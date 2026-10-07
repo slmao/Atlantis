@@ -105,6 +105,9 @@ static_assert(sizeof(Vertex) == atlantis::asset_system::kMeshArtifactVertexStrid
 static_assert(std::is_nothrow_move_assignable_v<std::unique_ptr<atlantis::world::BakedScene>>,
               "scene_ = std::move(bakedScene) in initializeSteps() must be noexcept for the scene-load publish step "
               "to be genuinely atomic");
+// Plan 0054 P8 (J1): the endpoint slot keeps RuntimeApplication's defaulted
+// move constructor noexcept.
+static_assert(std::is_nothrow_move_constructible_v<RuntimeApplication>);
 static_assert(std::is_nothrow_move_constructible_v<atlantis::world::access::RuntimeWorldAccess>,
               "worldAccess_.emplace(std::move(access)) in initializeSteps() must be noexcept for the scene-load "
               "publish step to be genuinely atomic");
@@ -1155,6 +1158,17 @@ atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(
 
 bool RuntimeApplication::shouldContinue() const noexcept {
   return !platform::shouldQuit() && !closeRequested_ && lifecycle_.state() != RuntimeLifecycleState::Failed;
+}
+
+RuntimeApplication::EndpointSlot::EndpointSlot(EndpointSlot&& other) noexcept {
+  ATLANTIS_CHECK_MSG(other.endpoint == nullptr,
+                     "a RuntimeApplication whose client endpoint exists is never moved (Spec 0054 Correction J1)");
+}
+
+std::unique_ptr<atlantis::connection::RuntimeConnection> RuntimeApplication::openConnection() {
+  ATLANTIS_CHECK_MSG(worldAccess_.has_value(), "openConnection(): no scene is loaded");
+  if (!endpoint_.endpoint) endpoint_.endpoint = std::make_unique<atlantis::connection::InProcessEndpoint>(*worldAccess_);
+  return endpoint_.endpoint->open();
 }
 
 void RuntimeApplication::runFrame() {

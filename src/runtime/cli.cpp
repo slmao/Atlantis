@@ -10,7 +10,7 @@ namespace {
 // (Proposed Design) -- both --help's own message and every error
 // message's own trailing usage block reuse this one constant.
 constexpr std::string_view kUsageText =
-    "usage: atlantis_runtime [--scene <name>]\n"
+    "usage: atlantis_runtime [--scene <name>] [--exec <script|->]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "\n"
@@ -39,7 +39,9 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int sceneCount = 0;
   int helpCount = 0;
   int listScenesCount = 0;
+  int execCount = 0;
   std::string_view requestedSceneName;
+  std::string_view execScript;
 
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -47,6 +49,10 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++sceneCount > 1) return makeError("--scene supplied more than once");
       if (i + 1 >= argc) return makeError("--scene requires a value");
       requestedSceneName = argv[++i];
+    } else if (arg == "--exec") {
+      if (++execCount > 1) return makeError("--exec supplied more than once");
+      if (i + 1 >= argc) return makeError("--exec requires a value");
+      execScript = argv[++i];
     } else if (arg == "--help") {
       if (++helpCount > 1) return makeError("--help supplied more than once");
     } else if (arg == "--list-scenes") {
@@ -65,6 +71,10 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   const int modesRequested = (sceneCount > 0 ? 1 : 0) + (helpCount > 0 ? 1 : 0) + (listScenesCount > 0 ? 1 : 0);
   if (modesRequested > 1) {
     return makeError("--help, --list-scenes, and --scene may not be combined");
+  }
+
+  if (execCount > 0 && (helpCount > 0 || listScenesCount > 0)) {
+    return makeError("--exec runs a scene; it may not be combined with --help or --list-scenes");
   }
 
   if (helpCount > 0) {
@@ -108,6 +118,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   CommandLineResult result;
   result.outcome = CommandLineOutcome::RunScene;
   result.selectedScene = matched->selection;
+  if (execCount > 0) result.execScript = std::string(execScript);
   return result;
 }
 

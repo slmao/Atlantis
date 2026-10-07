@@ -367,3 +367,57 @@ TEST_CASE("parseCommandLine(): a whitelist missing the default scene entry fails
   REQUIRE(result.outcome == CommandLineOutcome::PrintErrorAndExit);
   REQUIRE_FALSE(result.selectedScene.has_value());
 }
+
+// ---------------------------------------------------------------------------
+// Plan 0054 M5 (Spec 0054 ruling Q3, P7): --exec <path|->, a CLI script run
+// against the selected scene. It modifies a RunScene result only.
+// ---------------------------------------------------------------------------
+TEST_CASE("parseCommandLine(): no --exec leaves execScript empty", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv args{};
+  const CommandLineResult result = parseCommandLine(args.argc(), args.argv(), whitelist);
+  requireRunScene(result, whitelist, "integrated_showcase_demo");
+  REQUIRE_FALSE(result.execScript.has_value());
+}
+
+TEST_CASE("parseCommandLine(): --exec <path> runs the default scene with that script", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv args{"--exec", "tests/cli/scripts/north_star.txt"};
+  const CommandLineResult result = parseCommandLine(args.argc(), args.argv(), whitelist);
+  requireRunScene(result, whitelist, "integrated_showcase_demo");
+  REQUIRE(result.execScript == std::optional<std::string>{"tests/cli/scripts/north_star.txt"});
+}
+
+TEST_CASE("parseCommandLine(): --exec - combines with --scene in either order", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv sceneFirst{"--scene", "ibl_material_demo", "--exec", "-"};
+  const CommandLineResult first = parseCommandLine(sceneFirst.argc(), sceneFirst.argv(), whitelist);
+  requireRunScene(first, whitelist, "ibl_material_demo");
+  REQUIRE(first.execScript == std::optional<std::string>{"-"});
+  FakeArgv execFirst{"--exec", "-", "--scene", "ibl_material_demo"};
+  const CommandLineResult second = parseCommandLine(execFirst.argc(), execFirst.argv(), whitelist);
+  requireRunScene(second, whitelist, "ibl_material_demo");
+  REQUIRE(second.execScript == std::optional<std::string>{"-"});
+}
+
+TEST_CASE("parseCommandLine(): --exec errors -- missing value, repeated, combined with --help/--list-scenes",
+          "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv missing{"--exec"};
+  requireError(parseCommandLine(missing.argc(), missing.argv(), whitelist), "--exec requires a value");
+  FakeArgv twice{"--exec", "a.txt", "--exec", "b.txt"};
+  requireError(parseCommandLine(twice.argc(), twice.argv(), whitelist), "--exec supplied more than once");
+  FakeArgv withHelp{"--exec", "a.txt", "--help"};
+  requireError(parseCommandLine(withHelp.argc(), withHelp.argv(), whitelist),
+               "--exec runs a scene; it may not be combined with --help or --list-scenes");
+  FakeArgv withList{"--list-scenes", "--exec", "a.txt"};
+  requireError(parseCommandLine(withList.argc(), withList.argv(), whitelist),
+               "--exec runs a scene; it may not be combined with --help or --list-scenes");
+}
+
+TEST_CASE("parseCommandLine(): --help shows --exec", "[runtime][cli]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv args{"--help"};
+  requireUsage(parseCommandLine(args.argc(), args.argv(), whitelist),
+               "usage: atlantis_runtime [--scene <name>] [--exec <script|->]");
+}

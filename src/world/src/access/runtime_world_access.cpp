@@ -494,6 +494,16 @@ RuntimeWorldAccess& RuntimeWorldAccess::operator=(RuntimeWorldAccess&&) noexcept
 
 bool RuntimeWorldAccess::findEntity(const EntityGuid& entity) const { return impl_->lookup(entity).isOk(); }
 
+std::vector<EntityGuid> RuntimeWorldAccess::listEntities() const {
+  std::vector<EntityGuid> entities;
+  entities.reserve(impl_->index.size());
+  // The index is a std::map keyed by GUID, so it is already in GUID order.
+  for (const auto& [guid, entity] : impl_->index) {
+    if (impl_->world().isValid(entity)) entities.push_back(guid);
+  }
+  return entities;
+}
+
 atlantis::Result<std::vector<schema::TypeId>, AccessError> RuntimeWorldAccess::listComponents(
     const EntityGuid& entity) const {
   using ResultT = atlantis::Result<std::vector<schema::TypeId>, AccessError>;

@@ -755,6 +755,47 @@ narrow consumption point of it).
 
 ---
 
+## Atlantis Connection
+
+**Status: Approved** (Spec 0054,
+[ADR-0105](../adr/0105-runtime-connection-and-cli-client.md)).
+
+**Responsibilities:** the one client connection to a running Runtime World —
+`atlantis::connection::RuntimeConnection`, exactly Query / Command / Event /
+Transaction over Atlantis World's access value types; its InProcess endpoint
+(`InProcessEndpoint`, the boundary's only drainer, with per-connection
+pull-only subscriptions and ticket-routed failures); and the client text
+forms (`atlantis::connection::text`). A transport (0055) implements the
+interface; it does not shape it.
+
+**Depends on:** Atlantis Core and Atlantis World's public access
+(`world/access/*`) and schema (`world/world_schema.h`) headers only — no
+ECS, Runtime, Platform, RHI or Renderer include (checked by
+`tests/cli/cli_boundary_tests.cpp`).
+
+**Depended on by:** Atlantis Runtime (it owns the InProcess endpoint) and
+clients (Atlantis CLI).
+
+---
+
+## Atlantis CLI
+
+**Status: Approved** (Spec 0054,
+[ADR-0105](../adr/0105-runtime-connection-and-cli-client.md)).
+
+**Responsibilities:** the minimal CLI client (`atlantis::cli`, distinct from
+`atlantis::runtime::cli`, Runtime's startup flags) — six commands and a
+one-command-per-frame script runner over a `RuntimeConnection`.
+
+**Depends on:** Atlantis Connection, and nothing else — it links only
+`Atlantis::Connection` and includes no Runtime, ECS, Platform, RHI or
+Renderer header (both checked by `tests/cli/cli_boundary_tests.cpp`).
+
+**Depended on by:** the `atlantis_runtime` executable, its only v1 host
+(`--exec`).
+
+---
+
 ## Atlantis Runtime
 
 **Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
@@ -843,7 +884,10 @@ paused/resumed) remains TBD, see Open Questions in
 [threading.md](threading.md).
 
 **Depends on:** Atlantis Platform, RHI (Device + Presentation), Renderer,
-Shader System (both targets), Asset System, World, Core. **Not**
+Shader System (both targets), Asset System, World, Core, and — since Spec
+0054 — Atlantis Connection (`RuntimeApplication` owns the InProcess client
+endpoint); the `atlantis_runtime` executable alone also links Atlantis CLI,
+which it hosts (`--exec`). **Not**
 RenderGraph directly — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally, confirmed by inspection
 that no `atlantis/render_graph/*.h` header is included anywhere under

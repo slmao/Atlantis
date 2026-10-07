@@ -1,0 +1,6 @@
+# Spec 0054 R11 (Plan 0054 P7): the default scene's Directional light,
+# 0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea (integrated_showcase_demo, intensity 3).
+# Run: atlantis_runtime --exec tests/cli/scripts/north_star.txt
+entity get 0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea Light.intensity
+entity set 0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea Light.intensity 6
+entity get 0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea Light.intensity

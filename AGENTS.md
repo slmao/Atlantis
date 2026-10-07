@@ -163,8 +163,8 @@ none should ever need to contradict these:
 
 Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
-Shader System, Atlantis Asset System, Atlantis World, Atlantis Runtime,
-Atlantis Tools.**
+Shader System, Atlantis Asset System, Atlantis World, Atlantis Connection,
+Atlantis CLI, Atlantis Runtime, Atlantis Tools.**
 Atlantis Asset System (Spec 0012, `Approved`; extended by Spec 0015,
 `Approved`, with a second asset type, scene graphs) depends on Atlantis
 Core only — no RHI, Renderer, Shader System, or Atlantis World
@@ -196,12 +196,25 @@ Tools dependency in either direction. `World` never returns a reference or point
 internal storage; every accessor is by value. See
 [ADR-0048](docs/adr/0048-world-scene-module-boundary-and-ownership.md)–[ADR-0051](docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
+Atlantis Connection (Spec 0054, `Approved`) is the one client connection to a
+running Runtime World: the `RuntimeConnection` interface (exactly Query /
+Command / Event / Transaction, in Atlantis World's access value types), its
+InProcess endpoint and the client text forms. It depends on Atlantis Core and
+Atlantis World's public access and schema headers only. Atlantis CLI (Spec
+0054) is a client of it and nothing else: it links Atlantis Connection only
+and includes no Runtime, ECS, Platform, RHI or Renderer header (checked by
+`tests/cli/cli_boundary_tests.cpp`). Neither depends on Runtime; Runtime owns
+the endpoint and its executable hosts the CLI. See
+[ADR-0105](docs/adr/0105-runtime-connection-and-cli-client.md).
+
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `Approved`, and Spec 0015, `Approved`) is the actual composition root — a private
 `atlantis_runtime_host` static library plus a thin `atlantis_runtime`
 Windows executable, composing Platform, RHI, Vulkan Backend, Renderer,
 Shader System, Asset System, and World into one fixed startup → windowed
-frame loop → shutdown lifecycle. Runtime owns the loaded scene's bake
+frame loop → shutdown lifecycle. It also owns the InProcess endpoint of Atlantis
+Connection (Spec 0054), and the `atlantis_runtime` executable hosts Atlantis
+CLI (`--exec`). Runtime owns the loaded scene's bake
 output (`world::BakedScene`, Spec 0051) and is the sole place a
 `World`-driven scene is turned into `atlantis::renderer::DrawItem`s, via a
 Runtime-private extraction adapter (`scene_extraction.h`/`.cpp`) — not a

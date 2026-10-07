@@ -69,6 +69,10 @@ struct CommandLineResult {
   CommandLineOutcome outcome;
   std::string message;                              // empty when outcome == RunScene
   std::optional<SceneSelection> selectedScene;  // populated only when outcome == RunScene
+  // Spec 0054 ruling Q3 (Plan 0054 P7): `--exec <path|->` -- a CLI script to
+  // run against the scene (a file path, or "-" for stdin). Populated only
+  // when outcome == RunScene and --exec was given.
+  std::optional<std::string> execScript;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

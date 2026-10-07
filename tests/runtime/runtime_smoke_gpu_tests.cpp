@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/cli/command.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
@@ -14,6 +15,7 @@
 #include <array>
 #include <cstddef>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -495,6 +497,50 @@ TEST_CASE("Runtime renders real windowed frames with bloom on when the scene's c
   }
   REQUIRE(app.shouldContinue());  // no frame failed; no validation hit aborted
   CHECK(atlantis::runtime::RuntimeSmokeTestAccess::hasBloomTargets(app));
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0054 M5 (Spec 0054 R11, the north star): CLI -> Connection -> World API
+// -> ECS -> render extraction -> Renderer, on the running default scene, under
+// fatal Validation Layers. The CLI holds only its connection (opened through
+// RuntimeApplication::openConnection()); the test reads the frame's lighting
+// bytes through the existing smoke friend. The default scene's one light is
+// Directional, 0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea, intensity 3, and
+// extraction copies Light::intensity verbatim (scene_extraction.cpp).
+TEST_CASE("Runtime: a CLI `entity set` on the default scene's light reaches the next frame's lighting",
+          "[runtime][gpu][connection]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const FrameLightingData before = atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app);
+  REQUIRE(before.directionalLightCount == 1);
+  CHECK(before.directionalLights[0].intensity == 3.0f);
+
+  // Declared after `app`, so destroyed before it (the endpoint CHECKs this).
+  const auto connection = app.openConnection();
+  std::ostringstream out;
+  atlantis::cli::Commands commands(*connection, out);
+  const std::string light = "0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea";
+  REQUIRE(commands.run("entity set " + light + " Light.intensity 6") == atlantis::cli::Outcome::Submitted);
+
+  // The next real windowed frame applies the command first, then renders it.
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const FrameLightingData after = atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app);
+  REQUIRE(after.directionalLightCount == 1);
+  CHECK(after.directionalLights[0].intensity == 6.0f);
+  // Nothing else about the light moved.
+  CHECK(std::memcmp(before.directionalLights[0].direction, after.directionalLights[0].direction,
+                    sizeof(before.directionalLights[0].direction)) == 0);
+  CHECK(std::memcmp(before.directionalLights[0].color, after.directionalLights[0].color,
+                    sizeof(before.directionalLights[0].color)) == 0);
+  CHECK(commands.reportPending() == atlantis::cli::Outcome::Done);
+  CHECK(out.str() == "ok " + light + " Light.intensity = 6\n");
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);

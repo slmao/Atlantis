@@ -98,6 +98,9 @@ add_executable(atlantis_runtime_gpu_tests
 target_link_libraries(atlantis_runtime_gpu_tests
   PRIVATE
     Atlantis::RuntimeHost
+    # Plan 0054 M5: the north-star test drives the CLI client over a
+    # connection to the running application.
+    Atlantis::Cli
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
