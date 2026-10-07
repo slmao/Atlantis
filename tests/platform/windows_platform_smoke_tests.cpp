@@ -24,7 +24,9 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <string_view>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -253,6 +255,105 @@ TEST_CASE("Windows Platform lifecycle: SurfaceCreated ordering, close, resize, m
     const auto events = atlantis::platform::processEvents();
     REQUIRE(events.empty());
   }
+}
+
+// Plan 0056 M2 (Spec 0056 Q9 / ADR-0109, P2): input messages, synthesized with
+// SendMessageW (dispatched synchronously, so they precede anything the drain
+// loop later pulls from the queue), arrive as plain-value input events in
+// order. Keys outside the closed set and control characters produce nothing;
+// a UTF-16 surrogate pair becomes one 4-byte code point. A real pointer over
+// the window may add trailing PointerMoved events, which are tolerated.
+TEST_CASE("Windows Platform input: pointer, button, wheel, key and text messages become input events in order",
+          "[platform][integration][input]") {
+  using atlantis::platform::Key;
+  using atlantis::platform::KeyChanged;
+  using atlantis::platform::PlatformEvent;
+  using atlantis::platform::PointerButton;
+  using atlantis::platform::PointerButtonChanged;
+  using atlantis::platform::PointerMoved;
+  using atlantis::platform::SurfaceCreated;
+  using atlantis::platform::TextEntered;
+  using atlantis::platform::WheelScrolled;
+
+  REQUIRE(atlantis::platform::initialize().isOk());
+  PlatformLifecycleGuard lifecycleGuard;
+  const auto initialBatch = atlantis::platform::processEvents();
+  REQUIRE(initialBatch.size() >= 1);
+  REQUIRE(std::holds_alternative<SurfaceCreated>(initialBatch[0]));
+  const HWND hwnd = reinterpret_cast<HWND>(std::get<SurfaceCreated>(initialBatch[0]).handle.value0);
+  static_cast<void>(atlantis::platform::processEvents());
+
+  const auto at = [](int x, int y) { return static_cast<LPARAM>(MAKELPARAM(x, y)); };
+  SendMessageW(hwnd, WM_MOUSEMOVE, 0, at(10, 20));
+  SendMessageW(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, at(11, 21));
+  SendMessageW(hwnd, WM_LBUTTONUP, 0, at(12, 22));
+  SendMessageW(hwnd, WM_RBUTTONDOWN, MK_RBUTTON, at(13, 23));
+  SendMessageW(hwnd, WM_RBUTTONUP, 0, at(13, 23));
+  SendMessageW(hwnd, WM_MBUTTONUP, 0, at(14, 24));
+  SendMessageW(hwnd, WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), at(0, 0));
+  SendMessageW(hwnd, WM_MOUSEHWHEEL, MAKEWPARAM(0, static_cast<WORD>(-2 * WHEEL_DELTA)), at(0, 0));
+  SendMessageW(hwnd, WM_KEYDOWN, 'W', 0);
+  SendMessageW(hwnd, WM_KEYUP, VK_ESCAPE, 0);
+  SendMessageW(hwnd, WM_KEYDOWN, VK_F5, 0);
+  SendMessageW(hwnd, WM_KEYDOWN, VK_CONTROL, static_cast<LPARAM>(KF_EXTENDED) << 16);  // right Ctrl
+  SendMessageW(hwnd, WM_KEYDOWN, VK_SNAPSHOT, 0);                                     // not in the set: nothing
+  SendMessageW(hwnd, WM_CHAR, 'a', 0);
+  SendMessageW(hwnd, WM_CHAR, 0x00E9, 0);  // e acute: 2 UTF-8 bytes
+  SendMessageW(hwnd, WM_CHAR, 0x08, 0);    // Backspace as a character: nothing
+  SendMessageW(hwnd, WM_CHAR, 0xD83D, 0);  // U+1F600, as a surrogate pair
+  SendMessageW(hwnd, WM_CHAR, 0xDE00, 0);
+
+  const auto events = atlantis::platform::processEvents();
+  std::vector<PlatformEvent> input;
+  for (const PlatformEvent& event : events) {
+    if (event.index() >= 9) input.push_back(event);  // the input alternatives
+  }
+  REQUIRE(input.size() >= 15);
+
+  const auto moved = [&](std::size_t i, float x, float y) {
+    REQUIRE(std::holds_alternative<PointerMoved>(input[i]));
+    CHECK(std::get<PointerMoved>(input[i]).x == x);
+    CHECK(std::get<PointerMoved>(input[i]).y == y);
+  };
+  const auto button = [&](std::size_t i, PointerButton which, bool down, float x, float y) {
+    REQUIRE(std::holds_alternative<PointerButtonChanged>(input[i]));
+    const auto& e = std::get<PointerButtonChanged>(input[i]);
+    CHECK(e.button == which);
+    CHECK(e.down == down);
+    CHECK(e.x == x);
+    CHECK(e.y == y);
+  };
+  const auto key = [&](std::size_t i, Key which, bool down) {
+    REQUIRE(std::holds_alternative<KeyChanged>(input[i]));
+    CHECK(std::get<KeyChanged>(input[i]).key == which);
+    CHECK(std::get<KeyChanged>(input[i]).down == down);
+  };
+  const auto text = [&](std::size_t i, std::string_view utf8) {
+    REQUIRE(std::holds_alternative<TextEntered>(input[i]));
+    const auto& e = std::get<TextEntered>(input[i]);
+    CHECK(std::string_view(e.utf8.data(), e.size) == utf8);
+  };
+
+  moved(0, 10.0f, 20.0f);
+  button(1, PointerButton::Left, true, 11.0f, 21.0f);
+  button(2, PointerButton::Left, false, 12.0f, 22.0f);
+  button(3, PointerButton::Right, true, 13.0f, 23.0f);
+  button(4, PointerButton::Right, false, 13.0f, 23.0f);
+  button(5, PointerButton::Middle, false, 14.0f, 24.0f);
+  REQUIRE(std::holds_alternative<WheelScrolled>(input[6]));
+  CHECK(std::get<WheelScrolled>(input[6]).dx == 0.0f);
+  CHECK(std::get<WheelScrolled>(input[6]).dy == 1.0f);
+  REQUIRE(std::holds_alternative<WheelScrolled>(input[7]));
+  CHECK(std::get<WheelScrolled>(input[7]).dx == -2.0f);
+  CHECK(std::get<WheelScrolled>(input[7]).dy == 0.0f);
+  key(8, Key::W, true);
+  key(9, Key::Escape, false);
+  key(10, Key::F5, true);
+  key(11, Key::RightCtrl, true);
+  text(12, "a");
+  text(13, "\xC3\xA9");
+  text(14, "\xF0\x9F\x98\x80");
+  for (std::size_t i = 15; i < input.size(); ++i) CHECK(std::holds_alternative<PointerMoved>(input[i]));
 }
 
 #endif  // defined(_WIN32)
