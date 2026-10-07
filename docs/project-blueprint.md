@@ -790,7 +790,16 @@ milestone being listed does not authorize starting it — see Section 1.
     [PR #220](https://github.com/slmao/Atlantis/pull/220);
     [ADR-0104](adr/0104-runtime-world-transaction-atomicity.md)),
     transactions: all-or-nothing groups of those commands, by projected
-    pre-validation.
+    pre-validation;
+  - since [Spec 0054](specs/0054-runtime-connection-minimal-cli.md) (merged
+    [PR #224](https://github.com/slmao/Atlantis/pull/224);
+    [ADR-0105](adr/0105-runtime-connection-and-cli-client.md)), the first
+    step of Phase 2B ("Machine-operable Runtime"): a `listEntities()` query;
+    `RuntimeConnection` (Atlantis Connection), the one client connection,
+    with its InProcess endpoint owned by Runtime and the address/value text
+    forms; and a six-command CLI client (Atlantis CLI) hosted by
+    `atlantis_runtime --exec`, which sets a light's intensity on the
+    running scene and sees it rendered on the next frame.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -801,8 +810,9 @@ milestone being listed does not authorize starting it — see Section 1.
   - prefab, networking and C# bindings;
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
-    (named only in Spec 0053), a client transport (0054), and an
-    entity-listing query.
+    (named only in Spec 0053);
+  - IPC, a standalone attachable CLI and an interactive REPL (0055), and a
+    filtered entity listing (0056) — named only in Spec 0054.
 
 ### Milestone 12 — Scene Asset & Serialization Foundation
 

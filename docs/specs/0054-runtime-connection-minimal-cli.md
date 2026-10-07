@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-07
-- **Related Plan(s):** none yet. Plan 0054 drafting is authorized by the
-  Approval.
+- **Related Plan(s):** [Plan 0054](../plans/0054-runtime-connection-minimal-cli.md)
+  (`Approved`; Joint Human Review 2026-10-07,
+  [PR #223](https://github.com/slmao/Atlantis/pull/223)) — implemented, merged
+  [PR #224](https://github.com/slmao/Atlantis/pull/224).
 - **Approval:** slmao, 2026-10-07 (review of this Spec's own branch PR,
   [PR #222](https://github.com/slmao/Atlantis/pull/222)) — authorizes drafting Plan 0054; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
