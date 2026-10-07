@@ -1,28 +1,33 @@
 # Spec: RuntimeConnection and a Minimal CLI Client
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-07
-- **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
-  Spec's Approval.
-- **Approval:** pending, under review in
-  [PR #222](https://github.com/slmao/Atlantis/pull/222). The maintainer fixed this Spec's position, scope and
-  boundaries before drafting (2026-10-07, chat). They are recorded under
-  Goals / Non-Goals and are not open questions:
+- **Related Plan(s):** none yet. Plan 0054 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-07 (review of this Spec's own branch PR,
+  [PR #222](https://github.com/slmao/Atlantis/pull/222)) — authorizes drafting Plan 0054; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The maintainer fixed this Spec's position, scope and boundaries before
+  drafting (2026-10-07, chat). They are recorded under Goals / Non-Goals:
   - the first step of Phase 2B, "Machine-operable Runtime";
   - the connection exposes exactly Query / Command / Event / Transaction;
   - InProcess is the only implementation;
   - a minimal CLI with a fixed command list;
   - IPC, the Editor and the rest are named only.
+
+  The same review ruled all eight open questions, each as its
+  recommendation. See Risks & Open Questions below.
 - **Related ADR(s):**
-  [ADR-0105](../adr/0105-runtime-connection-and-cli-client.md) (`Proposed`,
-  drafted alongside this Spec). It records:
+  [ADR-0105](../adr/0105-runtime-connection-and-cli-client.md) (`Accepted`
+  2026-10-07, alongside this Spec's own Approval). It records:
   - the connection's shape and placement;
   - the CLI as an ordinary client and how it is hosted;
   - the address text form;
   - the subscription model;
   - the enumeration query added to ADR-0103 D1's Query set (D1 says
-    "Additions are later Specs").
+    "Additions are later Specs"), one Query extending D1, superseding
+    nothing.
 
   It applies [ADR-0033](../adr/0033-runtime-authority-and-client-boundary.md)
   and keeps [ADR-0004](../adr/0004-phase1-threading-baseline.md),
@@ -325,13 +330,12 @@ RuntimeConnection (InProcess)    endpoint owned by RuntimeApplication, beside wo
 ## Architectural Impact
 
 Yes. Recorded in
-[ADR-0105](../adr/0105-runtime-connection-and-cli-client.md), drafted
-alongside:
+[ADR-0105](../adr/0105-runtime-connection-and-cli-client.md) (`Accepted`
+with this Spec's Approval):
 
 - the connection interface (exactly the four concepts) and its InProcess
   implementation;
-- module placement (Q4, Q6), with two new top-level modules under the
-  recommendations;
+- module placement (rulings Q4, Q6): two new top-level modules;
 - the address text form (Q2);
 - the subscription and fan-out model (Q5);
 - the hosting decision, with no thread and no ADR-0004 change (Q3);
@@ -339,7 +343,7 @@ alongside:
 - the listing query, extending ADR-0103 D1's Query set ("Additions are later
   Specs"; no supersession).
 
-**Expected code impact**, for the Plan, under the recommendations:
+**Expected code impact**, for the Plan, under the rulings:
 
 - **New:**
   - `src/connection/` (interface, InProcess endpoint, text forms);
@@ -416,9 +420,9 @@ The seven questions below compare the options. Rejected across all of them:
 
 Risks:
 
-- **Two new modules for a small feature,** under the Q4/Q6 recommendations.
-  They hold the boundary the maintainer asked for; a lighter merge is noted
-  in Q6.
+- **Two new modules for a small feature** (rulings Q4, Q6). They hold the
+  boundary the maintainer asked for; the lighter merge (Q6 B-d) was not
+  chosen.
 - **Text forms becoming a de-facto wire format.** They are defined as client
   text, and 0055 decides its own encoding (Q2).
 - **Script pacing is one line per frame.** A long script takes many frames.
@@ -426,11 +430,16 @@ Risks:
 - **The CLI can make inert edits.** It can set `Transform`, which does not
   render (Spec 0052 ruling Q8); the CLI prints values, not their effect.
 
-Open questions (to be ruled at review). Q1–Q7 were posed by the maintainer;
-Q8 surfaced while drafting.
+Open questions — all eight ruled by Human Review (slmao, 2026-10-07, review
+of [PR #222](https://github.com/slmao/Atlantis/pull/222)), each as its
+recommendation. Q1–Q7 were posed by the maintainer; Q8 surfaced while
+drafting. The options are kept as the record of what was weighed.
 
 - **Q1 — Listing entities.** `world entities` needs it. Spec 0052's Risks
   named it, and the blueprint queues it.
+  - **Ruled (2026-10-07): L1, `RuntimeWorldAccess::listEntities()`** (R5;
+    ADR-0105 D4; entered through ADR-0103 D1, no separate ADR; L2 left to
+    0056), as recommended.
   - **Options:**
     - **(L1)** A new Query on `RuntimeWorldAccess`, `listEntities()` →
       `std::vector<EntityGuid>`. It returns every live entity in the GUID
@@ -443,7 +452,7 @@ Q8 surfaced while drafting.
         obtain;
       - or by reading the scene source, which misses runtime-created
         entities and is authoring data, not the Runtime World.
-  - **Recommendation: L1.**
+  - **Why L1:**
     - It is the smallest Query that closes the queued debt. It changes no
       existing semantics and enters through ADR-0103 D1's "Additions are
       later Specs".
@@ -453,6 +462,8 @@ Q8 surfaced while drafting.
     - L2's filter is a later extension when a consumer (0056) needs it. L3
       cannot be correct.
 - **Q2 — The address text form** (Plan 0052 J7's debt).
+  - **Ruled (2026-10-07): T2 + F1 + the value table + J-i** (R6; ADR-0105 D5),
+    as recommended.
   - **Entity.** The existing canonical GUID text: lowercase RFC 9562
     8-4-4-4-12 (`parseEntityGuid` / `toString`, `asset_guid.h:43-47`). No
     choice is needed.
@@ -484,13 +495,14 @@ Q8 surfaced while drafting.
   - **Joined form** — options:
     - **(J-i)** two tokens, `<guid> <Type>.<field>`, as the CLI uses;
     - **(J-ii)** also a single-token joined form for a future wire.
-  - **Recommendation: T2 (qualified also accepted) + F1 + the value table +
-    J-i.**
+  - **Why T2 (qualified also accepted) + F1 + the value table + J-i:**
     - The text lives in the connection module (Q4), so 0055 can reuse it.
     - The wire encoding remains 0055's, and the text is not a protocol. So
       the transport does not decide the API.
 - **Q3 — How the CLI operates on a running Runtime without IPC.** It must
   coexist with the window on one thread (ADR-0004).
+  - **Ruled (2026-10-07): H-a, `atlantis_runtime --exec <file|->`** (R9;
+    ADR-0105 D7; interactive use left to 0055), as recommended.
   - **Options:**
     - **(H-a) `atlantis_runtime --exec <file|->`.**
       - **Loading.** The script is read whole at startup, from the file or
@@ -518,7 +530,7 @@ Q8 surfaced while drafting.
       contract, so it needs its own ADR.
     - **(H-e) A standalone CLI process.** It cannot reach a running Runtime
       without IPC (0055).
-  - **Recommendation: H-a.**
+  - **Why H-a:**
     - **Why it fits.** It runs against the scene being rendered (the north
       star), adds no thread and no OS-specific I/O, and is deterministic
       (scripts double as acceptance tests). It still uses Spec 0052's
@@ -527,6 +539,8 @@ Q8 surfaced while drafting.
       separate CLI process over IPC is naturally interactive. H-c/H-d are
       named there.
 - **Q4 — Where the connection lives, and the client's dependency surface.**
+  - **Ruled (2026-10-07): M-b, the Atlantis Connection module** (R1, R8;
+    ADR-0105 D3), as recommended.
   - **Options:**
     - **(M-a)** In Atlantis World, beside `access`
       (`atlantis::world::access::RuntimeConnection`). It is the smallest
@@ -546,11 +560,13 @@ Q8 surfaced while drafting.
     reaching World, Core and Asset System only transitively, for value
     types. It must not link `Atlantis::RuntimeHost` (already forbidden to
     other modules) or include Runtime or `world/ecs` headers (R8).
-  - **Recommendation: M-b.** The client contract gets one home that is
+  - **Why M-b:** The client contract gets one home that is
     neither the world's owner nor its host. 0055 adds a transport there,
     and the World module stays free of connection concerns.
 - **Q5 — The v1 shape of Subscription / EventFilter** (pull-only, not
   reactive).
+  - **Ruled (2026-10-07): S-b, per-connection pull-only subscriptions** (R4;
+    ADR-0105 D6), as recommended.
   - **Options:**
     - **(S-a)** No subscription: the connection exposes `drainEvents()` /
       `drainFailures()` as the boundary does. It has a single consumer, so
@@ -574,11 +590,13 @@ Q8 surfaced while drafting.
       - **Mechanism:** the endpoint is the boundary's only drainer and fans
         out on demand.
     - **(S-c) Callbacks.** Reactive, which is forbidden.
-  - **Recommendation: S-b.** It is the smallest shape that makes several
+  - **Why S-b:** It is the smallest shape that makes several
     symmetric clients correct (ADR-0033; the Editor 0056 is an ordinary
     client). It needs no frame change and keeps Spec 0052's non-reactive
     pull. The CLI subscribes to `PropertyChanged` on the entity it sets.
 - **Q6 — Where the CLI is built.**
+  - **Ruled (2026-10-07): B-a, the Atlantis CLI module** (R8; ADR-0105 D3; the
+    standalone `atlantis_cli` left to 0055), as recommended.
   - **Options:**
     - **(B-a)** A new top-level module **Atlantis CLI** (`src/cli/`,
       `atlantis::cli`; distinct from `atlantis::runtime::cli`, Runtime's
@@ -598,12 +616,15 @@ Q8 surfaced while drafting.
     - **(B-d)** A second target inside the Connection module. That is one
       module fewer, but it mixes client presentation with the connection
       contract.
-  - **Recommendation: B-a.** The boundary scan (R8) then guards one
-    directory, and `atlantis_runtime` (the executable, not `RuntimeHost`)
-    is its only v1 host. B-d is an acceptable lighter variant if the
-    reviewer prefers fewer modules.
+  - **Why B-a:** The boundary scan (R8) then guards one directory, and
+    `atlantis_runtime` (the executable, not `RuntimeHost`) is its only v1
+    host. The lighter B-d was not chosen. The CLI's namespace
+    `atlantis::cli` is kept distinct from `atlantis::runtime::cli`
+    (Runtime's startup flags).
 - **Q7 — The Runtime side: where the InProcess endpoint hangs, who owns it,
   and how "no change" is guaranteed.**
+  - **Ruled (2026-10-07): R-a, `RuntimeApplication` owns the endpoint** (R3,
+    R10; ADR-0105 D2), as recommended.
   - **Options:**
     - **(R-a) `RuntimeApplication` owns the endpoint.**
       - **Member:** `std::optional<connection::InProcessEndpoint>`, declared
@@ -617,7 +638,7 @@ Q8 surfaced while drafting.
       publicly, and `main.cpp` builds the endpoint. That widens the
       application's API with the owner-side boundary object and moves the
       access point out of the authority.
-  - **Recommendation: R-a.** Runtime, the authority, owns every client
+  - **Why R-a:** Runtime, the authority, owns every client
     access point (ADR-0033).
   - **How "no change" is guaranteed (R10):**
     - **The frame:** `runFrame()` is untouched. The endpoint drains only
@@ -631,13 +652,15 @@ Q8 surfaced while drafting.
       covers `RuntimeHost`'s new dependency.
 - **Q8 — The schema through the connection** (surfaced). `schema list` /
   `schema inspect` need the World schema.
+  - **Ruled (2026-10-07): K1, the schema as a connection Query** (R1; ADR-0105
+    D8), as recommended.
   - **Options:**
     - **(K1)** A connection Query returns it: Core's descriptor types, whose
       views stay valid for the connection's lifetime. InProcess returns
       `worldSchema()`'s static data; a 0055 transport would own a decoded
       copy.
     - **(K2)** The CLI calls `worldSchema()` directly.
-  - **Recommendation: K1.** K2 ties the client to being built from the same
+  - **Why K1:** K2 ties the client to being built from the same
     source as the Runtime, which is exactly what a remote client in 0055
     cannot assume. Through the connection, the CLI stays
     transport-independent, and nothing about the World changes.
