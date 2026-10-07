@@ -7,6 +7,7 @@
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/connection/runtime_connection.h>
+#include <atlantis/connection/runtime_control.h>
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
@@ -36,10 +37,13 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace atlantis::runtime {
+
+struct RenderableExtractionInput;  // scene_extraction.h
 
 // See Plan 0013 Section D4/D6/D7/D8. The composition object: owns
 // Platform, Device, Presentation, Mesh, camera Buffer, depth Texture,
@@ -93,7 +97,41 @@ class RuntimeApplication {
   // moved -- both are CHECKed.
   [[nodiscard]] std::unique_ptr<atlantis::connection::RuntimeConnection> openConnection();
 
+  // Spec 0055 R3 (Plan 0055 P8; ADR-0106 D5, ruling Q2 C1): between frames,
+  // the extraction output of the frame just run -- its lighting block, camera
+  // matrices and draw-item count, recomputed from the baked world with the
+  // functions runFrame() uses. Nothing changes the world between frames, so
+  // this equals the frame's own. NotRendering until a frame has drawn.
+  // Frame thread only.
+  [[nodiscard]] atlantis::Result<atlantis::connection::FrameData, atlantis::connection::ControlError>
+  captureFrameData();
+
+  // Spec 0055 R3 / ADR-0106 D4 (ruling Q2, P-a; Plan 0055 P7): while held,
+  // runFrame() does not apply pending commands -- it still pumps, collects
+  // and presents, so the window stays responsive and the same world is shown.
+  // Never held unless set: only RuntimeControlHost::beforeFrame() sets it, and
+  // the host exists only when atlantis_runtime serves clients (`--listen`).
+  // Frame thread only, between frames.
+  void setCommandsHeld(bool held) noexcept { commandsHeld_ = held; }
+
+  // Spec 0055 R3/R8 (Plan 0055 P8; ADR-0106 D5, ruling Q2 C2): between
+  // frames, an image of the world as the last frame drew it -- rendered once
+  // more offscreen at the presentation's extent and format, read back, and
+  // written to `path` as PNG. Waits for the GPU to be idle. NotRendering
+  // until a frame has drawn; CaptureFailed if the render, readback or write
+  // fails. Frame thread only.
+  [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
+  captureImage(const std::string& path);
+
+  // The loaded scene's catalog GUID (Plan 0047 P17).
+  [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
+
  private:
+  // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
+  // (frame_capture.cpp).
+  [[nodiscard]] std::vector<atlantis::renderer::DrawItem> assembleCaptureDrawItems(
+      const std::vector<RenderableExtractionInput>& renderables) const;
+
   friend atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig&);
   // Plan 0014 Section D-Step 6: the one narrowly-scoped friend needed for
   // the GPU smoke test's own V17 assertion (exactly 5 DrawItems reach
@@ -303,6 +341,9 @@ class RuntimeApplication {
     std::unique_ptr<atlantis::connection::InProcessEndpoint> endpoint;
   };
   EndpointSlot endpoint_;
+  // Plan 0055 P7: runFrame()'s first statement skips applyPending() while
+  // set. Written by setCommandsHeld() only.
+  bool commandsHeld_ = false;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth

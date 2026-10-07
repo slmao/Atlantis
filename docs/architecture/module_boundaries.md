@@ -777,8 +777,31 @@ interface; it does not shape it.
 ECS, Runtime, Platform, RHI or Renderer include (checked by
 `tests/cli/cli_boundary_tests.cpp`).
 
-**Depended on by:** Atlantis Runtime (it owns the InProcess endpoint) and
-clients (Atlantis CLI).
+**Depended on by:** Atlantis Runtime (it owns the InProcess endpoint),
+Atlantis Remote (its payload), and clients (Atlantis CLI).
+
+---
+
+## Atlantis Remote
+
+**Status: Approved** (Spec 0055,
+[ADR-0106](../adr/0106-attachable-runtime-transport-and-control.md)).
+
+**Responsibilities:** the attachable-Runtime transport — a loopback-TCP,
+JSON-lines RPC (`atlantis.remote/1`) whose payload is exactly
+`RuntimeConnection` and `RuntimeControl` calls; the session file. Client half
+`atlantis_remote_client` (`RemoteSession`: a `RemoteConnection` and a
+`RemoteControl`); server half `atlantis_remote_server` (`RemoteServer`, polled
+once per frame, never waiting, one InProcess connection per client).
+
+**Depends on:** Atlantis Connection only — no Runtime, ECS, Platform, RHI or
+Renderer include. Its OS socket code (Winsock / BSD sockets) is private to the
+module, as the Vulkan Backend's WSI code is: one private header with one
+translation unit per OS under `src/remote/src/os/`, chosen by CMake; no OS type
+in any public header (checked by `tests/remote/remote_boundary_tests.cpp`).
+
+**Depended on by:** the `atlantis` executable (client half) and the
+`atlantis_runtime` executable (server half); never `atlantis_runtime_host`.
 
 ---
 
@@ -795,8 +818,9 @@ one-command-per-frame script runner over a `RuntimeConnection`.
 `Atlantis::Connection` and includes no Runtime, ECS, Platform, RHI or
 Renderer header (both checked by `tests/cli/cli_boundary_tests.cpp`).
 
-**Depended on by:** the `atlantis_runtime` executable, its only v1 host
-(`--exec`).
+**Depended on by:** the `atlantis_runtime` executable (`--exec`) and the
+`atlantis` executable (`atlantis_cli_app`, Spec 0055), which is built in
+`src/cli/` and alone also links Atlantis Remote's client half.
 
 ---
 
@@ -894,7 +918,9 @@ paused/resumed) remains TBD, see Open Questions in
 Shader System (both targets), Asset System, World, Core, and — since Spec
 0054 — Atlantis Connection (`RuntimeApplication` owns the InProcess client
 endpoint); the `atlantis_runtime` executable alone also links Atlantis CLI,
-which it hosts (`--exec`). **Not**
+which it hosts (`--exec`), and — since Spec 0055 — Atlantis Remote's server
+half (`--listen`). Since Spec 0055 `atlantis_runtime_host` also links the
+existing `Stb::Stb` (PRIVATE; frame captures written as PNG). **Not**
 RenderGraph directly — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally, confirmed by inspection
 that no `atlantis/render_graph/*.h` header is included anywhere under

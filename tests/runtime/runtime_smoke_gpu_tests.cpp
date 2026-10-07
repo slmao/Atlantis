@@ -1,8 +1,13 @@
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/cli/command.h>
+#include <atlantis/cli/invocation.h>
+#include <atlantis/connection/json.h>
+#include <atlantis/remote/remote_client.h>
+#include <atlantis/remote/remote_server.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
+#include <atlantis/runtime/runtime_control_host.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/schema.h>
 #include <atlantis/world/access/runtime_world_access.h>
@@ -12,9 +17,18 @@
 #include <atlantis/world/transform.h>
 #include <atlantis/world/world_matrix.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <random>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -22,6 +36,8 @@
 #include <variant>
 
 #include <catch2/catch_test_macros.hpp>
+
+#include "png_codec.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -141,6 +157,14 @@ struct RuntimeSmokeTestAccess {
     FrameLightingData lighting{};
     std::memcpy(&lighting, cameraBytes + kLightingByteOffset, sizeof(FrameLightingData));
     return lighting;
+  }
+
+  // Plan 0055 M3: the camera view and projection the frame wrote, the
+  // uniform's first 32 floats.
+  [[nodiscard]] static std::array<float, 32> cameraMatrixFloats(const RuntimeApplication& app) {
+    std::array<float, 32> floats{};
+    std::memcpy(floats.data(), app.cameraBuffer_->mappedData(), sizeof(floats));
+    return floats;
   }
 };
 }  // namespace atlantis::runtime
@@ -544,4 +568,424 @@ TEST_CASE("Runtime: a CLI `entity set` on the default scene's light reaches the 
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0055 M3 (Spec 0055 R3; P8, ruling Q2 C1): the frame data a step
+// reports is the frame just drawn -- its lighting block and camera matrices
+// as the frame wrote them to the camera uniform (read through the smoke
+// friend), and its draw-item count -- before and after an edit applies.
+TEST_CASE("Runtime: captureFrameData() equals the frame just drawn", "[runtime][gpu][control]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  CHECK(app.captureFrameData().error() == atlantis::connection::ControlError::NotRendering);  // nothing drawn yet
+
+  const auto equalsFrame = [&](const atlantis::connection::FrameData& data) {
+    const FrameLightingData lighting = atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app);
+    REQUIRE(data.directionalLights.size() == lighting.directionalLightCount);
+    REQUIRE(data.pointLights.size() == lighting.pointLightCount);
+    for (std::size_t i = 0; i < data.directionalLights.size(); ++i) {
+      const auto& gpu = lighting.directionalLights[i];
+      CHECK(std::memcmp(data.directionalLights[i].direction.data(), gpu.direction, sizeof(gpu.direction)) == 0);
+      CHECK(std::memcmp(data.directionalLights[i].color.data(), gpu.color, sizeof(gpu.color)) == 0);
+      CHECK(std::memcmp(&data.directionalLights[i].intensity, &gpu.intensity, sizeof(float)) == 0);
+    }
+    for (std::size_t i = 0; i < data.pointLights.size(); ++i) {
+      const auto& gpu = lighting.pointLights[i];
+      CHECK(std::memcmp(data.pointLights[i].position.data(), gpu.position, sizeof(gpu.position)) == 0);
+      CHECK(std::memcmp(data.pointLights[i].color.data(), gpu.color, sizeof(gpu.color)) == 0);
+      CHECK(std::memcmp(&data.pointLights[i].intensity, &gpu.intensity, sizeof(float)) == 0);
+      CHECK(std::memcmp(&data.pointLights[i].range, &gpu.range, sizeof(float)) == 0);
+    }
+    const std::array<float, 32> camera = atlantis::runtime::RuntimeSmokeTestAccess::cameraMatrixFloats(app);
+    CHECK(std::memcmp(data.view.data(), camera.data(), sizeof(float) * 16) == 0);
+    CHECK(std::memcmp(data.projection.data(), camera.data() + 16, sizeof(float) * 16) == 0);
+    // integrated_showcase_demo: six Renderables, all drawn (see the smoke test above).
+    CHECK(data.drawItemCount == 6);
+  };
+
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto before = app.captureFrameData();
+  REQUIRE(before.isOk());
+  equalsFrame(before.value());
+  REQUIRE(before.value().directionalLights.size() == 1);
+  CHECK(before.value().directionalLights[0].intensity == 3.0f);
+
+  {
+    const auto connection = app.openConnection();
+    const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+    connection->submit(atlantis::world::access::SetProperty{
+        {light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+         atlantis::schema::fieldId("world::Light", "intensity")},
+        6.0f});
+    app.runFrame();
+    REQUIRE(app.shouldContinue());
+    const auto after = app.captureFrameData();
+    REQUIRE(after.isOk());
+    equalsFrame(after.value());
+    CHECK(after.value().directionalLights[0].intensity == 6.0f);
+  }
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0055 M4 (Spec 0055 R3, ruling Q2 P-a; ADR-0106 D4): on the running
+// default scene, under fatal Validation Layers, with the control driving the
+// frames as atlantis_runtime's loop does: paused, submitted commands stay
+// pending across frames (no event, the frame's lighting unchanged); a step of
+// n applies exactly n frames' worth (one command submitted before each); once
+// resumed, every frame applies again.
+TEST_CASE("Runtime: pause holds command application; step n applies exactly n frames; resume restores it",
+          "[runtime][gpu][control]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  const auto frame = [&] {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    REQUIRE(app.shouldContinue());
+  };
+  const auto intensity = [&] {
+    return atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app).directionalLights[0].intensity;
+  };
+  frame();
+  REQUIRE(intensity() == 3.0f);
+
+  const auto connection = app.openConnection();
+  const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+  const atlantis::world::access::PropertyAddress address{
+      light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+      atlantis::schema::fieldId("world::Light", "intensity")};
+  const auto changes = connection->subscribe(atlantis::connection::EventFilter{});
+  const auto set = [&](float value) { connection->submit(atlantis::world::access::SetProperty{address, value}); };
+
+  control.pause();
+  set(4.0f);
+  frame();
+  frame();
+  frame();
+  CHECK(intensity() == 3.0f);  // held: the command is still pending
+  CHECK(connection->drainEvents(changes).value().empty());
+  CHECK(connection->getProperty(address).value() == atlantis::world::access::PropertyValue(3.0f));
+
+  int completed = 0;
+  control.step(atlantis::connection::StepRequest{2, std::nullopt},
+               [&](const atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>& r) {
+                 REQUIRE(r.isOk());
+                 CHECK(r.value().data.directionalLights[0].intensity == 5.0f);
+                 ++completed;
+               });
+  frame();  // released: applies 4
+  CHECK(intensity() == 4.0f);
+  set(5.0f);
+  frame();  // released: applies 5; the step completes
+  CHECK(intensity() == 5.0f);
+  CHECK(completed == 1);
+  set(6.0f);
+  frame();
+  frame();  // held again
+  CHECK(intensity() == 5.0f);
+  CHECK(connection->drainEvents(changes).value().size() == 2);  // exactly the two released applications
+
+  control.resume();
+  frame();
+  CHECK(intensity() == 6.0f);
+  set(7.0f);
+  frame();
+  CHECK(intensity() == 7.0f);
+}
+
+// Plan 0055 M5 (Spec 0055 R3, R8; P8, ruling Q2 C2): a captured image is the
+// world the last frame drew, rendered once more offscreen at the
+// presentation's extent -- deterministic (two captures of an unchanged world
+// are byte-identical), sensitive (an intensity edit changes it), a decodable
+// RGBA PNG, and what a step with an image path reports -- under fatal
+// Validation Layers.
+TEST_CASE("Runtime: a capture is a deterministic, edit-sensitive PNG of the frame at the presentation extent",
+          "[runtime][gpu][control][capture]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_capture_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const auto bytes = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  CHECK(app.captureImage((dir / "none.png").string()).error() == atlantis::connection::ControlError::NotRendering);
+
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto first = app.captureImage((dir / "a.png").string());
+  REQUIRE(first.isOk());
+  const auto second = app.captureImage((dir / "b.png").string());
+  REQUIRE(second.isOk());
+  CHECK(first.value().width > 0);
+  CHECK(first.value().height > 0);
+  CHECK(second.value() == atlantis::connection::CapturedImage{(dir / "b.png").string(), first.value().width,
+                                                              first.value().height});
+  const std::string a = bytes(dir / "a.png");
+  REQUIRE(a.size() > 8);
+  const bool identical = a == bytes(dir / "b.png");  // compared as a bool: Catch must not print PNG bytes
+  CHECK(identical);  // determinism
+  const auto decoded = atlantis::image_regression::decodePng(dir / "a.png");
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().pixels.width == first.value().width);
+  CHECK(decoded.value().pixels.height == first.value().height);
+
+  // The frame loop goes on after a capture.
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  {
+    const auto connection = app.openConnection();
+    const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+    connection->submit(atlantis::world::access::SetProperty{
+        {light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+         atlantis::schema::fieldId("world::Light", "intensity")},
+        6.0f});
+    atlantis::runtime::RuntimeControlHost::Options options;
+    options.recordDiagnostics = false;
+    atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app),
+                                                  options);
+    std::optional<atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>> report;
+    control.step(atlantis::connection::StepRequest{1, (dir / "c.png").string()},
+                 [&](atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError> r) {
+                   report = std::move(r);
+                 });
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    REQUIRE(app.shouldContinue());
+    REQUIRE(report.has_value());
+    REQUIRE(report->isOk());
+    CHECK(report->value().data.directionalLights[0].intensity == 6.0f);
+    REQUIRE(report->value().image.has_value());
+    CHECK(report->value().image->path == (dir / "c.png").string());
+    const bool changed = bytes(dir / "c.png") != a;
+    CHECK(changed);  // sensitivity
+  }
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+// Plan 0055 M7 (Spec 0055 R8, ruling Q7 A-a; J4): the north star in one
+// process, every link public -- the `atlantis` command layer and its JSON,
+// over a RemoteConnection and RemoteControl on a real loopback socket, to a
+// RemoteServer polled after each frame of a windowed RuntimeApplication whose
+// RuntimeControlHost drives its frames, exactly as atlantis_runtime --listen
+// runs them. The client's waits run those frames (J4). Under fatal
+// Validation Layers.
+namespace {
+
+namespace json = atlantis::connection::json;
+
+class NorthStarBatch final : public atlantis::cli::QueryBatch {
+ public:
+  explicit NorthStarBatch(atlantis::remote::RemoteSession& session) : session_(session) {}
+  std::vector<atlantis::Result<std::vector<atlantis::schema::TypeId>, atlantis::world::access::AccessError>>
+  listComponents(std::span<const atlantis::asset_system::EntityGuid> entities) override {
+    return session_.listComponents(entities);
+  }
+  std::vector<atlantis::Result<atlantis::world::access::PropertyValue, atlantis::world::access::AccessError>>
+  getProperties(std::span<const atlantis::world::access::PropertyAddress> addresses) override {
+    return session_.getProperties(addresses);
+  }
+
+ private:
+  atlantis::remote::RemoteSession& session_;
+};
+
+// The attached Runtime and a `--json` command line against it.
+struct Attached {
+  explicit Attached(RuntimeApplication& application)
+      : app(application), control(atlantis::runtime::RuntimeControlHost::forApplication(app), options()) {
+    auto listening = atlantis::remote::RemoteServer::listen(
+        0, atlantis::remote::generateToken(), app.sceneGuid(), [this] { return app.openConnection(); }, &control);
+    REQUIRE(listening.isOk());
+    server = std::move(listening.value());
+    atlantis::remote::RemoteOptions remoteOptions;
+    remoteOptions.whileWaiting = [this] {
+      control.beforeFrame();
+      app.runFrame();
+      control.afterFrame();
+      server->poll();
+    };
+    auto connected = atlantis::remote::connectRemote(server->session(), remoteOptions);
+    REQUIRE(connected.isOk());
+    session = std::move(connected.value());
+    batch = std::make_unique<NorthStarBatch>(*session);
+    atlantis::cli::InvocationOptions invocationOptions;
+    invocationOptions.json = true;
+    invocation = std::make_unique<atlantis::cli::Invocation>(session->connection(), &session->control(), batch.get(),
+                                                             out, err, invocationOptions);
+  }
+
+  static atlantis::runtime::RuntimeControlHost::Options options() {
+    atlantis::runtime::RuntimeControlHost::Options o;
+    o.recordDiagnostics = false;  // Core's sink stays the test process's
+    return o;
+  }
+
+  // One command; its envelope, which must say ok.
+  json::Value run(const std::vector<std::string>& command) {
+    out.str({});
+    err.str({});
+    INFO(command[0] << " " << (command.size() > 1 ? command[1] : ""));
+    REQUIRE(invocation->run(command) == 0);
+    auto envelope = json::parse(out.str());
+    REQUIRE(envelope.isOk());
+    CHECK(envelope.value().find("ok")->asBool());
+    REQUIRE_FALSE(session->failure().has_value());
+    return *envelope.value().find("result");
+  }
+
+  RuntimeApplication& app;
+  atlantis::runtime::RuntimeControlHost control;
+  std::unique_ptr<atlantis::remote::RemoteServer> server;
+  std::unique_ptr<atlantis::remote::RemoteSession> session;
+  std::unique_ptr<NorthStarBatch> batch;
+  std::ostringstream out;
+  std::ostringstream err;
+  std::unique_ptr<atlantis::cli::Invocation> invocation;
+};
+
+[[nodiscard]] float asFloat(const json::Value& value) {
+  float out = 0.0f;
+  REQUIRE(value.toFloat(out));
+  return out;
+}
+
+// Finds the light by its kind, reads its intensity, sets it to `to`, pauses,
+// steps one frame with an image, and checks the frame data and the image.
+// Returns the light's GUID.
+// `imageChanges`: whether the light can change the image at all -- false for
+// a light (and its range) outside the scene camera's view.
+void runNorthStar(RuntimeApplication& app, std::string_view kind, std::string_view expectedGuid, float from, float to,
+                  const std::optional<std::array<float, 3>>& pointPosition, bool imageChanges = true) {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_north_star" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  Attached attached(app);
+
+  // Find: entity list --with Light --where Light.kind=<kind>
+  const json::Value found = attached.run(
+      {"entity", "list", "--with", "Light", "--where", "Light.kind=" + std::string(kind)});
+  std::vector<std::string> guids;
+  for (const json::Value& entry : found.asArray()) guids.push_back(entry.find("guid")->asString());
+  REQUIRE(std::find(guids.begin(), guids.end(), std::string(expectedGuid)) != guids.end());
+  const std::string guid(expectedGuid);
+
+  // Read.
+  CHECK(asFloat(*attached.run({"property", "get", guid, "Light.intensity"}).find("value")) == from);
+
+  // The pre-edit image.
+  attached.run({"runtime", "pause"});
+  const json::Value beforeStep =
+      attached.run({"runtime", "step", "--capture", (dir / "before.png").string()});
+  CHECK(beforeStep.find("applied")->asBool());
+
+  // Modify: a write while paused stays pending until the step.
+  const json::Value set = attached.run({"property", "set", guid, "Light.intensity", std::to_string(to)});
+  CHECK(set.find("outcome")->find("pending")->asBool());
+  CHECK(asFloat(*attached.run({"property", "get", guid, "Light.intensity"}).find("value")) == from);
+
+  // Step and capture.
+  const json::Value stepped = attached.run({"runtime", "step", "--capture", (dir / "after.png").string()});
+  const json::Value& frameData = *stepped.find("capture")->find("frameData");
+  if (pointPosition) {
+    bool matched = false;
+    for (const json::Value& light : frameData.find("pointLights")->asArray()) {
+      const auto& position = light.find("position")->asArray();
+      if (std::fabs(asFloat(position[0]) - (*pointPosition)[0]) < 1e-3f &&
+          std::fabs(asFloat(position[1]) - (*pointPosition)[1]) < 1e-3f &&
+          std::fabs(asFloat(position[2]) - (*pointPosition)[2]) < 1e-3f) {
+        CHECK(asFloat(*light.find("intensity")) == to);  // exactly
+        matched = true;
+      }
+    }
+    CHECK(matched);
+  } else {
+    REQUIRE(frameData.find("directionalLights")->asArray().size() == 1);
+    CHECK(asFloat(*frameData.find("directionalLights")->asArray()[0].find("intensity")) == to);  // exactly
+  }
+  CHECK(asFloat(*attached.run({"property", "get", guid, "Light.intensity"}).find("value")) == to);
+
+  // The image changed.
+  const auto bytes = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  const std::string before = bytes(dir / "before.png");
+  REQUIRE(before.size() > 8);
+  const bool changed = bytes(dir / "after.png") != before;  // a bool: Catch must not print PNG bytes
+  if (imageChanges) {
+    CHECK(changed);
+  } else {
+    WARN("image changed: " << (changed ? "yes" : "no (the light is outside the camera's view)"));
+  }
+  attached.run({"runtime", "resume"});
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+}  // namespace
+
+TEST_CASE("Runtime: the north star in process -- the default scene's Directional light, 3 to 6",
+          "[runtime][gpu][north_star]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  runNorthStar(app, "Directional", "0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea", 3.0f, 6.0f, std::nullopt);
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime: the north star in process -- Bistro's point light 6b63b12c, 12 to 24",
+          "[runtime][gpu][north_star][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  // As atlantis_runtime's `bistro` entry: lit by its own lights only.
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  // Spec 0055 R8's light, exactly: found, read (12), set (24), stepped and
+  // captured, its frame data 24 exactly. It and its 6 m range lie about 82
+  // degrees off the scene camera's axis (camera at (-22, 1.7, 22), yaw -0.86),
+  // outside the view, so no pixel can change (verified: even 2000 leaves the
+  // capture byte-identical) -- reported as a deviation in the implementing PR.
+  runNorthStar(app, "Point", "6b63b12c-9cde-4ae2-8391-c0b4cefadb7d", 12.0f, 24.0f,
+               std::array<float, 3>{-39.615f, 3.255f, -5.032f}, /*imageChanges=*/false);
+  // The same chain on a point light in view (the cafe's, overlay node 59)
+  // shows the next frame's image change on Bistro.
+  runNorthStar(app, "Point", "425c3b17-dcac-4148-831c-22a454829357", 4.5f, 9.0f,
+               std::array<float, 3>{-7.966f, 3.42f, 9.084f});
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+#endif
 }

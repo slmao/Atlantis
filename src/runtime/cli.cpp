@@ -10,7 +10,7 @@ namespace {
 // (Proposed Design) -- both --help's own message and every error
 // message's own trailing usage block reuse this one constant.
 constexpr std::string_view kUsageText =
-    "usage: atlantis_runtime [--scene <name>] [--exec <script|->]\n"
+    "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "\n"
@@ -40,8 +40,12 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int helpCount = 0;
   int listScenesCount = 0;
   int execCount = 0;
+  int listenCount = 0;
+  int sessionFileCount = 0;
   std::string_view requestedSceneName;
   std::string_view execScript;
+  std::string_view listenPort;
+  std::string_view sessionFile;
 
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -53,6 +57,14 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++execCount > 1) return makeError("--exec supplied more than once");
       if (i + 1 >= argc) return makeError("--exec requires a value");
       execScript = argv[++i];
+    } else if (arg == "--listen") {
+      if (++listenCount > 1) return makeError("--listen supplied more than once");
+      if (i + 1 >= argc) return makeError("--listen requires a value");
+      listenPort = argv[++i];
+    } else if (arg == "--session-file") {
+      if (++sessionFileCount > 1) return makeError("--session-file supplied more than once");
+      if (i + 1 >= argc) return makeError("--session-file requires a value");
+      sessionFile = argv[++i];
     } else if (arg == "--help") {
       if (++helpCount > 1) return makeError("--help supplied more than once");
     } else if (arg == "--list-scenes") {
@@ -75,6 +87,23 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
 
   if (execCount > 0 && (helpCount > 0 || listScenesCount > 0)) {
     return makeError("--exec runs a scene; it may not be combined with --help or --list-scenes");
+  }
+
+  if ((listenCount > 0 || sessionFileCount > 0) && (helpCount > 0 || listScenesCount > 0)) {
+    return makeError("--listen runs a scene; it may not be combined with --help or --list-scenes");
+  }
+  if (sessionFileCount > 0 && listenCount == 0) return makeError("--session-file requires --listen");
+  std::optional<std::uint16_t> port;
+  if (listenCount > 0) {
+    // Decimal digits only, 0-65535 (0: an ephemeral port).
+    std::uint32_t value = 0;
+    bool valid = !listenPort.empty() && listenPort.size() <= 5;
+    for (const char c : listenPort) {
+      if (c < '0' || c > '9') valid = false;
+      if (valid) value = value * 10 + static_cast<std::uint32_t>(c - '0');
+    }
+    if (!valid || value > 65535) return makeError(std::string("invalid --listen port: ").append(listenPort));
+    port = static_cast<std::uint16_t>(value);
   }
 
   if (helpCount > 0) {
@@ -119,6 +148,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   result.outcome = CommandLineOutcome::RunScene;
   result.selectedScene = matched->selection;
   if (execCount > 0) result.execScript = std::string(execScript);
+  result.listenPort = port;
+  if (sessionFileCount > 0) result.sessionFile = std::string(sessionFile);
   return result;
 }
 

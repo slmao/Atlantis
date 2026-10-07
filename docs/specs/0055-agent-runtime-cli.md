@@ -14,6 +14,24 @@
 
   The same review ruled all eight open questions, each as its
   recommendation. See Risks & Open Questions below.
+  **Correction (2026-10-08, post-Approval, review of the implementation PR
+  [PR #228](https://github.com/slmao/Atlantis/pull/228)):** which Bistro light the north star's image check uses.
+  - **The approved text** (Testing & Verification Plan, Bistro step 6) asked
+    that, after `6b63b12c-…` goes from 12 to 24, the image differ from the
+    pre-edit capture.
+  - **Why that cannot hold:** `6b63b12c-…` and its 6 m range lie about 82°
+    off the scene camera's axis (camera at (-22, 1.7, 22), yaw -0.86), outside
+    the view. No pixel can change: even intensity 2000 leaves the capture
+    byte-identical (PR #228, deviation 1).
+  - **Corrected:**
+    - `6b63b12c-…` keeps the addressing chain and the exact frame-data check
+      (found by `--where Light.kind=Point`, read 12, set 24, stepped and
+      captured, the frame data's point light at its position 24 exactly);
+    - the image check runs the same chain on the in-view café light
+      `425c3b17-dcac-4148-831c-22a454829357` (intensity 4.5 → 9) and asserts
+      that the image differs from its pre-edit capture.
+  - **Unchanged:** R8's chain and its public-surfaces-only rule, the
+    default-scene twin, ADR-0106.
 - **Related ADR(s):**
   [ADR-0106](../adr/0106-attachable-runtime-transport-and-control.md)
   (`Accepted` 2026-10-07, alongside this Spec's own Approval). It records the
@@ -254,7 +272,8 @@ Also out of scope:
   4. step;
   5. capture;
   6. the captured frame data carries the new intensity, and the image
-     differs from the pre-edit capture.
+     differs from the pre-edit capture (for a light in the camera's view;
+     Correction 2026-10-08 -- the Bistro image check uses an in-view light).
 - **R9 — The completion loop.** Discover → query → find → modify → step →
   capture → diagnostics → verify, as one automated end-to-end case (Q7).
 - **R10 — No behaviour change without a client.**
@@ -378,7 +397,11 @@ The seven questions below compare their options. Rejected across them:
     4. set it to 24;
     5. step with capture;
     6. the frame data's point light at that light's position has intensity
-       24 exactly, and the image differs from the pre-edit capture.
+       24 exactly;
+    7. the same chain on the in-view café light `425c3b17-…` (4.5 → 9): the
+       image differs from its pre-edit capture (Correction 2026-10-08; the
+       approved text asked this of `6b63b12c-…`, which is outside the
+       camera's view, so no pixel of the image can change).
   - **A non-gated twin** runs the same on the default scene's Directional
     light, so every machine runs the chain.
 - **The completion loop (R9):** one end-to-end case that runs the

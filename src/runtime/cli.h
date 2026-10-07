@@ -11,6 +11,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 
+#include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
@@ -73,6 +74,13 @@ struct CommandLineResult {
   // run against the scene (a file path, or "-" for stdin). Populated only
   // when outcome == RunScene and --exec was given.
   std::optional<std::string> execScript;
+  // Spec 0055 R1 (Plan 0055 P3, P4): `--listen <port>` -- serve attachable
+  // clients on 127.0.0.1:<port> (0: an ephemeral port); `--session-file
+  // <path>` -- where the session file goes (only with --listen; default
+  // ./.atlantis/runtime.session.json). Populated only when outcome ==
+  // RunScene and the flag was given. Without --listen no socket is opened.
+  std::optional<std::uint16_t> listenPort;
+  std::optional<std::string> sessionFile;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

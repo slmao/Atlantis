@@ -16,6 +16,10 @@ add_library(atlantis_runtime_host STATIC
   src/material_realization.cpp
   src/environment_realization.cpp
   src/runtime_application.cpp
+  # Plan 0055 P5, P6, P8 (ADR-0106 D3, D5): the RuntimeControl implementation
+  # and its diagnostics ring, and capture of the frame just run.
+  src/runtime_control_host.cpp
+  src/frame_capture.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
 
@@ -48,6 +52,10 @@ target_link_libraries(atlantis_runtime_host
     Atlantis::Connection
   PRIVATE
     atlantis_compiler_warnings
+    # Plan 0055 P1/P8 (ADR-0106 D5): PNG encoding for captures -- the existing
+    # header-only Stb::Stb (ADR-0006/ADR-0041), its write implementation
+    # compiled static in frame_capture.cpp alone.
+    Stb::Stb
 )
 
 # Plan 0013 Section D1/D3 (2026-08-21 amendment): real, compile-time
@@ -89,6 +97,10 @@ target_link_libraries(atlantis_runtime
     # Plan 0054 P7 (ADR-0105 D3, D7): the executable hosts the CLI client
     # (`--exec`); Atlantis::RuntimeHost does not depend on it.
     Atlantis::Cli
+    # Plan 0055 P1/P11 (ADR-0106 D7): the executable serves attachable clients
+    # (`--listen`) with the server half of Atlantis Remote only;
+    # Atlantis::RuntimeHost does not depend on Remote.
+    Atlantis::RemoteServer
     atlantis_compiler_warnings
 )
 

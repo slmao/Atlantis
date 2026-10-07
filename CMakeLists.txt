@@ -75,6 +75,10 @@ add_subdirectory(src/world)
 # Plan 0054 P1 (ADR-0105 D3): Atlantis Connection, after World (whose access
 # headers it names) and before Runtime (which owns its InProcess endpoint).
 add_subdirectory(src/connection)
+# Plan 0055 P1 (ADR-0106 D7): Atlantis Remote, after Connection (its payload)
+# and before CLI (whose `atlantis` executable links its client half) and
+# Runtime (whose executable links its server half).
+add_subdirectory(src/remote)
 # Plan 0054 P1 (ADR-0105 D3): Atlantis CLI, a client of Atlantis Connection
 # only; hosted by atlantis_runtime (src/runtime, below).
 add_subdirectory(src/cli)
@@ -243,6 +247,7 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/world)
   add_subdirectory(tests/connection)
   add_subdirectory(tests/cli)
+  add_subdirectory(tests/remote)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)

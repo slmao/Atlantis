@@ -31,6 +31,7 @@ add_executable(atlantis_runtime_tests
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
   cli_tests.cpp
+  runtime_control_tests.cpp
   ../../src/runtime/cli.cpp
 )
 
@@ -51,6 +52,8 @@ target_link_libraries(atlantis_runtime_tests
 # schema does not retain, ADR-0030's own scope) -- never a stale,
 # committed golden JSON for either.
 target_compile_definitions(atlantis_runtime_tests PRIVATE
+  # Plan 0055 M4 (P7): the commandsHeld_ writer scan.
+  ATLANTIS_RUNTIME_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/runtime"
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_SLANGC_EXECUTABLE="${ATLANTIS_SLANGC_EXECUTABLE}"
   ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_direct_lit/pbr_direct_lit.slang"
@@ -101,6 +104,12 @@ target_link_libraries(atlantis_runtime_gpu_tests
     # Plan 0054 M5: the north-star test drives the CLI client over a
     # connection to the running application.
     Atlantis::Cli
+    # Plan 0055 M5: the capture tests decode the PNGs a capture writes.
+    Atlantis::ImageRegressionSupport
+    # Plan 0055 M7 (ruling Q7, A-a): the in-process north star attaches over a
+    # real loopback socket, both halves in this one process.
+    Atlantis::RemoteClient
+    Atlantis::RemoteServer
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -188,3 +197,12 @@ catch_discover_tests(atlantis_runtime_gpu_tests
   PROPERTIES LABELS "gpu"
   WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_runtime_gpu_tests>"
 )
+
+# Plan 0055 M7 (Spec 0055 R8): the Bistro north star is content-gated, as
+# atlantis_runtime's `bistro` entry is.
+if(DEFINED ATLANTIS_bistro_scene_TARGET)
+  target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
+    ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
+  )
+  add_dependencies(atlantis_runtime_gpu_tests ${ATLANTIS_bistro_scene_TARGET})
+endif()
