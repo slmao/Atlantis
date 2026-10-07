@@ -202,7 +202,7 @@ android {
     externalNativeBuild {
       cmake {
         arguments "-DANDROID_PLATFORM=android-29", "-DATLANTIS_BUILD_TESTS=OFF", "-DATLANTIS_BUILD_EXAMPLES=OFF"
-        targets "atlantis_runtime_android", "atlantis_cli", "atlantis_remote_client", "atlantis_remote_server"
+        targets "atlantis_runtime_android", "atlantis_cli", "atlantis_remote_client", "atlantis_remote_server", "atlantis_editor"
       }
     }
   }
