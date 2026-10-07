@@ -14,11 +14,14 @@
   - It keeps [ADR-0103](../adr/0103-runtime-world-operation-boundary.md),
     [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) and
     [ADR-0004](../adr/0004-phase1-threading-baseline.md).
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in [PR #231](https://github.com/slmao/Atlantis/pull/231). Implementation needs the Joint Human
-  Review of this Plan together with Spec 0056, explicitly authorizing it
-  (J1–J12 below).
+- **Joint Human Review:** slmao, 2026-10-08 — reviewed this Plan and
+  [Spec 0056](../specs/0056-minimal-editor.md) together in
+  [PR #231](https://github.com/slmao/Atlantis/pull/231) and explicitly authorized Implementation from Milestone 1.
+  J1–J12 were ruled as recommended. No Spec Correction was made (J1);
+  ADR-0107, ADR-0108 and ADR-0109 are unchanged. See Joint Review decisions
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -559,41 +562,77 @@ M3 and M5; M7 needs M6; M8 last.
 - **sRGB handling** in the overlay is new; M3's pixel tests cover both
   target formats.
 
-## Joint Review decisions (recommendation first)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-08, PR #231)
 
-- **J1 — No Spec Correction proposed.** The Plan stays within Spec 0056's
-  rulings and ADR-0108's decisions.
-- **J2 — RHI scissor and ranged indexed draw** (P4 item 3) are read as part
-  of ADR-0108 D3's "scissored triangles", not a new decision. Alternative:
-  one index buffer per draw command (no RHI change, many small buffers per
-  frame).
-- **J3 — The editor's UI frame runs between frames** (P6), one frame of
-  input latency, so every connection call keeps ADR-0105's "between
-  frames" contract. Alternative: inside `runFrame()` after the pump (no
-  latency, but connection calls mid-frame and a fifth named line).
-- **J4 — The adapter is executable-private** (`editor_attachment.*`,
-  compiled into `atlantis_runtime` and the GPU tests, the `cli.cpp`
-  precedent), so the host library never links the editor.
-- **J5 — Inspector edits commit on completion**, one `SetProperty` per edit
-  (no live writes while dragging a field). Alternative: live, throttled
-  like the Gizmo.
-- **J6 — sRGB:** linearize UI vertex colours for sRGB targets; sample the
-  Viewport through a same-format view.
-- **J7 — Gizmo camera from `captureFrameData()` only while a Gizmo is
-  shown** (its draw-item walk costs milliseconds on Bistro).
-- **J8 — ImGui pinned to `v1.92.9b`**, core only,
-  `IMGUI_DISABLE_OBSOLETE_FUNCTIONS`, no dynamic font textures.
-- **J9 — `--editor` combines with `--listen`** (one shared
+All twelve were ruled as recommended. Spec 0056 is not corrected (J1), and
+ADR-0107, ADR-0108 and ADR-0109 are unchanged: the RHI additions are read
+inside ADR-0108 D3 (J2), and the four named `runFrame()` lines are
+ADR-0108 D4's, held to P7's guard.
+
+- **J1 — No Spec Correction proposed.** **Ruled (2026-10-08): no Spec
+  Correction.** The Plan stays within Spec 0056's rulings and ADR-0108's
+  decisions.
+- **J2 — RHI scissor and ranged indexed draw** (P4 item 3).
+  **Ruled (2026-10-08): as P4.**
+  - **Ruled:** RHI gains a scissor rectangle (the `Rect2D` type and a
+    `setScissor()` call) and `drawIndexed()` with a first index and a vertex
+    offset.
+  - **Recorded interpretation:** these are what ADR-0108 D3's "scissored
+    triangles" already implies, not a new decision; ADR-0108 is not amended
+    and no new ADR is written.
+  - **Rejected:** one small index buffer per draw command (no RHI change,
+    but many small buffers allocated every frame, and still no clipping
+    without a scissor).
+- **J3 — Where the editor's UI frame runs** (P6). **Ruled (2026-10-08):
+  between frames.**
+  - **Ruled:** `attachment.update()` runs after `afterFrame()`, outside
+    `runFrame()`; one frame of input latency is accepted.
+  - Every connection call keeps ADR-0105's "between frames" contract.
+  - **Rejected:** inside `runFrame()` after the event pump (no latency, but
+    connection calls mid-frame and a fifth named line).
+- **J4 — Adapter placement.** **Ruled (2026-10-08): executable-private.**
+  `editor_attachment.*` is compiled into `atlantis_runtime` and the GPU
+  tests (the `cli.cpp` precedent); the host library never links the
+  editor.
+- **J5 — Inspector commit policy** (P9). **Ruled (2026-10-08): commit on
+  completion.**
+  - **Ruled:** one `SetProperty` per completed edit; no live writes while a
+    field is being dragged.
+  - The cadence differs from the Gizmo's by the nature of the input: a
+    field edit has one result, while a Gizmo drag is a continuous
+    manipulation the Viewport must follow (≤1 transaction per frame plus
+    the final value, Spec Q5).
+  - **Rejected:** live, throttled field writes like the Gizmo's.
+- **J6 — sRGB** (P5). **Ruled (2026-10-08): as P5.** When the target is
+  sRGB the shader linearizes UI vertex colours; the Viewport is sampled
+  through a same-format view and its pixels pass through unchanged.
+- **J7 — Gizmo camera** (P6). **Ruled (2026-10-08): from
+  `captureFrameData()` only while a Gizmo is shown.** The frame-data walk
+  visits every draw item (milliseconds on Bistro), so it runs only when a
+  selected entity's Gizmo is drawn.
+- **J8 — ImGui pin** (P3). **Ruled (2026-10-08): `v1.92.9b`.**
+  - FetchContent of the tag archive with a SHA256 `URL_HASH` (the
+    cgltf/stb precedent);
+  - the four core sources only, `IMGUI_DISABLE_OBSOLETE_FUNCTIONS`, no stock
+    backend, no dynamic font textures (the atlas is built and uploaded
+    once);
+  - one ImGui context per `Editor`, no global state.
+- **J9 — Flag combinations** (P10). **Ruled (2026-10-08): as P10.**
+  `--editor` combines with `--scene` and `--listen` (one shared
   `RuntimeControlHost`) and is refused with `--exec`.
-- **J10 — Docs:** normative sentences with the implementation PR
-  (AGENTS.md module list and Editor rule; `module_boundaries.md`'s Editor
-  section and Platform/RHI/Renderer/Runtime lines); narratives post-merge
-  (the Plan 0054/0055 J6 split).
-- **J11 — Android:** Gradle `targets` gain `atlantis_editor` (ImGui and the
-  input-event header compile on the NDK); no Android host.
-- **J12 — Acceptance runs:** the human editor run (default scene and
-  Bistro) and the Plan 0052 J9 runs repeated, since Platform, RHI,
-  Renderer and `runFrame()` change.
+- **J10 — Docs.** **Ruled (2026-10-08): the Plan 0054/0055 split.**
+  - **Normative sentences in the implementation PR:** AGENTS.md's module
+    list and Editor rule; `module_boundaries.md`'s Editor section and its
+    Platform/RHI/Renderer/Runtime lines.
+  - **Narratives post-merge:** the blueprint and the registry's
+    Implementation column.
+- **J11 — Android.** **Ruled (2026-10-08): build, don't host.** Gradle
+  `targets` gain `atlantis_editor`, so ImGui, the editor library and the
+  input-event header compile on the NDK; Android emits no input events
+  and hosts no editor.
+- **J12 — Acceptance runs** (M8). **Ruled (2026-10-08): both.** The human
+  editor run (default scene and Bistro), and the Plan 0052 J9 runs
+  repeated, since Platform, RHI, Renderer and `runFrame()` change.
 
 ## Rollback Plan
 
