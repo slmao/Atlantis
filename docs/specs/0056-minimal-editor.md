@@ -1,15 +1,22 @@
 # Spec: Minimal Editor
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
-- **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending, in [PR #230](https://github.com/slmao/Atlantis/pull/230). The maintainer fixed this Spec's position, the four
-  v1 features, the layout, the schema-generated Inspector, the Gizmo chain,
-  the "ordinary client" rule and the named-only list before drafting
-  (2026-10-08, chat). They are recorded under Goals / Non-Goals and are not
-  open to review; the open questions below are.
-- **Related ADR(s)** (all `Proposed`, drafted alongside):
+- **Related Plan(s):** none yet. Plan 0056 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-08 (review of this Spec's own branch PR,
+  [PR #230](https://github.com/slmao/Atlantis/pull/230)) — authorizes drafting Plan 0056; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  The maintainer fixed this Spec's position, the four v1 features, the
+  layout, the schema-generated Inspector, the Gizmo chain, the "ordinary
+  client" rule and the named-only list before drafting (2026-10-08, chat).
+  They are recorded under Goals / Non-Goals.
+
+  The same review ruled all nine open questions, each as its
+  recommendation. See Risks & Open Questions below.
+- **Related ADR(s)** (all `Accepted` 2026-10-08, alongside this Spec's own
+  Approval):
   - [ADR-0107](../adr/0107-editor-ui-library-selection.md): the editor's UI
     library (Q1);
   - [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md): the
@@ -218,7 +225,7 @@ Also out of scope here:
 
 ## Proposed Design
 
-Under the recommendations below:
+Under the rulings below:
 
 ```
 atlantis_runtime --editor
@@ -241,7 +248,7 @@ into those values and draws the list through the Renderer.
 
 ## Architectural Impact
 
-Yes. Recorded in three ADRs drafted alongside (all `Proposed`):
+Yes. Recorded in three ADRs drafted alongside (all `Accepted` 2026-10-08):
 
 - **[ADR-0107](../adr/0107-editor-ui-library-selection.md)** — a new
   third-party dependency, the UI library (Q1), with the integration rule that
@@ -253,7 +260,7 @@ Yes. Recorded in three ADRs drafted alongside (all `Proposed`):
 - **[ADR-0109](../adr/0109-platform-input-events.md)** — Platform's public
   event set gains input events (Q9).
 
-**Expected code impact** under the recommendations:
+**Expected code impact** under the rulings:
 
 - **New:** `src/editor/` (Atlantis Editor, a client library), its tests, the
   UI library's pinned fetch.
@@ -327,11 +334,18 @@ Risks:
 - **Bistro's frame time** (about 130 ms with its log flood) makes the
   editor's UI on Bistro run at that rate when hosted in the Runtime's frame.
 
-Open questions — Q1–Q8 posed by the maintainer, Q9 surfaced while
-drafting. Each lists options and a recommendation.
+Open questions — all nine ruled by Human Review (slmao, 2026-10-08, review
+of [PR #230](https://github.com/slmao/Atlantis/pull/230)), each as its
+recommendation. Q1–Q8 were posed by the maintainer; Q9 surfaced while
+drafting. The options are kept as the record of what was weighed.
 
 - **Q1 — UI technology** (a new dependency; ADR-0107, after ADR-0082's
   selection precedent).
+  - **Ruled (2026-10-08): U-a, Dear ImGui, core only** (ADR-0107; fetched
+    pinned and compiled into the editor library only; no stock backend; input
+    from Platform events (Q9), output an engine-neutral draw list drawn by a
+    Renderer pass (Q3); no ImGui type leaves the editor library and the models
+    hold no UI type; no docking branch), as recommended.
   - **(U-a) Dear ImGui** (MIT, C++, a pinned source fetch, ADR-0006).
     - **Dependency surface:** a handful of source files compiled into the
       editor library; no transitive dependencies.
@@ -356,12 +370,16 @@ drafting. Each lists options and a recommendation.
       capture: measured +0.5–0.6 s per frame (about 2 FPS), 0.37–2.6 MB of
       PNG each. A usable stream needs a new GPU-side encode path (a video
       encoder dependency) or shared memory — a large new subsystem.
-  - **Recommendation: U-a**, with the integration rule above. It is the
+  - **Why U-a**, with the integration rule above: It is the
     smallest dependency that delivers four panels now, and the rule keeps
     the Vulkan-only-in-the-backend and OS-only-in-Platform boundaries
     intact.
 
 - **Q2 — The host model** (load-bearing; ADR-0108).
+  - **Ruled (2026-10-08): (a), `atlantis_runtime --editor`** (R1; ADR-0108 D1;
+    hosted as `--exec` hosts the CLI, with an InProcess connection and the
+    `RuntimeControlHost`; no change to the module dependency rules), as
+    recommended.
   - **(a) `atlantis_runtime --editor`.** The editor library is a client
     hosted by the Runtime executable, as Atlantis CLI is hosted by
     `--exec` (Spec 0054). It gets an InProcess connection and the
@@ -383,13 +401,18 @@ drafting. Each lists options and a recommendation.
     U-c's numbers). Sharing a GPU image between processes needs
     platform-specific external-memory APIs in the Vulkan Backend — a new
     design.
-  - **Recommendation: (a).** It is the only option with a real-time
+  - **Why (a):** it is the only option with a real-time
     Viewport and no change to who may depend on Runtime. It keeps the editor
     an ordinary client: the host gives it exactly what `--exec` gives the
     CLI — a connection — plus a control and its inputs and Viewport. (c)
     remains a later mode once a frame-sharing path exists.
 
 - **Q3 — The Viewport rendering path** (ADR-0108).
+  - **Ruled (2026-10-08): V-a, offscreen then sampled** (R4; ADR-0108 D3, D4;
+    the scene drawn by `drawFrame()` into an offscreen target at the Viewport
+    size (the Spec 0055 offscreen path, without readback); RHI gains a
+    sampleable offscreen target, Renderer a UI overlay pass; v1 uses the scene
+    camera only, no picking), as recommended.
   - **(V-a) Offscreen, then sampled by the UI.** The scene is drawn by the
     existing `drawFrame()` into an offscreen target at the Viewport panel's
     size (the Spec 0055 capture machinery, without readback); the UI pass
@@ -415,12 +438,16 @@ drafting. Each lists options and a recommendation.
   - **Picking** (click in the Viewport to select): not v1 — it needs an ID
     buffer or mesh data the client cannot reach; selection is from the
     Hierarchy.
-  - **Recommendation: V-a.** It reuses 0055's offscreen path, decouples the
+  - **Why V-a:** it reuses 0055's offscreen path, decouples the
     Viewport's size from the window's, and its RHI change (one usage bit and
     a sampled view) is smaller and more contained than teaching every
     Renderer pass a sub-rectangle.
 
 - **Q4 — The Hierarchy's data** (the baked world is flat).
+  - **Ruled (2026-10-08): a flat list, L-a** (R2; a first full listing, then
+    incremental updates from one event subscription; no server-side filtered
+    listing (L2 waits for a real remote client); a tree Hierarchy belongs to
+    the future authoring editing mode), as recommended.
   - **Data:** a flat list. First, one `listEntities()` and every entity's
     `listComponents()`; then one subscription (`EntityCreated`,
     `EntityDestroyed`, `ComponentAdded`, `ComponentRemoved`) drained once
@@ -436,10 +463,15 @@ drafting. Each lists options and a recommendation.
   - **(L-b) Add L2** now: a filtered `findEntities` on `RuntimeConnection`
     — a change to ADR-0105's interface with no v1 consumer that needs it in
     process.
-  - **Recommendation: L-a.** A tree Hierarchy is explicitly the future
+  - **Why L-a:** a tree Hierarchy is explicitly the future
     authoring editing mode's.
 
 - **Q5 — Gizmo semantics.**
+  - **Ruled (2026-10-08): G-a** (R5; the Gizmo writes `WorldMatrix` (0052 Q8
+    T-a), decomposed and composed client-side by the schema; while dragging at
+    most one transaction of the four columns per frame, and the final value on
+    release; the Inspector's `Transform` editable, noted as not affecting
+    rendering), as recommended.
   - **What it writes:** the selected entity's `WorldMatrix` (0052 T-a), not
     `Transform`.
   - **The math:** client-side, by the schema: read `column0`–`column3`,
@@ -455,21 +487,27 @@ drafting. Each lists options and a recommendation.
       last superseded before they apply).
   - **The Inspector's `Transform`:** shown and editable like any component,
     with a note that it does not affect rendering (0052 T-a).
-  - **Recommendation: G-a** — live feedback at the frame rate, every frame's
+  - **Why G-a** — live feedback at the frame rate, every frame's
     matrix whole (one transaction), nothing written that a later write in
     the same frame supersedes.
 
 - **Q6 — The Content panel** (in the layout, not in the four features).
+  - **Ruled (2026-10-08): C-a** (the panel is not built in v1; the layout
+    keeps its quadrant), as recommended.
   - **(C-a) Not built in v1.** The layout reserves the quadrant; it shows
     nothing yet.
   - **(C-b) A read-only catalog list.** The catalog is Asset System data,
     not World data: reading it means either a new Connection query (the
     connection carries the World only) or the editor reading the catalog
     file directly (a second data path beside the connection).
-  - **Recommendation: C-a.** The maintainer's four-feature list is binding;
+  - **Why C-a:** the maintainer's four-feature list is binding;
     C-b opens a data path that needs its own decision.
 
 - **Q7 — Module placement** (ADR-0108).
+  - **Ruled (2026-10-08): P-a, Atlantis Editor (`src/editor/`)** (R1; ADR-0108
+    D2; a client library linking Atlantis Connection and the UI library only,
+    boundary-scanned; normative docs with the implementation PR (the J6
+    precedent)), as recommended.
   - **(P-a) Atlantis Editor, `src/editor/`**, a client library: links
     Atlantis Connection and the UI library only; includes no Runtime, ECS,
     RHI, Renderer, Vulkan, Platform or OS header; boundary-scanned like the
@@ -481,9 +519,15 @@ drafting. Each lists options and a recommendation.
   - **Docs:** the normative sentences (AGENTS.md, `module_boundaries.md`)
     land with the implementation PR, narratives after merge (the Plan
     0054/0055 J6 split).
-  - **Recommendation: P-a.**
+  - **Why P-a:** the editor stays a client library like Atlantis CLI.
 
 - **Q8 — Control and cadence.**
+  - **Ruled (2026-10-08): as recommended** (R6; ADR-0108 D5; play, pause and
+    step call `RuntimeControl`; the UI frame is the Runtime's vsync frame; the
+    north star on the default scene's Directional light (3 → 6, visible the
+    next frame), Bistro-gated with `6b63b12c-…` exact in frame data (12 → 24)
+    and the in-view café light `425c3b17-…` changing the image), as
+    recommended.
   - **Control:** play, pause and step buttons call `RuntimeControl`
     (resume, pause, step) — the in-process `RuntimeControlHost` of Spec 0055,
     which the host creates under `--editor` as it does under `--listen`.
@@ -495,16 +539,19 @@ drafting. Each lists options and a recommendation.
     driven by scripted input in process; frame data exact and the Viewport
     image changed. Bistro-gated: frame data exact on `6b63b12c-…`, the image
     change on the in-view café light `425c3b17-…`.
-  - **Recommendation:** as above.
+  - **Why:** the control already exists (Spec 0055); the frame is the one clock.
 
 - **Q9 — Input** (surfaced; ADR-0109).
+  - **Ruled (2026-10-08): I-a** (ADR-0109; Platform's event set gains pointer
+    move, pointer button, wheel, key and text events, carrying plain values;
+    emitted on Windows only), as recommended.
   - **(I-a)** Platform's event set gains input events — pointer move,
     pointer button, wheel, key down/up, text — emitted by Windows Platform
     from its message pump; Android Platform emits none in v1.
   - **(I-b)** The editor or Runtime reads Win32 messages itself — OS code
     outside Platform, against AGENTS.md's Platform rule.
   - **(I-c)** The UI library's own Win32 backend — the same violation.
-  - **Recommendation: I-a.** Runtime translates them into the editor's
+  - **Why I-a:** Runtime translates them into the editor's
     plain input values; the editor sees no Platform type.
 
 ## Out of Scope / Future Work

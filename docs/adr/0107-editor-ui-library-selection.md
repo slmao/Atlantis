@@ -1,11 +1,13 @@
 # ADR 0107: Editor UI Library Selection
 
-- **Status:** Proposed
-- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Date:** 2026-10-08 (accepted 2026-10-08)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0056](../specs/0056-minimal-editor.md), as ruled there (Spec Q1).
-- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md)
+- **Acceptance:** slmao, 2026-10-08 (review of this branch's own PR,
+  [PR #230](https://github.com/slmao/Atlantis/pull/230); accepted together with Spec 0056's Approval, its nine open
+  questions ruled as recommended; ADR-0105, ADR-0106, ADR-0103, ADR-0104 and
+  ADR-0004 unchanged)
+- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md) (`Approved`)
 - **Related ADR(s):**
   - Follows [ADR-0082](0082-gltf-parser-dependency-selection.md)'s
     selection precedent (a candidate matrix for one new dependency) and
@@ -40,7 +42,7 @@ Constraints from the repository:
 
 ## Decision
 
-**Adopt Dear ImGui** (MIT) for Atlantis Editor's UI, fetched pinned to a
+**Adopt Dear ImGui** (MIT; Spec 0056 ruling Q1, U-a) for Atlantis Editor's UI, fetched pinned to a
 release tag (the exact tag and hash are the Plan's), compiled into the
 editor library only, **core only**:
 

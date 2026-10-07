@@ -1,11 +1,13 @@
 # ADR 0109: Input Events from Atlantis Platform
 
-- **Status:** Proposed
-- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Date:** 2026-10-08 (accepted 2026-10-08)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0056](../specs/0056-minimal-editor.md), as ruled there (Spec Q9).
-- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md)
+- **Acceptance:** slmao, 2026-10-08 (review of this branch's own PR,
+  [PR #230](https://github.com/slmao/Atlantis/pull/230); accepted together with Spec 0056's Approval, its nine open
+  questions ruled as recommended; ADR-0105, ADR-0106, ADR-0103, ADR-0104 and
+  ADR-0004 unchanged)
+- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md) (`Approved`)
 - **Related ADR(s):**
   - Extends the event model of
     [ADR-0005](0005-platform-module-multi-os-windowing.md) (Platform owns OS
@@ -29,7 +31,7 @@ Runtime, nor a UI library's OS backend may read Win32 messages.
 
 ## Decision
 
-**`PlatformEvent` gains input events**, emitted by Windows Platform from its
+**`PlatformEvent` gains input events** (Spec 0056 ruling Q9, I-a), emitted by Windows Platform from its
 existing message pump, in the order received:
 
 - pointer moved (window-relative position in framebuffer pixels);

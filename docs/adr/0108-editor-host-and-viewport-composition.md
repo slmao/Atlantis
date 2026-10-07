@@ -1,12 +1,13 @@
 # ADR 0108: Editor Host, Module Boundary and Viewport Composition
 
-- **Status:** Proposed
-- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Date:** 2026-10-08 (accepted 2026-10-08)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0056](../specs/0056-minimal-editor.md), with D1–D5 as ruled there
-  (Spec Q2, Q3, Q7, Q8).
-- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md)
+- **Acceptance:** slmao, 2026-10-08 (review of this branch's own PR,
+  [PR #230](https://github.com/slmao/Atlantis/pull/230); accepted together with Spec 0056's Approval, its nine open
+  questions ruled as recommended; ADR-0105, ADR-0106, ADR-0103, ADR-0104 and
+  ADR-0004 unchanged)
+- **Related Spec:** [Spec 0056: Minimal Editor](../specs/0056-minimal-editor.md) (`Approved`)
 - **Related ADR(s):**
   - The editor is a client of [ADR-0105](0105-runtime-connection-and-cli-client.md)'s
     `RuntimeConnection` and [ADR-0106](0106-attachable-runtime-transport-and-control.md)'s
@@ -41,13 +42,13 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Decision
 
-1. **Host: `atlantis_runtime --editor`** (Spec 0056 Q2 (a)). The Runtime
+1. **Host: `atlantis_runtime --editor`** (Spec 0056 ruling Q2, (a)). The Runtime
    executable hosts Atlantis Editor as it hosts Atlantis CLI: it opens an
    InProcess connection for it and creates the `RuntimeControlHost` (Spec
    0055) for it. No other module depends on `atlantis_runtime_host`; that
    rule is unchanged. A remote editor (attached through Spec 0055's
    transport) is a later mode, once frames can cross processes.
-2. **Module: Atlantis Editor, `src/editor/`** (Q7, P-a). A client library
+2. **Module: Atlantis Editor, `src/editor/`** (Spec 0056 ruling Q7, P-a). A client library
    that links Atlantis Connection and the UI library (ADR-0107) only, and
    includes no Runtime, ECS, RHI, Renderer, Vulkan, Platform or OS header
    (boundary-scanned). Its interface with the host is plain values:
@@ -56,7 +57,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - out: the UI draw list (engine-neutral) and the Viewport size it wants.
 
    `atlantis_runtime` links it; `atlantis_runtime_host` does not.
-3. **Viewport: offscreen, then sampled** (Q3, V-a). With the editor
+3. **Viewport: offscreen, then sampled** (Spec 0056 ruling Q3, V-a). With the editor
    attached, Runtime draws the scene with the existing `drawFrame()` into an
    offscreen colour target at the Viewport's size (its depth, HDR and bloom
    targets follow that size), then draws the editor's UI draw list into the
@@ -77,7 +78,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    P7 was (the exact mechanism and named lines are the Plan's). The camera
    is the scene's active camera; the editor gets the frame's view and
    projection for its Gizmo.
-5. **Control and cadence** (Q8). The editor's play, pause and step call
+5. **Control and cadence** (Spec 0056 ruling Q8). The editor's play, pause and step call
    `RuntimeControl`; its UI frame is the Runtime's frame (FIFO vsync).
 
 ## Consequences
