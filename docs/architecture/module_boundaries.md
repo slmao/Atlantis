@@ -683,6 +683,19 @@ neither replaces nor wraps `World`.
     and the active camera and its `Camera`/`WorldMatrix`.
   - **Events** come one per successful command, drained by value. This is
     not a reactive ECS.
+  - **Transactions.** Since Spec 0053
+    ([ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md)),
+    `submitTransaction()` submits a group of those commands, applied all or
+    nothing at its place in submission order; it returns a
+    `TransactionTicket` over the commands' consecutive tickets.
+    - **Projected pre-validation.** The whole group is checked first, by the
+      same check routine the single-command path uses, against a projection
+      of the state the checks read. Only if every command passes is it
+      applied.
+    - **Rollback is "never started".** An aborted transaction made no ECS
+      call: no event, and one failure at its first refused command.
+    - No command, event or error kind is added, and Runtime's frame is
+      unchanged.
 - **Not yet done.** A hierarchy over ECS components, a system scheduler,
   job-system integration and Spec 0050's other exclusions are future Specs.
 
