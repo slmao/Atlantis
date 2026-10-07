@@ -631,4 +631,244 @@ bool OwnedSchema::decode(const Value& value) {
   return true;
 }
 
+// Plan 0055 M3: RuntimeControl's value types (P5, P6).
+
+namespace {
+
+constexpr std::array kControlErrors = {
+    connection::ControlError::InvalidRequest,
+    connection::ControlError::NotRendering,
+    connection::ControlError::CaptureFailed,
+    connection::ControlError::Stopped,
+};
+
+constexpr std::array kSeverities = {
+    connection::DiagnosticSeverity::Warning,
+    connection::DiagnosticSeverity::Error,
+    connection::DiagnosticSeverity::Fatal,
+};
+
+template <std::size_t N>
+[[nodiscard]] Value encodeFloats(const std::array<float, N>& values) {
+  return encodeVector(values);
+}
+
+[[nodiscard]] std::optional<float> floatMember(const Value& object, std::string_view key) {
+  const Value* value = member(object, key);
+  if (value == nullptr) return std::nullopt;
+  return decodeFloat(*value);
+}
+
+template <std::size_t N>
+[[nodiscard]] std::optional<std::array<float, N>> floatsMember(const Value& object, std::string_view key) {
+  const Value* value = member(object, key);
+  if (value == nullptr) return std::nullopt;
+  return decodeVector<N>(*value);
+}
+
+}  // namespace
+
+Value encodeControlError(connection::ControlError error) {
+  return Value::string(std::string(connection::toString(error)));
+}
+
+std::optional<connection::ControlError> decodeControlError(const Value& value) {
+  if (!value.isString()) return std::nullopt;
+  for (const connection::ControlError error : kControlErrors) {
+    if (value.asString() == connection::toString(error)) return error;
+  }
+  return std::nullopt;
+}
+
+Value encode(const connection::RuntimeStatus& status) {
+  Value out = Value::object();
+  out.set("paused", Value::boolean(status.paused));
+  out.set("frame", Value::number(status.frame));
+  out.set("scene", encodeAsset(status.scene));
+  return out;
+}
+
+std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
+  const Value* paused = member(value, "paused");
+  const Value* frame = member(value, "frame");
+  const Value* scene = member(value, "scene");
+  if (paused == nullptr || !paused->isBool() || frame == nullptr || scene == nullptr) return std::nullopt;
+  const auto f = decodeUInt64(*frame);
+  const auto s = decodeAsset(*scene);
+  if (!f || !s) return std::nullopt;
+  return connection::RuntimeStatus{paused->asBool(), *f, *s};
+}
+
+Value encode(const connection::StepRequest& request) {
+  Value out = Value::object();
+  out.set("frames", Value::number(static_cast<std::uint64_t>(request.frames)));
+  out.set("image", request.imagePath ? Value::string(*request.imagePath) : Value());
+  return out;
+}
+
+std::optional<connection::StepRequest> decodeStepRequest(const Value& value) {
+  const Value* frames = member(value, "frames");
+  const Value* image = member(value, "image");
+  if (frames == nullptr || image == nullptr || !(image->isNull() || image->isString())) return std::nullopt;
+  const auto n = decodeUInt64(*frames);
+  if (!n || *n > UINT32_MAX) return std::nullopt;
+  connection::StepRequest request;
+  request.frames = static_cast<std::uint32_t>(*n);
+  if (image->isString()) request.imagePath = image->asString();
+  return request;
+}
+
+Value encode(const connection::FrameData& data) {
+  Value directional = Value::array();
+  for (const connection::FrameDirectionalLight& light : data.directionalLights) {
+    Value l = Value::object();
+    l.set("direction", encodeFloats(light.direction));
+    l.set("color", encodeFloats(light.color));
+    l.set("intensity", encodeFloat(light.intensity));
+    directional.push(std::move(l));
+  }
+  Value points = Value::array();
+  for (const connection::FramePointLight& light : data.pointLights) {
+    Value l = Value::object();
+    l.set("position", encodeFloats(light.position));
+    l.set("color", encodeFloats(light.color));
+    l.set("intensity", encodeFloat(light.intensity));
+    l.set("range", encodeFloat(light.range));
+    points.push(std::move(l));
+  }
+  Value out = Value::object();
+  out.set("directionalLights", std::move(directional));
+  out.set("pointLights", std::move(points));
+  out.set("view", encodeFloats(data.view));
+  out.set("projection", encodeFloats(data.projection));
+  out.set("drawItemCount", Value::number(data.drawItemCount));
+  return out;
+}
+
+std::optional<connection::FrameData> decodeFrameData(const Value& value) {
+  const Value* directional = member(value, "directionalLights");
+  const Value* points = member(value, "pointLights");
+  const Value* drawItems = member(value, "drawItemCount");
+  if (directional == nullptr || !directional->isArray() || points == nullptr || !points->isArray() ||
+      drawItems == nullptr) {
+    return std::nullopt;
+  }
+  connection::FrameData data;
+  for (const Value& l : directional->asArray()) {
+    const auto direction = floatsMember<3>(l, "direction");
+    const auto color = floatsMember<3>(l, "color");
+    const auto intensity = floatMember(l, "intensity");
+    if (!direction || !color || !intensity) return std::nullopt;
+    data.directionalLights.push_back({*direction, *color, *intensity});
+  }
+  for (const Value& l : points->asArray()) {
+    const auto position = floatsMember<3>(l, "position");
+    const auto color = floatsMember<3>(l, "color");
+    const auto intensity = floatMember(l, "intensity");
+    const auto range = floatMember(l, "range");
+    if (!position || !color || !intensity || !range) return std::nullopt;
+    data.pointLights.push_back({*position, *color, *intensity, *range});
+  }
+  const auto view = floatsMember<16>(value, "view");
+  const auto projection = floatsMember<16>(value, "projection");
+  const auto count = decodeUInt64(*drawItems);
+  if (!view || !projection || !count) return std::nullopt;
+  data.view = *view;
+  data.projection = *projection;
+  data.drawItemCount = *count;
+  return data;
+}
+
+Value encode(const connection::FrameReport& report) {
+  Value out = Value::object();
+  out.set("frame", Value::number(report.frame));
+  out.set("applied", Value::boolean(report.applied));
+  out.set("data", encode(report.data));
+  if (report.image) {
+    Value image = Value::object();
+    image.set("path", Value::string(report.image->path));
+    image.set("width", Value::number(static_cast<std::uint64_t>(report.image->width)));
+    image.set("height", Value::number(static_cast<std::uint64_t>(report.image->height)));
+    out.set("image", std::move(image));
+  } else {
+    out.set("image", Value());
+  }
+  return out;
+}
+
+std::optional<connection::FrameReport> decodeFrameReport(const Value& value) {
+  const Value* frame = member(value, "frame");
+  const Value* applied = member(value, "applied");
+  const Value* data = member(value, "data");
+  const Value* image = member(value, "image");
+  if (frame == nullptr || applied == nullptr || !applied->isBool() || data == nullptr || image == nullptr) {
+    return std::nullopt;
+  }
+  connection::FrameReport report;
+  const auto f = decodeUInt64(*frame);
+  auto d = decodeFrameData(*data);
+  if (!f || !d) return std::nullopt;
+  report.frame = *f;
+  report.applied = applied->asBool();
+  report.data = std::move(*d);
+  if (!image->isNull()) {
+    const Value* path = member(*image, "path");
+    const Value* width = member(*image, "width");
+    const Value* height = member(*image, "height");
+    if (path == nullptr || !path->isString() || width == nullptr || height == nullptr) return std::nullopt;
+    const auto w = decodeUInt64(*width);
+    const auto h = decodeUInt64(*height);
+    if (!w || !h || *w > UINT32_MAX || *h > UINT32_MAX) return std::nullopt;
+    report.image = connection::CapturedImage{path->asString(), static_cast<std::uint32_t>(*w),
+                                             static_cast<std::uint32_t>(*h)};
+  }
+  return report;
+}
+
+Value encode(const connection::DiagnosticBatch& batch) {
+  Value entries = Value::array();
+  for (const connection::Diagnostic& record : batch.entries) {
+    Value r = Value::object();
+    r.set("sequence", Value::number(record.sequence));
+    r.set("severity", Value::string(std::string(connection::toString(record.severity))));
+    r.set("message", Value::string(record.message));
+    entries.push(std::move(r));
+  }
+  Value out = Value::object();
+  out.set("entries", std::move(entries));
+  out.set("latest", Value::number(batch.latest));
+  out.set("dropped", Value::number(batch.dropped));
+  return out;
+}
+
+std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& value) {
+  const Value* entries = member(value, "entries");
+  const Value* latest = member(value, "latest");
+  const Value* dropped = member(value, "dropped");
+  if (entries == nullptr || !entries->isArray() || latest == nullptr || dropped == nullptr) return std::nullopt;
+  connection::DiagnosticBatch batch;
+  for (const Value& r : entries->asArray()) {
+    const Value* sequence = member(r, "sequence");
+    const Value* severity = member(r, "severity");
+    const Value* message = member(r, "message");
+    if (sequence == nullptr || severity == nullptr || !severity->isString() || message == nullptr ||
+        !message->isString()) {
+      return std::nullopt;
+    }
+    const auto s = decodeUInt64(*sequence);
+    std::optional<connection::DiagnosticSeverity> level;
+    for (const connection::DiagnosticSeverity candidate : kSeverities) {
+      if (severity->asString() == connection::toString(candidate)) level = candidate;
+    }
+    if (!s || !level) return std::nullopt;
+    batch.entries.push_back(connection::Diagnostic{*s, *level, message->asString()});
+  }
+  const auto l = decodeUInt64(*latest);
+  const auto d = decodeUInt64(*dropped);
+  if (!l || !d) return std::nullopt;
+  batch.latest = *l;
+  batch.dropped = *d;
+  return batch;
+}
+
 }  // namespace atlantis::remote::codec

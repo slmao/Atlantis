@@ -7,6 +7,7 @@
 #include "os/socket.h"
 
 #include <cstdint>
+#include <deque>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -86,6 +87,7 @@ struct Client {
   LineChannel channel;
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;  // after a good hello
   bool closing = false;  // write what is queued, then drop
+  bool overran = false;  // exceeded the write limit: drop now
 };
 
 [[nodiscard]] Value response(const Value& id, Value result) {
@@ -209,6 +211,27 @@ template <typename T, typename E, typename Encode, typename EncodeError>
   return Outcome::Err("unknown method " + std::string(method));
 }
 
+// control.* other than step (P5): answered at once.
+[[nodiscard]] Outcome callControl(atlantis::connection::RuntimeControl& control, std::string_view method,
+                                  const Value& p) {
+  if (method == "control.status") return Outcome::Ok(codec::encode(control.status()));
+  if (method == "control.pause") {
+    control.pause();
+    return Outcome::Ok(Value());
+  }
+  if (method == "control.resume") {
+    control.resume();
+    return Outcome::Ok(Value());
+  }
+  if (method == "control.diagnostics") {
+    const auto after = decodeParam(p, "after", &codec::decodeUInt64);
+    const auto max = decodeParam(p, "max", &codec::decodeUInt64);
+    if (!after || !max) return bad("after/max");
+    return Outcome::Ok(codec::encode(control.diagnostics(*after, static_cast<std::size_t>(*max))));
+  }
+  return Outcome::Err("unknown method " + std::string(method));
+}
+
 }  // namespace
 
 struct RemoteServer::State {
@@ -216,9 +239,43 @@ struct RemoteServer::State {
   std::string token;
   atlantis::asset_system::AssetGuid scene;
   OpenConnection openConnection;
+  atlantis::connection::RuntimeControl* control = nullptr;
   Limits limits;
   std::uint64_t nextClient = 1;
   std::map<std::uint64_t, Client> clients;
+  // P3's parked FIFO: step requests awaiting their frame, in request order.
+  struct Parked {
+    std::uint64_t key = 0;
+    std::uint64_t client = 0;
+    Value id;
+    std::optional<Value> response;  // set when the control completes the step
+  };
+  std::deque<Parked> parked;
+  std::uint64_t nextParked = 1;
+  std::weak_ptr<State> self;  // what a parked step's completion holds
+
+  void resolve(std::uint64_t key, const atlantis::Result<atlantis::connection::FrameReport,
+                                                         atlantis::connection::ControlError>& result) {
+    for (Parked& entry : parked) {
+      if (entry.key != key) continue;
+      entry.response = response(entry.id, result.isOk() ? codec::ok(codec::encode(result.value()))
+                                                        : codec::err(codec::encodeControlError(result.error())));
+      return;
+    }
+  }
+
+  // Queues every completed step at the head of the FIFO to its client.
+  void releaseParked() {
+    while (!parked.empty() && parked.front().response.has_value()) {
+      const auto client = clients.find(parked.front().client);
+      if (client != clients.end() && !client->second.closing &&
+          !client->second.channel.queue(json::write(*parked.front().response))) {
+        client->second.closing = true;  // over its write limit: dropped below
+        client->second.overran = true;
+      }
+      parked.pop_front();
+    }
+  }
 
   void accept() {
     // Bounded per poll; the rest wait in the OS backlog for the next frame.
@@ -229,8 +286,9 @@ struct RemoteServer::State {
     }
   }
 
-  // One request line; returns the response to queue (always one per line).
-  Value dispatch(Client& client, std::string_view line) {
+  // One request line; returns the response to queue, or nullopt for a step
+  // that was parked.
+  std::optional<Value> dispatch(std::uint64_t clientKey, Client& client, std::string_view line) {
     const auto parsed = json::parse(line);
     if (parsed.isErr() || !parsed.value().isObject()) {
       return errorResponse(Value(), "BadRequest", "a request is one JSON object per line");
@@ -266,19 +324,37 @@ struct RemoteServer::State {
       client.closing = true;
       return errorResponse(requestId, "HelloRequired", "the first request must be hello");
     }
-    Outcome outcome = callConnection(*client.connection, method->asString(), p);
+    const std::string_view name = method->asString();
+    if (name.starts_with("control.")) {
+      if (control == nullptr) return errorResponse(requestId, "NoControl", "this server carries no RuntimeControl");
+      if (name == "control.step") {
+        const auto step = decodeParam(p, "request", &codec::decodeStepRequest);
+        if (!step) return errorResponse(requestId, "BadRequest", "malformed or missing request");
+        const std::uint64_t key = nextParked++;
+        parked.push_back(Parked{key, clientKey, requestId, std::nullopt});
+        control->step(*step, [weak = self, key](const auto& result) {
+          if (const auto state = weak.lock()) state->resolve(key, result);
+        });
+        return std::nullopt;
+      }
+      Outcome outcome = callControl(*control, name, p);
+      if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
+      return response(requestId, std::move(outcome.value()));
+    }
+    Outcome outcome = callConnection(*client.connection, name, p);
     if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
     return response(requestId, std::move(outcome.value()));
   }
 
   // Reads and answers what `client` sent; false if it must be dropped (it
   // closed, failed, sent a line over the limit, or overran its write limit).
-  [[nodiscard]] bool serve(Client& client) {
+  [[nodiscard]] bool serve(std::uint64_t clientKey, Client& client) {
     std::vector<std::string> lines;
     const LineChannel::ReadStatus status = client.channel.read(lines);
     for (const std::string& line : lines) {
       if (client.closing) break;  // after a refused hello nothing more is answered
-      if (!client.channel.queue(json::write(dispatch(client, line)))) return false;
+      const std::optional<Value> reply = dispatch(clientKey, client, line);
+      if (reply && !client.channel.queue(json::write(*reply))) return false;
     }
     return status == LineChannel::ReadStatus::Ok;
   }
@@ -290,7 +366,7 @@ RemoteServer::~RemoteServer() = default;
 
 atlantis::Result<std::unique_ptr<RemoteServer>, ListenError> RemoteServer::listen(
     std::uint16_t port, std::string token, atlantis::asset_system::AssetGuid scene, OpenConnection openConnection,
-    Limits limits) {
+    atlantis::connection::RuntimeControl* control, Limits limits) {
   using ResultT = atlantis::Result<std::unique_ptr<RemoteServer>, ListenError>;
   auto listener = os::listenLoopback(port);
   if (listener.isErr()) {
@@ -304,7 +380,9 @@ atlantis::Result<std::unique_ptr<RemoteServer>, ListenError> RemoteServer::liste
   state->token = std::move(token);
   state->scene = scene;
   state->openConnection = std::move(openConnection);
+  state->control = control;
   state->limits = limits;
+  state->self = state;
   return ResultT::Ok(std::make_unique<RemoteServer>(Key{}, std::move(state)));
 }
 
@@ -320,10 +398,15 @@ SessionInfo RemoteServer::session() const {
 void RemoteServer::poll() {
   State& state = *state_;
   state.accept();
+  std::vector<std::uint64_t> dropped;
+  for (auto& [key, client] : state.clients) {
+    if (!client.closing && !state.serve(key, client)) dropped.push_back(key);
+  }
+  for (const std::uint64_t key : dropped) state.clients.erase(key);
+  state.releaseParked();
   for (auto it = state.clients.begin(); it != state.clients.end();) {
     Client& client = it->second;
-    bool keep = client.closing || state.serve(client);
-    keep = keep && client.channel.flush();
+    bool keep = !client.overran && client.channel.flush();
     if (client.closing && !client.channel.hasPendingWrite()) keep = false;
     it = keep ? std::next(it) : state.clients.erase(it);
   }

@@ -81,10 +81,11 @@ inline constexpr const char* kToken = "00112233445566778899aabbccddeeff";
 // Not movable: the boundary borrows the baked scene, the endpoint the
 // boundary, the server the endpoint.
 struct ServedWorld {
-  explicit ServedWorld(const atlantis::asset_system::ValidatedSceneData& scene, RemoteServer::Limits limits = {})
+  explicit ServedWorld(const atlantis::asset_system::ValidatedSceneData& scene, RemoteServer::Limits limits = {},
+                       atlantis::connection::RuntimeControl* control = nullptr)
       : baked(atlantis::world::bakeScene(scene)), boundary(baked), endpoint(boundary) {
-    auto listening =
-        RemoteServer::listen(0, kToken, fixtureSceneGuid(), [this] { return endpoint.open(); }, limits);
+    auto listening = RemoteServer::listen(0, kToken, fixtureSceneGuid(), [this] { return endpoint.open(); }, control,
+                                          limits);
     REQUIRE(listening.isOk());
     server = std::move(listening.value());
   }

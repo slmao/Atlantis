@@ -3,6 +3,7 @@
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/connection/runtime_connection.h>
+#include <atlantis/connection/runtime_control.h>
 #include <atlantis/schema.h>
 #include <atlantis/world/access/access_error.h>
 #include <atlantis/world/access/runtime_world_access.h>
@@ -92,5 +93,19 @@ class OwnedSchema {
 };
 
 [[nodiscard]] Value encodeSchema(std::span<const schema::TypeDescriptor> types);
+
+// Plan 0055 M3: RuntimeControl's value types over the wire (P5, P6).
+[[nodiscard]] Value encodeControlError(connection::ControlError error);
+[[nodiscard]] std::optional<connection::ControlError> decodeControlError(const Value& value);
+[[nodiscard]] Value encode(const connection::RuntimeStatus& status);
+[[nodiscard]] std::optional<connection::RuntimeStatus> decodeStatus(const Value& value);
+[[nodiscard]] Value encode(const connection::StepRequest& request);
+[[nodiscard]] std::optional<connection::StepRequest> decodeStepRequest(const Value& value);
+[[nodiscard]] Value encode(const connection::FrameData& data);
+[[nodiscard]] std::optional<connection::FrameData> decodeFrameData(const Value& value);
+[[nodiscard]] Value encode(const connection::FrameReport& report);
+[[nodiscard]] std::optional<connection::FrameReport> decodeFrameReport(const Value& value);
+[[nodiscard]] Value encode(const connection::DiagnosticBatch& batch);
+[[nodiscard]] std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& value);
 
 }  // namespace atlantis::remote::codec

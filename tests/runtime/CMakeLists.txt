@@ -31,6 +31,7 @@ add_executable(atlantis_runtime_tests
   pbr_reflection_cross_check_tests.cpp
   material_realization_tests.cpp
   cli_tests.cpp
+  runtime_control_tests.cpp
   ../../src/runtime/cli.cpp
 )
 

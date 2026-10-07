@@ -9,6 +9,7 @@ add_executable(atlantis_remote_tests
   remote_boundary_tests.cpp
   remote_connection_tests.cpp
   remote_protocol_tests.cpp
+  remote_control_tests.cpp
 )
 
 target_include_directories(atlantis_remote_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/remote/src)

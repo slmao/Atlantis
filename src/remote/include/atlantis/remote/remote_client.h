@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/runtime_connection.h>
+#include <atlantis/connection/runtime_control.h>
 #include <atlantis/remote/session_file.h>
 #include <atlantis/result.h>
 #include <atlantis/schema.h>
@@ -52,7 +53,9 @@ struct RemoteOptions {
 
 // One attached session: the socket, a RuntimeConnection over it (Spec 0055
 // R2: RemoteConnection implements the interface; ADR-0105 D1: the transport
-// does not shape it) and the batch queries below.
+// does not shape it), a RuntimeControl over it (ADR-0106 D3; its step()
+// blocks until the Runtime completes the step and calls `done` before
+// returning), and the batch queries below.
 //
 // RuntimeConnection has no transport-error channel. After a transport
 // failure every call returns an empty value -- false, no entities,
@@ -70,6 +73,7 @@ class RemoteSession {
   RemoteSession& operator=(const RemoteSession&) = delete;
 
   [[nodiscard]] atlantis::connection::RuntimeConnection& connection() noexcept;
+  [[nodiscard]] atlantis::connection::RuntimeControl& control() noexcept;
   [[nodiscard]] const atlantis::asset_system::AssetGuid& scene() const noexcept;
   [[nodiscard]] std::optional<RemoteError> failure() const noexcept;
 

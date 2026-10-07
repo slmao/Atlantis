@@ -142,6 +142,14 @@ struct RuntimeSmokeTestAccess {
     std::memcpy(&lighting, cameraBytes + kLightingByteOffset, sizeof(FrameLightingData));
     return lighting;
   }
+
+  // Plan 0055 M3: the camera view and projection the frame wrote, the
+  // uniform's first 32 floats.
+  [[nodiscard]] static std::array<float, 32> cameraMatrixFloats(const RuntimeApplication& app) {
+    std::array<float, 32> floats{};
+    std::memcpy(floats.data(), app.cameraBuffer_->mappedData(), sizeof(floats));
+    return floats;
+  }
 };
 }  // namespace atlantis::runtime
 
@@ -541,6 +549,69 @@ TEST_CASE("Runtime: a CLI `entity set` on the default scene's light reaches the 
                     sizeof(before.directionalLights[0].color)) == 0);
   CHECK(commands.reportPending() == atlantis::cli::Outcome::Done);
   CHECK(out.str() == "ok " + light + " Light.intensity = 6\n");
+
+  const RuntimeExitReason reason = app.shutdown();
+  REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0055 M3 (Spec 0055 R3; P8, ruling Q2 C1): the frame data a step
+// reports is the frame just drawn -- its lighting block and camera matrices
+// as the frame wrote them to the camera uniform (read through the smoke
+// friend), and its draw-item count -- before and after an edit applies.
+TEST_CASE("Runtime: captureFrameData() equals the frame just drawn", "[runtime][gpu][control]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  CHECK(app.captureFrameData().error() == atlantis::connection::ControlError::NotRendering);  // nothing drawn yet
+
+  const auto equalsFrame = [&](const atlantis::connection::FrameData& data) {
+    const FrameLightingData lighting = atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app);
+    REQUIRE(data.directionalLights.size() == lighting.directionalLightCount);
+    REQUIRE(data.pointLights.size() == lighting.pointLightCount);
+    for (std::size_t i = 0; i < data.directionalLights.size(); ++i) {
+      const auto& gpu = lighting.directionalLights[i];
+      CHECK(std::memcmp(data.directionalLights[i].direction.data(), gpu.direction, sizeof(gpu.direction)) == 0);
+      CHECK(std::memcmp(data.directionalLights[i].color.data(), gpu.color, sizeof(gpu.color)) == 0);
+      CHECK(std::memcmp(&data.directionalLights[i].intensity, &gpu.intensity, sizeof(float)) == 0);
+    }
+    for (std::size_t i = 0; i < data.pointLights.size(); ++i) {
+      const auto& gpu = lighting.pointLights[i];
+      CHECK(std::memcmp(data.pointLights[i].position.data(), gpu.position, sizeof(gpu.position)) == 0);
+      CHECK(std::memcmp(data.pointLights[i].color.data(), gpu.color, sizeof(gpu.color)) == 0);
+      CHECK(std::memcmp(&data.pointLights[i].intensity, &gpu.intensity, sizeof(float)) == 0);
+      CHECK(std::memcmp(&data.pointLights[i].range, &gpu.range, sizeof(float)) == 0);
+    }
+    const std::array<float, 32> camera = atlantis::runtime::RuntimeSmokeTestAccess::cameraMatrixFloats(app);
+    CHECK(std::memcmp(data.view.data(), camera.data(), sizeof(float) * 16) == 0);
+    CHECK(std::memcmp(data.projection.data(), camera.data() + 16, sizeof(float) * 16) == 0);
+    // integrated_showcase_demo: six Renderables, all drawn (see the smoke test above).
+    CHECK(data.drawItemCount == 6);
+  };
+
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto before = app.captureFrameData();
+  REQUIRE(before.isOk());
+  equalsFrame(before.value());
+  REQUIRE(before.value().directionalLights.size() == 1);
+  CHECK(before.value().directionalLights[0].intensity == 3.0f);
+
+  {
+    const auto connection = app.openConnection();
+    const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+    connection->submit(atlantis::world::access::SetProperty{
+        {light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+         atlantis::schema::fieldId("world::Light", "intensity")},
+        6.0f});
+    app.runFrame();
+    REQUIRE(app.shouldContinue());
+    const auto after = app.captureFrameData();
+    REQUIRE(after.isOk());
+    equalsFrame(after.value());
+    CHECK(after.value().directionalLights[0].intensity == 6.0f);
+  }
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);

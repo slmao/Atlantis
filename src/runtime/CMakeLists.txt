@@ -16,6 +16,10 @@ add_library(atlantis_runtime_host STATIC
   src/material_realization.cpp
   src/environment_realization.cpp
   src/runtime_application.cpp
+  # Plan 0055 P5, P6, P8 (ADR-0106 D3, D5): the RuntimeControl implementation
+  # and its diagnostics ring, and capture of the frame just run.
+  src/runtime_control_host.cpp
+  src/frame_capture.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
 

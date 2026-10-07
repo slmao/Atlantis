@@ -7,6 +7,7 @@
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/connection/runtime_connection.h>
+#include <atlantis/connection/runtime_control.h>
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
@@ -40,6 +41,8 @@
 #include <vector>
 
 namespace atlantis::runtime {
+
+struct RenderableExtractionInput;  // scene_extraction.h
 
 // See Plan 0013 Section D4/D6/D7/D8. The composition object: owns
 // Platform, Device, Presentation, Mesh, camera Buffer, depth Texture,
@@ -93,7 +96,24 @@ class RuntimeApplication {
   // moved -- both are CHECKed.
   [[nodiscard]] std::unique_ptr<atlantis::connection::RuntimeConnection> openConnection();
 
+  // Spec 0055 R3 (Plan 0055 P8; ADR-0106 D5, ruling Q2 C1): between frames,
+  // the extraction output of the frame just run -- its lighting block, camera
+  // matrices and draw-item count, recomputed from the baked world with the
+  // functions runFrame() uses. Nothing changes the world between frames, so
+  // this equals the frame's own. NotRendering until a frame has drawn.
+  // Frame thread only.
+  [[nodiscard]] atlantis::Result<atlantis::connection::FrameData, atlantis::connection::ControlError>
+  captureFrameData();
+
+  // The loaded scene's catalog GUID (Plan 0047 P17).
+  [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
+
  private:
+  // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
+  // (frame_capture.cpp).
+  [[nodiscard]] std::vector<atlantis::renderer::DrawItem> assembleCaptureDrawItems(
+      const std::vector<RenderableExtractionInput>& renderables) const;
+
   friend atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig&);
   // Plan 0014 Section D-Step 6: the one narrowly-scoped friend needed for
   // the GPU smoke test's own V17 assertion (exactly 5 DrawItems reach

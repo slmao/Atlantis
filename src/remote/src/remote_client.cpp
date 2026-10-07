@@ -72,6 +72,7 @@ struct RemoteSession::State {
   atlantis::asset_system::AssetGuid scene;
   codec::OwnedSchema schema;
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;
+  std::unique_ptr<atlantis::connection::RuntimeControl> control;
 
   void fail(RemoteError error) {
     if (!failure) failure = error;
@@ -341,6 +342,56 @@ class RemoteConnection final : public atlantis::connection::RuntimeConnection {
   RemoteSession::State* state_;
 };
 
+// Plan 0055 P5: RuntimeControl over the wire.
+class RemoteControl final : public atlantis::connection::RuntimeControl {
+ public:
+  explicit RemoteControl(RemoteSession::State& state) : state_(&state) {}
+
+  atlantis::connection::RuntimeStatus status() override {
+    const auto result = state_->call("control.status");
+    const auto status = result ? codec::decodeStatus(*result) : std::nullopt;
+    if (!status) {
+      state_->fail(RemoteError::ProtocolError);
+      return {};
+    }
+    return *status;
+  }
+  void pause() override { (void)state_->call("control.pause"); }
+  void resume() override { (void)state_->call("control.resume"); }
+  void step(atlantis::connection::StepRequest request,
+            std::function<void(atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>)>
+                done) override {
+    using ResultT = atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>;
+    Value params = Value::object();
+    params.set("request", codec::encode(request));
+    const auto result = state_->call("control.step", std::move(params));
+    const auto decoded = result ? decodeInBand<atlantis::connection::FrameReport, atlantis::connection::ControlError>(
+                                      *result, &codec::decodeFrameReport, &codec::decodeControlError)
+                                : std::nullopt;
+    if (!decoded) {
+      state_->fail(RemoteError::ProtocolError);
+      done(ResultT::Err(atlantis::connection::ControlError::Stopped));
+      return;
+    }
+    done(*decoded);
+  }
+  atlantis::connection::DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) override {
+    Value params = Value::object();
+    params.set("after", Value::number(afterSequence));
+    params.set("max", Value::number(static_cast<std::uint64_t>(max)));
+    const auto result = state_->call("control.diagnostics", std::move(params));
+    const auto batch = result ? codec::decodeDiagnosticBatch(*result) : std::nullopt;
+    if (!batch) {
+      state_->fail(RemoteError::ProtocolError);
+      return {};
+    }
+    return *batch;
+  }
+
+ private:
+  RemoteSession::State* state_;
+};
+
 }  // namespace
 
 RemoteSession::RemoteSession(std::unique_ptr<State> state) : state_(std::move(state)) {}
@@ -348,6 +399,8 @@ RemoteSession::RemoteSession(std::unique_ptr<State> state) : state_(std::move(st
 RemoteSession::~RemoteSession() = default;
 
 atlantis::connection::RuntimeConnection& RemoteSession::connection() noexcept { return *state_->connection; }
+
+atlantis::connection::RuntimeControl& RemoteSession::control() noexcept { return *state_->control; }
 
 const atlantis::asset_system::AssetGuid& RemoteSession::scene() const noexcept { return state_->scene; }
 
@@ -409,6 +462,7 @@ atlantis::Result<std::unique_ptr<RemoteSession>, RemoteError> connectRemote(cons
   const std::optional<Value> schema = state->call("connection.schema");
   if (!schema || !state->schema.decode(*schema)) return ResultT::Err(state->failure.value_or(RemoteError::ProtocolError));
   state->connection = std::make_unique<RemoteConnection>(*state);
+  state->control = std::make_unique<RemoteControl>(*state);
   return ResultT::Ok(std::make_unique<RemoteSession>(std::move(state)));
 }
 
