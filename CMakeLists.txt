@@ -72,6 +72,9 @@ add_subdirectory(src/asset_system)
 # dependencies (Atlantis::Core, Atlantis::AssetSystem) are already
 # declared.
 add_subdirectory(src/world)
+# Plan 0054 P1 (ADR-0105 D3): Atlantis Connection, after World (whose access
+# headers it names) and before Runtime (which owns its InProcess endpoint).
+add_subdirectory(src/connection)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
@@ -235,6 +238,7 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/core)
   add_subdirectory(tests/asset_system)
   add_subdirectory(tests/world)
+  add_subdirectory(tests/connection)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
   add_subdirectory(tests/vulkan_backend)
