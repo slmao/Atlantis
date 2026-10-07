@@ -1,16 +1,17 @@
 # ADR 0106: Attachable Runtime — a Frame-Drained Transport for RuntimeConnection, and a Runtime Control Interface
 
-- **Status:** Proposed
-- **Date:** 2026-10-07
+- **Status:** Accepted
+- **Date:** 2026-10-07 (accepted 2026-10-07)
 - **Deciders:** slmao
-- **Acceptance:** pending. To be `Accepted` before or during the review of
-  [Spec 0055](../specs/0055-agent-runtime-cli.md), with D1–D8 as ruled there
-  (Spec Q1–Q8).
-- **Related Spec:** [Spec 0055: Agent / Runtime CLI](../specs/0055-agent-runtime-cli.md)
+- **Acceptance:** slmao, 2026-10-07 (review of this branch's own PR,
+  [PR #226](https://github.com/slmao/Atlantis/pull/226); accepted together with Spec 0055's Approval, its eight open
+  questions ruled as recommended)
+- **Related Spec:** [Spec 0055: Agent / Runtime CLI](../specs/0055-agent-runtime-cli.md) (`Approved`)
 - **Related ADR(s):**
   - Implements [ADR-0105](0105-runtime-connection-and-cli-client.md) D1's
     reservation: "a transport (0055) implements this interface; it does not
-    shape it". No ADR-0105 decision changes.
+    shape it" -- the transport slot ADR-0105 left open. No ADR-0105 decision
+    changes.
   - Applies [ADR-0033](0033-runtime-authority-and-client-boundary.md): it
     answers the out-of-process question for a local client.
   - Keeps [ADR-0103](0103-runtime-world-operation-boundary.md) (concepts,
@@ -47,8 +48,11 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
     statement.
   - **Threading.** ADR-0004 fixes one frame thread, and the connection and
     boundary are frame-thread-only.
-  - **Platform.** Only Runtime may depend on Platform. OS code outside
-    Platform has a Tools precedent (`process_launch.cpp`).
+  - **Platform.** Only Runtime may depend on Platform. OS-specific code
+    private to another module, with no Platform dependency, has a precedent
+    in the Vulkan Backend's WSI code (`src/vulkan_backend/src/wsi/`,
+    module_boundaries.md, Atlantis Vulkan Backend), and also in Tools
+    (`process_launch.cpp`).
   - **Capture.** The swapchain has no `TRANSFER_SRC` usage, and offscreen
     readback exists (ADR-0040).
   - **Data shape.** Entities have no name field.
@@ -57,7 +61,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 ## Decision
 
 1. **Transport: loopback TCP, JSON-lines RPC, drained at frame boundaries**
-   (Spec 0055 Q1, recommended (a)+(a1)).
+   (Spec 0055 ruling Q1, (a)+(a1)).
    - **Opt-in.** `atlantis_runtime --listen [port]` (0 means ephemeral)
      binds 127.0.0.1 only. It writes a session file holding the port and a
      per-run token, and a client presents the token on connect.
@@ -70,7 +74,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **No blocking and no thread.** Sockets are non-blocking, buffers are
      bounded, and an overrun disconnects.
    - **Without `--listen`** no socket exists.
-2. **The payload is the existing interface** (Q8, recommended E-a).
+2. **The payload is the existing interface** (Spec 0055 ruling Q8, E-a).
    - **The wire.** It carries `RuntimeConnection` calls (and D3's control
      calls), never CLI text.
    - **Client side.** A `RemoteConnection` implements `RuntimeConnection`.
@@ -79,8 +83,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      routing, transactions.
    - **The command engine** (text forms, filters, JSON) runs in the client
      process.
-3. **A `RuntimeControl` interface beside `RuntimeConnection`** (Q2,
-   recommended K-a + V-a).
+3. **A `RuntimeControl` interface beside `RuntimeConnection`** (Spec 0055
+   ruling Q2, K-a + V-a).
    - **Calls:**
      - `status()` (paused, frame index, scene GUID);
      - `pause()` / `resume()`;
@@ -92,7 +96,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **The command tree gains no capture or diagnostics verb.**
      `runtime step --capture` returns the frame report, and Runtime
      diagnostics ride in every JSON envelope and on stderr.
-4. **Pause holds command application** (Q2, recommended P-a).
+4. **Pause holds command application** (Spec 0055 ruling Q2, P-a).
    - **The change.** `runFrame()`'s first statement becomes "apply pending
      unless held".
    - **What keeps running:** pumping, collection and presentation, so the
@@ -101,7 +105,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **The default path** (never held) is byte-identical, guarded by the
      full suites and goldens.
    - Nothing in the World is time-driven today. Simulation time is 0060's.
-5. **Capture** (Q2, recommended C1 + C2).
+5. **Capture** (Spec 0055 ruling Q2, C1 + C2).
    - **Always:** the stepped frame's data, its extraction output
      (`FrameLightingData`, camera matrices, draw count), exact.
    - **On request:** an image. The stepped world is rendered once more into
@@ -111,7 +115,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Not chosen:** swapchain readback. It needs `TRANSFER_SRC` swapchain
      usage, a Presentation API and format handling, and Android support of
      that usage is not guaranteed.
-6. **The machine output contract** (Q3, recommended).
+6. **The machine output contract** (Spec 0055 ruling Q3).
    - **Envelope.** One versioned envelope per invocation:
      `{"atlantis":"cli/1", command, ok, result, diagnostics}`.
    - **Errors.** Each error is `{code, category, message, subject}`, with
@@ -128,18 +132,27 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Types** come with their TypeId.
    - **Entities** are shown as GUID plus components, with no invented names
      (N-a).
-7. **Placement** (Q6, recommended G-a + X-a + M-a).
+7. **Placement** (Spec 0055 ruling Q6, G-a + X-a + M-a).
    - **Atlantis Remote** (`src/remote/`), a new module, holds:
      - the client `RemoteConnection` and `RemoteControl`;
      - the server;
      - the codec;
-     - its own minimal OS socket layer, under the Tools precedent.
+     - its own minimal OS socket layer (Winsock / BSD sockets).
+   - **The socket layer's boundary follows the Vulkan Backend's WSI
+     precedent** (Spec 0055 ruling Q6). The Vulkan Backend keeps its
+     platform-specific surface code private
+     (`src/vulkan_backend/src/wsi/win32_surface.cpp`, `android_surface.cpp`),
+     dispatches on the platform itself, and does not depend on Platform. In
+     the same way, Atlantis Remote keeps its socket code private to the
+     module, exposes no OS type in a public header, and does not depend on
+     Platform. Platform's charter (windowing and input) and its "only
+     Runtime depends on Platform" rule are unchanged.
    - **Dependencies.** It depends on Atlantis Connection. Runtime links the
      server half, and Platform is untouched.
    - **The executable.** `atlantis` is built in `src/cli/`, links Atlantis
      CLI and the client half, and grows the 0054 command layer. The 0054
      names stay as aliases.
-8. **Writes and sessions** (Q4, Q5, recommended T-a + T-c, R-a).
+8. **Writes and sessions** (Spec 0055 rulings Q4, Q5: T-a + T-c, R-a).
    - **One-shot writes.** Each write invocation is one ticketed submission,
      reporting its outcome once applied.
    - **Grouping.** `atlantis tx` submits a list of writes as one
@@ -166,8 +179,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **A second render on capture frames.**
 - **Runtime gains a PNG dependency.**
 - **Client-side filters** cost O(entities) pipelined messages.
-- **OS socket code** lives in a non-Platform module, under the Tools
-  precedent rather than Platform's charter.
+- **OS socket code** lives in a non-Platform module, private to it as the
+  Vulkan Backend's WSI code is, rather than under Platform's charter.
 
 ## Alternatives Considered
 
