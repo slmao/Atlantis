@@ -11,7 +11,8 @@
     and [ADR-0004](../adr/0004-phase1-threading-baseline.md) unchanged.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation needs the Joint Human Review
+- **Joint Human Review:** pending, in
+  [PR #223](https://github.com/slmao/Atlantis/pull/223). Implementation needs the Joint Human Review
   of this Plan together with Spec 0054, explicitly authorizing it (J1–J9
   below).
 
