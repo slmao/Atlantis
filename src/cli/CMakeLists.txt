@@ -7,6 +7,10 @@
 add_library(atlantis_cli STATIC
   src/command.cpp
   src/script_runner.cpp
+  # Plan 0055 P9 (Spec 0055 rulings Q3-Q6): the command tree, its JSON, and
+  # the one-shot / REPL driver of the `atlantis` executable.
+  src/command_layer.cpp
+  src/invocation.cpp
 )
 add_library(Atlantis::Cli ALIAS atlantis_cli)
 

@@ -6,6 +6,8 @@ add_executable(atlantis_cli_tests
   cli_command_tests.cpp
   cli_script_tests.cpp
   cli_boundary_tests.cpp
+  # Plan 0055 M6: the command tree, its JSON and the invocation driver.
+  cli_tree_tests.cpp
 )
 
 target_link_libraries(atlantis_cli_tests
