@@ -180,6 +180,11 @@ class RuntimeWorldAccess {
 
   // Query (R3): by value.
   [[nodiscard]] bool findEntity(const atlantis::asset_system::EntityGuid& entity) const;
+  // Spec 0054 ruling Q1 (ADR-0103 D1's "Additions are later Specs"): every
+  // live entity this boundary addresses -- exactly those findEntity()
+  // accepts -- ordered by GUID value. O(n). An ECS entity with no GUID is not
+  // addressable here, so it is not listed.
+  [[nodiscard]] std::vector<atlantis::asset_system::EntityGuid> listEntities() const;
   // The entity's component TypeIds, sorted by value.
   [[nodiscard]] atlantis::Result<std::vector<schema::TypeId>, AccessError> listComponents(
       const atlantis::asset_system::EntityGuid& entity) const;
