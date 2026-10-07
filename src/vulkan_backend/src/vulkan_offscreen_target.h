@@ -41,7 +41,7 @@ class VulkanOffscreenRenderTarget;
 class VulkanOffscreenTarget final : public atlantis::rhi::OffscreenTarget {
  public:
   VulkanOffscreenTarget(VkDevice device, VkImage image, VkDeviceMemory memory, VkImageView imageView,
-                        atlantis::rhi::Extent2D extent, atlantis::rhi::Format format);
+                        atlantis::rhi::Extent2D extent, atlantis::rhi::Format format, bool sampled);
   ~VulkanOffscreenTarget() override;
 
   VulkanOffscreenTarget(const VulkanOffscreenTarget&) = delete;
@@ -59,6 +59,8 @@ class VulkanOffscreenTarget final : public atlantis::rhi::OffscreenTarget {
   [[nodiscard]] VkImageView imageView() const noexcept { return imageView_; }
   [[nodiscard]] atlantis::rhi::Extent2D extent() const noexcept { return extent_; }
   [[nodiscard]] atlantis::rhi::Format format() const noexcept { return format_; }
+  // Plan 0056 P4: created with SAMPLED usage (OffscreenTargetCreateParams::sampled).
+  [[nodiscard]] bool sampled() const noexcept { return sampled_; }
 
  private:
   friend class VulkanOffscreenRenderTarget;
@@ -74,7 +76,13 @@ class VulkanOffscreenTarget final : public atlantis::rhi::OffscreenTarget {
   VkImageView imageView_;
   atlantis::rhi::Extent2D extent_;
   atlantis::rhi::Format format_;
+  bool sampled_;
   bool outstandingBorrow_ = false;
 };
+
+// Plan 0056 P4 (ADR-0108 D3): the color image's usage -- color attachment for
+// the draw, transfer source for readback (ADR-0040), plus sampled when asked.
+// Pinned by tests/vulkan_backend/sampled_offscreen_target_gpu_tests.cpp.
+[[nodiscard]] VkImageUsageFlags offscreenTargetImageUsage(bool sampled) noexcept;
 
 }  // namespace atlantis::vulkan_backend::detail

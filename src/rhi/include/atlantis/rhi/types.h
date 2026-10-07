@@ -15,6 +15,15 @@ struct Extent2D {
 
 [[nodiscard]] bool operator==(const Extent2D& lhs, const Extent2D& rhs);
 
+// Plan 0056 P4 (ADR-0108 D3, J2): a rectangle in a target's pixels, origin top
+// left -- the scissor of CommandList::setScissor().
+struct Rect2D {
+  std::int32_t x = 0;
+  std::int32_t y = 0;
+  Extent2D extent;
+  friend bool operator==(const Rect2D&, const Rect2D&) = default;
+};
+
 // Describes the currently-selected swapchain surface format for
 // Presentation's read-only metadata query, and (Spec 0010/ADR-0038) an
 // OffscreenTarget's color image creation-time format parameter -- still
@@ -222,9 +231,14 @@ struct SamplerCreateParams {
 // Format::Unknown -- toVkFormat() unconditionally asserts on Unknown, and
 // every sibling *CreateParams struct above defaults its enum field to a
 // real value for the same reason.
+// Plan 0056 P4 (ADR-0108 D3): `sampled` additionally lets the color image be
+// bound as a sampled texture (CommandList::bindTexture(binding, const
+// RenderTarget&, ...)) -- false, the default, keeps every existing creation's
+// image exactly as it was.
 struct OffscreenTargetCreateParams {
   Extent2D extent;
   Format format = Format::Rgba8Unorm;
+  bool sampled = false;
 };
 
 [[nodiscard]] bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs);

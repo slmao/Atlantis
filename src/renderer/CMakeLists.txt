@@ -4,6 +4,8 @@ add_library(atlantis_renderer STATIC
   src/mesh.cpp
   src/material.cpp
   src/renderer.cpp
+  # Plan 0056 P5 (ADR-0108 D3): the UI overlay pass.
+  src/ui_overlay.cpp
 )
 add_library(Atlantis::Renderer ALIAS atlantis_renderer)
 

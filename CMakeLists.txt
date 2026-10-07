@@ -217,6 +217,9 @@ add_subdirectory(shaders/shadow_cast)
 add_subdirectory(shaders/bloom_downsample)
 add_subdirectory(shaders/bloom_upsample)
 add_subdirectory(shaders/bloom_composite)
+# Plan 0056 P5 (ADR-0108 D3): the UI overlay pass's shader pair, production
+# content declared before src/runtime for the same add_dependencies() reason.
+add_subdirectory(shaders/editor_ui)
 endif()
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)

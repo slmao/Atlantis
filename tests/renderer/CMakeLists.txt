@@ -3,6 +3,8 @@ add_executable(atlantis_renderer_tests
   draw_order_tests.cpp
   exposure_multiplier_tests.cpp
   renderer_ownership_tests.cpp
+  # Plan 0056 M3: the UI overlay pass's recording, on the fake command list.
+  ui_overlay_tests.cpp
 )
 target_include_directories(atlantis_renderer_tests
   PRIVATE

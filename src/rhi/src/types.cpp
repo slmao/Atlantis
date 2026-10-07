@@ -37,7 +37,7 @@ bool operator==(const SampledTextureUploadRegion& lhs, const SampledTextureUploa
 }
 
 bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs) {
-  return lhs.extent == rhs.extent && lhs.format == rhs.format;
+  return lhs.extent == rhs.extent && lhs.format == rhs.format && lhs.sampled == rhs.sampled;
 }
 
 bool operator==(const HdrColorTargetCreateParams& lhs, const HdrColorTargetCreateParams& rhs) {

@@ -1360,8 +1360,8 @@ VulkanDevice::createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreatePa
   imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
   // Color-attachment for the draw pass, transfer-source for the readback
   // copy -- both required (Spec 0010 Requirements, ADR-0040's copy
-  // contract).
-  imageCreateInfo.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  // contract). Plan 0056 P4 (ADR-0108 D3): plus sampled, when asked.
+  imageCreateInfo.usage = offscreenTargetImageUsage(params.sampled);
   imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -1419,7 +1419,8 @@ VulkanDevice::createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreatePa
   }
 
   return ResultT::Ok(
-      std::make_unique<VulkanOffscreenTarget>(device_, image, memory, imageView, params.extent, params.format));
+      std::make_unique<VulkanOffscreenTarget>(device_, image, memory, imageView, params.extent, params.format,
+                                              params.sampled));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::SampledTexture>, atlantis::rhi::SampledTextureCreateError>

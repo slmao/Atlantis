@@ -32,6 +32,7 @@ using atlantis::shader_system::litTexturedExpectedDescriptorContract;
 using atlantis::shader_system::minimalRendererExpectedDescriptorContract;
 using atlantis::shader_system::outputTransformExpectedDescriptorContract;
 using atlantis::shader_system::bloomCompositeExpectedDescriptorContract;
+using atlantis::shader_system::editorUiExpectedDescriptorContract;
 using atlantis::shader_system::bloomDownsampleExpectedDescriptorContract;
 using atlantis::shader_system::bloomUpsampleExpectedDescriptorContract;
 using atlantis::shader_system::pbrClearcoatIblExpectedDescriptorContract;
@@ -186,6 +187,9 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = bloomUpsampleExpectedDescriptorContract();
   } else if (expectedContract == "bloom-composite") {
     fullContract = bloomCompositeExpectedDescriptorContract();
+  } else if (expectedContract == "editor-ui") {
+    // Plan 0056 P5 (ADR-0108 D3).
+    fullContract = editorUiExpectedDescriptorContract();
   } else if (expectedContract == "sky") {
     fullContract = skyExpectedDescriptorContract();
   } else if (expectedContract == "shadow-cast") {
@@ -245,6 +249,9 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
   } else if (expectedContract == "bloom-downsample" || expectedContract == "bloom-upsample" ||
              expectedContract == "bloom-composite") {
     // Plan 0044 Milestone 1: renderer::Bloom*PushConstants, 16 bytes each.
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 16, .stage = ShaderStage::Vertex}};
+  } else if (expectedContract == "editor-ui") {
+    // Plan 0056 P5: renderer::UiOverlayPushConstants (ui_overlay.cpp), 16 bytes.
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 16, .stage = ShaderStage::Vertex}};
   } else {
     // Plan 0035 Milestone 2 (ADR-0081): pbr-clearcoat-ibl/pbr-clearcoat-
@@ -480,6 +487,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
   } else if (validationOk && (request.expectedContract == "output-transform-unorm" ||
                               request.expectedContract == "output-transform-srgb")) {
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 4);
+  } else if (validationOk && request.expectedContract == "editor-ui") {
+    // Plan 0056 P5: the fragment stage reads the texture slot from the same block.
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 16);
   }
   if (!validationOk) {
     std::filesystem::remove_all(tempDir);

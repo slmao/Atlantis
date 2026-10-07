@@ -2,9 +2,13 @@
 
 #include <atlantis/assert.h>
 
+#include <algorithm>
+#include <cstdint>
+
 #include "resource_state_mapping.h"
 #include "vulkan_buffer.h"
 #include "vulkan_hdr_color_target.h"
+#include "vulkan_offscreen_render_target.h"
 #include "vulkan_pipeline.h"
 #include "vulkan_render_target.h"
 #include "vulkan_render_target_access.h"
@@ -255,6 +259,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
   };
   vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
   vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
+  renderArea_ = renderingInfo.renderArea.extent;
 }
 
 // Plan 0024 Milestone 2: a direct copy of beginRendering(RenderTarget&,
@@ -308,6 +313,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::HdrColorTarget& color, atl
   };
   vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
   vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
+  renderArea_ = renderingInfo.renderArea.extent;
 }
 
 // Plan 0027 Milestone 2 (ADR-0072 D-2/D-4): a genuinely new depth-only
@@ -357,6 +363,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::ShadowMap& depth, float de
   };
   vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
   vkCmdSetScissor(commandBuffer_, 0, 1, &renderingInfo.renderArea);
+  renderArea_ = renderingInfo.renderArea.extent;
 }
 
 void VulkanCommandList::endRendering() {
@@ -599,6 +606,62 @@ void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
 
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, 0, 0, 0);
+}
+
+// Plan 0056 P4 (ADR-0108 D3, J2): the ranged draw. drawIndexed(indexCount)
+// above is this with firstIndex = 0, vertexOffset = 0.
+void VulkanCommandList::drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) {
+  vkCmdDrawIndexed(commandBuffer_, indexCount, 1, firstIndex, vertexOffset, 0);
+}
+
+// Plan 0056 P4 (ADR-0108 D3 "scissored triangles", J2): clamped to the current
+// render area, so a rectangle partly or wholly outside it is legal (an empty
+// intersection scissors everything away).
+void VulkanCommandList::setScissor(atlantis::rhi::Rect2D rect) {
+  const auto areaWidth = static_cast<std::int64_t>(renderArea_.width);
+  const auto areaHeight = static_cast<std::int64_t>(renderArea_.height);
+  const std::int64_t x0 = std::clamp<std::int64_t>(rect.x, 0, areaWidth);
+  const std::int64_t y0 = std::clamp<std::int64_t>(rect.y, 0, areaHeight);
+  const std::int64_t x1 = std::clamp<std::int64_t>(static_cast<std::int64_t>(rect.x) + rect.extent.width, x0, areaWidth);
+  const std::int64_t y1 = std::clamp<std::int64_t>(static_cast<std::int64_t>(rect.y) + rect.extent.height, y0, areaHeight);
+  const VkRect2D scissor{{static_cast<std::int32_t>(x0), static_cast<std::int32_t>(y0)},
+                         {static_cast<std::uint32_t>(x1 - x0), static_cast<std::uint32_t>(y1 - y0)}};
+  vkCmdSetScissor(commandBuffer_, 0, 1, &scissor);
+}
+
+// Plan 0056 P4 (ADR-0108 D3): like bindTexture(HdrColorTarget&, ...) -- bound
+// once per pass, so the descriptor is written unconditionally. Only a sampled
+// offscreen target qualifies: a swapchain image or an offscreen target created
+// without SAMPLED usage is a programmer error.
+void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::RenderTarget& sampledTarget,
+                                     const atlantis::rhi::Sampler& sampler) {
+  ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
+  ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
+                                                boundSampledTextureBindingCount_, binding));
+  const auto* offscreen = dynamic_cast<const VulkanOffscreenRenderTarget*>(&sampledTarget);
+  ATLANTIS_CHECK_MSG(offscreen != nullptr && offscreen->sampled(),
+                     "bindTexture() received a RenderTarget that is not a sampled offscreen target");
+  if (offscreen == nullptr || !offscreen->sampled()) return;
+  const auto& vulkanSampler = static_cast<const VulkanSampler&>(sampler);
+
+  VkDescriptorImageInfo imageInfo{};
+  imageInfo.sampler = vulkanSampler.sampler();
+  imageInfo.imageView = offscreen->imageView();
+  // Precondition, not re-checked here: the target is in
+  // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead).
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = boundDescriptorSet_;
+  write.dstBinding = binding;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo = &imageInfo;
+
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                           &boundDescriptorSet_, 0, nullptr);
 }
 
 void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source,

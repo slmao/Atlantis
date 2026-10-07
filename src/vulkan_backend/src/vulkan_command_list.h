@@ -109,6 +109,13 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void bindTexture(std::uint32_t binding, const atlantis::rhi::ShadowMap& texture,
                    const atlantis::rhi::Sampler& sampler) override;
 
+  // Plan 0056 P4 (ADR-0108 D3, J2): a sampled offscreen target, the scissor,
+  // and the ranged indexed draw.
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::RenderTarget& sampledTarget,
+                   const atlantis::rhi::Sampler& sampler) override;
+  void setScissor(atlantis::rhi::Rect2D rect) override;
+  void drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) override;
+
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
@@ -129,6 +136,9 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
   std::uint32_t boundSampledTextureFirstBinding_ = 0;
   std::uint32_t boundSampledTextureBindingCount_ = 0;
+  // Plan 0056 P4: the current attachment scope's render area, set by every
+  // beginRendering() overload -- setScissor() clamps to it.
+  VkExtent2D renderArea_{0, 0};
 
   // Implementation-forced addition, discovered by Plan 0007 Section 15's
   // own multi-DrawItem GPU test: Vulkan invalidates a command buffer if

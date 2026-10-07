@@ -39,6 +39,8 @@ class VulkanOffscreenRenderTarget final : public atlantis::rhi::RenderTarget, pu
   [[nodiscard]] atlantis::rhi::Format format() const override { return owner_->format(); }
   [[nodiscard]] VkImage image() const noexcept override { return owner_->image(); }
   [[nodiscard]] VkImageView imageView() const noexcept override { return owner_->imageView(); }
+  // Plan 0056 P4: whether CommandList::bindTexture() may sample this target.
+  [[nodiscard]] bool sampled() const noexcept { return owner_->sampled(); }
 
   // Explicit, legal "nothing to wait on / nothing meaningful to signal"
   // value -- an offscreen submission has no swapchain acquire semaphore
