@@ -5,6 +5,8 @@
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/connection/in_process_endpoint.h>
+#include <atlantis/connection/runtime_connection.h>
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/material.h>
 #include <atlantis/renderer/mesh.h>
@@ -80,6 +82,16 @@ class RuntimeApplication {
   // to run only after every member below it, is the sole place
   // platform::shutdown() is ever called.
   RuntimeExitReason shutdown();
+
+  // Spec 0054 R3 / ADR-0105 D2 (ruling Q7; Plan 0054 P8): opens a client
+  // connection to this application's Runtime World -- the only way a client
+  // reaches it (ADR-0033). The InProcess endpoint is created at the first call
+  // (Spec 0054 Correction 2026-10-07, J1: the application is in its final
+  // place by then) and owned here. Frame thread only, between frames;
+  // requires a loaded scene. Every connection must be destroyed before this
+  // application, and once the endpoint exists this application must not be
+  // moved -- both are CHECKed.
+  [[nodiscard]] std::unique_ptr<atlantis::connection::RuntimeConnection> openConnection();
 
  private:
   friend atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(const BootstrapConfig&);
@@ -273,6 +285,24 @@ class RuntimeApplication {
   // Emplaced with scene_; its pending commands apply at the start of every
   // runFrame() (J6).
   std::optional<atlantis::world::access::RuntimeWorldAccess> worldAccess_;
+  // Spec 0054 / ADR-0105 D2 (Plan 0054 P8; Spec 0054 Correction 2026-10-07,
+  // J1): the InProcess client endpoint over worldAccess_, declared after it
+  // so it is destroyed first (it borrows it). Created by the first
+  // openConnection(), never in initializeSteps(): this application is moved
+  // after initializeSteps() (createRuntimeApplication() returns it by value),
+  // which would leave an endpoint made there borrowing a moved-from
+  // worldAccess_. The slot's move constructor CHECKs that it is empty, so
+  // moving an application whose endpoint exists fails loudly instead.
+  struct EndpointSlot {
+    EndpointSlot() = default;
+    EndpointSlot(EndpointSlot&& other) noexcept;
+    EndpointSlot(const EndpointSlot&) = delete;
+    EndpointSlot& operator=(const EndpointSlot&) = delete;
+    EndpointSlot& operator=(EndpointSlot&&) = delete;
+    ~EndpointSlot() = default;
+    std::unique_ptr<atlantis::connection::InProcessEndpoint> endpoint;
+  };
+  EndpointSlot endpoint_;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth

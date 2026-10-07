@@ -43,6 +43,9 @@ target_link_libraries(atlantis_runtime_host
     # Plan 0014 Section D1: Runtime's own World-driven validation scene
     # and Runtime-private extraction adapter.
     Atlantis::World
+    # Plan 0054 P8 (ADR-0105 D2): RuntimeApplication owns the InProcess
+    # client endpoint; its header names the connection types.
+    Atlantis::Connection
   PRIVATE
     atlantis_compiler_warnings
 )
@@ -83,6 +86,9 @@ add_executable(atlantis_runtime main.cpp cli.cpp)
 target_link_libraries(atlantis_runtime
   PRIVATE
     Atlantis::RuntimeHost
+    # Plan 0054 P7 (ADR-0105 D3, D7): the executable hosts the CLI client
+    # (`--exec`); Atlantis::RuntimeHost does not depend on it.
+    Atlantis::Cli
     atlantis_compiler_warnings
 )
 

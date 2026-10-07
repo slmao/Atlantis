@@ -8,9 +8,16 @@
 
 #include "cli.h"
 
+#include <atlantis/cli/script_runner.h>
+#include <atlantis/connection/runtime_connection.h>
+
 #include <array>
 #include <cstddef>
+#include <fstream>
 #include <iostream>
+#include <iterator>
+#include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -94,6 +101,23 @@ int main(int argc, char** argv) {
   if (cliResult.outcome == CommandLineOutcome::PrintErrorAndExit) {
     std::cerr << cliResult.message;
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
+
+  // Spec 0054 ruling Q3 (Plan 0054 P7): an --exec script is read whole now,
+  // before the window exists, so nothing reads input once frames run.
+  std::optional<std::string> execScript;
+  if (cliResult.execScript.has_value()) {
+    const std::string& source = *cliResult.execScript;
+    if (source == "-") {
+      execScript.emplace(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
+    } else {
+      std::ifstream in(source, std::ios::binary);
+      if (!in) {
+        std::cerr << "atlantis_runtime: cannot read --exec script: " << source << "\n";
+        return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+      }
+      execScript.emplace(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
   }
 
   atlantis::log::setMinLevel(atlantis::LogLevel::Info);
@@ -284,8 +308,20 @@ int main(int argc, char** argv) {
   RuntimeApplication app = std::move(appResult.value());
   ATLANTIS_LOG_INFO("Runtime initialized");
 
+  // Spec 0054 R9 (ruling Q3, H-a; Plan 0054 P7): with --exec, a CLI client on
+  // a connection to this application runs one script line after each frame,
+  // on this thread -- runFrame() itself is unchanged. Declared after `app`
+  // (connection, then runner) so both are destroyed before it.
+  std::unique_ptr<atlantis::connection::RuntimeConnection> connection;
+  std::optional<atlantis::cli::ScriptRunner> runner;
+  if (execScript.has_value()) {
+    connection = app.openConnection();
+    runner.emplace(*connection, atlantis::cli::splitLines(*execScript), std::cout);
+  }
+
   while (app.shouldContinue()) {
     app.runFrame();
+    if (runner) runner->step();
   }
 
   const RuntimeExitReason reason = app.shutdown();

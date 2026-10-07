@@ -884,7 +884,10 @@ paused/resumed) remains TBD, see Open Questions in
 [threading.md](threading.md).
 
 **Depends on:** Atlantis Platform, RHI (Device + Presentation), Renderer,
-Shader System (both targets), Asset System, World, Core. **Not**
+Shader System (both targets), Asset System, World, Core, and — since Spec
+0054 — Atlantis Connection (`RuntimeApplication` owns the InProcess client
+endpoint); the `atlantis_runtime` executable alone also links Atlantis CLI,
+which it hosts (`--exec`). **Not**
 RenderGraph directly — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally, confirmed by inspection
 that no `atlantis/render_graph/*.h` header is included anywhere under
