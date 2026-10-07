@@ -4,7 +4,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -209,4 +213,58 @@ TEST_CASE("control: the ring becomes the log sink only when asked, and the defau
   }
   CHECK(recording->messages.size() == 1);  // the ring, not this sink, took it
   atlantis::log::initialize(nullptr);
+}
+
+// Plan 0055 M4 (P7, ADR-0106 D4): the hold decision each frame. Paused,
+// every frame is held except the ones a step releases -- exactly its count;
+// running, nothing is held; resume returns to per-frame application.
+TEST_CASE("control: paused frames are held, a step releases exactly its frames, resume releases all",
+          "[runtime][control][hold]") {
+  Fake fake;
+  RuntimeControlHost host(fake.target(), noDiagnostics());
+  frame(host);  // running: applied
+  host.pause();
+  frame(host);
+  frame(host);  // paused: held
+  int completed = 0;
+  host.step(connection::StepRequest{2, std::nullopt}, [&](StepResult) { ++completed; });
+  frame(host);
+  frame(host);  // the step's two frames: applied
+  CHECK(completed == 1);
+  frame(host);  // paused again: held
+  host.step(connection::StepRequest{1, std::nullopt}, [&](StepResult) { ++completed; });
+  frame(host);  // released once
+  frame(host);  // held
+  host.resume();
+  frame(host);
+  frame(host);  // running: applied
+  CHECK(completed == 2);
+  CHECK(fake.holds == std::vector<bool>{false, true, true, false, false, true, false, true, false, false});
+}
+
+// Plan 0055 P7 proof 2: setCommandsHeld() is commandsHeld_'s only writer, and
+// RuntimeControlHost is setCommandsHeld()'s only caller -- so without the
+// host (no --listen) nothing ever holds a frame.
+TEST_CASE("control: commandsHeld_ has one writer, reached only through RuntimeControlHost",
+          "[runtime][control][hold]") {
+  namespace fs = std::filesystem;
+  std::size_t writes = 0;
+  std::vector<std::string> callers;
+  for (const auto& entry : fs::recursive_directory_iterator(ATLANTIS_RUNTIME_SOURCE_DIR)) {
+    const auto extension = entry.path().extension();
+    if (!entry.is_regular_file() || (extension != ".h" && extension != ".cpp")) continue;
+    std::ifstream in(entry.path(), std::ios::binary);
+    const std::string source((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (std::size_t at = 0; (at = source.find("commandsHeld_ =", at)) != std::string::npos; ++at) {
+      if (at < 5 || source.compare(at - 5, 5, "bool ") != 0) ++writes;  // not the member's initializer
+    }
+    for (std::size_t at = 0; (at = source.find("setCommandsHeld(", at)) != std::string::npos; ++at) {
+      callers.push_back(entry.path().filename().string());
+    }
+  }
+  CHECK(writes == 1);  // `commandsHeld_ = held;` in setCommandsHeld(), besides `bool commandsHeld_ = false;`
+  std::sort(callers.begin(), callers.end());
+  callers.erase(std::unique(callers.begin(), callers.end()), callers.end());
+  // The declaration (runtime_application.h) and the host (its Target hook).
+  CHECK(callers == std::vector<std::string>{"runtime_application.h", "runtime_control_host.cpp"});
 }

@@ -105,6 +105,14 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::Result<atlantis::connection::FrameData, atlantis::connection::ControlError>
   captureFrameData();
 
+  // Spec 0055 R3 / ADR-0106 D4 (ruling Q2, P-a; Plan 0055 P7): while held,
+  // runFrame() does not apply pending commands -- it still pumps, collects
+  // and presents, so the window stays responsive and the same world is shown.
+  // Never held unless set: only RuntimeControlHost::beforeFrame() sets it, and
+  // the host exists only when atlantis_runtime serves clients (`--listen`).
+  // Frame thread only, between frames.
+  void setCommandsHeld(bool held) noexcept { commandsHeld_ = held; }
+
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
 
@@ -323,6 +331,9 @@ class RuntimeApplication {
     std::unique_ptr<atlantis::connection::InProcessEndpoint> endpoint;
   };
   EndpointSlot endpoint_;
+  // Plan 0055 P7: runFrame()'s first statement skips applyPending() while
+  // set. Written by setCommandsHeld() only.
+  bool commandsHeld_ = false;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth

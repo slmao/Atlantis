@@ -40,7 +40,7 @@ connection::DiagnosticBatch DiagnosticsRing::read(std::uint64_t afterSequence, s
 
 RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication& application) {
   Target target;
-  target.setCommandsHeld = [](bool) {};
+  target.setCommandsHeld = [&application](bool held) { application.setCommandsHeld(held); };
   target.frameData = [&application] { return application.captureFrameData(); };
   target.captureImage = [](const std::string&) {
     return atlantis::Result<connection::CapturedImage, connection::ControlError>::Err(

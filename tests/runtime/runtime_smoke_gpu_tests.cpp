@@ -3,6 +3,7 @@
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
+#include <atlantis/runtime/runtime_control_host.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/schema.h>
 #include <atlantis/world/access/runtime_world_access.h>
@@ -615,4 +616,75 @@ TEST_CASE("Runtime: captureFrameData() equals the frame just drawn", "[runtime][
 
   const RuntimeExitReason reason = app.shutdown();
   REQUIRE(reason == RuntimeExitReason::Success);
+}
+
+// Plan 0055 M4 (Spec 0055 R3, ruling Q2 P-a; ADR-0106 D4): on the running
+// default scene, under fatal Validation Layers, with the control driving the
+// frames as atlantis_runtime's loop does: paused, submitted commands stay
+// pending across frames (no event, the frame's lighting unchanged); a step of
+// n applies exactly n frames' worth (one command submitted before each); once
+// resumed, every frame applies again.
+TEST_CASE("Runtime: pause holds command application; step n applies exactly n frames; resume restores it",
+          "[runtime][gpu][control]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  const auto frame = [&] {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    REQUIRE(app.shouldContinue());
+  };
+  const auto intensity = [&] {
+    return atlantis::runtime::RuntimeSmokeTestAccess::lightingPayloadBytes(app).directionalLights[0].intensity;
+  };
+  frame();
+  REQUIRE(intensity() == 3.0f);
+
+  const auto connection = app.openConnection();
+  const auto light = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+  const atlantis::world::access::PropertyAddress address{
+      light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+      atlantis::schema::fieldId("world::Light", "intensity")};
+  const auto changes = connection->subscribe(atlantis::connection::EventFilter{});
+  const auto set = [&](float value) { connection->submit(atlantis::world::access::SetProperty{address, value}); };
+
+  control.pause();
+  set(4.0f);
+  frame();
+  frame();
+  frame();
+  CHECK(intensity() == 3.0f);  // held: the command is still pending
+  CHECK(connection->drainEvents(changes).value().empty());
+  CHECK(connection->getProperty(address).value() == atlantis::world::access::PropertyValue(3.0f));
+
+  int completed = 0;
+  control.step(atlantis::connection::StepRequest{2, std::nullopt},
+               [&](const atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>& r) {
+                 REQUIRE(r.isOk());
+                 CHECK(r.value().data.directionalLights[0].intensity == 5.0f);
+                 ++completed;
+               });
+  frame();  // released: applies 4
+  CHECK(intensity() == 4.0f);
+  set(5.0f);
+  frame();  // released: applies 5; the step completes
+  CHECK(intensity() == 5.0f);
+  CHECK(completed == 1);
+  set(6.0f);
+  frame();
+  frame();  // held again
+  CHECK(intensity() == 5.0f);
+  CHECK(connection->drainEvents(changes).value().size() == 2);  // exactly the two released applications
+
+  control.resume();
+  frame();
+  CHECK(intensity() == 6.0f);
+  set(7.0f);
+  frame();
+  CHECK(intensity() == 7.0f);
 }

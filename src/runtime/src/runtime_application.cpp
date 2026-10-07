@@ -1179,7 +1179,7 @@ void RuntimeApplication::runFrame() {
   // reads the world -- so this frame and every later one see them. Nothing
   // pending, nothing changes. Refusals stay queued for the client's
   // drainFailures().
-  if (worldAccess_.has_value()) (void)worldAccess_->applyPending();
+  if (worldAccess_.has_value() && !commandsHeld_) (void)worldAccess_->applyPending();
 
   for (const auto& event : platform::processEvents()) {
     if (const auto* created = std::get_if<platform::SurfaceCreated>(&event)) {

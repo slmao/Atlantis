@@ -52,6 +52,8 @@ target_link_libraries(atlantis_runtime_tests
 # schema does not retain, ADR-0030's own scope) -- never a stale,
 # committed golden JSON for either.
 target_compile_definitions(atlantis_runtime_tests PRIVATE
+  # Plan 0055 M4 (P7): the commandsHeld_ writer scan.
+  ATLANTIS_RUNTIME_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/runtime"
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_SLANGC_EXECUTABLE="${ATLANTIS_SLANGC_EXECUTABLE}"
   ATLANTIS_PBR_DIRECT_LIT_SLANG_SOURCE="${CMAKE_SOURCE_DIR}/shaders/pbr_direct_lit/pbr_direct_lit.slang"
