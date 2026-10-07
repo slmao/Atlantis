@@ -5,7 +5,8 @@
 - **Created:** 2026-10-07
 - **Related Plan(s):** none yet. Drafting a Plan is authorized only after this
   Spec's Approval.
-- **Approval:** pending. The maintainer fixed this Spec's position, command
+- **Approval:** pending, under review in
+  [PR #226](https://github.com/slmao/Atlantis/pull/226). The maintainer fixed this Spec's position, command
   tree, output contract, north star, completion definition and named-only
   list before drafting (2026-10-07, chat). They are recorded under Goals /
   Non-Goals and are not open questions.
