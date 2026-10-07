@@ -4,6 +4,7 @@
 # reach this test target through Atlantis::Connection's PUBLIC World link).
 add_executable(atlantis_connection_tests
   connection_tests.cpp
+  connection_text_tests.cpp
 )
 
 target_link_libraries(atlantis_connection_tests

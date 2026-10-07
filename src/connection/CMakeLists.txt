@@ -7,6 +7,7 @@
 add_library(atlantis_connection STATIC
   src/runtime_connection.cpp
   src/in_process_endpoint.cpp
+  src/text.cpp
 )
 add_library(Atlantis::Connection ALIAS atlantis_connection)
 
