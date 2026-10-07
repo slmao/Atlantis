@@ -9,12 +9,14 @@
     D1 by `listEntities()` ("Additions are later Specs").
   - It keeps [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md)
     and [ADR-0004](../adr/0004-phase1-threading-baseline.md) unchanged.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in
-  [PR #223](https://github.com/slmao/Atlantis/pull/223). Implementation needs the Joint Human Review
-  of this Plan together with Spec 0054, explicitly authorizing it (J1–J9
-  below).
+- **Joint Human Review:** slmao, 2026-10-07 — reviewed this Plan and
+  [Spec 0054](../specs/0054-runtime-connection-minimal-cli.md) together in
+  [PR #223](https://github.com/slmao/Atlantis/pull/223) and explicitly authorized Implementation from Milestone 1.
+  J1–J9 were ruled as recommended. J1's Spec Correction is recorded in
+  Spec 0054's header (Correction 2026-10-07). See Joint Review decisions
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -105,7 +107,8 @@ Read at `origin/main` `5ebca44` (PR #222 merged).
 ## Plan-stage decisions
 
 These are details Spec 0054 leaves to the Plan. None changes a Spec
-requirement or an ADR-0105 decision, except as J1 proposes.
+requirement or an ADR-0105 decision. J1 corrects only ruling Q7's creation
+point (Spec 0054 Correction 2026-10-07).
 
 **P1 — Files.**
 
@@ -555,63 +558,83 @@ This maps to Spec 0054's Testing & Verification Plan.
 - **NDK float text.** P5 avoids `to_chars` / `from_chars` for floats;
   `assembleDebug` checks the rest.
 
-## Joint Review decisions (recommendation first)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-07, PR #223)
 
-- **J1 — When the endpoint is created (Spec Correction).**
-  - **The conflict.** Spec 0054 ruling Q7 (R-a) says the endpoint is
-    "emplaced with it in `initializeSteps()`". But `RuntimeApplication` is
-    moved after `initializeSteps()` (reading item 3), so that endpoint
-    would borrow a moved-from `worldAccess_`: Plan 0052 deviation 3's
-    failure again.
-  - **Recommended:** create it at the first `openConnection()`, after the
-    application is in place, behind a move guard (P8). Record a dated
-    Correction on that bullet; ownership and declaration order stay as
-    ruled.
-  - **Alternatives:**
-    - make `worldAccess_` heap-held. That changes `runFrame()`'s
-      `worldAccess_.has_value()` line, against "`runFrame()` unchanged";
-    - hand-write `RuntimeApplication`'s move constructor to rebind. That
-      means listing every member by hand, and is fragile.
-- **J2 — The interface shape.** An abstract `RuntimeConnection` with Spec
-  0052/0053 types, the filter and the id as in P3.
-- **J3 — Fan-out timing.** The endpoint pumps on demand (drain, subscribe,
-  unsubscribe), not each frame, so Runtime's frame is untouched.
-- **J4 — Failures nobody owns.** A failure whose ticket no connection
-  submitted is dropped by the endpoint. Only the owner submits outside a
-  connection, and the owner holds the boundary directly.
-- **J5 — `ConnectionError::UnknownSubscription`.** A connection-level error
-  value, rather than an abort or a silent empty result, for a client
-  passing an unknown or foreign subscription id. It is not a World error.
-- **J6 — Docs.**
-  - **Recommended, following Plan 0052 J8's split:**
-    - **normative rule sentences land with the milestone whose test
-      enforces them:**
-      - AGENTS.md's "Top-level modules" list gains Atlantis Connection and
-        Atlantis CLI, with a short paragraph on their dependency rules (M4);
-      - `module_boundaries.md` gains their sections' dependency lines and
-        the Runtime "Depends on" line (M4/M5);
-    - **descriptive narratives go to the post-merge docs PR:** the
-      blueprint, the registry's Implementation column, the World/Runtime
-      status narratives and Spec 0054's Related Plan.
-  - **Alternative:** all of it post-merge (Plan 0053 J8). That leaves
-    AGENTS.md naming modules that no longer match the tree while the PR is
-    open.
-- **J7 — Android compiles the CLI library.**
-  - **Recommended:** add `"atlantis_cli"` to Gradle's `targets`, so the
-    Spec's "Connection and CLI libraries build on Android" holds.
-    Connection is already compiled through `RuntimeHost`.
-  - **Alternative:** Connection only on Android.
-- **J8 — Acceptance runs.**
-  - **Recommended:**
-    - the human north-star run (M6.2);
-    - the Plan 0052 J9 runs repeated: the four Windows whitelist scenes
-      without `--exec`, Debug and Release, VVL on, and the Android
-      emulator default scene.
-  - **Why:** `RuntimeApplication` and `main.cpp` change.
-  - **Alternative:** the north-star run only.
-- **J9 — Script syntax and output** (P6, P7): `#` comments, blank lines
-  skipped, per-line errors continue, the `> ` echo, the done line, and
-  `ok` / `refused` / `error:` prefixes.
+All nine were ruled as recommended. J1 corrects Spec 0054, recorded as a
+dated Correction in its header with in-place markers on ruling Q7 (R-a).
+ADR-0105 is unchanged: D2 states ownership, declaration order, no thread
+and an unchanged `runFrame()`, which all hold under lazy creation.
+
+- **J1 — When the endpoint is created.** **Ruled (2026-10-07): at the first
+  `openConnection()`, behind a move guard** (P8; M5).
+  - **The conflict.** Ruling Q7 said the endpoint is "emplaced with it in
+    `initializeSteps()`".
+  - **The evidence** (reading item 3):
+    - `createRuntimeApplication()` returns the application by value after
+      `initializeSteps()`, and `main.cpp` moves it again;
+    - `worldAccess_` is an inline `std::optional` whose address changes
+      with each move;
+    - so that endpoint would borrow a moved-from object, Plan 0052
+      deviation 3's failure.
+  - **The ruling.**
+    - The endpoint is created when the application is in its final place.
+    - The `EndpointSlot` guard makes any later move an `ATLANTIS_CHECK`
+      failure.
+    - Ownership and declaration order stay as ruled in Q7, and `runFrame()`
+      is unchanged line for line.
+    - Spec 0054 Correction 2026-10-07 records it.
+  - **Rejected:**
+    - **(alternative A)** a heap-held `worldAccess_`. It changes
+      `runFrame()`'s `worldAccess_.has_value()` line, against "`runFrame()`
+      unchanged".
+    - **(alternative B)** a hand-written `RuntimeApplication` move
+      constructor that rebinds. It means listing every member by hand, and
+      is fragile.
+- **J2 — The interface shape.** **Ruled (2026-10-07): as P3.**
+  - `RuntimeConnection` is an abstract class over Spec 0052/0053's types.
+  - `EventFilter{kinds, entity?, component?}`.
+  - `SubscriptionId` runs from 1 and is unique within the endpoint.
+- **J3 — Fan-out timing.** **Ruled (2026-10-07): on demand** (P4). The
+  endpoint drains the boundary once, and distributes, only on
+  `drainEvents`, `drainFailures`, `subscribe` and `unsubscribe`. There is
+  no per-frame logic.
+- **J4 — Failures nobody owns.** **Ruled (2026-10-07): dropped** (P4). A
+  failure whose ticket no connection submitted is discarded by the
+  endpoint.
+- **J5 — `ConnectionError::UnknownSubscription`.** **Ruled (2026-10-07):**
+  the one connection-level error, returned for an unknown or foreign
+  subscription id (P3). It is not a World error.
+- **J6 — Docs.** **Ruled (2026-10-07): split as Plan 0052 J8, applied to new
+  modules.**
+  - **Normative rule sentences ride with the implementation PR:**
+    - AGENTS.md's top-level module list gains Atlantis Connection and
+      Atlantis CLI, with their dependency rules (M4);
+    - `module_boundaries.md` gains the two modules' sections (their
+      dependency lines) and Runtime's "Depends on" line (M4/M5).
+  - **Descriptive narratives go to the post-merge docs PR:**
+    - the blueprint;
+    - the registry's Implementation column;
+    - status narratives;
+    - Spec 0054's Related Plan.
+- **J7 — Android compiles the CLI library.** **Ruled (2026-10-07):** Gradle
+  `targets` gains `"atlantis_cli"` (M4). Both libraries are then compiled
+  by `assembleDebug`; Connection already is, through `RuntimeHost`.
+- **J8 — Acceptance runs.** **Ruled (2026-10-07)** (M6):
+  - the human north-star run (`--exec tests/cli/scripts/north_star.txt`,
+    before/after screenshots);
+  - the Plan 0052 J9 runs repeated:
+    - the four Windows whitelist scenes without `--exec`, Debug and
+      Release, VVL on;
+    - the Android emulator default scene.
+
+  The reason: `RuntimeApplication` and `main.cpp` change.
+- **J9 — Script syntax and output.** **Ruled (2026-10-07): as P6/P7.**
+  - **Syntax:** `#` comments and blank lines take no frame; an erroneous
+    line prints `error:` and the script continues.
+  - **Output:** each command is echoed (`> `), and a done line summarizes.
+    `ok` / `refused` / `error:` prefixes and bare values distinguish CLI
+    output on stdout.
+  - **Floats:** `%.9g` / `strtof` text.
 
 ## Rollback Plan
 
@@ -633,5 +656,5 @@ Deltas:
       re-captured.
 - [ ] `runFrame()`'s body unchanged; the path guard holds.
 - [ ] The CLI boundary scans green (R8).
-- [ ] J1's Spec Correction recorded at the Joint Review, if ruled.
+- [x] J1's Spec Correction recorded (Spec 0054 Correction 2026-10-07).
 - [ ] The post-merge docs items (J6) are queued.
