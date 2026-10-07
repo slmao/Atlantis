@@ -12,12 +12,13 @@
     [ADR-0004](../adr/0004-phase1-threading-baseline.md).
   - It uses [ADR-0040](../adr/0040-gpu-to-cpu-readback-rhi-capability.md)'s
     readback.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in
-  [PR #227](https://github.com/slmao/Atlantis/pull/227). Implementation needs the Joint Human Review
-  of this Plan together with Spec 0055, explicitly authorizing it (J1–J10
-  below).
+- **Joint Human Review:** slmao, 2026-10-07 — reviewed this Plan and
+  [Spec 0055](../specs/0055-agent-runtime-cli.md) together in
+  [PR #227](https://github.com/slmao/Atlantis/pull/227) and explicitly authorized Implementation from Milestone 1.
+  J1–J10 were ruled as recommended. No Spec Correction was made (J1);
+  ADR-0106 is unchanged. See Joint Review decisions below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -697,56 +698,64 @@ This maps to Spec 0055's Testing & Verification Plan.
 - **Bistro's log flood** saturates the diagnostics ring every frame. The
   ring reports `dropped` (P6).
 
-## Joint Review decisions (recommendation first)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-07, PR #227)
 
-- **J1 — None proposed against the Spec.** The Plan stays within Spec
-  0055's rulings. The first `runFrame()` change is the one ADR-0106 D4
-  decided, and it is held to P7's guard.
-- **J2 — Where JSON lives.**
-  - **Recommended:** a minimal JSON value, writer and parser in Atlantis
+All ten were ruled as recommended. Spec 0055 is not corrected (J1), and
+ADR-0106 is unchanged: the one named `runFrame()` change is D4's.
+
+- **J1 — None proposed against the Spec.** **Ruled (2026-10-07): no Spec
+  Correction.** The Plan stays within Spec 0055's rulings. The first
+  `runFrame()` change is the one ADR-0106 D4 decided, and it is held to
+  P7's guard.
+- **J2 — Where JSON lives.** **Ruled (2026-10-07): in Atlantis Connection.**
+  - **Ruled:** a minimal JSON value, writer and parser in Atlantis
     Connection, shared by the CLI's `--json` and Remote's codec. The CLI
     library then keeps linking only Connection (0054 R8), and no
     third-party JSON dependency is added.
-  - **Alternatives:**
+  - **Rejected:**
     - private copies in CLI and Remote (duplicated code);
     - a third-party JSON library (a new dependency, against the brief).
-- **J3 — The proof that the default path is unchanged** (P7):
+- **J3 — The proof that the default path is unchanged** (P7).
+  **Ruled (2026-10-07): all three parts, at every gate from M4:**
   - the named-line diff guard at every gate;
-  - the flag's single writer;
+  - the flag's single writer (`setCommandsHeld()`, reachable only under
+    `--listen`);
   - the full suites with the exact-`FrameLightingData` GPU tests.
 
   This states explicitly that the image goldens (from the headless
   fixture) cannot observe `runFrame()`.
-- **J4 — The in-process harness.** `RemoteConnection` takes an optional
-  `whileWaiting` hook, so a single-threaded test drives frames and
-  `server.poll()` while the client waits. Production passes none and
-  waits on the socket.
-- **J5 — Filter syntax.**
+- **J4 — The in-process harness.** **Ruled (2026-10-07): as proposed.**
+  `RemoteConnection` takes an optional `whileWaiting` hook, so a
+  single-threaded test drives frames and `server.poll()` while the client
+  waits. Production passes none and waits on the socket.
+- **J5 — Filter syntax.** **Ruled (2026-10-07): as P9.**
   - `--with <Type>` and `--where <Type>.<field>=<value>`, repeatable and
     ANDed;
   - comma-separated vectors;
   - exact equality after parse;
   - client-side and pipelined.
-- **J6 — Docs.**
+- **J6 — Docs.** **Ruled (2026-10-07): the Plan 0054 J6 split.**
   - **Normative sentences in the implementation PR** (the Plan 0054 J6
     split): AGENTS.md's module list and Remote's dependency rule, and
     `module_boundaries.md`'s Remote section and Runtime "Depends on".
   - **Narratives post-merge:** the blueprint, the registry's
     Implementation column, Spec 0055's Related Plan.
-- **J7 — The REPL.** The prompt goes to stderr; `exit`, `quit` or EOF
+- **J7 — The REPL.** **Ruled (2026-10-07): as proposed.** The prompt
+  goes to stderr, so stdout carries only output; `exit`, `quit` or EOF
   ends it; errors do not end the session.
-- **J8 — Android build targets.** Gradle `targets` gain
-  `atlantis_remote_client` and `atlantis_remote_server`, so both halves
-  compile on the NDK. Android attach itself remains out of scope.
-- **J9 — The two-process test's process control.**
+- **J8 — Android build targets.** **Ruled (2026-10-07): both Remote halves
+  build.** Gradle `targets` gain `atlantis_remote_client` and
+  `atlantis_remote_server`, so both halves compile on the NDK. Android
+  attach itself remains out of scope.
+- **J9 — The two-process test's process control.** **Ruled (2026-10-07): the
+  test-only Windows helper; no new shutdown verb.**
   - **Start:** a test-only Windows helper (`CreateProcessW` with pipes)
     starts and reads the processes.
   - **Close:** `WM_CLOSE` to the runtime's window closes it gracefully.
   - **Exit code:** a 0 exit is asserted, and a forced kill is a failure.
-  - **Alternative:** a `control.shutdown` method. That is a new verb, so it
-    is not chosen.
-- **J10 — Acceptance runs.**
-  - **Recommended:**
+  - **Rejected:** a `control.shutdown` method. That is a new verb.
+- **J10 — Acceptance runs.** **Ruled (2026-10-07): both runs, at M8.**
+  - **Ruled:**
     - the human north star on Bistro;
     - the Plan 0052 J9 runs repeated (Windows whitelist without
       `--listen`; the Android emulator default scene).
