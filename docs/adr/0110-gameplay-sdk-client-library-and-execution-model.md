@@ -1,10 +1,13 @@
 # ADR 0110: Gameplay SDK — Client Library, Layers and Execution Model
 
-- **Status:** Proposed
-- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Date:** 2026-10-08 (accepted 2026-10-09)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0057's own branch PR, [PR #234](https://github.com/slmao/Atlantis/pull/234))
-- **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`In Review`)
+- **Acceptance:** slmao, 2026-10-09 (review of this branch's own PR,
+  [PR #234](https://github.com/slmao/Atlantis/pull/234); accepted together with Spec 0057's Approval, its ten open
+  questions ruled as recommended after review rounds 1 and 2; ADR-0099 D4,
+  ADR-0105, ADR-0106, ADR-0103, ADR-0104 and ADR-0004 unchanged)
+- **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`Approved`)
 - **Related ADR(s):**
   - The SDK is a client of [ADR-0105](0105-runtime-connection-and-cli-client.md)'s
     `RuntimeConnection`; over Remote it attaches through
@@ -37,8 +40,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
     execution and time, without growing into a complete scripting or
     scheduling system.
 
-  D3–D5 below are this ADR's proposals for that scope, not maintainer
-  rulings.
+  D3–D5 below were proposed by the drafter and ruled with Spec 0057's
+  Approval (rulings Q5–Q7).
 - **What exists:**
   - `RuntimeConnection` (values only; InProcess and Remote);
   - `RuntimeControl` (pause, resume, step with exact frame data and
@@ -68,14 +71,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Decision
 
-1. **A new top-level module, Atlantis Gameplay SDK** (`src/gameplay_sdk/`,
+1. **A new top-level module, Atlantis Gameplay SDK** (Spec 0057 ruling Q1) (`src/gameplay_sdk/`,
    namespace `atlantis::gameplay`, target `Atlantis::GameplaySdk`).
    - It links **Atlantis Connection only**. It includes no Runtime, ECS,
      World component, Platform, RHI, Renderer, Vulkan, Remote or OS header.
      A boundary test checks this, as for the CLI and the editor.
    - Nothing in the engine depends on it. Runtime, Remote, the CLI and the
      editor do not link it.
-2. **Two layers, one implementation.**
+2. **Two layers, one implementation** (Spec 0057 rulings Q2, Q9).
    - **Reflective:** `gameplay::World` borrows a `RuntimeConnection` and
      addresses types and fields by name (Connection's `text` grammar) or
      id. It provides:
@@ -105,14 +108,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      and reports names it cannot resolve.
    - Values only: every result is a copy, and no SDK type names a World
      component C++ type, ECS handle or byte offset.
-3. **Game logic is client-driven.** The SDK is a library: logic runs in the
+3. **Game logic is client-driven** (Spec 0057 ruling Q6). The SDK is a library: logic runs in the
    client's own control flow.
    - Over Remote, that is the client's own process.
    - In process, it is wherever a host calls it between frames.
 
    There is no callback, behaviour, update phase or scheduler inside the
    Runtime, and no loading of client code into the Runtime process.
-4. **No clock; logic time is the client's own step.** The SDK defines no
+4. **No clock; logic time is the client's own step** (Spec 0057 ruling Q7). The SDK defines no
    clock, delta time, fixed step or time scale.
    - A client counts its own logic steps and computes state from them.
    - Ordering comes from the rule that commands apply at the next frame's
@@ -120,11 +123,11 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      application.
    - The Runtime's frame number (`status().frame`, `FrameReport::frame`)
      identifies which frame a report describes. It is not a logic clock.
-5. **No custom components.** The SDK covers the types the connection's
+5. **No custom components** (Spec 0057 ruling Q5). The SDK covers the types the connection's
    schema serves, which today is `worldSchema()`. Client-defined component
    types are a later Spec. The reflective layer and the generator take any
    descriptor table, so they carry over unchanged.
-6. **The real client is an out-of-process example**
+6. **The real client is an out-of-process example** (Spec 0057 ruling Q8)
    (`examples/gameplay_demo/` → `atlantis_gameplay_demo`).
    - It links the SDK and Atlantis Remote's client half
      (`atlantis_remote_client`), the second executable to do so after
@@ -176,7 +179,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   operations and transactions, and the typed layer would be a second
   implementation of each.
 - **Runtime-hosted behaviours** (update callbacks in `runFrame()`).
-  Proposed for rejection in v1: it is the start of a scheduler, a
+  Rejected for v1 (Spec 0057 ruling Q6): it is the start of a scheduler, a
   privileged position in the frame, and a frame-path change.
 - **Loading client code into the Runtime** (a plugin flag). Rejected here:
   it is the Package/Plugin work (0059).

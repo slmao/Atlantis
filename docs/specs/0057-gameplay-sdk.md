@@ -1,14 +1,17 @@
 # Spec: Gameplay SDK
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
-- **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). Review rounds 1 and 2 (2026-10-09)
-  corrections are folded into this text: Q4, Q7 and Q9, the
-  component-operation contracts (read isolation, enum defaults) and an
-  attribution. The maintainer set this Spec's goal before drafting
-  (2026-10-08, chat):
+- **Related Plan(s):** none yet. Plan 0057 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-09 (review of this Spec's own branch PR,
+  [PR #234](https://github.com/slmao/Atlantis/pull/234), after review rounds 1 and 2) — authorizes drafting Plan 0057;
+  Implementation itself still awaits its own, separate Joint Human Review of
+  Spec + Plan together. The review rounds' corrections (Q4, Q7 and Q9, the
+  component-operation contracts — read isolation, enum defaults — and an
+  attribution) are folded into this text. The maintainer set this Spec's
+  goal before drafting (2026-10-08, chat):
   - a reflective interface and a generated typed interface, both from the
     one schema;
   - `RuntimeConnection`'s Query, Command, Event and Transaction semantics,
@@ -20,9 +23,12 @@
     complete scripting or scheduling system.
 
   These are recorded under Goals / Non-Goals. Everything else, including
-  the answers to the three scope questions (Q5–Q7), is this draft's
-  recommendation, open to review.
-- **Related ADR(s)** (both `Proposed`, drafted alongside):
+  the answers to the three scope questions (Q5–Q7), was proposed by the
+  draft. The same review ruled all ten open questions, each as its
+  recommendation as revised in rounds 1 and 2 (see Risks & Open Questions
+  below).
+- **Related ADR(s)** (both `Accepted` 2026-10-09, alongside this Spec's own
+  Approval):
   - [ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md):
     the SDK's module, its two layers over `RuntimeConnection`, its optional
     query batch, and where game logic runs (Q1, Q2, Q5–Q9);
@@ -66,11 +72,10 @@ Transaction semantics. They add no verb and expose no Runtime or ECS
 storage. One real client, an example executable attached to
 `atlantis_runtime --listen`, runs the full loop.
 
-This draft recommends (Q5–Q7, open to review) that the SDK be a **client
-library**: game logic runs in the client's own control flow, between the
-Runtime's frames. v1 would have no callbacks inside the Runtime, no
-scheduler, no clock (a client counts its own logic steps), and no custom
-components.
+As ruled (Q5–Q7), the SDK is a **client library**: game logic runs in the
+client's own control flow, between the Runtime's frames. v1 has no
+callbacks inside the Runtime, no scheduler, no clock (a client counts its
+own logic steps), and no custom components.
 
 **North star:** a client process holding no Runtime C++ object connects to
 the default scene and checks its generated bindings against the Runtime's
@@ -207,7 +212,7 @@ Maintainer-set (2026-10-08):
 - **A complete scheduling system.** No systems, job graph or execution
   ordering. ADR-0004 unchanged.
 
-Proposed by this draft (open to review):
+Ruled with this Spec's Approval (proposed by the draft):
 
 - **Runtime-hosted game logic** (Q6): no callbacks, behaviours or update
   phases inside the Runtime's frame.
@@ -356,7 +361,7 @@ Proposed by this draft (open to review):
 
 ## Proposed Design
 
-Under the recommendations below:
+Under the rulings below:
 
 ```
 worldSchema()  (World, hand-authored, ADR-0099)
@@ -412,7 +417,7 @@ Without the generated header, the same operations work by name:
 
 ## Architectural Impact
 
-Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
+Yes. Recorded in two ADRs drafted alongside (both `Accepted` 2026-10-09):
 
 - **[ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md)**
   covers:
@@ -436,7 +441,7 @@ Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
 
   It leaves ADR-0099 D4 in force: the descriptor tables are not generated.
 
-**Expected code impact** under the recommendations:
+**Expected code impact** under the rulings:
 
 - **New:**
   - `src/gameplay_sdk/` (library, committed generated header) and
@@ -461,8 +466,8 @@ The questions below compare their options. Rejected across them:
 
 - **A Runtime-embedded gameplay layer** (behaviours with per-frame update
   callbacks inside `runFrame()`): it is the start of a scheduling system,
-  and it gives client code a privileged position in the frame. This draft
-  recommends not including it in v1 (Q6, open to review).
+  and it gives client code a privileged position in the frame. It is not
+  in v1 (ruling Q6, as the draft proposed).
 - **Generating the descriptor tables from annotated C++** (macros or a
   parser): it reverses ADR-0099 D4 and is a reflection system the
   repository rejected. The SDK generates *client* code *from* the tables.
@@ -587,11 +592,15 @@ Risks:
   and review rules are set once here (ADR-0111) and reused by later
   bindings (C#, Python).
 
-Open questions — each lists options and a recommendation. Q5–Q7 are the
-maintainer's three scope questions; their answers are recommendations, not
-rulings.
+Open questions — all ten ruled by Human Review (slmao, 2026-10-09, review
+of [PR #234](https://github.com/slmao/Atlantis/pull/234) after rounds 1 and 2), each as its recommendation. Q5–Q7 were the
+maintainer's three scope questions, answered by the draft's
+recommendations. The options are kept as the record of what was weighed.
 
 - **Q1 — Module placement** (ADR-0110).
+  - **Ruled (2026-10-09): M-a, Atlantis Gameplay SDK** (`src/gameplay_sdk/`,
+    `atlantis::gameplay`, `Atlantis::GameplaySdk`; links Atlantis Connection
+    only, boundary-scanned; ADR-0110 D1), as recommended.
   - **(M-a) A new module, Atlantis Gameplay SDK** (`src/gameplay_sdk/`,
     namespace `atlantis::gameplay`, target `Atlantis::GameplaySdk`). It
     links Atlantis Connection only and is boundary-scanned like the CLI and
@@ -602,9 +611,15 @@ rulings.
     Remote and Runtime link.
   - **(M-c) A header-only add-on to the CLI or editor.** It ties gameplay
     clients to a tool's library.
-  - **Recommendation: M-a.**
+  - **Why M-a:** the SDK stays a client library, like Atlantis CLI and
+    the editor.
 
 - **Q2 — The reflective layer** (ADR-0110).
+  - **Ruled (2026-10-09): R-a** (a reflective layer over
+    `RuntimeConnection&`; names through Connection's `text` grammar;
+    component operations, the component filter, `Transaction`, RAII
+    `Subscription`, failures per ticket; no boundary rule duplicated; the
+    typed layer built on it; ADR-0110 D2), as recommended.
   - **(R-a) A layer over `RuntimeConnection&`** (borrowed):
     - `gameplay::World` resolves names through Connection's `text` grammar
       (one path syntax for CLI, editor and SDK);
@@ -621,10 +636,13 @@ rulings.
     smaller. But names, components and transactions would then be rebuilt
     by every client, and the typed layer would have its own second
     implementation of each operation.
-  - **Recommendation: R-a.** The typed layer is implemented on it, so the
+  - **Why R-a:** the typed layer is implemented on it, so the
     two cannot drift (R4).
 
 - **Q3 — How the typed interface is generated** (ADR-0111).
+  - **Ruled (2026-10-09): G-a** (the host generator
+    `atlantis_sdk_codegen`, committed output, a staleness test; ADR-0111 D1),
+    as recommended.
   - **(G-a) A host generator plus a committed output plus a staleness
     test.**
     - `atlantis_sdk_codegen` (`src/tools/sdk_codegen/`, host-only like the
@@ -644,10 +662,20 @@ rulings.
       names), and error messages would be template diagnostics.
   - **(G-d) Hand-written typed wrappers.** They drift silently from the
     schema, and the maintainer asked for a generated interface.
-  - **Recommendation: G-a.** Generated code is reviewed like source. It is
+  - **Why G-a:** generated code is reviewed like source. It is
     proven current by test, and it builds everywhere the SDK does.
 
 - **Q4 — The typed shape and compatibility** (ADR-0111).
+  - **Ruled (2026-10-09): the shape below with S-a**, as recommended after
+    review rounds 1 and 2 (ADR-0111 D2–D4):
+    - value structs, `enum class` with exact values, path-mirroring
+      handles, read-only handles;
+    - per-type lazy compatibility, recursive over referenced types; a
+      transaction containing an incompatible type is not submitted;
+    - R10's contracts: a component read is not a snapshot and is isolated
+      only while the Runtime stays paused with no `step`/`resume` from any
+      client and no pending step; `add` only for all-`Editable` types;
+      value-initialization to zeros and enum value 0.
   - **Values:**
     - one value struct per schema struct (`world::Light`, with nested
       `world::Camera::fog` of type `world::CameraFog`);
@@ -682,9 +710,12 @@ rulings.
   - **Alternative (S-b):** check every type at construction and refuse the
     whole connection. One unrelated renamed type would then block a client
     that never uses it.
-  - **Recommendation:** as above, per-type lazily (S-a).
+  - **Why S-a:** an incompatible type blocks only the operations that use
+    it.
 
-- **Q5 — Custom components** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
+- **Q5 — Custom components** (maintainer-posed question, answered by the draft's recommendation; ADR-0110).
+  - **Ruled (2026-10-09): C-a**, custom components out of v1 (ADR-0110
+    D5), as recommended.
   - **(C-a) Out of scope.** The SDK covers `worldSchema()`'s types only.
     The generator and the reflective layer take any descriptor table, so a
     later Spec that adds component tables reuses both unchanged.
@@ -701,9 +732,12 @@ rulings.
   - **(C-c) Client-side "components":** SDK-side data keyed by
     `EntityGuid`. It is not in the World, no other client sees it, and it
     is just client state under a misleading name.
-  - **Recommendation: C-a**, with C-b named as the follow-up it would be.
+  - **Why C-a:** C-b is a Spec with several ADRs of its own; it is named as
+    the follow-up.
 
-- **Q6 — Game-logic execution** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
+- **Q6 — Game-logic execution** (maintainer-posed question, answered by the draft's recommendation; ADR-0110).
+  - **Ruled (2026-10-09): X-a**, client-driven logic: no Runtime-hosted
+    callbacks, scheduler or plugin loading (ADR-0110 D3), as recommended.
   - **(X-a) Client-driven.** The SDK is a library; logic runs in the
     client's own control flow:
     - over Remote, in its own process, each call answered at a frame
@@ -716,10 +750,13 @@ rulings.
     `runFrame()`. This is a scheduler, and it changes the frame path.
   - **(X-c) Loading client code into the Runtime** (a DLL/plugin flag): the
     Package/Plugin work (0059).
-  - **Recommendation: X-a.** The example's logic is a plain loop in its own
+  - **Why X-a:** no Runtime change and no scheduler. The example's logic is a plain loop in its own
     process.
 
-- **Q7 — The time model** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
+- **Q7 — The time model** (maintainer-posed question, answered by the draft's recommendation; ADR-0110).
+  - **Ruled (2026-10-09): T-a**, no clock: the client's own logic step,
+    with the Runtime's frame number only identifying frames (ADR-0110 D4),
+    as recommended after review round 1.
   - **(T-a) No clock; the client's own logic step.** The SDK defines no
     clock, no delta time and no fixed timestep.
     - **Logic time:** a client advances logic in its own steps `k` and
@@ -741,9 +778,13 @@ rulings.
     Runtime concept and a `RuntimeControl` change.
   - **(T-c) A full time model** (simulation time, fixed step, time scale,
     pause semantics for logic). It belongs with a scheduler.
-  - **Recommendation: T-a.**
+  - **Why T-a:** the Runtime has no time to expose, and logic steps are
+    reproducible where frame numbers are not.
 
 - **Q8 — The example client and the loop** (ADR-0110).
+  - **Ruled (2026-10-09): E-a** (`atlantis_gameplay_demo` over Atlantis
+    Remote's client half, plus the in-process GPU test and the two-process
+    ctest; ADR-0110 D6), as recommended.
   - **(E-a) An out-of-process example**, `examples/gameplay_demo/` →
     `atlantis_gameplay_demo`:
     - it links the SDK and `atlantis_remote_client`, attaches to
@@ -759,9 +800,14 @@ rulings.
     a Runtime change for a demo, and it is X-c in miniature.
   - **(E-c) Tests only.** That is not the "real client" the maintainer asked
     for.
-  - **Recommendation: E-a.**
+  - **Why E-a:** a real client in its own process, with no Runtime change.
 
 - **Q9 — Query batching** (ADR-0110).
+  - **Ruled (2026-10-09): B-c**, an SDK-owned, transport-neutral
+    `gameplay::QueryBatch` for component-field reads and the component
+    filter; the default asks one at a time; the example adapts
+    `RemoteSession`; no Connection or protocol change (ADR-0110 D2), as
+    recommended after review round 1.
   - **(B-a) None in v1.** Component reads cost N calls (about 33 ms each on
     the default scene), and the component filter costs one call per entity
     (5969 on Bistro).
@@ -787,13 +833,16 @@ rulings.
     changes Connection for a client-side seam. Two identical small
     interfaces in two client libraries can be unified later if a third
     client needs one.
-  - **Recommendation: B-c.**
+  - **Why B-c:** batching without changing Connection or the protocol,
+    after an existing precedent.
 
 - **Q10 — Android.**
+  - **Ruled (2026-10-09): A-a** (`assembleDebug` builds the SDK library;
+    no Android client), as recommended.
   - **(A-a)** `assembleDebug` builds the SDK library (Gradle `targets`), as
     Spec 0056 J11 did for the editor. No Android client runs.
   - **(A-b)** Windows only.
-  - **Recommendation: A-a.** The library is portable C++ over Connection;
+  - **Why A-a:** the library is portable C++ over Connection;
     building it keeps it honest.
 
 ## Out of Scope / Future Work

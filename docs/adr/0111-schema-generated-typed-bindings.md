@@ -1,10 +1,13 @@
 # ADR 0111: Schema-Generated Typed Bindings
 
-- **Status:** Proposed
-- **Date:** 2026-10-08
+- **Status:** Accepted
+- **Date:** 2026-10-08 (accepted 2026-10-09)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0057's own branch PR, [PR #234](https://github.com/slmao/Atlantis/pull/234))
-- **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`In Review`)
+- **Acceptance:** slmao, 2026-10-09 (review of this branch's own PR,
+  [PR #234](https://github.com/slmao/Atlantis/pull/234); accepted together with Spec 0057's Approval, its ten open
+  questions ruled as recommended after review rounds 1 and 2; ADR-0099 D4,
+  ADR-0105, ADR-0106, ADR-0103, ADR-0104 and ADR-0004 unchanged)
+- **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`Approved`)
 - **Related ADR(s):**
   - The bindings are generated **from**
     [ADR-0099](0099-engine-schema-core-and-descriptor-vocabulary.md)'s
@@ -47,7 +50,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Decision
 
-1. **A host generator writes the bindings; the output is committed.**
+1. **A host generator writes the bindings; the output is committed** (Spec 0057 ruling Q3).
    - `atlantis_sdk_codegen` (`src/tools/sdk_codegen/`, host-only, gated
      like the other tools) links World for `worldSchema()`. It writes one
      C++ header:
@@ -62,7 +65,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      regenerated or a hand edit.
    - The SDK library has no build-time generation step, so it builds on
      Android unchanged.
-2. **The generated shape.**
+2. **The generated shape** (Spec 0057 ruling Q4).
    - **Values:**
      - one plain value struct per schema struct, nested structs as
        members of their generated type;
@@ -121,7 +124,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        boundary refuses the write (`EnumValueOutOfRange`) and its
        transaction aborts. A bare add gives World's defaults.
    - **Typed event decoding** matches on the binding's ids.
-4. **Compatibility is checked per type, recursively, on first use.**
+4. **Compatibility is checked per type, recursively, on first use** (Spec 0057 ruling Q4).
    - Before the first typed operation that uses a type, `gameplay::World`
      compares that type's binding with the connection's `schema()`:
      - `TypeId`, kind and `schemaVersion`;
