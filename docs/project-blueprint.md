@@ -810,7 +810,21 @@ milestone being listed does not authorize starting it — see Section 1.
     speaks `--json` (with `--diagnostics=json` and exit codes) and which runs
     the completion definition's eight steps end to end — discover, query,
     find, modify, step, capture, read diagnostics, verify — against a
-    Runtime that keeps rendering.
+    Runtime that keeps rendering;
+  - since [Spec 0056](specs/0056-minimal-editor.md) (merged
+    [PR #232](https://github.com/slmao/Atlantis/pull/232)), the Tooling
+    Foundation's second step: a Minimal Editor (Atlantis Editor) — a flat
+    Hierarchy, an Inspector generated from the schema's descriptors, a
+    Viewport showing the Runtime's own rendering and a Transform Gizmo
+    writing `WorldMatrix` through transactions — that is one more ordinary
+    client of `RuntimeConnection` and `RuntimeControl`. It is built on Dear
+    ImGui v1.92.9b, core only
+    ([ADR-0107](adr/0107-editor-ui-library-selection.md)); it is hosted by
+    `atlantis_runtime --editor`, which renders the scene into a sampleable
+    offscreen Viewport target and draws the editor's UI as Renderer's overlay
+    pass ([ADR-0108](adr/0108-editor-host-and-viewport-composition.md)); and
+    its input comes from Platform's new input events
+    ([ADR-0109](adr/0109-platform-input-events.md)).
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -822,8 +836,11 @@ milestone being listed does not authorize starting it — see Section 1.
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
     (named only in Spec 0053);
-  - a Minimal Editor (0056), and the rest of Spec 0055's named-only list —
+  - a Gameplay SDK (0057), and the rest of Spec 0056's named-only list —
     named only, not designed or scaffolded;
+  - the editor's tree Hierarchy, picking, free camera, Custom Inspectors,
+    undo/redo, saving and Android hosting (Spec 0056 Non-Goals / Out of
+    Scope);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 
