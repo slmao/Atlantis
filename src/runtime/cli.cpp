@@ -10,7 +10,8 @@ namespace {
 // (Proposed Design) -- both --help's own message and every error
 // message's own trailing usage block reuse this one constant.
 constexpr std::string_view kUsageText =
-    "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]]\n"
+    "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]] "
+    "[--editor]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "\n"
@@ -42,6 +43,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int execCount = 0;
   int listenCount = 0;
   int sessionFileCount = 0;
+  int editorCount = 0;
   std::string_view requestedSceneName;
   std::string_view execScript;
   std::string_view listenPort;
@@ -65,6 +67,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++sessionFileCount > 1) return makeError("--session-file supplied more than once");
       if (i + 1 >= argc) return makeError("--session-file requires a value");
       sessionFile = argv[++i];
+    } else if (arg == "--editor") {
+      if (++editorCount > 1) return makeError("--editor supplied more than once");
     } else if (arg == "--help") {
       if (++helpCount > 1) return makeError("--help supplied more than once");
     } else if (arg == "--list-scenes") {
@@ -93,6 +97,12 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
     return makeError("--listen runs a scene; it may not be combined with --help or --list-scenes");
   }
   if (sessionFileCount > 0 && listenCount == 0) return makeError("--session-file requires --listen");
+  // Plan 0056 P10 (J9): the editor and an --exec script would both drive the
+  // frame.
+  if (editorCount > 0 && (helpCount > 0 || listScenesCount > 0)) {
+    return makeError("--editor runs a scene; it may not be combined with --help or --list-scenes");
+  }
+  if (editorCount > 0 && execCount > 0) return makeError("--editor and --exec may not be combined");
   std::optional<std::uint16_t> port;
   if (listenCount > 0) {
     // Decimal digits only, 0-65535 (0: an ephemeral port).
@@ -150,6 +160,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   if (execCount > 0) result.execScript = std::string(execScript);
   result.listenPort = port;
   if (sessionFileCount > 0) result.sessionFile = std::string(sessionFile);
+  result.editor = editorCount > 0;
   return result;
 }
 

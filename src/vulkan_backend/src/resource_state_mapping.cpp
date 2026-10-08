@@ -164,6 +164,19 @@ using atlantis::rhi::ResourceState;
 // destination layout/access/stage mirror colorAttachmentOutputToShaderRead()'s
 // own destination exactly (the same "about to be sampled in the
 // fragment shader" ending point).
+// Plan 0056 M6: a sampled image read back after its last sampling -- the
+// Viewport target's test-only readback (tests/runtime/runtime_smoke_gpu_tests.cpp).
+[[nodiscard]] ImageBarrierPlan shaderReadToTransferSource() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_SHADER_READ_BIT,
+      .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+      .srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+      .dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
+  };
+}
+
 [[nodiscard]] ImageBarrierPlan depthAttachmentReadWriteToShaderRead() {
   return ImageBarrierPlan{
       .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
@@ -212,6 +225,9 @@ ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
   }
   if (before == ResourceState::DepthAttachmentReadWrite && after == ResourceState::ShaderRead) {
     return depthAttachmentReadWriteToShaderRead();
+  }
+  if (before == ResourceState::ShaderRead && after == ResourceState::TransferSource) {
+    return shaderReadToTransferSource();
   }
 
   ATLANTIS_CHECK_MSG(false, "planTransition() called with a (before, after) pair this round does not define");

@@ -259,6 +259,19 @@ struct RecordedPushConstant {
   std::size_t sizeBytes;
 };
 
+// Plan 0056 P4: the sampled-offscreen-target bindTexture() overload and the
+// ranged drawIndexed().
+struct RecordedRenderTargetBindTexture {
+  std::uint32_t binding;
+  const atlantis::rhi::RenderTarget* target;
+  const atlantis::rhi::Sampler* sampler;
+};
+struct RecordedRangedDraw {
+  std::uint32_t indexCount;
+  std::uint32_t firstIndex;
+  std::int32_t vertexOffset;
+};
+
 // Spec 0007 / Plan 0007 Section 15: extended to record the new attachment-
 // scoping and draw-call methods (beginRendering/endRendering/bindPipeline/
 // bindVertexBuffer/bindIndexBuffer/bindUniformBuffer/pushConstant/
@@ -377,6 +390,23 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::DrawIndexed);
   }
 
+  // Plan 0056 P4.
+  void bindTexture(std::uint32_t binding, const atlantis::rhi::RenderTarget& sampledTarget,
+                   const atlantis::rhi::Sampler& sampler) override {
+    boundRenderTargetTextures.push_back(RecordedRenderTargetBindTexture{binding, &sampledTarget, &sampler});
+    events.push_back(EventKind::BindRenderTargetTexture);
+  }
+
+  void setScissor(atlantis::rhi::Rect2D rect) override {
+    scissors.push_back(rect);
+    events.push_back(EventKind::SetScissor);
+  }
+
+  void drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) override {
+    rangedDraws.push_back(RecordedRangedDraw{indexCount, firstIndex, vertexOffset});
+    events.push_back(EventKind::DrawIndexedRange);
+  }
+
   // Spec 0010: records source/destination identity only, exact mirror of
   // clearColor()'s own recording shape -- no real GPU resource, no copy
   // actually performed.
@@ -422,6 +452,9 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     DrawIndexed,
     CopyToBuffer,
     CopyBufferToTexture,
+    BindRenderTargetTexture,  // Plan 0056 P4
+    SetScissor,               // Plan 0056 P4
+    DrawIndexedRange,         // Plan 0056 P4
   };
 
   std::vector<RecordedTransition> transitions;
@@ -446,6 +479,9 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<RecordedCopyToBuffer> copiesToBuffer;
   std::vector<RecordedCopyBufferToTexture> copiesBufferToTexture;
   std::vector<std::vector<atlantis::rhi::SampledTextureUploadRegion>> copyBufferToTextureRegions;
+  std::vector<RecordedRenderTargetBindTexture> boundRenderTargetTextures;  // Plan 0056 P4
+  std::vector<atlantis::rhi::Rect2D> scissors;                             // Plan 0056 P4
+  std::vector<RecordedRangedDraw> rangedDraws;                             // Plan 0056 P4
   std::vector<EventKind> events;  // interleaved order across all recorded calls
 };
 

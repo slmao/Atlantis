@@ -3,6 +3,8 @@
 #include <atlantis/cli/invocation.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/remote/remote_client.h>
+#include <atlantis/render_graph/execution.h>
+#include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/remote/remote_server.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
@@ -34,10 +36,12 @@
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "png_codec.h"
+#include "../../src/runtime/editor_attachment.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -59,6 +63,7 @@ using atlantis::runtime::createRuntimeApplication;
 using atlantis::runtime::FrameLightingData;
 using atlantis::runtime::RuntimeApplication;
 using atlantis::runtime::RuntimeExitReason;
+using atlantis::runtime::RuntimeSmokeTestAccess;  // Plan 0056 M6/M7
 using atlantis::world::BakedScene;
 using atlantis::world::Light;
 using atlantis::world::LightKind;
@@ -157,6 +162,55 @@ struct RuntimeSmokeTestAccess {
     FrameLightingData lighting{};
     std::memcpy(&lighting, cameraBytes + kLightingByteOffset, sizeof(FrameLightingData));
     return lighting;
+  }
+
+  // Plan 0056 M6: the overlay frame's targets, and a test-only readback of
+  // the Viewport target (left in ShaderRead by the frame) between frames.
+  [[nodiscard]] static std::optional<atlantis::rhi::Extent2D> lastSeenExtent(const RuntimeApplication& app) {
+    return app.lastSeenExtent_;
+  }
+  [[nodiscard]] static atlantis::rhi::Extent2D depthExtent(const RuntimeApplication& app) {
+    return app.depthTexture_->extent();
+  }
+  [[nodiscard]] static atlantis::rhi::Extent2D viewportTargetExtent(const RuntimeApplication& app) {
+    return app.overlayViewportTarget_->extent();
+  }
+  struct Readback {
+    atlantis::rhi::Extent2D extent;
+    atlantis::rhi::Format format = atlantis::rhi::Format::Unknown;
+    std::vector<std::uint8_t> pixels;
+  };
+  [[nodiscard]] static Readback readViewport(RuntimeApplication& app) {
+    using atlantis::rhi::ResourceState;
+    REQUIRE(app.device_->waitIdle().isOk());
+    atlantis::rhi::RenderTarget& target = *app.overlayViewportTarget_;
+    Readback out{target.extent(), target.format(), {}};
+    const std::size_t bytes = static_cast<std::size_t>(out.extent.width) * out.extent.height * 4;
+    auto buffer = app.device_->createBuffer({.purpose = atlantis::rhi::BufferPurpose::Readback, .sizeBytes = bytes});
+    auto commandList = app.device_->createCommandList();
+    REQUIRE(buffer.isOk());
+    REQUIRE(commandList.isOk());
+    atlantis::render_graph::RenderGraphBuilder builder;
+    const auto resource = builder.declareResource("viewport-readback");
+    const auto pass = builder.declarePass("viewport-readback");
+    builder.writes(pass, resource, ResourceState::TransferSource);
+    atlantis::rhi::Buffer& readback = *buffer.value();
+    builder.setExecute(pass, [&target, &readback](atlantis::rhi::CommandList& cmd) {
+      cmd.copyRenderTargetToBuffer(target, readback);
+    });
+    auto compiled = builder.compile();
+    REQUIRE(compiled.isOk());
+    atlantis::render_graph::execute(compiled.value(),
+                                    {{.resource = compiled.value().resourceAt(0),
+                                      .target = &target,
+                                      .incomingState = ResourceState::ShaderRead,
+                                      .finalState = std::nullopt}},
+                                    *commandList.value());
+    REQUIRE(app.device_->submit(std::move(commandList.value()), target).isOk());
+    REQUIRE(app.device_->waitIdle().isOk());
+    const auto* pixels = static_cast<const std::uint8_t*>(readback.mappedData());
+    out.pixels.assign(pixels, pixels + bytes);
+    return out;
   }
 
   // Plan 0055 M3: the camera view and projection the frame wrote, the
@@ -986,6 +1040,281 @@ TEST_CASE("Runtime: the north star in process -- Bistro's point light 6b63b12c, 
   // shows the next frame's image change on Bistro.
   runNorthStar(app, "Point", "425c3b17-dcac-4148-831c-22a454829357", 4.5f, 9.0f,
                std::array<float, 3>{-7.966f, 3.42f, 9.084f});
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+#endif
+}
+
+// --- Plan 0056 M6 (Spec 0056 R4; P6, P7, ADR-0108 D3/D4): the frame with an
+// overlay attached, under fatal Validation Layers. ------------------------------
+
+namespace {
+
+[[nodiscard]] atlantis::runtime::OverlayShaderPaths overlayShaders() {
+  static const std::string vertex = std::string(ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR) + "/editor_ui.vert.spv";
+  static const std::string fragment = std::string(ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR) + "/editor_ui.frag.spv";
+  return {vertex, fragment};
+}
+
+// A FrameOverlay with a settable Viewport size, an empty UI and a 1x1 atlas.
+class FakeOverlay final : public atlantis::runtime::FrameOverlay {
+ public:
+  void onPlatformEvent(const atlantis::platform::PlatformEvent&) override { ++events; }
+  [[nodiscard]] atlantis::rhi::Extent2D viewportExtent() const override { return extent; }
+  [[nodiscard]] const atlantis::renderer::UiDrawList& drawList() const override { return list; }
+  [[nodiscard]] atlantis::runtime::FontAtlasPixels fontAtlas() const override { return {1, 1, atlas}; }
+
+  atlantis::rhi::Extent2D extent{320, 200};
+  atlantis::renderer::UiDrawList list;
+  std::array<std::uint8_t, 4> atlas{255, 255, 255, 255};
+  int events = 0;
+};
+
+}  // namespace
+
+TEST_CASE("Runtime with an editor attached: the Viewport target holds exactly what a capture of the frame shows",
+          "[runtime][gpu][editor]") {
+  namespace fs = std::filesystem;
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  atlantis::runtime::EditorAttachment editor(app, control);
+  REQUIRE(app.attachOverlay(editor, overlayShaders()).isOk());
+  CHECK(app.attachOverlay(editor, overlayShaders()).error() == atlantis::runtime::OverlayAttachError::AlreadyAttached);
+  for (int i = 0; i < 4; ++i) {
+    app.runFrame();
+    editor.update();
+  }
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  // The scene is rendered at the editor's Viewport panel size.
+  const auto panel = editor.editor().viewportSize();
+  REQUIRE(panel.width > 0);
+  const atlantis::rhi::Extent2D viewportExtent = RuntimeSmokeTestAccess::viewportTargetExtent(app);
+  CHECK(viewportExtent == atlantis::rhi::Extent2D{panel.width, panel.height});
+  CHECK(RuntimeSmokeTestAccess::lastSeenExtent(app) == viewportExtent);
+  CHECK(RuntimeSmokeTestAccess::depthExtent(app) == viewportExtent);
+  CHECK_FALSE(editor.drawList().commands.empty());
+
+  // The Viewport target, read back, equals a capture of the same world at the
+  // same size (the Spec 0055 offscreen path), byte for byte.
+  const auto viewport = RuntimeSmokeTestAccess::readViewport(app);
+  const fs::path dir = fs::temp_directory_path() / "atlantis_editor_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const auto captured = app.captureImage((dir / "viewport.png").string());
+  REQUIRE(captured.isOk());
+  CHECK(captured.value().width == viewport.extent.width);
+  CHECK(captured.value().height == viewport.extent.height);
+  const auto decoded = atlantis::image_regression::decodePng(dir / "viewport.png");
+  REQUIRE(decoded.isOk());
+  const bool bgra = viewport.format == atlantis::rhi::Format::Bgra8Unorm ||
+                    viewport.format == atlantis::rhi::Format::Bgra8Srgb;
+  std::size_t mismatches = 0;
+  const auto& png = decoded.value().pixels.rgba8;
+  REQUIRE(png.size() == viewport.pixels.size());
+  for (std::size_t i = 0; i < viewport.pixels.size(); i += 4) {
+    const std::uint8_t r = viewport.pixels[i + (bgra ? 2 : 0)];
+    const std::uint8_t g = viewport.pixels[i + 1];
+    const std::uint8_t b = viewport.pixels[i + (bgra ? 0 : 2)];
+    if (png[i] != r || png[i + 1] != g || png[i + 2] != b) ++mismatches;
+  }
+  CHECK(mismatches == 0);
+
+  // The frame loop goes on; detaching restores the plain frame at the window's extent.
+  app.runFrame();
+  editor.update();
+  app.detachOverlay();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK_FALSE(RuntimeSmokeTestAccess::lastSeenExtent(app) == viewportExtent);
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Runtime with an overlay attached: resizing the Viewport recreates the scene's targets at its size",
+          "[runtime][gpu][editor]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  FakeOverlay overlay;
+  REQUIRE(app.attachOverlay(overlay, overlayShaders()).isOk());
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(overlay.events > 0);  // the pump's events reach the overlay
+  CHECK(RuntimeSmokeTestAccess::viewportTargetExtent(app) == atlantis::rhi::Extent2D{320, 200});
+  CHECK(RuntimeSmokeTestAccess::depthExtent(app) == atlantis::rhi::Extent2D{320, 200});
+  overlay.extent = {200, 120};
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(RuntimeSmokeTestAccess::viewportTargetExtent(app) == atlantis::rhi::Extent2D{200, 120});
+  CHECK(RuntimeSmokeTestAccess::depthExtent(app) == atlantis::rhi::Extent2D{200, 120});
+  CHECK(RuntimeSmokeTestAccess::lastSeenExtent(app) == atlantis::rhi::Extent2D{200, 120});
+  overlay.extent = {0, 0};  // a collapsed panel renders at 1x1
+  app.runFrame();
+  CHECK(RuntimeSmokeTestAccess::viewportTargetExtent(app) == atlantis::rhi::Extent2D{1, 1});
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);  // shutdown() detaches
+}
+
+// --- Plan 0056 M7 (Spec 0056 north star, ruling Q8): the editor drives the
+// World through its own model actions -- the calls its view makes on a click
+// (M5 covers the clicks) -- with the editor attached to the frame, under fatal
+// Validation Layers. -------------------------------------------------------------
+
+namespace {
+
+// An application with the editor attached and the control host the
+// executable creates for it; frame() is atlantis_runtime's loop body.
+struct EditorHost {
+  explicit EditorHost(RuntimeApplication& application)
+      : app(application),
+        control(atlantis::runtime::RuntimeControlHost::forApplication(application), [] {
+          atlantis::runtime::RuntimeControlHost::Options options;
+          options.recordDiagnostics = false;
+          return options;
+        }()),
+        editor(application, control) {
+    REQUIRE(app.attachOverlay(editor, overlayShaders()).isOk());
+  }
+  ~EditorHost() { app.detachOverlay(); }
+  EditorHost(const EditorHost&) = delete;
+  EditorHost& operator=(const EditorHost&) = delete;
+
+  void frame() {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    editor.update();
+    REQUIRE(app.shouldContinue());
+  }
+
+  RuntimeApplication& app;
+  atlantis::runtime::RuntimeControlHost control;
+  atlantis::runtime::EditorAttachment editor;
+};
+
+[[nodiscard]] std::size_t inspectorField(atlantis::editor::Editor& editor, std::string_view path) {
+  const auto& fields = editor.inspector().fields();
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (fields[i].path == path) return i;
+  }
+  FAIL("no Inspector field " << path);
+  return 0;
+}
+
+// The light's intensity in the frame data just drawn: the directional light,
+// or the point light at `pointPosition`.
+[[nodiscard]] float frameIntensity(RuntimeApplication& app, const std::optional<std::array<float, 3>>& pointPosition) {
+  const auto data = app.captureFrameData();
+  REQUIRE(data.isOk());
+  if (!pointPosition) {
+    REQUIRE(data.value().directionalLights.size() == 1);
+    return data.value().directionalLights[0].intensity;
+  }
+  for (const auto& light : data.value().pointLights) {
+    if (std::fabs(light.position[0] - (*pointPosition)[0]) < 1e-3f &&
+        std::fabs(light.position[1] - (*pointPosition)[1]) < 1e-3f &&
+        std::fabs(light.position[2] - (*pointPosition)[2]) < 1e-3f) {
+      return light.intensity;
+    }
+  }
+  FAIL("no point light at the expected position");
+  return 0.0f;
+}
+
+// Select in the Hierarchy -> the generated Inspector shows Light.intensity =
+// `from` -> commit `to` -> the next frame's frame data has `to` exactly and the
+// Viewport image changed; then pause holds a further edit across three frames
+// and one step applies it.
+void runEditorNorthStar(EditorHost& host, std::string_view guidText, float from, float to,
+                        const std::optional<std::array<float, 3>>& pointPosition, bool imageChanges = true) {
+  atlantis::editor::Editor& editor = host.editor.editor();
+  const auto guid = atlantis::asset_system::parseEntityGuid(guidText).value();
+  editor.hierarchy().select(guid);
+  host.frame();  // the editor's frame takes up the selection
+  REQUIRE(editor.inspector().subject() == guid);
+  const std::size_t intensity = inspectorField(editor, "Light.intensity");
+  REQUIRE(editor.inspector().fields()[intensity].value == atlantis::world::access::PropertyValue{from});
+  CHECK(editor.inspector().fields()[intensity].editable);
+  CHECK(frameIntensity(host.app, pointPosition) == from);
+  const auto before = RuntimeSmokeTestAccess::readViewport(host.app);
+
+  (void)editor.inspector().commit(intensity, to);  // the field's edit, completed
+  host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == to);  // exactly
+  CHECK(editor.inspector().fields()[intensity].value == atlantis::world::access::PropertyValue{to});
+  REQUIRE(editor.inspector().outcome(intensity).has_value());
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Applied);
+  const auto after = RuntimeSmokeTestAccess::readViewport(host.app);
+  REQUIRE(after.extent == before.extent);
+  const bool changed = after.pixels != before.pixels;  // a bool: Catch must not print the pixels
+  if (imageChanges) {
+    CHECK(changed);
+  } else {
+    WARN("Viewport changed: " << (changed ? "yes" : "no (the light is outside the camera's view)"));
+  }
+
+  // Pause (the toolbar's Pause calls RuntimeControl::pause()): a further edit
+  // is held across three frames; Step applies it.
+  host.control.pause();
+  (void)editor.inspector().commit(intensity, from);
+  for (int i = 0; i < 3; ++i) host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == to);
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Pending);
+  host.control.step(atlantis::connection::StepRequest{1, std::nullopt}, [](auto) {});
+  host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == from);
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Applied);
+  host.control.resume();
+  host.frame();
+}
+
+}  // namespace
+
+TEST_CASE("Editor north star: the default scene's Directional light, 3 to 6, through the editor",
+          "[runtime][gpu][editor][north_star]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    for (int i = 0; i < 3; ++i) host.frame();
+    runEditorNorthStar(host, "0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea", 3.0f, 6.0f, std::nullopt);
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Editor north star: Bistro's point light 6b63b12c 12 to 24, and the cafe light's image change",
+          "[runtime][gpu][editor][north_star][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    for (int i = 0; i < 3; ++i) host.frame();
+    // 6b63b12c lies outside the camera's view (the Spec 0055 Correction
+    // 2026-10-08): exact in frame data; the in-view cafe light 425c3b17
+    // shows the Viewport's image change.
+    runEditorNorthStar(host, "6b63b12c-9cde-4ae2-8391-c0b4cefadb7d", 12.0f, 24.0f,
+                       std::array<float, 3>{-39.615f, 3.255f, -5.032f}, /*imageChanges=*/false);
+    runEditorNorthStar(host, "425c3b17-dcac-4148-831c-22a454829357", 4.5f, 9.0f,
+                       std::array<float, 3>{-7.966f, 3.42f, 9.084f});
+  }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif
 }

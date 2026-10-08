@@ -164,7 +164,8 @@ none should ever need to contradict these:
 Top-level modules: **Atlantis Core, Atlantis Platform, Atlantis RHI,
 Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
 Shader System, Atlantis Asset System, Atlantis World, Atlantis Connection,
-Atlantis Remote, Atlantis CLI, Atlantis Runtime, Atlantis Tools.**
+Atlantis Remote, Atlantis CLI, Atlantis Editor, Atlantis Runtime, Atlantis
+Tools.**
 Atlantis Asset System (Spec 0012, `Approved`; extended by Spec 0015,
 `Approved`, with a second asset type, scene graphs) depends on Atlantis
 Core only — no RHI, Renderer, Shader System, or Atlantis World
@@ -223,6 +224,22 @@ Platform's charter and the rule that only Runtime depends on Platform are
 unchanged. See
 [ADR-0106](docs/adr/0106-attachable-runtime-transport-and-control.md).
 
+Atlantis Editor (Spec 0056, `Approved`) is one more ordinary client of a
+running Runtime: Hierarchy, a schema-generated Inspector, a Viewport and a
+Transform Gizmo, reaching the World only through `RuntimeConnection` and the
+Runtime's lifecycle only through `RuntimeControl`. It links Atlantis
+Connection and its UI library (Dear ImGui, core only, pinned; no stock backend)
+only, and includes no Runtime, ECS, Platform, RHI, Renderer, Vulkan or OS
+header; UI-library headers appear only under `src/editor/src/view/`, so its
+public headers and models are UI-free (all checked by
+`tests/editor/editor_boundary_tests.cpp`). Its input is plain values the host
+derives from Platform's input events; its output is an engine-neutral UI draw
+list the host hands to Renderer's overlay pass. The `atlantis_runtime`
+executable hosts it (`--editor`) through an executable-private adapter
+(`src/runtime/editor_attachment.*`); `atlantis_runtime_host` never links it.
+Android builds the library but hosts no editor. See
+[ADR-0107](docs/adr/0107-editor-ui-library-selection.md)–[ADR-0109](docs/adr/0109-platform-input-events.md).
+
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `Approved`, and Spec 0015, `Approved`) is the actual composition root — a private
 `atlantis_runtime_host` static library plus a thin `atlantis_runtime`
@@ -235,7 +252,12 @@ CLI (`--exec`). Since Spec 0055 it implements `RuntimeControl`
 of `runFrame()`, ADR-0106 D4), captures frames (offscreen re-render and
 readback, PNG through the existing `Stb::Stb`), and the `atlantis_runtime`
 executable serves Atlantis Remote clients with `--listen` (no socket without
-it). Runtime owns the loaded scene's bake
+it). Since Spec 0056 `RuntimeApplication` accepts a frame overlay
+(`FrameOverlay`, `attachOverlay()`): while one is attached, `runFrame()`
+differs in exactly four named places (ADR-0108 D4) — the scene renders into a
+sampleable offscreen Viewport target and the overlay's UI is drawn over the
+swapchain image — and the `atlantis_runtime` executable alone links Atlantis
+Editor to host it (`--editor`). Runtime owns the loaded scene's bake
 output (`world::BakedScene`, Spec 0051) and is the sole place a
 `World`-driven scene is turned into `atlantis::renderer::DrawItem`s, via a
 Runtime-private extraction adapter (`scene_extraction.h`/`.cpp`) — not a
@@ -253,7 +275,9 @@ abstraction — it is to *operating systems* what RHI is to *graphics
 backends*: an interface with concrete per-OS implementations (Windows
 Platform, Android Platform, and — future, not implemented —  iOS
 Platform). It owns Win32/Android NDK/(future) UIKit types so nothing else
-has to.
+has to. Since Spec 0056 its events include pointer, wheel, key and text input
+as plain values (Windows emits them; Android none in v1; ADR-0109) — no
+other module reads OS input.
 
 The hard boundary rule: **Renderer must not directly depend on Win32, the
 Android NDK, GLFW/SDL, `VkSurfaceKHR`, or `VkSwapchainKHR`** (or any `Vk*`

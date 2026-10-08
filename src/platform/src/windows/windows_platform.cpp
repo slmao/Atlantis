@@ -14,12 +14,14 @@
 #include <atlantis/platform/platform.h>
 
 #include <iterator>
+#include <optional>
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
+#include <windowsx.h>
 
 namespace atlantis::platform {
 
@@ -62,6 +64,11 @@ struct State {
   // vector's storage out from under the span before the caller's next
   // processEvents()/shutdown() call.
   std::vector<PlatformEvent> outputBuffer;
+
+  // Spec 0056 / ADR-0109 (Plan 0056 P2): WM_CHAR delivers UTF-16 code units;
+  // a high surrogate waits here for its low surrogate, so TextEntered always
+  // carries one whole code point.
+  wchar_t pendingHighSurrogate = 0;
 };
 
 State& state() {
@@ -79,6 +86,85 @@ void movePendingIntoOutput(State& s) {
   s.outputBuffer.insert(s.outputBuffer.end(), std::make_move_iterator(s.pendingBuffer.begin()),
                          std::make_move_iterator(s.pendingBuffer.end()));
   s.pendingBuffer.clear();
+}
+
+// Spec 0056 / ADR-0109 (Plan 0056 P2): virtual-key code -> Platform's closed
+// Key set. Keys outside the set are not reported. Left/right Ctrl and Alt
+// are told apart by the extended-key bit, Shift by its scan code.
+std::optional<Key> toKey(WPARAM virtualKey, LPARAM lParam) {
+  const bool extended = (HIWORD(lParam) & KF_EXTENDED) != 0;
+  if (virtualKey >= 'A' && virtualKey <= 'Z') {
+    return static_cast<Key>(static_cast<int>(Key::A) + static_cast<int>(virtualKey - 'A'));
+  }
+  if (virtualKey >= '0' && virtualKey <= '9') {
+    return static_cast<Key>(static_cast<int>(Key::Num0) + static_cast<int>(virtualKey - '0'));
+  }
+  if (virtualKey >= VK_F1 && virtualKey <= VK_F12) {
+    return static_cast<Key>(static_cast<int>(Key::F1) + static_cast<int>(virtualKey - VK_F1));
+  }
+  switch (virtualKey) {
+    case VK_TAB: return Key::Tab;
+    case VK_LEFT: return Key::LeftArrow;
+    case VK_RIGHT: return Key::RightArrow;
+    case VK_UP: return Key::UpArrow;
+    case VK_DOWN: return Key::DownArrow;
+    case VK_HOME: return Key::Home;
+    case VK_END: return Key::End;
+    case VK_PRIOR: return Key::PageUp;
+    case VK_NEXT: return Key::PageDown;
+    case VK_INSERT: return Key::Insert;
+    case VK_DELETE: return Key::Delete;
+    case VK_BACK: return Key::Backspace;
+    case VK_SPACE: return Key::Space;
+    case VK_RETURN: return Key::Enter;
+    case VK_ESCAPE: return Key::Escape;
+    case VK_CONTROL: return extended ? Key::RightCtrl : Key::LeftCtrl;
+    case VK_MENU: return extended ? Key::RightAlt : Key::LeftAlt;
+    case VK_SHIFT: {
+      const UINT scanCode = (HIWORD(lParam) & 0xFF);
+      return MapVirtualKeyW(scanCode, MAPVK_VSC_TO_VK_EX) == VK_RSHIFT ? Key::RightShift : Key::LeftShift;
+    }
+    default: return std::nullopt;
+  }
+}
+
+KeyModifiers currentModifiers() {
+  return KeyModifiers{(GetKeyState(VK_CONTROL) & 0x8000) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0,
+                      (GetKeyState(VK_MENU) & 0x8000) != 0};
+}
+
+TextEntered encodeUtf8(char32_t codePoint) {
+  TextEntered text;
+  auto put = [&text](unsigned value) { text.utf8[text.size++] = static_cast<char>(static_cast<unsigned char>(value)); };
+  if (codePoint < 0x80) {
+    put(codePoint);
+  } else if (codePoint < 0x800) {
+    put(0xC0 | (codePoint >> 6));
+    put(0x80 | (codePoint & 0x3F));
+  } else if (codePoint < 0x10000) {
+    put(0xE0 | (codePoint >> 12));
+    put(0x80 | ((codePoint >> 6) & 0x3F));
+    put(0x80 | (codePoint & 0x3F));
+  } else {
+    put(0xF0 | (codePoint >> 18));
+    put(0x80 | ((codePoint >> 12) & 0x3F));
+    put(0x80 | ((codePoint >> 6) & 0x3F));
+    put(0x80 | (codePoint & 0x3F));
+  }
+  return text;
+}
+
+void pushPointerButton(State& s, PointerButton button, bool down, LPARAM lParam) {
+  s.pendingBuffer.push_back(PlatformEvent{PointerButtonChanged{button, down, static_cast<float>(GET_X_LPARAM(lParam)),
+                                                                static_cast<float>(GET_Y_LPARAM(lParam))}});
+  // Keep receiving the pointer while a button is held outside the window, so
+  // a drag ends with its release.
+  if (down) {
+    SetCapture(s.hwnd);
+  } else if ((GetKeyState(VK_LBUTTON) & 0x8000) == 0 && (GetKeyState(VK_RBUTTON) & 0x8000) == 0 &&
+             (GetKeyState(VK_MBUTTON) & 0x8000) == 0) {
+    ReleaseCapture();
+  }
 }
 
 NativeWindowHandle currentHandle() {
@@ -122,6 +208,64 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
       // only shutdown() may destroy it.
       s.pendingBuffer.push_back(PlatformEvent{WindowCloseRequested{}});
       return 0;
+    // Spec 0056 / ADR-0109 (Plan 0056 P2): input, as plain values. Client-area
+    // coordinates are framebuffer pixels (the process is per-monitor DPI
+    // aware, initialize()).
+    case WM_MOUSEMOVE:
+      s.pendingBuffer.push_back(PlatformEvent{
+          PointerMoved{static_cast<float>(GET_X_LPARAM(lParam)), static_cast<float>(GET_Y_LPARAM(lParam))}});
+      return 0;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+      pushPointerButton(s, PointerButton::Left, message == WM_LBUTTONDOWN, lParam);
+      return 0;
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+      pushPointerButton(s, PointerButton::Right, message == WM_RBUTTONDOWN, lParam);
+      return 0;
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+      pushPointerButton(s, PointerButton::Middle, message == WM_MBUTTONDOWN, lParam);
+      return 0;
+    case WM_MOUSEWHEEL:
+      s.pendingBuffer.push_back(PlatformEvent{
+          WheelScrolled{0.0f, static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA)}});
+      return 0;
+    case WM_MOUSEHWHEEL:
+      s.pendingBuffer.push_back(PlatformEvent{
+          WheelScrolled{static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA), 0.0f}});
+      return 0;
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP: {
+      if (const std::optional<Key> key = toKey(wParam, lParam)) {
+        const bool down = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
+        s.pendingBuffer.push_back(PlatformEvent{KeyChanged{*key, down, currentModifiers()}});
+      }
+      // System keys keep their default handling (Alt+F4 still requests close).
+      if (message == WM_SYSKEYDOWN || message == WM_SYSKEYUP) return DefWindowProcW(hwnd, message, wParam, lParam);
+      return 0;
+    }
+    case WM_CHAR: {
+      const auto unit = static_cast<wchar_t>(wParam);
+      if (unit >= 0xD800 && unit <= 0xDBFF) {
+        s.pendingHighSurrogate = unit;
+        return 0;
+      }
+      char32_t codePoint = unit;
+      if (unit >= 0xDC00 && unit <= 0xDFFF) {
+        if (s.pendingHighSurrogate == 0) return 0;  // an unpaired low surrogate: dropped
+        codePoint = 0x10000 + ((static_cast<char32_t>(s.pendingHighSurrogate) - 0xD800) << 10) +
+                    (static_cast<char32_t>(unit) - 0xDC00);
+      }
+      s.pendingHighSurrogate = 0;
+      // Control characters (Backspace, Tab, Enter, Escape...) arrive as key
+      // events; text carries printable code points only.
+      if (codePoint < 0x20 || codePoint == 0x7F) return 0;
+      s.pendingBuffer.push_back(PlatformEvent{encodeUtf8(codePoint)});
+      return 0;
+    }
     case WM_DESTROY:
       // Only ever reached synchronously from shutdown()'s DestroyWindow
       // call below -- nothing else in this file destroys the window.

@@ -190,3 +190,15 @@ TEST_CASE("planTransition still asserts on a plausible-sounding but unlisted Sam
 
   REQUIRE_FALSE(failures.empty());
 }
+
+// Plan 0056 M6: a sampled image read back after its last sampling.
+TEST_CASE("planTransition maps ShaderRead -> TransferSource", "[vulkan_backend][resource_state]") {
+  const auto plan = atlantis::vulkan_backend::detail::planTransition(atlantis::rhi::ResourceState::ShaderRead,
+                                                                     atlantis::rhi::ResourceState::TransferSource);
+  CHECK(plan.oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  CHECK(plan.newLayout == VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  CHECK(plan.srcAccessMask == VK_ACCESS_SHADER_READ_BIT);
+  CHECK(plan.dstAccessMask == VK_ACCESS_TRANSFER_READ_BIT);
+  CHECK(plan.srcStage == VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+  CHECK(plan.dstStage == VK_PIPELINE_STAGE_TRANSFER_BIT);
+}

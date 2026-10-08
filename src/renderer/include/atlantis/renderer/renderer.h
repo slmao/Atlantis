@@ -8,6 +8,7 @@
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/environment_lighting.h>
+#include <atlantis/renderer/ui_overlay.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/hdr_color_target.h>
@@ -150,6 +151,16 @@ class Renderer {
                  std::span<const DrawItem> shadowCasterDrawItems,
                  const std::optional<std::array<float, 3>>& cameraWorldPosition = std::nullopt,
                  const BloomInput* bloom = nullptr);
+
+  // Plan 0056 P5 (ADR-0108 D3; defined in ui_overlay.cpp): records one
+  // RenderGraph pass, "ui_overlay", that clears `target` and draws `list`'s
+  // commands into it in order -- each scissored to its clip and sampling the
+  // font atlas or the Viewport (resources) -- then leaves `target` in
+  // `finalState`. Writes the list into resources' vertex and index buffers;
+  // retains nothing. Like drawFrame(), never submits or presents.
+  void drawOverlay(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
+                   atlantis::rhi::ResourceState finalState, const UiDrawList& list,
+                   const UiOverlayResources& resources);
 };
 
 }  // namespace atlantis::renderer

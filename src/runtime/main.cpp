@@ -8,6 +8,7 @@
 #include <atlantis/runtime/runtime_control_host.h>
 
 #include "cli.h"
+#include "editor_attachment.h"
 
 #include <atlantis/cli/script_runner.h>
 #include <atlantis/connection/runtime_connection.h>
@@ -333,9 +334,14 @@ int main(int argc, char** argv) {
   std::unique_ptr<atlantis::runtime::RuntimeControlHost> control;
   std::unique_ptr<atlantis::remote::RemoteServer> server;
   std::filesystem::path sessionPath;
-  if (cliResult.listenPort.has_value()) {
+  // Spec 0056 ruling Q2/Q8 (Plan 0056 P10, J9): the editor drives the same
+  // RuntimeControl a --listen client does -- one host, shared when both are
+  // given.
+  if (cliResult.listenPort.has_value() || cliResult.editor) {
     control = std::make_unique<atlantis::runtime::RuntimeControlHost>(
         atlantis::runtime::RuntimeControlHost::forApplication(app), atlantis::runtime::RuntimeControlHost::Options{});
+  }
+  if (cliResult.listenPort.has_value()) {
     auto listening = atlantis::remote::RemoteServer::listen(*cliResult.listenPort, atlantis::remote::generateToken(),
                                                             app.sceneGuid(), [&app] { return app.openConnection(); },
                                                             control.get());
@@ -356,19 +362,45 @@ int main(int argc, char** argv) {
     ATLANTIS_LOG_INFO("Listening on 127.0.0.1:{} (session file {})", session.port, sessionPath.string());
   }
 
+  // Spec 0056 R1/R4 (Plan 0056 P6, P10; ADR-0108 D1): with --editor, Atlantis
+  // Editor is an ordinary client on its own connection, attached to the frame
+  // as its overlay; its UI frame runs between Runtime frames (J3), after the
+  // server's, so both see the same between-frames World. Declared after the
+  // control (it borrows it) and detached before it is destroyed.
+  std::unique_ptr<atlantis::runtime::EditorAttachment> editor;
+  if (cliResult.editor) {
+    editor = std::make_unique<atlantis::runtime::EditorAttachment>(app, *control);
+    const std::string vertexPath = std::string(ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR) + "/editor_ui.vert.spv";
+    const std::string fragmentPath = std::string(ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR) + "/editor_ui.frag.spv";
+    auto attached = app.attachOverlay(*editor, atlantis::runtime::OverlayShaderPaths{vertexPath, fragmentPath});
+    if (attached.isErr()) {
+      ATLANTIS_LOG_ERROR("--editor: {}", atlantis::runtime::toString(attached.error()));
+      editor.reset();
+      (void)app.shutdown();
+      return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+    }
+    ATLANTIS_LOG_INFO("Editor attached");
+  }
+
   while (app.shouldContinue()) {
     if (control) control->beforeFrame();
     app.runFrame();
     if (control) control->afterFrame();
     if (server) server->poll();
     if (runner) runner->step();
+    if (editor) editor->update();
+  }
+
+  if (editor) {
+    app.detachOverlay();
+    editor.reset();  // its connection closes before the application shuts down
   }
 
   if (server) {
-    server.reset();   // closes every client connection before the application shuts down
-    control.reset();  // fails any step still waiting; restores the default log sink
+    server.reset();  // closes every client connection before the application shuts down
     atlantis::remote::removeSessionFile(sessionPath);
   }
+  control.reset();  // fails any step still waiting; restores the default log sink
   const RuntimeExitReason reason = app.shutdown();
   ATLANTIS_LOG_INFO("Atlantis Runtime finished");
   return toProcessExitCode(reason);

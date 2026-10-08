@@ -84,6 +84,12 @@ namespace atlantis::shader_system {
 [[nodiscard]] std::vector<DescriptorBinding> bloomUpsampleExpectedDescriptorContract();
 [[nodiscard]] std::vector<DescriptorBinding> bloomCompositeExpectedDescriptorContract();
 
+// Plan 0056 P5 (ADR-0108 D3): shaders/editor_ui's contract -- no uniform
+// buffer, two Fragment-only combined image samplers (the UI font atlas at
+// binding 0, the Viewport at 1), and a 16-byte push-constant block read by
+// both stages (checked by atlantis_shader_compiler).
+[[nodiscard]] std::vector<DescriptorBinding> editorUiExpectedDescriptorContract();
+
 // Plan 0026 Milestone 4 (ADR-0071 P3): the sky's own fixed, expected
 // descriptor contract -- two bindings, both Fragment-only: {set 0,
 // binding 0, UniformBuffer, Fragment} (the existing frame uniform,

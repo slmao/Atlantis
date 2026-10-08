@@ -166,6 +166,27 @@ class CommandList {
   // above (the ShadowMap must be in ResourceState::ShaderRead when this
   // is recorded).
   virtual void bindTexture(std::uint32_t binding, const ShadowMap& texture, const Sampler& sampler) = 0;
+
+  // Plan 0056 P4 (ADR-0108 D3): a fourth bindTexture() overload, sampling a
+  // RenderTarget vended by an OffscreenTarget created with
+  // OffscreenTargetCreateParams::sampled -- any other RenderTarget is a
+  // programmer error (ATLANTIS_CHECK). Same precondition as the overloads
+  // above: the target must be in ResourceState::ShaderRead when this is
+  // recorded. The descriptor is written on every call (it is bound once per
+  // pass, like the HdrColorTarget overload).
+  virtual void bindTexture(std::uint32_t binding, const RenderTarget& sampledTarget, const Sampler& sampler) = 0;
+
+  // Plan 0056 P4 (ADR-0108 D3 "scissored triangles", J2): restricts the
+  // draws that follow, until the next setScissor() or the end of the current
+  // attachment scope, to `rect`, clamped to the scope's render area.
+  // beginRendering() resets the scissor to the whole render area, as before.
+  virtual void setScissor(Rect2D rect) = 0;
+
+  // Plan 0056 P4 (J2): one indexed draw of indexCount indices starting at
+  // firstIndex in the bound index buffer, each index added to vertexOffset
+  // before it addresses the bound vertex buffer. drawIndexed(indexCount) above
+  // is drawIndexed(indexCount, 0, 0).
+  virtual void drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) = 0;
 };
 
 }  // namespace atlantis::rhi

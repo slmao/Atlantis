@@ -91,6 +91,11 @@ Runtime owns the Platform instance itself.
 **Public/private boundary:** public surface is lifecycle (create/
 destroy/pump-events), an opaque native-surface-handle accessor, and
 lifecycle event delivery (e.g. "surface became invalid," "app paused").
+Since Spec 0056 (ADR-0109) the event set also carries input — pointer move
+and button, wheel, a closed Platform-defined key set with modifiers, and text
+(one UTF-8 code point per event) — as plain values in framebuffer pixels;
+Windows Platform emits them from its message pump, Android Platform none in
+v1. No other module reads OS input.
 OS-specific types (`HWND`, `ANativeWindow*`, ...) never cross this public
 surface — see [resource_lifetime.md](resource_lifetime.md) for how
 surface invalidity is expected to propagate.
@@ -132,7 +137,10 @@ lifetime; it does not itself decide caching/pooling policy. See
 **Public/private boundary:** RHI's public surface is the interfaces
 listed above. Anything backend-specific (Vulkan object handles, extension
 usage, WSI surface-creation calls) is private to Vulkan Backend and never
-appears in an RHI header.
+appears in an RHI header. Since Spec 0056 (ADR-0108 D3) an `OffscreenTarget`
+can be created sampleable (`OffscreenTargetCreateParams::sampled`) and its
+`RenderTarget` bound as a sampled texture, and a `CommandList` sets a scissor
+rectangle (`Rect2D`) and draws an index range with a vertex offset.
 
 **Extension points:** a second backend (a native Metal backend for future
 iOS is the one named candidate — see
@@ -242,6 +250,12 @@ material system, and any higher-level submission API are **not designed
 yet** — no rendering features are implemented ahead of their own specs
 (per [AGENTS.md](../../AGENTS.md)), so this document deliberately does not
 invent one.
+
+Since Spec 0056 (ADR-0108 D3) `Renderer::drawOverlay()` draws a
+Renderer-owned UI draw list (`renderer::UiDrawList`: textured,
+vertex-coloured, scissored triangles sampling a font atlas or a sampled
+offscreen Viewport target) as one RenderGraph pass into a `RenderTarget`;
+Renderer knows neither the UI library nor the editor.
 
 **Extension points:** scene/material submission API (future spec);
 multi-`RenderTarget` / multi-viewport rendering (future spec).
@@ -824,6 +838,34 @@ Renderer header (both checked by `tests/cli/cli_boundary_tests.cpp`).
 
 ---
 
+## Atlantis Editor
+
+**Status: Approved** (Spec 0056,
+[ADR-0107](../adr/0107-editor-ui-library-selection.md),
+[ADR-0108](../adr/0108-editor-host-and-viewport-composition.md),
+[ADR-0109](../adr/0109-platform-input-events.md)).
+
+**Responsibilities:** the minimal editor (`atlantis::editor`) — a flat
+Hierarchy kept current by events, an Inspector generated from the schema's
+descriptors, a Viewport showing the Runtime's own rendering, and a Transform
+Gizmo writing `WorldMatrix` as one transaction per frame — as one more
+ordinary client: every World access through `RuntimeConnection`, play / pause
+/ step through `RuntimeControl`. UI-free models (`model/`) under a Dear ImGui
+view layer (`src/view/`, one ImGui context per `Editor`).
+
+**Depends on:** Atlantis Connection and the UI library (`ImGui::ImGui`, Dear
+ImGui's four core sources, pinned; no stock backend) only — no Runtime, ECS,
+Platform, RHI, Renderer, Vulkan or OS include; UI-library headers only under
+`src/view/` (checked by `tests/editor/editor_boundary_tests.cpp`). Input is
+the editor's own plain values; output an engine-neutral UI draw list and the
+Viewport size it wants.
+
+**Depended on by:** the `atlantis_runtime` executable (`--editor`), through
+the executable-private `src/runtime/editor_attachment.*`; never
+`atlantis_runtime_host`. Android builds the library but hosts no editor.
+
+---
+
 ## Atlantis Runtime
 
 **Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
@@ -919,14 +961,16 @@ Shader System (both targets), Asset System, World, Core, and — since Spec
 0054 — Atlantis Connection (`RuntimeApplication` owns the InProcess client
 endpoint); the `atlantis_runtime` executable alone also links Atlantis CLI,
 which it hosts (`--exec`), and — since Spec 0055 — Atlantis Remote's server
-half (`--listen`). Since Spec 0055 `atlantis_runtime_host` also links the
-existing `Stb::Stb` (PRIVATE; frame captures written as PNG). **Not**
-RenderGraph directly — `Renderer::drawFrame()` already owns RenderGraph
-construction/compilation/execution internally, confirmed by inspection
-that no `atlantis/render_graph/*.h` header is included anywhere under
-`src/runtime/` (a correction to this section's own earlier, `PROPOSED`-
-era text, which listed RenderGraph as a direct dependency before any
-real Runtime code existed to check that claim against). This is the
+half (`--listen`), and — since Spec 0056 — Atlantis Editor (`--editor`),
+attached as the frame's overlay (`FrameOverlay`, ADR-0108 D4). Since Spec 0055
+`atlantis_runtime_host` also links the existing `Stb::Stb` (PRIVATE; frame
+captures written as PNG). **Not** RenderGraph as a link dependency — `Renderer::drawFrame()` already owns RenderGraph
+construction/compilation/execution internally; the few one-pass graphs
+Runtime records itself (the capture's readback copy, Spec 0055; the overlay's
+font-atlas upload, Spec 0056) use the RenderGraph headers Renderer exposes
+publicly (a correction to this section's own earlier, `PROPOSED`-era text,
+which listed RenderGraph as a direct dependency before any real Runtime code
+existed to check that claim against). This is the
 **only** module permitted to depend on Atlantis Platform.
 
 **Depended on by:** nothing (it's the executable) — and, per its own

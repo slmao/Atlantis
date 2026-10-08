@@ -36,6 +36,10 @@ include(cmake/CompilerWarnings.cmake)
 # (added unconditionally below) needs Stb::Stb too (Spec 0016). Must
 # precede add_subdirectory(src/tools/asset_cooker).
 include(cmake/AtlantisStb.cmake)
+# Plan 0056 P1/P3 (ADR-0107): Dear ImGui, core only, for Atlantis Editor --
+# outside the if(NOT ANDROID) gates below, since Android compiles the editor
+# library too (Plan 0056 J11).
+include(cmake/AtlantisImGui.cmake)
 
 find_package(Vulkan REQUIRED)
 
@@ -82,6 +86,9 @@ add_subdirectory(src/remote)
 # Plan 0054 P1 (ADR-0105 D3): Atlantis CLI, a client of Atlantis Connection
 # only; hosted by atlantis_runtime (src/runtime, below).
 add_subdirectory(src/cli)
+# Plan 0056 P1 (ADR-0108 D2): Atlantis Editor, a client of Atlantis Connection
+# only (plus the UI library); hosted by atlantis_runtime (src/runtime, below).
+add_subdirectory(src/editor)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
@@ -210,6 +217,9 @@ add_subdirectory(shaders/shadow_cast)
 add_subdirectory(shaders/bloom_downsample)
 add_subdirectory(shaders/bloom_upsample)
 add_subdirectory(shaders/bloom_composite)
+# Plan 0056 P5 (ADR-0108 D3): the UI overlay pass's shader pair, production
+# content declared before src/runtime for the same add_dependencies() reason.
+add_subdirectory(shaders/editor_ui)
 endif()
 # Plan 0013 Section D1: must come after add_subdirectory(assets),
 # add_subdirectory(shaders/minimal_renderer), (Plan 0018 Section P10)
@@ -247,6 +257,7 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/world)
   add_subdirectory(tests/connection)
   add_subdirectory(tests/cli)
+  add_subdirectory(tests/editor)
   add_subdirectory(tests/remote)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)

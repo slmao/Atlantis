@@ -21,6 +21,8 @@ add_executable(atlantis_vulkan_backend_tests
   hdr_color_target_capability_tests.cpp
   shadow_map_capability_tests.cpp
   sampled_texture_block_tests.cpp
+  # Plan 0056 M3: an OffscreenTarget's image usage, pinned.
+  sampled_offscreen_target_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -69,6 +71,9 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   pipeline_depth_write_gpu_tests.cpp
   shadow_map_render_gpu_tests.cpp
   descriptor_set_revisit_gpu_tests.cpp
+  # Plan 0056 M3 (ADR-0108 D3): the sampled offscreen target, scissor, ranged
+  # draws and the Renderer's UI overlay pass.
+  ui_overlay_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests
@@ -121,7 +126,7 @@ catch_discover_tests(atlantis_vulkan_backend_gpu_tests
 # (the read half, already-established elsewhere in this repo, reused
 # unchanged here) -- both copied into this same flat shaders/ folder.
 add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders output_transform_unorm_shaders
-  output_transform_srgb_shaders shadow_cast_shaders textured_quad_shaders)
+  output_transform_srgb_shaders shadow_cast_shaders textured_quad_shaders editor_ui_shaders)
 add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
@@ -154,5 +159,10 @@ add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.vert.refl.json"
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.spv"
       "${ATLANTIS_output_transform_srgb_SHADER_OUTPUT_DIR}/output_transform_srgb.frag.refl.json"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  # Plan 0056 M3: the UI overlay pass's pair (ui_overlay_gpu_tests.cpp).
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}/editor_ui.vert.spv"
+      "${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}/editor_ui.frag.spv"
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
 )

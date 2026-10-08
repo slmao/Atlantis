@@ -196,6 +196,13 @@ std::vector<DescriptorBinding> bloomCompositeExpectedDescriptorContract() {
   return bloomUpsampleExpectedDescriptorContract();  // the same two-sampler shape
 }
 
+// Plan 0056 P5: its own named contract, though its shape is the bloom
+// upsample's -- the two must be free to diverge.
+std::vector<DescriptorBinding> editorUiExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment},
+          DescriptorBinding{.set = 0, .binding = 1, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 // Plan 0026 Milestone 4 (ADR-0071 P3): both bindings Fragment-only --
 // see this function's own header comment for the real slangc reflection
 // evidence.
