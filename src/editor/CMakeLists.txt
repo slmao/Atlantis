@@ -8,6 +8,11 @@
 # hosts no editor (Plan 0056 J11).
 add_library(atlantis_editor STATIC
   src/editor.cpp
+  # Plan 0056 P9: the models -- UI-free, over the connection only.
+  src/model/hierarchy.cpp
+  src/model/inspector.cpp
+  src/model/gizmo.cpp
+  # The view layer: the only sources that include the UI library.
   src/view/editor_view.cpp
 )
 add_library(Atlantis::Editor ALIAS atlantis_editor)
