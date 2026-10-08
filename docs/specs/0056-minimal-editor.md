@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
-- **Related Plan(s):** none yet. Plan 0056 drafting is authorized by the
-  Approval.
+- **Related Plan(s):** [Plan 0056](../plans/0056-minimal-editor.md)
+  (`Approved`; Joint Human Review 2026-10-08,
+  [PR #231](https://github.com/slmao/Atlantis/pull/231)) — implemented, merged
+  [PR #232](https://github.com/slmao/Atlantis/pull/232).
 - **Approval:** slmao, 2026-10-08 (review of this Spec's own branch PR,
   [PR #230](https://github.com/slmao/Atlantis/pull/230)) — authorizes drafting Plan 0056; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.
