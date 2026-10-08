@@ -135,6 +135,24 @@ TEST_CASE("Atlantis Gameplay SDK names no byte offset and no World C++ type (R6)
   CHECK(bad.empty());
 }
 
+TEST_CASE("atlantis_gameplay_demo links the SDK and Atlantis Remote's client half only",
+          "[gameplay_sdk][module_boundary]") {
+  const std::string cmake = readFile(fs::path(ATLANTIS_GAMEPLAY_DEMO_SOURCE_DIR) / "CMakeLists.txt");
+  const auto start = cmake.find("target_link_libraries(atlantis_gameplay_demo");
+  REQUIRE(start != std::string::npos);
+  REQUIRE(cmake.find("target_link_libraries(atlantis_gameplay_demo", start + 1) == std::string::npos);
+  const auto end = cmake.find(')', start);
+  std::string block = cmake.substr(start, end - start);
+  for (const std::string_view word : {"target_link_libraries(atlantis_gameplay_demo", "PRIVATE",
+                                      "Atlantis::GameplaySdk", "Atlantis::RemoteClient",
+                                      "atlantis_compiler_warnings"}) {
+    const auto at = block.find(word);
+    REQUIRE(at != std::string::npos);
+    block.erase(at, word.size());
+  }
+  CHECK(block.find_first_not_of(" \t\r\n") == std::string::npos);
+}
+
 TEST_CASE("Atlantis Gameplay SDK links Atlantis::Connection and nothing else", "[gameplay_sdk][module_boundary]") {
   const std::string cmake = readFile(fs::path(ATLANTIS_GAMEPLAY_SDK_SOURCE_DIR) / "CMakeLists.txt");
   const auto start = cmake.find("target_link_libraries(atlantis_gameplay_sdk");

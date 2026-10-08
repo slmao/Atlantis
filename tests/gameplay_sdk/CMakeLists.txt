@@ -26,9 +26,29 @@ target_include_directories(atlantis_gameplay_sdk_tests PRIVATE
 
 target_compile_definitions(atlantis_gameplay_sdk_tests PRIVATE
   ATLANTIS_GAMEPLAY_SDK_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/gameplay_sdk"
+  ATLANTIS_GAMEPLAY_DEMO_SOURCE_DIR="${CMAKE_SOURCE_DIR}/examples/gameplay_demo"
 )
 
 catch_discover_tests(atlantis_gameplay_sdk_tests DISCOVERY_MODE PRE_TEST)
+
+# Plan 0057 M4 (Spec 0057 R8; J8, J12): the example against a separate
+# `atlantis_runtime --listen` process. Windows-only test code (the harness is
+# copied from tests/cli/cli_e2e_tests.cpp); needs the example, so only when
+# examples are built.
+if(WIN32 AND ATLANTIS_BUILD_EXAMPLES)
+  add_executable(atlantis_gameplay_e2e_tests gameplay_e2e_tests.cpp)
+  target_link_libraries(atlantis_gameplay_e2e_tests
+    PRIVATE
+      Catch2::Catch2WithMain
+      atlantis_compiler_warnings
+  )
+  target_compile_definitions(atlantis_gameplay_e2e_tests PRIVATE
+    ATLANTIS_RUNTIME_EXE="$<TARGET_FILE:atlantis_runtime>"
+    ATLANTIS_GAMEPLAY_DEMO_EXE="$<TARGET_FILE:atlantis_gameplay_demo>"
+  )
+  add_dependencies(atlantis_gameplay_e2e_tests atlantis_runtime atlantis_gameplay_demo)
+  catch_discover_tests(atlantis_gameplay_e2e_tests DISCOVERY_MODE PRE_TEST)
+endif()
 
 # Plan 0057 M3 (J3): three compile-failure probes, each with a twin that must
 # compile. Each is an EXCLUDE_FROM_ALL object library built by its own ctest

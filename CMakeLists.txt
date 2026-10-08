@@ -253,6 +253,9 @@ if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/frame_execution_demo)
   add_subdirectory(examples/minimal_renderer_demo)
   add_subdirectory(examples/headless_rendering_demo)
+  # Plan 0057 P6 (ADR-0110 D6): the real Gameplay SDK client, attached over
+  # Atlantis Remote's client half.
+  add_subdirectory(examples/gameplay_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
