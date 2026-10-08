@@ -15,11 +15,14 @@
     [ADR-0103](../adr/0103-runtime-world-operation-boundary.md),
     [ADR-0104](../adr/0104-runtime-world-transaction-atomicity.md) and
     [ADR-0004](../adr/0004-phase1-threading-baseline.md).
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending, in [PR #235](https://github.com/slmao/Atlantis/pull/235). Implementation needs the Joint Human
-  Review of this Plan together with Spec 0057, explicitly authorizing it
-  (J1–J12 below).
+- **Joint Human Review:** slmao, 2026-10-09 — reviewed this Plan and
+  [Spec 0057](../specs/0057-gameplay-sdk.md) together in [PR #235](https://github.com/slmao/Atlantis/pull/235) and
+  explicitly authorized Implementation from Milestone 1. J1–J12 were ruled
+  as recommended (each one's first option). No Spec Correction was made
+  (J1); ADR-0110 and ADR-0111 are unchanged. See Joint Review decisions
+  below.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -552,59 +555,94 @@ Six milestones. Commit prefixes `feat:` / `test:` / `docs:` / `chore:`.
 - **Remote latency.** About 33 ms per call: the example's run takes a few
   seconds in Release, more in Debug.
 
-## Joint Review decisions (recommendation first)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-09, PR #235)
 
-- **J1 — No Spec Correction proposed.**
-  - The read-isolation tests' "second client" is an in-process client of
-    the same Runtime (its own connection and the shared control), not a
-    second `RemoteSession`. Nested blocking Remote calls inside the
-    first client's wait are not supported by the harness. Every remote
-    client is served as such an in-process client by `--listen` anyway.
-  - Read as satisfying the Spec's "two clients over Remote loopback".
-- **J2 — `.gitattributes`:** `text eol=lf` for the two generated headers,
-  so the staleness tests compare bytes exactly. *Alternative:* normalize
-  CRLF in the test (no repository config change, but the comparison is no
-  longer byte-for-byte as the Spec says).
-- **J3 — Compile checks:**
-  - every negative case as a `requires`-expression `static_assert` (exact
-    and cheap);
-  - plus three `WILL_FAIL` build probes with positive twins (the Spec's
-    "ctest cases expected to fail compilation"): a wrong-kind `set`, a set
+All twelve were ruled as recommended, each as its first option. Spec 0057
+is not corrected (J1), and ADR-0110 and ADR-0111 are unchanged. The
+rejected alternatives are kept as the record of what was weighed.
+
+- **J1 — The read-isolation tests' second client.** **Ruled (2026-10-09):
+  a second in-process client of the same Runtime; no Spec Correction.**
+  - **Ruled:** client B has its own connection from `app.openConnection()`
+    and the shared `RuntimeControlHost` (P7).
+  - **Rationale:**
+    - B's calls take the same boundary path a remote client's do, since
+      `--listen` serves every remote client as exactly such an in-process
+      connection on the shared control;
+    - the loopback harness cannot nest blocking Remote calls inside client
+      A's wait.
+  - **Recorded interpretation:** this satisfies Spec 0057's "two clients
+    over Remote loopback" test requirement as written. No Spec Correction
+    is raised.
+  - **Rejected:** a second `RemoteSession` for B (nested blocking calls
+    the harness does not support).
+- **J2 — `.gitattributes`.** **Ruled (2026-10-09): `text eol=lf` for the two
+  generated headers** (`src/gameplay_sdk/include/atlantis/gameplay/generated/world.h`,
+  `tests/gameplay_sdk/generated/synthetic.h`). The staleness tests compare
+  bytes exactly on any checkout, including under `core.autocrlf=true`.
+  **Rejected:** normalizing CRLF inside the test (no repository config
+  change, but no longer byte-for-byte as the Spec says).
+- **J3 — Compile checks.** **Ruled (2026-10-09): both forms.**
+  - **Static assertions:** every negative case as a `requires`-expression
+    `static_assert`.
+  - **Build probes:** three `WILL_FAIL` probes — a wrong-kind `set`, a set
     on a `ReadOnlyField`, and `add` on the synthetic read-only type.
+  - **Positive twins:** each probe has a twin that must compile, differing
+    only in the offending line, so a failure is attributable.
 
-  *Alternative:* only the `static_assert`s. That would deviate from the
-  Spec's test text.
-- **J4 — Staleness output:** a mismatch writes `<name>.expected` to the
-  build tree and fails with the regeneration command. No test or build
-  step rewrites a committed file.
-- **J5 — Names:** the reflective layer accepts short or qualified type
-  names and full paths, through `connection::text`, so the CLI, the editor
-  and the SDK share one grammar.
-- **J6 — Transaction resolution at submit:** `Transaction` is a builder
-  independent of any connection. `World::submit` resolves it whole, and any
-  name or compatibility error refuses all of it.
-- **J7 — The example's image check** compares PNG bytes, so the example
-  needs no decoder. The GPU test compares decoded pixels.
-- **J8 — The two-process harness is copied** into
-  `tests/gameplay_sdk/gameplay_e2e_tests.cpp`, test-only Windows code, not
-  extracted from `cli_e2e_tests.cpp`, which is not refactored here.
-  *Alternative:* extract a shared test helper. That changes a
-  0055-verified test file.
-- **J9 — Acceptance runs:** the human example run only. No
-  whitelist-scene or Android-emulator re-run, because Runtime, Platform,
-  RHI and Renderer are untouched (path guard); `assembleDebug` covers the
-  library. *Alternative:* repeat the Plan 0052 J9 runs as 0055 and 0056
-  did.
-- **J10 — Docs:** normative sentences with the implementation PR (AGENTS.md
-  module list, SDK rule and Remote client-half sentence;
-  `module_boundaries.md` Gameplay SDK section and Tools line). Narratives
-  (registry, Spec Related Plan, blueprint) after merge.
-- **J11 — Names:** class `gameplay::World` beside the generated namespace
-  `gameplay::world`, as the Spec's sample shows. *Alternative:*
-  `gameplay::Client`.
-- **J12 — The beacon GUID** is fixed
-  (`57005700-0000-4000-8000-0000000000b1`), so the output lines are
-  identical across runs. A leftover beacon is reported, not overwritten.
+  This negative-test pattern is new to the repository. **Rejected:** the
+  `static_assert`s alone (a deviation from the Spec's "ctest cases expected
+  to fail compilation").
+- **J4 — Staleness output.** **Ruled (2026-10-09): as recommended.** A
+  mismatch writes `<build>/sdk_codegen/<name>.expected` and fails with the
+  regeneration command. No test or build step rewrites a committed file.
+- **J5 — Names.** **Ruled (2026-10-09): through `connection::text`.**
+  Short or qualified type names and full paths, one grammar shared by the
+  CLI, the editor and the SDK.
+- **J6 — Transaction resolution.** **Ruled (2026-10-09): at `submit`,
+  whole.** `Transaction` is a connection-independent builder.
+  `World::submit` resolves it entirely, and any name or compatibility error
+  refuses all of it: nothing is submitted and no ticket is taken.
+- **J7 — Image checks.** **Ruled (2026-10-09): as recommended.** The example
+  compares PNG bytes (no decoder); the GPU test compares decoded pixels.
+- **J8 — The two-process harness.** **Ruled (2026-10-09): copied, not
+  extracted.**
+  - **Ruled:** `tests/gameplay_sdk/gameplay_e2e_tests.cpp` carries its own
+    copy of the `CreateProcessW` / pipe / `WM_CLOSE` helper from
+    `tests/cli/cli_e2e_tests.cpp`.
+  - **Rationale:** the 0055-verified file stays untouched. This is
+    disciplined duplication: test-only Windows code, copied whole, its
+    origin cited in a comment.
+  - **Rejected:** extracting a shared test helper, which would change a
+    verified test file.
+- **J9 — Acceptance runs.** **Ruled (2026-10-09): the human example run
+  only.**
+  - **Ruled:** M6's human run of `atlantis_gameplay_demo` against
+    `atlantis_runtime --listen` (default scene, Debug and Release). No
+    whitelist-scene or Android-emulator re-run.
+  - **Rationale:** the precedent's reason for repeating the Plan 0052 J9
+    runs was that frame-path modules changed (0055, 0056). That reason does
+    not hold here:
+    - every gate already requires zero changes under `src/runtime/`,
+      `src/world/`, `src/connection/`, `src/remote/`, `src/cli/` and
+      `src/editor/`;
+    - goldens and `runFrame()` stay byte-identical;
+    - `assembleDebug` covers the library.
+  - **Rejected:** repeating the Plan 0052 J9 runs.
+- **J10 — Docs.** **Ruled (2026-10-09): the split as recommended.**
+  - **With the implementation PR (normative):**
+    - AGENTS.md: the module list, the SDK rule, and the Remote client-half
+      sentence;
+    - `module_boundaries.md`: the Gameplay SDK section and the Tools line.
+  - **After merge (narratives):** the registry, the Spec's Related Plan
+    and the blueprint.
+- **J11 — Names.** **Ruled (2026-10-09): class `gameplay::World` beside the
+  generated namespace `gameplay::world`**, as the Spec's sample shows.
+  **Rejected:** `gameplay::Client`.
+- **J12 — The beacon GUID.** **Ruled (2026-10-09): fixed,
+  `57005700-0000-4000-8000-0000000000b1`.** The example's output lines are
+  identical run to run. A leftover beacon from an aborted run is reported
+  (exit 1), not overwritten.
 
 ## Rollback Plan
 
