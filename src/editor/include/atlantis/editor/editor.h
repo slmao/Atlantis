@@ -3,6 +3,9 @@
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/editor/input.h>
+#include <atlantis/editor/model/gizmo.h>
+#include <atlantis/editor/model/hierarchy.h>
+#include <atlantis/editor/model/inspector.h>
 #include <atlantis/editor/ui_draw_list.h>
 
 #include <array>
@@ -10,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 // Spec 0056 / ADR-0108 D2 (Plan 0056 P8): Atlantis Editor -- an ordinary
@@ -66,7 +70,12 @@ class Editor {
 
   [[nodiscard]] FontAtlas fontAtlas() const;
 
-  // One UI frame: the input gathered since the last frame, in order.
+  // One UI frame: the input gathered since the last frame, in order. Drains
+  // the connection's failures once, brings the models up to date with the
+  // World (Hierarchy events, the Inspector's values and pending edits, the
+  // Gizmo's matrix), runs the UI -- whose actions are the models' and the
+  // control's own calls -- and submits the Gizmo's transaction for this
+  // frame, if any.
   void frame(std::span<const InputEvent> input, const FrameContext& context);
 
   // The last frame's UI; valid until the next frame().
@@ -74,6 +83,24 @@ class Editor {
 
   // The Viewport panel's size after the last frame (zero before the first).
   [[nodiscard]] ViewportSize viewportSize() const;
+
+  // Whether the next frame() draws a Gizmo and so needs FrameContext::camera
+  // (Plan 0056 J7: the host computes the camera only then).
+  [[nodiscard]] bool wantsCamera() const;
+
+  // The models the UI acts through -- the same calls the view makes, for a
+  // host or test that drives the editor without pointer input.
+  [[nodiscard]] HierarchyModel& hierarchy();
+  [[nodiscard]] InspectorModel& inspector();
+  [[nodiscard]] GizmoModel& gizmo();
+
+  // Where the last frame drew a widget, in framebuffer pixels -- for scripted
+  // input. Keys: "hierarchy:<guid>", "hierarchy:filter",
+  // "inspector:<Type>.<field...>" (an enum's choices, while its list is open:
+  // "...#<constant>"), "inspector:<Type>" (a component's header),
+  // "toolbar:Play|Pause|Step|Translate|Rotate|Scale", "viewport". Empty when
+  // the widget was not drawn (scrolled away, collapsed).
+  [[nodiscard]] std::optional<UiRect> widgetRect(std::string_view key) const;
 
  private:
   struct Impl;

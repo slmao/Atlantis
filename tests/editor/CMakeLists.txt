@@ -7,6 +7,8 @@ add_executable(atlantis_editor_tests
   editor_skeleton_tests.cpp
   # Plan 0056 M4: the Hierarchy, Inspector and Gizmo models.
   editor_model_tests.cpp
+  # Plan 0056 M5: the view layer, headless, driven by scripted input.
+  editor_view_tests.cpp
 )
 
 # ImGui::ImGui is linked here only so the tests can observe the UI library's
