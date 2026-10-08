@@ -4,7 +4,9 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
 - **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). The maintainer set this Spec's goal before drafting
+- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). Review round 1 (2026-10-09) corrections to
+  Q4, Q7, Q9, the component-operation contracts and an attribution are
+  folded into this text. The maintainer set this Spec's goal before drafting
   (2026-10-08, chat):
   - a reflective interface and a generated typed interface, both from the
     one schema;
@@ -12,16 +14,17 @@
     reused;
   - no Runtime or ECS internal storage exposed;
   - one real client example proving the full operation loop;
-  - an explicit ruling on whether custom components, game-logic execution
-    and a time model are in scope, without growing into a scripting or
-    scheduling system.
+  - a scope proposal from the drafter on whether custom components,
+    game-logic execution and a time model are in v1, without growing into a
+    complete scripting or scheduling system.
 
-  These are recorded under Goals / Non-Goals; the open questions below are
-  open to review.
+  These are recorded under Goals / Non-Goals. Everything else, including
+  the answers to the three scope questions (Q5–Q7), is this draft's
+  recommendation, open to review.
 - **Related ADR(s)** (both `Proposed`, drafted alongside):
   - [ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md):
-    the SDK's module, its two layers over `RuntimeConnection`, and where
-    game logic runs (Q1, Q2, Q5–Q8);
+    the SDK's module, its two layers over `RuntimeConnection`, its optional
+    query batch, and where game logic runs (Q1, Q2, Q5–Q9);
   - [ADR-0111](../adr/0111-schema-generated-typed-bindings.md): how the
     typed interface is generated from the schema, and checked against a
     running Runtime (Q3, Q4).
@@ -62,10 +65,11 @@ Transaction semantics. They add no verb and expose no Runtime or ECS
 storage. One real client, an example executable attached to
 `atlantis_runtime --listen`, runs the full loop.
 
-The SDK is a **client library**. Game logic runs in the client's own
-control flow, between the Runtime's frames. The SDK has no callbacks inside
-the Runtime, no scheduler, no time model beyond the frame boundary, and no
-custom components (Q5–Q7).
+This draft recommends (Q5–Q7, open to review) that the SDK be a **client
+library**: game logic runs in the client's own control flow, between the
+Runtime's frames. v1 would have no callbacks inside the Runtime, no
+scheduler, no clock (a client counts its own logic steps), and no custom
+components.
 
 **North star:** a client process holding no Runtime C++ object connects to
 the default scene and checks its generated bindings against the Runtime's
@@ -73,9 +77,10 @@ schema. It then:
 
 1. finds the Directional light through a typed query;
 2. spawns a Point "beacon" light as one typed transaction;
-3. for several stepped frames, moves the beacon and pulses its intensity
-   from the frame number, and each frame's data shows exactly the written
-   values;
+3. pauses the Runtime, then for logic steps `k = 1…K` computes the
+   beacon's position and intensity from `k` (its own counter, Q7), submits
+   them as one transaction and steps one frame; each stepped frame's data
+   shows exactly the values written for that `k`;
 4. sends a deliberately invalid transaction, which changes nothing and
    returns one failure by ticket;
 5. captures an image that shows the beacon;
@@ -109,6 +114,17 @@ schema. It then:
 - **Client text** (Spec 0054, `connection::text`): one grammar for paths
   (`Light.intensity`, `Camera.fog.density`), `leavesOf`, `parseValue` and
   `formatValue`, shared by the CLI and the editor.
+- **A transport-neutral query batch** (Plan 0055 P9): `cli::QueryBatch`
+  (`src/cli/include/atlantis/cli/command_layer.h`) declares
+  `listComponents` and `getProperties` over spans.
+  - The CLI's default implementation asks one query at a time.
+  - The `atlantis` executable supplies an adapter over `RemoteSession`'s
+    pipelined queries (`RemoteBatch`, `src/cli/app/main.cpp`).
+  - `RemoteSession` answers a batch in input order, equal to the
+    one-at-a-time calls at that frame boundary.
+
+  The interface belongs to the client; Connection and the protocol do not
+  change.
 
 ### What a gameplay client lacks
 
@@ -144,7 +160,15 @@ Found in the code while drafting:
 - **Entities have no name** (Spec 0055 N-a): an entity is its GUID and its
   components.
 - **Commands apply at the start of the next frame** (Spec 0052), and are
-  held while paused (Spec 0055). Every call is single-threaded (ADR-0004).
+  held while paused (Spec 0055). That application
+  (`runtime_application.cpp`, `applyPending()`) is the only place the
+  frame writes the World. Every call is single-threaded (ADR-0004).
+- **The Runtime's frame number is not a logic clock.**
+  `RuntimeControlHost::afterFrame()` increments it every frame, paused or
+  not, because pause holds only command application
+  (`src/runtime/src/runtime_control_host.cpp`). How many frames pass
+  between two client calls depends on Remote waits, so a client cannot
+  derive reproducible behaviour from it. It identifies a returned frame.
 - **Remote calls are answered at frame boundaries** (ADR-0106 D1). Measured
   while drafting (Release, default scene at vsync, `atlantis repl` over
   `atlantis_runtime --listen`, 59 sequential `property get`): **about
@@ -163,8 +187,9 @@ Maintainer-set (2026-10-08):
 - **No internal storage exposed:** values only. No ECS handle, archetype,
   component C++ type, byte offset, pointer or reference into the Runtime.
 - **A real client example** proving the full loop (North star).
-- **Scope stated explicitly** for custom components, game-logic execution
-  and the time model (Q5–Q7); no scripting system, no scheduling system.
+- **A scope proposal** for custom components, game-logic execution and the
+  time model (Q5–Q7), without growing into a complete scripting or
+  scheduling system.
 
 Goals of this Spec within those boundaries:
 
@@ -173,11 +198,19 @@ Goals of this Spec within those boundaries:
 
 ## Non-Goals
 
-- **A scripting system.** No embedded language (Luau, C#, Python), no
-  hot-reload, no script assets, no visual scripting. C# (0058) and Python
-  (0061) are named only.
-- **A scheduling system.** No update phases, systems, job graph or ordering
-  inside the Runtime's frame. ADR-0004 unchanged.
+Maintainer-set (2026-10-08):
+
+- **A complete scripting system.** No embedded language (Luau, C#,
+  Python), hot-reload, script assets or visual scripting. C# (0058) and
+  Python (0061) are named only.
+- **A complete scheduling system.** No systems, job graph or execution
+  ordering. ADR-0004 unchanged.
+
+Proposed by this draft (open to review):
+
+- **Runtime-hosted game logic** (Q6): no callbacks, behaviours or update
+  phases inside the Runtime's frame.
+- **Custom components** (Q5) and **a time model** (Q7).
 - **Package / plugin loading** (0059): no loading of client code into the
   Runtime process.
 - **Headless simulation** (0060), and running the Runtime without a window.
@@ -205,7 +238,9 @@ Goals of this Spec within those boundaries:
   - create and destroy;
   - a transaction builder;
   - event subscriptions;
-  - failures routed by ticket.
+  - failures routed by ticket;
+  - batched queries through an optional, SDK-owned, transport-neutral
+    `QueryBatch` (Q9): component-field reads and the component filter.
 - **R3 — Generated typed interface** (Q3, Q4), covering every type in
   `worldSchema()`:
   - a value struct per struct type (components and nested structs) and a
@@ -224,12 +259,28 @@ Goals of this Spec within those boundaries:
   Refusals stay the boundary's: the SDK does not pre-check finiteness,
   light limits or editability (the Spec 0054 "one rule source" principle).
   It resolves names to ids and reports names it cannot resolve.
-- **R5 — Schema compatibility** (Q4). Before its first typed operation on a
-  type, the SDK compares that type's generated binding with the
-  connection's schema: ids, kinds, primitive kinds, `Optional` and
-  `Editable` flags, enum constants and `schemaVersion`. On a mismatch,
-  every typed operation on that type returns `SchemaMismatch` and submits
-  nothing. The reflective layer is unaffected.
+- **R5 — Schema compatibility** (Q4). Before the first typed operation
+  that uses a type, the SDK compares the type's generated binding with the
+  connection's schema.
+  - **What is compared:**
+    - the type's `TypeId`, kind and `schemaVersion`;
+    - its field set exactly: ids, names, kinds, primitive kinds, the
+      referenced `TypeId` of each struct or enum field, and the `Optional`
+      and `Editable` flags;
+    - an enum's constants, by name and value.
+  - **Recursively:** every struct or enum type a field references is
+    checked the same way (`Camera` → `CameraFog`, `CameraBloom`; `Light` →
+    `LightKind`). A type is compatible only if it and every type it
+    references are.
+  - **On a mismatch:**
+    - every typed operation on that type returns `SchemaMismatch` and
+      submits nothing;
+    - a transaction, typed or mixed, containing any operation on an
+      incompatible type is not submitted at all: `submit` returns
+      `SchemaMismatch` and takes no ticket;
+    - typed event decoding of that type returns `SchemaMismatch`.
+
+  The reflective layer alone is unaffected.
 - **R6 — No storage exposure.** Generated code encodes names, ids, kinds,
   flags and versions, never `FieldDescriptor::byteOffset` or a World C++
   type. Every value the SDK returns is a copy.
@@ -243,13 +294,39 @@ Goals of this Spec within those boundaries:
 - **R9 — No Runtime change.** Runtime, World, Connection and Remote sources
   are unchanged. `runFrame()` is byte-identical at every milestone, and
   every golden is unchanged.
+- **R10 — Component-operation contracts** (Q4).
+  - **A component read is not a snapshot.** `read<C>()` and its reflective
+    form issue one `getProperty` per leaf, or one `getProperties` batch
+    when a `QueryBatch` is supplied.
+    - Over Remote, one-at-a-time queries are answered at successive frame
+      boundaries, so commands may apply between them.
+    - The batch interface promises answers in input order, not one
+      instant: the default asks one at a time, and an adapter may split.
+    - The returned value holds each leaf as it was when that leaf was
+      answered.
+    - A client that needs a consistent component reads while the Runtime
+      is paused. No command applies then, and command application is the
+      frame's only World write.
+  - **`add(entity, C)`** appends `AddComponent` and then one `SetProperty`
+    per leaf in descriptor order. It compiles only for a type whose every
+    leaf is `Editable`. For a type with a read-only leaf, the client adds
+    the bare component (World's defaults) and sets the editable leaves. No
+    `worldSchema()` type has a read-only leaf today; a synthetic schema
+    covers the rule.
+  - **Defaults:** generated value structs are value-initialized (zeros,
+    the first enumerator, empty optionals), not World's member defaults;
+    the schema carries no defaults (ADR-0099 D5). So `add(entity, C{})`
+    writes zeros, while a bare add gives World's defaults (for `Light`:
+    colour 1, 1, 1 and intensity 1).
 
 ### Non-functional
 
 - **Latency:** an SDK call costs what its `RuntimeConnection` calls cost.
   In process that is a function call. Over Remote it is one frame boundary
   per synchronous call (about 33 ms on the default scene, measured above).
-  A typed component read of N leaves is N calls (Q9).
+  A component read of N leaves is N calls, or one pipelined batch when the
+  client supplies a `QueryBatch` (Q9). The component filter is one
+  `listEntities` plus one `listComponents` per entity, or one batch.
 - **Threading:** not thread-safe. One thread, between the owner's frames in
   process, or the client's own thread over Remote (ADR-0004, ADR-0106).
 - **Dependencies:** none new.
@@ -274,13 +351,15 @@ Atlantis Gameplay SDK  (src/gameplay_sdk/, links Atlantis Connection only)
         │ implemented on
    reflective layer  gameplay::World over RuntimeConnection&: names/ids, components,
                      queries, Transaction builder, Subscription, failures by ticket,
-                     per-type schema compatibility
-        │ calls
-RuntimeConnection  (unchanged; InProcess or Remote)
+                     recursive per-type schema compatibility
+        │ calls                       │ batched reads (optional)
+RuntimeConnection                gameplay::QueryBatch  (SDK-owned; default: one at a time)
+ (unchanged; InProcess or Remote)
 
 examples/gameplay_demo  (atlantis_gameplay_demo)
    links the SDK + atlantis_remote_client; attaches to atlantis_runtime --listen;
-   runs the North star; RuntimeControl for step and capture
+   supplies a QueryBatch adapter over RemoteSession (as `atlantis` does for the CLI);
+   runs the North star; RuntimeControl for pause, step and capture
 ```
 
 Typed client code, illustratively (Q4 fixes the shape; the Plan fixes the
@@ -290,16 +369,22 @@ exact spellings):
 namespace gp = atlantis::gameplay;
 namespace w = atlantis::gameplay::world;          // generated
 
-gp::World world(session.connection());            // borrows the connection
+RemoteBatch batch(session);                       // the example's adapter
+gp::World world(session.connection(), &batch);    // borrows both; batch optional
 gp::Transaction tx;
 tx.create(beacon);
 tx.add(beacon, w::Light{.kind = w::LightKind::Point, .color = {1, .6f, .2f},
                         .intensity = 4.0f, .range = 6.0f});
 tx.add(beacon, w::WorldMatrix{/* column3 = position */});
-const auto ticket = world.submit(tx);             // one TransactionTicket
-// … step …
-const float i = world.get(beacon, w::fields::Light.intensity).value();
-world.set(beacon, w::fields::WorldMatrix.column3, {x, y, z, 1.0f});
+const auto ticket = world.submit(tx);             // one TransactionTicket (or SchemaMismatch)
+control.pause();
+for (int k = 1; k <= K; ++k) {                    // the client's own logic step (Q7)
+  gp::Transaction move;
+  move.set(beacon, w::fields::WorldMatrix.column3, positionAt(k));
+  move.set(beacon, w::fields::Light.intensity, intensityAt(k));
+  world.submit(move);
+  // step(1) -> the FrameReport's point light equals positionAt(k), intensityAt(k)
+}
 ```
 
 Without the generated header, the same operations work by name:
@@ -314,18 +399,21 @@ Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
   covers:
   - a new top-level module, Atlantis Gameplay SDK, a client of Atlantis
     Connection only (Q1);
-  - its two layers over `RuntimeConnection` (Q2);
+  - its two layers over `RuntimeConnection` (Q2), and its optional,
+    SDK-owned, transport-neutral `QueryBatch` (Q9);
   - the execution model: client-driven logic, no Runtime-hosted callbacks
     or scheduler (Q6);
-  - the time model: the frame boundary only (Q7);
+  - the time model: no clock; the client counts its own logic steps, and
+    the Runtime's frame number only identifies frames (Q7);
   - custom components out of scope (Q5);
   - the example client attaching through Atlantis Remote's client half
     (Q8).
 - **[ADR-0111](../adr/0111-schema-generated-typed-bindings.md)** covers:
   - typed bindings generated from the schema by a host tool, with the
     output committed and checked for staleness (Q3);
-  - the binding shape and the per-type compatibility check against the
-    connected Runtime's schema (Q4).
+  - the binding shape, the component-operation contracts, and the
+    recursive per-type compatibility check against the connected Runtime's
+    schema (Q4).
 
   It leaves ADR-0099 D4 in force: the descriptor tables are not generated.
 
@@ -353,9 +441,9 @@ Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
 The questions below compare their options. Rejected across them:
 
 - **A Runtime-embedded gameplay layer** (behaviours with per-frame update
-  callbacks inside `runFrame()`): it is a scheduling system, and it gives
-  client code a privileged position in the frame. The maintainer excluded
-  it (Q6).
+  callbacks inside `runFrame()`): it is the start of a scheduling system,
+  and it gives client code a privileged position in the frame. This draft
+  recommends not including it in v1 (Q6, open to review).
 - **Generating the descriptor tables from annotated C++** (macros or a
   parser): it reverses ADR-0099 D4 and is a reflection system the
   repository rejected. The SDK generates *client* code *from* the tables.
@@ -387,15 +475,39 @@ The questions below compare their options. Rejected across them:
   - subscriptions: typed decoding and RAII unsubscribe;
   - name errors are reported client-side; boundary refusals pass through
     unchanged.
+- **Batch tests** (R2, Q9):
+  - the default `QueryBatch` returns exactly the one-at-a-time results;
+  - a recording `QueryBatch` shows that a component read is one
+    `getProperties` call and the component filter one `listComponents`
+    call;
+  - over Remote loopback (the Spec 0055 `whileWaiting` harness), the
+    example's `RemoteSession` adapter returns the same values as the
+    default.
+- **Component-contract tests** (R10):
+  - `add(e, w::Light{})` writes zeros, while a bare add gives World's
+    defaults;
+  - over Remote loopback, a one-at-a-time `read<C>` that straddles an
+    applied command returns leaves from different frames, and the same
+    read while paused returns one consistent component;
+  - `add(entity, C)` for a synthetic type with a read-only leaf fails to
+    compile (a probe).
 - **Compatibility tests** (R5), with a modified schema span served by a
-  test `RuntimeConnection`: a changed `schemaVersion`, a changed kind, a
-  missing field or a renamed enum constant each give `SchemaMismatch` for
-  that type only, and nothing is submitted.
+  test `RuntimeConnection`:
+  - a changed `schemaVersion`, kind, referenced `TypeId` or `Editable`
+    flag, a missing or extra field, or a renamed enum constant each give
+    `SchemaMismatch`;
+  - a change only to a referenced type (`CameraFog`'s version,
+    `LightKind`'s constants) makes the referencing component (`Camera`,
+    `Light`) incompatible;
+  - unrelated types stay usable;
+  - a transaction mixing a compatible and an incompatible type is not
+    submitted: no ticket, no command reaches the connection.
 - **Boundary scan** (R1, R6): the SDK's includes and link list. The
   generated header includes Core's `schema.h` and SDK headers only.
 - **The North star, in process** (fatal VVL; `RuntimeApplication` +
   `RuntimeControlHost`, as the 0055/0056 north stars):
-  - exact frame data at every step;
+  - exact frame data at every logic step `k` (paused, one step per `k`);
+  - the same values on a repeated run, whatever the frame numbers;
   - the image changes when the beacon appears;
   - frame data returns to the original light set after the destroy.
 
@@ -422,15 +534,20 @@ Risks:
   that already has a Directional light is refused (Plan 0052 J1). The SDK
   documents the order and the example follows it. It does not reorder
   silently.
-- **Remote latency.** A typed component read over Remote is N frame
-  boundaries (Q9). Gameplay loops over Remote should write in transactions
-  and observe through events rather than poll.
+- **Remote latency.** Without a `QueryBatch`, a component read over Remote
+  is N frame boundaries (Q9). With one it is one pipelined boundary.
+  Gameplay loops still write in transactions and observe through events
+  and step reports rather than poll.
+- **A component read is not a snapshot** (R10). Unless the Runtime is
+  paused, a multi-leaf read can mix frames. The contract says so, and the
+  example reads while paused.
 - **The first generated code in the repository.** Its banner, determinism
   and review rules are set once here (ADR-0111) and reused by later
   bindings (C#, Python).
 
-Open questions — each lists options and a recommendation. Q5–Q7 answer the
-maintainer's three explicit scope questions.
+Open questions — each lists options and a recommendation. Q5–Q7 are the
+maintainer's three scope questions; their answers are recommendations, not
+rulings.
 
 - **Q1 — Module placement** (ADR-0110).
   - **(M-a) A new module, Atlantis Gameplay SDK** (`src/gameplay_sdk/`,
@@ -483,8 +600,8 @@ maintainer's three explicit scope questions.
     - World's table would have to move into a public header.
     - There would be no named value structs (`read<Light>()` needs member
       names), and error messages would be template diagnostics.
-  - **(G-d) Hand-written typed wrappers.** They are not generated, and they
-    drift silently: what the maintainer asked to avoid.
+  - **(G-d) Hand-written typed wrappers.** They drift silently from the
+    schema, and the maintainer asked for a generated interface.
   - **Recommendation: G-a.** Generated code is reviewed like source. It is
     proven current by test, and it builds everywhere the SDK does.
 
@@ -502,19 +619,21 @@ maintainer's three explicit scope questions.
     - Each handle carries the component's `TypeId`, the leaf's `FieldId`
       and the C++ type.
     - A non-`Editable` leaf gets a read-only handle type.
-  - **Component operations:**
-    - `read<C>` reads every leaf (N gets) into a `C`;
+  - **Component operations** (R10):
+    - `read<C>` reads every leaf into a `C`: N gets or one batch, and not
+      a snapshot;
     - `add(entity, C)` is `AddComponent` then one `SetProperty` per leaf,
-      in descriptor order, appended to the caller's transaction. It writes
-      every leaf, so a value-initialized `C{}` writes zeros, not World's
-      defaults (the schema carries no defaults, ADR-0099 D5). A bare
-      `AddComponent` (World's defaults) stays available by type.
+      in descriptor order, appended to the caller's transaction. It is
+      available only when every leaf is `Editable`, and it writes zeros for
+      a value-initialized `C{}`;
+    - a bare `AddComponent` (World's defaults) stays available by type.
   - **Compatibility (R5):**
     - each generated type carries its binding: ids, kinds, flags,
-      constants and `schemaVersion`;
-    - `World` compares it with `connection.schema()` once per type, on
-      first use;
-    - on a mismatch that type returns `SchemaMismatch`;
+      referenced `TypeId`s, constants and `schemaVersion`;
+    - `World` compares it, and recursively every type it references, with
+      `connection.schema()` once per type, on first use;
+    - on a mismatch that type's operations return `SchemaMismatch`, and so
+      does any transaction containing one, which is then not submitted;
     - in process the check passes by construction. Over Remote it catches
       a client built against another Runtime.
   - **Alternative (S-b):** check every type at construction and refuse the
@@ -522,7 +641,7 @@ maintainer's three explicit scope questions.
     that never uses it.
   - **Recommendation:** as above, per-type lazily (S-a).
 
-- **Q5 — Custom components** (maintainer-posed; ADR-0110).
+- **Q5 — Custom components** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
   - **(C-a) Out of scope.** The SDK covers `worldSchema()`'s types only.
     The generator and the reflective layer take any descriptor table, so a
     later Spec that adds component tables reuses both unchanged.
@@ -541,7 +660,7 @@ maintainer's three explicit scope questions.
     is just client state under a misleading name.
   - **Recommendation: C-a**, with C-b named as the follow-up it would be.
 
-- **Q6 — Game-logic execution** (maintainer-posed; ADR-0110).
+- **Q6 — Game-logic execution** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
   - **(X-a) Client-driven.** The SDK is a library; logic runs in the
     client's own control flow:
     - over Remote, in its own process, each call answered at a frame
@@ -557,15 +676,22 @@ maintainer's three explicit scope questions.
   - **Recommendation: X-a.** The example's logic is a plain loop in its own
     process.
 
-- **Q7 — The time model** (maintainer-posed; ADR-0110).
-  - **(T-a) The frame boundary only.** The SDK defines no clock, no delta
-    time and no fixed timestep. A client observes time as frames:
-    - `RuntimeStatus::frame`;
-    - `FrameReport::frame` after `step`;
-    - commands applying at the next frame start.
-
-    The example derives motion from the frame number, which is
-    deterministic under `step`.
+- **Q7 — The time model** (maintainer-posed question; the answer is this draft's recommendation; ADR-0110).
+  - **(T-a) No clock; the client's own logic step.** The SDK defines no
+    clock, no delta time and no fixed timestep.
+    - **Logic time:** a client advances logic in its own steps `k` and
+      computes state from `k`.
+    - **Ordering:** commands apply at the next frame start, and a step
+      releases exactly one frame's application while paused.
+    - **Frame numbers:** the Runtime's frame number
+      (`RuntimeStatus::frame`, `FrameReport::frame`) identifies the frame a
+      report describes. It is not a logic clock: it advances while paused,
+      and how many frames pass between client calls depends on Remote
+      waits (Motivation, Facts).
+    - **The example:** it pauses, then for each `k` submits the
+      transaction computed from `k`, steps one frame, and checks that
+      frame's report. The run is reproducible whatever frame numbers it
+      sees.
   - **(T-b) A frame clock query** (frame number plus delta time): the
     Runtime has no delta time or simulation time today. This is a new
     Runtime concept and a `RuntimeControl` change.
@@ -577,8 +703,9 @@ maintainer's three explicit scope questions.
   - **(E-a) An out-of-process example**, `examples/gameplay_demo/` →
     `atlantis_gameplay_demo`:
     - it links the SDK and `atlantis_remote_client`, attaches to
-      `atlantis_runtime --listen` by session file, and runs the North star
-      with `RuntimeControl::step` (capture on the image step);
+      `atlantis_runtime --listen` by session file, supplies a `QueryBatch`
+      adapter over `RemoteSession`, and runs the North star with
+      `RuntimeControl` pause and `step` (capture on the image step);
     - the same loop runs in process in a GPU test, for exact frame data
       under fatal VVL;
     - a two-process ctest runs the executable;
@@ -590,18 +717,33 @@ maintainer's three explicit scope questions.
     for.
   - **Recommendation: E-a.**
 
-- **Q9 — Read batching over Remote.**
-  - **(B-a) None in v1.** Typed reads cost N calls (about 33 ms each on the
-    default scene). The example writes in transactions and observes
-    through events and frame reports.
-  - **(B-b) A batch `getProperties` on `RuntimeConnection`.** Remote
-    already pipelines it on `RemoteSession` (Spec 0055). It is a new Query
-    (an ADR-0105 D1 extension), which the maintainer's "reuse the
-    semantics" goal argues against adding here.
-  - **(B-c) The SDK takes an optional batch reader** (a `RemoteSession`
-    adapter). This couples the SDK's API to a transport.
-  - **Recommendation: B-a.** Measure in the example and decide B-b in a
-    later Spec if a real client needs it.
+- **Q9 — Query batching** (ADR-0110).
+  - **(B-a) None in v1.** Component reads cost N calls (about 33 ms each on
+    the default scene), and the component filter costs one call per entity
+    (5969 on Bistro).
+  - **(B-b) A batch query on `RuntimeConnection`.** Remote already
+    pipelines it on `RemoteSession` (Spec 0055). It is a new Query (an
+    ADR-0105 D1 extension) and a Connection change, which this Spec's
+    "reuse the semantics" goal argues against.
+  - **(B-c) An SDK-owned, transport-neutral `QueryBatch`**, after the CLI's
+    `cli::QueryBatch` precedent (Plan 0055 P9):
+    - **Interface:** `gameplay::QueryBatch`, belonging to the SDK and
+      naming only Connection's value types. `listComponents` and
+      `getProperties` take spans and return results in input order.
+    - **Default:** one query at a time over the `RuntimeConnection`.
+    - **Remote:** the example supplies a ~15-line adapter over
+      `RemoteSession`, as `atlantis` does in `src/cli/app/main.cpp`.
+    - **Scope:** the SDK uses it for component-field reads (one
+      `getProperties` per component read) and for the component filter
+      (one `listComponents` for all listed entities).
+    - **No new contract:** Connection and the protocol are unchanged, the
+      SDK does not depend on Remote, and the batch makes no snapshot
+      promise (R10).
+  - **(B-d) Share `cli::QueryBatch`** by moving it into Connection. This
+    changes Connection for a client-side seam. Two identical small
+    interfaces in two client libraries can be unified later if a third
+    client needs one.
+  - **Recommendation: B-c.**
 
 - **Q10 — Android.**
   - **(A-a)** `assembleDebug` builds the SDK library (Gradle `targets`), as
@@ -616,7 +758,8 @@ maintainer's three explicit scope questions.
   extension and bake support.
 - A time model or scheduler (Q6 X-b, Q7 T-b/T-c), and Runtime-hosted
   logic.
-- A batch query on `RuntimeConnection` (Q9 B-b).
+- A batch query on `RuntimeConnection` (Q9 B-b), and unifying the CLI's
+  and the SDK's `QueryBatch` (Q9 B-d).
 - Generated bindings for other languages (C# 0058, Python 0061) from the
   same generator design.
 - Math helpers (TRS composition), an SDK-side entity cache, and Android

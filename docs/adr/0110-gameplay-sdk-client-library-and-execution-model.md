@@ -33,22 +33,33 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
     reused;
   - no Runtime or ECS storage exposed;
   - a real client example;
-  - custom components, logic execution and time stated in or out, with no
-    scripting or scheduling system.
+  - a scope proposal (from the drafter) on custom components, logic
+    execution and time, without growing into a complete scripting or
+    scheduling system.
+
+  D3–D5 below are this ADR's proposals for that scope, not maintainer
+  rulings.
 - **What exists:**
   - `RuntimeConnection` (values only; InProcess and Remote);
   - `RuntimeControl` (pause, resume, step with exact frame data and
     capture);
   - `worldSchema()` (eight types; every component field `Editable`);
-  - Connection's client text grammar (`text::parsePath`, `leavesOf`).
+  - Connection's client text grammar (`text::parsePath`, `leavesOf`);
+  - a transport-neutral query batch in the CLI (`cli::QueryBatch`, Plan
+    0055 P9). Its default asks one query at a time; the `atlantis`
+    executable adapts `RemoteSession`'s pipelined queries to it. Neither
+    Connection nor the protocol changed for it.
 - **Three clients already speak the connection directly**: the CLI, the
   editor and the tests. Each rebuilds names → ids, component-level
   operations and multi-command builds by hand. The smoke test's point light
   is nine ordered commands.
 - **The Runtime has no logic-hosting point.** `runFrame()` has been held to
   named-line diff guards since Spec 0055. There is no delta time and no
-  simulation clock; time is the frame (`RuntimeStatus::frame`,
-  `FrameReport::frame`).
+  simulation clock.
+- **The frame number is not a logic clock.**
+  `RuntimeControlHost::afterFrame()` increments it every frame, paused or
+  not, because pause holds only command application. The number of frames
+  between two Remote calls varies with the waits.
 - **Component types are C++ types in World** (the ECS's component ids are
   per C++ type). The boundary accepts only `worldSchema()`'s components.
 - **Remote calls are answered at frame boundaries** (D1 of ADR-0106).
@@ -73,6 +84,17 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      - a `Transaction` builder;
      - RAII `Subscription`s;
      - failures per ticket.
+   - **Optional query batch:** `gameplay::QueryBatch`, an SDK-owned,
+     transport-neutral interface after `cli::QueryBatch`.
+     - It declares `listComponents` and `getProperties` over spans, with
+       results in input order.
+     - `World` takes it optionally. Without one, a default asks one query
+       at a time over the connection.
+     - The SDK uses it for component-field reads and for the component
+       filter.
+     - A Remote client supplies an adapter over `RemoteSession`; the SDK
+       never names Remote.
+     - It promises input order, not a snapshot (ADR-0111 D3).
    - **Typed:** generated per ADR-0111, and implemented on the reflective
      layer only.
    - Every SDK operation is a sequence of `RuntimeConnection` calls a client
@@ -90,10 +112,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
    There is no callback, behaviour, update phase or scheduler inside the
    Runtime, and no loading of client code into the Runtime process.
-4. **Time is the frame boundary.** The SDK defines no clock, delta time,
-   fixed step or time scale. A client observes frames through
-   `RuntimeControl` (`status().frame`, `step()`'s `FrameReport`) and the
-   rule that commands apply at the next frame's start.
+4. **No clock; logic time is the client's own step.** The SDK defines no
+   clock, delta time, fixed step or time scale.
+   - A client counts its own logic steps and computes state from them.
+   - Ordering comes from the rule that commands apply at the next frame's
+     start, and that while paused a `step` releases exactly one frame's
+     application.
+   - The Runtime's frame number (`status().frame`, `FrameReport::frame`)
+     identifies which frame a report describes. It is not a logic clock.
 5. **No custom components.** The SDK covers the types the connection's
    schema serves, which today is `worldSchema()`. Client-defined component
    types are a later Spec. The reflective layer and the generator take any
@@ -103,8 +129,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - It links the SDK and Atlantis Remote's client half
      (`atlantis_remote_client`), the second executable to do so after
      `atlantis`.
-   - It attaches to `atlantis_runtime --listen` and runs Spec 0057's North
-     star with `RuntimeControl::step`.
+   - It attaches to `atlantis_runtime --listen`, supplies a `QueryBatch`
+     adapter over `RemoteSession`, and runs Spec 0057's North star: paused,
+     one `step` per logic step `k`.
    - The Runtime executable does not link the SDK.
 7. **Threading:** not thread-safe. Calls are made on one thread: between
    frames in process, or the client's thread over Remote (ADR-0004).
@@ -120,18 +147,20 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   calls cannot disagree. Parity is testable as equal `Command` sequences.
 - The SDK works the same over InProcess and Remote because it only speaks
   `RuntimeConnection`.
-- The excluded systems — scheduler, time model, custom components, hosted
-  code — stay open for their own Specs. No SDK shape presumes their
+- The systems this ADR leaves out — scheduler, time model, custom
+  components, hosted code — stay open for their own Specs. No SDK shape presumes their
   answers.
 
 ### Negative / Trade-offs
 
 - **Over Remote, logic runs at frame-boundary latency.** A synchronous call
-  costs about two vsync frames on the default scene, and a typed component
-  read of N leaves is N calls. Clients write in transactions and observe
-  through events and step reports. A batch query is a later decision.
-- **No delta time.** Motion is expressed per frame. Frame-rate-independent
-  logic waits for a time model.
+  costs about two vsync frames on the default scene. A `QueryBatch` brings
+  a component read or the component filter down to one pipelined boundary,
+  but writes and steps remain one call each.
+- **No delta time.** Motion is expressed per logic step. Frame-rate-
+  independent logic waits for a time model.
+- **Two identical small batch interfaces** (the CLI's and the SDK's). They
+  can be unified later; doing it now would change Connection.
 - **Order is the client's responsibility.** A point light must get its
   `Light` and `kind` before its `WorldMatrix` (Plan 0052 J1). The SDK
   documents the order and does not fix it silently.
@@ -147,13 +176,21 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   operations and transactions, and the typed layer would be a second
   implementation of each.
 - **Runtime-hosted behaviours** (update callbacks in `runFrame()`).
-  Rejected: this is a scheduler, a privileged position in the frame, and a
-  frame-path change. It is excluded by the maintainer.
+  Proposed for rejection in v1: it is the start of a scheduler, a
+  privileged position in the frame, and a frame-path change.
 - **Loading client code into the Runtime** (a plugin flag). Rejected here:
   it is the Package/Plugin work (0059).
 - **A frame clock query (delta time).** Rejected for v1: the Runtime has no
   such concept to expose; adding one is a Runtime and `RuntimeControl`
   change.
+- **Deriving logic from the Runtime's frame number.** Rejected: it advances
+  while paused and between Remote calls by varying amounts, so behaviour
+  would not be reproducible.
+- **No batching.** Rejected: component reads and the component filter
+  would cost one frame boundary per query over Remote (5969
+  `listComponents` calls for Bistro's filter).
+- **A batch query on `RuntimeConnection`.** Rejected for v1: it is a new
+  Query and a Connection change, where a client-side seam suffices.
 - **Client-defined components in the World.** Rejected for v1: this needs
   run-time ECS registration, boundary and transport schema extension, and
   bake and persistence support.

@@ -85,26 +85,50 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Bindings:** per generated type, a `constexpr` description of what
      it was generated from:
      - qualified name, `TypeId` and `schemaVersion`;
-     - each field's `FieldId`, kind, primitive kind, `Optional` and
-       `Editable` flags;
-     - enum constants.
+     - each field's name, `FieldId`, kind, primitive kind, referenced
+       `TypeId`, and `Optional` and `Editable` flags;
+     - enum constants, by name and value.
    - **Self-checks:** the header `static_assert`s every id against
      `schema::typeId`/`schema::fieldId` of its names, using Core only.
    - **Never generated:** `byteOffset`, World C++ type names, or any
      layout claim about World's structs.
 3. **Typed operations go through the reflective layer** (ADR-0110 D2).
-   - `read<C>` is one get per leaf.
-   - `add(entity, C)` appends `AddComponent` then one `SetProperty` per
+   - **`read<C>`** is one get per leaf, or one `getProperties` batch when a
+     `QueryBatch` is supplied.
+     - It is **not a snapshot**: one-at-a-time queries over Remote are
+       answered at successive frame boundaries, and the batch promises
+       input order, not one instant.
+     - Each leaf is as it was when answered.
+     - A consistent read is one taken while the Runtime is paused, when no
+       command applies.
+   - **`add(entity, C)`** appends `AddComponent` then one `SetProperty` per
      leaf, in descriptor order.
-   - A typed event decoding matches on the binding's ids.
-4. **Compatibility is checked per type, on first use.**
-   - Before its first typed operation on a type, `gameplay::World` compares
-     that type's binding with the connection's `schema()`: ids, kinds,
-     flags, constants and version.
-   - A mismatch makes every typed operation on that type return
-     `SchemaMismatch`, submitting nothing.
+     - It is declared only for a type whose every leaf is `Editable`. For
+       any other type it does not compile; the client adds the bare
+       component and sets the editable leaves.
+     - It writes every leaf, so a value-initialized `C{}` writes zeros,
+       not World's defaults; a bare add gives World's defaults.
+   - **Typed event decoding** matches on the binding's ids.
+4. **Compatibility is checked per type, recursively, on first use.**
+   - Before the first typed operation that uses a type, `gameplay::World`
+     compares that type's binding with the connection's `schema()`:
+     - `TypeId`, kind and `schemaVersion`;
+     - the exact field set (names, ids, kinds, primitive kinds, referenced
+       `TypeId`s, flags);
+     - enum constants by name and value.
+   - **Recursively:** every struct or enum type a field references
+     (`Camera` → `CameraFog`, `CameraBloom`; `Light` → `LightKind`) is
+     checked the same way. A type is compatible only if its whole closure
+     is.
+   - **On a mismatch:**
+     - every typed operation on that type returns `SchemaMismatch`,
+       submitting nothing;
+     - a transaction, typed or mixed, that contains any operation on an
+       incompatible type is not submitted at all, takes no ticket, and
+       returns `SchemaMismatch`;
+     - typed decoding of that type's events returns `SchemaMismatch`.
    - The result is cached for the `World`'s lifetime. The reflective layer
-     is never blocked.
+     alone is never blocked.
 5. **Naming:** generated C++ names are the schema's names. Types use the
    part after the module prefix (`world::Light` →
    `atlantis::gameplay::world::Light`), and fields use their schema names.
@@ -138,6 +162,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   The staleness test keeps it in step.
 - **Per-type lazy checking** means a mismatch shows on first use, not at
   connect.
+- **A component read is not a snapshot** unless taken while paused. The
+  contract says so rather than implying an atomicity the connection does
+  not offer.
 
 ## Alternatives Considered
 
@@ -157,6 +184,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   ADR-0099 declined.
 - **Checking every type at connect and refusing the whole connection.**
   Rejected: one renamed type the client never uses would block it.
+- **Checking only a type's own fields, not the types it references.**
+  Rejected: a changed `CameraFog` or `LightKind` would pass the `Camera` or
+  `Light` check and fail later as `KindMismatch` or wrong enum values.
+- **Submitting the compatible part of a mixed transaction.** Rejected: it
+  breaks the transaction's all-or-nothing meaning.
+- **Generating World's member defaults into the value structs.** Rejected:
+  defaults are not schema data (ADR-0099 D5), and the generator would have
+  to read World's structs by layout.
 - **Emitting `byteOffset` for zero-copy reads.** Rejected: it exposes
   internal layout (ADR-0034), and the values come by copy through the
   connection anyway.
