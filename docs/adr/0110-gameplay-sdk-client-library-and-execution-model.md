@@ -1,0 +1,164 @@
+# ADR 0110: Gameplay SDK — Client Library, Layers and Execution Model
+
+- **Status:** Proposed
+- **Date:** 2026-10-08
+- **Deciders:** slmao
+- **Acceptance:** pending (review of Spec 0057's own branch PR)
+- **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`In Review`)
+- **Related ADR(s):**
+  - The SDK is a client of [ADR-0105](0105-runtime-connection-and-cli-client.md)'s
+    `RuntimeConnection`; over Remote it attaches through
+    [ADR-0106](0106-attachable-runtime-transport-and-control.md). Neither
+    interface changes.
+  - It applies [ADR-0033](0033-runtime-authority-and-client-boundary.md)
+    (the Runtime is authoritative; clients hold values) and
+    [ADR-0034](0034-stable-public-boundary-versus-internal-cpp-layout.md)
+    (the stable boundary is schema, identity and protocol).
+  - It pairs with [ADR-0111](0111-schema-generated-typed-bindings.md) (how
+    its typed layer is generated).
+  - It keeps [ADR-0103](0103-runtime-world-operation-boundary.md),
+    [ADR-0104](0104-runtime-world-transaction-atomicity.md) and
+    [ADR-0004](0004-phase1-threading-baseline.md) unchanged.
+
+Record one decision and its rationale. Follow the
+[ADR lifecycle](README.md); keep approval discussion and execution evidence in
+PRs. After acceptance, a changed decision requires a new superseding ADR.
+
+## Context
+
+- **The maintainer's goal** (2026-10-08):
+  - a Gameplay SDK with a reflective and a generated typed interface over
+    one schema;
+  - `RuntimeConnection`'s Query, Command, Event and Transaction semantics,
+    reused;
+  - no Runtime or ECS storage exposed;
+  - a real client example;
+  - custom components, logic execution and time stated in or out, with no
+    scripting or scheduling system.
+- **What exists:**
+  - `RuntimeConnection` (values only; InProcess and Remote);
+  - `RuntimeControl` (pause, resume, step with exact frame data and
+    capture);
+  - `worldSchema()` (eight types; every component field `Editable`);
+  - Connection's client text grammar (`text::parsePath`, `leavesOf`).
+- **Three clients already speak the connection directly**: the CLI, the
+  editor and the tests. Each rebuilds names → ids, component-level
+  operations and multi-command builds by hand. The smoke test's point light
+  is nine ordered commands.
+- **The Runtime has no logic-hosting point.** `runFrame()` has been held to
+  named-line diff guards since Spec 0055. There is no delta time and no
+  simulation clock; time is the frame (`RuntimeStatus::frame`,
+  `FrameReport::frame`).
+- **Component types are C++ types in World** (the ECS's component ids are
+  per C++ type). The boundary accepts only `worldSchema()`'s components.
+- **Remote calls are answered at frame boundaries** (D1 of ADR-0106).
+  Measured for Spec 0057: about 33 ms per synchronous call on the default
+  scene.
+
+## Decision
+
+1. **A new top-level module, Atlantis Gameplay SDK** (`src/gameplay_sdk/`,
+   namespace `atlantis::gameplay`, target `Atlantis::GameplaySdk`).
+   - It links **Atlantis Connection only**. It includes no Runtime, ECS,
+     World component, Platform, RHI, Renderer, Vulkan, Remote or OS header.
+     A boundary test checks this, as for the CLI and the editor.
+   - Nothing in the engine depends on it. Runtime, Remote, the CLI and the
+     editor do not link it.
+2. **Two layers, one implementation.**
+   - **Reflective:** `gameplay::World` borrows a `RuntimeConnection` and
+     addresses types and fields by name (Connection's `text` grammar) or
+     id. It provides:
+     - component-level read, add (with values) and remove;
+     - "entities with these components";
+     - a `Transaction` builder;
+     - RAII `Subscription`s;
+     - failures per ticket.
+   - **Typed:** generated per ADR-0111, and implemented on the reflective
+     layer only.
+   - Every SDK operation is a sequence of `RuntimeConnection` calls a client
+     could make by hand, in the order the client wrote it. The SDK never
+     reorders, merges or splits a submission.
+   - The SDK adds no rule the boundary owns (finiteness, limits,
+     editability): those remain the boundary's refusals. It resolves names
+     and reports names it cannot resolve.
+   - Values only: every result is a copy, and no SDK type names a World
+     component C++ type, ECS handle or byte offset.
+3. **Game logic is client-driven.** The SDK is a library: logic runs in the
+   client's own control flow.
+   - Over Remote, that is the client's own process.
+   - In process, it is wherever a host calls it between frames.
+
+   There is no callback, behaviour, update phase or scheduler inside the
+   Runtime, and no loading of client code into the Runtime process.
+4. **Time is the frame boundary.** The SDK defines no clock, delta time,
+   fixed step or time scale. A client observes frames through
+   `RuntimeControl` (`status().frame`, `step()`'s `FrameReport`) and the
+   rule that commands apply at the next frame's start.
+5. **No custom components.** The SDK covers the types the connection's
+   schema serves, which today is `worldSchema()`. Client-defined component
+   types are a later Spec. The reflective layer and the generator take any
+   descriptor table, so they carry over unchanged.
+6. **The real client is an out-of-process example**
+   (`examples/gameplay_demo/` → `atlantis_gameplay_demo`).
+   - It links the SDK and Atlantis Remote's client half
+     (`atlantis_remote_client`), the second executable to do so after
+     `atlantis`.
+   - It attaches to `atlantis_runtime --listen` and runs Spec 0057's North
+     star with `RuntimeControl::step`.
+   - The Runtime executable does not link the SDK.
+7. **Threading:** not thread-safe. Calls are made on one thread: between
+   frames in process, or the client's thread over Remote (ADR-0004).
+
+## Consequences
+
+### Positive
+
+- Gameplay code gets names, component values and compile-time types without
+  any new Runtime capability. The Runtime, its frame and its goldens are
+  untouched.
+- One reflective implementation backs both layers, so typed and reflective
+  calls cannot disagree. Parity is testable as equal `Command` sequences.
+- The SDK works the same over InProcess and Remote because it only speaks
+  `RuntimeConnection`.
+- The excluded systems — scheduler, time model, custom components, hosted
+  code — stay open for their own Specs. No SDK shape presumes their
+  answers.
+
+### Negative / Trade-offs
+
+- **Over Remote, logic runs at frame-boundary latency.** A synchronous call
+  costs about two vsync frames on the default scene, and a typed component
+  read of N leaves is N calls. Clients write in transactions and observe
+  through events and step reports. A batch query is a later decision.
+- **No delta time.** Motion is expressed per frame. Frame-rate-independent
+  logic waits for a time model.
+- **Order is the client's responsibility.** A point light must get its
+  `Light` and `kind` before its `WorldMatrix` (Plan 0052 J1). The SDK
+  documents the order and does not fix it silently.
+- One more module, and Atlantis Remote's client half has a second linker.
+
+## Alternatives Considered
+
+- **Inside Atlantis Connection.** Rejected: Connection is the
+  transport-neutral interface that Remote and Runtime link. A convenience
+  layer and generated code would grow what they all carry.
+- **No reflective layer (the typed layer over `RuntimeConnection`
+  directly).** Rejected: every client would rebuild names, component
+  operations and transactions, and the typed layer would be a second
+  implementation of each.
+- **Runtime-hosted behaviours** (update callbacks in `runFrame()`).
+  Rejected: this is a scheduler, a privileged position in the frame, and a
+  frame-path change. It is excluded by the maintainer.
+- **Loading client code into the Runtime** (a plugin flag). Rejected here:
+  it is the Package/Plugin work (0059).
+- **A frame clock query (delta time).** Rejected for v1: the Runtime has no
+  such concept to expose; adding one is a Runtime and `RuntimeControl`
+  change.
+- **Client-defined components in the World.** Rejected for v1: this needs
+  run-time ECS registration, boundary and transport schema extension, and
+  bake and persistence support.
+- **SDK-side "components" keyed by GUID.** Rejected: it is invisible to
+  other clients and is not World data.
+- **The example hosted by `atlantis_runtime`.** Rejected: it needs a Runtime
+  change for a demo and is hosted code in miniature. **Tests only** is not
+  a real client.
