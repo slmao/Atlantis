@@ -474,4 +474,3 @@ TEST_CASE("no Gizmo without a WorldMatrix, or on a sheared one", "[editor][model
   CHECK_FALSE(gizmo.available());
   CHECK_FALSE(gizmo.flush().has_value());
 }
-

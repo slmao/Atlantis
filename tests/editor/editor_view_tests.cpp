@@ -283,4 +283,3 @@ TEST_CASE("a Gizmo handle dragged in the Viewport moves the entity along the axi
   CHECK(a[1] == b[1]);
   CHECK(a[2] == b[2]);
 }
-
