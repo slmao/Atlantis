@@ -89,7 +89,11 @@ target_compile_options(atlantis_runtime_host PRIVATE
 # link. Deviation from Plan 0034's own sequencing, reported in the
 # implementing PR per AGENTS.md.
 if(WIN32)
-add_executable(atlantis_runtime main.cpp cli.cpp)
+# Plan 0056 P1/P6 (ADR-0108 D2; J4): editor_attachment.cpp is executable-
+# private like cli.cpp -- the adapter between Atlantis Editor and the frame's
+# overlay -- never added to atlantis_runtime_host, which does not link the
+# editor.
+add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp)
 
 target_link_libraries(atlantis_runtime
   PRIVATE
@@ -101,6 +105,9 @@ target_link_libraries(atlantis_runtime
     # (`--listen`) with the server half of Atlantis Remote only;
     # Atlantis::RuntimeHost does not depend on Remote.
     Atlantis::RemoteServer
+    # Plan 0056 P1 (ADR-0108 D1, D2): the executable hosts Atlantis Editor
+    # (`--editor`); Atlantis::RuntimeHost does not depend on it.
+    Atlantis::Editor
     atlantis_compiler_warnings
 )
 
@@ -203,6 +210,8 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_BLOOM_DOWNSAMPLE_SHADER_DIR="${ATLANTIS_bloom_downsample_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_BLOOM_UPSAMPLE_SHADER_DIR="${ATLANTIS_bloom_upsample_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
+  # Plan 0056 P5/P10: the UI overlay pass's shader pair, for `--editor`.
+  ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR="${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}"
   # Plan 0032 M2 (Spec 0032 Requirement 5/6): the two scenes --scene
   # can additionally select, beyond the default (ATLANTIS_RUNTIME_SCENE_*
   # above, unrenamed). Same real, already-exported CMake variables
@@ -238,7 +247,7 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
   pbr_clearcoat_ibl_shaders pbr_clearcoat_ibl_normal_map_shaders
   pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
   pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders
-  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders editor_ui_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_ibl_material_demo_scene_TARGET} ${ATLANTIS_pbr_normal_map_demo_scene_TARGET}
   # Plan 0035 Milestone 5 (Spec 0035 Requirement 7): closes the same

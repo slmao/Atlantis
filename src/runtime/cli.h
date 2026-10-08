@@ -81,6 +81,11 @@ struct CommandLineResult {
   // RunScene and the flag was given. Without --listen no socket is opened.
   std::optional<std::uint16_t> listenPort;
   std::optional<std::string> sessionFile;
+  // Spec 0056 ruling Q2 (Plan 0056 P10, J9): `--editor` -- host Atlantis
+  // Editor on the scene. Combines with --scene and --listen; refused with
+  // --exec, --help and --list-scenes. Meaningful only when outcome ==
+  // RunScene.
+  bool editor = false;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

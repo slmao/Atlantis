@@ -6,7 +6,10 @@
 #include <atlantis/log.h>
 #include <atlantis/platform/platform.h>
 #include <atlantis/platform/platform_event.h>
+#include <atlantis/render_graph/execution.h>
+#include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
+#include <atlantis/renderer/ui_overlay.h>
 #include <atlantis/runtime/error_classification.h>
 #include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
@@ -1182,6 +1185,7 @@ void RuntimeApplication::runFrame() {
   if (worldAccess_.has_value() && !commandsHeld_) (void)worldAccess_->applyPending();
 
   for (const auto& event : platform::processEvents()) {
+    if (overlay_) overlay_->onPlatformEvent(event);
     if (const auto* created = std::get_if<platform::SurfaceCreated>(&event)) {
       if (presentation_) {
         ATLANTIS_LOG_ERROR("SurfaceCreated observed while a Presentation already exists");
@@ -1340,7 +1344,7 @@ void RuntimeApplication::runFrame() {
   // rather than partially adopted, so depthTexture_/hdrColorTarget_
   // never end up at two different extents and the shared trigger
   // correctly retries BOTH next frame, not just the one that failed.
-  const Extent2D currentExtent = target->extent();
+  const Extent2D currentExtent = overlay_ ? overlayViewportExtent() : target->extent();
   if (!lastSeenExtent_.has_value() || !(currentExtent == *lastSeenExtent_)) {
     auto newTextureResult = device_->createTexture({.extent = currentExtent, .format = DepthFormat::D32Sfloat});
     auto newHdrColorTargetResult = device_->createHdrColorTarget({.extent = currentExtent});
@@ -1808,8 +1812,8 @@ void RuntimeApplication::runFrame() {
     for (std::size_t i = 0; i < bloomPipelines_.size(); ++i) bloomInput->pipelines[i] = bloomPipelines_[i].get();
   }
 
-  renderer_.drawFrame(*commandList, *target, *depthTexture_, *cameraBuffer_, drawItems,
-                       atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
+  renderer_.drawFrame(*commandList, overlay_ ? overlayViewportTarget() : *target, *depthTexture_, *cameraBuffer_, drawItems,
+                       overlay_ ? atlantis::rhi::ResourceState::ShaderRead : atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
                        // Plan 0031 (Spec 0031 Requirement 8/10): the active
                        // Camera's own real exposureCompensationEv -- every
@@ -1830,6 +1834,7 @@ void RuntimeApplication::runFrame() {
                        // gates.
                        hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>(),
                        cameraWorldPosition, bloomInput.has_value() ? &*bloomInput : nullptr);
+  if (overlay_) drawOverlayInto(*commandList, *target);
 
   auto submitResult = device_->submit(std::move(commandList), *target);
   if (submitResult.isErr()) {
@@ -1926,6 +1931,169 @@ void RuntimeApplication::runFrame() {
   }
 }
 
+std::string_view toString(OverlayAttachError error) noexcept {
+  switch (error) {
+    case OverlayAttachError::AlreadyAttached: return "an overlay is already attached";
+    case OverlayAttachError::NoDevice: return "the application has no Device";
+    case OverlayAttachError::ShaderLoadFailed: return "the overlay pass's SPIR-V could not be loaded";
+    case OverlayAttachError::FontUploadFailed: return "the overlay's font atlas could not be uploaded";
+  }
+  return "unknown overlay error";
+}
+
+// Plan 0056 P6 (ADR-0108 D3): between frames. The font atlas is uploaded here,
+// once, in a submission of its own; the Viewport target and the Pipeline wait
+// for the first frame, which knows the presentation's format.
+atlantis::Result<std::monostate, OverlayAttachError> RuntimeApplication::attachOverlay(
+    FrameOverlay& overlay, const OverlayShaderPaths& shaders) {
+  using ResultT = atlantis::Result<std::monostate, OverlayAttachError>;
+  using atlantis::rhi::ResourceState;
+  if (overlay_ != nullptr) return ResultT::Err(OverlayAttachError::AlreadyAttached);
+  if (!device_) return ResultT::Err(OverlayAttachError::NoDevice);
+  auto vertexSpirv = loadSpirvFile(std::string(shaders.vertexSpirvPath));
+  auto fragmentSpirv = loadSpirvFile(std::string(shaders.fragmentSpirvPath));
+  if (!vertexSpirv.has_value() || !fragmentSpirv.has_value()) return ResultT::Err(OverlayAttachError::ShaderLoadFailed);
+
+  const FontAtlasPixels atlas = overlay.fontAtlas();
+  const std::size_t atlasBytes = static_cast<std::size_t>(atlas.width) * atlas.height * 4;
+  if (atlas.width == 0 || atlas.height == 0 || atlas.rgba.size() != atlasBytes) {
+    return ResultT::Err(OverlayAttachError::FontUploadFailed);
+  }
+  auto texture = device_->createSampledTexture(
+      {.extent = {atlas.width, atlas.height}, .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm});
+  auto staging = device_->createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = atlasBytes});
+  // Device::submit() names a RenderTarget for its semaphores; an offscreen one
+  // has none to wait on or signal.
+  auto submitTarget = device_->createOffscreenTarget({.extent = {1, 1}});
+  auto commandList = device_->createCommandList();
+  auto fontSampler = device_->createSampler(
+      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  // Nearest: the Viewport is drawn at its own size, texel for pixel.
+  auto viewportSampler = device_->createSampler({});
+  if (texture.isErr() || staging.isErr() || submitTarget.isErr() || commandList.isErr() || fontSampler.isErr() ||
+      viewportSampler.isErr()) {
+    return ResultT::Err(OverlayAttachError::FontUploadFailed);
+  }
+  std::memcpy(staging.value()->mappedData(), atlas.rgba.data(), atlasBytes);
+  auto borrowedTarget = submitTarget.value()->acquireTarget();
+  if (borrowedTarget.isErr()) return ResultT::Err(OverlayAttachError::FontUploadFailed);
+
+  atlantis::render_graph::RenderGraphBuilder builder;
+  const auto resource = builder.declareResource("overlay-font-upload");
+  const auto pass = builder.declarePass("overlay-font-upload");
+  builder.writes(pass, resource, ResourceState::TransferDestination);
+  atlantis::rhi::Buffer& stagingBuffer = *staging.value();
+  atlantis::rhi::SampledTexture& destination = *texture.value();
+  builder.setExecute(pass, [&stagingBuffer, &destination](atlantis::rhi::CommandList& cmd) {
+    cmd.copyBufferToTexture(stagingBuffer, destination);
+  });
+  auto compiled = builder.compile();
+  if (compiled.isErr()) return ResultT::Err(OverlayAttachError::FontUploadFailed);
+  atlantis::render_graph::execute(compiled.value(),
+                                  {{.resource = compiled.value().resourceAt(0),
+                                    .sampledTexture = &destination,
+                                    .finalState = ResourceState::ShaderRead}},
+                                  *commandList.value());
+  auto submitted = device_->submit(std::move(commandList.value()), *borrowedTarget.value());
+  if (submitted.isErr() || device_->waitIdle().isErr()) return ResultT::Err(OverlayAttachError::FontUploadFailed);
+
+  overlayVertexSpirv_ = std::move(*vertexSpirv);
+  overlayFragmentSpirv_ = std::move(*fragmentSpirv);
+  overlayFontAtlas_ = std::move(texture.value());
+  overlayFontSampler_ = std::move(fontSampler.value());
+  overlayViewportSampler_ = std::move(viewportSampler.value());
+  overlay_ = &overlay;
+  return ResultT::Ok(std::monostate{});
+}
+
+void RuntimeApplication::detachOverlay() {
+  if (overlay_ == nullptr) return;
+  if (device_ && device_->waitIdle().isErr()) ATLANTIS_LOG_ERROR("waitIdle() failed while detaching the overlay");
+  releaseOverlayResources();
+  overlay_ = nullptr;
+}
+
+void RuntimeApplication::releaseOverlayResources() {
+  overlayViewportTarget_.reset();  // the borrow, before its OffscreenTarget (ADR-0038)
+  overlayViewport_.reset();
+  overlayViewportFormat_.reset();
+  overlayViewportExtent_ = Extent2D{};
+  overlayIndexBuffer_.reset();
+  overlayVertexBuffer_.reset();
+  overlayPipeline_.reset();
+  overlayPipelineFormat_.reset();
+  overlayViewportSampler_.reset();
+  overlayFontSampler_.reset();
+  overlayFontAtlas_.reset();
+  overlayVertexSpirv_.clear();
+  overlayFragmentSpirv_.clear();
+}
+
+// Plan 0056 P7, place 2: the scene's extent is the overlay's Viewport size.
+Extent2D RuntimeApplication::overlayViewportExtent() {
+  const Extent2D wanted = overlay_->viewportExtent();
+  const Extent2D extent{std::max(wanted.width, 1u), std::max(wanted.height, 1u)};
+  const atlantis::rhi::Format format = presentation_->metadata().format;
+  if (!overlayViewport_ || !(overlayViewportExtent_ == extent) || overlayViewportFormat_ != format) {
+    overlayViewportTarget_.reset();
+    overlayViewport_.reset();
+    auto created = device_->createOffscreenTarget({.extent = extent, .format = format, .sampled = true});
+    ATLANTIS_CHECK_MSG(created.isOk(), "createOffscreenTarget() (the overlay's Viewport target) failed");
+    overlayViewport_ = std::move(created.value());
+    auto acquired = overlayViewport_->acquireTarget();
+    ATLANTIS_CHECK_MSG(acquired.isOk(), "acquireTarget() (the overlay's Viewport target) failed");
+    overlayViewportTarget_ = std::move(acquired.value());
+    overlayViewportExtent_ = extent;
+    overlayViewportFormat_ = format;
+  }
+  if (!overlayPipeline_ || overlayPipelineFormat_ != format) {
+    overlayPipeline_.reset();
+    auto pipeline = device_->createPipeline(
+        {.vertexShader = {.spirvWords = overlayVertexSpirv_.data(), .wordCount = overlayVertexSpirv_.size()},
+         .fragmentShader = {.spirvWords = overlayFragmentSpirv_.data(), .wordCount = overlayFragmentSpirv_.size()},
+         .vertexInputLayout = atlantis::renderer::uiVertexInputLayout(),
+         .colorFormat = format,
+         .pushConstantSizeBytes = atlantis::renderer::kUiOverlayPushConstantSizeBytes,
+         .sampledTextureBindingCount = atlantis::renderer::kUiOverlaySampledTextureBindingCount,
+         .hasCameraUniformBinding = false,
+         .hasDepthAttachment = false,
+         .colorBlendMode = atlantis::rhi::ColorBlendMode::AlphaBlend});
+    ATLANTIS_CHECK_MSG(pipeline.isOk(), "createPipeline() (the overlay pass) failed");
+    overlayPipeline_ = std::move(pipeline.value());
+    overlayPipelineFormat_ = format;
+  }
+  return extent;
+}
+
+// Plan 0056 P7, place 3: the scene's target is the Viewport target.
+atlantis::rhi::RenderTarget& RuntimeApplication::overlayViewportTarget() { return *overlayViewportTarget_; }
+
+// Plan 0056 P7, place 4: the overlay's UI into the swapchain image, sampling
+// the Viewport target the scene was just drawn into (left in ShaderRead), and
+// leaving the swapchain image ready to present. The vertex and index buffers
+// grow (doubling) to the list; this frame's acquire drained the GPU work that
+// last read them.
+void RuntimeApplication::drawOverlayInto(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target) {
+  const atlantis::renderer::UiDrawList& list = overlay_->drawList();
+  const auto grow = [this](std::unique_ptr<atlantis::rhi::Buffer>& buffer, BufferPurpose purpose, std::size_t bytes) {
+    if (buffer && buffer->sizeBytes() >= bytes) return;
+    std::size_t size = buffer ? buffer->sizeBytes() : std::size_t{64 * 1024};
+    while (size < bytes) size *= 2;
+    buffer.reset();
+    auto created = device_->createBuffer(
+        {.purpose = purpose, .sizeBytes = size, .indexType = atlantis::rhi::IndexType::Uint32});
+    ATLANTIS_CHECK_MSG(created.isOk(), "createBuffer() (the overlay's geometry) failed");
+    buffer = std::move(created.value());
+  };
+  grow(overlayVertexBuffer_, BufferPurpose::Vertex, atlantis::renderer::uiVertexBytes(list));
+  grow(overlayIndexBuffer_, BufferPurpose::Index, atlantis::renderer::uiIndexBytes(list));
+  const atlantis::renderer::UiOverlayResources resources{*overlayPipeline_,      *overlayVertexBuffer_,
+                                                         *overlayIndexBuffer_,   *overlayFontAtlas_,
+                                                         *overlayFontSampler_,   *overlayViewportTarget_,
+                                                         *overlayViewportSampler_, isSrgbFormat(target.format())};
+  renderer_.drawOverlay(commandList, target, atlantis::rhi::ResourceState::PresentSource, list, resources);
+}
+
 RuntimeExitReason RuntimeApplication::shutdown() {
   if (lifecycle_.state() == RuntimeLifecycleState::ShutDown) {
     return lastExitReason_;  // idempotent
@@ -1953,6 +2121,9 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   // member, each reset in the exact reverse order of its own
   // declaration (runtime_application.h) -- the same, no-new-rule
   // discipline this whole sequence already follows.
+  // Plan 0056 P6: an attached overlay's resources first (detachOverlay()
+  // waits again, harmlessly, and is a no-op without one).
+  detachOverlay();
   // Plan 0044 P9: the bloom resources, before the HDR target and Device.
   bloomTargets_.reset();
   for (auto& pipeline : bloomPipelines_) pipeline.reset();

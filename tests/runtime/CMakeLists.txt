@@ -92,6 +92,9 @@ catch_discover_tests(atlantis_runtime_tests DISCOVERY_MODE PRE_TEST)
 # already declared below.
 add_executable(atlantis_runtime_gpu_tests
   runtime_smoke_gpu_tests.cpp
+  # Plan 0056 M6 (J4): the executable-private editor adapter, compiled here as
+  # atlantis_runtime compiles it -- the cli.cpp precedent.
+  ../../src/runtime/editor_attachment.cpp
   material_realization_gpu_tests.cpp
   environment_realization_gpu_tests.cpp
   material_ibl_selection_gpu_tests.cpp
@@ -110,6 +113,8 @@ target_link_libraries(atlantis_runtime_gpu_tests
     # real loopback socket, both halves in this one process.
     Atlantis::RemoteClient
     Atlantis::RemoteServer
+    # Plan 0056 M6/M7: the editor attached to the frame, through its adapter.
+    Atlantis::Editor
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -180,12 +185,13 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR="${ATLANTIS_bloom_composite_SHADER_OUTPUT_DIR}"
   # Plan 0044 Milestone 2: the bloom smoke TEST_CASE's scene.
   ATLANTIS_RUNTIME_BLOOM_SCENE_GUID="${ATLANTIS_bloom_demo_scene_GUID}"
+  ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR="${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
-  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders
+  bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders editor_ui_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_bloom_demo_scene_TARGET})
 

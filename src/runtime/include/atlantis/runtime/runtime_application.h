@@ -16,6 +16,7 @@
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/device.h>
 #include <atlantis/rhi/hdr_color_target.h>
+#include <atlantis/rhi/offscreen_target.h>
 #include <atlantis/rhi/pipeline.h>
 #include <atlantis/rhi/presentation.h>
 #include <atlantis/rhi/sampled_texture.h>
@@ -26,6 +27,7 @@
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/environment_realization.h>
 #include <atlantis/runtime/exit_reason.h>
+#include <atlantis/runtime/frame_overlay.h>
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
@@ -126,7 +128,33 @@ class RuntimeApplication {
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
 
+  // Spec 0056 R4 / ADR-0108 D3, D4 (Plan 0056 P6, P7): attaches a frame
+  // overlay -- borrowed; detachOverlay() must run before it is destroyed.
+  // Uploads its font atlas once and loads the overlay pass's shaders. While
+  // attached, runFrame() differs in exactly four named places (P7): it hands
+  // the overlay every Platform event, renders the scene at the overlay's
+  // Viewport size into an offscreen target that the overlay pass samples, and
+  // draws the overlay's UI into the swapchain image. Between frames, frame
+  // thread only; only atlantis_runtime's `--editor` attaches one.
+  [[nodiscard]] atlantis::Result<std::monostate, OverlayAttachError> attachOverlay(FrameOverlay& overlay,
+                                                                                  const OverlayShaderPaths& shaders);
+  // Waits for the GPU, releases the overlay's resources and detaches it; the
+  // frame is the plain frame again. No-op without an overlay. shutdown()
+  // detaches too.
+  void detachOverlay();
+
  private:
+  // Plan 0056 P7: the helpers of runFrame()'s named overlay places, called
+  // only while overlay_ is set. overlayViewportExtent() (place 2) also brings
+  // the Viewport target and the overlay Pipeline to the Viewport's size and
+  // the presentation's format -- safe there, after this frame's acquire has
+  // drained the previous frame's GPU work; failing to create either is fatal
+  // (an ATLANTIS_CHECK), as nothing could be drawn without them.
+  [[nodiscard]] atlantis::rhi::Extent2D overlayViewportExtent();
+  [[nodiscard]] atlantis::rhi::RenderTarget& overlayViewportTarget();
+  void drawOverlayInto(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target);
+  void releaseOverlayResources();
+
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).
   [[nodiscard]] std::vector<atlantis::renderer::DrawItem> assembleCaptureDrawItems(
@@ -294,6 +322,28 @@ class RuntimeApplication {
   std::unique_ptr<atlantis::rhi::Sampler> outputTransformSampler_;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformUnormPipeline_;
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformSrgbPipeline_;
+
+  // Plan 0056 P6/P7 (ADR-0108 D3): the attached overlay (borrowed; written
+  // only by attachOverlay()/detachOverlay()) and the resources its frame
+  // places use -- all empty without one. The Viewport target is a sampled
+  // OffscreenTarget in the presentation's format, at the overlay's Viewport
+  // size, held acquired for its whole life; the Pipeline follows the
+  // presentation's format like the output-transform one. Released by
+  // detachOverlay() (and so by shutdown()) before the Device.
+  FrameOverlay* overlay_ = nullptr;
+  std::vector<std::uint32_t> overlayVertexSpirv_;
+  std::vector<std::uint32_t> overlayFragmentSpirv_;
+  std::unique_ptr<atlantis::rhi::SampledTexture> overlayFontAtlas_;
+  std::unique_ptr<atlantis::rhi::Sampler> overlayFontSampler_;
+  std::unique_ptr<atlantis::rhi::Sampler> overlayViewportSampler_;
+  std::unique_ptr<atlantis::rhi::Pipeline> overlayPipeline_;
+  std::optional<atlantis::rhi::Format> overlayPipelineFormat_;
+  std::unique_ptr<atlantis::rhi::Buffer> overlayVertexBuffer_;
+  std::unique_ptr<atlantis::rhi::Buffer> overlayIndexBuffer_;
+  std::unique_ptr<atlantis::rhi::OffscreenTarget> overlayViewport_;
+  std::unique_ptr<atlantis::rhi::RenderTarget> overlayViewportTarget_;  // the borrow of overlayViewport_
+  atlantis::rhi::Extent2D overlayViewportExtent_;
+  std::optional<atlantis::rhi::Format> overlayViewportFormat_;
 
   // CPU-only, populated by Phase 1 (initializeSteps()), consumed/cleared
   // by Phase 2 (runFrame()) as each entry is realized -- no GPU handle,

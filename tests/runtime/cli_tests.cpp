@@ -476,3 +476,39 @@ TEST_CASE("parseCommandLine(): --help shows --listen and --session-file", "[runt
   FakeArgv args{"--help"};
   requireUsage(parseCommandLine(args.argc(), args.argv(), whitelist), "[--listen <port> [--session-file <path>]]");
 }
+
+// Plan 0056 M6 (Spec 0056 ruling Q2; P10, J9): `--editor` hosts the editor on
+// the scene, alone or with --scene and --listen, and never with --exec,
+// --help or --list-scenes.
+TEST_CASE("parseCommandLine(): --editor combines with --scene and --listen", "[runtime][cli][editor]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv none{};
+  CHECK_FALSE(parseCommandLine(none.argc(), none.argv(), whitelist).editor);
+  FakeArgv alone{"--editor"};
+  const CommandLineResult editor = parseCommandLine(alone.argc(), alone.argv(), whitelist);
+  requireRunScene(editor, whitelist, "integrated_showcase_demo");
+  CHECK(editor.editor);
+  CHECK_FALSE(editor.listenPort.has_value());
+  FakeArgv all{"--scene", "pbr_normal_map_demo", "--editor", "--listen", "0"};
+  const CommandLineResult combined = parseCommandLine(all.argc(), all.argv(), whitelist);
+  requireRunScene(combined, whitelist, "pbr_normal_map_demo");
+  CHECK(combined.editor);
+  CHECK(combined.listenPort == std::optional<std::uint16_t>{std::uint16_t{0}});
+}
+
+TEST_CASE("parseCommandLine(): --editor is refused with --exec, --help, --list-scenes, or twice",
+          "[runtime][cli][editor]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv exec{"--editor", "--exec", "-"};
+  requireError(parseCommandLine(exec.argc(), exec.argv(), whitelist), "--editor and --exec may not be combined");
+  FakeArgv help{"--help", "--editor"};
+  requireError(parseCommandLine(help.argc(), help.argv(), whitelist),
+               "--editor runs a scene; it may not be combined with --help or --list-scenes");
+  FakeArgv list{"--editor", "--list-scenes"};
+  requireError(parseCommandLine(list.argc(), list.argv(), whitelist),
+               "--editor runs a scene; it may not be combined with --help or --list-scenes");
+  FakeArgv twice{"--editor", "--editor"};
+  requireError(parseCommandLine(twice.argc(), twice.argv(), whitelist), "--editor supplied more than once");
+  FakeArgv usage{"--help"};
+  requireUsage(parseCommandLine(usage.argc(), usage.argv(), whitelist), "[--editor]");
+}
