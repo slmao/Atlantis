@@ -67,13 +67,17 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      - one plain value struct per schema struct, nested structs as
        members of their generated type;
      - one `enum class` per schema enum, its enumerators carrying the
-       constants' values;
+       constants' exact values (never ordinals). Each enum's binding
+       records whether 0 is a declared constant;
      - field types exactly the `PropertyValue` alternatives
        (`std::uint64_t`, `float`, `std::array<float, 3>`,
        `std::array<float, 4>`, `AssetGuid`, `EntityGuid`);
      - `Optional` → `std::optional<T>`;
-     - member defaults are value-initialized, not World's defaults (the
-       schema carries no defaults, ADR-0099 D5).
+     - members are value-initialized, not set to World's defaults (the
+       schema carries no defaults, ADR-0099 D5). An enum member is
+       therefore underlying value 0. That is whichever constant has the
+       value 0, or no declared constant when none does; it is not "the
+       first enumerator".
    - **Handles:** per component, one `constexpr` object in a `fields`
      namespace whose members mirror the canonical path
      (`world::fields::Light.intensity`,
@@ -99,15 +103,23 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        answered at successive frame boundaries, and the batch promises
        input order, not one instant.
      - Each leaf is as it was when answered.
-     - A consistent read is one taken while the Runtime is paused, when no
-       command applies.
+     - **Pausing alone does not isolate a read.** Any client may step or
+       resume the Runtime, and a step queued earlier may still be pending.
+       A read is consistent only if, for its whole duration:
+       - the Runtime stays paused;
+       - no client calls `step` or `resume`;
+       - no step is pending.
+
+       No lock, lease or snapshot mechanism is added to enforce this.
    - **`add(entity, C)`** appends `AddComponent` then one `SetProperty` per
      leaf, in descriptor order.
      - It is declared only for a type whose every leaf is `Editable`. For
        any other type it does not compile; the client adds the bare
        component and sets the editable leaves.
-     - It writes every leaf, so a value-initialized `C{}` writes zeros,
-       not World's defaults; a bare add gives World's defaults.
+     - It writes every leaf. A value-initialized `C{}` writes zeros, and
+       enum value 0; if 0 is not a declared constant of that enum, the
+       boundary refuses the write (`EnumValueOutOfRange`) and its
+       transaction aborts. A bare add gives World's defaults.
    - **Typed event decoding** matches on the binding's ids.
 4. **Compatibility is checked per type, recursively, on first use.**
    - Before the first typed operation that uses a type, `gameplay::World`
@@ -162,9 +174,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   The staleness test keeps it in step.
 - **Per-type lazy checking** means a mismatch shows on first use, not at
   connect.
-- **A component read is not a snapshot** unless taken while paused. The
-  contract says so rather than implying an atomicity the connection does
-  not offer.
+- **A component read is not a snapshot.** It is consistent only while the
+  Runtime stays paused, with no `step` or `resume` from any client and no
+  pending step. The contract says so rather than implying an atomicity or
+  isolation the connection does not offer, and coordinating control
+  between clients is left to them.
+- **A value-initialized struct is not a valid default** when one of its
+  enums has no 0 constant. The binding's "0 is declared" flag makes this
+  visible, and a bare add remains the way to get World's defaults.
 
 ## Alternatives Considered
 
@@ -192,6 +209,13 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **Generating World's member defaults into the value structs.** Rejected:
   defaults are not schema data (ADR-0099 D5), and the generator would have
   to read World's structs by layout.
+- **Initializing each enum member to its first declared constant.**
+  Rejected: "first" is a listing order, not a schema meaning, and it would
+  silently differ from what `C{}` means for every other member.
+- **A read lease or Runtime-side snapshot for consistent reads.**
+  Rejected: it is a new Runtime or `RuntimeControl` capability. Pausing
+  with no step or resume is enough for a client that controls the
+  Runtime.
 - **Emitting `byteOffset` for zero-copy reads.** Rejected: it exposes
   internal layout (ADR-0034), and the values come by copy through the
   connection anyway.

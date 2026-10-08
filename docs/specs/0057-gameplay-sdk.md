@@ -4,9 +4,10 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
 - **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). Review round 1 (2026-10-09) corrections to
-  Q4, Q7, Q9, the component-operation contracts and an attribution are
-  folded into this text. The maintainer set this Spec's goal before drafting
+- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). Review rounds 1 and 2 (2026-10-09)
+  corrections are folded into this text: Q4, Q7 and Q9, the
+  component-operation contracts (read isolation, enum defaults) and an
+  attribution. The maintainer set this Spec's goal before drafting
   (2026-10-08, chat):
   - a reflective interface and a generated typed interface, both from the
     one schema;
@@ -304,20 +305,38 @@ Proposed by this draft (open to review):
       instant: the default asks one at a time, and an adapter may split.
     - The returned value holds each leaf as it was when that leaf was
       answered.
-    - A client that needs a consistent component reads while the Runtime
-      is paused. No command applies then, and command application is the
-      frame's only World write.
+    - **Pausing alone does not isolate a read.** Any client of the same
+      Runtime can step or resume it, and a step queued before the read can
+      still be running. A multi-leaf read is consistent only if, for the
+      whole read:
+      - the Runtime stays paused;
+      - no client (the reader or any other) calls `step` or `resume`;
+      - no step is pending, i.e. requested but not yet completed.
+
+      Command application is the frame's only World write, so under these
+      conditions every leaf is answered against the same World state. The
+      SDK adds no lock, lease or snapshot to enforce them; coordinating
+      control between clients is the clients' business.
   - **`add(entity, C)`** appends `AddComponent` and then one `SetProperty`
     per leaf in descriptor order. It compiles only for a type whose every
     leaf is `Editable`. For a type with a read-only leaf, the client adds
     the bare component (World's defaults) and sets the editable leaves. No
     `worldSchema()` type has a read-only leaf today; a synthetic schema
     covers the rule.
-  - **Defaults:** generated value structs are value-initialized (zeros,
-    the first enumerator, empty optionals), not World's member defaults;
-    the schema carries no defaults (ADR-0099 D5). So `add(entity, C{})`
-    writes zeros, while a bare add gives World's defaults (for `Light`:
-    colour 1, 1, 1 and intensity 1).
+  - **Defaults:** generated value structs are value-initialized, not set
+    to World's member defaults; the schema carries no defaults (ADR-0099
+    D5).
+    - Numbers and vectors become zeros, optionals become empty.
+    - An enum member becomes **underlying value 0**. That is not "the
+      first enumerator": it equals whichever constant has the value 0, if
+      any, and corresponds to no constant when none has it.
+    - Today `LightKind::Directional` is 0, so `w::Light{}.kind` is
+      `Directional`. A future enum without a 0 constant would make `C{}`
+      carry an undeclared value, and `add(entity, C{})` would be refused
+      by the boundary (`EnumValueOutOfRange`), aborting its transaction.
+    - So `add(entity, C{})` writes zeros (and enum value 0), while a bare
+      add gives World's defaults (for `Light`: colour 1, 1, 1 and
+      intensity 1).
 
 ### Non-functional
 
@@ -455,7 +474,19 @@ The questions below compare their options. Rejected across them:
     header byte for byte (R7);
   - the output is identical across two runs;
   - a synthetic schema table exercises every `PrimitiveKind`, nesting, an
-    enum, `Optional`, a non-`Editable` field and a long name.
+    enum, `Optional`, a non-`Editable` field and a long name;
+  - **enum values:** synthetic enums cover non-contiguous values, a
+    negative value, a first constant that is not 0, and no 0 constant at
+    all.
+    - Each generated enumerator carries exactly its descriptor's value,
+      never its ordinal.
+    - Each enum's binding records whether 0 is a declared constant, and
+      the test checks that flag against the descriptors.
+    - A compile-time check shows that a value-initialized member of each
+      enum has underlying value 0.
+    - For `worldSchema()`, `w::Light{}.kind == w::LightKind::Directional`
+      holds because `Directional` is 0; the test fails if that stops being
+      true.
 - **Typed-binding compile checks:**
   - the generated header `static_assert`s every `TypeId` and `FieldId`
     against `schema::typeId` / `schema::fieldId` of its names, using Core
@@ -486,9 +517,16 @@ The questions below compare their options. Rejected across them:
 - **Component-contract tests** (R10):
   - `add(e, w::Light{})` writes zeros, while a bare add gives World's
     defaults;
-  - over Remote loopback, a one-at-a-time `read<C>` that straddles an
-    applied command returns leaves from different frames, and the same
-    read while paused returns one consistent component;
+  - read isolation, over Remote loopback with two clients (the Spec 0055
+    `whileWaiting` harness):
+    - with the Runtime paused, client B queues a command and **steps once
+      in the middle of** client A's one-at-a-time `read<C>`. A's result
+      mixes leaves from before and after the applied command, so pausing
+      alone does not isolate a read;
+    - the same holds when B calls `resume` mid-read, and when a step
+      requested before A's read is still pending as it starts;
+    - with the Runtime paused, no `step` or `resume` from any client, and
+      no pending step, A's read returns one consistent component;
   - `add(entity, C)` for a synthetic type with a read-only leaf fails to
     compile (a probe).
 - **Compatibility tests** (R5), with a modified schema span served by a
@@ -538,9 +576,13 @@ Risks:
   is N frame boundaries (Q9). With one it is one pipelined boundary.
   Gameplay loops still write in transactions and observe through events
   and step reports rather than poll.
-- **A component read is not a snapshot** (R10). Unless the Runtime is
-  paused, a multi-leaf read can mix frames. The contract says so, and the
-  example reads while paused.
+- **A component read is not a snapshot** (R10). A multi-leaf read can mix
+  frames unless the Runtime stays paused with no `step` or `resume` from any
+  client and no pending step throughout. The contract says so and adds no
+  locking.
+  - The example reads only in that state: it is the only client in its
+    tests, and it pauses before reading.
+  - With other clients attached, isolation is theirs to coordinate.
 - **The first generated code in the repository.** Its banner, determinism
   and review rules are set once here (ADR-0111) and reused by later
   bindings (C#, Python).
@@ -620,12 +662,13 @@ rulings.
       and the C++ type.
     - A non-`Editable` leaf gets a read-only handle type.
   - **Component operations** (R10):
-    - `read<C>` reads every leaf into a `C`: N gets or one batch, and not
-      a snapshot;
+    - `read<C>` reads every leaf into a `C`: N gets or one batch. It is not
+      a snapshot, and pausing alone does not isolate it (R10);
     - `add(entity, C)` is `AddComponent` then one `SetProperty` per leaf,
       in descriptor order, appended to the caller's transaction. It is
-      available only when every leaf is `Editable`, and it writes zeros for
-      a value-initialized `C{}`;
+      available only when every leaf is `Editable`. A value-initialized
+      `C{}` writes zeros, and enum value 0, which matches a declared
+      constant only if one has the value 0;
     - a bare `AddComponent` (World's defaults) stays available by type.
   - **Compatibility (R5):**
     - each generated type carries its binding: ids, kinds, flags,
@@ -691,7 +734,8 @@ rulings.
     - **The example:** it pauses, then for each `k` submits the
       transaction computed from `k`, steps one frame, and checks that
       frame's report. The run is reproducible whatever frame numbers it
-      sees.
+      sees, provided no other client resumes or steps the Runtime during
+      it (R10).
   - **(T-b) A frame clock query** (frame number plus delta time): the
     Runtime has no delta time or simulation time today. This is a new
     Runtime concept and a `RuntimeControl` change.
@@ -737,8 +781,8 @@ rulings.
       `getProperties` per component read) and for the component filter
       (one `listComponents` for all listed entities).
     - **No new contract:** Connection and the protocol are unchanged, the
-      SDK does not depend on Remote, and the batch makes no snapshot
-      promise (R10).
+      SDK does not depend on Remote, and the batch makes no snapshot or
+      isolation promise (R10).
   - **(B-d) Share `cli::QueryBatch`** by moving it into Connection. This
     changes Connection for a client-side seam. Two identical small
     interfaces in two client libraries can be unified later if a third
