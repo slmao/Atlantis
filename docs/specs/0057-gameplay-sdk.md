@@ -4,7 +4,7 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
 - **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending. The maintainer set this Spec's goal before drafting
+- **Approval:** pending, in [PR #234](https://github.com/slmao/Atlantis/pull/234). The maintainer set this Spec's goal before drafting
   (2026-10-08, chat):
   - a reflective interface and a generated typed interface, both from the
     one schema;

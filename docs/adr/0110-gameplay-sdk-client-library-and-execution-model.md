@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-10-08
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0057's own branch PR)
+- **Acceptance:** pending (review of Spec 0057's own branch PR, [PR #234](https://github.com/slmao/Atlantis/pull/234))
 - **Related Spec:** [Spec 0057: Gameplay SDK](../specs/0057-gameplay-sdk.md) (`In Review`)
 - **Related ADR(s):**
   - The SDK is a client of [ADR-0105](0105-runtime-connection-and-cli-client.md)'s
