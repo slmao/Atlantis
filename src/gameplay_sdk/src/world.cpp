@@ -125,6 +125,10 @@ atlantis::Result<access::Command, Error> World::resolve(const Transaction::Opera
   using ResultT = atlantis::Result<access::Command, Error>;
   using Kind = Transaction::Kind;
   const Transaction::Target& target = operation.target;
+  if (!target.bindings.empty()) {  // typed: its binding must match (R5), or the whole transaction is refused
+    auto compatible = checkBinding(target.bindings, target.bindingIndex);
+    if (compatible.isErr()) return ResultT::Err(std::move(compatible.error()));
+  }
   switch (operation.kind) {
     case Kind::Create: return ResultT::Ok(access::CreateEntity{operation.entity});
     case Kind::Destroy: return ResultT::Ok(access::DestroyEntity{operation.entity});

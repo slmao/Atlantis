@@ -6,12 +6,14 @@
 #include <atlantis/schema.h>
 #include <atlantis/world/access/runtime_world_access.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -65,10 +67,57 @@ class Transaction {
   Transaction& set(const EntityGuid& entity, std::string_view path, PropertyValue value);
   Transaction& set(const PropertyAddress& address, PropertyValue value);
 
+  // --- Typed (Spec 0057 R3, R10; ADR-0111 D3): checked against the
+  // connection's schema at World::submit (R5).
+  // AddComponent, then one SetProperty per leaf in the schema's leaf order.
+  // Only for a type whose every leaf is Editable (R10): for another, add the
+  // bare component and set its editable leaves. Every leaf is written, so a
+  // value-initialized C{} writes zeros and enum value 0 (which is a declared
+  // constant only where the enum's binding says zeroIsDeclared) -- not
+  // World's defaults; add<C>(entity) gives World's defaults.
+  template <Component C>
+    requires(Codec<C>::allEditable)
+  Transaction& add(const EntityGuid& entity, const C& value) {
+    add<C>(entity);
+    std::array<PropertyValue, Codec<C>::leaves.size()> values{};
+    Codec<C>::write(value, values);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      operations_.push_back(Operation{Kind::SetProperty, entity, typedTarget<C>(Codec<C>::leaves[i]), values[i]});
+    }
+    return *this;
+  }
+  // A bare AddComponent: the component with World's default values.
+  template <Component C>
+  Transaction& add(const EntityGuid& entity) {
+    operations_.push_back(Operation{Kind::AddComponent, entity, typedTarget<C>({}), ::atlantis::world::access::Absent{}});
+    return *this;
+  }
+  template <Component C>
+  Transaction& remove(const EntityGuid& entity) {
+    operations_.push_back(
+        Operation{Kind::RemoveComponent, entity, typedTarget<C>({}), ::atlantis::world::access::Absent{}});
+    return *this;
+  }
+  template <Bound C, class T>
+  Transaction& set(const EntityGuid& entity, const Field<C, T>& handle, const std::type_identity_t<T>& value) {
+    operations_.push_back(Operation{Kind::SetProperty, entity, typedTarget<C>(handle.field), toPropertyValue(value)});
+    return *this;
+  }
+
   [[nodiscard]] const std::vector<Operation>& operations() const noexcept { return operations_; }
   [[nodiscard]] bool empty() const noexcept { return operations_.empty(); }
 
  private:
+  template <Bound C>
+  [[nodiscard]] static Target typedTarget(schema::FieldId field) {
+    Target target;
+    target.component = BindingOf<C>::table[BindingOf<C>::index].id;
+    target.field = field;
+    target.bindings = BindingOf<C>::table;
+    target.bindingIndex = BindingOf<C>::index;
+    return target;
+  }
+
   std::vector<Operation> operations_;
 };
 

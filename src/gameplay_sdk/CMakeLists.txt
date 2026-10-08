@@ -11,6 +11,11 @@ add_library(atlantis_gameplay_sdk STATIC
   src/subscription.cpp
   src/transaction.cpp
   src/world.cpp
+  # Plan 0057 M3: the typed layer's binding check, and one translation unit
+  # that includes the generated World bindings, so their static_asserts are
+  # compiled wherever the library is (Android included).
+  src/compatibility.cpp
+  src/generated_world.cpp
 )
 add_library(Atlantis::GameplaySdk ALIAS atlantis_gameplay_sdk)
 
