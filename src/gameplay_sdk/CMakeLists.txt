@@ -6,6 +6,11 @@
 # .gitattributes keeps the committed header LF).
 add_library(atlantis_gameplay_sdk STATIC
   src/error.cpp
+  # Plan 0057 M2: the reflective layer and the query batch.
+  src/query_batch.cpp
+  src/subscription.cpp
+  src/transaction.cpp
+  src/world.cpp
 )
 add_library(Atlantis::GameplaySdk ALIAS atlantis_gameplay_sdk)
 

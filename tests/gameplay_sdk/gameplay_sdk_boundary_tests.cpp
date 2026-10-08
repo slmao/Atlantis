@@ -123,7 +123,10 @@ TEST_CASE("Atlantis Gameplay SDK names no byte offset and no World C++ type (R6)
     // connection's own vocabulary; nothing else of World is named.
     for (std::size_t at = source.find("atlantis::world::"); at != std::string::npos;
          at = source.find("atlantis::world::", at + 1)) {
-      if (source.compare(at, 25, "atlantis::world::access::") != 0) {
+      const std::size_t after = at + 23;  // past "atlantis::world::access"
+      const bool access = source.compare(at, 23, "atlantis::world::access") == 0 &&
+                          (after == source.size() || source[after] == ':' || source[after] == ';');
+      if (!access) {
         bad.push_back(file.generic_string() + ": " + source.substr(at, 40));
       }
     }

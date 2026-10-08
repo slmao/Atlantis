@@ -3,6 +3,9 @@
 add_executable(atlantis_gameplay_sdk_tests
   gameplay_sdk_boundary_tests.cpp
   generated_binding_tests.cpp
+  # Plan 0057 M2: the reflective layer and the query batch, over the
+  # InProcess fixture (gameplay_fixture.h).
+  reflective_tests.cpp
 )
 
 target_link_libraries(atlantis_gameplay_sdk_tests
