@@ -1161,3 +1161,160 @@ TEST_CASE("Runtime with an overlay attached: resizing the Viewport recreates the
   CHECK(RuntimeSmokeTestAccess::viewportTargetExtent(app) == atlantis::rhi::Extent2D{1, 1});
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);  // shutdown() detaches
 }
+
+// --- Plan 0056 M7 (Spec 0056 north star, ruling Q8): the editor drives the
+// World through its own model actions -- the calls its view makes on a click
+// (M5 covers the clicks) -- with the editor attached to the frame, under fatal
+// Validation Layers. -------------------------------------------------------------
+
+namespace {
+
+// An application with the editor attached and the control host the
+// executable creates for it; frame() is atlantis_runtime's loop body.
+struct EditorHost {
+  explicit EditorHost(RuntimeApplication& application)
+      : app(application),
+        control(atlantis::runtime::RuntimeControlHost::forApplication(application), [] {
+          atlantis::runtime::RuntimeControlHost::Options options;
+          options.recordDiagnostics = false;
+          return options;
+        }()),
+        editor(application, control) {
+    REQUIRE(app.attachOverlay(editor, overlayShaders()).isOk());
+  }
+  ~EditorHost() { app.detachOverlay(); }
+  EditorHost(const EditorHost&) = delete;
+  EditorHost& operator=(const EditorHost&) = delete;
+
+  void frame() {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    editor.update();
+    REQUIRE(app.shouldContinue());
+  }
+
+  RuntimeApplication& app;
+  atlantis::runtime::RuntimeControlHost control;
+  atlantis::runtime::EditorAttachment editor;
+};
+
+[[nodiscard]] std::size_t inspectorField(atlantis::editor::Editor& editor, std::string_view path) {
+  const auto& fields = editor.inspector().fields();
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (fields[i].path == path) return i;
+  }
+  FAIL("no Inspector field " << path);
+  return 0;
+}
+
+// The light's intensity in the frame data just drawn: the directional light,
+// or the point light at `pointPosition`.
+[[nodiscard]] float frameIntensity(RuntimeApplication& app, const std::optional<std::array<float, 3>>& pointPosition) {
+  const auto data = app.captureFrameData();
+  REQUIRE(data.isOk());
+  if (!pointPosition) {
+    REQUIRE(data.value().directionalLights.size() == 1);
+    return data.value().directionalLights[0].intensity;
+  }
+  for (const auto& light : data.value().pointLights) {
+    if (std::fabs(light.position[0] - (*pointPosition)[0]) < 1e-3f &&
+        std::fabs(light.position[1] - (*pointPosition)[1]) < 1e-3f &&
+        std::fabs(light.position[2] - (*pointPosition)[2]) < 1e-3f) {
+      return light.intensity;
+    }
+  }
+  FAIL("no point light at the expected position");
+  return 0.0f;
+}
+
+// Select in the Hierarchy -> the generated Inspector shows Light.intensity =
+// `from` -> commit `to` -> the next frame's frame data has `to` exactly and the
+// Viewport image changed; then pause holds a further edit across three frames
+// and one step applies it.
+void runEditorNorthStar(EditorHost& host, std::string_view guidText, float from, float to,
+                        const std::optional<std::array<float, 3>>& pointPosition, bool imageChanges = true) {
+  atlantis::editor::Editor& editor = host.editor.editor();
+  const auto guid = atlantis::asset_system::parseEntityGuid(guidText).value();
+  editor.hierarchy().select(guid);
+  host.frame();  // the editor's frame takes up the selection
+  REQUIRE(editor.inspector().subject() == guid);
+  const std::size_t intensity = inspectorField(editor, "Light.intensity");
+  REQUIRE(editor.inspector().fields()[intensity].value == atlantis::world::access::PropertyValue{from});
+  CHECK(editor.inspector().fields()[intensity].editable);
+  CHECK(frameIntensity(host.app, pointPosition) == from);
+  const auto before = RuntimeSmokeTestAccess::readViewport(host.app);
+
+  (void)editor.inspector().commit(intensity, to);  // the field's edit, completed
+  host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == to);  // exactly
+  CHECK(editor.inspector().fields()[intensity].value == atlantis::world::access::PropertyValue{to});
+  REQUIRE(editor.inspector().outcome(intensity).has_value());
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Applied);
+  const auto after = RuntimeSmokeTestAccess::readViewport(host.app);
+  REQUIRE(after.extent == before.extent);
+  const bool changed = after.pixels != before.pixels;  // a bool: Catch must not print the pixels
+  if (imageChanges) {
+    CHECK(changed);
+  } else {
+    WARN("Viewport changed: " << (changed ? "yes" : "no (the light is outside the camera's view)"));
+  }
+
+  // Pause (the toolbar's Pause calls RuntimeControl::pause()): a further edit
+  // is held across three frames; Step applies it.
+  host.control.pause();
+  (void)editor.inspector().commit(intensity, from);
+  for (int i = 0; i < 3; ++i) host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == to);
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Pending);
+  host.control.step(atlantis::connection::StepRequest{1, std::nullopt}, [](auto) {});
+  host.frame();
+  CHECK(frameIntensity(host.app, pointPosition) == from);
+  CHECK(editor.inspector().outcome(intensity)->status == atlantis::editor::EditStatus::Applied);
+  host.control.resume();
+  host.frame();
+}
+
+}  // namespace
+
+TEST_CASE("Editor north star: the default scene's Directional light, 3 to 6, through the editor",
+          "[runtime][gpu][editor][north_star]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    for (int i = 0; i < 3; ++i) host.frame();
+    runEditorNorthStar(host, "0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea", 3.0f, 6.0f, std::nullopt);
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Editor north star: Bistro's point light 6b63b12c 12 to 24, and the cafe light's image change",
+          "[runtime][gpu][editor][north_star][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    for (int i = 0; i < 3; ++i) host.frame();
+    // 6b63b12c lies outside the camera's view (the Spec 0055 Correction
+    // 2026-10-08): exact in frame data; the in-view cafe light 425c3b17
+    // shows the Viewport's image change.
+    runEditorNorthStar(host, "6b63b12c-9cde-4ae2-8391-c0b4cefadb7d", 12.0f, 24.0f,
+                       std::array<float, 3>{-39.615f, 3.255f, -5.032f}, /*imageChanges=*/false);
+    runEditorNorthStar(host, "425c3b17-dcac-4148-831c-22a454829357", 4.5f, 9.0f,
+                       std::array<float, 3>{-7.966f, 3.42f, 9.084f});
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+#endif
+}
