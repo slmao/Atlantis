@@ -824,7 +824,22 @@ milestone being listed does not authorize starting it — see Section 1.
     offscreen Viewport target and draws the editor's UI as Renderer's overlay
     pass ([ADR-0108](adr/0108-editor-host-and-viewport-composition.md)); and
     its input comes from Platform's new input events
-    ([ADR-0109](adr/0109-platform-input-events.md)).
+    ([ADR-0109](adr/0109-platform-input-events.md));
+  - since [Spec 0057](specs/0057-gameplay-sdk.md) (merged
+    [PR #236](https://github.com/slmao/Atlantis/pull/236)), the Tooling
+    Foundation's third step: a Gameplay SDK (Atlantis Gameplay SDK), a
+    client library over `RuntimeConnection` with a reflective layer (types
+    and fields by name or id, component reads, transactions resolved whole,
+    subscriptions, an optional transport-neutral query batch) and a typed
+    layer generated from the schema
+    ([ADR-0110](adr/0110-gameplay-sdk-client-library-and-execution-model.md),
+    [ADR-0111](adr/0111-schema-generated-typed-bindings.md)). The host-only
+    `atlantis_sdk_codegen` writes the typed bindings from the hand-authored
+    descriptor tables, and they are committed and checked for staleness.
+    `atlantis_gameplay_demo` is the real client: a separate process attached
+    to `atlantis_runtime --listen` that spawns, moves and destroys a light
+    with exact frame data per logic step. Game logic is client-driven: no
+    Runtime-hosted callback, scheduler, clock or custom components.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -836,8 +851,11 @@ milestone being listed does not authorize starting it — see Section 1.
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
     (named only in Spec 0053);
-  - a Gameplay SDK (0057), and the rest of Spec 0056's named-only list —
-    named only, not designed or scaffolded;
+  - C# (0058), and the rest of Spec 0057's named-only list — named only,
+    not designed or scaffolded;
+  - custom components, a time model or scheduler, Runtime-hosted game
+    logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
+    Out of Scope);
   - the editor's tree Hierarchy, picking, free camera, Custom Inspectors,
     undo/redo, saving and Android hosting (Spec 0056 Non-Goals / Out of
     Scope);

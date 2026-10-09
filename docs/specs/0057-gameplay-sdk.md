@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-08
-- **Related Plan(s):** none yet. Plan 0057 drafting is authorized by the
-  Approval.
+- **Related Plan(s):** [Plan 0057](../plans/0057-gameplay-sdk.md)
+  (`Approved`; Joint Human Review 2026-10-09,
+  [PR #235](https://github.com/slmao/Atlantis/pull/235)) — implemented, merged
+  [PR #236](https://github.com/slmao/Atlantis/pull/236).
 - **Approval:** slmao, 2026-10-09 (review of this Spec's own branch PR,
   [PR #234](https://github.com/slmao/Atlantis/pull/234), after review rounds 1 and 2) — authorizes drafting Plan 0057;
   Implementation itself still awaits its own, separate Joint Human Review of
