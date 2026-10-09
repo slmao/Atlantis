@@ -15,7 +15,7 @@
     ADR-0004 governs the engine, not the client process.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation needs the Joint Human
+- **Joint Human Review:** pending, in [PR #239](https://github.com/slmao/Atlantis/pull/239). Implementation needs the Joint Human
   Review of this Plan together with Spec 0058, explicitly authorizing it
   (J1–J13 below).
 
