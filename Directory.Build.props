@@ -1,0 +1,25 @@
+<Project>
+  <!--
+    Atlantis C# SDK (Spec 0058 R7; ADR-0113 D2; Plan 0058 P7, J8): settings
+    shared by every C# project in the repository. When CMake builds a project
+    it passes AtlantisCSharpBuildRoot (<build>/csharp/<config>) and every
+    output goes there, one directory per project; a developer's plain
+    `dotnet build` uses the SDK's bin/ and obj/ (git-ignored).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(AtlantisCSharpBuildRoot)' != ''">
+    <BaseIntermediateOutputPath>$(AtlantisCSharpBuildRoot)/obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <OutputPath>$(AtlantisCSharpBuildRoot)/$(MSBuildProjectName)/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+</Project>

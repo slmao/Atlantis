@@ -910,6 +910,43 @@ editor do not link it. Android builds the library.
 
 ---
 
+## Atlantis C# SDK
+
+**Status: Approved** (Spec 0058,
+[ADR-0112](../adr/0112-csharp-gameplay-client-transport-and-bindings.md),
+[ADR-0113](../adr/0113-dotnet-toolchain-and-build-integration.md)).
+
+**Responsibilities:** the Gameplay SDK's model for .NET — a managed client
+library (`src/csharp/Atlantis.Gameplay/`, namespace `Atlantis.Gameplay`):
+- `Remote/`: the session file, the JSON and codec of `atlantis.remote/1`
+  (byte-identical with the C++ codec on the conformance vectors), and
+  `RemoteSession` / `RemoteControl` (hello, line framing, pipelining);
+- the reflective layer (`GameplayWorld`, `Transaction`, `Subscription`,
+  `FailureLog`) and the typed layer (`Generated/World.g.cs`: record structs,
+  `long` enums, `Field` / `ReadOnlyField` handles, `IComponent<T>` /
+  `IEditableComponent<T>` with static members, so no reflection), with the
+  same per-type, recursive compatibility check.
+
+Name, binding and query refusals are thrown; a command's refusal comes back
+by ticket. A multi-leaf read is not a snapshot (the C++ SDK's rule). Not
+thread-safe; synchronous.
+
+**Depends on:** the .NET 10 base class library only (SDK pinned by
+`global.json`, 10.0.1xx band; zero NuGet). It is coupled to the engine only
+through `atlantis.remote/1`
+([remote_protocol.md](remote_protocol.md)) and the generated bindings; it
+calls nothing native (no P/Invoke, no native library, no `unsafe` — checked,
+with zero NuGet and `eol=lf`, by `tests/csharp/check_csharp_rules.cmake`).
+**Not a C++ module and not in the native dependency graph.**
+
+**Depended on by:** C# clients — the `GameplayDemo` example
+(`examples/csharp/`) and the C# tests. Nothing native links it. CMake builds
+it with `dotnet build` only when a .NET 10.0.1xx SDK is found
+(`cmake/AtlantisDotnet.cmake`, `ATLANTIS_REQUIRE_CSHARP`); Android never
+declares a C# target.
+
+---
+
 ## Atlantis Runtime
 
 **Status: Approved, implemented** (Spec 0013, ADR-0046/ADR-0047, all
@@ -1073,7 +1110,8 @@ Future iOS Runtime entry point: not designed.
 implemented; the real cooking logic lives in Atlantis Asset System, not
 here), the schema-to-C++ binding generator `atlantis_sdk_codegen` (Spec
 0057, ADR-0111: host-only, reads the hand-authored descriptor tables, its
-output committed to Atlantis Gameplay SDK), shader
+output committed to Atlantis Gameplay SDK; since Spec 0058, ADR-0112 D3,
+`--lang csharp` writes the C# bindings committed to Atlantis C# SDK), shader
 precompilation CLI, debug-capture glue (e.g. RenderDoc workflow per
 [testing-strategy.md](../process/testing-strategy.md)). This narrows an
 earlier, more generic "asset processing" phrase now that Spec 0012 has

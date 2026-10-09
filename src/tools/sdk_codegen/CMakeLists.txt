@@ -4,6 +4,8 @@
 # table. Its output is committed, never generated at build time.
 add_library(atlantis_sdk_codegen_lib STATIC
   generate_bindings.cpp
+  # Plan 0058 P5 (ADR-0112 D3): the C# backend.
+  generate_csharp_bindings.cpp
 )
 
 target_include_directories(atlantis_sdk_codegen_lib

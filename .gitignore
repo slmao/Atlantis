@@ -82,3 +82,8 @@ android/app/src/main/assets/
 # script (tools/content/fetch_*.ps1), never committed. Their provenance and
 # licence files live in tools/content/ and ARE committed.
 /content/
+
+# Plan 0058 P7 (J8): a developer's plain `dotnet build` of a C# project
+# writes beside it; CMake builds write under build/.
+bin/
+obj/

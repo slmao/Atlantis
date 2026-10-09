@@ -123,6 +123,13 @@ if(NOT ANDROID)
   add_subdirectory(src/tools/gltf_importer)
   # Plan 0057 P3 (ADR-0111 D1): the schema-to-C++ binding generator, host-only.
   add_subdirectory(src/tools/sdk_codegen)
+  # Plan 0058 P7 (ADR-0113): .NET discovery and the Atlantis C# SDK -- a
+  # managed client library, not a C++ module; nothing native links it.
+  # Host-only: Android never declares a C# target.
+  include(cmake/AtlantisDotnet.cmake)
+  if(ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(src/csharp)
+  endif()
   # Must come after add_subdirectory(src/asset_system) and
   # add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
   # atlantis_add_static_mesh_asset() is defined in the former and this
@@ -256,6 +263,10 @@ if(ATLANTIS_BUILD_EXAMPLES)
   # Plan 0057 P6 (ADR-0110 D6): the real Gameplay SDK client, attached over
   # Atlantis Remote's client half.
   add_subdirectory(examples/gameplay_demo)
+  # Plan 0058 P8 (Q6): the C# beacon demo, when C# is enabled (host only).
+  if(ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(examples/csharp)
+  endif()
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
@@ -280,5 +291,8 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/tools/asset_cooker)
   add_subdirectory(tests/tools/gltf_importer)
   add_subdirectory(tests/tools/sdk_codegen)
+  # Plan 0058 (Spec 0058): the atlantis.remote/1 conformance vectors (no
+  # .NET), and -- when the .NET SDK is found -- the C# SDK's own tests.
+  add_subdirectory(tests/csharp)
   add_subdirectory(tests/runtime)
 endif()

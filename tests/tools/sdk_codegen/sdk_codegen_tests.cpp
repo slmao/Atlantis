@@ -5,6 +5,7 @@
 // written to the build tree (J4), never over the committed file.
 
 #include "generate_bindings.h"
+#include "generate_csharp_bindings.h"
 #include "synthetic_schema.h"
 
 #include <atlantis/connection/text.h>
@@ -195,5 +196,129 @@ TEST_CASE("the generator refuses what it cannot emit", "[tools][sdk_codegen]") {
         TypeDescriptor{schema::typeId("synthetic::Inner"), "synthetic::Inner", TypeKind::Struct, 1, inner, {}},
         TypeDescriptor{schema::typeId("synthetic::Outer"), "synthetic::Outer", TypeKind::Struct, 1, outer, {}}};
     CHECK(failureOf(table).error == codegen::CodegenError::UnsupportedField);
+  }
+}
+
+// --- Plan 0058 M2 (Spec 0058 R2, ruling Q2; ADR-0112 D3): the C# backend. ------
+
+namespace {
+
+[[nodiscard]] codegen::CSharpOptions syntheticCSharpOptions() {
+  codegen::CSharpOptions options;
+  options.modulePrefix = "synthetic::";
+  options.ns = "Atlantis.Gameplay.Synthetic";
+  options.source = "the synthetic test schema (tests/tools/sdk_codegen/synthetic_schema.h)";
+  options.regenerate =
+      "run atlantis_sdk_codegen_tests; on a mismatch copy <build>/sdk_codegen/Synthetic.g.cs.expected over this file";
+  return options;
+}
+
+[[nodiscard]] std::string generateCs(std::span<const schema::TypeDescriptor> table,
+                                     const codegen::CSharpOptions& options) {
+  const auto generated = codegen::generateCSharpBindings(table, options);
+  REQUIRE(generated.isOk());
+  return generated.value();
+}
+
+}  // namespace
+
+TEST_CASE("the committed World.g.cs is what the C# backend writes for worldSchema()",
+          "[tools][sdk_codegen][csharp][staleness]") {
+  checkCurrent(generateCs(atlantis::world::worldSchema(), codegen::worldCSharpOptions()),
+               ATLANTIS_SDK_GENERATED_WORLD_CS, "World.g.cs", codegen::worldCSharpOptions().regenerate);
+}
+
+TEST_CASE("the committed Synthetic.g.cs is what the C# backend writes for the synthetic schema",
+          "[tools][sdk_codegen][csharp][staleness]") {
+  checkCurrent(generateCs(atlantis::test::synthetic_schema::table(), syntheticCSharpOptions()),
+               ATLANTIS_SDK_GENERATED_SYNTHETIC_CS, "Synthetic.g.cs", syntheticCSharpOptions().regenerate);
+}
+
+TEST_CASE("the C# backend is deterministic, writes LF only, and names no byte offset", "[tools][sdk_codegen][csharp]") {
+  for (const auto& [table, options] :
+       {std::pair{atlantis::world::worldSchema(), codegen::worldCSharpOptions()},
+        std::pair{atlantis::test::synthetic_schema::table(), syntheticCSharpOptions()}}) {
+    const std::string text = generateCs(table, options);
+    CHECK(generateCs(table, options) == text);
+    CHECK(text.find('') == std::string::npos);
+    CHECK(text.find("byteOffset") == std::string::npos);
+    CHECK(text.find("atlantis::world::") == std::string::npos);
+  }
+}
+
+TEST_CASE("C#: every leaf of every World component has exactly one typed handle, PascalCased",
+          "[tools][sdk_codegen][csharp]") {
+  const auto table = atlantis::world::worldSchema();
+  const std::string text = generateCs(table, codegen::worldCSharpOptions());
+  for (const std::string_view component : {"Transform", "Camera", "Light", "Renderable", "WorldMatrix"}) {
+    const auto* type = atlantis::connection::text::findType(table, component);
+    REQUIRE(type != nullptr);
+    for (const auto& leaf : atlantis::connection::text::leavesOf(table, type->id)) {
+      INFO(leaf.path);
+      CHECK(occurrences(text, "\"" + leaf.path + "\"") == 1);
+    }
+  }
+  CHECK(text.find("public float Intensity;") != std::string::npos);
+  CHECK(text.find("public static class Fog") != std::string::npos);
+  CHECK(text.find("public record struct Light : global::Atlantis.Gameplay.IEditableComponent<Light>") !=
+        std::string::npos);
+  CHECK(text.find("public record struct CameraFog\n") != std::string::npos);  // nested: no component interface
+  CHECK(text.find("public ulong? MaterialAsset;") != std::string::npos);
+}
+
+TEST_CASE("C#: enumerators carry exact values; a read-only leaf gets ReadOnlyField and no IEditableComponent",
+          "[tools][sdk_codegen][csharp]") {
+  const std::string text = generateCs(atlantis::test::synthetic_schema::table(), syntheticCSharpOptions());
+  CHECK(text.find("public enum Mode : long\n{\n    A = 3,\n    B = -2,\n    C = 7,\n}") != std::string::npos);
+  CHECK(text.find("public enum Phase : long\n{\n    First = 5,\n    Zero = 0,\n    Last = 9,\n}") !=
+        std::string::npos);
+  CHECK(text.find("ReadOnlyField<global::Atlantis.Gameplay.Synthetic.Locked, float> Fixed") != std::string::npos);
+  CHECK(text.find("public record struct Locked : global::Atlantis.Gameplay.IComponent<Locked>") != std::string::npos);
+  CHECK(text.find("public record struct Probe : global::Atlantis.Gameplay.IEditableComponent<Probe>") !=
+        std::string::npos);
+  const std::string world = generateCs(atlantis::world::worldSchema(), codegen::worldCSharpOptions());
+  CHECK(world.find("public enum LightKind : long\n{\n    Directional = 0,\n    Point = 1,\n}") != std::string::npos);
+}
+
+TEST_CASE("the C# backend refuses names it cannot emit", "[tools][sdk_codegen][csharp]") {
+  using schema::FieldDescriptor;
+  using schema::FieldFlags;
+  using schema::PrimitiveKind;
+  using schema::TypeDescriptor;
+  using schema::TypeKind;
+  const auto failureOf = [](std::span<const TypeDescriptor> table) {
+    const auto generated = codegen::generateCSharpBindings(table, syntheticCSharpOptions());
+    REQUIRE(generated.isErr());
+    return generated.error();
+  };
+  const auto field = [](std::string_view owner, std::string_view name) {
+    return FieldDescriptor{schema::fieldId(owner, name), name, TypeKind::Primitive, PrimitiveKind::Float32,
+                           schema::TypeId{}, FieldFlags::Editable, 0};
+  };
+  SECTION("two fields with one PascalCase name") {
+    static constexpr std::array fields{field("synthetic::T", "speed"), field("synthetic::T", "Speed")};
+    const std::array table{TypeDescriptor{schema::typeId("synthetic::T"), "synthetic::T", TypeKind::Struct, 1, fields, {}}};
+    CHECK(failureOf(table).error == codegen::CodegenError::InvalidName);
+  }
+  SECTION("a member named like its enclosing type (CS0542)") {
+    static constexpr std::array fields{field("synthetic::Thing", "thing")};
+    const std::array table{
+        TypeDescriptor{schema::typeId("synthetic::Thing"), "synthetic::Thing", TypeKind::Struct, 1, fields, {}}};
+    CHECK(failureOf(table).error == codegen::CodegenError::InvalidName);
+  }
+  SECTION("a C# keyword as a type name") {
+    static constexpr std::array fields{field("synthetic::string", "x")};
+    const std::array table{
+        TypeDescriptor{schema::typeId("synthetic::string"), "synthetic::string", TypeKind::Struct, 1, fields, {}}};
+    CHECK(failureOf(table).error == codegen::CodegenError::ReservedName);
+  }
+  SECTION("a generator-reserved name") {
+    static constexpr std::array fields{field("synthetic::T", "leafIds")};
+    const std::array table{TypeDescriptor{schema::typeId("synthetic::T"), "synthetic::T", TypeKind::Struct, 1, fields, {}}};
+    CHECK(failureOf(table).error == codegen::CodegenError::ReservedName);
+    static constexpr std::array other{field("synthetic::Bindings", "x")};
+    const std::array table2{
+        TypeDescriptor{schema::typeId("synthetic::Bindings"), "synthetic::Bindings", TypeKind::Struct, 1, other, {}}};
+    CHECK(failureOf(table2).error == codegen::CodegenError::ReservedName);
   }
 }

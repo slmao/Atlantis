@@ -47,6 +47,15 @@ if(WIN32 AND ATLANTIS_BUILD_EXAMPLES)
     ATLANTIS_GAMEPLAY_DEMO_EXE="$<TARGET_FILE:atlantis_gameplay_demo>"
   )
   add_dependencies(atlantis_gameplay_e2e_tests atlantis_runtime atlantis_gameplay_demo)
+  # Plan 0058 M5 (Q6; J10): the C# demo's case is compiled in only when C# is
+  # enabled (cmake/AtlantisDotnet.cmake), and SKIPs otherwise.
+  if(ATLANTIS_CSHARP_ENABLED)
+    target_compile_definitions(atlantis_gameplay_e2e_tests PRIVATE
+      ATLANTIS_DOTNET_EXE="${ATLANTIS_DOTNET}"
+      ATLANTIS_CSHARP_GAMEPLAY_DEMO_DLL="${ATLANTIS_CSHARP_GAMEPLAY_DEMO_DLL}"
+    )
+    add_dependencies(atlantis_gameplay_e2e_tests atlantis_csharp_gameplay_demo)
+  endif()
   catch_discover_tests(atlantis_gameplay_e2e_tests DISCOVERY_MODE PRE_TEST)
 endif()
 

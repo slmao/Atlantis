@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Atlantis C# SDK (Spec 0058 R1; ADR-0112 D4): a managed client library that
+    speaks atlantis.remote/1 itself. BCL only: no PackageReference, no native
+    code (ADR-0113; checked by tests/csharp/check_csharp_rules.cmake). The
+    shared settings (net10.0, Nullable, warnings as errors, output placement)
+    are the repository's Directory.Build.props.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Atlantis.Gameplay</RootNamespace>
+    <AssemblyName>Atlantis.Gameplay</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+</Project>
