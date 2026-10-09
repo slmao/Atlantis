@@ -1,14 +1,22 @@
 # Spec: C# Gameplay
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-09
-- **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending, in [PR #238](https://github.com/slmao/Atlantis/pull/238). The maintainer set this Spec's position and
-  boundaries before drafting (2026-10-09, chat). They are recorded under
-  Goals / Non-Goals and are not open to review; the open questions below
-  are.
-- **Related ADR(s)** (both `Proposed`, drafted alongside):
+- **Related Plan(s):** none yet. Plan 0058 drafting is authorized by the
+  Approval.
+- **Approval:** slmao, 2026-10-09 (review of this Spec's own branch PR,
+  [PR #238](https://github.com/slmao/Atlantis/pull/238)) — authorizes drafting Plan 0058; Implementation itself
+  still awaits its own, separate Joint Human Review of Spec + Plan together.
+  **Implementation precondition:** the .NET 10 SDK installed on the
+  implementing machine (this machine has only the .NET 8.0.7 runtime;
+  ADR-0113). The maintainer set this Spec's position and boundaries before
+  drafting (2026-10-09, chat). They are recorded under Goals / Non-Goals.
+
+  The same review ruled all eight open questions, each as its
+  recommendation. See Risks & Open Questions below.
+- **Related ADR(s)** (both `Accepted` 2026-10-09, alongside this Spec's own
+  Approval):
   - [ADR-0112](../adr/0112-csharp-gameplay-client-transport-and-bindings.md):
     the C# client's transport, its module, its generated bindings and its
     API shape (Q1, Q2, Q4, Q5);
@@ -20,9 +28,9 @@
   [ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md)
   (client-driven logic, no Runtime-hosted code) and
   [ADR-0111](../adr/0111-schema-generated-typed-bindings.md) (generated,
-  committed, staleness-checked bindings; the C++ output unchanged). They
-  extend [ADR-0006](../adr/0006-dependency-management.md)'s toolchain
-  category. [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md),
+  committed, staleness-checked bindings; the C++ output unchanged), all
+  unchanged. [ADR-0006](../adr/0006-dependency-management.md)'s toolchain
+  category is extended through ADR-0113. [ADR-0099](../adr/0099-engine-schema-core-and-descriptor-vocabulary.md),
   [ADR-0103](../adr/0103-runtime-world-operation-boundary.md)–[ADR-0105](../adr/0105-runtime-connection-and-cli-client.md)
   and [ADR-0004](../adr/0004-phase1-threading-baseline.md) are unchanged.
 
@@ -157,7 +165,7 @@ Maintainer-set (2026-10-09) — named only, not designed or scaffolded:
 - **Hot-path optimization:** a binary protocol v2, generated marshaling,
   shared memory.
 
-Also out of scope (drafter's proposal, open to review):
+Also out of scope (proposed by the draft, ruled with this Spec's Approval):
 
 - **New World or protocol capabilities.** No new method, query or event;
   `atlantis.remote/1` is used as it is.
@@ -237,7 +245,7 @@ Also out of scope (drafter's proposal, open to review):
 
 ## Proposed Design
 
-Under the recommendations below:
+Under the rulings below:
 
 ```
 worldSchema() ─► atlantis_sdk_codegen ─┬─► generated/world.h          (C++, unchanged)
@@ -281,7 +289,7 @@ world.Set(beacon, Fields.Light.Intensity, 6f);
 
 ## Architectural Impact
 
-Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
+Yes. Recorded in two ADRs drafted alongside (both `Accepted` 2026-10-09):
 
 - **[ADR-0112](../adr/0112-csharp-gameplay-client-transport-and-bindings.md)**
   covers:
@@ -298,7 +306,7 @@ Yes. Recorded in two ADRs drafted alongside (both `Proposed`):
   - how CMake builds and ctest runs C#;
   - the gate when the toolchain is absent (Q3).
 
-**Expected code impact** under the recommendations:
+**Expected code impact** under the rulings:
 
 - **New:**
   - `src/csharp/Atlantis.Gameplay/` (csproj, sources, committed
@@ -399,10 +407,16 @@ Risks:
   depend on `MathF.Sin` matching `std::sin` bit for bit. Determinism is
   required run to run, not C#-to-C++ (Q6).
 
-Open questions — Q1–Q7 posed by the maintainer, Q8 surfaced while
-drafting. Each lists options and a recommendation.
+Open questions — all eight ruled by Human Review (slmao, 2026-10-09, review
+of [PR #238](https://github.com/slmao/Atlantis/pull/238)), each as its recommendation. Q1–Q7 were posed by the
+maintainer; Q8 surfaced while drafting. The options are kept as the record
+of what was weighed.
 
 - **Q1 — Transport and architecture** (the heaviest; ADR-0112).
+  - **Ruled (2026-10-09): (a)** — a pure managed C# client speaking
+    `atlantis.remote/1` directly, loading no native engine code (R1;
+    ADR-0112 D1). (b) and (c) stay below with their reasons for rejection,
+    as recommended.
   - **(a) Pure managed C# speaking `atlantis.remote/1` directly.**
     - **Stack:** session file → TCP socket → JSON-lines → codec → C#
       reflective layer → generated typed layer. All of it is C#; there is
@@ -460,7 +474,7 @@ drafting. Each lists options and a recommendation.
       - a C ABI becomes a public surface to version.
   - **(c) Hosted inside the Runtime process.** Excluded by Spec 0057 and
     the maintainer; listed as rejected.
-  - **Recommendation: (a).**
+  - **Why (a):**
     - Both live options cross the same IPC boundary, so neither meets the
       hot-path principle in v1. Only (a) avoids a C ABI, native
       distribution and a crash domain shared with native code.
@@ -471,6 +485,16 @@ drafting. Each lists options and a recommendation.
       surface that the hot-path v2 would reshape anyway.
 
 - **Q2 — C# code generation** (ADR-0112).
+  - **Ruled (2026-10-09): as recommended** (R2; ADR-0112 D3):
+    - the generator gains `--lang csharp`, with C++ the unchanged default;
+    - `World.g.cs` and `Synthetic.g.cs` are committed;
+    - `.gitattributes` gains `*.g.cs text eol=lf`;
+    - a stale file writes `.expected` and fails, checked by the existing
+      C++ tests with no .NET;
+    - the type map and naming rules are the table below: GUIDs by text
+      only; `enum : long` with exact values; a non-Editable leaf a
+      read-only handle, so a write to it does not compile; PascalCase,
+      with any collision failing generation.
   - **Backend:** `generateCSharpBindings(schema, options)` beside
     `generateBindings()`, in the same pure library.
     - The tool gains `--lang cpp|csharp` (C++ stays the default, so its
@@ -515,10 +539,19 @@ drafting. Each lists options and a recommendation.
     - C# source generators at build time (rejected: a build-time generator
       reads no committed output and cannot be staleness-checked without
       .NET).
-  - **Recommendation:** as above.
+  - **Why:** the rows above.
 
 - **Q3 — Toolchain and build integration** (ADR-0113, a selection ADR in
   the ADR-0006 / ADR-0082 manner).
+  - **Ruled (2026-10-09): as recommended** (R7; ADR-0113 D1–D5):
+    - the .NET 10 SDK, `net10.0`, pinned by `global.json`;
+    - zero NuGet (a `NuGet.config` clearing all sources, plus a test for no
+      package references);
+    - CMake custom targets driving `dotnet build` (B-a);
+    - without the toolchain, no C# target is declared and configure says
+      so; `ATLANTIS_REQUIRE_CSHARP=ON` makes the absence an error, and
+      gates and CI turn it on (G-b);
+    - C# tests are console programs whose exit code is the assertion.
   - **SDK and target:** the **.NET 10 SDK** (LTS to November 2028),
     **TFM `net10.0`**, pinned by a repository `global.json` (SDK
     `10.0.1xx` feature band, `rollForward: latestPatch`).
@@ -539,7 +572,7 @@ drafting. Each lists options and a recommendation.
       support is thin.
     - **(B-c)** C# outside CMake entirely. ctest could not run it, and the
       gate could not see it.
-    - **Recommendation: B-a.**
+    - **Why B-a:** C# stays buildable with plain `dotnet` and runs under ctest.
   - **Without the toolchain:**
     - **(G-a)** configure fails, as for a missing Vulkan SDK or `slangc`.
       Every contributor must install .NET even to build the C++ engine.
@@ -547,7 +580,7 @@ drafting. Each lists options and a recommendation.
       configure message, plus an option `ATLANTIS_REQUIRE_CSHARP` that
       turns the absence into a configure error. Gates and CI set it.
     - **(G-c)** silently skip. An absent SDK would pass the gate unnoticed.
-    - **Recommendation: G-b.** It follows the Bistro content-gating
+    - **Why G-b:** it follows the Bistro content-gating
       precedent, and the Plan's gates run with `ATLANTIS_REQUIRE_CSHARP=ON`.
   - **ctest:**
     - C# test programs are console executables whose exit code is the
@@ -555,6 +588,13 @@ drafting. Each lists options and a recommendation.
     - the two-process test stays in the C++ harness (Q6).
 
 - **Q4 — Shape and place of the C# code** (ADR-0112).
+  - **Ruled (2026-10-09): M-a with the layout below** (ADR-0112 D4):
+    - AGENTS.md gains a top-level module, **Atlantis C# SDK**;
+    - `src/csharp/Atlantis.Gameplay/`, `examples/csharp/GameplayDemo/`,
+      `tests/csharp/`;
+    - namespace `Atlantis.Gameplay`, generated types in `.World`;
+    - the normative text says it is not a C++ module and not in the native
+      dependency graph.
   - **Layout:**
     - `src/csharp/Atlantis.Gameplay/`: one class library — remote client,
       codec, reflective and typed layers, generated bindings;
@@ -575,9 +615,20 @@ drafting. Each lists options and a recommendation.
       the codec.
   - **Alternatives for layout:** `examples/csharp/` only, or `csharp/` at
     the root (outside `src/`).
-  - **Recommendation: M-a with the layout above.**
+  - **Why M-a:** a library with its own layers is a module, not an example.
 
 - **Q5 — The typed API surface** (ADR-0112).
+  - **Ruled (2026-10-09): as recommended, E-b and S-a** (R3, R4;
+    ADR-0112 D5):
+    - a synchronous API: `Get<T>`, `Get`/`Set` by field handle,
+      `EntitiesWith<T…>`, `Transaction`, `Subscribe` (`IDisposable`),
+      `Decode`, `Control`;
+    - batching built in, pipelined over the client's own socket;
+    - connection, name and schema-mismatch errors throw; World refusals
+      return as values, by ticket;
+    - a client object is not thread-safe, and the client process's
+      threading is outside ADR-0004 (stated);
+    - async named only.
   - **Shape:**
     - `GameplayWorld` (over a session):
       - `Get<T>(entity)` (a component, one pipelined batch);
@@ -599,7 +650,7 @@ drafting. Each lists options and a recommendation.
     - **(E-a)** results (`Result<T>`-like, mirroring C++);
     - **(E-b)** exceptions for connection, schema-mismatch and name errors,
       with World refusals of commands still reported by ticket, not thrown;
-    - **Recommendation: E-b.** Exceptions are idiomatic C#, and refusals stay
+    - **Why E-b:** exceptions are idiomatic C#, and refusals stay
       values, as in C++.
   - **Sync or async.** The client process is outside ADR-0004; its
     threading is its own.
@@ -609,11 +660,17 @@ drafting. Each lists options and a recommendation.
       at the cost of ordering rules (request ids, response order) the
       protocol already serializes per connection.
     - **(S-c)** both.
-    - **Recommendation: S-a**, async named for later.
+    - **Why S-a:** v1's loop is sequential; async is named for later.
     - One `GameplayWorld` and its session are not thread-safe. A client may
       run them on any one thread.
 
 - **Q6 — The North star** (the C# beacon demo).
+  - **Ruled (2026-10-09): as recommended** (R5):
+    - the C# beacon demo, GUID `58005800-0000-4000-8000-0000000000b1`;
+    - motion without trigonometry, output identical run to run;
+    - no line-for-line equality with the C++ demo required;
+    - one new test case in the 0057 two-process test file, with no third
+      copy of the helpers.
   - **The loop:** `examples/csharp/GameplayDemo` runs Spec 0057's loop with
     the typed API — connect and check bindings, find, pause and capture a
     baseline, spawn, K logic steps, refuse, capture (the image differs from
@@ -628,9 +685,18 @@ drafting. Each lists options and a recommendation.
     `tests/gameplay_sdk/gameplay_e2e_tests.cpp` runs `atlantis_runtime
     --listen 0` and `dotnet GameplayDemo.dll`. It reuses that file's harness,
     so there is no third copy, and the existing C++ case is untouched.
-  - **Recommendation:** as above.
+  - **Why:** determinism without cross-language float drift.
 
 - **Q7 — Test surface.** As in the Testing section:
+  - **Ruled (2026-10-09): as recommended** (R6, R8):
+    - staleness checks needing no .NET;
+    - C# console test programs;
+    - a GPU-free C++ test server;
+    - conformance vectors generated by the C++ codec;
+    - the two-process North star;
+    - the eight-directory zero-change guard and `runFrame()` byte-identical.
+
+  The surface, as recommended:
   - generator staleness for C# (C++ tests, no .NET);
   - C# test programs, exit code as the assertion;
   - a no-GPU C++ fixture server for live-protocol C# tests;
@@ -641,9 +707,14 @@ drafting. Each lists options and a recommendation.
     - a C# test framework (NuGet; excluded);
     - C# tests only against a GPU Runtime (slow, and no fixture control
       for refusals or compatibility mutations).
-  - **Recommendation:** as above.
+  - **Why:** every layer is tested without a GPU except the North star.
 
 - **Q8 — The protocol as a contract** (surfaced).
+  - **Ruled (2026-10-09): P-a** (R6; ADR-0112 D2):
+    - a new reference document, `docs/architecture/remote_protocol.md`;
+    - committed conformance vectors;
+    - a protocol change still needs a Spec and a new ADR superseding
+      ADR-0106, as recommended.
   - **(P-a)** a reference document, `docs/architecture/remote_protocol.md`,
     plus committed conformance vectors generated by the C++ codec. It
     describes `atlantis.remote/1` as it is:
@@ -657,7 +728,7 @@ drafting. Each lists options and a recommendation.
     Spec and ADR-0106's successor.
   - **(P-b)** the code as the only description (status quo). A second
     implementer reads C++ internals, and drift is found only by tests.
-  - **Recommendation: P-a.**
+  - **Why P-a:** a second implementation needs a written contract.
 
 ## Out of Scope / Future Work
 

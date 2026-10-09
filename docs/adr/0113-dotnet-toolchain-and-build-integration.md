@@ -1,10 +1,13 @@
 # ADR 0113: .NET Toolchain Selection and Build Integration
 
-- **Status:** Proposed
-- **Date:** 2026-10-09
+- **Status:** Accepted
+- **Date:** 2026-10-09 (accepted 2026-10-09)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0058's own branch PR, [PR #238](https://github.com/slmao/Atlantis/pull/238))
-- **Related Spec:** [Spec 0058: C# Gameplay](../specs/0058-csharp-gameplay.md) (`In Review`)
+- **Acceptance:** slmao, 2026-10-09 (review of this branch's own PR,
+  [PR #238](https://github.com/slmao/Atlantis/pull/238); accepted together with Spec 0058's Approval, its eight open
+  questions ruled as recommended; ADR-0106, ADR-0110 and ADR-0111
+  unchanged; ADR-0006's toolchain category extended through ADR-0113)
+- **Related Spec:** [Spec 0058: C# Gameplay](../specs/0058-csharp-gameplay.md) (`Approved`)
 - **Related ADR(s):**
   - [ADR-0006](0006-dependency-management.md): large SDKs and toolchains
     (the Vulkan SDK, the Android NDK) are host-installed and located by
@@ -39,7 +42,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Decision
 
-1. **The .NET 10 SDK, TFM `net10.0`** (Spec 0058 Q3).
+1. **The .NET 10 SDK, TFM `net10.0`** (Spec 0058 ruling Q3).
    - A repository `global.json` pins the SDK to the `10.0.1xx` feature
      band with `rollForward: latestPatch`; the Plan records the exact
      version installed.
@@ -52,7 +55,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      accidental restore fetch fails.
    - A test checks both.
    - The SDK's own targeting packs are not packages in this sense.
-3. **CMake builds C# by driving `dotnet`** (B-a).
+3. **CMake builds C# by driving `dotnet`** (Spec 0058 ruling Q3, B-a).
    - SDK-style `.csproj` files are built by CMake custom targets running
      `dotnet build -c <config> -o <build tree>`.
    - Dependencies are wired so the generated `.g.cs` and the example build
@@ -60,7 +63,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - Plain `dotnet build` of a project also works for C# developers.
    - CMake's native C# language support is not used: it ties C# to the
      Visual Studio generator.
-4. **The gate** (G-b).
+4. **The gate** (Spec 0058 ruling Q3, G-b).
    - **Discovery:** configure looks for `dotnet` and a matching SDK.
    - **If absent:**
      - no C# target or test is declared;

@@ -1,10 +1,13 @@
 # ADR 0112: C# Gameplay Client — Transport, Bindings and Module
 
-- **Status:** Proposed
-- **Date:** 2026-10-09
+- **Status:** Accepted
+- **Date:** 2026-10-09 (accepted 2026-10-09)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0058's own branch PR, [PR #238](https://github.com/slmao/Atlantis/pull/238))
-- **Related Spec:** [Spec 0058: C# Gameplay](../specs/0058-csharp-gameplay.md) (`In Review`)
+- **Acceptance:** slmao, 2026-10-09 (review of this branch's own PR,
+  [PR #238](https://github.com/slmao/Atlantis/pull/238); accepted together with Spec 0058's Approval, its eight open
+  questions ruled as recommended; ADR-0106, ADR-0110 and ADR-0111
+  unchanged; ADR-0006's toolchain category extended through ADR-0113)
+- **Related Spec:** [Spec 0058: C# Gameplay](../specs/0058-csharp-gameplay.md) (`Approved`)
 - **Related ADR(s):**
   - It speaks [ADR-0106](0106-attachable-runtime-transport-and-control.md)'s
     `atlantis.remote/1` unchanged, and turns it into a cross-language
@@ -51,7 +54,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 ## Decision
 
 1. **Transport: managed C# speaking `atlantis.remote/1` directly**
-   (Spec 0058 Q1, (a)).
+   (Spec 0058 ruling Q1, (a)).
    - **What the C# library implements:**
      - the session file;
      - the TCP socket;
@@ -61,7 +64,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **No native engine code is loaded.** There is no C ABI and no P/Invoke
      of engine code.
    - The engine links nothing of it.
-2. **The protocol becomes a cross-language contract** (Q8, P-a).
+2. **The protocol becomes a cross-language contract** (Spec 0058 ruling Q8, P-a).
    - **A reference document,** `docs/architecture/remote_protocol.md`,
      describes `atlantis.remote/1` as it is:
      - framing and limits;
@@ -74,7 +77,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      the C++ codec's output for them changes.
    - **Changes.** The protocol still changes only through a Spec and an ADR
      superseding ADR-0106. Its version string stays the gate.
-3. **Generated C#** (Q2).
+3. **Generated C#** (Spec 0058 ruling Q2).
    - **Generator:** a second backend in the same pure generator,
      `generateCSharpBindings()`, selected by `atlantis_sdk_codegen --lang
      csharp`. C++ remains the default; its command and output are
@@ -106,7 +109,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
        generation (ADR-0111 D5 extended).
    - **Value initialization** is C#'s default: zeros, `null`, enum value 0.
      Spec 0057 R10's contract carries over.
-4. **Module** (Q4, M-a).
+4. **Module** (Spec 0058 ruling Q4, M-a).
    - **A new top-level module, Atlantis C# SDK:**
      - `src/csharp/Atlantis.Gameplay/`, one class library, namespace
        `Atlantis.Gameplay`;
@@ -121,7 +124,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      - .NET 10, zero NuGet (ADR-0113).
    - **Docs.** AGENTS.md lists it, noting it is not a C++ module and not in
      the native dependency graph.
-5. **API and threading** (Q5).
+5. **API and threading** (Spec 0058 ruling Q5, E-b + S-a).
    - **The typed surface** follows the C++ SDK:
      - `Get<T>(entity)` (one pipelined batch);
      - `Get` / `Set` by field handle;
