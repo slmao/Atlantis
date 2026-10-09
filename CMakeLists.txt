@@ -280,5 +280,8 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/tools/asset_cooker)
   add_subdirectory(tests/tools/gltf_importer)
   add_subdirectory(tests/tools/sdk_codegen)
+  # Plan 0058 (Spec 0058): the atlantis.remote/1 conformance vectors (no
+  # .NET), and -- when the .NET SDK is found -- the C# SDK's own tests.
+  add_subdirectory(tests/csharp)
   add_subdirectory(tests/runtime)
 endif()
