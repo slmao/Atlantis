@@ -1,1 +1,6 @@
 *.png binary
+
+# Plan 0057 J2 (ADR-0111 D1): the generated binding headers are compared
+# byte for byte with the generator's LF output, on every checkout.
+src/gameplay_sdk/include/atlantis/gameplay/generated/world.h text eol=lf
+tests/gameplay_sdk/generated/synthetic.h text eol=lf

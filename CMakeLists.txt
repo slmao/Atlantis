@@ -89,6 +89,10 @@ add_subdirectory(src/cli)
 # Plan 0056 P1 (ADR-0108 D2): Atlantis Editor, a client of Atlantis Connection
 # only (plus the UI library); hosted by atlantis_runtime (src/runtime, below).
 add_subdirectory(src/editor)
+# Plan 0057 P1 (ADR-0110 D1): Atlantis Gameplay SDK, a client of Atlantis
+# Connection only; its generated bindings are committed (ADR-0111 D1), so it
+# builds on Android too.
+add_subdirectory(src/gameplay_sdk)
 add_subdirectory(src/platform)
 add_subdirectory(src/rhi)
 add_subdirectory(src/vulkan_backend)
@@ -117,6 +121,8 @@ if(NOT ANDROID)
   # Plan 0037 (ADR-0084, as-built correction 2026-09-19): the glTF
   # importer registers alongside the cooker, host-only.
   add_subdirectory(src/tools/gltf_importer)
+  # Plan 0057 P3 (ADR-0111 D1): the schema-to-C++ binding generator, host-only.
+  add_subdirectory(src/tools/sdk_codegen)
   # Must come after add_subdirectory(src/asset_system) and
   # add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
   # atlantis_add_static_mesh_asset() is defined in the former and this
@@ -247,6 +253,9 @@ if(ATLANTIS_BUILD_EXAMPLES)
   add_subdirectory(examples/frame_execution_demo)
   add_subdirectory(examples/minimal_renderer_demo)
   add_subdirectory(examples/headless_rendering_demo)
+  # Plan 0057 P6 (ADR-0110 D6): the real Gameplay SDK client, attached over
+  # Atlantis Remote's client half.
+  add_subdirectory(examples/gameplay_demo)
 endif()
 
 if(ATLANTIS_BUILD_TESTS)
@@ -258,6 +267,7 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/connection)
   add_subdirectory(tests/cli)
   add_subdirectory(tests/editor)
+  add_subdirectory(tests/gameplay_sdk)
   add_subdirectory(tests/remote)
   add_subdirectory(tests/platform)
   add_subdirectory(tests/rhi)
@@ -269,5 +279,6 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/tools/shader_compiler)
   add_subdirectory(tests/tools/asset_cooker)
   add_subdirectory(tests/tools/gltf_importer)
+  add_subdirectory(tests/tools/sdk_codegen)
   add_subdirectory(tests/runtime)
 endif()

@@ -99,6 +99,9 @@ add_executable(atlantis_runtime_gpu_tests
   environment_realization_gpu_tests.cpp
   material_ibl_selection_gpu_tests.cpp
   pbr_render_gpu_tests.cpp
+  # Plan 0057 M5 (P7): the Gameplay SDK against a real Runtime -- the North
+  # star, Bistro, batch equivalence and read isolation, fatal VVL.
+  gameplay_sdk_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
@@ -115,6 +118,8 @@ target_link_libraries(atlantis_runtime_gpu_tests
     Atlantis::RemoteServer
     # Plan 0056 M6/M7: the editor attached to the frame, through its adapter.
     Atlantis::Editor
+    # Plan 0057 M5: the Gameplay SDK as a client of the running application.
+    Atlantis::GameplaySdk
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

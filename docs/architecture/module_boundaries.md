@@ -792,7 +792,8 @@ ECS, Runtime, Platform, RHI or Renderer include (checked by
 `tests/cli/cli_boundary_tests.cpp`).
 
 **Depended on by:** Atlantis Runtime (it owns the InProcess endpoint),
-Atlantis Remote (its payload), and clients (Atlantis CLI).
+Atlantis Remote (its payload), and clients (Atlantis CLI; since Spec 0057,
+Atlantis Gameplay SDK).
 
 ---
 
@@ -814,8 +815,9 @@ module, as the Vulkan Backend's WSI code is: one private header with one
 translation unit per OS under `src/remote/src/os/`, chosen by CMake; no OS type
 in any public header (checked by `tests/remote/remote_boundary_tests.cpp`).
 
-**Depended on by:** the `atlantis` executable (client half) and the
-`atlantis_runtime` executable (server half); never `atlantis_runtime_host`.
+**Depended on by:** the `atlantis` executable and, since Spec 0057, the
+`atlantis_gameplay_demo` example (client half), and the `atlantis_runtime`
+executable (server half); never `atlantis_runtime_host`.
 
 ---
 
@@ -863,6 +865,48 @@ Viewport size it wants.
 **Depended on by:** the `atlantis_runtime` executable (`--editor`), through
 the executable-private `src/runtime/editor_attachment.*`; never
 `atlantis_runtime_host`. Android builds the library but hosts no editor.
+
+---
+
+## Atlantis Gameplay SDK
+
+**Status: Approved** (Spec 0057,
+[ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md),
+[ADR-0111](../adr/0111-schema-generated-typed-bindings.md)).
+
+**Responsibilities:** a C++ client library (`atlantis::gameplay`) over one
+borrowed `RuntimeConnection`, with two layers:
+- reflective (`gameplay::World`, `Transaction`, `Subscription`,
+  `FailureLog`): types and fields by name (Connection's `text` grammar) or
+  id, component reads, the component filter, transactions resolved whole at
+  submit, failures by ticket;
+- typed, generated from the schema (`generated/world.h`): value structs,
+  `int64` enums with the constants' exact values, path-mirroring field
+  handles (`fields::Light.intensity`), and a per-type, recursive
+  compatibility check against the connection's schema.
+
+Every operation is a sequence of `RuntimeConnection` calls in the client's
+order; refusals stay the boundary's. An optional, transport-neutral
+`QueryBatch` serves component reads and the component filter (a Remote
+client adapts `RemoteSession`). A multi-leaf read is not a snapshot: it is
+consistent only while the Runtime stays paused with no step or resume from
+any client and no pending step. Game logic is client-driven: no
+Runtime-hosted callback, scheduler, clock or plugin loading, and no custom
+components.
+
+**Depends on:** Atlantis Connection only — its includes are the connection,
+World's access value types, Core's schema and `Result`, the GUID value
+header and its own headers; no World component or schema-table, ECS,
+Runtime, Platform, RHI, Renderer, Vulkan, Remote or OS include; no byte
+offset named (checked by `tests/gameplay_sdk/gameplay_sdk_boundary_tests.cpp`).
+The generated headers are produced by Atlantis Tools' `atlantis_sdk_codegen`
+from the hand-authored descriptor tables and committed, with `eol=lf`
+(`.gitattributes`); a staleness test fails when they differ from the
+generator's output.
+
+**Depended on by:** clients — the `atlantis_gameplay_demo` example (with
+Atlantis Remote's client half) and tests. Runtime, Remote, the CLI and the
+editor do not link it. Android builds the library.
 
 ---
 
@@ -1027,7 +1071,9 @@ Future iOS Runtime entry point: not designed.
 **Responsibilities:** offline/developer tooling — the
 `atlantis_asset_cooker` CLI entry point (Spec 0012, `Approved`,
 implemented; the real cooking logic lives in Atlantis Asset System, not
-here), shader
+here), the schema-to-C++ binding generator `atlantis_sdk_codegen` (Spec
+0057, ADR-0111: host-only, reads the hand-authored descriptor tables, its
+output committed to Atlantis Gameplay SDK), shader
 precompilation CLI, debug-capture glue (e.g. RenderDoc workflow per
 [testing-strategy.md](../process/testing-strategy.md)). This narrows an
 earlier, more generic "asset processing" phrase now that Spec 0012 has
