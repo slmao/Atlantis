@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-09
-- **Related Plan(s):** none yet. Plan 0058 drafting is authorized by the
-  Approval.
+- **Related Plan(s):** [Plan 0058](../plans/0058-csharp-gameplay.md)
+  (`Approved`; Joint Human Review 2026-10-09,
+  [PR #239](https://github.com/slmao/Atlantis/pull/239)) — implemented, merged
+  [PR #240](https://github.com/slmao/Atlantis/pull/240).
 - **Approval:** slmao, 2026-10-09 (review of this Spec's own branch PR,
   [PR #238](https://github.com/slmao/Atlantis/pull/238)) — authorizes drafting Plan 0058; Implementation itself
   still awaits its own, separate Joint Human Review of Spec + Plan together.

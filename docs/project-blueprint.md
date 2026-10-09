@@ -840,6 +840,21 @@ milestone being listed does not authorize starting it — see Section 1.
     to `atlantis_runtime --listen` that spawns, moves and destroys a light
     with exact frame data per logic step. Game logic is client-driven: no
     Runtime-hosted callback, scheduler, clock or custom components.
+  - since [Spec 0058](specs/0058-csharp-gameplay.md) (merged
+    [PR #240](https://github.com/slmao/Atlantis/pull/240)), the Tooling
+    Foundation's fourth step: C# Gameplay. The binding generator gained a
+    C# backend (`--lang csharp`) writing committed, staleness-checked
+    `World.g.cs` from the same schema, and a pure-managed C# client
+    (Atlantis C# SDK, `src/csharp/Atlantis.Gameplay/`) speaks
+    `atlantis.remote/1` directly with no native engine code, on the .NET 10
+    toolchain with zero NuGet dependencies
+    ([ADR-0112](adr/0112-csharp-gameplay-client-transport-and-bindings.md),
+    [ADR-0113](adr/0113-dotnet-toolchain-and-build-integration.md)). The
+    wire protocol became a documented cross-language contract
+    (`docs/architecture/remote_protocol.md` plus committed conformance
+    vectors; behaviour changes still need a Spec and an ADR superseding
+    ADR-0106). `examples/csharp/GameplayDemo` drives a beacon over the
+    typed surface with run-to-run identical output.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -847,12 +862,14 @@ milestone being listed does not authorize starting it — see Section 1.
   - job-system integration and multi-threading;
   - change tracking, replication and reactive queries;
   - chunk streaming;
-  - prefab, networking and C# bindings;
+  - prefab and networking;
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
     (named only in Spec 0053);
-  - C# (0058), and the rest of Spec 0057's named-only list — named only,
-    not designed or scaffolded;
+  - 0059 Package and the rest of Spec 0058's named-only list (managed
+    hosting inside the Runtime, the hot-path work — binary protocol v2,
+    generated marshaling — NuGet dependencies, Android C#, C# editor
+    extensions) — named only, not designed or scaffolded;
   - custom components, a time model or scheduler, Runtime-hosted game
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);
