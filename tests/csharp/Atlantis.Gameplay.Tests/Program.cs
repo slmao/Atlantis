@@ -14,6 +14,11 @@ public static class Program
         ["codec"] = CodecSuite.Run,
         ["session"] = SessionSuite.Run,
         ["live.connection"] = LiveConnectionSuite.Run,
+        ["generated"] = GeneratedSuite.Run,
+        ["live.reflective"] = LiveReflectiveSuite.Run,
+        ["live.typed"] = LiveTypedSuite.Run,
+        ["live.compat"] = LiveCompatSuite.Run,
+        ["live.isolation"] = LiveIsolationSuite.Run,
     };
 
     public static int Main(string[] args)

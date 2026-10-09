@@ -25,11 +25,32 @@ if(ATLANTIS_CSHARP_ENABLED)
     DEPENDS atlantis_csharp_gameplay)
   add_dependencies(atlantis_csharp_tests atlantis_csharp_fixture_server)
 
-  foreach(suite IN ITEMS codec session live.connection)
+  foreach(suite IN ITEMS codec session generated live.connection live.reflective live.typed live.compat live.isolation)
     add_test(NAME "csharp: ${suite}"
       COMMAND "${ATLANTIS_DOTNET}" "${atlantis_csharp_tests_DLL}" ${suite}
               --repo "${CMAKE_SOURCE_DIR}"
               --fixture-server "$<TARGET_FILE:atlantis_csharp_fixture_server>")
     set_tests_properties("csharp: ${suite}" PROPERTIES LABELS csharp TIMEOUT 600)
+  endforeach()
+
+  # Plan 0058 P9 (J5): three compile probes, each with a compiling twin.
+  # A refused probe passes only if its build fails with a C# error on its
+  # own marked line of probes/Probe.cs. Built against the library's DLL.
+  foreach(probe IN ITEMS READONLY_SET READONLY_ADD WRONG_TYPE)
+    string(TOLOWER "${probe}" name)
+    foreach(variant IN ITEMS fail compile)
+      if(variant STREQUAL "fail")
+        set(define "PROBE_${probe}")
+        set(test "csharp: compile probe ${name} is refused")
+      else()
+        set(define "PROBE_${probe}_TWIN")
+        set(test "csharp: compile probe ${name} twin compiles")
+      endif()
+      add_test(NAME "${test}"
+        COMMAND ${CMAKE_COMMAND} "-DDOTNET=${ATLANTIS_DOTNET}" -DPROBE=${define} -DEXPECT=${variant}
+                "-DGAMEPLAY_DLL=${ATLANTIS_CSHARP_GAMEPLAY_DLL}" "-DOUT=${CMAKE_BINARY_DIR}/csharp/probes"
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/probes/run_probe.cmake)
+      set_tests_properties("${test}" PROPERTIES LABELS csharp RUN_SERIAL TRUE TIMEOUT 600)
+    endforeach()
   endforeach()
 endif()

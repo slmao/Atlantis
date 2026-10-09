@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plan 0058 P9 (J5): the compile probes. Built by run_probe.cmake with
+    DefineConstants naming one probe, against the already-built
+    Atlantis.Gameplay.dll (AtlantisGameplayDll) and the synthetic bindings.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <AssemblyName>Probe</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../Generated/Synthetic.g.cs" Link="Generated/Synthetic.g.cs" />
+    <Reference Include="Atlantis.Gameplay">
+      <HintPath>$(AtlantisGameplayDll)</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>
