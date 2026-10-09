@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-10-09
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0058's own branch PR)
+- **Acceptance:** pending (review of Spec 0058's own branch PR, [PR #238](https://github.com/slmao/Atlantis/pull/238))
 - **Related Spec:** [Spec 0058: C# Gameplay](../specs/0058-csharp-gameplay.md) (`In Review`)
 - **Related ADR(s):**
   - It speaks [ADR-0106](0106-attachable-runtime-transport-and-control.md)'s

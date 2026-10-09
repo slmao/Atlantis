@@ -4,7 +4,7 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-09
 - **Related Plan(s):** none yet. Plan drafting awaits this Spec's Approval.
-- **Approval:** pending. The maintainer set this Spec's position and
+- **Approval:** pending, in [PR #238](https://github.com/slmao/Atlantis/pull/238). The maintainer set this Spec's position and
   boundaries before drafting (2026-10-09, chat). They are recorded under
   Goals / Non-Goals and are not open to review; the open questions below
   are.
