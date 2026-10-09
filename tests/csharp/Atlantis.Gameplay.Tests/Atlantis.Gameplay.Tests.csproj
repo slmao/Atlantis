@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plan 0058 P9 (Spec 0058 R2 to R6; ruling Q7): the C# SDK tests: one
+    console program, a suite per command-line argument (ctest runs each as
+    "csharp: <suite>"). No test framework: zero NuGet (ADR-0113).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Atlantis.Gameplay.Tests</RootNamespace>
+    <AssemblyName>Atlantis.Gameplay.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The synthetic schema's committed bindings (Plan 0058 P5), namespace Atlantis.Gameplay.Synthetic. -->
+    <Compile Include="../Generated/Synthetic.g.cs" Link="Generated/Synthetic.g.cs" />
+  </ItemGroup>
+
+</Project>

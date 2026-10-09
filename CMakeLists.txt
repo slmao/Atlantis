@@ -123,6 +123,13 @@ if(NOT ANDROID)
   add_subdirectory(src/tools/gltf_importer)
   # Plan 0057 P3 (ADR-0111 D1): the schema-to-C++ binding generator, host-only.
   add_subdirectory(src/tools/sdk_codegen)
+  # Plan 0058 P7 (ADR-0113): .NET discovery and the Atlantis C# SDK -- a
+  # managed client library, not a C++ module; nothing native links it.
+  # Host-only: Android never declares a C# target.
+  include(cmake/AtlantisDotnet.cmake)
+  if(ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(src/csharp)
+  endif()
   # Must come after add_subdirectory(src/asset_system) and
   # add_subdirectory(src/tools/asset_cooker) (Plan 0012 Section D4):
   # atlantis_add_static_mesh_asset() is defined in the former and this

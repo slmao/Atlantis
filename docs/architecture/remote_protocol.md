@@ -146,7 +146,9 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 - **Floats:** a float is a JSON number, written as C++ `std::to_chars`
   writes a `float`.
   - **Shortest round trip:** the shorter of fixed and scientific notation,
-    fixed on a tie.
+    fixed on a tie. An integral value in fixed notation is written as its
+    exact integer, which is no longer than its shortest digits padded with
+    zeros and closer (`5409459712`, not `5409459700`).
   - **Scientific notation:** a lowercase `e`, an explicit sign and at
     least two exponent digits, e.g. `1e+20`, `1e-05`, `-0`, `0.1`,
     `3.4028235e+38`.
