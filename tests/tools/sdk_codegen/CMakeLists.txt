@@ -17,6 +17,9 @@ target_link_libraries(atlantis_sdk_codegen_tests
 target_compile_definitions(atlantis_sdk_codegen_tests PRIVATE
   ATLANTIS_SDK_GENERATED_WORLD_H="${CMAKE_SOURCE_DIR}/src/gameplay_sdk/include/atlantis/gameplay/generated/world.h"
   ATLANTIS_SDK_GENERATED_SYNTHETIC_H="${CMAKE_SOURCE_DIR}/tests/gameplay_sdk/generated/synthetic.h"
+  # Plan 0058 M2: the committed C# outputs, checked here without .NET.
+  ATLANTIS_SDK_GENERATED_WORLD_CS="${CMAKE_SOURCE_DIR}/src/csharp/Atlantis.Gameplay/Generated/World.g.cs"
+  ATLANTIS_SDK_GENERATED_SYNTHETIC_CS="${CMAKE_SOURCE_DIR}/tests/csharp/Generated/Synthetic.g.cs"
   ATLANTIS_SDK_CODEGEN_EXPECTED_DIR="${CMAKE_BINARY_DIR}/sdk_codegen"
 )
 

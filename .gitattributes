@@ -8,3 +8,7 @@ tests/gameplay_sdk/generated/synthetic.h text eol=lf
 # Plan 0058 M1 (Spec 0058 R6): the conformance vectors are compared byte for
 # byte with the C++ codec's LF output.
 tests/csharp/conformance/*.jsonl text eol=lf
+
+# Plan 0058 M2 (ADR-0112 D3): the generated C# bindings are compared byte for
+# byte with the generator's LF output, on every checkout.
+*.g.cs text eol=lf
