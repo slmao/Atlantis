@@ -263,6 +263,10 @@ if(ATLANTIS_BUILD_EXAMPLES)
   # Plan 0057 P6 (ADR-0110 D6): the real Gameplay SDK client, attached over
   # Atlantis Remote's client half.
   add_subdirectory(examples/gameplay_demo)
+  # Plan 0058 P8 (Q6): the C# beacon demo, when C# is enabled (host only).
+  if(ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(examples/csharp)
+  endif()
 endif()
 
 if(ATLANTIS_BUILD_TESTS)

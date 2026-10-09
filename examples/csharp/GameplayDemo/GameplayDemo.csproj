@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Plan 0058 P8 (Spec 0058 R5, ruling Q6): the C# beacon demo, a client of
+    the Atlantis C# SDK only. Run it as: dotnet GameplayDemo.dll.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Atlantis.Gameplay.Examples</RootNamespace>
+    <AssemblyName>GameplayDemo</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../src/csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -24,6 +24,10 @@ if(ATLANTIS_CSHARP_ENABLED)
                 "${CMAKE_SOURCE_DIR}/src/csharp/Atlantis.Gameplay"
     DEPENDS atlantis_csharp_gameplay)
   add_dependencies(atlantis_csharp_tests atlantis_csharp_fixture_server)
+  # One `dotnet build` of the shared library at a time: after the demo's.
+  if(TARGET atlantis_csharp_gameplay_demo)
+    add_dependencies(atlantis_csharp_tests atlantis_csharp_gameplay_demo)
+  endif()
 
   foreach(suite IN ITEMS codec session generated live.connection live.reflective live.typed live.compat live.isolation)
     add_test(NAME "csharp: ${suite}"

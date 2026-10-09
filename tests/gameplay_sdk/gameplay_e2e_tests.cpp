@@ -8,6 +8,10 @@
 // The process helpers below (widen, quote, Child, windowsOf) are copied whole
 // from tests/cli/cli_e2e_tests.cpp (Plan 0055 M7), not extracted from it, so
 // that verified file stays untouched (Plan 0057 J8). Test-only Windows code.
+//
+// Plan 0058 M5 (Spec 0058 R5, ruling Q6; J10): one more case runs the C#
+// beacon demo (`dotnet GameplayDemo.dll`) the same way, through the same
+// helpers. It is compiled in only when C# is enabled, and SKIPs otherwise.
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -185,8 +189,10 @@ class Child {
 }
 
 // One Runtime with --listen, the demo against it, and the Runtime closed
-// gracefully. Returns the demo's output lines.
-[[nodiscard]] std::vector<std::string> runOnce(const fs::path& dir) {
+// gracefully. Returns the demo's output lines. The demo is `demoExe` with
+// `demoArguments` before its own (Plan 0058: dotnet and GameplayDemo.dll).
+[[nodiscard]] std::vector<std::string> runOnce(const fs::path& dir, const fs::path& demoExe = ATLANTIS_GAMEPLAY_DEMO_EXE,
+                                               std::vector<std::string> demoArguments = {}) {
   const fs::path session = dir / "runtime.session.json";
   Child runtime(ATLANTIS_RUNTIME_EXE,
                 {"--scene", "integrated_showcase_demo", "--listen", "0", "--session-file", session.string()});
@@ -196,7 +202,8 @@ class Child {
   }
   REQUIRE(fs::exists(session));
 
-  Child demo(ATLANTIS_GAMEPLAY_DEMO_EXE, {"--session", session.string(), "--capture-dir", dir.string()});
+  demoArguments.insert(demoArguments.end(), {"--session", session.string(), "--capture-dir", dir.string()});
+  Child demo(demoExe, demoArguments);
   demo.closeStdin();
   const auto demoExit = demo.wait(std::chrono::seconds(300));
   INFO("demo stdout:\n" << demo.out() << "\ndemo stderr:\n" << demo.err());
@@ -242,4 +249,44 @@ TEST_CASE("atlantis_gameplay_demo runs the Gameplay SDK loop against atlantis_ru
 
   std::error_code ec;
   fs::remove_all(root, ec);
+}
+
+// Plan 0058 M5 (Spec 0058 R5; J10): the C# Gameplay SDK's beacon demo, a
+// managed process speaking atlantis.remote/1 itself, in the same loop.
+TEST_CASE("the C# GameplayDemo runs the C# Gameplay SDK loop against atlantis_runtime --listen, identically twice",
+          "[gameplay_sdk][e2e][gpu][csharp]") {
+#if defined(ATLANTIS_CSHARP_GAMEPLAY_DEMO_DLL)
+  const fs::path root =
+      fs::temp_directory_path() / "atlantis_csharp_gameplay_e2e" / std::to_string(std::random_device{}());
+  fs::create_directories(root / "first");
+  fs::create_directories(root / "second");
+
+  const std::vector<std::string> first =
+      runOnce(root / "first", ATLANTIS_DOTNET_EXE, {ATLANTIS_CSHARP_GAMEPLAY_DEMO_DLL});
+  // 1 connect, 2 find, 3 baseline, 4 spawn, 5.1-5.8 move, 6 refuse,
+  // 7 capture, 8 destroy, 9 resume.
+  REQUIRE(first.size() == 16);
+  const std::vector<std::string_view> prefixes{"1 connect: ok", "2 find: ok",    "3 baseline: ok", "4 spawn: ok",
+                                               "5.1 move: ok",  "5.2 move: ok",  "5.3 move: ok",   "5.4 move: ok",
+                                               "5.5 move: ok",  "5.6 move: ok",  "5.7 move: ok",   "5.8 move: ok",
+                                               "6 refuse: ok",  "7 capture: ok", "8 destroy: ok",  "9 resume: ok"};
+  for (std::size_t i = 0; i < prefixes.size(); ++i) {
+    INFO(first[i]);
+    CHECK(first[i].starts_with(prefixes[i]));
+  }
+  // The square trajectory with K = 8: corners and edge midpoints, 4 or 6.
+  CHECK(first[4] == "5.1 move: ok (position 0 2 1.5, intensity 6)");
+  CHECK(first[11] == "5.8 move: ok (position 1.5 2 1.5, intensity 4)");
+
+  // A second Runtime, a second run: the same lines (the fixed beacon GUID;
+  // logic steps, not frame numbers; no path in any line).
+  const std::vector<std::string> second =
+      runOnce(root / "second", ATLANTIS_DOTNET_EXE, {ATLANTIS_CSHARP_GAMEPLAY_DEMO_DLL});
+  CHECK(second == first);
+
+  std::error_code ec;
+  fs::remove_all(root, ec);
+#else
+  SKIP("C# is not enabled: no .NET 10.0.1xx SDK at configure (Plan 0058 P7)");
+#endif
 }
