@@ -23,6 +23,8 @@
 #include <windows.h>
 #include <windowsx.h>
 
+#include <atlantis/profile_recorder.h>
+
 namespace atlantis::platform {
 
 namespace {
@@ -39,6 +41,13 @@ struct State {
   bool initialized = false;
   bool shutDown = false;
   bool quit = false;
+
+  // Spec 0059 / ADR-0117 D2: the outer size of a window created for a requested
+  // client size; 0 when none was requested. WM_GETMINMAXINFO raises the maximum
+  // tracking size to at least this, so Windows does not shrink the window to the
+  // monitor.
+  int requestedOuterWidth = 0;
+  int requestedOuterHeight = 0;
 
   // windowProc (below) always appends here -- whether it is invoked
   // synchronously from something outside processEvents() entirely (e.g.
@@ -186,6 +195,15 @@ WindowExtent clientExtent(HWND hwnd) {
 LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
   State& s = state();
   switch (message) {
+    case WM_GETMINMAXINFO: {
+      if (s.requestedOuterWidth > 0 && s.requestedOuterHeight > 0) {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        if (info->ptMaxTrackSize.x < s.requestedOuterWidth) info->ptMaxTrackSize.x = s.requestedOuterWidth;
+        if (info->ptMaxTrackSize.y < s.requestedOuterHeight) info->ptMaxTrackSize.y = s.requestedOuterHeight;
+        return 0;
+      }
+      return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
     case WM_SIZE: {
       if (wParam == SIZE_MINIMIZED) {
         s.pendingBuffer.push_back(PlatformEvent{WindowResize{WindowExtent{0, 0}, WindowExtent{0, 0}}});
@@ -280,7 +298,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
 
 }  // namespace
 
-atlantis::Result<std::monostate, PlatformError> initialize() {
+atlantis::Result<std::monostate, PlatformError> initialize() { return initialize(WindowOptions{}); }
+
+atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& options) {
   State& s = state();
 
   // Start from a clean slate.
@@ -299,6 +319,25 @@ atlantis::Result<std::monostate, PlatformError> initialize() {
 
   s.hInstance = GetModuleHandleW(nullptr);
 
+  // Spec 0059 / ADR-0117 D2: size the window so its CLIENT area is the requested
+  // size (the process is per-monitor-DPI-aware, so client pixels are framebuffer
+  // pixels); otherwise the OS chooses, as before.
+  int windowWidth = CW_USEDEFAULT;
+  int windowHeight = CW_USEDEFAULT;
+  s.requestedOuterWidth = 0;
+  s.requestedOuterHeight = 0;
+  if (options.requestedClientSize.has_value() && options.requestedClientSize->width > 0 &&
+      options.requestedClientSize->height > 0) {
+    RECT rect{0, 0, static_cast<LONG>(options.requestedClientSize->width),
+              static_cast<LONG>(options.requestedClientSize->height)};
+    if (AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, GetDpiForSystem())) {
+      windowWidth = rect.right - rect.left;
+      windowHeight = rect.bottom - rect.top;
+      s.requestedOuterWidth = windowWidth;
+      s.requestedOuterHeight = windowHeight;
+    }
+  }
+
   WNDCLASSEXW windowClass{};
   windowClass.cbSize = sizeof(WNDCLASSEXW);
   windowClass.style = CS_HREDRAW | CS_VREDRAW;
@@ -314,7 +353,7 @@ atlantis::Result<std::monostate, PlatformError> initialize() {
   }
 
   s.hwnd = CreateWindowExW(0, kWindowClassName, L"Atlantis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                            CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, s.hInstance, nullptr);
+                            windowWidth, windowHeight, nullptr, nullptr, s.hInstance, nullptr);
   if (s.hwnd == nullptr) {
     const DWORD lastError = GetLastError();
     UnregisterClassW(kWindowClassName, s.hInstance);
@@ -323,6 +362,18 @@ atlantis::Result<std::monostate, PlatformError> initialize() {
   }
 
   s.initialized = true;
+
+#if defined(ATLANTIS_PROFILING)
+  {
+    // Spec 0059 (ADR-0117 D6): the display's refresh rate, for the benchmark's
+    // metadata. Best effort: 0 when the OS does not say.
+    DEVMODEW mode{};
+    mode.dmSize = sizeof(mode);
+    atlantis::profile::DeviceInfo info = atlantis::profile::deviceInfo();
+    info.refreshHz = EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &mode) ? static_cast<double>(mode.dmDisplayFrequency) : 0.0;
+    atlantis::profile::setDeviceInfo(info);
+  }
+#endif
 
   // CreateWindowExW() above can itself synchronously dispatch window
   // messages to windowProc before returning (e.g. WM_NCCREATE/WM_CREATE

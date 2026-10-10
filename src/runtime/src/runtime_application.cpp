@@ -1161,7 +1161,12 @@ atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(
   // so platformSession_ can be move-CONSTRUCTED directly into it below.
   // On Err, no RuntimeApplication is ever constructed; there is nothing
   // to tear down.
-  auto sessionResult = createPlatformSession();
+  atlantis::platform::WindowOptions windowOptions;
+  if (config.requestedClientWidth > 0 && config.requestedClientHeight > 0) {
+    windowOptions.requestedClientSize =
+        atlantis::platform::ClientSize{config.requestedClientWidth, config.requestedClientHeight};
+  }
+  auto sessionResult = createPlatformSession(windowOptions);
   if (sessionResult.isErr()) {
     ATLANTIS_LOG_ERROR("createPlatformSession() failed");
     return atlantis::Result<RuntimeApplication, RuntimeInitError>::Err(RuntimeInitError::PlatformInitFailed);

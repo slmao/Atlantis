@@ -32,3 +32,20 @@ TEST_CASE("Platform public API compiles and links", "[platform][compile]") {
   [[maybe_unused]] ShouldQuitFn shouldQuitFn = &atlantis::platform::shouldQuit;
   [[maybe_unused]] ShutdownFn shutdownFn = &atlantis::platform::shutdown;
 }
+
+// Spec 0059 / ADR-0117 D2: the window options are a plain value; the default
+// leaves the size to the OS, exactly as initialize() always did.
+TEST_CASE("WindowOptions defaults to no requested client size", "[platform][compile]") {
+  const atlantis::platform::WindowOptions options;
+  REQUIRE_FALSE(options.requestedClientSize.has_value());
+
+  atlantis::platform::WindowOptions sized;
+  sized.requestedClientSize = atlantis::platform::ClientSize{1920, 1080};
+  REQUIRE(sized.requestedClientSize->width == 1920);
+  REQUIRE(sized.requestedClientSize->height == 1080);
+
+  // The overload exists and is linkable (not called: it would create a window).
+  using InitializeWithFn = atlantis::Result<std::monostate, atlantis::platform::PlatformError> (*)(
+      const atlantis::platform::WindowOptions&);
+  [[maybe_unused]] InitializeWithFn initializeWith = &atlantis::platform::initialize;
+}

@@ -24,6 +24,7 @@
 #include <windows.h>
 
 #include <cstddef>
+#include <optional>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -354,6 +355,50 @@ TEST_CASE("Windows Platform input: pointer, button, wheel, key and text messages
   text(13, "\xC3\xA9");
   text(14, "\xF0\x9F\x98\x80");
   for (std::size_t i = 15; i < input.size(); ++i) CHECK(std::holds_alternative<PointerMoved>(input[i]));
+}
+
+// Spec 0059 / ADR-0117 D2 (Plan 0059 M8): a window created for a requested
+// client size has exactly that client size -- including a size larger than the
+// monitor, which Windows would otherwise shrink the window to (the
+// WM_GETMINMAXINFO handling). Its own TEST_CASE: Phase 1 does not re-initialize
+// Platform in one process; catch_discover_tests runs each case in its own.
+TEST_CASE("Windows Platform: a requested client size is the window's client size, even beyond the monitor",
+          "[platform][integration][window_size]") {
+  using atlantis::platform::SurfaceCreated;
+  using atlantis::platform::WindowResize;
+
+  constexpr unsigned int kWidth = 3000;
+  constexpr unsigned int kHeight = 1700;  // taller and wider than a 1080p monitor, with its frame
+  atlantis::platform::WindowOptions options;
+  options.requestedClientSize = atlantis::platform::ClientSize{kWidth, kHeight};
+  REQUIRE(atlantis::platform::initialize(options).isOk());
+  PlatformLifecycleGuard lifecycleGuard;
+
+  const auto batch = atlantis::platform::processEvents();
+  REQUIRE(!batch.empty());
+  REQUIRE(std::holds_alternative<SurfaceCreated>(batch[0]));
+  const HWND hwnd = reinterpret_cast<HWND>(std::get<SurfaceCreated>(batch[0]).handle.value0);
+  REQUIRE(IsWindow(hwnd));
+
+  RECT client{};
+  REQUIRE(GetClientRect(hwnd, &client));
+  CHECK(static_cast<unsigned int>(client.right - client.left) == kWidth);
+  CHECK(static_cast<unsigned int>(client.bottom - client.top) == kHeight);
+
+  // The framebuffer extent the engine sees (the last WindowResize) agrees.
+  std::optional<WindowResize> lastResize;
+  for (const auto& event : batch) {
+    if (const auto* resize = std::get_if<WindowResize>(&event)) lastResize = *resize;
+  }
+  for (const auto& event : atlantis::platform::processEvents()) {
+    if (const auto* resize = std::get_if<WindowResize>(&event)) lastResize = *resize;
+  }
+  REQUIRE(lastResize.has_value());
+  CHECK(lastResize->framebuffer.width == kWidth);
+  CHECK(lastResize->framebuffer.height == kHeight);
+
+  atlantis::platform::shutdown();
+  lifecycleGuard.markShutDown();
 }
 
 #endif  // defined(_WIN32)

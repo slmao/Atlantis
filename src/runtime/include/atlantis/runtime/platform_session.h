@@ -38,7 +38,8 @@ class PlatformSession {
   [[nodiscard]] bool isActive() const noexcept { return active_; }
 
  private:
-  friend atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession();
+  friend atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession(
+      const atlantis::platform::WindowOptions& options);
 
   bool active_ = false;
 };
@@ -49,5 +50,9 @@ class PlatformSession {
 // succeeded, so its destructor never calls platform::shutdown() for a
 // session that was never really established.
 [[nodiscard]] atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession();
+
+// Spec 0059 / ADR-0117 D2: the same, calling platform::initialize(options).
+[[nodiscard]] atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession(
+    const atlantis::platform::WindowOptions& options);
 
 }  // namespace atlantis::runtime
