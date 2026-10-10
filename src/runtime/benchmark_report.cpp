@@ -115,9 +115,14 @@ void add(Collected& out, std::string key, Series series) { out.flat.emplace_back
     const double cpu = zoneMs(f.record, frameZone);
     frameMs.values.push_back(f.frameMs);
     cpuMs.values.push_back(cpu);
-    cpuActive.values.push_back(cpu - (zoneMs(f.record, waitPrev) + zoneMs(f.record, acquire) + zoneMs(f.record, waitIdle)));
-    waitPrevMs.values.push_back(zoneMs(f.record, waitPrev));
-    acquireMs.values.push_back(zoneMs(f.record, acquire));
+    // WaitPreviousGpu is the previous submission's fence wait, which runs at the top of
+    // acquireNextTarget(): it is nested in the Acquire zone, so the two blocking waits
+    // that are disjoint are Acquire (inclusive) and WaitIdle, and acquire_ms reports
+    // what is left of Acquire once the fence wait is taken out.
+    const double fenceWait = zoneMs(f.record, waitPrev);
+    cpuActive.values.push_back(cpu - (zoneMs(f.record, acquire) + zoneMs(f.record, waitIdle)));
+    waitPrevMs.values.push_back(fenceWait);
+    acquireMs.values.push_back(std::max(0.0, zoneMs(f.record, acquire) - fenceWait));
     presentMs.values.push_back(zoneMs(f.record, present));
     waitIdleMs.values.push_back(zoneMs(f.record, waitIdle));
   }

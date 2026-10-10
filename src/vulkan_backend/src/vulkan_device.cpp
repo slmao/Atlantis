@@ -643,9 +643,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
     return ResultT::Err(toSubmitError(endResult));
   }
 
-  ATL_PROFILE_SCOPE_NAMED(waitPreviousGpuZone, "WaitPreviousGpu");
-  const auto drainResult = waitAndReleaseRetainedSubmission();
-  ATL_PROFILE_SCOPE_END(waitPreviousGpuZone);
+  const auto drainResult = waitAndReleaseRetainedSubmission();  // already drained by acquireNextTarget(); a no-op here
   if (drainResult.isErr()) {
     return ResultT::Err(drainResult.error());
   }

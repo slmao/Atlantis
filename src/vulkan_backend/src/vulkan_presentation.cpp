@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include <atlantis/profile.h>
 #include <atlantis/profile_recorder.h>
 #include <atlantis/assert.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
@@ -544,7 +545,9 @@ VulkanPresentation::acquireNextTarget() {
   // rejects that. (2) recreateIfNeeded() below may destroy the current
   // swapchain; that swapchain's images must not still be in use by a
   // previous frame's outstanding GPU work when that happens.
+  ATL_PROFILE_SCOPE_NAMED(waitPreviousGpuZone, "WaitPreviousGpu");  // nested in the Runtime's Acquire zone
   const auto drainResult = device_.waitAndReleaseRetainedSubmission();
+  ATL_PROFILE_SCOPE_END(waitPreviousGpuZone);
   if (drainResult.isErr()) {
     const atlantis::rhi::SubmitError submitError = drainResult.error();
     return ResultT::Err(submitError == atlantis::rhi::SubmitError::DeviceLost

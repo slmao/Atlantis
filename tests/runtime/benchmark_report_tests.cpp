@@ -33,6 +33,9 @@ bm::MeasuredFrame makeFrame(std::uint64_t id, double cpuMs, double waitPrevMs, d
   r.zoneCount[profile::internName("Frame")] = 1;
   r.zoneNs[profile::internName("WaitPreviousGpu")] = static_cast<std::uint64_t>(waitPrevMs * kMs);
   r.zoneCount[profile::internName("WaitPreviousGpu")] = 1;
+  // The fence wait runs inside acquireNextTarget(), so Acquire contains it; 1 ms of the zone is the rest.
+  r.zoneNs[profile::internName("Acquire")] = static_cast<std::uint64_t>((waitPrevMs + 1.0) * kMs);
+  r.zoneCount[profile::internName("Acquire")] = 1;
   r.zoneNs[profile::internName("RecordPass:draw")] = static_cast<std::uint64_t>(2 * kMs);
   r.zoneCount[profile::internName("RecordPass:draw")] = 1;
   const auto setCounter = [&r](const char* name, double v) {
@@ -116,9 +119,11 @@ TEST_CASE("metrics carry nearest-rank statistics", "[runtime][benchmark][report]
   CHECK(number(frameMs->find("max")) == 100.0);
 
   const json::Value* metrics = doc.find("metrics");
-  // cpu_active_ms = Frame - waits: (10 + i) - 2, so p50 is 10 + 49 - 2.
-  CHECK(number(metrics->find("cpu_active_ms")->find("p50")) == 57.0);
+  // cpu_active_ms = Frame - (Acquire + WaitIdle), Acquire containing the 2 ms fence wait
+  // and 1 ms of its own: (10 + i) - 3, so p50 is 10 + 49 - 3.
+  CHECK(number(metrics->find("cpu_active_ms")->find("p50")) == 56.0);
   CHECK(number(metrics->find("wait_previous_gpu_ms")->find("avg")) == 2.0);
+  CHECK(number(metrics->find("acquire_ms")->find("avg")) == 1.0);  // Acquire minus the fence wait
   CHECK(number(metrics->find("draw_calls")->find("p50")) == 100.0);
   CHECK(number(metrics->find("renderables_skipped")->find("p50")) == 2.0);  // total - drawn
   // GPU: the depth-0 regions are the passes (shadow 1 ms + draw 5 ms).

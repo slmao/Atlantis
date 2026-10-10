@@ -91,6 +91,14 @@ reports `comparable: false` with reasons when the schema, scene, content pin,
 resolution, variant, build, GPU or driver differ. Benchmark results are
 hardware-specific: keep them as PR evidence, do not commit them.
 
+**Reading the waits.** The previous frame's fence wait runs at the top of
+`acquireNextTarget()`, so `WaitPreviousGpu` is nested in `Acquire`:
+`wait_previous_gpu_ms` is the time the CPU waited for the GPU, `acquire_ms` is
+what remains of `Acquire` (swapchain recreation, `vkAcquireNextImage`), and
+`cpu_active_ms` is `Frame` minus `Acquire` and `WaitIdle`. While one frame is in
+flight, `frame_ms` is about `cpu_active_ms + gpu_busy_ms`: the CPU does not
+overlap the GPU.
+
 **Vsync caveat.** Presentation stays FIFO, so wall-clock `frame_ms` is
 quantised to the refresh interval for any frame faster than it. The unthrottled
 metrics are `cpu_active_ms` and `gpu_busy_ms`; read them beside `frame_ms`.
