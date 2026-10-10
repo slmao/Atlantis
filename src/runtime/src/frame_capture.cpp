@@ -22,6 +22,7 @@
 #pragma clang diagnostic pop
 #endif
 
+#include <atlantis/profile.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -218,9 +219,11 @@ atlantis::Result<connection::CapturedImage, connection::ControlError> RuntimeApp
     for (std::size_t i = 0; i < bloomPipelines_.size(); ++i) bloomInput->pipelines[i] = bloomPipelines_[i].get();
   }
 
-  auto offscreen = device_->createOffscreenTarget({.extent = extent, .format = *lastSeenFormat_});
+  auto offscreen = device_->createOffscreenTarget(
+      {.extent = extent, .format = *lastSeenFormat_, .debugName = ATL_DEBUG_NAME("capture_target")});
   auto readback = device_->createBuffer({.purpose = atlantis::rhi::BufferPurpose::Readback,
-                                         .sizeBytes = static_cast<std::size_t>(extent.width) * extent.height * 4});
+                                         .sizeBytes = static_cast<std::size_t>(extent.width) * extent.height * 4,
+                                         .debugName = ATL_DEBUG_NAME("capture_readback")});
   auto commandList = device_->createCommandList();
   if (offscreen.isErr() || readback.isErr() || commandList.isErr()) {
     return ResultT::Err(connection::ControlError::CaptureFailed);

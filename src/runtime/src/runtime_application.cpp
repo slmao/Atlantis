@@ -6,6 +6,7 @@
 #include <atlantis/log.h>
 #include <atlantis/platform/platform.h>
 #include <atlantis/platform/platform_event.h>
+#include <atlantis/profile.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
@@ -27,6 +28,7 @@
 #include <cstring>
 #include <fstream>
 #include <optional>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -847,7 +849,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // FrameLightingData, at absolute byte offset 304 -- CameraMatrices
   // and FrameLightingData themselves stay byte-for-byte unmodified.
   auto cameraBufferResult =
-      device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
+      device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes,
+       .debugName = ATL_DEBUG_NAME("camera_uniform")});
   if (cameraBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (camera uniform) failed");
     lifecycle_.markFailed();
@@ -870,7 +873,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
       -1.0f, 3.0f,   // NDC (-1,3) -- deliberately off-screen
   };
   auto fullscreenTriangleVertexBufferResult = device_->createBuffer(
-      {.purpose = BufferPurpose::Vertex, .sizeBytes = sizeof(fullscreenTriangleVertices)});
+      {.purpose = BufferPurpose::Vertex,
+       .sizeBytes = sizeof(fullscreenTriangleVertices),
+       .debugName = ATL_DEBUG_NAME("fullscreen_triangle_vb")});
   if (fullscreenTriangleVertexBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (fullscreen-triangle vertex) failed");
     lifecycle_.markFailed();
@@ -883,7 +888,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
 
   const std::uint16_t fullscreenTriangleIndices[3] = {0, 1, 2};
   auto fullscreenTriangleIndexBufferResult = device_->createBuffer(
-      {.purpose = BufferPurpose::Index, .sizeBytes = sizeof(fullscreenTriangleIndices)});
+      {.purpose = BufferPurpose::Index,
+       .sizeBytes = sizeof(fullscreenTriangleIndices),
+       .debugName = ATL_DEBUG_NAME("fullscreen_triangle_ib")});
   if (fullscreenTriangleIndexBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (fullscreen-triangle index) failed");
     lifecycle_.markFailed();
@@ -895,7 +902,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
               sizeof(fullscreenTriangleIndices));
 
   auto outputTransformSamplerResult =
-      device_->createSampler({.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+      device_->createSampler({.filter = atlantis::rhi::Filter::Linear,
+                              .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
+                              .debugName = ATL_DEBUG_NAME("output_transform_sampler")});
   if (outputTransformSamplerResult.isErr()) {
     ATLANTIS_LOG_ERROR("createSampler() (output-transform) failed");
     lifecycle_.markFailed();
@@ -947,7 +956,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
          .depthFormat = DepthFormat::D32Sfloat,
          .sampledTextureBindingCount = 1,
          .hasDepthAttachment = true,
-         .depthWriteEnabled = false});
+         .depthWriteEnabled = false,
+         .debugName = ATL_DEBUG_NAME("pipeline:sky")});
     if (skyPipelineResult.isErr()) {
       ATLANTIS_LOG_ERROR("createPipeline() (sky) failed");
       lifecycle_.markFailed();
@@ -963,7 +973,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // dependency, created at startup" reasoning. No drawFrame() parameter
   // is touched yet (Milestone 9) -- these four resources are only
   // constructed and destroyed by this Milestone.
-  auto shadowMapResult = device_->createShadowMap({.extent = {.width = 1024, .height = 1024}});
+  auto shadowMapResult = device_->createShadowMap(
+      {.extent = {.width = 1024, .height = 1024}, .debugName = ATL_DEBUG_NAME("shadow_map")});
   if (shadowMapResult.isErr()) {
     ATLANTIS_LOG_ERROR("createShadowMap() failed");
     lifecycle_.markFailed();
@@ -972,7 +983,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   shadowMap_ = std::move(shadowMapResult.value());
 
   auto shadowMapSamplerResult =
-      device_->createSampler({.filter = atlantis::rhi::Filter::Nearest, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+      device_->createSampler({.filter = atlantis::rhi::Filter::Nearest,
+                              .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
+                              .debugName = ATL_DEBUG_NAME("shadow_map_sampler")});
   if (shadowMapSamplerResult.isErr()) {
     ATLANTIS_LOG_ERROR("createSampler() (shadow map) failed");
     lifecycle_.markFailed();
@@ -990,7 +1003,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
        .hasCameraUniformBinding = true,
        .hasDepthAttachment = true,
        .depthWriteEnabled = true,
-       .hasColorAttachment = false});
+       .hasColorAttachment = false,
+       .debugName = ATL_DEBUG_NAME("pipeline:shadow_cast")});
   if (shadowCastPipelineResult.isErr()) {
     ATLANTIS_LOG_ERROR("createPipeline() (shadow-cast) failed");
     lifecycle_.markFailed();
@@ -1004,7 +1018,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // push-constant block (renderer::Bloom*PushConstants), and one sampler
   // (downsample) or two (upsample, composite) from binding 0.
   if (bloomDownsampleShaders.has_value()) {
-    const auto createBloomPipeline = [this](const FullscreenShaderPair& shaders, std::uint32_t samplerCount) {
+    const auto createBloomPipeline = [this](const FullscreenShaderPair& shaders, std::uint32_t samplerCount, std::string_view debugName) {
       return device_->createPipeline(
           {.vertexShader = {.spirvWords = shaders.vertexSpirv.data(), .wordCount = shaders.vertexSpirv.size()},
            .fragmentShader = {.spirvWords = shaders.fragmentSpirv.data(), .wordCount = shaders.fragmentSpirv.size()},
@@ -1013,7 +1027,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
            .pushConstantSizeBytes = 16,
            .sampledTextureBindingCount = samplerCount,
            .hasCameraUniformBinding = false,
-           .hasDepthAttachment = false});
+           .hasDepthAttachment = false,
+           .debugName = debugName});
     };
     // ADR-0092 Accepted Correction 2026-09-25: twelve instances, one per
     // pass, from the three shader pairs.
@@ -1024,7 +1039,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
                                                 : (pair == atlantis::renderer::BloomShaderPair::Upsample
                                                        ? *bloomUpsampleShaders
                                                        : *bloomCompositeShaders);
-      auto result = createBloomPipeline(shaders, atlantis::renderer::bloomPipelineSamplerCount(i));
+      auto result = createBloomPipeline(shaders, atlantis::renderer::bloomPipelineSamplerCount(i),
+                                        ATL_DEBUG_NAME("pipeline:bloom_" + std::to_string(i)));
       if (result.isErr()) {
         ATLANTIS_LOG_ERROR("createPipeline() (bloom, instance {}) failed", i);
         lifecycle_.markFailed();
@@ -1038,7 +1054,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // (P5): 128 bytes (view + projection only) -- deliberately NOT the
   // main cameraBuffer_ above (shadow_cast.slang never reads the
   // camera/lighting fields cameraBuffer_ otherwise carries).
-  auto shadowLightSpaceBufferResult = device_->createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = 128});
+  auto shadowLightSpaceBufferResult = device_->createBuffer(
+      {.purpose = BufferPurpose::Uniform, .sizeBytes = 128, .debugName = ATL_DEBUG_NAME("shadow_light_space_uniform")});
   if (shadowLightSpaceBufferResult.isErr()) {
     ATLANTIS_LOG_ERROR("createBuffer() (shadow light-space uniform) failed");
     lifecycle_.markFailed();
@@ -1318,7 +1335,8 @@ void RuntimeApplication::runFrame() {
          .pushConstantSizeBytes = 4,  // Plan 0031
          .sampledTextureBindingCount = 1,
          .hasCameraUniformBinding = false,
-         .hasDepthAttachment = false});
+         .hasDepthAttachment = false,
+         .debugName = ATL_DEBUG_NAME("pipeline:output_transform")});
     if (outputTransformPipelineResult.isErr()) {
       ATLANTIS_LOG_ERROR(
           "createPipeline() (output-transform) failed during format-change rebuild -- keeping the existing "
@@ -1346,8 +1364,9 @@ void RuntimeApplication::runFrame() {
   // correctly retries BOTH next frame, not just the one that failed.
   const Extent2D currentExtent = overlay_ ? overlayViewportExtent() : target->extent();
   if (!lastSeenExtent_.has_value() || !(currentExtent == *lastSeenExtent_)) {
-    auto newTextureResult = device_->createTexture({.extent = currentExtent, .format = DepthFormat::D32Sfloat});
-    auto newHdrColorTargetResult = device_->createHdrColorTarget({.extent = currentExtent});
+    auto newTextureResult = device_->createTexture(
+        {.extent = currentExtent, .format = DepthFormat::D32Sfloat, .debugName = ATL_DEBUG_NAME("depth")});
+    auto newHdrColorTargetResult = device_->createHdrColorTarget({.extent = currentExtent, .debugName = ATL_DEBUG_NAME("hdr_color")});
     // Plan 0044 P9: the bloom targets follow the HDR target's extent,
     // under the same all-or-nothing adoption -- only when the scene wants
     // bloom.
@@ -1617,6 +1636,7 @@ void RuntimeApplication::runFrame() {
     return;
   }
   std::unique_ptr<atlantis::rhi::CommandList> commandList = std::move(commandListResult.value());
+  ATL_PROFILE_NAME_COMMAND_LIST(*commandList, "frame");
 
   // Plan 0025/M7: realize the fixed environment once, on the first drawable
   // frame. Both uploads are recorded before all material uploads and the draw
@@ -1960,16 +1980,20 @@ atlantis::Result<std::monostate, OverlayAttachError> RuntimeApplication::attachO
     return ResultT::Err(OverlayAttachError::FontUploadFailed);
   }
   auto texture = device_->createSampledTexture(
-      {.extent = {atlas.width, atlas.height}, .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm});
-  auto staging = device_->createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = atlasBytes});
+      {.extent = {atlas.width, atlas.height},
+       .format = atlantis::rhi::SampledTextureFormat::Rgba8Unorm,
+       .debugName = ATL_DEBUG_NAME("ui_font_atlas")});
+  auto staging = device_->createBuffer(
+      {.purpose = BufferPurpose::Staging, .sizeBytes = atlasBytes, .debugName = ATL_DEBUG_NAME("ui_font_staging")});
   // Device::submit() names a RenderTarget for its semaphores; an offscreen one
   // has none to wait on or signal.
-  auto submitTarget = device_->createOffscreenTarget({.extent = {1, 1}});
+  auto submitTarget = device_->createOffscreenTarget({.extent = {1, 1}, .debugName = ATL_DEBUG_NAME("ui_submit_target")});
   auto commandList = device_->createCommandList();
-  auto fontSampler = device_->createSampler(
-      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  auto fontSampler = device_->createSampler({.filter = atlantis::rhi::Filter::Linear,
+                                             .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
+                                             .debugName = ATL_DEBUG_NAME("ui_font_sampler")});
   // Nearest: the Viewport is drawn at its own size, texel for pixel.
-  auto viewportSampler = device_->createSampler({});
+  auto viewportSampler = device_->createSampler({.debugName = ATL_DEBUG_NAME("ui_viewport_sampler")});
   if (texture.isErr() || staging.isErr() || submitTarget.isErr() || commandList.isErr() || fontSampler.isErr() ||
       viewportSampler.isErr()) {
     return ResultT::Err(OverlayAttachError::FontUploadFailed);
@@ -2037,7 +2061,8 @@ Extent2D RuntimeApplication::overlayViewportExtent() {
   if (!overlayViewport_ || !(overlayViewportExtent_ == extent) || overlayViewportFormat_ != format) {
     overlayViewportTarget_.reset();
     overlayViewport_.reset();
-    auto created = device_->createOffscreenTarget({.extent = extent, .format = format, .sampled = true});
+    auto created = device_->createOffscreenTarget(
+        {.extent = extent, .format = format, .sampled = true, .debugName = ATL_DEBUG_NAME("ui_viewport")});
     ATLANTIS_CHECK_MSG(created.isOk(), "createOffscreenTarget() (the overlay's Viewport target) failed");
     overlayViewport_ = std::move(created.value());
     auto acquired = overlayViewport_->acquireTarget();
@@ -2057,7 +2082,8 @@ Extent2D RuntimeApplication::overlayViewportExtent() {
          .sampledTextureBindingCount = atlantis::renderer::kUiOverlaySampledTextureBindingCount,
          .hasCameraUniformBinding = false,
          .hasDepthAttachment = false,
-         .colorBlendMode = atlantis::rhi::ColorBlendMode::AlphaBlend});
+         .colorBlendMode = atlantis::rhi::ColorBlendMode::AlphaBlend,
+         .debugName = ATL_DEBUG_NAME("pipeline:ui_overlay")});
     ATLANTIS_CHECK_MSG(pipeline.isOk(), "createPipeline() (the overlay pass) failed");
     overlayPipeline_ = std::move(pipeline.value());
     overlayPipelineFormat_ = format;
@@ -2081,7 +2107,10 @@ void RuntimeApplication::drawOverlayInto(atlantis::rhi::CommandList& commandList
     while (size < bytes) size *= 2;
     buffer.reset();
     auto created = device_->createBuffer(
-        {.purpose = purpose, .sizeBytes = size, .indexType = atlantis::rhi::IndexType::Uint32});
+        {.purpose = purpose,
+         .sizeBytes = size,
+         .indexType = atlantis::rhi::IndexType::Uint32,
+         .debugName = ATL_DEBUG_NAME(purpose == BufferPurpose::Vertex ? "ui_vertices" : "ui_indices")});
     ATLANTIS_CHECK_MSG(created.isOk(), "createBuffer() (the overlay's geometry) failed");
     buffer = std::move(created.value());
   };

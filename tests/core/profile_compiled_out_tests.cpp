@@ -34,6 +34,7 @@ TEST_CASE("every ATL_PROFILE_* macro expands to ((void)0) when profiling is off"
   CHECK(std::string_view(ATL_TEST_STR(ATL_PROFILE_GPU_SCOPE(cmd, "x"))) == "((void)0)");
   CHECK(std::string_view(ATL_TEST_STR(ATL_PROFILE_VALUE("x", 1))) == "((void)0)");
   CHECK(std::string_view(ATL_TEST_STR(ATL_PROFILE_ADD("x", 1))) == "((void)0)");
+  CHECK(std::string_view(ATL_TEST_STR(ATL_PROFILE_NAME_COMMAND_LIST(list, "x"))) == "((void)0)");
 }
 
 TEST_CASE("disabled macros do not evaluate their arguments", "[profile][compiled_out]") {

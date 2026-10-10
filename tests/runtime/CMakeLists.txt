@@ -120,6 +120,8 @@ target_link_libraries(atlantis_runtime_gpu_tests
     Atlantis::Editor
     # Plan 0057 M5: the Gameplay SDK as a client of the running application.
     Atlantis::GameplaySdk
+    # Plan 0059 M5: the smoke test reads the backend's debug-name observer.
+    Vulkan::Vulkan
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
@@ -127,6 +129,8 @@ target_link_libraries(atlantis_runtime_gpu_tests
 # Same build-tree path pattern as src/runtime/CMakeLists.txt's own
 # atlantis_runtime target (Plan 0013 Section D9) -- absolute,
 # configuration-independent, no working-directory dependence.
+target_include_directories(atlantis_runtime_gpu_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/vulkan_backend/src)
+
 target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_ASSET_ARTIFACT_PATH="${ATLANTIS_minimal_cube_ARTIFACT_PATH}"

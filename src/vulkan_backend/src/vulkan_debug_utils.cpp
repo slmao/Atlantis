@@ -27,7 +27,13 @@ std::size_t compose(std::array<char, kMaxNameBytes + 1>& buffer, std::string_vie
   return length;
 }
 
+const DebugUtilsObserver* gGlobalObserver = nullptr;
+
 }  // namespace
+
+void setGlobalDebugUtilsObserverForTesting(const DebugUtilsObserver* observer) noexcept {
+  gGlobalObserver = observer;
+}
 
 DebugUtilsEntryPointNames debugUtilsEntryPointNames() noexcept {
   return {VK_EXT_DEBUG_UTILS_EXTENSION_NAME, "vkSetDebugUtilsObjectNameEXT", "vkCmdBeginDebugUtilsLabelEXT",
@@ -36,6 +42,7 @@ DebugUtilsEntryPointNames debugUtilsEntryPointNames() noexcept {
 
 DebugUtils DebugUtils::load(VkInstance instance, bool instanceEnabled) noexcept {
   DebugUtils utils;
+  utils.observer_ = gGlobalObserver;
   if (!instanceEnabled || instance == VK_NULL_HANDLE) return utils;
   const DebugUtilsEntryPointNames names = debugUtilsEntryPointNames();
   const auto setName =

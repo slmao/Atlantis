@@ -1,3 +1,4 @@
+#include <atlantis/profile.h>
 #include <atlantis/runtime/material_realization.h>
 
 #include <atlantis/asset_system/texture_artifact.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace atlantis::runtime {
@@ -393,7 +395,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
         .extent = Extent2D{textureData.width, textureData.height},
         .format = toSampledTextureFormat(textureData.colorSpace, textureData.layout),
-        .mipLevelCount = textureData.mipCount});
+        .mipLevelCount = textureData.mipCount,
+        .debugName = ATL_DEBUG_NAME("texture:" + atlantis::asset_system::toHexString(materialData.textureAsset))});
     if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
     candidate.newSampledTexture = std::move(textureResult.value());
 
@@ -401,7 +404,9 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     // is exactly the upload size for both Rgba8 and Bc7 layouts.
     const std::size_t stagingBytes = textureData.pixelBytes.size();
     auto stagingResult =
-        device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = stagingBytes});
+        device.createBuffer({.purpose = BufferPurpose::Staging,
+                             .sizeBytes = stagingBytes,
+                             .debugName = ATL_DEBUG_NAME("staging:texture:" + atlantis::asset_system::toHexString(materialData.textureAsset))});
     if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
     std::memcpy(stagingResult.value()->mappedData(), textureData.pixelBytes.data(), stagingBytes);
     candidate.stagingBuffer = std::move(stagingResult.value());
@@ -427,13 +432,16 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       auto normalMapTextureResult = device.createSampledTexture(SampledTextureCreateParams{
           .extent = Extent2D{normalMapTextureData->width, normalMapTextureData->height},
           .format = toSampledTextureFormat(normalMapTextureData->colorSpace, normalMapTextureData->layout),
-          .mipLevelCount = normalMapTextureData->mipCount});
+          .mipLevelCount = normalMapTextureData->mipCount,
+          .debugName = ATL_DEBUG_NAME("texture:" + atlantis::asset_system::toHexString(materialData.normalMapTexture))});
       if (normalMapTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
       candidate.newNormalMapTexture = std::move(normalMapTextureResult.value());
 
       const std::size_t normalMapStagingBytes = normalMapTextureData->pixelBytes.size();
       auto normalMapStagingResult =
-          device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = normalMapStagingBytes});
+          device.createBuffer({.purpose = BufferPurpose::Staging,
+                               .sizeBytes = normalMapStagingBytes,
+                               .debugName = ATL_DEBUG_NAME("staging:texture:" + atlantis::asset_system::toHexString(materialData.normalMapTexture))});
       if (normalMapStagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
       std::memcpy(normalMapStagingResult.value()->mappedData(), normalMapTextureData->pixelBytes.data(),
                   normalMapStagingBytes);
@@ -472,13 +480,16 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       auto emissiveTextureResult = device.createSampledTexture(SampledTextureCreateParams{
           .extent = Extent2D{emissiveTextureData->width, emissiveTextureData->height},
           .format = toSampledTextureFormat(emissiveTextureData->colorSpace, emissiveTextureData->layout),
-          .mipLevelCount = emissiveTextureData->mipCount});
+          .mipLevelCount = emissiveTextureData->mipCount,
+          .debugName = ATL_DEBUG_NAME("texture:" + atlantis::asset_system::toHexString(materialData.emissiveTexture))});
       if (emissiveTextureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
       candidate.newEmissiveTexture = std::move(emissiveTextureResult.value());
 
       const std::size_t emissiveStagingBytes = emissiveTextureData->pixelBytes.size();
       auto emissiveStagingResult =
-          device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = emissiveStagingBytes});
+          device.createBuffer({.purpose = BufferPurpose::Staging,
+                               .sizeBytes = emissiveStagingBytes,
+                               .debugName = ATL_DEBUG_NAME("staging:texture:" + atlantis::asset_system::toHexString(materialData.emissiveTexture))});
       if (emissiveStagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
       std::memcpy(emissiveStagingResult.value()->mappedData(), emissiveTextureData->pixelBytes.data(),
                   emissiveStagingBytes);
@@ -510,7 +521,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       .mipFilter = deepestMipLevel > 0 && samplerFilter == atlantis::rhi::Filter::Linear
                        ? atlantis::rhi::MipFilter::Linear
                        : atlantis::rhi::MipFilter::Nearest,
-      .maxLod = static_cast<float>(deepestMipLevel)});
+      .maxLod = static_cast<float>(deepestMipLevel),
+      .debugName = ATL_DEBUG_NAME("sampler:" + atlantis::asset_system::toHexString(materialAssetId))});
   if (samplerResult.isErr()) return ResultT::Err(MaterialRealizationError::SamplerCreateFailed);
   candidate.sampler = std::move(samplerResult.value());
 
@@ -556,7 +568,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
            sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap),
        // Plan 0042 Milestone 1 (ADR-0090 Decisions 1/3).
        .depthWriteEnabled = alphaRealization.depthWriteEnabled,
-       .colorBlendMode = alphaRealization.colorBlendMode},
+       .colorBlendMode = alphaRealization.colorBlendMode,
+       .debugName = ATL_DEBUG_NAME("pipeline:material:" + atlantis::asset_system::toHexString(materialAssetId))},
       sampledTexturePtr, candidate.sampler.get(), pushConstantLayoutFor(materialData.kind),
       {materialData.baseColorFactor[0], materialData.baseColorFactor[1], materialData.baseColorFactor[2],
        materialData.baseColorFactor[3]},
@@ -771,12 +784,16 @@ atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefault
 
   DefaultEmissiveTexture result;
   auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
-      .extent = Extent2D{1, 1}, .format = SampledTextureFormat::Rgba8Unorm, .mipLevelCount = 1});
+      .extent = Extent2D{1, 1},
+      .format = SampledTextureFormat::Rgba8Unorm,
+      .mipLevelCount = 1,
+      .debugName = ATL_DEBUG_NAME("default_emissive_texture")});
   if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
   result.texture = std::move(textureResult.value());
 
   constexpr std::uint8_t kWhiteTexel[4] = {255, 255, 255, 255};
-  auto stagingResult = device.createBuffer({.purpose = BufferPurpose::Staging, .sizeBytes = sizeof(kWhiteTexel)});
+  auto stagingResult = device.createBuffer(
+      {.purpose = BufferPurpose::Staging, .sizeBytes = sizeof(kWhiteTexel), .debugName = ATL_DEBUG_NAME("default_emissive_staging")});
   if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
   std::memcpy(stagingResult.value()->mappedData(), kWhiteTexel, sizeof(kWhiteTexel));
   result.stagingBuffer = std::move(stagingResult.value());

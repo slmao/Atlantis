@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 #include <limits>
 
 #include <atlantis/assert.h>
@@ -57,7 +58,7 @@ std::array<float, 3> computeLocalBoundsCentre(const atlantis::rhi::VertexInputLa
 atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device,
                                                     atlantis::rhi::VertexInputLayout layout, const void* vertexData,
                                                     std::size_t vertexDataSizeBytes, const std::uint16_t* indices,
-                                                    std::uint32_t indexCount) {
+                                                    std::uint32_t indexCount, std::string_view debugName) {
   using ResultT = atlantis::Result<Mesh, CreateMeshError>;
 
   // The layout is inspected exactly once, here at creation, to compute
@@ -68,8 +69,10 @@ atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device
   // human-ruled 2026-09-23.
   const std::array<float, 3> localBoundsCentre = computeLocalBoundsCentre(layout, vertexData, vertexDataSizeBytes);
 
+  const std::string vertexName = debugName.empty() ? std::string() : std::string(debugName) + "/vertices";
+  const std::string indexName = debugName.empty() ? std::string() : std::string(debugName) + "/indices";
   auto vertexBufferResult = device.createBuffer(
-      {.purpose = atlantis::rhi::BufferPurpose::Vertex, .sizeBytes = vertexDataSizeBytes});
+      {.purpose = atlantis::rhi::BufferPurpose::Vertex, .sizeBytes = vertexDataSizeBytes, .debugName = vertexName});
   if (vertexBufferResult.isErr()) {
     return ResultT::Err(CreateMeshError::VertexBufferCreationFailed);
   }
@@ -78,7 +81,9 @@ atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device
 
   const std::size_t indexDataSizeBytes = static_cast<std::size_t>(indexCount) * sizeof(std::uint16_t);
   auto indexBufferResult =
-      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Index, .sizeBytes = indexDataSizeBytes});
+      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Index,
+                           .sizeBytes = indexDataSizeBytes,
+                           .debugName = indexName});
   if (indexBufferResult.isErr()) {
     return ResultT::Err(CreateMeshError::IndexBufferCreationFailed);
   }
@@ -97,14 +102,16 @@ atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device
 atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device,
                                                     atlantis::rhi::VertexInputLayout layout, const void* vertexData,
                                                     std::size_t vertexDataSizeBytes, const std::uint32_t* indices,
-                                                    std::uint32_t indexCount) {
+                                                    std::uint32_t indexCount, std::string_view debugName) {
   using ResultT = atlantis::Result<Mesh, CreateMeshError>;
 
   // As in the overload above: the layout's single, creation-time use.
   const std::array<float, 3> localBoundsCentre = computeLocalBoundsCentre(layout, vertexData, vertexDataSizeBytes);
 
+  const std::string vertexName = debugName.empty() ? std::string() : std::string(debugName) + "/vertices";
+  const std::string indexName = debugName.empty() ? std::string() : std::string(debugName) + "/indices";
   auto vertexBufferResult = device.createBuffer(
-      {.purpose = atlantis::rhi::BufferPurpose::Vertex, .sizeBytes = vertexDataSizeBytes});
+      {.purpose = atlantis::rhi::BufferPurpose::Vertex, .sizeBytes = vertexDataSizeBytes, .debugName = vertexName});
   if (vertexBufferResult.isErr()) {
     return ResultT::Err(CreateMeshError::VertexBufferCreationFailed);
   }
@@ -118,7 +125,8 @@ atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device
   // without this call site or any bind site saying so.
   auto indexBufferResult = device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Index,
                                                  .sizeBytes = indexDataSizeBytes,
-                                                 .indexType = atlantis::rhi::IndexType::Uint32});
+                                                 .indexType = atlantis::rhi::IndexType::Uint32,
+                                                 .debugName = indexName});
   if (indexBufferResult.isErr()) {
     return ResultT::Err(CreateMeshError::IndexBufferCreationFailed);
   }

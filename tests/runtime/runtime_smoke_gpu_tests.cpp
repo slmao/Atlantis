@@ -42,6 +42,7 @@
 
 #include "png_codec.h"
 #include "../../src/runtime/editor_attachment.h"
+#include "vulkan_debug_utils.h"  // Plan 0059 M5: the debug-name observer
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -1316,5 +1317,68 @@ TEST_CASE("Editor north star: Bistro's point light 6b63b12c 12 to 24, and the ca
                        std::array<float, 3>{-7.966f, 3.42f, 9.084f});
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+#endif
+}
+
+// Plan 0059 M5 (Spec 0059 R5, ADR-0115 D5): the Runtime names the GPU objects
+// it creates and the frame's command list, so a capture shows them by name.
+// Vulkan has no call to read a name back; the backend's debug-utils wrapper
+// reports every name it is asked to set to a process-wide test observer.
+TEST_CASE("Runtime gives its GPU objects and its frame's command list stable names",
+          "[runtime][gpu][debug_names]") {
+  std::vector<std::pair<VkObjectType, std::string>> names;
+  atlantis::vulkan_backend::detail::DebugUtilsObserver observer;
+  observer.onName = [&names](VkObjectType type, std::string_view name) { names.emplace_back(type, std::string(name)); };
+  atlantis::vulkan_backend::detail::setGlobalDebugUtilsObserverForTesting(&observer);
+
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = sceneGuidFromDefinition(ATLANTIS_RUNTIME_BLOOM_SCENE_GUID);
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  for (int i = 0; i < 3 && app.shouldContinue(); ++i) app.runFrame();
+  REQUIRE(app.shouldContinue());
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  atlantis::vulkan_backend::detail::setGlobalDebugUtilsObserverForTesting(nullptr);
+
+  const auto has = [&names](VkObjectType type, const std::string& name) {
+    for (const auto& [t, n] : names) {
+      if (t == type && n == name) return true;
+    }
+    return false;
+  };
+  const auto hasPrefix = [&names](const std::string& prefix) {
+    for (const auto& [t, n] : names) {
+      if (n.rfind(prefix, 0) == 0) return true;
+    }
+    return false;
+  };
+#if defined(ATLANTIS_GPU_MARKERS)
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "camera_uniform"));
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "fullscreen_triangle_vb"));
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "shadow_light_space_uniform"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "shadow_map"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "depth"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "hdr_color"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_d1"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_u1"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_composite"));
+  CHECK(has(VK_OBJECT_TYPE_SAMPLER, "bloom_sampler"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:shadow_cast"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:output_transform"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:bloom_0"));
+  CHECK(has(VK_OBJECT_TYPE_COMMAND_BUFFER, "frame"));
+  CHECK(hasPrefix("mesh:"));
+  CHECK(hasPrefix("pipeline:material:"));
+  CHECK(hasPrefix("texture:"));
+  CHECK(hasPrefix("sampler:"));
+  // A scene resource's name is "<kind>:<16 lowercase hex digits>".
+  for (const auto& [type, name] : names) {
+    if (name.rfind("mesh:", 0) == 0 && name.find('/') == std::string::npos) {
+      CHECK(name.size() == 5 + 16);
+    }
+  }
+#else
+  CHECK(names.empty());
 #endif
 }

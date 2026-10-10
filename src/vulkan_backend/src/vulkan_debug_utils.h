@@ -31,6 +31,11 @@ struct DebugUtilsObserver {
   std::function<void()> onEndLabel;
 };
 
+// A process-wide observer that every DebugUtils created by load() afterwards
+// starts with -- for a test that cannot reach the Device (a RuntimeApplication
+// owns its own). nullptr clears it. Test seam only.
+void setGlobalDebugUtilsObserverForTesting(const DebugUtilsObserver* observer) noexcept;
+
 // Borrowed from the Device that resolved it; cheap to copy (three pointers and
 // an observer pointer). Not thread-safe: frame thread only (ADR-0004).
 class DebugUtils {

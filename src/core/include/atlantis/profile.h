@@ -14,6 +14,7 @@
 //   ATL_PROFILE_ADD(name, delta)           a per-frame accumulator
 //   ATL_DEBUG_NAME(expr)                   expr as a string_view when GPU markers
 //                                          are on, an empty one otherwise
+//   ATL_PROFILE_NAME_COMMAND_LIST(cmd, n)  cmd.setDebugName(n) when GPU markers are on
 //
 // `name` is a string literal unless stated. With ATLANTIS_PROFILING undefined
 // every ATL_PROFILE_* macro expands to ((void)0): its arguments are NOT
@@ -213,6 +214,11 @@ class GpuScope {
 
 #if defined(ATLANTIS_GPU_MARKERS)
 #define ATL_DEBUG_NAME(expr) (std::string_view(expr))
+// Names an rhi::CommandList for debuggers. An ATL_PROFILE_* macro so that the
+// one line naming the frame's command list in RuntimeApplication::runFrame()
+// falls under that function's diff guard (Plan 0059 P12).
+#define ATL_PROFILE_NAME_COMMAND_LIST(cmd, name) ((cmd).setDebugName(std::string_view(name)))
 #else
 #define ATL_DEBUG_NAME(expr) (std::string_view{})
+#define ATL_PROFILE_NAME_COMMAND_LIST(cmd, name) ((void)0)
 #endif
