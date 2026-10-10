@@ -37,6 +37,7 @@ target_compile_definitions(atlantis_tracy PUBLIC
   TRACY_ENABLE
   TRACY_ON_DEMAND
   TRACY_ONLY_LOCALHOST
+  TRACY_NO_CALLSTACK
 )
 target_compile_definitions(atlantis_tracy PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 if(WIN32)

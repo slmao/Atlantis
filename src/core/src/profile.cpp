@@ -101,6 +101,9 @@ void Zone::begin(detail::Site& site) noexcept {
       ___tracy_emit_zone_begin(reinterpret_cast<const ___tracy_source_location_data*>(&site.location), 1);
   tracyId_ = ctx.id;
   tracyActive_ = ctx.active;
+#ifdef TRACY_ON_DEMAND
+  tracyConnection_ = ctx.connectionId;
+#endif
 #endif
 }
 
@@ -116,6 +119,9 @@ void Zone::beginDynamic(std::string_view name) noexcept {
   const TracyCZoneCtx ctx = ___tracy_emit_zone_begin_alloc(srcloc, 1);
   tracyId_ = ctx.id;
   tracyActive_ = ctx.active;
+#ifdef TRACY_ON_DEMAND
+  tracyConnection_ = ctx.connectionId;
+#endif
 #endif
 }
 
@@ -126,6 +132,9 @@ void Zone::finish() noexcept {
   TracyCZoneCtx ctx;
   ctx.id = tracyId_;
   ctx.active = tracyActive_;
+#ifdef TRACY_ON_DEMAND
+  ctx.connectionId = tracyConnection_;
+#endif
   ___tracy_emit_zone_end(ctx);
 #endif
 }

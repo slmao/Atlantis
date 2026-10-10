@@ -107,6 +107,7 @@ class Zone {
   std::uint64_t startNs_ = 0;
   std::uint32_t tracyId_ = 0;
   int tracyActive_ = 0;
+  std::uint64_t tracyConnection_ = 0;  // Tracy's on-demand connection id; its zone end needs it back
   bool open_ = false;
   bool recorded_ = false;
 };
