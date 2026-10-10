@@ -13,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include <atlantis/profile.h>
 #include <atlantis/profile_recorder.h>
 #include <atlantis/assert.h>
 #include <atlantis/log.h>
@@ -642,7 +643,9 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
     return ResultT::Err(toSubmitError(endResult));
   }
 
+  ATL_PROFILE_SCOPE_NAMED(waitPreviousGpuZone, "WaitPreviousGpu");
   const auto drainResult = waitAndReleaseRetainedSubmission();
+  ATL_PROFILE_SCOPE_END(waitPreviousGpuZone);
   if (drainResult.isErr()) {
     return ResultT::Err(drainResult.error());
   }

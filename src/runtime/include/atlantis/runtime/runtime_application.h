@@ -82,6 +82,11 @@ class RuntimeApplication {
 
   [[nodiscard]] bool shouldContinue() const noexcept;
 
+  // Spec 0059 / ADR-0117 D2: the extent the scene is rendered at -- the
+  // swapchain's, or the Viewport's while an overlay is attached -- as last seen
+  // by a frame that reached drawing; empty before the first such frame. Read-only.
+  [[nodiscard]] std::optional<atlantis::rhi::Extent2D> presentationExtent() const noexcept { return lastSeenExtent_; }
+
   // Idempotent: waitIdle() (only if hasEverRun()), then destroys every
   // GPU resource this object owns, in the fixed order (D8). Does NOT
   // touch platformSession_ -- that member's own destructor, guaranteed

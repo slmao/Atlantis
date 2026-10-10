@@ -1193,13 +1193,17 @@ std::unique_ptr<atlantis::connection::RuntimeConnection> RuntimeApplication::ope
 
 void RuntimeApplication::runFrame() {
   ATLANTIS_CHECK_MSG(shouldContinue(), "runFrame() called while !shouldContinue()");
+  ATL_PROFILE_FRAME();
 
   // Spec 0052 / ADR-0103 D7 (Plan 0052 P9, J6): commands clients submitted
   // between frames apply here, first -- on the frame thread, before anything
   // reads the world -- so this frame and every later one see them. Nothing
   // pending, nothing changes. Refusals stay queued for the client's
   // drainFailures().
+  ATL_PROFILE_SCOPE_NAMED(worldZone, "World");
   if (worldAccess_.has_value() && !commandsHeld_) (void)worldAccess_->applyPending();
+  ATL_PROFILE_SCOPE_END(worldZone);
+  ATL_PROFILE_SCOPE_NAMED(runtimeZone1, "Runtime");
 
   for (const auto& event : platform::processEvents()) {
     if (overlay_) overlay_->onPlatformEvent(event);
@@ -1280,7 +1284,9 @@ void RuntimeApplication::runFrame() {
     return;
   }
 
+  ATL_PROFILE_SCOPE_NAMED(acquireZone, "Acquire");
   auto acquireResult = presentation_->acquireNextTarget();
+  ATL_PROFILE_SCOPE_END(acquireZone);
   if (acquireResult.isErr()) {
     ATLANTIS_LOG_ERROR("acquireNextTarget() failed");
     static_cast<void>(classifyPresentationError(acquireResult.error()));  // classification result: always Unrecoverable
@@ -1441,6 +1447,8 @@ void RuntimeApplication::runFrame() {
   // scene, through the collect*() functions the image-regression fixtures
   // share (ruling Q7 V3). There is no transform pass: the hierarchy was
   // resolved at bake time (ruling Q2 H1).
+  ATL_PROFILE_SCOPE_END(runtimeZone1);
+  ATL_PROFILE_SCOPE_NAMED(extractionZone1, "RenderExtraction");
   const std::optional<ActiveCameraInput> activeCamera = collectActiveCamera(*scene_);
   if (!activeCamera.has_value()) {
     // Every scene this Plan's own decodeScene()/ValidatedSceneData
@@ -1533,6 +1541,8 @@ void RuntimeApplication::runFrame() {
   // value-initializes a fresh result every call).
   auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
   *lightingData = lightingResult.value();
+  ATL_PROFILE_VALUE("lights_directional", lightingResult.value().directionalLightCount);
+  ATL_PROFILE_VALUE("lights_point", lightingResult.value().pointLightCount);
 
   // Plan 0023 Milestone 2 (ADR-0062's own Accepted Amendment): tail-only
   // CameraWorldPositionData write, unconditional every frame like the
@@ -1608,6 +1618,7 @@ void RuntimeApplication::runFrame() {
   std::vector<atlantis::asset_system::AssetId> knownMeshAssetIds;
   knownMeshAssetIds.reserve(meshResourceMap_.size());
   for (const auto& [assetId, mesh] : meshResourceMap_) knownMeshAssetIds.push_back(assetId);
+  ATL_PROFILE_SCOPE_END(extractionZone1);
 
   // Plan 0018 Section P12 (Spec 0018 D8 step 1): the pending set is a
   // pure function of current state, recomputed every frame. referencedMaterialIds
@@ -1617,7 +1628,9 @@ void RuntimeApplication::runFrame() {
   // reproducible frame-to-frame (Human Review Approval item 3).
   // Spec 0051 (Plan 0051 P3): one collection per frame feeds both the
   // referenced-material list and the DrawItem walk below.
+  ATL_PROFILE_SCOPE_NAMED(extractionZone2, "RenderExtraction");
   const std::vector<RenderableExtractionInput> renderables = collectRenderables(*scene_);
+  ATL_PROFILE_VALUE("renderables_total", renderables.size());
   const std::vector<atlantis::asset_system::AssetId> referencedMaterialIds =
       collectReferencedMaterialIds(renderables);
   std::vector<atlantis::asset_system::AssetId> alreadyRealizedMaterialIds;
@@ -1628,7 +1641,9 @@ void RuntimeApplication::runFrame() {
   // DrawItem walk below as unresolvable, never fatal.
   const std::vector<atlantis::asset_system::AssetId> pendingMaterialIds = computePendingMaterialIds(
       loadedMaterialIdsOnly(referencedMaterialIds, materialDataMap_), alreadyRealizedMaterialIds);
+  ATL_PROFILE_SCOPE_END(extractionZone2);
 
+  ATL_PROFILE_SCOPE_NAMED(runtimeZone2, "Runtime");
   auto commandListResult = device_->createCommandList();
   if (commandListResult.isErr()) {
     ATLANTIS_LOG_ERROR("createCommandList() failed");
@@ -1727,6 +1742,9 @@ void RuntimeApplication::runFrame() {
   std::vector<atlantis::asset_system::AssetId> knownMaterialIds = alreadyRealizedMaterialIds;
   for (const auto& [assetId, candidate] : realizedCandidates) knownMaterialIds.push_back(assetId);
 
+  ATL_PROFILE_VALUE("materials_realized", realizedCandidates.size());
+  ATL_PROFILE_SCOPE_END(runtimeZone2);
+  ATL_PROFILE_SCOPE_NAMED(extractionZone3, "RenderExtraction");
   std::vector<DrawItem> drawItems;
   for (const RenderableExtractionInput& renderable : renderables) {
     const auto resolveResult = resolveMeshAsset(renderable.renderable.meshAsset, knownMeshAssetIds);
@@ -1812,6 +1830,10 @@ void RuntimeApplication::runFrame() {
     item.objectToWorld = renderable.worldMatrix;
     drawItems.push_back(item);
   }
+  ATL_PROFILE_SCOPE_END(extractionZone3);
+  ATL_PROFILE_VALUE("renderables_drawn", drawItems.size());
+  ATL_PROFILE_VALUE("renderables_culled", 0);  // no culling exists; the key is stable for when one does
+  ATL_PROFILE_VALUE("uniform_write_bytes", kCameraUniformBufferSizeBytes + 128);  // camera buffer + light-space buffer
 
   std::optional<atlantis::renderer::EnvironmentLighting> environmentLightingView;
   if (environmentCandidate.has_value()) {
@@ -1856,7 +1878,9 @@ void RuntimeApplication::runFrame() {
                        cameraWorldPosition, bloomInput.has_value() ? &*bloomInput : nullptr);
   if (overlay_) drawOverlayInto(*commandList, *target);
 
+  ATL_PROFILE_SCOPE_NAMED(submitZone, "Submit");
   auto submitResult = device_->submit(std::move(commandList), *target);
+  ATL_PROFILE_SCOPE_END(submitZone);
   if (submitResult.isErr()) {
     ATLANTIS_LOG_ERROR("submit() failed");
     static_cast<void>(classifySubmitError(submitResult.error()));
@@ -1872,6 +1896,7 @@ void RuntimeApplication::runFrame() {
   // PREVIOUS frame's GPU work has finished -- is it safe to swap in the
   // rebuilt output-transform Pipeline candidate; the OLD Pipeline this
   // overwrites is destroyed here, provably safe.
+  ATL_PROFILE_SCOPE_NAMED(runtimeZone3, "Runtime");
   if (pendingOutputTransformPipeline.has_value()) {
     // Plan 0024 Milestone 6 (ADR-0068 D-6): isSrgbFormat(currentFormat)
     // selects which one of outputTransformUnormPipeline_/
@@ -1900,7 +1925,9 @@ void RuntimeApplication::runFrame() {
   // wraps an already-signaled VkSemaphore (Pre-draft verification
   // [Claim d]).
   if (anyMaterialRealizedThisFrame || environmentCandidate.has_value() || defaultEmissiveStagingBuffer) {
+    ATL_PROFILE_SCOPE_NAMED(waitIdleZone, "WaitIdle");
     auto waitResult = device_->waitIdle();
+    ATL_PROFILE_SCOPE_END(waitIdleZone);
     if (waitResult.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed after a realization frame's own submit() -- treated as fatal, matching "
                           "shutdown()'s own identical severity for an unrecoverable wait");
@@ -1942,7 +1969,10 @@ void RuntimeApplication::runFrame() {
     }
   }
 
+  ATL_PROFILE_SCOPE_END(runtimeZone3);
+  ATL_PROFILE_SCOPE_NAMED(presentZone, "Present");
   auto presentResult = presentation_->present(std::move(target), std::move(submitResult.value()));
+  ATL_PROFILE_SCOPE_END(presentZone);
   if (presentResult.isErr()) {
     ATLANTIS_LOG_ERROR("present() failed");
     static_cast<void>(classifyPresentationError(presentResult.error()));

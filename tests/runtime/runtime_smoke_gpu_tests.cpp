@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/profile_recorder.h>
 #include <atlantis/cli/command.h>
 #include <atlantis/cli/invocation.h>
 #include <atlantis/connection/json.h>
@@ -1382,3 +1383,97 @@ TEST_CASE("Runtime gives its GPU objects and its frame's command list stable nam
   CHECK(names.empty());
 #endif
 }
+
+// Plan 0059 M7 (Spec 0059 R3, R4, R6): a recorded Runtime frame carries every zone
+// of the Zone map, every counter-set key the Runtime and the backend produce, and
+// the GPU regions of its passes -- on the default scene, under fatal validation.
+#if defined(ATLANTIS_PROFILING)
+TEST_CASE("Runtime: a profiled frame carries every Zone-map zone, counter and pass region",
+          "[runtime][gpu][profile]") {
+  namespace profile = atlantis::profile;
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+
+  const auto zoneCount = [](const profile::FrameRecord& record, const char* name) {
+    return record.zoneCount[profile::internName(name)];
+  };
+  const auto counter = [](const profile::FrameRecord& record, const char* name) {
+    return record.counter[profile::internName(name)];
+  };
+
+  profile::startRecording();
+  const std::uint64_t firstFrame = profile::currentFrameId() + 1;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  // The first frame realizes the scene's materials: the one-off stall and upload.
+  // (Read now: the recorder keeps only the last few frames.)
+  profile::FrameRecord first;
+  REQUIRE(profile::readFrame(firstFrame, first));
+  CHECK(first.presented);
+  CHECK(zoneCount(first, "WaitIdle") > 0);
+  CHECK(counter(first, "materials_realized") == 4.0);
+  CHECK(counter(first, "upload_bytes") > 0.0);
+
+  constexpr int kFrames = 6;
+  for (int i = 1; i < kFrames && app.shouldContinue(); ++i) app.runFrame();
+  REQUIRE(app.shouldContinue());
+  profile::stopRecording();
+
+  // A later frame whose GPU results have arrived (they come one frame late).
+  profile::FrameRecord steady;
+  bool found = false;
+  for (std::uint64_t id = firstFrame + 2; id + 1 < firstFrame + kFrames; ++id) {
+    if (profile::readFrame(id, steady) && steady.presented && steady.gpuDelivered) {
+      found = true;
+      break;
+    }
+  }
+  REQUIRE(found);
+
+  for (const char* zone : {"Frame", "World", "Runtime", "Acquire", "RenderExtraction", "Renderer", "RenderGraph",
+                           "Submit", "Present", "WaitPreviousGpu", "RecordPass:shadow", "RecordPass:draw",
+                           "RecordPass:output_transform"}) {
+    INFO(zone);
+    CHECK(zoneCount(steady, zone) > 0);
+  }
+  CHECK(zoneCount(steady, "WaitIdle") == 0);  // not a realization frame
+  CHECK(steady.zoneNs[profile::internName("Frame")] > 0);
+
+  CHECK(counter(steady, "renderables_total") == 6.0);  // integrated_showcase_demo: one ground plane, five spheres
+  CHECK(counter(steady, "renderables_drawn") == 6.0);
+  CHECK(counter(steady, "renderables_culled") == 0.0);  // there is no culling
+  CHECK(counter(steady, "lights_directional") >= 1.0);
+  CHECK(counter(steady, "uniform_write_bytes") > 0.0);
+  CHECK(counter(steady, "draw_calls") >= 12.0);  // six shadow-pass draws and six main-pass draws
+  CHECK(counter(steady, "triangles") > 0.0);
+  CHECK(counter(steady, "pipeline_binds") > 0.0);
+  CHECK(counter(steady, "vertex_buffer_binds") > 0.0);
+  CHECK(counter(steady, "index_buffer_binds") > 0.0);
+  CHECK(counter(steady, "descriptor_set_binds") > 0.0);
+  CHECK(counter(steady, "descriptor_writes") > 0.0);
+  CHECK(counter(steady, "push_constants") > 0.0);
+
+  // GPU regions: the passes (depth 0) and the draw pass's Opaque segment (depth 1).
+  bool shadow = false, draw = false, outputTransform = false, opaque = false;
+  for (std::uint32_t i = 0; i < steady.regionCount; ++i) {
+    const std::string_view name = profile::nameOf(steady.regions[i].name);
+    if (name == "shadow") shadow = true;
+    if (name == "draw") draw = true;
+    if (name == "output_transform") outputTransform = true;
+    if (name == "Opaque") {
+      opaque = true;
+      CHECK(steady.regions[i].depth == 1);
+    }
+    CHECK(steady.regions[i].endNs >= steady.regions[i].beginNs);
+  }
+  CHECK(shadow);
+  CHECK(draw);
+  CHECK(outputTransform);
+  CHECK(opaque);
+
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+#endif
