@@ -45,14 +45,37 @@ namespace {
 
 VulkanCommandList::VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
                                       PFN_vkCmdBeginRenderingKHR cmdBeginRendering,
-                                      PFN_vkCmdEndRenderingKHR cmdEndRendering)
+                                      PFN_vkCmdEndRenderingKHR cmdEndRendering, DebugUtils debugUtils)
     : device_(device),
       commandPool_(commandPool),
       commandBuffer_(commandBuffer),
       cmdBeginRendering_(cmdBeginRendering),
-      cmdEndRendering_(cmdEndRendering) {}
+      cmdEndRendering_(cmdEndRendering),
+      debugUtils_(debugUtils) {}
 
 VulkanCommandList::~VulkanCommandList() { vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer_); }
+
+void VulkanCommandList::beginRegion(std::string_view name) {
+#if defined(ATLANTIS_GPU_MARKERS)
+  debugUtils_.beginLabel(commandBuffer_, name);
+#else
+  static_cast<void>(name);
+#endif
+}
+
+void VulkanCommandList::endRegion() {
+#if defined(ATLANTIS_GPU_MARKERS)
+  debugUtils_.endLabel(commandBuffer_);
+#endif
+}
+
+void VulkanCommandList::setDebugName(std::string_view name) {
+#if defined(ATLANTIS_GPU_MARKERS)
+  debugUtils_.name(device_, VK_OBJECT_TYPE_COMMAND_BUFFER, handleValue(commandBuffer_), name);
+#else
+  static_cast<void>(name);
+#endif
+}
 
 void VulkanCommandList::transitionResource(atlantis::rhi::RenderTarget& target, atlantis::rhi::ResourceState before,
                                             atlantis::rhi::ResourceState after) {

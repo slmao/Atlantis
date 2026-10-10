@@ -602,7 +602,8 @@ VulkanDevice::createCommandList() {
   }
 
   return ResultT::Ok(
-      std::make_unique<VulkanCommandList>(device_, commandPool_, commandBuffer, cmdBeginRendering_, cmdEndRendering_));
+      std::make_unique<VulkanCommandList>(device_, commandPool_, commandBuffer, cmdBeginRendering_, cmdEndRendering_,
+                                          debugUtils_));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError> VulkanDevice::submit(
@@ -796,6 +797,26 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// Spec 0059 / ADR-0115 D5: names a created object and the Vulkan objects that
+// belong to it, "<name>", "<name>/memory", "<name>/view". All no-ops when the
+// name is empty or debug utils is not enabled.
+void nameBufferObjects(const DebugUtils& debugUtils, VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
+                       std::string_view name) {
+  debugUtils.name(device, VK_OBJECT_TYPE_BUFFER, handleValue(buffer), name);
+  debugUtils.name(device, VK_OBJECT_TYPE_DEVICE_MEMORY, handleValue(memory), name, "/memory");
+}
+
+void nameImageObjects(const DebugUtils& debugUtils, VkDevice device, VkImage image, VkDeviceMemory memory,
+                      VkImageView view, std::string_view name) {
+  debugUtils.name(device, VK_OBJECT_TYPE_IMAGE, handleValue(image), name);
+  debugUtils.name(device, VK_OBJECT_TYPE_DEVICE_MEMORY, handleValue(memory), name, "/memory");
+  debugUtils.name(device, VK_OBJECT_TYPE_IMAGE_VIEW, handleValue(view), name, "/view");
+}
+
+}  // namespace
+
 atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCreateError> VulkanDevice::createBuffer(
     const atlantis::rhi::BufferCreateParams& params) {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCreateError>;
@@ -869,6 +890,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Buffer>, atlantis::rhi::BufferCr
     return ResultT::Err(toBufferCreateError(mapResult));
   }
 
+  nameBufferObjects(debugUtils_, device_, buffer, memory, params.debugName);
   return ResultT::Ok(
       std::make_unique<VulkanBuffer>(device_, buffer, memory, mappedData, params.purpose, params.sizeBytes,
                                       params.indexType));
@@ -943,6 +965,7 @@ VulkanDevice::createTexture(const atlantis::rhi::TextureCreateParams& params) {
     return ResultT::Err(atlantis::rhi::TextureCreateError::ImageViewCreationFailed);
   }
 
+  nameImageObjects(debugUtils_, device_, image, memory, imageView, params.debugName);
   return ResultT::Ok(
       std::make_unique<VulkanTexture>(device_, image, memory, imageView, params.extent, params.format));
 }
@@ -1336,6 +1359,11 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
     return ResultT::Err(toPipelineCreateError(pipelineResult));
   }
 
+  debugUtils_.name(device_, VK_OBJECT_TYPE_PIPELINE, handleValue(pipeline), params.debugName);
+  debugUtils_.name(device_, VK_OBJECT_TYPE_PIPELINE_LAYOUT, handleValue(pipelineLayout), params.debugName, "/layout");
+  debugUtils_.name(device_, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, handleValue(descriptorSetLayout), params.debugName,
+                   "/set_layout");
+  debugUtils_.name(device_, VK_OBJECT_TYPE_DESCRIPTOR_SET, handleValue(descriptorSet), params.debugName, "/set");
   return ResultT::Ok(std::make_unique<VulkanPipeline>(device_, originPool, pipeline, pipelineLayout,
                                                         descriptorSetLayout, descriptorSet,
                                                         sampledTextureFirstBinding,
@@ -1418,6 +1446,7 @@ VulkanDevice::createOffscreenTarget(const atlantis::rhi::OffscreenTargetCreatePa
     return ResultT::Err(atlantis::rhi::OffscreenTargetCreateError::ImageViewCreationFailed);
   }
 
+  nameImageObjects(debugUtils_, device_, image, memory, imageView, params.debugName);
   return ResultT::Ok(
       std::make_unique<VulkanOffscreenTarget>(device_, image, memory, imageView, params.extent, params.format,
                                               params.sampled));
@@ -1518,6 +1547,7 @@ VulkanDevice::createSampledTexture(const atlantis::rhi::SampledTextureCreatePara
     return ResultT::Err(atlantis::rhi::SampledTextureCreateError::ImageViewCreationFailed);
   }
 
+  nameImageObjects(debugUtils_, device_, image, memory, imageView, params.debugName);
   return ResultT::Ok(
       std::make_unique<VulkanSampledTexture>(device_, image, memory, imageView, params.extent, params.format,
                                              params.dimension, params.mipLevelCount));
@@ -1609,6 +1639,7 @@ VulkanDevice::createHdrColorTarget(const atlantis::rhi::HdrColorTargetCreatePara
     return ResultT::Err(atlantis::rhi::HdrColorTargetCreateError::ImageViewCreationFailed);
   }
 
+  nameImageObjects(debugUtils_, device_, image, memory, imageView, params.debugName);
   return ResultT::Ok(
       std::make_unique<VulkanHdrColorTarget>(device_, image, memory, imageView, params.extent, params.format));
 }
@@ -1700,6 +1731,7 @@ VulkanDevice::createShadowMap(const atlantis::rhi::ShadowMapCreateParams& params
     return ResultT::Err(atlantis::rhi::ShadowMapCreateError::ImageViewCreationFailed);
   }
 
+  nameImageObjects(debugUtils_, device_, image, memory, imageView, params.debugName);
   return ResultT::Ok(std::make_unique<VulkanShadowMap>(device_, image, memory, imageView, params.extent, params.format));
 }
 
@@ -1730,6 +1762,7 @@ VulkanDevice::createSampler(const atlantis::rhi::SamplerCreateParams& params) {
     return ResultT::Err(atlantis::rhi::SamplerCreateError::SamplerCreationFailed);
   }
 
+  debugUtils_.name(device_, VK_OBJECT_TYPE_SAMPLER, handleValue(sampler), params.debugName);
   return ResultT::Ok(std::make_unique<VulkanSampler>(device_, sampler, params.filter, params.addressMode,
                                                       params.mipFilter, params.minLod, params.maxLod));
 }
@@ -1964,6 +1997,10 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
       instanceGuard.get(), selection->physicalDevice, deviceGuard.get(), queue, selection->queueFamilyIndex,
       messengerGuard.get(), destroyMessengerFn, commandPoolGuard.get(), fenceGuard.get(), cmdBeginRendering,
       cmdEndRendering, descriptorPoolGuard.get());
+
+  // Spec 0059 / ADR-0115 D6: resolve VK_EXT_debug_utils' commands, if the instance enabled it.
+  static_cast<detail::VulkanDevice&>(*vulkanDevice)
+      .setDebugUtils(detail::DebugUtils::load(instanceGuard.get(), instanceResult.value().debugUtilsEnabled));
 
   // Phase 2: std::make_unique returned successfully, so VulkanDevice now
   // holds its own copy of every handle value and is the sole owner going

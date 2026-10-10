@@ -331,6 +331,19 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
     enabledExtensions.push_back(kDebugUtilsExtension);
     enabledLayers.push_back(kValidationLayerName);
   }
+#endif
+  // Spec 0059 / ADR-0115 D6: with GPU markers on, VK_EXT_debug_utils is also
+  // requested when validation did not already enable it, if the loader or an
+  // installed layer (RenderDoc's, for one) offers it. Optional: absent is fine.
+  bool debugUtilsEnabled = false;
+#if !defined(__ANDROID__)
+  debugUtilsEnabled = validationEnabled;
+#endif
+#if defined(ATLANTIS_GPU_MARKERS)
+  if (!debugUtilsEnabled && containsExtension(*availableExtensions, kDebugUtilsExtension)) {
+    enabledExtensions.push_back(kDebugUtilsExtension);
+    debugUtilsEnabled = true;
+  }
 #endif  // !defined(__ANDROID__)
   // Step 2: if available, requested alongside whatever this repository's
   // existing instance creation already enables. If unavailable, simply
@@ -442,6 +455,7 @@ atlantis::Result<InstanceCreateResult, DeviceCreateError> createInstance(const D
   result.physicalDeviceProperties2ExtensionAvailable = physicalDeviceProperties2Resolved;
   result.getPhysicalDeviceFeatures2KHR = physicalDeviceProperties2Resolved ? getPhysicalDeviceFeatures2KHR : nullptr;
   result.instanceRequestedApiVersionAtLeast1_3 = requestedApiVersion >= VK_API_VERSION_1_3;
+  result.debugUtilsEnabled = debugUtilsEnabled;
   return ResultT::Ok(result);
 }
 

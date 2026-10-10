@@ -4,6 +4,8 @@
 
 #include <atlantis/rhi/command_list.h>
 
+#include "vulkan_debug_utils.h"
+
 #include <array>
 #include <cstddef>
 #include <unordered_map>
@@ -43,7 +45,8 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // CommandList's whole lifetime; VulkanDevice must outlive it (same
   // caller-enforced tier as device/commandPool below).
   VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
-                     PFN_vkCmdBeginRenderingKHR cmdBeginRendering, PFN_vkCmdEndRenderingKHR cmdEndRendering);
+                     PFN_vkCmdBeginRenderingKHR cmdBeginRendering, PFN_vkCmdEndRenderingKHR cmdEndRendering,
+                     DebugUtils debugUtils = {});
   ~VulkanCommandList() override;
 
   VulkanCommandList(const VulkanCommandList&) = delete;
@@ -116,6 +119,12 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void setScissor(atlantis::rhi::Rect2D rect) override;
   void drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) override;
 
+  // Spec 0059 / ADR-0115 D1-D2: a region is a debug label (debug utils) and, in a
+  // profiling build, a GPU timestamp pair (Plan 0059 M6).
+  void beginRegion(std::string_view name) override;
+  void endRegion() override;
+  void setDebugName(std::string_view name) override;
+
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
@@ -126,6 +135,7 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   VkCommandBuffer commandBuffer_;
   PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
   PFN_vkCmdEndRenderingKHR cmdEndRendering_;
+  DebugUtils debugUtils_;
 
   // Set by bindPipeline(), read by bindUniformBuffer()/pushConstant() --
   // the currently-bound Pipeline's own VkPipelineLayout/VkDescriptorSet

@@ -23,6 +23,8 @@ add_executable(atlantis_vulkan_backend_tests
   sampled_texture_block_tests.cpp
   # Plan 0056 M3: an OffscreenTarget's image usage, pinned.
   sampled_offscreen_target_tests.cpp
+  # Plan 0059 M4 (ADR-0115): the debug-utils wrapper, GPU-free.
+  debug_utils_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -74,6 +76,8 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   # Plan 0056 M3 (ADR-0108 D3): the sampled offscreen target, scissor, ranged
   # draws and the Renderer's UI overlay pass.
   ui_overlay_gpu_tests.cpp
+  # Plan 0059 M4 (ADR-0115): object names and pass labels reach the Vulkan layer.
+  debug_utils_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests
@@ -90,6 +94,8 @@ target_link_libraries(atlantis_vulkan_backend_gpu_tests
     Atlantis::Renderer
     Atlantis::ShaderSystem
     Atlantis::ShaderSystemRhiIntegration
+    # Plan 0059 M4: debug_utils_gpu_tests.cpp includes the private vulkan_device.h.
+    Vulkan::Vulkan
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
