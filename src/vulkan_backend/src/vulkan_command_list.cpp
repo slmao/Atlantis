@@ -1,6 +1,7 @@
 #include "vulkan_command_list.h"
 
 #include <atlantis/assert.h>
+#include <atlantis/profile.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include "vulkan_sampler.h"
 #include "vulkan_shadow_map.h"
 #include "vulkan_texture.h"
+#include "vulkan_tracy_context.h"
 
 namespace atlantis::vulkan_backend::detail {
 
@@ -45,25 +47,36 @@ namespace {
 
 VulkanCommandList::VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
                                       PFN_vkCmdBeginRenderingKHR cmdBeginRendering,
-                                      PFN_vkCmdEndRenderingKHR cmdEndRendering, DebugUtils debugUtils)
+                                      PFN_vkCmdEndRenderingKHR cmdEndRendering, DebugUtils debugUtils,
+                                     GpuProfilingResources profiling)
     : device_(device),
       commandPool_(commandPool),
       commandBuffer_(commandBuffer),
       cmdBeginRendering_(cmdBeginRendering),
       cmdEndRendering_(cmdEndRendering),
-      debugUtils_(debugUtils) {}
+      debugUtils_(debugUtils),
+      profiling_(profiling) {}
 
 VulkanCommandList::~VulkanCommandList() { vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer_); }
 
 void VulkanCommandList::beginRegion(std::string_view name) {
 #if defined(ATLANTIS_GPU_MARKERS)
   debugUtils_.beginLabel(commandBuffer_, name);
-#else
+#endif
+#if defined(ATLANTIS_PROFILING)
+  gpuRegions_.begin(profiling_.timing, commandBuffer_, name, renderingActive_);
+  if (profiling_.tracy != nullptr) profiling_.tracy->begin(commandBuffer_, name);
+#endif
+#if !defined(ATLANTIS_GPU_MARKERS) && !defined(ATLANTIS_PROFILING)
   static_cast<void>(name);
 #endif
 }
 
 void VulkanCommandList::endRegion() {
+#if defined(ATLANTIS_PROFILING)
+  if (profiling_.tracy != nullptr) profiling_.tracy->end();
+  gpuRegions_.end(profiling_.timing, commandBuffer_);
+#endif
 #if defined(ATLANTIS_GPU_MARKERS)
   debugUtils_.endLabel(commandBuffer_);
 #endif
@@ -262,6 +275,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
 
   ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
   cmdBeginRendering_(commandBuffer_, &renderingInfo);
+  renderingActive_ = true;
 
   // Pipeline (Section 3/ADR-0025) fixes VK_DYNAMIC_STATE_VIEWPORT/SCISSOR
   // as dynamic state specifically so it survives a resize without
@@ -323,6 +337,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::HdrColorTarget& color, atl
 
   ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
   cmdBeginRendering_(commandBuffer_, &renderingInfo);
+  renderingActive_ = true;
 
   // See beginRendering(RenderTarget&, ...)'s own identical comment
   // above for why this viewport/scissor set is required here.
@@ -371,6 +386,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::ShadowMap& depth, float de
 
   ATLANTIS_CHECK(cmdBeginRendering_ != nullptr);
   cmdBeginRendering_(commandBuffer_, &renderingInfo);
+  renderingActive_ = true;
 
   // See beginRendering(RenderTarget&, ...)'s own identical comment above
   // for why this viewport/scissor set is required here -- sized to the
@@ -392,11 +408,13 @@ void VulkanCommandList::beginRendering(atlantis::rhi::ShadowMap& depth, float de
 void VulkanCommandList::endRendering() {
   ATLANTIS_CHECK(cmdEndRendering_ != nullptr);
   cmdEndRendering_(commandBuffer_);
+  renderingActive_ = false;
 }
 
 void VulkanCommandList::bindPipeline(atlantis::rhi::Pipeline& pipeline) {
   auto& vulkanPipeline = static_cast<VulkanPipeline&>(pipeline);
   vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkanPipeline.vkPipeline());
+  ATL_PROFILE_ADD("pipeline_binds", 1);
   boundPipelineLayout_ = vulkanPipeline.pipelineLayout();
   boundDescriptorSet_ = vulkanPipeline.descriptorSet();
   boundSampledTextureFirstBinding_ = vulkanPipeline.sampledTextureFirstBinding();
@@ -409,6 +427,7 @@ void VulkanCommandList::bindVertexBuffer(atlantis::rhi::Buffer& buffer) {
   const VkBuffer vkBuffer = vulkanBuffer.vkBuffer();
   const VkDeviceSize offset = 0;
   vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &vkBuffer, &offset);
+  ATL_PROFILE_ADD("vertex_buffer_binds", 1);
 }
 
 void VulkanCommandList::bindIndexBuffer(atlantis::rhi::Buffer& buffer) {
@@ -431,6 +450,7 @@ void VulkanCommandList::bindIndexBuffer(atlantis::rhi::Buffer& buffer) {
   }
 
   vkCmdBindIndexBuffer(commandBuffer_, vulkanBuffer.vkBuffer(), 0, vkIndexType);
+  ATL_PROFILE_ADD("index_buffer_binds", 1);
 }
 
 void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
@@ -466,11 +486,13 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
     // vkUpdateDescriptorSets returns void -- no VkResult exists for this
     // call (Plan 0007 Section 10).
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_writes", 1);
     it->second = vkBuffer;
   }
 
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_set_binds", 1);
 }
 
 void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::SampledTexture& texture,
@@ -511,6 +533,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
     write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_writes", 1);
     memo.texture = &vulkanTexture;
     memo.sampler = &vulkanSampler;
   }
@@ -523,6 +546,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // that earlier call could not have known about this write yet.
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_set_binds", 1);
 }
 
 // Plan 0024 Milestone 2 (ADR-0068 D-10): used only by the output-
@@ -560,8 +584,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   write.pImageInfo = &imageInfo;
 
   vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_writes", 1);
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_set_binds", 1);
 }
 
 // Plan 0027 Milestone 2 (ADR-0072 D-4/D-7): memoized, like
@@ -605,6 +631,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
     write.pImageInfo = &imageInfo;
 
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_writes", 1);
     memo.shadowMap = &vulkanShadowMap;
     memo.sampler = &vulkanSampler;
   }
@@ -614,6 +641,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // bindUniformBuffer()'s own earlier call.
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_set_binds", 1);
 }
 
 void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
@@ -625,16 +653,21 @@ void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
   // targets.
   vkCmdPushConstants(commandBuffer_, boundPipelineLayout_, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
                       0, static_cast<std::uint32_t>(sizeBytes), data);
+  ATL_PROFILE_ADD("push_constants", 1);
 }
 
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, 0, 0, 0);
+  ATL_PROFILE_ADD("draw_calls", 1);
+  ATL_PROFILE_ADD("triangles", indexCount / 3);
 }
 
 // Plan 0056 P4 (ADR-0108 D3, J2): the ranged draw. drawIndexed(indexCount)
 // above is this with firstIndex = 0, vertexOffset = 0.
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) {
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, firstIndex, vertexOffset, 0);
+  ATL_PROFILE_ADD("draw_calls", 1);
+  ATL_PROFILE_ADD("triangles", indexCount / 3);
 }
 
 // Plan 0056 P4 (ADR-0108 D3 "scissored triangles", J2): clamped to the current
@@ -683,8 +716,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   write.pImageInfo = &imageInfo;
 
   vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_writes", 1);
   vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
                            &boundDescriptorSet_, 0, nullptr);
+  ATL_PROFILE_ADD("descriptor_set_binds", 1);
 }
 
 void VulkanCommandList::copyRenderTargetToBuffer(atlantis::rhi::RenderTarget& source,
@@ -755,6 +790,7 @@ void VulkanCommandList::copyBufferToTexture(
   vkCmdCopyBufferToImage(commandBuffer_, vulkanBuffer.vkBuffer(), vulkanTexture.image(),
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, static_cast<std::uint32_t>(vkRegions.size()),
                           vkRegions.data());
+  ATL_PROFILE_ADD("upload_bytes", source.sizeBytes());
 }
 
 }  // namespace atlantis::vulkan_backend::detail

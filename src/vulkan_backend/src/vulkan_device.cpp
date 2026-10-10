@@ -1,5 +1,8 @@
 #include "vulkan_device.h"
+#include "vulkan_gpu_timing.h"
+#include "vulkan_tracy_context.h"
 
+#include <cstdio>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -10,6 +13,7 @@
 #include <variant>
 #include <vector>
 
+#include <atlantis/profile_recorder.h>
 #include <atlantis/assert.h>
 #include <atlantis/log.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
@@ -528,6 +532,10 @@ VulkanDevice::~VulkanDevice() {
     ATLANTIS_LOG_ERROR("~VulkanDevice(): vkDeviceWaitIdle() failed during destruction");
   }
 
+  // Spec 0059 M6: these hold Vulkan objects of this device; destroyed before it.
+  tracyGpu_.reset();
+  gpuTiming_.reset();
+
   vkDestroyFence(device_, submissionFence_, nullptr);
   vkDestroyCommandPool(device_, commandPool_, nullptr);
   // Plan 0007 Section 10 / Spec 0021 D10: destroyed before VkDevice,
@@ -553,6 +561,12 @@ VulkanDevice::~VulkanDevice() {
   vkDestroyInstance(instance_, nullptr);
 }
 
+void VulkanDevice::setProfilingResources(std::unique_ptr<GpuTimingPool> timing,
+                                         std::unique_ptr<TracyGpuContext> tracy) noexcept {
+  gpuTiming_ = std::move(timing);
+  tracyGpu_ = std::move(tracy);
+}
+
 atlantis::Result<std::monostate, atlantis::rhi::SubmitError> VulkanDevice::waitAndReleaseRetainedSubmission() {
   using ResultT = atlantis::Result<std::monostate, atlantis::rhi::SubmitError>;
 
@@ -568,6 +582,13 @@ atlantis::Result<std::monostate, atlantis::rhi::SubmitError> VulkanDevice::waitA
   if (resetResult != VK_SUCCESS) {
     return ResultT::Err(toSubmitError(resetResult));
   }
+
+#if defined(ATLANTIS_PROFILING)
+  // Spec 0059 M6 (ADR-0115 D3): the fence above is the one wait this read-back
+  // needs -- the retained submission's queries are complete.
+  if (gpuTiming_ != nullptr && pendingGpu_.regionCount > 0) gpuTiming_->collect(pendingGpu_);
+#endif
+  pendingGpu_ = PendingGpuFrame{};
 
   retainedSubmission_.reset();
   hasRetainedSubmission_ = false;
@@ -603,7 +624,7 @@ VulkanDevice::createCommandList() {
 
   return ResultT::Ok(
       std::make_unique<VulkanCommandList>(device_, commandPool_, commandBuffer, cmdBeginRendering_, cmdEndRendering_,
-                                          debugUtils_));
+                                          debugUtils_, GpuProfilingResources{gpuTiming_.get(), tracyGpu_.get()}));
 }
 
 atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError> VulkanDevice::submit(
@@ -611,6 +632,11 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError>;
 
   auto& vulkanCommandList = static_cast<VulkanCommandList&>(*commandList);
+#if defined(ATLANTIS_PROFILING)
+  // Tracy reads back finished GPU zones into this frame's command buffer, once,
+  // outside any rendering scope.
+  if (tracyGpu_ != nullptr) tracyGpu_->collect(vulkanCommandList.commandBuffer());
+#endif
   const VkResult endResult = vkEndCommandBuffer(vulkanCommandList.commandBuffer());
   if (endResult != VK_SUCCESS) {
     return ResultT::Err(toSubmitError(endResult));
@@ -658,6 +684,10 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
     return ResultT::Err(toSubmitError(submitResult));
   }
 
+#if defined(ATLANTIS_PROFILING)
+  pendingGpu_ = vulkanCommandList.takeGpuRegions();
+  pendingGpu_.frameId = atlantis::profile::currentFrameId();
+#endif
   retainedSubmission_ = std::move(commandList);
   hasRetainedSubmission_ = true;
 
@@ -1767,6 +1797,25 @@ VulkanDevice::createSampler(const atlantis::rhi::SamplerCreateParams& params) {
                                                       params.mipFilter, params.minLod, params.maxLod));
 }
 
+#if defined(ATLANTIS_PROFILING)
+// A human-readable driver version. NVIDIA packs 10.8.8.6 bits; Intel on Windows
+// packs 18.14 bits; everything else uses the standard Vulkan packing. The raw value
+// is always appended, so two driver builds never compare equal by accident.
+std::string driverVersionText(std::uint32_t vendorId, std::uint32_t version) {
+  char text[96];
+  if (vendorId == 0x10DE) {
+    std::snprintf(text, sizeof(text), "%u.%u.%u.%u (0x%08x)", (version >> 22) & 0x3FF, (version >> 14) & 0xFF,
+                  (version >> 6) & 0xFF, version & 0x3F, version);
+  } else if (vendorId == 0x8086) {
+    std::snprintf(text, sizeof(text), "%u.%u (0x%08x)", version >> 14, version & 0x3FFF, version);
+  } else {
+    std::snprintf(text, sizeof(text), "%u.%u.%u (0x%08x)", VK_VERSION_MAJOR(version), VK_VERSION_MINOR(version),
+                  VK_VERSION_PATCH(version), version);
+  }
+  return text;
+}
+#endif
+
 }  // namespace atlantis::vulkan_backend::detail
 
 namespace atlantis::vulkan_backend {
@@ -1893,9 +1942,24 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
     featureChain = &dynamicRenderingFeatures;
   }
 
+  // Spec 0059 M6 (ADR-0115 D3): the optional pipeline-statistics query (fragment
+  // invocations, input-assembly primitives), enabled only in a profiling build
+  // and only where the device offers it. No other core feature is enabled.
+  VkPhysicalDeviceFeatures enabledFeatures{};
+  bool pipelineStatisticsEnabled = false;
+#if defined(ATLANTIS_PROFILING)
+  {
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(selection->physicalDevice, &supportedFeatures);
+    pipelineStatisticsEnabled = supportedFeatures.pipelineStatisticsQuery == VK_TRUE;
+    enabledFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
+  }
+#endif
+
   VkDeviceCreateInfo deviceCreateInfo{};
   deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   deviceCreateInfo.pNext = featureChain;
+  if (pipelineStatisticsEnabled) deviceCreateInfo.pEnabledFeatures = &enabledFeatures;
   deviceCreateInfo.queueCreateInfoCount = 1;
   deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
   deviceCreateInfo.enabledExtensionCount = static_cast<std::uint32_t>(deviceExtensions.size());
@@ -2001,6 +2065,37 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Device>, DeviceCreateError> crea
   // Spec 0059 / ADR-0115 D6: resolve VK_EXT_debug_utils' commands, if the instance enabled it.
   static_cast<detail::VulkanDevice&>(*vulkanDevice)
       .setDebugUtils(detail::DebugUtils::load(instanceGuard.get(), instanceResult.value().debugUtilsEnabled));
+
+#if defined(ATLANTIS_PROFILING)
+  {
+    // Spec 0059 M6 (ADR-0115 D3, ADR-0116 D5): the device facts the benchmark
+    // reports, the timestamp pool, and Tracy's Vulkan context.
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(selection->physicalDevice, &properties);
+    std::uint32_t familyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(selection->physicalDevice, &familyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(selection->physicalDevice, &familyCount, families.data());
+    const std::uint32_t validBits =
+        selection->queueFamilyIndex < familyCount ? families[selection->queueFamilyIndex].timestampValidBits : 0;
+    const double periodNs = static_cast<double>(properties.limits.timestampPeriod);
+
+    auto timing = detail::GpuTimingPool::create(deviceGuard.get(), validBits, periodNs, pipelineStatisticsEnabled);
+    atlantis::profile::DeviceInfo info = atlantis::profile::deviceInfo();
+    info.gpu = properties.deviceName;
+    info.driver = detail::driverVersionText(properties.vendorID, properties.driverVersion);
+    info.vulkanApi = std::to_string(VK_VERSION_MAJOR(properties.apiVersion)) + "." +
+                     std::to_string(VK_VERSION_MINOR(properties.apiVersion)) + "." +
+                     std::to_string(VK_VERSION_PATCH(properties.apiVersion));
+    info.timestampPeriodNs = periodNs;
+    info.timestampsSupported = timing != nullptr;
+    atlantis::profile::setDeviceInfo(info);
+
+    auto tracy = detail::TracyGpuContext::create(selection->physicalDevice, deviceGuard.get(), queue,
+                                                 commandPoolGuard.get());
+    static_cast<detail::VulkanDevice&>(*vulkanDevice).setProfilingResources(std::move(timing), std::move(tracy));
+  }
+#endif
 
   // Phase 2: std::make_unique returned successfully, so VulkanDevice now
   // holds its own copy of every handle value and is the sole owner going

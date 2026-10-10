@@ -15,12 +15,15 @@
 
 #include "vulkan_debug_utils.h"
 #include "vulkan_descriptor_pool_growth.h"
+#include "vulkan_gpu_timing.h"
 
 // Concrete Vulkan implementation of atlantis::rhi::Device (ADR-0014). See
 // vulkan_device.cpp for createDevice()'s full orchestration (instance
 // creation, validation installation, physical device/queue-family
 // selection, logical device/queue creation).
 namespace atlantis::vulkan_backend::detail {
+
+class TracyGpuContext;
 
 // Spec 0021/ADR-0064: one entry in VulkanDevice's own growable
 // descriptor-pool set. Vulkan has no "query this pool's own maxSets"
@@ -175,6 +178,13 @@ class VulkanDevice final : public atlantis::rhi::Device {
   // right after construction; a test may install an observer on it.
   void setDebugUtils(DebugUtils debugUtils) noexcept { debugUtils_ = debugUtils; }
   [[nodiscard]] DebugUtils& debugUtils() noexcept { return debugUtils_; }
+
+  // Spec 0059 M6 (ADR-0115 D3, ADR-0116 D5): the GPU timestamp pool and Tracy's
+  // Vulkan context, created by createDevice() in a profiling build (either may be
+  // null: timestamps unsupported, or no Tracy). Owned here so they are destroyed
+  // before the VkDevice.
+  void setProfilingResources(std::unique_ptr<GpuTimingPool> timing, std::unique_ptr<TracyGpuContext> tracy) noexcept;
+  [[nodiscard]] const GpuTimingPool* gpuTiming() const noexcept { return gpuTiming_.get(); }
   [[nodiscard]] const DebugUtils& debugUtils() const noexcept { return debugUtils_; }
 
   // Waits on submissionFence_ (if a submission is currently retained),
@@ -201,6 +211,9 @@ class VulkanDevice final : public atlantis::rhi::Device {
 
  private:
   DebugUtils debugUtils_;
+  std::unique_ptr<GpuTimingPool> gpuTiming_;
+  std::unique_ptr<TracyGpuContext> tracyGpu_;
+  PendingGpuFrame pendingGpu_;  // the retained submission's regions, read back when its fence is waited
   // Spec 0021/ADR-0064: scans descriptorPools_[0, descriptorPoolCount_)
   // in creation order, allocating one VkDescriptorSet of the given
   // layout from the first pool with capacity -- naturally reusing

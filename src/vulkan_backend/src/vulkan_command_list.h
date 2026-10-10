@@ -5,6 +5,7 @@
 #include <atlantis/rhi/command_list.h>
 
 #include "vulkan_debug_utils.h"
+#include "vulkan_gpu_timing.h"
 
 #include <array>
 #include <cstddef>
@@ -15,10 +16,19 @@
 // (VulkanDevice::createCommandList()).
 namespace atlantis::vulkan_backend::detail {
 
+class GpuTimingPool;
+class TracyGpuContext;
 class VulkanSampledTexture;
 class VulkanSampler;
 class VulkanHdrColorTarget;
 class VulkanShadowMap;
+
+// Spec 0059 / ADR-0115 D3: borrowed from the Device that creates the list; both
+// null in a build without ATLANTIS_PROFILING.
+struct GpuProfilingResources {
+  const GpuTimingPool* timing = nullptr;
+  TracyGpuContext* tracy = nullptr;
+};
 
 // Owns its VkCommandBuffer's allocation from device/commandPool (frees it
 // in its destructor via vkFreeCommandBuffers) but does not own device or
@@ -46,7 +56,7 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // caller-enforced tier as device/commandPool below).
   VulkanCommandList(VkDevice device, VkCommandPool commandPool, VkCommandBuffer commandBuffer,
                      PFN_vkCmdBeginRenderingKHR cmdBeginRendering, PFN_vkCmdEndRenderingKHR cmdEndRendering,
-                     DebugUtils debugUtils = {});
+                     DebugUtils debugUtils = {}, GpuProfilingResources profiling = {});
   ~VulkanCommandList() override;
 
   VulkanCommandList(const VulkanCommandList&) = delete;
@@ -125,6 +135,9 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   void endRegion() override;
   void setDebugName(std::string_view name) override;
 
+  // Spec 0059 M6: the regions this list timed, handed to the Device at submit().
+  [[nodiscard]] PendingGpuFrame takeGpuRegions() noexcept { return gpuRegions_.take(); }
+
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
@@ -136,6 +149,9 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   PFN_vkCmdBeginRenderingKHR cmdBeginRendering_;
   PFN_vkCmdEndRenderingKHR cmdEndRendering_;
   DebugUtils debugUtils_;
+  GpuProfilingResources profiling_;
+  GpuRegionRecorder gpuRegions_;
+  bool renderingActive_ = false;  // between beginRendering() and endRendering()
 
   // Set by bindPipeline(), read by bindUniformBuffer()/pushConstant() --
   // the currently-bound Pipeline's own VkPipelineLayout/VkDescriptorSet

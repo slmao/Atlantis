@@ -25,6 +25,8 @@ add_executable(atlantis_vulkan_backend_tests
   sampled_offscreen_target_tests.cpp
   # Plan 0059 M4 (ADR-0115): the debug-utils wrapper, GPU-free.
   debug_utils_tests.cpp
+  # Plan 0059 M6 (ADR-0115 D3): tick arithmetic and the per-list region recorder, GPU-free.
+  gpu_timing_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_tests
@@ -78,6 +80,8 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   ui_overlay_gpu_tests.cpp
   # Plan 0059 M4 (ADR-0115): object names and pass labels reach the Vulkan layer.
   debug_utils_gpu_tests.cpp
+  # Plan 0059 M6 (ADR-0115 D3, D7): timestamps one frame late, exact backend counters.
+  gpu_timing_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests

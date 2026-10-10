@@ -32,6 +32,7 @@ struct State {
   std::array<std::uint32_t, kMaxNames> depth{};
   std::array<std::uint64_t, kMaxNames> outerStart{};
   ClockFn clock = nullptr;
+  bool gpuTiming = true;
   DeviceInfo device;
 };
 
@@ -153,6 +154,19 @@ bool deliverGpuRegions(std::uint64_t frameId, std::span<const GpuRegion> regions
   record.gpuDelivered = true;
   return true;
 }
+
+bool counterValueForFrame(std::uint64_t frameId, NameId id, double value) {
+  State& s = state();
+  if (frameId == 0 || id >= kMaxNames) return false;
+  FrameRecord& record = s.ring[frameId % kFrameRing];
+  if (record.frameId != frameId) return false;
+  record.counter[id] = value;
+  record.counterSet.set(id);
+  return true;
+}
+
+void setGpuTimingEnabled(bool enabled) noexcept { state().gpuTiming = enabled; }
+bool gpuTimingEnabled() noexcept { return state().gpuTiming; }
 
 std::uint64_t currentFrameId() noexcept { return state().current != nullptr ? state().current->frameId : 0; }
 

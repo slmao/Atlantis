@@ -190,3 +190,27 @@ TEST_CASE("device info round-trips", "[profile][recorder]") {
   CHECK(back.timestampsSupported);
   setDeviceInfo({});
 }
+
+TEST_CASE("a late counter lands in the earlier frame, and is refused once that frame left the ring",
+          "[profile][recorder]") {
+  RecorderFixture fixture;
+  const NameId id = internName("recorder_test_late");
+  beginFrame();
+  const std::uint64_t first = currentFrameId();
+  beginFrame();
+  CHECK(counterValueForFrame(first, id, 12.0));
+  CHECK(frame(first).counter[id] == 12.0);
+  CHECK(frame(first).counterSet.test(id));
+  CHECK_FALSE(frame(currentFrameId()).counterSet.test(id));
+  for (std::size_t i = 0; i < kFrameRing; ++i) beginFrame();
+  CHECK_FALSE(counterValueForFrame(first, id, 1.0));
+  CHECK_FALSE(counterValueForFrame(0, id, 1.0));
+}
+
+TEST_CASE("GPU timing is on by default and can be switched off", "[profile][recorder]") {
+  CHECK(gpuTimingEnabled());
+  setGpuTimingEnabled(false);
+  CHECK_FALSE(gpuTimingEnabled());
+  setGpuTimingEnabled(true);
+  CHECK(gpuTimingEnabled());
+}

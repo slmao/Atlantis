@@ -108,6 +108,15 @@ bool deliverGpuRegions(std::uint64_t frameId, std::span<const GpuRegion> regions
 // Copies the record for `frameId` if it is still in the ring.
 [[nodiscard]] bool readFrame(std::uint64_t frameId, FrameRecord& out);
 
+// A counter of an earlier frame -- a GPU result that arrives one frame late.
+// False if that frame has left the ring.
+bool counterValueForFrame(std::uint64_t frameId, NameId id, double value);
+
+// The benchmark's --gpu-timing switch: with it off the Vulkan Backend writes no
+// region timestamps (labels and Tracy are unaffected). On by default.
+void setGpuTimingEnabled(bool enabled) noexcept;
+[[nodiscard]] bool gpuTimingEnabled() noexcept;
+
 // Metadata.
 void setDeviceInfo(const DeviceInfo& info);
 [[nodiscard]] DeviceInfo deviceInfo();

@@ -7,6 +7,7 @@
 #include <variant>
 #include <vector>
 
+#include <atlantis/profile_recorder.h>
 #include <atlantis/assert.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
@@ -708,6 +709,16 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Presentation>, PresentationCreat
       std::make_unique<detail::VulkanPresentation>(*vulkanDevice, surfaceGuard.get());
 
   (void)surfaceGuard.release();
+
+#if defined(ATLANTIS_PROFILING)
+  {
+    // Spec 0059 (ADR-0117 D6): the present mode is fixed (FIFO, vsync); the
+    // benchmark records it beside the display's refresh rate.
+    atlantis::profile::DeviceInfo info = atlantis::profile::deviceInfo();
+    info.presentMode = "FIFO";
+    atlantis::profile::setDeviceInfo(info);
+  }
+#endif
 
   return ResultT::Ok(std::move(presentation));
 }

@@ -81,7 +81,9 @@ TEST_CASE("only Core's profile.cpp and the Vulkan Backend's Tracy context file i
       std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
       });
-      if (lower.find("tracy") != std::string::npos) violations += generic + ": " + line + '\n';
+      // Tracy's own headers live under a tracy/ directory (<tracy/TracyC.h>); the
+      // backend's wrapper header vulkan_tracy_context.h is not one of them.
+      if (lower.find("tracy/") != std::string::npos) violations += generic + ": " + line + '\n';
     }
   }
   CHECK(scanned > 200);
