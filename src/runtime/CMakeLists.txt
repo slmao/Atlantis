@@ -93,7 +93,38 @@ if(WIN32)
 # private like cli.cpp -- the adapter between Atlantis Editor and the frame's
 # overlay -- never added to atlantis_runtime_host, which does not link the
 # editor.
-add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp)
+# Plan 0059 M9 (ADR-0117 D1): the benchmark is executable-private like cli.cpp and
+# editor_attachment.cpp -- never added to atlantis_runtime_host.
+add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp
+  benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp)
+
+# Plan 0059 M9 (ADR-0117 D6): what the result document records about the build,
+# read at configure time -- the configuration, the source revision (and whether the
+# tree was dirty), and the Bistro content pin (the upstream commit the fetched
+# content is pinned to, tools/content/bistro_source.provenance.txt).
+execute_process(COMMAND git rev-parse --short=12 HEAD
+  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE ATLANTIS_GIT_REVISION_TEXT
+  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+execute_process(COMMAND git status --porcelain --untracked-files=no
+  WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" OUTPUT_VARIABLE ATLANTIS_GIT_STATUS_TEXT
+  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(ATLANTIS_GIT_STATUS_TEXT)
+  set(ATLANTIS_GIT_DIRTY_VALUE 1)
+else()
+  set(ATLANTIS_GIT_DIRTY_VALUE 0)
+endif()
+set(ATLANTIS_BISTRO_CONTENT_PIN_TEXT "")
+file(STRINGS "${CMAKE_SOURCE_DIR}/tools/content/bistro_source.provenance.txt" ATLANTIS_PROVENANCE_LINES
+  REGEX "^source_commit: ")
+if(ATLANTIS_PROVENANCE_LINES)
+  string(REGEX REPLACE "^source_commit: ([0-9a-f]+).*" "\\1" ATLANTIS_BISTRO_CONTENT_PIN_TEXT "${ATLANTIS_PROVENANCE_LINES}")
+endif()
+target_compile_definitions(atlantis_runtime PRIVATE
+  ATLANTIS_BUILD_TYPE="$<CONFIG>"
+  ATLANTIS_GIT_REVISION="${ATLANTIS_GIT_REVISION_TEXT}"
+  ATLANTIS_GIT_DIRTY=${ATLANTIS_GIT_DIRTY_VALUE}
+  ATLANTIS_BISTRO_CONTENT_PIN="${ATLANTIS_BISTRO_CONTENT_PIN_TEXT}"
+)
 
 target_link_libraries(atlantis_runtime
   PRIVATE

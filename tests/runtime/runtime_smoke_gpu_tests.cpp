@@ -3,6 +3,7 @@
 #include <atlantis/cli/command.h>
 #include <atlantis/cli/invocation.h>
 #include <atlantis/connection/json.h>
+#include <atlantis/connection/text.h>
 #include <atlantis/remote/remote_client.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -44,6 +45,8 @@
 #include "png_codec.h"
 #include "../../src/runtime/editor_attachment.h"
 #include "vulkan_debug_utils.h"  // Plan 0059 M5: the debug-name observer
+#include "../../src/runtime/benchmark_run.h"
+#include "../../src/runtime/benchmark_variants.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -1475,5 +1478,208 @@ TEST_CASE("Runtime: a profiled frame carries every Zone-map zone, counter and pa
   CHECK(opaque);
 
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Plan 0059 M9 (Spec 0059 R8, R9; ADR-0117 D1-D4): the benchmark. The variants on
+// the real Bistro scene (content-gated), and a whole `--benchmark` run on the
+// default scene. Each in its own TEST_CASE: catch_discover_tests runs every case
+// in its own process, and a process creates one window lifecycle.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+namespace bench = atlantis::runtime::benchmark;
+
+#if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+// A Bistro application, three frames in, and the variant submitted and applied;
+// returns the application's own view of the lights after the edit.
+struct VariantRun {
+  std::size_t pointLightsBefore = 0;
+  std::size_t pointLightsAfter = 0;
+  float fogBefore = 0.0f;
+  float bloomBefore = 0.0f;
+  std::string problem;
+  std::size_t commands = 0;
+};
+
+[[nodiscard]] VariantRun runBistroVariant(atlantis::runtime::cli::BenchmarkVariant variant) {
+  namespace cli = atlantis::runtime::cli;
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  auto connection = app.openConnection();
+  for (int i = 0; i < 2; ++i) app.runFrame();
+
+  VariantRun out;
+  const auto before = app.captureFrameData();
+  REQUIRE(before.isOk());
+  out.pointLightsBefore = before.value().pointLights.size();
+  const auto schema = connection->schema();
+  const auto fog = atlantis::connection::text::parsePath(schema, "Camera.fog.density");
+  const auto bloom = atlantis::connection::text::parsePath(schema, "Camera.bloom.strength");
+  REQUIRE(fog.isOk());
+  REQUIRE(bloom.isOk());
+  for (const auto& entity : connection->listEntities()) {
+    const auto components = connection->listComponents(entity);
+    if (!components.isOk() ||
+        std::find(components.value().begin(), components.value().end(), fog.value().component) ==
+            components.value().end()) {
+      continue;
+    }
+    const auto f = connection->getProperty({entity, fog.value().component, fog.value().leaf->id});
+    const auto b = connection->getProperty({entity, bloom.value().component, bloom.value().leaf->id});
+    if (f.isOk()) out.fogBefore = std::get<float>(f.value());
+    if (b.isOk()) out.bloomBefore = std::get<float>(b.value());
+  }
+
+  const auto edit = bench::submitVariant(*connection, variant);
+  REQUIRE(edit.isOk());
+  out.commands = edit.value().commands;
+  app.runFrame();  // the edit applies at this frame's start
+  out.problem = bench::verifyVariant(*connection, variant);
+  const auto after = app.captureFrameData();
+  REQUIRE(after.isOk());
+  out.pointLightsAfter = after.value().pointLights.size();
+  connection.reset();
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  return out;
+}
+#endif
+
+}  // namespace
+
+TEST_CASE("Benchmark variant no-point-lights removes every point light of Bistro", "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoPointLights);
+  CHECK(run.pointLightsBefore == 59);
+  CHECK(run.commands == 59);
+  CHECK(run.problem.empty());
+  CHECK(run.pointLightsAfter == 0);  // the lighting block really has none, not zero-intensity ones
+#endif
+}
+
+TEST_CASE("Benchmark variant no-fog zeroes the camera's fog density on Bistro", "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoFog);
+  CHECK(run.fogBefore > 0.0f);
+  CHECK(run.commands == 1);
+  CHECK(run.problem.empty());
+  CHECK(run.pointLightsAfter == run.pointLightsBefore);  // nothing else changed
+#endif
+}
+
+TEST_CASE("Benchmark variant no-bloom zeroes the camera's bloom strength on Bistro",
+          "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoBloom);
+  CHECK(run.bloomBefore > 0.0f);
+  CHECK(run.commands == 1);
+  CHECK(run.problem.empty());
+#endif
+}
+
+TEST_CASE("Benchmark: a whole run on the default scene writes a valid document, or says the build cannot",
+          "[runtime][gpu][benchmark]") {
+  namespace cli = atlantis::runtime::cli;
+  const std::filesystem::path output = std::filesystem::temp_directory_path() / "atlantis_benchmark_smoke.json";
+  std::filesystem::remove(output);
+
+  cli::BenchmarkRequest request;
+  request.sceneName = "integrated_showcase_demo";
+  request.warmup = 3;
+  request.frames = 12;
+  request.width = 1280;
+  request.height = 720;
+  request.series = true;
+  request.outputPath = output.string();
+  const int code = bench::runBenchmark(request, buildSmokeConfig());
+
+#if defined(ATLANTIS_PROFILING)
+  REQUIRE(code == bench::kExitOk);
+  std::ifstream in(output, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();  // the file must be closed before it is removed below
+  const auto parsed = atlantis::connection::json::parse(text);
+  REQUIRE(parsed.isOk());
+  const auto& doc = parsed.value();
+  CHECK(doc.find("schema")->asString() == "atlantis.benchmark/1");
+  CHECK(std::stoi(doc.find("frames")->find("measured")->numberText()) == 12);
+  CHECK(std::stoi(doc.find("frames")->find("discarded")->numberText()) >= 3);
+  // The window really was the requested size.
+  CHECK(std::stoi(doc.find("settings")->find("resolution")->find("width")->numberText()) == 1280);
+  CHECK(std::stoi(doc.find("settings")->find("resolution")->find("height")->numberText()) == 720);
+  CHECK(doc.find("settings")->find("variant")->asString() == "baseline");
+  const auto* metrics = doc.find("metrics");
+  REQUIRE(metrics != nullptr);
+  for (const char* key : {"frame_ms", "cpu_ms", "cpu_active_ms", "draw_calls", "triangles", "descriptor_writes"}) {
+    INFO(key);
+    REQUIRE(metrics->find(key) != nullptr);
+    CHECK(metrics->find(key)->find("p50") != nullptr);  // available, with statistics
+  }
+  CHECK(std::stod(metrics->find("draw_calls")->find("p50")->numberText()) >= 12.0);
+  if (metrics->find("gpu_busy_ms")->find("p50") != nullptr) {
+    CHECK(std::stod(metrics->find("passes")->find("draw")->find("gpu_ms")->find("p50")->numberText()) > 0.0);
+  }
+  CHECK(doc.find("series")->find("frame_ms")->asArray().size() == 12);
+  CHECK(doc.find("meta")->find("build")->find("profiling")->asBool());
+  std::filesystem::remove(output);
+#else
+  CHECK(code == bench::kExitEnvironment);  // a build without profiling refuses, with the documented code
+  CHECK_FALSE(std::filesystem::exists(output));
+#endif
+}
+
+// Plan 0059 M9 (ADR-0117 D1, D5): the real executable. stdout is exactly one JSON
+// document -- logs go to stderr -- and the exit codes are the documented ones.
+#if defined(_WIN32) && defined(ATLANTIS_RUNTIME_EXECUTABLE)
+TEST_CASE("atlantis_runtime --benchmark: stdout is exactly one JSON document, and the exit codes are as documented",
+          "[runtime][gpu][benchmark][process]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_benchmark_process_test";
+  fs::create_directories(dir);
+  // cmd.exe strips one outer pair of quotes, so the whole command is quoted once more.
+  const auto run = [&](const std::string& args, const fs::path& stdoutFile) {
+    const std::string command = "\"\"" + std::string(ATLANTIS_RUNTIME_EXECUTABLE) + "\" " + args + " > \"" +
+                                stdoutFile.string() + "\" 2> NUL\"";
+    return std::system(command.c_str());
+  };
+  const auto read = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+
+  const fs::path ok = dir / "ok.json";
+  const int code = run("--benchmark integrated_showcase_demo --warmup 3 --frames 10 --resolution 1280x720 --json", ok);
+#if defined(ATLANTIS_PROFILING)
+  CHECK(code == 0);
+  const auto parsed = atlantis::connection::json::parse(read(ok));  // a log line on stdout would fail this
+  CHECK(parsed.isOk());
+  if (parsed.isOk()) CHECK(parsed.value().find("schema")->asString() == "atlantis.benchmark/1");
+#else
+  CHECK(code == 3);
+  CHECK(read(ok).empty());
+#endif
+
+  const fs::path absent = dir / "absent.txt";
+  CHECK(run("--benchmark no_such_scene", absent) == 3);
+  CHECK(read(absent).empty());
+
+  const fs::path usage = dir / "usage.txt";
+  CHECK(run("--benchmark integrated_showcase_demo --frames 0", usage) == 1);
+  CHECK(run("--benchmark integrated_showcase_demo --listen 0", usage) == 1);
+  fs::remove_all(dir);
 }
 #endif

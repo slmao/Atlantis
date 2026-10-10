@@ -33,6 +33,12 @@ add_executable(atlantis_runtime_tests
   cli_tests.cpp
   runtime_control_tests.cpp
   ../../src/runtime/cli.cpp
+  # Plan 0059 M9 (ADR-0117): the benchmark's GPU-independent parts, compiled here as
+  # atlantis_runtime compiles them -- the cli.cpp precedent.
+  ../../src/runtime/benchmark_report.cpp
+  ../../src/runtime/benchmark_loop.cpp
+  benchmark_report_tests.cpp
+  benchmark_loop_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -102,6 +108,13 @@ add_executable(atlantis_runtime_gpu_tests
   # Plan 0057 M5 (P7): the Gameplay SDK against a real Runtime -- the North
   # star, Bistro, batch equivalence and read isolation, fatal VVL.
   gameplay_sdk_gpu_tests.cpp
+  # Plan 0059 M9 (ADR-0117): runtime_smoke_gpu_tests.cpp's variant and whole-run tests,
+  # with the benchmark sources compiled as atlantis_runtime compiles them.
+  ../../src/runtime/cli.cpp
+  ../../src/runtime/benchmark_report.cpp
+  ../../src/runtime/benchmark_loop.cpp
+  ../../src/runtime/benchmark_variants.cpp
+  ../../src/runtime/benchmark_run.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
@@ -130,6 +143,12 @@ target_link_libraries(atlantis_runtime_gpu_tests
 # atlantis_runtime target (Plan 0013 Section D9) -- absolute,
 # configuration-independent, no working-directory dependence.
 target_include_directories(atlantis_runtime_gpu_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/vulkan_backend/src)
+
+if(WIN32)
+  # Plan 0059 M9: the process-level benchmark test runs the real executable.
+  target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE ATLANTIS_RUNTIME_EXECUTABLE="$<TARGET_FILE:atlantis_runtime>")
+  add_dependencies(atlantis_runtime_gpu_tests atlantis_runtime)
+endif()
 
 target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   ATLANTIS_RUNTIME_SHADER_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"

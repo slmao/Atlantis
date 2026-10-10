@@ -60,6 +60,38 @@ struct SceneWhitelistEntry {
 // never an assertion).
 inline constexpr std::string_view kDefaultSceneName = "integrated_showcase_demo";
 
+// Spec 0059 / ADR-0117 D3: the benchmark's diagnostic variants -- a closed list.
+enum class BenchmarkVariant {
+  Baseline,       // the scene as authored; the only committed baseline
+  NoPointLights,  // every point light's Light component removed
+  NoFog,          // the camera's fog density set to 0
+  NoBloom,        // the camera's bloom strength set to 0
+};
+[[nodiscard]] std::string_view toString(BenchmarkVariant variant) noexcept;
+
+// Spec 0059 / ADR-0117 D1: `--benchmark <scene> [...]`. A scene run that measures
+// instead of serving a client: the scene is rendered in the real windowed loop at
+// a requested client size, for `warmup` then `frames` presented frames, and a JSON
+// document is produced. Mutually exclusive with --scene, --exec, --listen,
+// --session-file and --editor.
+struct BenchmarkRequest {
+  std::string sceneName;
+  // Empty if `sceneName` is not on the whitelist (the Bistro entry exists only
+  // when its content was fetched at configure time); the caller reports that as
+  // an environment mismatch, not a usage error.
+  std::optional<SceneSelection> scene;
+  unsigned int warmup = 120;
+  unsigned int frames = 300;
+  unsigned int width = 1920;
+  unsigned int height = 1080;
+  BenchmarkVariant variant = BenchmarkVariant::Baseline;
+  bool json = false;                       // the document on stdout (else a short summary)
+  std::optional<std::string> outputPath;   // the document to a file as well
+  std::optional<std::string> baselinePath; // compare against this earlier document
+  bool series = false;                     // include the raw per-frame values
+  bool gpuTiming = true;                   // --gpu-timing=on|off
+};
+
 enum class CommandLineOutcome {
   RunScene,           // .selectedScene is populated; proceed to BootstrapConfig/createRuntimeApplication().
   PrintUsageAndExit,  // .message is --help or --list-scenes text; print to stdout, exit RuntimeExitReason::Success.
@@ -86,6 +118,10 @@ struct CommandLineResult {
   // --exec, --help and --list-scenes. Meaningful only when outcome ==
   // RunScene.
   bool editor = false;
+  // Spec 0059 / ADR-0117 D1: populated only when outcome == RunScene and
+  // --benchmark was given; then selectedScene is empty and execScript, listenPort,
+  // sessionFile and editor are unset.
+  std::optional<BenchmarkRequest> benchmark;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,
