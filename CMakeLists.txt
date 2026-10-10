@@ -31,6 +31,35 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ATLANTIS_BUILD_TESTS "Build Atlantis unit tests" ON)
 option(ATLANTIS_BUILD_EXAMPLES "Build Atlantis example programs" ON)
 
+# Spec 0059 / ADR-0114 D3: profiling and GPU debug-marker options. Profiling is
+# off by default, so a default build fetches nothing new and is what it was.
+# ATLANTIS_PROFILING_TRACY only has effect with ATLANTIS_PROFILING (ADR-0116).
+# GPU markers (VK_EXT_debug_utils names and labels, ADR-0115) are independent
+# of the profiler and default on for Windows. Android carries neither.
+set(_atlantis_gpu_markers_default OFF)
+if(WIN32)
+  set(_atlantis_gpu_markers_default ON)
+endif()
+option(ATLANTIS_PROFILING "Build the ATL_PROFILE_* instrumentation, recorder and GPU timestamps (Spec 0059)" OFF)
+option(ATLANTIS_PROFILING_TRACY "With ATLANTIS_PROFILING: also feed Tracy (fetches Tracy; ADR-0116)" ON)
+option(ATLANTIS_GPU_MARKERS "Name Vulkan objects and label passes for RenderDoc (VK_EXT_debug_utils; ADR-0115)"
+       ${_atlantis_gpu_markers_default})
+if(ANDROID)
+  if(ATLANTIS_PROFILING OR ATLANTIS_GPU_MARKERS)
+    message(STATUS "Android: ATLANTIS_PROFILING and ATLANTIS_GPU_MARKERS are forced OFF (Spec 0059)")
+  endif()
+  set(ATLANTIS_PROFILING OFF CACHE BOOL "Forced OFF on Android (Spec 0059)" FORCE)
+  set(ATLANTIS_GPU_MARKERS OFF CACHE BOOL "Forced OFF on Android (Spec 0059)" FORCE)
+endif()
+if(NOT ATLANTIS_PROFILING)
+  # Tracy only exists inside a profiling build; keep the effective value honest.
+  set(ATLANTIS_PROFILING_TRACY_EFFECTIVE OFF)
+else()
+  set(ATLANTIS_PROFILING_TRACY_EFFECTIVE ${ATLANTIS_PROFILING_TRACY})
+endif()
+message(STATUS "Profiling: PROFILING=${ATLANTIS_PROFILING} TRACY=${ATLANTIS_PROFILING_TRACY_EFFECTIVE} "
+               "GPU_MARKERS=${ATLANTIS_GPU_MARKERS}")
+
 include(cmake/CompilerWarnings.cmake)
 # Unconditional, independent of ATLANTIS_BUILD_TESTS -- src/tools/asset_cooker
 # (added unconditionally below) needs Stb::Stb too (Spec 0016). Must
@@ -40,6 +69,11 @@ include(cmake/AtlantisStb.cmake)
 # outside the if(NOT ANDROID) gates below, since Android compiles the editor
 # library too (Plan 0056 J11).
 include(cmake/AtlantisImGui.cmake)
+# Plan 0059 M2 (ADR-0116): Tracy's client library, only in a profiling build that
+# asks for it; never on Android, and never fetched by a default build.
+if(ATLANTIS_PROFILING_TRACY_EFFECTIVE AND NOT ANDROID)
+  include(cmake/AtlantisTracy.cmake)
+endif()
 
 find_package(Vulkan REQUIRED)
 
