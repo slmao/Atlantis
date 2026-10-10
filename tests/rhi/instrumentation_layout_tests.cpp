@@ -44,7 +44,8 @@ TEST_CASE("the creation-params layouts are the same in every build configuration
   CHECK(sizeof(OffscreenTargetCreateParams) == 32);
   CHECK(sizeof(HdrColorTargetCreateParams) == 32);
   CHECK(sizeof(ShadowMapCreateParams) == 32);
-  CHECK(sizeof(PipelineCreateParams) == 128);
+  // PipelineCreateParams holds a std::vector, whose size differs between MSVC's
+  // Debug and Release iterator layouts; its debugName placement is checked above.
 }
 
 TEST_CASE("a designated initializer written before debugName existed still compiles and leaves it empty",
