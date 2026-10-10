@@ -315,6 +315,24 @@ dependency any other top-level module may take. See
 and
 [ADR-0051](docs/adr/0051-world-to-renderer-extraction-and-asset-resolution-boundary.md).
 
+**Profiling and benchmarking** (Spec 0059, `Approved`; ADR-0114..0117; operator
+note [docs/process/profiling.md](docs/process/profiling.md)). Instrumentation
+goes through the one Core header `atlantis/profile.h` (`ATL_PROFILE_*` macros
+that expand to `((void)0)`, arguments unevaluated, unless `ATLANTIS_PROFILING`
+is on; never put a side effect in a macro argument). `ATLANTIS_PROFILING`
+(default `OFF`), `ATLANTIS_PROFILING_TRACY` (default `ON`, effective only with
+profiling) and `ATLANTIS_GPU_MARKERS` (default `ON` on Windows) are the only
+switches, all forced `OFF` on Android; a default build fetches and changes
+nothing. Tracy (v0.14.1, ADR-0116) is a dependency of a profiling build only,
+fetched by pinned URL and SHA-256, linked privately by Core and one Vulkan
+Backend file, loopback-only; no other module names a Tracy or Vulkan profiling
+type. `atlantis_runtime --benchmark <scene> [--warmup N] [--frames N]
+[--resolution WxH] [--variant V] [--json] [--output P] [--baseline P] [--series]
+[--gpu-timing=on|off]` writes the `atlantis.benchmark/1` document and is
+executable-private; a performance number is never a test verdict. The
+`runFrame()` diff guard now reads: identical to its base text except added
+`ATL_PROFILE_*` lines and `debugName` members.
+
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics
 backends*: an interface with concrete per-OS implementations (Windows
@@ -411,7 +429,10 @@ default.
   composition root (Runtime) and is threaded down explicitly. A narrowly-
   scoped, deliberate exception may exist for logging/diagnostics
   infrastructure in Core — that is a stated exception, not a precedent for
-  further singletons.
+  further singletons. There are two: the log sink and, since Spec 0059
+  (ADR-0114 D5), the profiling recorder (`atlantis/profile_recorder.h`),
+  which holds measurements only, never influences engine behavior and is
+  frame-thread-only.
 - Subsystem-specific ownership models (e.g., how RHI resources and
   `RenderTarget`s are owned) are decided by that subsystem's own spec/ADR,
   not invented ad hoc in implementation — see
