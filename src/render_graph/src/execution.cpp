@@ -1,7 +1,13 @@
 #include <atlantis/render_graph/execution.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/profile.h>
 
+#include <algorithm>
+#include <array>
+#include <cstdio>
+#include <span>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -44,6 +50,25 @@ using atlantis::rhi::ResourceState;
   }
   return false;
 }
+
+
+// Spec 0059 / ADR-0115 D4: a pass's region is named after its declaration label;
+// an empty label falls back to "pass_<position>". Both names are built in a
+// caller-owned stack buffer, so a frame allocates nothing for them.
+#if defined(ATLANTIS_PROFILING) || defined(ATLANTIS_GPU_MARKERS)
+[[nodiscard]] std::string_view passRegionName(std::string_view label, std::size_t position, std::span<char> buffer) {
+  if (!label.empty()) return label;
+  const int written = std::snprintf(buffer.data(), buffer.size(), "pass_%zu", position);
+  return std::string_view(buffer.data(), written > 0 ? static_cast<std::size_t>(written) : 0);
+}
+#endif
+#if defined(ATLANTIS_PROFILING)
+// "RecordPass:<label>", the CPU zone of a pass's recording.
+[[nodiscard]] std::string_view recordPassZoneName(std::string_view region, std::span<char> buffer) {
+  const int written = std::snprintf(buffer.data(), buffer.size(), "RecordPass:%.*s", static_cast<int>(region.size()), region.data());
+  return std::string_view(buffer.data(), written > 0 ? std::min(static_cast<std::size_t>(written), buffer.size() - 1) : 0);
+}
+#endif
 
 }  // namespace
 
@@ -94,6 +119,13 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
   for (std::size_t position = 0; position < graph.passCount(); ++position) {
     const CompiledPassId pass = graph.passOrder(position);
     const bool drawPass = isDrawPass(graph, pass);
+#if defined(ATLANTIS_PROFILING) || defined(ATLANTIS_GPU_MARKERS)
+    // The region opens before the pass's transitions and closes with this
+    // iteration, after endRendering() or the callback (ADR-0115 D4).
+    std::array<char, 64> regionBuffer{};
+    const std::string_view regionName = passRegionName(graph.label(pass), position, regionBuffer);
+    ATL_PROFILE_GPU_SCOPE(commandList, regionName);
+#endif
 
     const ResourceBinding* colorBinding = nullptr;
     const ResourceBinding* depthBinding = nullptr;
@@ -150,6 +182,10 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
     // A declared-but-never-.setExecute()'d pass is legal (Spec 0005 pass
     // retention) -- an empty PassExecuteFn is simply not invoked.
     const PassExecuteFn& executeFn = graph.passExecuteFn(pass);
+#if defined(ATLANTIS_PROFILING)
+    std::array<char, 80> zoneBuffer{};
+    ATL_PROFILE_SCOPE_DYNAMIC(recordPassZoneName(regionName, zoneBuffer));
+#endif
 
     if (drawPass) {
       // Plan 0027 Milestone 3 (ADR-0072 D-4): a pass whose only

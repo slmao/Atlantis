@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -194,6 +195,12 @@ struct BufferCreateParams {
   // a designated initializer that names only purpose/sizeBytes -- every
   // such site written before Spec 0039 -- still means 16-bit indices.
   IndexType indexType = IndexType::Uint16;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const BufferCreateParams& lhs, const BufferCreateParams& rhs);
@@ -201,6 +208,12 @@ struct BufferCreateParams {
 struct TextureCreateParams {
   Extent2D extent;
   DepthFormat format = DepthFormat::D32Sfloat;  // this round's only Texture usage is a depth attachment
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const TextureCreateParams& lhs, const TextureCreateParams& rhs);
@@ -212,6 +225,12 @@ struct SampledTextureCreateParams {
   SampledTextureFormat format = SampledTextureFormat::Rgba8Unorm;
   SampledTextureDimension dimension = SampledTextureDimension::Texture2D;
   std::uint32_t mipLevelCount = 1;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const SampledTextureCreateParams& lhs, const SampledTextureCreateParams& rhs);
@@ -222,6 +241,12 @@ struct SamplerCreateParams {
   MipFilter mipFilter = MipFilter::Nearest;
   float minLod = 0.0F;
   float maxLod = 0.0F;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const SamplerCreateParams& lhs, const SamplerCreateParams& rhs);
@@ -239,6 +264,12 @@ struct OffscreenTargetCreateParams {
   Extent2D extent;
   Format format = Format::Rgba8Unorm;
   bool sampled = false;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const OffscreenTargetCreateParams& lhs, const OffscreenTargetCreateParams& rhs);
@@ -251,6 +282,12 @@ struct OffscreenTargetCreateParams {
 struct HdrColorTargetCreateParams {
   Extent2D extent;
   HdrFormat format = HdrFormat::Rgba16Float;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const HdrColorTargetCreateParams& lhs, const HdrColorTargetCreateParams& rhs);
@@ -263,6 +300,12 @@ struct HdrColorTargetCreateParams {
 struct ShadowMapCreateParams {
   Extent2D extent;
   DepthFormat format = DepthFormat::D32Sfloat;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 [[nodiscard]] bool operator==(const ShadowMapCreateParams& lhs, const ShadowMapCreateParams& rhs);
@@ -390,6 +433,12 @@ struct PipelineCreateParams {
   // existing call site. A transparent (Blend) material's Pipeline pairs
   // AlphaBlend with depthWriteEnabled == false (ADR-0090 Decision 3).
   ColorBlendMode colorBlendMode = ColorBlendMode::Disabled;
+  // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
+  // validation messages. Diagnostic only: copied by the backend at creation, ignored
+  // when empty or when the backend has no debug naming, and not part of operator==
+  // (it is not identity). Always the LAST member, so designated initializers written
+  // before it existed still compile.
+  std::string_view debugName{};
 };
 
 struct SampledTextureUploadRegion {
