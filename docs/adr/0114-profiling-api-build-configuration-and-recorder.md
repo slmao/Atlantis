@@ -1,10 +1,11 @@
 # ADR 0114: Profiling API, Build Configuration and In-Process Recorder
 
-- **Status:** Proposed
-- **Date:** 2026-10-10
-- **Deciders:** slmao (pending)
-- **Acceptance:** Pending (review of Spec 0059's own branch PR).
-- **Related Spec:** [Spec 0059: Profiling and Performance Instrumentation Foundation](../specs/0059-profiling-instrumentation.md) (`Draft`)
+- **Status:** Accepted
+- **Date:** 2026-10-10 (accepted 2026-10-10)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-10-10 (chat rulings on Spec 0059 Q1–Q12; review of
+  Spec 0059's own branch PR, [PR #242](https://github.com/slmao/Atlantis/pull/242)).
+- **Related Spec:** [Spec 0059: Profiling and Performance Instrumentation Foundation](../specs/0059-profiling-instrumentation.md) (`Approved`)
 - **Related ADR(s):**
   - [ADR-0008](0008-logging.md): Core already hosts a deliberate global
     diagnostics facility (the log sink); this ADR adds a second, narrower one.

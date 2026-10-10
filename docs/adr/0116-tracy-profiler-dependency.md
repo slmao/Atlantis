@@ -1,10 +1,11 @@
 # ADR 0116: Tracy Profiler as a Third-Party Dependency
 
-- **Status:** Proposed
-- **Date:** 2026-10-10
-- **Deciders:** slmao (pending)
-- **Acceptance:** Pending (review of Spec 0059's own branch PR).
-- **Related Spec:** [Spec 0059](../specs/0059-profiling-instrumentation.md) (`Draft`)
+- **Status:** Accepted
+- **Date:** 2026-10-10 (accepted 2026-10-10)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-10-10 (chat rulings on Spec 0059 Q1–Q12; review of
+  Spec 0059's own branch PR, [PR #242](https://github.com/slmao/Atlantis/pull/242)).
+- **Related Spec:** [Spec 0059](../specs/0059-profiling-instrumentation.md) (`Approved`)
 - **Related ADR(s):**
   - [ADR-0006](0006-dependency-management.md): small pinned source dependencies
     use `FetchContent`; tools that are installed on the host are not fetched.
