@@ -1,16 +1,18 @@
 # Spec: Profiling and Performance Instrumentation Foundation
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-10
-- **Related Plan(s):** None yet — drafted only after this Spec is approved.
-- **Approval:** Pending (owner review of this Spec's own branch PR).
-  The owner fixed the mission, the five requirement groups, the non-goals and
-  the acceptance criteria before drafting (2026-10-10, chat); they are
-  recorded under Goals, Non-Goals and Requirements. Every design detail below
-  is a proposal with alternatives and a recommendation.
-- **Related ADR(s)** (all `Proposed`, drafted alongside; none is a decision
-  until accepted):
+- **Related Plan(s):** [Plan 0059](../plans/0059-profiling-instrumentation.md)
+  (`Draft`; pending Joint Human Review).
+- **Approval:** slmao, 2026-10-10 (chat rulings on Q1–Q12; review of this
+  Spec's own branch PR, [PR #242](https://github.com/slmao/Atlantis/pull/242),
+  merged). The rulings are recorded once in
+  [Plan 0059](../plans/0059-profiling-instrumentation.md); the open-question
+  text below keeps the options as the record of what was weighed. Implementation
+  still awaits the Plan's separate Joint Human Review.
+- **Related ADR(s)** (all `Accepted` 2026-10-10, together with this Spec's
+  approval):
   - [ADR-0114](../adr/0114-profiling-api-build-configuration-and-recorder.md):
     the profiling API, its build configuration and the in-process recorder
     (Q1, Q2, Q4, Q8, Q12);
