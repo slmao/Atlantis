@@ -95,6 +95,9 @@ PolicyResult parsePolicy(const Value& document) {
   if (auto error = readNumber(*protocol, "child_timeout_seconds", 1.0, policy.protocol.childTimeoutSeconds)) {
     return PolicyResult::Err("protocol: " + *error);
   }
+  const Value* pin = protocol->find("pin_process");
+  if (pin == nullptr || !pin->isBool()) return PolicyResult::Err("protocol: 'pin_process' is missing or not a boolean");
+  policy.protocol.pinProcess = pin->asBool();
   const Value* idle = protocol->find("idle");
   if (idle == nullptr || !idle->isObject()) return PolicyResult::Err("protocol.idle is missing");
   if (auto error = readNumber(*idle, "cpu_idle_pct", 0.0, policy.protocol.idle.cpuIdlePct)) {

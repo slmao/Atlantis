@@ -157,6 +157,22 @@ class ProcessLauncher final : public ChildLauncher {
 
 }  // namespace
 
+bool pinCurrentProcess(std::string& error) {
+  PROCESS_POWER_THROTTLING_STATE state{};
+  state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  state.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;  // this process controls the setting...
+  state.StateMask = 0;                                           // ...and turns the throttling off
+  if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state))) {
+    error = "SetProcessInformation(ProcessPowerThrottling) failed with error " + std::to_string(GetLastError());
+    return false;
+  }
+  if (!SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS)) {
+    error = "SetPriorityClass(HIGH_PRIORITY_CLASS) failed with error " + std::to_string(GetLastError());
+    return false;
+  }
+  return true;
+}
+
 std::unique_ptr<CpuSampler> makeSystemCpuSampler() { return std::make_unique<WindowsCpuSampler>(); }
 
 std::unique_ptr<ChildLauncher> makeProcessLauncher(std::string executablePath) {

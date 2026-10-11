@@ -18,7 +18,7 @@ namespace json = atlantis::connection::json;
 
 constexpr const char* kValidPolicy = R"({
   "version": 1,
-  "protocol": {"runs": 5, "preheat_seconds": 90, "k": 3, "child_timeout_seconds": 300,
+  "protocol": {"runs": 5, "preheat_seconds": 60, "k": 3, "child_timeout_seconds": 300, "pin_process": true,
                "idle": {"cpu_idle_pct": 90, "window_seconds": 10, "timeout_seconds": 120}},
   "dispersion_factor": 3,
   "tiers": {"counter": {"abs_floor": 0, "max_pct": 0, "metric_tolerance_pct": {"fragment_invocations": 0.1}},
@@ -52,6 +52,8 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.version == 1);
   CHECK(policy.protocol.runs >= 1);
   CHECK(policy.protocol.k > 0.0);
+  CHECK(policy.protocol.preheatSeconds == 60.0);  // the owner's ruling on the M7 stop (Q11)
+  CHECK(policy.protocol.pinProcess);              // the children run pinned
   CHECK(policy.cpu.absFloor >= 0.0);
   CHECK(policy.gpu.maxPct > policy.cpu.maxPct);  // the noisier tier has the wider allowance
   CHECK(policy.counter.maxPct == 0.0);           // counters are exact
@@ -78,7 +80,8 @@ TEST_CASE("a valid policy parses into its numbers", "[runtime][gate][policy]") {
   REQUIRE(parsed.isOk());
   const gate::GatePolicy& policy = parsed.value();
   CHECK(policy.protocol.runs == 5);
-  CHECK(policy.protocol.preheatSeconds == 90.0);
+  CHECK(policy.protocol.preheatSeconds == 60.0);
+  CHECK(policy.protocol.pinProcess);
   CHECK(policy.protocol.idle.cpuIdlePct == 90.0);
   CHECK(policy.protocol.idle.timeoutSeconds == 120.0);
   CHECK(policy.dispersionFactor == 3.0);
@@ -104,6 +107,8 @@ TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][p
     const char* mention;
   } cases[] = {
       {R"("protocol":)", R"("protocolx":)", "protocol"},
+      {R"("pin_process": true,)", R"("pin_process": "yes",)", "pin_process"},
+      {R"("pin_process": true,)", "", "pin_process"},
       {R"("k": 3,)", R"("k": 0,)", "'k'"},
       {R"("runs": 5,)", R"("runs": 0,)", "runs"},
       {R"("abs_floor": 0.1,)", R"("abs_floor": -1,)", "abs_floor"},

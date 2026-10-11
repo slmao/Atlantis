@@ -33,6 +33,13 @@ void take(RunValues& out, const std::string& key, const Value& leaf) {
 
 }  // namespace
 
+Value pinValue(bool pinned) {
+  Value out = Value::object();
+  out.set("power_throttling", Value::string(pinned ? "disabled" : "default"));
+  out.set("priority_class", Value::string(pinned ? "high" : "normal"));
+  return out;
+}
+
 ResultRunValues extractRunValues(const Value& benchmarkDocument) {
   const Value* schema = benchmarkDocument.find("schema");
   if (schema == nullptr || !schema->isString() || schema->asString() != "atlantis.benchmark/1") {
@@ -86,6 +93,7 @@ ResultValue buildSet(const Protocol& protocol, std::span<const Value> runDocumen
   protocolValue.set("preheat_seconds", num(protocol.preheatSeconds));
   protocolValue.set("idle_wait", Value::boolean(protocol.idleWait));
   protocolValue.set("k", num(protocol.k));
+  protocolValue.set("pin", pinValue(protocol.pin));
   protocolValue.set("child_stderr", Value::string("discarded"));
   set.set("protocol", std::move(protocolValue));
 

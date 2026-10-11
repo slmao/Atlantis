@@ -2,9 +2,10 @@
   "version": 1,
   "protocol": {
     "runs": 5,
-    "preheat_seconds": 90,
+    "preheat_seconds": 60,
     "k": 3,
     "child_timeout_seconds": 300,
+    "pin_process": true,
     "idle": {
       "cpu_idle_pct": 90,
       "window_seconds": 10,

@@ -4,6 +4,13 @@
 
 #include <atlantis/connection/json.h>
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
@@ -134,6 +141,36 @@ TEST_CASE("the system CPU sampler reads increasing cumulative times", "[runtime]
   CHECK(second->idle >= first->idle);
 }
 
+TEST_CASE("pinning the process opts out of power throttling and raises the priority class",
+          "[runtime][gpu][gate][process]") {
+  std::string error;
+  REQUIRE(gate::pinCurrentProcess(error));
+  CHECK(error.empty());
+  CHECK(GetPriorityClass(GetCurrentProcess()) == HIGH_PRIORITY_CLASS);
+  PROCESS_POWER_THROTTLING_STATE state{};
+  state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  REQUIRE(GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)));
+  CHECK((state.ControlMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) != 0);  // the process controls it
+  CHECK((state.StateMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) == 0);    // and throttling is off
+}
+
+TEST_CASE("a pinned benchmark child runs and writes its document", "[runtime][gpu][gate][process]") {
+#if !defined(ATLANTIS_PROFILING)
+  SUCCEED("this build has no profiling: the benchmark children refuse");
+#else
+  TempDir dir;
+  const auto launcher = gate::makeProcessLauncher(ATLANTIS_RUNTIME_EXECUTABLE);
+  gate::ChildSpec spec;
+  spec.args = {"--benchmark", "integrated_showcase_demo", "--warmup", "3", "--frames", "10", "--resolution", "1280x720",
+               "--pin-process", "on", "--output", (dir.path / "pinned.json").string()};
+  spec.timeoutSeconds = 120.0;
+  const gate::ChildResult result = launcher->run(spec);
+  REQUIRE(result.status == gate::ChildResult::Status::Exited);
+  CHECK(result.exitCode == 0);  // pinning succeeded on this machine, or the child would have exited 3
+  CHECK(fs::exists(dir.path / "pinned.json"));
+#endif
+}
+
 TEST_CASE("the running executable knows its own path", "[runtime][gpu][gate][process]") {
   const std::string path = gate::currentExecutablePath();
   CHECK_FALSE(path.empty());
@@ -171,6 +208,7 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   plan.runs = 2;
   plan.preheatSeconds = 0.0;
   plan.idleWait = false;
+  plan.pin = true;  // the real children run pinned, as the policy asks
   plan.childTimeoutSeconds = 120.0;
   plan.tempDir = (root / "children").string();
   fs::create_directories(plan.tempDir);
@@ -180,6 +218,7 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   protocol.runs = 2;
   protocol.preheatSeconds = 0.0;
   protocol.idleWait = false;
+  protocol.pin = true;
   auto set = gate::buildSet(protocol, session.runDocuments);
   REQUIRE(set.isOk());
   Value doc = set.value();

@@ -1,5 +1,7 @@
 #include "gate_evaluate.h"
 
+#include "gate_set.h"
+
 #include <algorithm>
 #include <array>
 #include <span>
@@ -39,6 +41,8 @@ const std::vector<Field> kIdentity = {
     {"meta.system.vulkan_api", {"meta", "system", "vulkan_api"}},
     {"meta.display.present_mode", {"meta", "display", "present_mode"}},
     {"meta.display.refresh_hz", {"meta", "display", "refresh_hz"}},
+    // A pinned run never compares against an unpinned baseline (owner ruling on the M7 stop).
+    {"protocol.pin", {"protocol", "pin"}},
 };
 
 [[nodiscard]] std::string describe(const Value* value) {
@@ -92,13 +96,17 @@ struct Aggregate {
   const bool idleWait = idle != nullptr && idle->isBool() && idle->asBool();
   // A run that skipped the idle wait or the preheat, or took fewer runs than the
   // policy asks, is a smoke run: it is reported as such and never a recording.
+  const Value* pin = at(candidate, {"protocol", "pin"});
+  const Value expectedPin = pinValue(policy.protocol.pinProcess);
+  const bool pinned = pin != nullptr && *pin == expectedPin;
   const bool conformant = idleWait && preheat >= policy.protocol.preheatSeconds && runs >= policy.protocol.runs &&
-                          k == policy.protocol.k;
+                          k == policy.protocol.k && pinned;
   Value out = Value::object();
   out.set("runs", num(runs));
   out.set("preheat_seconds", num(preheat));
   out.set("idle_wait", Value::boolean(idleWait));
   out.set("k", num(k));
+  out.set("pin", pin != nullptr ? *pin : Value());
   out.set("conformant", Value::boolean(conformant));
   return out;
 }

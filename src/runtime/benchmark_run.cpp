@@ -3,6 +3,7 @@
 #include "benchmark_loop.h"
 #include "benchmark_report.h"
 #include "benchmark_variants.h"
+#include "gate_orchestrate.h"
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/json.h>
@@ -126,6 +127,16 @@ int runBenchmark(const cli::BenchmarkRequest& request, atlantis::runtime::Bootst
   if (build.type == "Debug") {
     std::cerr << "atlantis_runtime: warning: a Debug build (validation layers on) is not a meaningful benchmark; "
                  "the result says so in meta.build\n";
+  }
+
+  // Owner ruling on the Plan 0060 M7 stop: the gate's children run pinned (no power throttling, high
+  // priority). A run that was asked to be pinned and could not be refuses rather than pose as one.
+  if (request.pinProcess) {
+    std::string pinError;
+    if (!gate::pinCurrentProcess(pinError)) {
+      std::cerr << "atlantis_runtime: --benchmark --pin-process on: " << pinError << "\n";
+      return kExitEnvironment;
+    }
   }
 
   profile::setGpuTimingEnabled(request.gpuTiming);

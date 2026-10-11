@@ -119,6 +119,7 @@ class TempDirScope {
   plan.idleWait = request.idleWait;
   plan.childTimeoutSeconds = policy.protocol.childTimeoutSeconds;
   plan.idle = policy.protocol.idle;
+  plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
   plan.tempDir = env.tempDir;
 
   const TempDirScope tempDir(env.tempDir);
@@ -133,6 +134,7 @@ class TempDirScope {
   protocol.preheatSeconds = plan.preheatSeconds;
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
+  protocol.pin = plan.pin;
   const auto set = buildSet(protocol, session.runDocuments);
   if (set.isErr()) {
     err << "atlantis_runtime: --gate: the runs do not make a set: " << set.error() << "\n";
@@ -235,13 +237,16 @@ class TempDirScope {
   plan.idleWait = request.idleWait;
   plan.childTimeoutSeconds = policy.protocol.childTimeoutSeconds;
   plan.idle = policy.protocol.idle;
+  plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
   plan.tempDir = env.tempDir;
 
   // A baseline is only ever recorded under the policy's full protocol: a smoke run is not a measurement.
-  if (!plan.idleWait || plan.preheatSeconds < policy.protocol.preheatSeconds || plan.runs < policy.protocol.runs) {
+  if (!plan.idleWait || plan.preheatSeconds < policy.protocol.preheatSeconds || plan.runs < policy.protocol.runs ||
+      plan.pin != policy.protocol.pinProcess) {
     err << "atlantis_runtime: --gate --record needs the policy's full protocol (idle wait on, a preheat of at least "
         << formatNumber(policy.protocol.preheatSeconds) << " s, at least " << policy.protocol.runs
-        << " runs per session); --idle-wait off, a shorter --preheat-seconds and a smaller --runs are for smoke runs\n";
+        << " runs per session, children pinned as the policy says); --idle-wait off, a shorter --preheat-seconds, a "
+           "smaller --runs and a different --pin-process are for smoke runs\n";
     return bench::kExitInitFailure;
   }
   if (request.profileId.has_value() && *request.profileId != "auto" && !isValidProfileId(*request.profileId)) {
@@ -273,6 +278,7 @@ class TempDirScope {
   protocol.preheatSeconds = plan.preheatSeconds;
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
+  protocol.pin = plan.pin;
   auto set = buildSet(protocol, documents);
   if (set.isErr()) {
     err << "atlantis_runtime: --gate --record: the runs do not make a set (did the hardware or build change "

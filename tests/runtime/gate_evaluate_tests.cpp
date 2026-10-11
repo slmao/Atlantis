@@ -343,3 +343,28 @@ TEST_CASE("the exit codes are 0 for pass, 4 for fail and 5 for not judged", "[ru
   CHECK(gate::kExitFail == 4);
   CHECK(gate::kExitNotJudged == 5);
 }
+
+TEST_CASE("a pinned run is never judged against an unpinned baseline, or the other way round", "[runtime][gate][evaluate]") {
+  SetProtocol unpinned;
+  unpinned.pin = false;
+  const auto pinnedAgainstUnpinned = gate::evaluate(makeSet(baselineAggregates()), makeSet(baselineAggregates(), {}, unpinned),
+                                                    testPolicy(), ref());
+  CHECK(pinnedAgainstUnpinned.result == "incomparable");
+  const auto& reasons = pinnedAgainstUnpinned.document.find("reasons")->asArray();
+  REQUIRE(reasons.size() == 1);
+  CHECK(reasons[0].asString().find("protocol.pin differs") != std::string::npos);
+  const auto unpinnedAgainstPinned = gate::evaluate(makeSet(baselineAggregates(), {}, unpinned), makeSet(baselineAggregates()),
+                                                    testPolicy(), ref());
+  CHECK(unpinnedAgainstPinned.result == "incomparable");
+  // Two unpinned documents are comparable with each other; whether such a run follows the policy is a different question.
+  const auto both = gate::evaluate(makeSet(baselineAggregates(), {}, unpinned), makeSet(baselineAggregates(), {}, unpinned),
+                                   testPolicy(), ref());
+  CHECK(both.result == "pass");
+  CHECK_FALSE(gate::at(both.document, {"protocol", "conformant"})->asBool());  // the policy asks for pinned children
+}
+
+TEST_CASE("the verdict records the pinning state and conformance needs it", "[runtime][gate][evaluate]") {
+  const auto pinned = run(same());
+  CHECK(*gate::at(pinned.document, {"protocol", "pin"}) == gate::pinValue(true));
+  CHECK(gate::at(pinned.document, {"protocol", "conformant"})->asBool());
+}

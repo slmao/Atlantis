@@ -86,6 +86,7 @@ struct RunPlan {
   bool idleWait = true;
   double childTimeoutSeconds = 300.0;
   IdlePolicy idle;
+  bool pin = false;     // the children run with --pin-process on
   std::string tempDir;  // where each child writes its document; the caller creates it
 };
 
@@ -107,6 +108,13 @@ struct SessionResult {
 // warmup duration it is the preheat (a single measured frame, result discarded).
 [[nodiscard]] std::vector<std::string> childArguments(const RunPlan& plan, const std::string& outputPath,
                                                       double warmupSeconds);
+
+// Owner ruling on the Plan 0060 M7 stop: inside this process only, opt out of process power
+// throttling (EcoQoS: `PROCESS_POWER_THROTTLING_EXECUTION_SPEED` off) and raise the priority class
+// to HIGH, so the OS scheduler does not park the render thread on a slow core. Process-level
+// measurement-environment control, not a hardware clock or power setting. Returns false with a
+// reason when the platform refuses (a pinned run that could not be pinned must not pose as one).
+[[nodiscard]] bool pinCurrentProcess(std::string& error);
 
 // The real implementations (Windows only; gate_process_windows.cpp).
 [[nodiscard]] std::unique_ptr<Clock> makeSystemClock();

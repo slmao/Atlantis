@@ -196,6 +196,9 @@ Value makeBaseline(Value set, const BaselineProvenance& provenance, Value mdr) {
   block.set("recorded_commit", Value::string(provenance.recordedCommit));
   block.set("git_dirty", Value::boolean(provenance.gitDirty));
   block.set("recorded_at", Value::string(provenance.recordedAt));
+  // The pinning state the baseline was recorded under (mirrors protocol.pin: a pinned run never compares
+  // against an unpinned baseline).
+  if (const Value* pin = at(set, {"protocol", "pin"})) block.set("pin", *pin);
   block.set("sessions", std::move(sessions));
   block.set("reason", std::move(reason));
   set.set("mdr", std::move(mdr));
@@ -259,6 +262,11 @@ std::vector<std::string> validateStore(const std::string& baselinesDir) {
         if (a == nullptr || b == nullptr || !(*a == *b)) same = false;
       }
       if (!same) problems.push_back(where + ": its meta is not the identity of profile '" + profile.id + "'");
+      const Value* pin = at(doc, {"protocol", "pin"});
+      const Value* recordedPin = field({"pin"});
+      if (pin == nullptr || !pin->isObject() || recordedPin == nullptr || !(*recordedPin == *pin)) {
+        problems.push_back(where + ": protocol.pin and baseline.pin are missing or differ (the pinning state is part of a baseline)");
+      }
       const Value* idle = at(doc, {"protocol", "idle_wait"});
       const auto preheat = numberOf(at(doc, {"protocol", "preheat_seconds"}));
       if (idle == nullptr || !idle->isBool() || !idle->asBool() || !preheat || *preheat <= 0.0) {

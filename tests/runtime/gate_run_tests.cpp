@@ -64,6 +64,8 @@ struct Fixture {
     std::vector<json::Value> runs;
     for (std::size_t i = 0; i < 5; ++i) runs.push_back(makeRun(metricsAt(1.0, wobble(i)), identity));
     gate::Protocol protocol;
+    protocol.preheatSeconds = 60.0;
+    protocol.pin = true;
     auto set = gate::buildSet(protocol, runs);
     REQUIRE(set.isOk());
     json::Value doc = set.value();
@@ -153,6 +155,11 @@ TEST_CASE("an unchanged candidate passes: exit 0 and exactly one gate document o
   CHECK(gate::at(o.verdict, {"baseline", "commit"})->asString() == "abc123");
   CHECK(gate::at(o.verdict, {"protocol", "conformant"})->asBool());
   CHECK(o.calls.size() == 6);  // the preheat and the five runs of the policy
+  for (const auto& call : o.calls) {
+    const auto it = std::find(call.args.begin(), call.args.end(), "--pin-process");
+    REQUIRE(it != call.args.end());
+    CHECK(*(it + 1) == "on");  // the policy's children run pinned
+  }
   CHECK(o.out.back() == '\n');
   CHECK(std::count(o.out.begin(), o.out.end(), '\n') == 1);  // one document, one line
   CHECK(o.err.empty());
@@ -388,4 +395,20 @@ TEST_CASE("the same inputs give the same bytes", "[runtime][gate][run]") {
   const auto b = f.run(request());
   CHECK(a.out == b.out);
   CHECK(a.exitCode == b.exitCode);
+}
+
+TEST_CASE("an unpinned smoke run against a pinned baseline is not judged", "[runtime][gate][run]") {
+  Fixture f;
+  f.writeStore();
+  cli::GateRequest r = request();
+  r.pinProcess = false;
+  const auto o = f.run(r);
+  CHECK(o.exitCode == 5);
+  CHECK(verdictOf(o) == "incomparable");
+  const auto& reasons = o.verdict.find("reasons")->asArray();
+  REQUIRE_FALSE(reasons.empty());
+  CHECK(reasons[0].asString().find("protocol.pin differs") != std::string::npos);
+  for (const auto& call : o.calls) {
+    CHECK(std::find(call.args.begin(), call.args.end(), "--pin-process") == call.args.end());
+  }
 }

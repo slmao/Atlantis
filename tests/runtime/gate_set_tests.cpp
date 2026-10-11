@@ -108,6 +108,7 @@ TEST_CASE("the set records the protocol and the runs' common meta, scene and set
   CHECK(gate::at(doc, {"protocol", "idle_wait"})->asBool() == false);
   CHECK(number(gate::at(doc, {"protocol", "preheat_seconds"})) == 0.0);
   CHECK(gate::at(doc, {"protocol", "child_stderr"})->asString() == "discarded");
+  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(false));  // the default protocol is unpinned
   CHECK(gate::at(doc, {"scene", "name"})->asString() == "bistro");
   CHECK(number(gate::at(doc, {"settings", "resolution", "width"})) == 1920.0);
   CHECK(gate::at(doc, {"meta", "system", "gpu"})->asString() == "Test GPU");
@@ -152,4 +153,18 @@ TEST_CASE("the same runs always give the same bytes", "[runtime][gate][set]") {
   const auto parsed = json::parse(json::write(a.value()));
   REQUIRE(parsed.isOk());
   CHECK(parsed.value() == a.value());
+}
+
+TEST_CASE("the pinning state is recorded in the set", "[runtime][gate][set]") {
+  CHECK(gate::at(gate::pinValue(true), {"power_throttling"})->asString() == "disabled");
+  CHECK(gate::at(gate::pinValue(true), {"priority_class"})->asString() == "high");
+  CHECK(gate::at(gate::pinValue(false), {"power_throttling"})->asString() == "default");
+  CHECK(gate::at(gate::pinValue(false), {"priority_class"})->asString() == "normal");
+  const std::vector<json::Value> runs{makeRun({{"cpu_active_ms", 12.0}})};
+  gate::Protocol pinned = protocol();
+  pinned.pin = true;
+  const auto set = gate::buildSet(pinned, runs);
+  REQUIRE(set.isOk());
+  CHECK(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(true));
+  CHECK_FALSE(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(false));
 }

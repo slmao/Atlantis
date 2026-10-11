@@ -813,3 +813,52 @@ TEST_CASE("parseCommandLine(): --help lists the command lines of the gate", "[ru
   CHECK(result.message.find("--gate --applies") != std::string::npos);
   CHECK(result.message.find("--warmup-seconds") != std::string::npos);
 }
+
+TEST_CASE("parseCommandLine(): --pin-process is the benchmark's and the gate's process pin", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.benchmark.has_value());
+    CHECK_FALSE(result.benchmark->pinProcess);  // a plain benchmark is unpinned, as it always was
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--pin-process", "on"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.benchmark.has_value());
+    CHECK(result.benchmark->pinProcess);
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--pin-process", "off"};
+    CHECK_FALSE(parseCommandLine(fa.argc(), fa.argv(), whitelist).benchmark->pinProcess);
+  }
+  {
+    FakeArgv fa{"--gate"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.gate.has_value());
+    CHECK_FALSE(result.gate->pinProcess.has_value());  // the policy decides
+  }
+  {
+    FakeArgv fa{"--gate", "--pin-process", "off"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.gate.has_value());
+    REQUIRE(result.gate->pinProcess.has_value());
+    CHECK_FALSE(*result.gate->pinProcess);
+  }
+  for (const char* bad : {"maybe", "1", ""}) {
+    FakeArgv fa{"--gate", "--pin-process", bad};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "invalid --pin-process");
+  }
+  {
+    FakeArgv fa{"--gate", "--pin-process", "on", "--pin-process", "off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--pin-process supplied more than once");
+  }
+  {
+    FakeArgv fa{"--pin-process", "on"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--pin-process", "on"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
+  }
+}

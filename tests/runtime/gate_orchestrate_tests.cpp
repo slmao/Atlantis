@@ -50,6 +50,7 @@ gate::RunPlan plan(const TempDir& dir) {
   p.scene = "bistro";
   p.runs = 3;
   p.preheatSeconds = 90.0;
+  p.pin = true;
   p.idleWait = true;
   p.idle = {90.0, 10.0, 120.0};
   p.childTimeoutSeconds = 300.0;
@@ -135,6 +136,7 @@ TEST_CASE("a session waits for idle, preheats once, then runs R children in orde
     CHECK(argAfter(run, "--variant") == "baseline");
     CHECK(argAfter(run, "--resolution") == "1920x1080");
     CHECK(argAfter(run, "--output").find("run_" + std::to_string(i) + ".json") != std::string::npos);
+    CHECK(argAfter(run, "--pin-process") == "on");  // the children run pinned
     CHECK_FALSE(hasArg(run, "--warmup-seconds"));
     CHECK_FALSE(hasArg(run, "--warmup"));  // the defaults of ADR-0117 apply
     CHECK_FALSE(hasArg(run, "--frames"));
@@ -236,12 +238,21 @@ TEST_CASE("the child arguments are the benchmark's own flags, in a fixed order",
   TempDir dir;
   gate::RunPlan p = plan(dir);
   p.variant = atlantis::runtime::cli::BenchmarkVariant::NoPointLights;
+  p.pin = false;
   p.width = 1280;
   p.height = 720;
   const auto args = gate::childArguments(p, "out.json", 0.0);
   const std::vector<std::string> expected = {"--benchmark", "bistro",      "--variant", "no-point-lights",
                                              "--resolution", "1280x720", "--output",  "out.json"};
   CHECK(args == expected);
+  p.pin = false;  // an unpinned plan asks nothing of its children
+  CHECK(gate::childArguments(p, "out.json", 0.0) == expected);
+  p.pin = true;
+  const auto pinned = gate::childArguments(p, "out.json", 0.0);
+  CHECK(pinned.size() == expected.size() + 2);
+  CHECK(pinned[pinned.size() - 2] == "--pin-process");
+  CHECK(pinned[pinned.size() - 1] == "on");
+  p.pin = false;
   const auto preheat = gate::childArguments(p, "out.json", 2.5);
   CHECK(preheat.size() == expected.size() + 4);
   CHECK(preheat[preheat.size() - 4] == "--warmup-seconds");

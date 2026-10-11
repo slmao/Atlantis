@@ -34,7 +34,12 @@ struct Protocol {
   double preheatSeconds = 90.0;
   bool idleWait = true;
   double k = 3.0;
+  bool pin = false;  // the children ran with --pin-process on
 };
+
+// The pinning state a run was made under, as the documents record it: a pinned run is never
+// compared against an unpinned baseline (the evaluator refuses).
+[[nodiscard]] Value pinValue(bool pinned);
 
 // One run's run-level values, keyed `cpu_active_ms`, `zones.<Zone>`,
 // `passes.<label>.gpu_ms`, ...

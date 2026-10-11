@@ -115,6 +115,10 @@ std::vector<std::string> childArguments(const RunPlan& plan, const std::string& 
                                    std::to_string(plan.width) + "x" + std::to_string(plan.height),
                                    "--output",
                                    outputPath};
+  if (plan.pin) {
+    args.push_back("--pin-process");
+    args.push_back("on");
+  }
   if (warmupSeconds > 0.0) {
     args.push_back("--warmup-seconds");
     args.push_back(formatNumber(warmupSeconds));

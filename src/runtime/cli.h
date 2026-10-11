@@ -94,6 +94,10 @@ struct BenchmarkRequest {
   // `warmup` frames AND this many seconds have elapsed (default 0: warmup frames only). It
   // exists so the gate's preheat is a duration, not a frame count; nothing measured changes.
   double warmupSeconds = 0.0;
+  // Owner ruling on the Plan 0060 M7 stop (2026-10-11): `--pin-process on|off` -- inside this process
+  // only, opt out of power throttling and raise the priority class (process-level measurement-environment
+  // control; nothing in the measured loop changes). Default off, so a plain --benchmark behaves as before.
+  bool pinProcess = false;
 };
 
 // Plan 0060 M3 (ADR-0119 D5): `--gate [...]`, `--gate --record ...` and `--gate --applies`.
@@ -116,6 +120,7 @@ struct GateRequest {
   std::optional<unsigned int> runs;            // --runs: the policy's value when absent
   std::optional<double> preheatSeconds;        // --preheat-seconds: the policy's value when absent
   bool idleWait = true;                        // --idle-wait on|off
+  std::optional<bool> pinProcess;              // --pin-process on|off: the policy's value when absent
   std::optional<std::string> baselinesDir;     // --baselines
   std::optional<std::string> profileId;        // --profile <id>|auto (auto: match this machine)
   std::optional<std::string> policyPath;       // --policy

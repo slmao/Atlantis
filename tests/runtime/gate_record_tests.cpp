@@ -123,7 +123,9 @@ TEST_CASE("recording runs the protocol once per session, waits between sessions,
   CHECK(*gate::numberOf(gate::at(doc, {"aggregate", "cpu_active_ms", "n"})) == 10.0);  // both sessions' runs
   CHECK(*gate::numberOf(gate::at(doc, {"protocol", "runs"})) == 5.0);
   CHECK(gate::at(doc, {"protocol", "idle_wait"})->asBool());
-  CHECK(*gate::numberOf(gate::at(doc, {"protocol", "preheat_seconds"})) == 90.0);
+  CHECK(*gate::numberOf(gate::at(doc, {"protocol", "preheat_seconds"})) == 60.0);
+  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(true));
+  CHECK(*gate::at(doc, {"baseline", "pin"}) == gate::pinValue(true));  // the pinning state is in the provenance
   CHECK(gate::at(doc, {"baseline", "profile"})->asString() == "test-gpu-windows-60hz");
   CHECK(gate::at(doc, {"baseline", "recorded_at"})->asString() == "2026-10-12T00:00:00Z");
   CHECK(gate::at(doc, {"baseline", "sessions"})->asArray().size() == 2);
@@ -193,6 +195,7 @@ TEST_CASE("a smoke protocol is never recorded", "[runtime][gate][record]") {
       {"idle wait off", [](cli::GateRequest& r) { r.idleWait = false; }},
       {"a short preheat", [](cli::GateRequest& r) { r.preheatSeconds = 5.0; }},
       {"too few runs", [](cli::GateRequest& r) { r.runs = 2; }},
+      {"unpinned children", [](cli::GateRequest& r) { r.pinProcess = false; }},
   };
   for (const Case& c : cases) {
     INFO(c.what);

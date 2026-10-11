@@ -18,10 +18,10 @@ constexpr std::string_view kUsageText =
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
     "                        [--variant <v>] [--json] [--output <path>] [--baseline <path>] [--series]\n"
-    "                        [--gpu-timing=on|off] [--warmup-seconds <s>]\n"
+    "                        [--gpu-timing=on|off] [--warmup-seconds <s>] [--pin-process on|off]\n"
     "       atlantis_runtime --gate [--scene <name>] [--variant <v>] [--resolution <W>x<H>] [--runs <n>]\n"
     "                        [--baselines <dir>] [--profile <id>|auto] [--policy <file>] [--json]\n"
-    "                        [--output <path>] [--idle-wait on|off] [--preheat-seconds <s>]\n"
+    "                        [--output <path>] [--idle-wait on|off] [--preheat-seconds <s>] [--pin-process on|off]\n"
     "       atlantis_runtime --gate --record --record-to <dir> --reason-category <1-4> --reason <text>\n"
     "                        [--sessions <n>] [--session-gap-minutes <m>] [the --gate options above]\n"
     "       atlantis_runtime --gate --applies [--applicability <file>]   (changed paths on stdin)\n"
@@ -120,7 +120,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   // Plan 0060 M3 (ADR-0119 D5): --gate and its options; --warmup-seconds is the benchmark's.
   int gateCount = 0, recordCount = 0, appliesCount = 0, runsCount = 0, baselinesCount = 0, profileCount = 0;
   int policyCount = 0, idleWaitCount = 0, preheatCount = 0, sessionsCount = 0, gapCount = 0, categoryCount = 0;
-  int reasonCount = 0, recordToCount = 0, applicabilityCount = 0, warmupSecondsCount = 0;
+  int reasonCount = 0, recordToCount = 0, applicabilityCount = 0, warmupSecondsCount = 0, pinCount = 0;
+  std::string_view pinText;
   std::string_view runsText, baselinesDir, profileId, policyPath, idleWaitText, preheatText, sessionsText, gapText;
   std::string_view categoryText, reasonText, recordTo, applicabilityPath, warmupSecondsText;
 
@@ -183,6 +184,10 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++warmupSecondsCount > 1) return makeError("--warmup-seconds supplied more than once");
       if (i + 1 >= argc) return makeError("--warmup-seconds requires a value");
       warmupSecondsText = argv[++i];
+    } else if (arg == "--pin-process") {
+      if (++pinCount > 1) return makeError("--pin-process supplied more than once");
+      if (i + 1 >= argc) return makeError("--pin-process requires a value");
+      pinText = argv[++i];
     } else if (arg == "--gate") {
       if (++gateCount > 1) return makeError("--gate supplied more than once");
     } else if (arg == "--record") {
@@ -273,7 +278,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   if (editorCount > 0 && execCount > 0) return makeError("--editor and --exec may not be combined");
   // Spec 0059 / ADR-0117 D1: the benchmark measures a scene; nothing else may drive it.
   const int benchmarkOptions = warmupCount + framesCount + resolutionCount + variantCount + jsonCount + outputCount +
-                               baselineCount + seriesCount + gpuTimingCount + warmupSecondsCount;
+                               baselineCount + seriesCount + gpuTimingCount + warmupSecondsCount + pinCount;
   // Plan 0060 M3: --variant, --resolution, --json and --output are shared with --gate; the rest are the
   // benchmark's alone.
   const int benchmarkOnlyOptions = warmupCount + framesCount + baselineCount + seriesCount + gpuTimingCount +
@@ -308,8 +313,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
                                    : (appliesCount > 0 ? GateRequest::Mode::Applies : GateRequest::Mode::Gate);
     if (request.mode == GateRequest::Mode::Applies) {
       if (sceneCount + variantCount + resolutionCount + runsCount + baselinesCount + profileCount + policyCount +
-              idleWaitCount + preheatCount + jsonCount + outputCount + sessionsCount + gapCount + categoryCount +
-              reasonCount + recordToCount >
+              idleWaitCount + preheatCount + pinCount + jsonCount + outputCount + sessionsCount + gapCount +
+              categoryCount + reasonCount + recordToCount >
           0) {
         return makeError("--applies takes only --applicability");
       }
@@ -352,6 +357,15 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
         request.idleWait = false;
       } else {
         return makeError(std::string("invalid --idle-wait value (on or off): ").append(idleWaitText));
+      }
+    }
+    if (pinCount > 0) {
+      if (pinText == "on") {
+        request.pinProcess = true;
+      } else if (pinText == "off") {
+        request.pinProcess = false;
+      } else {
+        return makeError(std::string("invalid --pin-process value (on or off): ").append(pinText));
       }
     }
     if (baselinesCount > 0) request.baselinesDir = std::string(baselinesDir);
@@ -409,6 +423,15 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       const auto variant = parseVariant(variantText);
       if (!variant.has_value()) return makeError(std::string("unrecognized --variant value: ").append(variantText));
       request.variant = *variant;
+    }
+    if (pinCount > 0) {
+      if (pinText == "on") {
+        request.pinProcess = true;
+      } else if (pinText == "off") {
+        request.pinProcess = false;
+      } else {
+        return makeError(std::string("invalid --pin-process value (on or off): ").append(pinText));
+      }
     }
     if (warmupSecondsCount > 0 && !parseDecimal(warmupSecondsText, 0.0, 3600.0, request.warmupSeconds)) {
       return makeError(std::string("invalid --warmup-seconds: ").append(warmupSecondsText));

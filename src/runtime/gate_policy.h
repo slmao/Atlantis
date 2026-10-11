@@ -41,6 +41,7 @@ struct ProtocolPolicy {
   double preheatSeconds = 90.0;
   double k = 3.0;
   double childTimeoutSeconds = 300.0;
+  bool pinProcess = true;  // the children run pinned (owner ruling on the M7 stop)
   IdlePolicy idle;
 };
 

@@ -49,6 +49,7 @@ json::Value setOf(const DocumentIdentity& identity = {}, bool idleWait = true, d
   gate::Protocol protocol;
   protocol.idleWait = idleWait;
   protocol.preheatSeconds = preheat;
+  protocol.pin = true;
   const auto set = gate::buildSet(protocol, runs);
   REQUIRE(set.isOk());
   return set.value();
@@ -385,6 +386,15 @@ TEST_CASE("the guard finds every way a committed baseline can be wrong", "[runti
                    rewrite(f, [](json::Value& d) { d.set("aggregate", json::Value::object()); });
                  }),
                  "no aggregate"));
+  // The pinning state is part of a baseline: missing, or not mirrored in the provenance.
+  CHECK(mentions(problemsFor([&](const TempStore&, const std::string& f) {
+                   rewrite(f, [](json::Value& d) {
+                     json::Value block = *d.find("baseline");
+                     block.set("pin", gate::pinValue(false));
+                     d.set("baseline", std::move(block));
+                   });
+                 }),
+                 "protocol.pin and baseline.pin"));
   // A baseline in the wrong place, and a stray file.
   CHECK(mentions(problemsFor([&](const TempStore& s, const std::string& f) {
                    fs::rename(f, s.root / "test-profile" / "bistro" / "wrong_name.baseline.json");
