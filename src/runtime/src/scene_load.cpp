@@ -1,3 +1,4 @@
+#include <atlantis/profile.h>
 #include <atlantis/runtime/scene_load.h>
 
 #include <atlantis/assert.h>
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -185,10 +187,12 @@ struct LoadedScene {
     auto createResult = meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
                              ? createMesh(*device, vertexInputLayout, meshAssetData.vertexBytes().data(),
                                           meshAssetData.vertexBytes().size(), meshAssetData.indices32().data(),
-                                          static_cast<std::uint32_t>(meshAssetData.indices32().size()))
+                                          static_cast<std::uint32_t>(meshAssetData.indices32().size()),
+                                          ATL_DEBUG_NAME("mesh:" + atlantis::asset_system::toHexString(distinctMeshIds[i])))
                              : createMesh(*device, vertexInputLayout, meshAssetData.vertexBytes().data(),
                                           meshAssetData.vertexBytes().size(), meshAssetData.indices().data(),
-                                          static_cast<std::uint32_t>(meshAssetData.indices().size()));
+                                          static_cast<std::uint32_t>(meshAssetData.indices().size()),
+                                          ATL_DEBUG_NAME("mesh:" + atlantis::asset_system::toHexString(distinctMeshIds[i])));
     if (createResult.isErr()) {
       ATLANTIS_LOG_ERROR("createMesh() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);

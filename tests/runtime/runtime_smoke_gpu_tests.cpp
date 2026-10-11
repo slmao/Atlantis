@@ -1,7 +1,9 @@
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/profile_recorder.h>
 #include <atlantis/cli/command.h>
 #include <atlantis/cli/invocation.h>
 #include <atlantis/connection/json.h>
+#include <atlantis/connection/text.h>
 #include <atlantis/remote/remote_client.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -42,6 +44,9 @@
 
 #include "png_codec.h"
 #include "../../src/runtime/editor_attachment.h"
+#include "vulkan_debug_utils.h"  // Plan 0059 M5: the debug-name observer
+#include "../../src/runtime/benchmark_run.h"
+#include "../../src/runtime/benchmark_variants.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -1318,3 +1323,363 @@ TEST_CASE("Editor north star: Bistro's point light 6b63b12c 12 to 24, and the ca
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif
 }
+
+// Plan 0059 M5 (Spec 0059 R5, ADR-0115 D5): the Runtime names the GPU objects
+// it creates and the frame's command list, so a capture shows them by name.
+// Vulkan has no call to read a name back; the backend's debug-utils wrapper
+// reports every name it is asked to set to a process-wide test observer.
+TEST_CASE("Runtime gives its GPU objects and its frame's command list stable names",
+          "[runtime][gpu][debug_names]") {
+  std::vector<std::pair<VkObjectType, std::string>> names;
+  atlantis::vulkan_backend::detail::DebugUtilsObserver observer;
+  observer.onName = [&names](VkObjectType type, std::string_view name) { names.emplace_back(type, std::string(name)); };
+  atlantis::vulkan_backend::detail::setGlobalDebugUtilsObserverForTesting(&observer);
+
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = sceneGuidFromDefinition(ATLANTIS_RUNTIME_BLOOM_SCENE_GUID);
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  for (int i = 0; i < 3 && app.shouldContinue(); ++i) app.runFrame();
+  REQUIRE(app.shouldContinue());
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  atlantis::vulkan_backend::detail::setGlobalDebugUtilsObserverForTesting(nullptr);
+
+  const auto has = [&names](VkObjectType type, const std::string& name) {
+    for (const auto& [t, n] : names) {
+      if (t == type && n == name) return true;
+    }
+    return false;
+  };
+  const auto hasPrefix = [&names](const std::string& prefix) {
+    for (const auto& [t, n] : names) {
+      if (n.rfind(prefix, 0) == 0) return true;
+    }
+    return false;
+  };
+#if defined(ATLANTIS_GPU_MARKERS)
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "camera_uniform"));
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "fullscreen_triangle_vb"));
+  CHECK(has(VK_OBJECT_TYPE_BUFFER, "shadow_light_space_uniform"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "shadow_map"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "depth"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "hdr_color"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_d1"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_u1"));
+  CHECK(has(VK_OBJECT_TYPE_IMAGE, "bloom_composite"));
+  CHECK(has(VK_OBJECT_TYPE_SAMPLER, "bloom_sampler"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:shadow_cast"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:output_transform"));
+  CHECK(has(VK_OBJECT_TYPE_PIPELINE, "pipeline:bloom_0"));
+  CHECK(has(VK_OBJECT_TYPE_COMMAND_BUFFER, "frame"));
+  CHECK(hasPrefix("mesh:"));
+  CHECK(hasPrefix("pipeline:material:"));
+  CHECK(hasPrefix("texture:"));
+  CHECK(hasPrefix("sampler:"));
+  // A scene resource's name is "<kind>:<16 lowercase hex digits>".
+  for (const auto& [type, name] : names) {
+    if (name.rfind("mesh:", 0) == 0 && name.find('/') == std::string::npos) {
+      CHECK(name.size() == 5 + 16);
+    }
+  }
+#else
+  CHECK(names.empty());
+#endif
+}
+
+// Plan 0059 M7 (Spec 0059 R3, R4, R6): a recorded Runtime frame carries every zone
+// of the Zone map, every counter-set key the Runtime and the backend produce, and
+// the GPU regions of its passes -- on the default scene, under fatal validation.
+#if defined(ATLANTIS_PROFILING)
+TEST_CASE("Runtime: a profiled frame carries every Zone-map zone, counter and pass region",
+          "[runtime][gpu][profile]") {
+  namespace profile = atlantis::profile;
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+
+  const auto zoneCount = [](const profile::FrameRecord& record, const char* name) {
+    return record.zoneCount[profile::internName(name)];
+  };
+  const auto counter = [](const profile::FrameRecord& record, const char* name) {
+    return record.counter[profile::internName(name)];
+  };
+
+  profile::startRecording();
+  const std::uint64_t firstFrame = profile::currentFrameId() + 1;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  // The first frame realizes the scene's materials: the one-off stall and upload.
+  // (Read now: the recorder keeps only the last few frames.)
+  profile::FrameRecord first;
+  REQUIRE(profile::readFrame(firstFrame, first));
+  CHECK(first.presented);
+  CHECK(zoneCount(first, "WaitIdle") > 0);
+  CHECK(counter(first, "materials_realized") == 4.0);
+  CHECK(counter(first, "upload_bytes") > 0.0);
+
+  constexpr int kFrames = 6;
+  for (int i = 1; i < kFrames && app.shouldContinue(); ++i) app.runFrame();
+  REQUIRE(app.shouldContinue());
+  profile::stopRecording();
+
+  // A later frame whose GPU results have arrived (they come one frame late).
+  profile::FrameRecord steady;
+  bool found = false;
+  for (std::uint64_t id = firstFrame + 2; id + 1 < firstFrame + kFrames; ++id) {
+    if (profile::readFrame(id, steady) && steady.presented && steady.gpuDelivered) {
+      found = true;
+      break;
+    }
+  }
+  REQUIRE(found);
+
+  for (const char* zone : {"Frame", "World", "Runtime", "Acquire", "RenderExtraction", "Renderer", "RenderGraph",
+                           "Submit", "Present", "WaitPreviousGpu", "RecordPass:shadow", "RecordPass:draw",
+                           "RecordPass:output_transform"}) {
+    INFO(zone);
+    CHECK(zoneCount(steady, zone) > 0);
+  }
+  CHECK(zoneCount(steady, "WaitIdle") == 0);  // not a realization frame
+  CHECK(steady.zoneNs[profile::internName("Frame")] > 0);
+
+  CHECK(counter(steady, "renderables_total") == 6.0);  // integrated_showcase_demo: one ground plane, five spheres
+  CHECK(counter(steady, "renderables_drawn") == 6.0);
+  CHECK(counter(steady, "renderables_culled") == 0.0);  // there is no culling
+  CHECK(counter(steady, "lights_directional") >= 1.0);
+  CHECK(counter(steady, "uniform_write_bytes") > 0.0);
+  CHECK(counter(steady, "draw_calls") >= 12.0);  // six shadow-pass draws and six main-pass draws
+  CHECK(counter(steady, "triangles") > 0.0);
+  CHECK(counter(steady, "pipeline_binds") > 0.0);
+  CHECK(counter(steady, "vertex_buffer_binds") > 0.0);
+  CHECK(counter(steady, "index_buffer_binds") > 0.0);
+  CHECK(counter(steady, "descriptor_set_binds") > 0.0);
+  CHECK(counter(steady, "descriptor_writes") > 0.0);
+  CHECK(counter(steady, "push_constants") > 0.0);
+
+  // GPU regions: the passes (depth 0) and the draw pass's Opaque segment (depth 1).
+  bool shadow = false, draw = false, outputTransform = false, opaque = false;
+  for (std::uint32_t i = 0; i < steady.regionCount; ++i) {
+    const std::string_view name = profile::nameOf(steady.regions[i].name);
+    if (name == "shadow") shadow = true;
+    if (name == "draw") draw = true;
+    if (name == "output_transform") outputTransform = true;
+    if (name == "Opaque") {
+      opaque = true;
+      CHECK(steady.regions[i].depth == 1);
+    }
+    CHECK(steady.regions[i].endNs >= steady.regions[i].beginNs);
+  }
+  CHECK(shadow);
+  CHECK(draw);
+  CHECK(outputTransform);
+  CHECK(opaque);
+
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+#endif
+
+// ---------------------------------------------------------------------------
+// Plan 0059 M9 (Spec 0059 R8, R9; ADR-0117 D1-D4): the benchmark. The variants on
+// the real Bistro scene (content-gated), and a whole `--benchmark` run on the
+// default scene. Each in its own TEST_CASE: catch_discover_tests runs every case
+// in its own process, and a process creates one window lifecycle.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+namespace bench = atlantis::runtime::benchmark;
+
+#if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+// A Bistro application, three frames in, and the variant submitted and applied;
+// returns the application's own view of the lights after the edit.
+struct VariantRun {
+  std::size_t pointLightsBefore = 0;
+  std::size_t pointLightsAfter = 0;
+  float fogBefore = 0.0f;
+  float bloomBefore = 0.0f;
+  std::string problem;
+  std::size_t commands = 0;
+};
+
+[[nodiscard]] VariantRun runBistroVariant(atlantis::runtime::cli::BenchmarkVariant variant) {
+  namespace cli = atlantis::runtime::cli;
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  auto connection = app.openConnection();
+  for (int i = 0; i < 2; ++i) app.runFrame();
+
+  VariantRun out;
+  const auto before = app.captureFrameData();
+  REQUIRE(before.isOk());
+  out.pointLightsBefore = before.value().pointLights.size();
+  const auto schema = connection->schema();
+  const auto fog = atlantis::connection::text::parsePath(schema, "Camera.fog.density");
+  const auto bloom = atlantis::connection::text::parsePath(schema, "Camera.bloom.strength");
+  REQUIRE(fog.isOk());
+  REQUIRE(bloom.isOk());
+  for (const auto& entity : connection->listEntities()) {
+    const auto components = connection->listComponents(entity);
+    if (!components.isOk() ||
+        std::find(components.value().begin(), components.value().end(), fog.value().component) ==
+            components.value().end()) {
+      continue;
+    }
+    const auto f = connection->getProperty({entity, fog.value().component, fog.value().leaf->id});
+    const auto b = connection->getProperty({entity, bloom.value().component, bloom.value().leaf->id});
+    if (f.isOk()) out.fogBefore = std::get<float>(f.value());
+    if (b.isOk()) out.bloomBefore = std::get<float>(b.value());
+  }
+
+  const auto edit = bench::submitVariant(*connection, variant);
+  REQUIRE(edit.isOk());
+  out.commands = edit.value().commands;
+  app.runFrame();  // the edit applies at this frame's start
+  out.problem = bench::verifyVariant(*connection, variant);
+  const auto after = app.captureFrameData();
+  REQUIRE(after.isOk());
+  out.pointLightsAfter = after.value().pointLights.size();
+  connection.reset();
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  return out;
+}
+#endif
+
+}  // namespace
+
+TEST_CASE("Benchmark variant no-point-lights removes every point light of Bistro", "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoPointLights);
+  CHECK(run.pointLightsBefore == 59);
+  CHECK(run.commands == 59);
+  CHECK(run.problem.empty());
+  CHECK(run.pointLightsAfter == 0);  // the lighting block really has none, not zero-intensity ones
+#endif
+}
+
+TEST_CASE("Benchmark variant no-fog zeroes the camera's fog density on Bistro", "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoFog);
+  CHECK(run.fogBefore > 0.0f);
+  CHECK(run.commands == 1);
+  CHECK(run.problem.empty());
+  CHECK(run.pointLightsAfter == run.pointLightsBefore);  // nothing else changed
+#endif
+}
+
+TEST_CASE("Benchmark variant no-bloom zeroes the camera's bloom strength on Bistro",
+          "[runtime][gpu][benchmark][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  const VariantRun run = runBistroVariant(atlantis::runtime::cli::BenchmarkVariant::NoBloom);
+  CHECK(run.bloomBefore > 0.0f);
+  CHECK(run.commands == 1);
+  CHECK(run.problem.empty());
+#endif
+}
+
+TEST_CASE("Benchmark: a whole run on the default scene writes a valid document, or says the build cannot",
+          "[runtime][gpu][benchmark]") {
+  namespace cli = atlantis::runtime::cli;
+  const std::filesystem::path output = std::filesystem::temp_directory_path() / "atlantis_benchmark_smoke.json";
+  std::filesystem::remove(output);
+
+  cli::BenchmarkRequest request;
+  request.sceneName = "integrated_showcase_demo";
+  request.warmup = 3;
+  request.frames = 12;
+  request.width = 1280;
+  request.height = 720;
+  request.series = true;
+  request.outputPath = output.string();
+  const int code = bench::runBenchmark(request, buildSmokeConfig());
+
+#if defined(ATLANTIS_PROFILING)
+  REQUIRE(code == bench::kExitOk);
+  std::ifstream in(output, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();  // the file must be closed before it is removed below
+  const auto parsed = atlantis::connection::json::parse(text);
+  REQUIRE(parsed.isOk());
+  const auto& doc = parsed.value();
+  CHECK(doc.find("schema")->asString() == "atlantis.benchmark/1");
+  CHECK(std::stoi(doc.find("frames")->find("measured")->numberText()) == 12);
+  CHECK(std::stoi(doc.find("frames")->find("discarded")->numberText()) >= 3);
+  // The window really was the requested size.
+  CHECK(std::stoi(doc.find("settings")->find("resolution")->find("width")->numberText()) == 1280);
+  CHECK(std::stoi(doc.find("settings")->find("resolution")->find("height")->numberText()) == 720);
+  CHECK(doc.find("settings")->find("variant")->asString() == "baseline");
+  const auto* metrics = doc.find("metrics");
+  REQUIRE(metrics != nullptr);
+  for (const char* key : {"frame_ms", "cpu_ms", "cpu_active_ms", "draw_calls", "triangles", "descriptor_writes"}) {
+    INFO(key);
+    REQUIRE(metrics->find(key) != nullptr);
+    CHECK(metrics->find(key)->find("p50") != nullptr);  // available, with statistics
+  }
+  CHECK(std::stod(metrics->find("draw_calls")->find("p50")->numberText()) >= 12.0);
+  if (metrics->find("gpu_busy_ms")->find("p50") != nullptr) {
+    CHECK(std::stod(metrics->find("passes")->find("draw")->find("gpu_ms")->find("p50")->numberText()) > 0.0);
+  }
+  CHECK(doc.find("series")->find("frame_ms")->asArray().size() == 12);
+  CHECK(doc.find("meta")->find("build")->find("profiling")->asBool());
+  std::filesystem::remove(output);
+#else
+  CHECK(code == bench::kExitEnvironment);  // a build without profiling refuses, with the documented code
+  CHECK_FALSE(std::filesystem::exists(output));
+#endif
+}
+
+// Plan 0059 M9 (ADR-0117 D1, D5): the real executable. stdout is exactly one JSON
+// document -- logs go to stderr -- and the exit codes are the documented ones.
+#if defined(_WIN32) && defined(ATLANTIS_RUNTIME_EXECUTABLE)
+TEST_CASE("atlantis_runtime --benchmark: stdout is exactly one JSON document, and the exit codes are as documented",
+          "[runtime][gpu][benchmark][process]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_benchmark_process_test";
+  fs::create_directories(dir);
+  // cmd.exe strips one outer pair of quotes, so the whole command is quoted once more.
+  const auto run = [&](const std::string& args, const fs::path& stdoutFile) {
+    const std::string command = "\"\"" + std::string(ATLANTIS_RUNTIME_EXECUTABLE) + "\" " + args + " > \"" +
+                                stdoutFile.string() + "\" 2> NUL\"";
+    return std::system(command.c_str());
+  };
+  const auto read = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+
+  const fs::path ok = dir / "ok.json";
+  const int code = run("--benchmark integrated_showcase_demo --warmup 3 --frames 10 --resolution 1280x720 --json", ok);
+#if defined(ATLANTIS_PROFILING)
+  CHECK(code == 0);
+  const auto parsed = atlantis::connection::json::parse(read(ok));  // a log line on stdout would fail this
+  CHECK(parsed.isOk());
+  if (parsed.isOk()) CHECK(parsed.value().find("schema")->asString() == "atlantis.benchmark/1");
+#else
+  CHECK(code == 3);
+  CHECK(read(ok).empty());
+#endif
+
+  const fs::path absent = dir / "absent.txt";
+  CHECK(run("--benchmark no_such_scene", absent) == 3);
+  CHECK(read(absent).empty());
+
+  const fs::path usage = dir / "usage.txt";
+  CHECK(run("--benchmark integrated_showcase_demo --frames 0", usage) == 1);
+  CHECK(run("--benchmark integrated_showcase_demo --listen 0", usage) == 1);
+  fs::remove_all(dir);
+}
+#endif

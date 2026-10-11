@@ -1,3 +1,4 @@
+#include <atlantis/profile.h>
 #include <atlantis/renderer/bloom.h>
 #include <atlantis/renderer/renderer.h>
 
@@ -19,6 +20,33 @@
 namespace atlantis::renderer {
 
 namespace {
+
+#if defined(ATLANTIS_PROFILING) || defined(ATLANTIS_GPU_MARKERS)
+// Spec 0059 / ADR-0115 D4 (Spec 0059 Q7): the draw pass's non-blended items,
+// then its blended items back to front (ADR-0090 Decision 2), are two
+// contiguous runs of the draw order, so "Opaque" and "Transparent" are two
+// regions that follow it -- nothing is reordered and no command changes. The
+// pass itself is not split. "Transparent" begins at the first blended item.
+class DrawRegions {
+ public:
+  explicit DrawRegions(atlantis::rhi::CommandList& cmd) : cmd_(cmd) { cmd_.beginRegion("Opaque"); }
+  ~DrawRegions() { cmd_.endRegion(); }
+  DrawRegions(const DrawRegions&) = delete;
+  DrawRegions& operator=(const DrawRegions&) = delete;
+
+  void onItem(bool blended) {
+    if (blended && !transparent_) {
+      cmd_.endRegion();
+      cmd_.beginRegion("Transparent");
+      transparent_ = true;
+    }
+  }
+
+ private:
+  atlantis::rhi::CommandList& cmd_;
+  bool transparent_ = false;
+};
+#endif
 
 // Fixed, Renderer-internal constant (not a caller-configurable parameter
 // this round -- consistent with Spec 0007's own minimal-material scope; a
@@ -65,6 +93,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                           std::span<const DrawItem> shadowCasterDrawItems,
                           const std::optional<std::array<float, 3>>& cameraWorldPosition,
                           const BloomInput* bloom) {
+  ATL_PROFILE_SCOPE("Renderer");
   // Plan 0031 (Spec 0031 Requirement 7): the one real gate for direct/
   // non-asset callers, which bypass cook/decode's own independent
   // check entirely.
@@ -145,6 +174,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     // environmentLighting's own already-realized cubemap/sampler --
     // no new caller-owned resource.
     if (skyPipeline != nullptr) {
+      ATL_PROFILE_GPU_SCOPE(cmd, "Sky");
       if (environmentLighting == nullptr) {
         ATLANTIS_CHECK_MSG(false, "a non-null skyPipeline requires frame-scoped EnvironmentLighting");
       } else {
@@ -159,8 +189,14 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
 
     // Plan 0042 Milestone 3 (ADR-0090 Decision 2): non-blended items in
     // caller order, then blended items back-to-front.
+#if defined(ATLANTIS_PROFILING) || defined(ATLANTIS_GPU_MARKERS)
+    DrawRegions drawRegions(cmd);
+#endif
     for (const std::uint32_t index : drawOrder) {
       const DrawItem& item = drawItems[index];
+#if defined(ATLANTIS_PROFILING) || defined(ATLANTIS_GPU_MARKERS)
+      drawRegions.onItem(isBlended(item));
+#endif
       cmd.bindPipeline(item.material->pipeline());
       cmd.bindVertexBuffer(item.mesh->vertexBuffer());
       cmd.bindIndexBuffer(item.mesh->indexBuffer());
@@ -448,6 +484,7 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
     cmd.drawIndexed(3);
   });
 
+  ATL_PROFILE_SCOPE("RenderGraph");
   auto compileResult = builder.compile();
   ATLANTIS_CHECK_MSG(compileResult.isOk(), "Renderer's fixed pass graph never fails to compile");
 

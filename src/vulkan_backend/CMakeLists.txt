@@ -26,6 +26,10 @@ add_library(atlantis_vulkan_backend STATIC
   src/vulkan_offscreen_render_target.cpp
   src/vulkan_hdr_color_target.cpp
   src/vulkan_shadow_map.cpp
+  src/vulkan_debug_utils.cpp
+  # Plan 0059 M6 (ADR-0115 D3, ADR-0116 D5): GPU region timestamps and Tracy.
+  src/vulkan_gpu_timing.cpp
+  src/vulkan_tracy_context.cpp
 )
 if(WIN32)
   target_sources(atlantis_vulkan_backend PRIVATE src/wsi/win32_surface.cpp)
@@ -48,3 +52,8 @@ target_link_libraries(atlantis_vulkan_backend
     Vulkan::Vulkan
     atlantis_compiler_warnings
 )
+
+# Plan 0059 M6 (ADR-0116 D3): the one backend file that includes Tracy's Vulkan header.
+if(ATLANTIS_PROFILING AND ATLANTIS_PROFILING_TRACY_EFFECTIVE)
+  target_link_libraries(atlantis_vulkan_backend PRIVATE atlantis_tracy)
+endif()

@@ -139,7 +139,11 @@ void onAppCmd(struct android_app* app, std::int32_t cmd) {
 
 }  // namespace
 
-atlantis::Result<std::monostate, PlatformError> initialize() {
+atlantis::Result<std::monostate, PlatformError> initialize() { return initialize(WindowOptions{}); }
+
+// Spec 0059 / ADR-0117 D2: the requested client size is a Windows-window concept;
+// an Android surface is the system's, so the option is ignored.
+atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& /*options*/) {
   State& s = state();
 
   s.outputBuffer.clear();

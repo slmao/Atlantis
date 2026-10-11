@@ -49,6 +49,12 @@ struct InstanceCreateResult {
   // decideDynamicRenderingPath() (dynamic_rendering.h) for every
   // physical-device candidate -- never re-derived per candidate.
   bool instanceRequestedApiVersionAtLeast1_3 = false;
+
+  // Spec 0059 / ADR-0115 D6: true iff VK_EXT_debug_utils was enabled on this
+  // instance -- for the validation messenger (validation on, not Android) or,
+  // with ATLANTIS_GPU_MARKERS, because the loader or a layer offered it. Names
+  // and labels need it; its absence is never an error.
+  bool debugUtilsEnabled = false;
 };
 
 // Creates a VkInstance for params.applicationName, requesting

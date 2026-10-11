@@ -7,6 +7,8 @@
 #include <variant>
 #include <vector>
 
+#include <atlantis/profile.h>
+#include <atlantis/profile_recorder.h>
 #include <atlantis/assert.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 
@@ -543,7 +545,9 @@ VulkanPresentation::acquireNextTarget() {
   // rejects that. (2) recreateIfNeeded() below may destroy the current
   // swapchain; that swapchain's images must not still be in use by a
   // previous frame's outstanding GPU work when that happens.
+  ATL_PROFILE_SCOPE_NAMED(waitPreviousGpuZone, "WaitPreviousGpu");  // nested in the Runtime's Acquire zone
   const auto drainResult = device_.waitAndReleaseRetainedSubmission();
+  ATL_PROFILE_SCOPE_END(waitPreviousGpuZone);
   if (drainResult.isErr()) {
     const atlantis::rhi::SubmitError submitError = drainResult.error();
     return ResultT::Err(submitError == atlantis::rhi::SubmitError::DeviceLost
@@ -708,6 +712,16 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::Presentation>, PresentationCreat
       std::make_unique<detail::VulkanPresentation>(*vulkanDevice, surfaceGuard.get());
 
   (void)surfaceGuard.release();
+
+#if defined(ATLANTIS_PROFILING)
+  {
+    // Spec 0059 (ADR-0117 D6): the present mode is fixed (FIFO, vsync); the
+    // benchmark records it beside the display's refresh rate.
+    atlantis::profile::DeviceInfo info = atlantis::profile::deviceInfo();
+    info.presentMode = "FIFO";
+    atlantis::profile::setDeviceInfo(info);
+  }
+#endif
 
   return ResultT::Ok(std::move(presentation));
 }

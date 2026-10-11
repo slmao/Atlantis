@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string_view>
 #include <memory>
 
 #include <atlantis/result.h>
@@ -50,12 +51,17 @@ enum class CreateMeshError {
 // vertexData/indexData into their mapped memory once, and returns an
 // independently-owned Mesh. Each call produces a new, independent Mesh --
 // no cache, no deduplication.
+//
+// Spec 0059 / ADR-0115 D5: debugName, if non-empty, names the two Buffers
+// ("<name>/vertices", "<name>/indices") for debuggers; diagnostic only, and
+// defaulted so every existing call compiles unchanged.
 [[nodiscard]] atlantis::Result<Mesh, CreateMeshError> createMesh(atlantis::rhi::Device& device,
                                                                   atlantis::rhi::VertexInputLayout layout,
                                                                   const void* vertexData,
                                                                   std::size_t vertexDataSizeBytes,
                                                                   const std::uint16_t* indices,
-                                                                  std::uint32_t indexCount);
+                                                                  std::uint32_t indexCount,
+                                                                  std::string_view debugName = {});
 
 // Spec 0039/ADR-0086: the 32-bit-index sibling, for .amesh schema-5
 // meshes (the glTF importer's own). An overload rather than a widened
@@ -72,6 +78,7 @@ enum class CreateMeshError {
                                                                   const void* vertexData,
                                                                   std::size_t vertexDataSizeBytes,
                                                                   const std::uint32_t* indices,
-                                                                  std::uint32_t indexCount);
+                                                                  std::uint32_t indexCount,
+                                                                  std::string_view debugName = {});
 
 }  // namespace atlantis::renderer

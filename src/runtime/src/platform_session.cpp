@@ -19,7 +19,12 @@ PlatformSession::PlatformSession(PlatformSession&& other) noexcept : active_(oth
 }
 
 atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession() {
-  auto initResult = platform::initialize();
+  return createPlatformSession(platform::WindowOptions{});
+}
+
+atlantis::Result<PlatformSession, atlantis::platform::PlatformError> createPlatformSession(
+    const atlantis::platform::WindowOptions& options) {
+  auto initResult = platform::initialize(options);
   if (initResult.isErr()) {
     return atlantis::Result<PlatformSession, atlantis::platform::PlatformError>::Err(initResult.error());
   }

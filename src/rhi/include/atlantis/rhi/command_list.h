@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/hdr_color_target.h>
@@ -187,6 +188,18 @@ class CommandList {
   // before it addresses the bound vertex buffer. drawIndexed(indexCount) above
   // is drawIndexed(indexCount, 0, 0).
   virtual void drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) = 0;
+
+  // Spec 0059 / ADR-0115 D1: a named, nestable region of this command list --
+  // a debug label for RenderDoc and, in a profiling build, a GPU timestamp pair.
+  // Must balance. Legal inside and outside an attachment scope. Non-pure with
+  // empty bodies, so an implementation with no debugging support (and the test
+  // fakes written before this existed) needs nothing; the set of virtuals does
+  // not depend on any build option. `name` need only live for the call.
+  virtual void beginRegion(std::string_view name) { static_cast<void>(name); }
+  virtual void endRegion() {}
+
+  // Names this command list for debuggers; diagnostic only.
+  virtual void setDebugName(std::string_view name) { static_cast<void>(name); }
 };
 
 }  // namespace atlantis::rhi

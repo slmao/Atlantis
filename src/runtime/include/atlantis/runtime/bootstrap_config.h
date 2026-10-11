@@ -170,6 +170,10 @@ struct BootstrapConfig {
   std::string bloomCompositeFragmentShaderSpirvPath;
   std::string bloomCompositeFragmentShaderReflectionPath;
   bool enableValidationLayers = true;
+  // Spec 0059 / ADR-0117 D2: the window's requested initial client size in pixels;
+  // 0 x 0 (the default) leaves it to the OS, as it always was. Windows only.
+  unsigned int requestedClientWidth = 0;
+  unsigned int requestedClientHeight = 0;
 };
 
 // GPU/window-independent validation for the optional environment portion.

@@ -48,6 +48,16 @@ therefore has no GPU/window/platform lifetime story.
 across modules; there is no "internal-only" Core surface by design — if
 something is Core-internal, it isn't in Core's public headers.
 
+**Profiling (Spec 0059, ADR-0114):** Core also owns the profiling API
+`atlantis/profile.h` (`ATL_PROFILE_*` macros that expand to `((void)0)`, arguments
+unevaluated, unless `ATLANTIS_PROFILING` is on), the in-process recorder
+(`profile_recorder.h`) and the nearest-rank statistics (`profile_stats.h`). The
+recorder is global diagnostics state, frame-thread-only, and the second instance
+of the AGENTS.md logging/diagnostics exception (after the log sink); it holds
+measurements only and never influences engine behavior. Core links the Tracy
+client privately under `ATLANTIS_PROFILING_TRACY` (ADR-0116); no Core header
+names a Tracy or Vulkan type.
+
 **Extension points:** allocator strategy, job/task system (if one is
 introduced) are both explicitly *not decided here* — flagged as open in
 [threading.md](threading.md).
@@ -100,6 +110,12 @@ OS-specific types (`HWND`, `ANativeWindow*`, ...) never cross this public
 surface — see [resource_lifetime.md](resource_lifetime.md) for how
 surface invalidity is expected to propagate.
 
+Since Plan 0059 (ADR-0117 D2) `initialize` has an additive overload taking
+`WindowOptions{requestedClientSize}`: Windows Platform creates the window at
+exactly that client size (DPI-adjusted, and not clamped to the monitor); Android
+Platform ignores it. The original `initialize()` is unchanged. Under profiling,
+Windows Platform publishes the display refresh rate into the Core recorder.
+
 **Extension points:** iOS Platform (future, not designed). Exact shape of
 the opaque native-surface-handle type, and exact shape of lifecycle event
 delivery (callback vs. polled-at-frame-boundary vs. queue) are **not
@@ -142,6 +158,12 @@ can be created sampleable (`OffscreenTargetCreateParams::sampled`) and its
 `RenderTarget` bound as a sampled texture, and a `CommandList` sets a scissor
 rectangle (`Rect2D`) and draws an index range with a vertex offset.
 
+Since Plan 0059 (ADR-0115) the interfaces carry additive instrumentation: a
+trailing `std::string_view debugName` on the creation parameter structs, and
+non-pure `CommandList::beginRegion`/`endRegion`/`setDebugName` (no-ops by
+default). Both are present in every build configuration, so no public layout or
+virtual set depends on a build option. No Vulkan or Tracy type appears.
+
 **Extension points:** a second backend (a native Metal backend for future
 iOS is the one named candidate — see
 [overview.md](overview.md#windowed-vs-headless-the-shared-path-across-platforms))
@@ -181,6 +203,13 @@ tears down the corresponding Vulkan object(s).
 (via implementation) plus whatever narrow construction API Runtime needs
 to stand up a `Device`/`Presentation` at startup. No `Vk*` type crosses
 that construction API's return values — callers get back RHI handles.
+
+Since Plan 0059 (ADR-0115) the backend alone uses `VK_EXT_debug_utils` (an
+optional instance extension, `ATLANTIS_GPU_MARKERS`) to name objects and label
+regions, and, under `ATLANTIS_PROFILING`, owns an Atlantis timestamp query pool
+and a pipeline-statistics query, read back after the existing per-frame fence
+wait (no new wait), and the Tracy Vulkan context. Device and driver metadata
+reaches the Core recorder, not an RHI getter. None of it crosses the RHI.
 
 **Extension points:** future iOS via MoltenVK would extend this module
 with a third WSI path (`VK_MVK_ios_surface`/`VK_EXT_metal_surface`); not
@@ -1092,6 +1121,14 @@ on by, above). `atlantis_runtime`'s own `main()` (Windows; on Android,
 `android_main` in `atlantis_runtime_android`) contains no composition logic of its own beyond building
 a fixed configuration from build-tree paths and driving
 `atlantis_runtime_host`'s own already-public API.
+
+Since Plan 0059 (ADR-0117) the `atlantis_runtime` executable's startup layer
+hosts `--benchmark` (`benchmark_*` sources, private to the executable like
+`editor_attachment`, never part of `atlantis_runtime_host`): it requests the
+window size, applies a variant through `openConnection()`, runs the measured
+loop around `runFrame()` and writes the `atlantis.benchmark/1` document.
+`runFrame()` itself gains only `ATL_PROFILE_*` lines; its other text is guarded
+unchanged. See [profiling.md](../process/profiling.md).
 
 **Extension points:** the headless entry point (offscreen target
 construction instead of Platform/Presentation) remains a future,

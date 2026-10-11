@@ -13,6 +13,11 @@ add_executable(atlantis_core_tests
   assert_tests.cpp
   schema_tests.cpp
   module_boundary_tests.cpp
+  profile_stats_tests.cpp
+  profile_recorder_tests.cpp
+  profile_macros_tests.cpp
+  profile_compiled_out_tests.cpp
+  profile_boundary_tests.cpp
 )
 
 target_link_libraries(atlantis_core_tests
@@ -26,6 +31,9 @@ target_link_libraries(atlantis_core_tests
 # matching tests/asset_system/CMakeLists.txt's ATLANTIS_ASSET_SYSTEM_SOURCE_DIR.
 target_compile_definitions(atlantis_core_tests PRIVATE
   ATLANTIS_CORE_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src/core"
+  # Spec 0059: the public-header scan of profile_boundary_tests.cpp.
+  ATLANTIS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/src"
+  ATLANTIS_CMAKE_DIR="${CMAKE_SOURCE_DIR}/cmake"
 )
 
 # PRE_TEST (not the default POST_BUILD): with a multi-config generator

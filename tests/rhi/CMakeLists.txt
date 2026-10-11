@@ -1,5 +1,6 @@
 add_executable(atlantis_rhi_tests
   types_tests.cpp
+  instrumentation_layout_tests.cpp
 )
 
 target_link_libraries(atlantis_rhi_tests

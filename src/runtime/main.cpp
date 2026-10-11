@@ -7,6 +7,7 @@
 #include <atlantis/runtime/runtime_application.h>
 #include <atlantis/runtime/runtime_control_host.h>
 
+#include "benchmark_run.h"
 #include "cli.h"
 #include "editor_attachment.h"
 
@@ -107,6 +108,20 @@ int main(int argc, char** argv) {
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
   }
 
+  // Spec 0059 / ADR-0117 D1: `--benchmark <scene>` measures a scene instead of
+  // serving a client. A scene that is not on the whitelist (the Bistro entry
+  // exists only with its fetched content) is an environment problem, not a typo.
+  std::optional<atlantis::runtime::benchmark::StderrLogScope> benchmarkLogs;
+  if (cliResult.benchmark.has_value()) benchmarkLogs.emplace();
+  if (cliResult.benchmark.has_value() && !cliResult.benchmark->scene.has_value()) {
+    std::cerr << "atlantis_runtime: --benchmark: scene '" << cliResult.benchmark->sceneName
+              << "' is not available in this build (the bistro scene needs its content: run "
+                 "tools/content/fetch_bistro.ps1 and re-configure)\n";
+    return atlantis::runtime::benchmark::kExitEnvironment;
+  }
+  const SceneSelection& selection =
+      cliResult.benchmark.has_value() ? *cliResult.benchmark->scene : *cliResult.selectedScene;
+
   // Spec 0054 ruling Q3 (Plan 0054 P7): an --exec script is read whole now,
   // before the window exists, so nothing reads input once frames run.
   std::optional<std::string> execScript;
@@ -138,7 +153,7 @@ int main(int argc, char** argv) {
   // Plan 0032 M2: the scene is the only field the CLI selection above
   // varies -- every other assignment in this function is unchanged.
   config.assetCatalogPath = ATLANTIS_RUNTIME_ASSET_CATALOG_PATH;
-  config.sceneAsset = cliResult.selectedScene->sceneAsset;
+  config.sceneAsset = selection.sceneAsset;
   config.unlitTexturedVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.refl.json";
@@ -174,7 +189,7 @@ int main(int argc, char** argv) {
   // Plan 0046 Milestone 3 (ruling O1): an entry flagged disableEnvironmentLight
   // leaves the environment unconfigured -- BootstrapConfig's own "no
   // environment" case (no IBL shaders selected, no sky).
-  if (!cliResult.selectedScene->disableEnvironmentLight) {
+  if (!selection.disableEnvironmentLight) {
     config.environmentArtifactPath = ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH;
     config.environmentMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
   }
@@ -303,6 +318,12 @@ int main(int argc, char** argv) {
   config.bloomCompositeFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.spv";
   config.bloomCompositeFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.refl.json";
   config.enableValidationLayers = true;
+
+  // Spec 0059 / ADR-0117 D1: the benchmark owns its whole run, including the
+  // application's creation, so it can set the window size before the window exists.
+  if (cliResult.benchmark.has_value()) {
+    return atlantis::runtime::benchmark::runBenchmark(*cliResult.benchmark, std::move(config));
+  }
 
   auto appResult = createRuntimeApplication(config);
   if (appResult.isErr()) {

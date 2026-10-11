@@ -1,5 +1,9 @@
 #include <atlantis/renderer/bloom.h>
 
+#include <atlantis/profile.h>
+
+#include <string>
+
 #include <atlantis/assert.h>
 
 #include <algorithm>
@@ -37,24 +41,26 @@ atlantis::Result<BloomTargets, CreateBloomTargetsError> createBloomTargets(atlan
   BloomTargets targets;
   targets.extent_ = hdrExtent;
   const auto levelExtents = bloomLevelExtents(hdrExtent);
-  const auto create = [&device](atlantis::rhi::Extent2D extent) -> std::unique_ptr<atlantis::rhi::HdrColorTarget> {
-    auto result = device.createHdrColorTarget({.extent = extent});
+  const auto create = [&device](atlantis::rhi::Extent2D extent,
+                                std::string_view debugName) -> std::unique_ptr<atlantis::rhi::HdrColorTarget> {
+    auto result = device.createHdrColorTarget({.extent = extent, .debugName = debugName});
     if (result.isErr()) return nullptr;
     return std::move(result.value());
   };
   for (std::size_t level = 0; level < kBloomLevelCount; ++level) {
-    targets.downsample_[level] = create(levelExtents[level]);
+    targets.downsample_[level] = create(levelExtents[level], ATL_DEBUG_NAME("bloom_d" + std::to_string(level + 1)));
     if (!targets.downsample_[level]) return ResultT::Err(CreateBloomTargetsError::TargetCreationFailed);
   }
   for (std::size_t level = 0; level + 1 < kBloomLevelCount; ++level) {
-    targets.upsample_[level] = create(levelExtents[level]);
+    targets.upsample_[level] = create(levelExtents[level], ATL_DEBUG_NAME("bloom_u" + std::to_string(level + 1)));
     if (!targets.upsample_[level]) return ResultT::Err(CreateBloomTargetsError::TargetCreationFailed);
   }
-  targets.composite_ = create(hdrExtent);
+  targets.composite_ = create(hdrExtent, ATL_DEBUG_NAME("bloom_composite"));
   if (!targets.composite_) return ResultT::Err(CreateBloomTargetsError::TargetCreationFailed);
 
-  auto samplerResult = device.createSampler(
-      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  auto samplerResult = device.createSampler({.filter = atlantis::rhi::Filter::Linear,
+                                             .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
+                                             .debugName = ATL_DEBUG_NAME("bloom_sampler")});
   if (samplerResult.isErr()) return ResultT::Err(CreateBloomTargetsError::SamplerCreationFailed);
   targets.sampler_ = std::move(samplerResult.value());
   return ResultT::Ok(std::move(targets));

@@ -266,6 +266,14 @@ struct RecordedRenderTargetBindTexture {
   const atlantis::rhi::RenderTarget* target;
   const atlantis::rhi::Sampler* sampler;
 };
+// Spec 0059 / ADR-0115: regions are logged apart from `events` (existing tests
+// assert exact `events` sequences), each with the number of `events` recorded
+// before it, so a test can relate a region to the commands around it.
+struct RecordedRegionEvent {
+  bool begin;
+  std::string name;  // empty for an end
+  std::size_t eventIndex;
+};
 struct RecordedRangedDraw {
   std::uint32_t indexCount;
   std::uint32_t firstIndex;
@@ -430,6 +438,11 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
     events.push_back(EventKind::CopyBufferToTexture);
   }
 
+  // Spec 0059 / ADR-0115 D1.
+  void beginRegion(std::string_view name) override { regionLog.push_back({true, std::string(name), events.size()}); }
+  void endRegion() override { regionLog.push_back({false, {}, events.size()}); }
+  void setDebugName(std::string_view name) override { debugName = std::string(name); }
+
   enum class EventKind {
     Transition,
     TextureTransition,
@@ -483,6 +496,8 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   std::vector<atlantis::rhi::Rect2D> scissors;                             // Plan 0056 P4
   std::vector<RecordedRangedDraw> rangedDraws;                             // Plan 0056 P4
   std::vector<EventKind> events;  // interleaved order across all recorded calls
+  std::vector<RecordedRegionEvent> regionLog;                              // Spec 0059
+  std::string debugName;                                                   // Spec 0059
 };
 
 }  // namespace atlantis::render_graph::test

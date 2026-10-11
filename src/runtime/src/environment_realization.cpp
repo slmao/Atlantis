@@ -1,3 +1,4 @@
+#include <atlantis/profile.h>
 #include <atlantis/runtime/environment_realization.h>
 
 #include <atlantis/assert.h>
@@ -25,7 +26,8 @@ atlantis::Result<EnvironmentLightingCandidate, EnvironmentRealizationError> real
       {.extent = {environmentData.faceSize, environmentData.faceSize},
        .format = atlantis::rhi::SampledTextureFormat::Rgba16Float,
        .dimension = atlantis::rhi::SampledTextureDimension::TextureCube,
-       .mipLevelCount = environmentData.mipCount});
+       .mipLevelCount = environmentData.mipCount,
+       .debugName = ATL_DEBUG_NAME("environment_prefiltered")});
   if (environmentResult.isErr()) {
     return ResultT::Err(EnvironmentRealizationError::PrefilteredTextureCreateFailed);
   }
@@ -33,7 +35,8 @@ atlantis::Result<EnvironmentLightingCandidate, EnvironmentRealizationError> real
 
   auto dfgResult = device.createSampledTexture(
       {.extent = {environmentData.dfgWidth, environmentData.dfgHeight},
-       .format = atlantis::rhi::SampledTextureFormat::Rg16Float});
+       .format = atlantis::rhi::SampledTextureFormat::Rg16Float,
+       .debugName = ATL_DEBUG_NAME("environment_dfg_lut")});
   if (dfgResult.isErr()) return ResultT::Err(EnvironmentRealizationError::DfgTextureCreateFailed);
   candidate.resources.dfgLut = std::move(dfgResult.value());
 
@@ -42,20 +45,24 @@ atlantis::Result<EnvironmentLightingCandidate, EnvironmentRealizationError> real
        .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
        .mipFilter = atlantis::rhi::MipFilter::Linear,
        .minLod = 0.0F,
-       .maxLod = static_cast<float>(environmentData.mipCount - 1)});
+       .maxLod = static_cast<float>(environmentData.mipCount - 1),
+       .debugName = ATL_DEBUG_NAME("environment_sampler")});
   if (environmentSamplerResult.isErr()) {
     return ResultT::Err(EnvironmentRealizationError::EnvironmentSamplerCreateFailed);
   }
   candidate.resources.environmentSampler = std::move(environmentSamplerResult.value());
 
-  auto dfgSamplerResult = device.createSampler(
-      {.filter = atlantis::rhi::Filter::Linear, .addressMode = atlantis::rhi::AddressMode::ClampToEdge});
+  auto dfgSamplerResult = device.createSampler({.filter = atlantis::rhi::Filter::Linear,
+                                                .addressMode = atlantis::rhi::AddressMode::ClampToEdge,
+                                                .debugName = ATL_DEBUG_NAME("environment_dfg_sampler")});
   if (dfgSamplerResult.isErr()) return ResultT::Err(EnvironmentRealizationError::DfgSamplerCreateFailed);
   candidate.resources.dfgSampler = std::move(dfgSamplerResult.value());
 
   const std::size_t specularBytes = environmentData.specularRgba16Float.size() * sizeof(std::uint16_t);
   auto specularStagingResult =
-      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Staging, .sizeBytes = specularBytes});
+      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Staging,
+                           .sizeBytes = specularBytes,
+                           .debugName = ATL_DEBUG_NAME("environment_specular_staging")});
   if (specularStagingResult.isErr()) {
     return ResultT::Err(EnvironmentRealizationError::SpecularStagingBufferCreateFailed);
   }
@@ -65,7 +72,9 @@ atlantis::Result<EnvironmentLightingCandidate, EnvironmentRealizationError> real
 
   const std::size_t dfgBytes = environmentData.dfgRg16Float.size() * sizeof(std::uint16_t);
   auto dfgStagingResult =
-      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Staging, .sizeBytes = dfgBytes});
+      device.createBuffer({.purpose = atlantis::rhi::BufferPurpose::Staging,
+                           .sizeBytes = dfgBytes,
+                           .debugName = ATL_DEBUG_NAME("environment_dfg_staging")});
   if (dfgStagingResult.isErr()) return ResultT::Err(EnvironmentRealizationError::DfgStagingBufferCreateFailed);
   candidate.dfgStagingBuffer = std::move(dfgStagingResult.value());
   std::memcpy(candidate.dfgStagingBuffer->mappedData(), environmentData.dfgRg16Float.data(), dfgBytes);
