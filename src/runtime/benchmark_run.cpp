@@ -188,6 +188,7 @@ int runBenchmark(const cli::BenchmarkRequest& request, atlantis::runtime::Bootst
 
   LoopOptions options;
   options.warmup = request.warmup;
+  options.warmupDuration = std::chrono::milliseconds(static_cast<std::int64_t>(request.warmupSeconds * 1000.0));
   options.frames = request.frames;
   const LoopResult loop = runMeasuredLoop(options, hooks);
 

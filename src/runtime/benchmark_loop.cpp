@@ -19,12 +19,16 @@ void refreshPrevious(std::vector<profile::FrameRecord>& records) {
 
 LoopResult runMeasuredLoop(const LoopOptions& options, const LoopHooks& hooks) {
   LoopResult result;
-  const std::size_t target = static_cast<std::size_t>(options.warmup) + options.frames;
+  // While a warmup duration is pending the end of warmup is not known in frames, so the target is
+  // open until it ends; without one it is `warmup + frames`, as it always was.
+  const bool timedWarmup = options.warmupDuration.count() > 0;
+  std::size_t target = timedWarmup ? ~std::size_t{0} : static_cast<std::size_t>(options.warmup) + options.frames;
   std::size_t presented = 0;
 
   profile::startRecording();
-  auto lastProgress = hooks.now();
-  bool warmupDone = options.warmup == 0;
+  const auto start = hooks.now();
+  auto lastProgress = start;
+  bool warmupDone = options.warmup == 0 && !timedWarmup;
 
   const auto runOne = [&]() -> bool {
     if (!hooks.runFrame()) return false;
@@ -45,9 +49,10 @@ LoopResult runMeasuredLoop(const LoopOptions& options, const LoopHooks& hooks) {
     if (isPresented) {
       ++presented;
       lastProgress = hooks.now();
-      if (!warmupDone && presented >= options.warmup) {
+      if (!warmupDone && presented >= options.warmup && (!timedWarmup || hooks.now() - start >= options.warmupDuration)) {
         warmupDone = true;
         result.warmupRecords = result.records.size();
+        if (timedWarmup) target = presented + options.frames;
       }
     } else if (hooks.now() - lastProgress > options.noProgressTimeout) {
       result.status = LoopStatus::NoPresentedFrames;

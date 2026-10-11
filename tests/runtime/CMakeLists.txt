@@ -44,9 +44,11 @@ add_executable(atlantis_runtime_tests
   ../../src/runtime/gate_set.cpp
   ../../src/runtime/gate_policy.cpp
   ../../src/runtime/gate_evaluate.cpp
+  ../../src/runtime/gate_orchestrate.cpp
   gate_set_tests.cpp
   gate_policy_tests.cpp
   gate_evaluate_tests.cpp
+  gate_orchestrate_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -128,6 +130,10 @@ add_executable(atlantis_runtime_gpu_tests
   ../../src/runtime/benchmark_loop.cpp
   ../../src/runtime/benchmark_variants.cpp
   ../../src/runtime/benchmark_run.cpp
+  # Plan 0060 M4 (ADR-0119 D1): the gate's real child-process launcher and CPU sampler.
+  ../../src/runtime/gate_orchestrate.cpp
+  ../../src/runtime/gate_process_windows.cpp
+  gate_process_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
