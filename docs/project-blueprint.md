@@ -854,7 +854,23 @@ milestone being listed does not authorize starting it — see Section 1.
     (`docs/architecture/remote_protocol.md` plus committed conformance
     vectors; behaviour changes still need a Spec and an ADR superseding
     ADR-0106). `examples/csharp/GameplayDemo` drives a beacon over the
-    typed surface with run-to-run identical output.
+    typed surface with run-to-run identical output;
+  - since [Spec 0059](specs/0059-profiling-instrumentation.md) (merged
+    [PR #244](https://github.com/slmao/Atlantis/pull/244)), the measurement
+    foundation for later optimization work: an `ATL_PROFILE_*` instrumentation
+    API in Core that compiles to nothing by default, an in-process recorder,
+    GPU timestamps and counters in the Vulkan Backend, `VK_EXT_debug_utils`
+    names and pass labels readable in RenderDoc, an optional Tracy 0.14.1
+    sink, and `atlantis_runtime --benchmark`, which runs a fixed-resolution
+    measured loop on a scene (Bistro is the committed baseline) and writes a
+    versioned JSON report with a baseline comparison and no pass/fail verdict
+    ([ADR-0114](adr/0114-profiling-api-build-configuration-and-recorder.md),
+    [ADR-0115](adr/0115-rhi-instrumentation-boundary.md),
+    [ADR-0116](adr/0116-tracy-profiler-dependency.md),
+    [ADR-0117](adr/0117-benchmark-host-json-schema-and-baseline-comparison.md);
+    operator note [docs/process/profiling.md](process/profiling.md)). Its first
+    Bistro measurement found the scene GPU-bound, with point lighting the
+    dominant cost.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -866,10 +882,15 @@ milestone being listed does not authorize starting it — see Section 1.
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
   - Undo/Redo, nested transactions and transactions spanning frames
     (named only in Spec 0053);
-  - 0059 Package and the rest of Spec 0058's named-only list (managed
-    hosting inside the Runtime, the hot-path work — binary protocol v2,
-    generated marshaling — NuGet dependencies, Android C#, C# editor
+  - a Package Spec (not yet numbered; Spec 0058 pencilled it as 0059, which
+    is the profiling foundation) and the rest of Spec 0058's named-only list
+    (managed hosting inside the Runtime, the hot-path work — binary protocol
+    v2, generated marshaling — NuGet dependencies, Android C#, C# editor
     extensions) — named only, not designed or scaffolded;
+  - optimization driven by Spec 0059's measurements, culling, a second frame
+    in flight, a CI performance gate, an in-engine profiler UI, Android
+    measurement (Spec 0059 Non-Goals) and an `atlantis benchmark` launcher
+    (ADR-0117) — named only, not designed or scaffolded;
   - custom components, a time model or scheduler, Runtime-hosted game
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);

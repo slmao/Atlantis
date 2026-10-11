@@ -14,11 +14,16 @@
   - Unchanged: ADR-0001 (backend independence), ADR-0004 (single frame
     thread), ADR-0006 (pinned `FetchContent`; the Tracy viewer is a host tool),
     ADR-0106 (`atlantis.remote/1`).
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — to be recorded here once the owner has
-  reviewed this Plan and Spec 0059 together and explicitly authorized
-  implementation.
+- **Joint Human Review:** slmao, 2026-10-11 — reviewed this Plan and
+  [Spec 0059](../specs/0059-profiling-instrumentation.md) together in
+  [PR #243](https://github.com/slmao/Atlantis/pull/243) and authorized
+  implementation from Milestone 1. J1–J11 were ruled as recommended; J10 was
+  ruled as acceptance on the development machine, with the Tracy 0.14.1 viewer
+  built from the pinned source and RenderDoc (official portable build) on that
+  machine. Implemented and
+  merged in [PR #244](https://github.com/slmao/Atlantis/pull/244).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -65,7 +70,8 @@ keeps its original option text; these rulings bind it.
   owner's rulings above and Spec 0059's review PR #242.
 - `docs/specs/README.md`: the 0059 row updated (status, Plan link).
 
-The Plan stays `Draft` until the Joint Human Review.
+The Plan stayed `Draft` until the Joint Human Review recorded in the status
+block above.
 
 ## Pre-drafting reading (cited, not restated)
 
@@ -651,9 +657,13 @@ instrumentation-only additions).
   tests compare the recorder's zone totals with a fake-clock Tracy stub, not
   with a live viewer.
 
-## Joint Review decisions — proposed (for the owner's Joint Human Review)
+## Joint Review decisions — ruled (Joint Human Review, slmao, 2026-10-11, PR #243)
 
-Each carries a recommendation; none re-opens an owner ruling above.
+All eleven were ruled as recommended; J10 was ruled as acceptance on the
+development machine, with the Tracy 0.14.1 viewer built from the pinned source
+and RenderDoc (official portable build) on that machine. Each carries the
+recommendation that was ruled;
+none re-opens an owner ruling above.
 
 - **J1 — The Spec's expected-files list is incomplete for R5/R8.** Name
   propagation needs the creation sites in P1 (about 70 one-line additions
