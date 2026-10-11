@@ -21,7 +21,8 @@
   [PR #243](https://github.com/slmao/Atlantis/pull/243) and authorized
   implementation from Milestone 1. J1–J11 were ruled as recommended; J10 was
   ruled as acceptance on the development machine, with the Tracy 0.14.1 viewer
-  built from the pinned source and RenderDoc installed there. Implemented and
+  built from the pinned source and RenderDoc (official portable build) on that
+  machine. Implemented and
   merged in [PR #244](https://github.com/slmao/Atlantis/pull/244).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
@@ -660,7 +661,8 @@ instrumentation-only additions).
 
 All eleven were ruled as recommended; J10 was ruled as acceptance on the
 development machine, with the Tracy 0.14.1 viewer built from the pinned source
-and RenderDoc installed there. Each carries the recommendation that was ruled;
+and RenderDoc (official portable build) on that machine. Each carries the
+recommendation that was ruled;
 none re-opens an owner ruling above.
 
 - **J1 — The Spec's expected-files list is incomplete for R5/R8.** Name
