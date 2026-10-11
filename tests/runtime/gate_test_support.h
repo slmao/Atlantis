@@ -5,6 +5,7 @@
 // stats object whose p50 is the given value. No device, no clock.
 
 #include "../../src/runtime/gate_json.h"
+#include "../../src/runtime/gate_policy.h"
 
 #include <map>
 #include <string>
@@ -50,13 +51,7 @@ struct DocumentIdentity {
   return out;
 }
 
-// `p50s` is keyed as the gate keys metrics: `cpu_active_ms`, `zones.<Zone>`,
-// `passes.<label>.<field>`. A key in `unavailable` becomes an unavailable leaf.
-[[nodiscard]] inline Value makeRun(const std::map<std::string, double>& p50s, const DocumentIdentity& id = {},
-                                   const std::map<std::string, std::string>& unavailable = {}) {
-  Value doc = Value::object();
-  doc.set("schema", Value::string("atlantis.benchmark/1"));
-
+inline void addIdentity(Value& doc, const DocumentIdentity& id) {
   Value build = Value::object();
   build.set("type", Value::string(id.buildType));
   build.set("profiling", Value::boolean(true));
@@ -95,6 +90,17 @@ struct DocumentIdentity {
   settings.set("gpu_timing", Value::boolean(true));
   doc.set("settings", std::move(settings));
 
+}
+
+// `p50s` is keyed as the gate keys metrics: `cpu_active_ms`, `zones.<Zone>`,
+// `passes.<label>.<field>`. A key in `unavailable` becomes an unavailable leaf.
+[[nodiscard]] inline Value makeRun(const std::map<std::string, double>& p50s, const DocumentIdentity& id = {},
+                                   const std::map<std::string, std::string>& unavailable = {}) {
+  Value doc = Value::object();
+  doc.set("schema", Value::string("atlantis.benchmark/1"));
+
+  addIdentity(doc, id);
+
   Value metrics = Value::object();
   Value zones = Value::object();
   Value passes = Value::object();
@@ -121,6 +127,68 @@ struct DocumentIdentity {
   metrics.set("passes", std::move(passes));
   doc.set("metrics", std::move(metrics));
   return doc;
+}
+
+
+struct Agg {
+  double center = 0.0;
+  double sigma = 0.0;
+  double n = 5.0;
+};
+
+struct SetProtocol {
+  unsigned int runs = 5;
+  double preheatSeconds = 90.0;
+  bool idleWait = true;
+  double k = 3.0;
+};
+
+// A set/1 document straight from aggregates (the evaluator reads nothing else of it).
+[[nodiscard]] inline Value makeSet(const std::map<std::string, Agg>& aggregates, const DocumentIdentity& id = {},
+                                   const SetProtocol& protocol = {}) {
+  Value doc = Value::object();
+  doc.set("schema", Value::string("atlantis.benchmark.set/1"));
+  Value p = Value::object();
+  p.set("runs", gate::count(protocol.runs));
+  p.set("preheat_seconds", gate::num(protocol.preheatSeconds));
+  p.set("idle_wait", Value::boolean(protocol.idleWait));
+  p.set("k", gate::num(protocol.k));
+  p.set("child_stderr", Value::string("discarded"));
+  doc.set("protocol", std::move(p));
+  addIdentity(doc, id);
+  Value aggregate = Value::object();
+  for (const auto& [key, a] : aggregates) {
+    Value entry = Value::object();
+    entry.set("center", gate::num(a.center));
+    entry.set("sigma", gate::num(a.sigma));
+    entry.set("min", gate::num(a.center - a.sigma));
+    entry.set("max", gate::num(a.center + a.sigma));
+    entry.set("n", gate::num(a.n));
+    aggregate.set(key, std::move(entry));
+  }
+  doc.set("aggregate", std::move(aggregate));
+  return doc;
+}
+
+// The Spec's proposed defaults, written out here so a test's numbers do not move when
+// the committed policy file is re-measured.
+[[nodiscard]] inline gate::GatePolicy testPolicy() {
+  gate::GatePolicy policy;
+  policy.protocol.runs = 5;
+  policy.protocol.preheatSeconds = 90.0;
+  policy.protocol.k = 3.0;
+  policy.dispersionFactor = 3.0;
+  policy.counter.metricTolerancePct = {{"fragment_invocations", 0.1}, {"ia_primitives", 0.1}};
+  policy.cpu.absFloor = 0.10;
+  policy.cpu.maxPct = 5.0;
+  policy.gpu.absFloor = 0.25;
+  policy.gpu.maxPct = 10.0;
+  policy.gatedCounter = {"draw_calls", "triangles", "descriptor_writes", "fragment_invocations"};
+  policy.gatedCpu = {"cpu_active_ms", "zones.RenderExtraction", "passes.*.cpu_record_ms"};
+  policy.gatedGpu = {"gpu_busy_ms", "passes.*.gpu_ms"};
+  policy.reported = {"frame_ms", "wait_*"};
+  policy.workload = {"renderables_total", "lights_point"};
+  return policy;
 }
 
 }  // namespace gate_test

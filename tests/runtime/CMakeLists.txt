@@ -42,7 +42,11 @@ add_executable(atlantis_runtime_tests
   # Plan 0060 (ADR-0119): the performance gate's GPU-independent parts, compiled here as
   # atlantis_runtime compiles them.
   ../../src/runtime/gate_set.cpp
+  ../../src/runtime/gate_policy.cpp
+  ../../src/runtime/gate_evaluate.cpp
   gate_set_tests.cpp
+  gate_policy_tests.cpp
+  gate_evaluate_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -83,6 +87,11 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_WHITELIST_IBL_MATERIAL_DEMO_SCENE_GUID="${ATLANTIS_ibl_material_demo_scene_GUID}"
   ATLANTIS_WHITELIST_PBR_NORMAL_MAP_DEMO_SCENE_GUID="${ATLANTIS_pbr_normal_map_demo_scene_GUID}"
   ATLANTIS_WHITELIST_PBR_MATERIALS_SHOWCASE_SCENE_GUID="${ATLANTIS_pbr_materials_showcase_scene_GUID}"
+)
+# Plan 0060 M2: the gate tests read the committed policy file (and, from M6, the committed
+# baseline store) under tests/performance/.
+target_compile_definitions(atlantis_runtime_tests PRIVATE
+  ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
 )
 add_dependencies(atlantis_runtime_tests atlantis_asset_catalog)
 if(DEFINED ATLANTIS_bistro_scene_TARGET)

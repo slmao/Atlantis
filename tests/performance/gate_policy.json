@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "protocol": {
+    "runs": 5,
+    "preheat_seconds": 90,
+    "k": 3,
+    "child_timeout_seconds": 300,
+    "idle": {
+      "cpu_idle_pct": 90,
+      "window_seconds": 10,
+      "timeout_seconds": 120
+    }
+  },
+  "dispersion_factor": 3,
+  "tiers": {
+    "counter": {
+      "abs_floor": 0,
+      "max_pct": 0,
+      "metric_tolerance_pct": {
+        "fragment_invocations": 0.1,
+        "ia_primitives": 0.1
+      }
+    },
+    "cpu": {
+      "abs_floor": 0.1,
+      "max_pct": 5
+    },
+    "gpu": {
+      "abs_floor": 0.25,
+      "max_pct": 10
+    }
+  },
+  "gated": {
+    "counter": [
+      "draw_calls",
+      "triangles",
+      "pipeline_binds",
+      "descriptor_set_binds",
+      "descriptor_writes",
+      "vertex_buffer_binds",
+      "index_buffer_binds",
+      "push_constants",
+      "upload_bytes",
+      "uniform_write_bytes",
+      "materials_realized",
+      "fragment_invocations",
+      "ia_primitives"
+    ],
+    "cpu": [
+      "cpu_active_ms",
+      "zones.RenderExtraction",
+      "zones.Renderer",
+      "zones.RenderGraph",
+      "passes.*.cpu_record_ms"
+    ],
+    "gpu": [
+      "gpu_busy_ms",
+      "passes.*.gpu_ms"
+    ]
+  },
+  "reported": [
+    "frame_ms",
+    "cpu_ms",
+    "acquire_ms",
+    "present_ms",
+    "wait_*",
+    "gpu_span_ms",
+    "renderables_drawn",
+    "renderables_skipped",
+    "renderables_culled"
+  ],
+  "workload": [
+    "renderables_total",
+    "lights_directional",
+    "lights_point"
+  ],
+  "measured": {}
+}

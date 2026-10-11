@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 
@@ -42,13 +43,16 @@ using Value = atlantis::connection::json::Value;
 }
 
 // The value at `path` below `root`, or nullptr when any step is missing.
-[[nodiscard]] inline const Value* at(const Value& root, std::initializer_list<std::string_view> path) {
+[[nodiscard]] inline const Value* at(const Value& root, std::span<const std::string_view> path) {
   const Value* current = &root;
   for (const std::string_view step : path) {
     current = current->find(step);
     if (current == nullptr) return nullptr;
   }
   return current;
+}
+[[nodiscard]] inline const Value* at(const Value& root, std::initializer_list<std::string_view> path) {
+  return at(root, std::span<const std::string_view>(path.begin(), path.size()));
 }
 
 }  // namespace atlantis::runtime::gate
