@@ -1,16 +1,18 @@
 # Spec: Performance Regression Gate and Baseline Store
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-11
-- **Related Plan(s):** None yet — drafted only after this Spec is approved.
-- **Approval:** Pending (owner review of this Spec's own branch PR). The owner
-  fixed the mission, five requirement groups, the non-goals and the acceptance
-  criteria before drafting (2026-10-11, chat); they are recorded under Goals,
-  Non-Goals, Requirements and Testing & Verification. Every design detail below
-  is a proposal with alternatives and a recommendation.
-- **Related ADR(s)** (both `Proposed`, drafted alongside; neither is a decision
-  until accepted):
+- **Related Plan(s):** [Plan 0060](../plans/0060-performance-contract.md)
+  (`Draft`; pending Joint Human Review).
+- **Approval:** slmao, 2026-10-11 (chat rulings on the ADR split and Q1, Q2, Q5,
+  Q9, Q10, Q11, Q12; review of this Spec's own branch PR,
+  [PR #246](https://github.com/slmao/Atlantis/pull/246), merged). The rulings are
+  recorded once in [Plan 0060](../plans/0060-performance-contract.md); the
+  open-question text below keeps the options as the record of what was weighed.
+  Implementation still awaits the Plan's separate Joint Human Review.
+- **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
+  approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
     contract — the committed baseline store, its refresh rule, the opt-in gate
     and its applicability, and the Definition-of-Done change;

@@ -1,10 +1,12 @@
 # ADR 0118: Performance as a Gated Contract
 
-- **Status:** Proposed
-- **Date:** 2026-10-11
+- **Status:** Accepted
+- **Date:** 2026-10-11 (accepted 2026-10-11)
 - **Deciders:** slmao
-- **Acceptance:** Pending (owner review of Spec 0060's own branch PR).
-- **Related Spec:** [Spec 0060](../specs/0060-performance-contract.md) (`Draft`)
+- **Acceptance:** slmao, 2026-10-11 (chat rulings on Spec 0060, including keeping this ADR
+  and its pair separate; review of Spec 0060's own branch PR,
+  [PR #246](https://github.com/slmao/Atlantis/pull/246)).
+- **Related Spec:** [Spec 0060](../specs/0060-performance-contract.md) (`Approved`)
 - **Related ADR(s):**
   - [ADR-0042](0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md):
     the precedent — committed goldens, a read-only comparison, categorized update
