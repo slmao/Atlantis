@@ -8,6 +8,7 @@
 #include <atlantis/runtime/runtime_control_host.h>
 
 #include "benchmark_run.h"
+#include "gate_run.h"
 #include "cli.h"
 #include "editor_attachment.h"
 
@@ -106,6 +107,14 @@ int main(int argc, char** argv) {
   if (cliResult.outcome == CommandLineOutcome::PrintErrorAndExit) {
     std::cerr << cliResult.message;
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
+
+  // Plan 0060 M3 (ADR-0119 D5): `--gate` launches child --benchmark runs and judges them; it
+  // renders nothing itself, so it is dispatched before any scene or device work. stdout is the
+  // verdict only, so the log sink moves to stderr first.
+  if (cliResult.gate.has_value()) {
+    const atlantis::runtime::benchmark::StderrLogScope gateLogs;
+    return atlantis::runtime::gate::runGate(*cliResult.gate);
   }
 
   // Spec 0059 / ADR-0117 D1: `--benchmark <scene>` measures a scene instead of

@@ -90,6 +90,45 @@ struct BenchmarkRequest {
   std::optional<std::string> baselinePath; // compare against this earlier document
   bool series = false;                     // include the raw per-frame values
   bool gpuTiming = true;                   // --gpu-timing=on|off
+  // Plan 0060 M4 (ADR-0119 D1): `--warmup-seconds <s>` -- the warmup phase continues until
+  // `warmup` frames AND this many seconds have elapsed (default 0: warmup frames only). It
+  // exists so the gate's preheat is a duration, not a frame count; nothing measured changes.
+  double warmupSeconds = 0.0;
+};
+
+// Plan 0060 M3 (ADR-0119 D5): `--gate [...]`, `--gate --record ...` and `--gate --applies`.
+// Mutually exclusive with --benchmark, --exec, --listen, --session-file, --editor, --help
+// and --list-scenes. The gate itself runs no frames: it launches child --benchmark runs.
+struct GateRequest {
+  enum class Mode {
+    Gate,     // run the protocol and judge it against the stored baseline
+    Record,   // run the protocol over several sessions and write a candidate baseline
+    Applies,  // read changed paths on stdin and say whether the applicability file selects them
+  };
+  Mode mode = Mode::Gate;
+  std::string sceneName = "bistro";
+  // Empty if `sceneName` is not on the whitelist (the caller reports an environment mismatch,
+  // as for --benchmark).
+  std::optional<SceneSelection> scene;
+  BenchmarkVariant variant = BenchmarkVariant::Baseline;
+  unsigned int width = 1920;
+  unsigned int height = 1080;
+  std::optional<unsigned int> runs;            // --runs: the policy's value when absent
+  std::optional<double> preheatSeconds;        // --preheat-seconds: the policy's value when absent
+  bool idleWait = true;                        // --idle-wait on|off
+  std::optional<std::string> baselinesDir;     // --baselines
+  std::optional<std::string> profileId;        // --profile <id>|auto (auto: match this machine)
+  std::optional<std::string> policyPath;       // --policy
+  bool json = false;                           // the verdict on stdout (else a short summary)
+  std::optional<std::string> outputPath;       // the verdict (or candidate baseline's report) to a file as well
+  // --record only.
+  unsigned int sessions = 3;                   // --sessions
+  double sessionGapMinutes = 10.0;             // --session-gap-minutes
+  unsigned int reasonCategory = 0;             // --reason-category 1..4 (ADR-0118 D3)
+  std::string reasonText;                      // --reason
+  std::string recordTo;                        // --record-to: the directory the candidate baseline goes to
+  // --applies only.
+  std::optional<std::string> applicabilityPath;  // --applicability
 };
 
 enum class CommandLineOutcome {
@@ -122,6 +161,9 @@ struct CommandLineResult {
   // --benchmark was given; then selectedScene is empty and execScript, listenPort,
   // sessionFile and editor are unset.
   std::optional<BenchmarkRequest> benchmark;
+  // Plan 0060 M3: populated only when outcome == RunScene and --gate was given; then
+  // selectedScene and benchmark are empty.
+  std::optional<GateRequest> gate;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

@@ -512,3 +512,304 @@ TEST_CASE("parseCommandLine(): --editor is refused with --exec, --help, --list-s
   FakeArgv usage{"--help"};
   requireUsage(parseCommandLine(usage.argc(), usage.argv(), whitelist), "[--editor]");
 }
+
+// ---------------------------------------------------------------------------
+// Plan 0060 M3 (ADR-0119 D5): --gate, --gate --record, --gate --applies, and the
+// benchmark's additive --warmup-seconds.
+// ---------------------------------------------------------------------------
+
+using atlantis::runtime::cli::BenchmarkVariant;
+using atlantis::runtime::cli::GateRequest;
+
+namespace {
+
+[[nodiscard]] const GateRequest& requireGate(const CommandLineResult& result) {
+  REQUIRE(result.outcome == CommandLineOutcome::RunScene);
+  REQUIRE(result.gate.has_value());
+  REQUIRE_FALSE(result.selectedScene.has_value());
+  REQUIRE_FALSE(result.benchmark.has_value());
+  return *result.gate;
+}
+
+}  // namespace
+
+TEST_CASE("parseCommandLine(): --gate alone is the protocol on bistro with every default", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv fa{"--gate"};
+  const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  const GateRequest& gate = requireGate(result);
+  CHECK(gate.mode == GateRequest::Mode::Gate);
+  CHECK(gate.sceneName == "bistro");
+  CHECK_FALSE(gate.scene.has_value());  // the fixture whitelist has no bistro: reported as an environment mismatch
+  CHECK(gate.variant == BenchmarkVariant::Baseline);
+  CHECK(gate.width == 1920);
+  CHECK(gate.height == 1080);
+  CHECK_FALSE(gate.runs.has_value());
+  CHECK_FALSE(gate.preheatSeconds.has_value());
+  CHECK(gate.idleWait);
+  CHECK_FALSE(gate.baselinesDir.has_value());
+  CHECK_FALSE(gate.profileId.has_value());
+  CHECK_FALSE(gate.policyPath.has_value());
+  CHECK_FALSE(gate.json);
+  CHECK_FALSE(gate.outputPath.has_value());
+}
+
+TEST_CASE("parseCommandLine(): --gate --scene names a whitelist scene", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv fa{"--gate", "--scene", "integrated_showcase_demo"};
+  const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  const GateRequest& gate = requireGate(result);
+  CHECK(gate.sceneName == "integrated_showcase_demo");
+  REQUIRE(gate.scene.has_value());
+  CHECK(gate.scene->sceneAsset == whitelist[0].selection.sceneAsset);
+}
+
+TEST_CASE("parseCommandLine(): every --gate option is read", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv fa{"--gate",      "--variant",   "no-fog",       "--resolution",     "1280x720", "--runs",
+              "7",           "--baselines", "store",        "--profile",        "auto",     "--policy",
+              "policy.json", "--json",      "--output",     "verdict.json",     "--idle-wait", "off",
+              "--preheat-seconds", "2.5"};
+  const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  const GateRequest& gate = requireGate(result);
+  CHECK(gate.variant == BenchmarkVariant::NoFog);
+  CHECK(gate.width == 1280);
+  CHECK(gate.height == 720);
+  REQUIRE(gate.runs.has_value());
+  CHECK(*gate.runs == 7);
+  CHECK(*gate.baselinesDir == "store");
+  CHECK(*gate.profileId == "auto");
+  CHECK(*gate.policyPath == "policy.json");
+  CHECK(gate.json);
+  CHECK(*gate.outputPath == "verdict.json");
+  CHECK_FALSE(gate.idleWait);
+  REQUIRE(gate.preheatSeconds.has_value());
+  CHECK(*gate.preheatSeconds == 2.5);
+}
+
+TEST_CASE("parseCommandLine(): --gate may not be combined with any other mode", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  for (const std::string_view other : {"--help", "--list-scenes", "--editor"}) {
+    FakeArgv fa{"--gate", other};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--gate may not be combined");
+  }
+  {
+    FakeArgv fa{"--gate", "--benchmark", "integrated_showcase_demo"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--gate may not be combined");
+  }
+  {
+    FakeArgv fa{"--gate", "--exec", "x"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--gate may not be combined");
+  }
+  {
+    FakeArgv fa{"--gate", "--listen", "0"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--gate may not be combined");
+  }
+  {
+    FakeArgv fa{"--gate", "--listen", "0", "--session-file", "s.json"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--gate may not be combined");
+  }
+}
+
+TEST_CASE("parseCommandLine(): the benchmark options of its own are refused with --gate", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--gate", "--warmup", "5"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--frames", "5"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--baseline", "b.json"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--series"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--gpu-timing=off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+  {
+    FakeArgv fa{"--gate", "--warmup-seconds", "3"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+}
+
+TEST_CASE("parseCommandLine(): the gate options of its own need --gate", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  for (const std::string_view flag :
+       {"--runs", "--baselines", "--profile", "--policy", "--idle-wait", "--preheat-seconds", "--sessions",
+        "--session-gap-minutes", "--reason-category", "--reason", "--record-to", "--applicability"}) {
+    FakeArgv fa{flag, "1"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --gate");
+  }
+  FakeArgv record{"--record"};
+  requireError(parseCommandLine(record.argc(), record.argv(), whitelist), "require --gate");
+  FakeArgv applies{"--applies"};
+  requireError(parseCommandLine(applies.argc(), applies.argv(), whitelist), "require --gate");
+}
+
+TEST_CASE("parseCommandLine(): invalid --gate values are usage errors", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  const struct {
+    std::string_view flag;
+    std::string_view value;
+    std::string_view mention;
+  } cases[] = {{"--runs", "0", "invalid --runs"},
+               {"--runs", "101", "invalid --runs"},
+               {"--runs", "five", "invalid --runs"},
+               {"--preheat-seconds", "-1", "invalid --preheat-seconds"},
+               {"--preheat-seconds", "abc", "invalid --preheat-seconds"},
+               {"--preheat-seconds", "4000", "invalid --preheat-seconds"},
+               {"--preheat-seconds", "1.2.3", "invalid --preheat-seconds"},
+               {"--idle-wait", "maybe", "invalid --idle-wait"},
+               {"--resolution", "1920", "invalid --resolution"},
+               {"--variant", "no-everything", "unrecognized --variant"}};
+  for (const auto& c : cases) {
+    INFO(c.flag << " " << c.value);
+    FakeArgv fa{"--gate", c.flag, c.value};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), c.mention);
+  }
+  FakeArgv twice{"--gate", "--runs", "3", "--runs", "4"};
+  requireError(parseCommandLine(twice.argc(), twice.argv(), whitelist), "--runs supplied more than once");
+  FakeArgv missing{"--gate", "--runs"};
+  requireError(parseCommandLine(missing.argc(), missing.argv(), whitelist), "--runs requires a value");
+}
+
+TEST_CASE("parseCommandLine(): --gate --record needs a stated reason and a destination", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--gate",   "--record", "--record-to", "out", "--reason-category", "4",
+                "--reason", "initial baseline for the reference profile"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    const GateRequest& gate = requireGate(result);
+    CHECK(gate.mode == GateRequest::Mode::Record);
+    CHECK(gate.sessions == 3);  // the defaults of ADR-0119 D6
+    CHECK(gate.sessionGapMinutes == 10.0);
+    CHECK(gate.reasonCategory == 4);
+    CHECK(gate.reasonText == "initial baseline for the reference profile");
+    CHECK(gate.recordTo == "out");
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason-category", "1", "--reason", "x",
+                "--sessions", "2", "--session-gap-minutes", "0.5"};
+    const auto parsed = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    const GateRequest& gate = requireGate(parsed);
+    CHECK(gate.sessions == 2);
+    CHECK(gate.sessionGapMinutes == 0.5);
+  }
+  // Each of the three is mandatory.
+  {
+    FakeArgv fa{"--gate", "--record", "--reason-category", "4", "--reason", "r"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--record requires");
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason", "r"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--record requires");
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason-category", "4"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--record requires");
+  }
+  // The category is one of the four reasons; the text is not empty.
+  for (const std::string_view category : {"0", "5", "x"}) {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason-category", category, "--reason", "r"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "invalid --reason-category");
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason-category", "4", "--reason", ""};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--reason must be");
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--record-to", "out", "--reason-category", "4", "--reason", "r",
+                "--sessions", "0"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "invalid --sessions");
+  }
+}
+
+TEST_CASE("parseCommandLine(): the record options need --record", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  for (const std::string_view flag :
+       {"--sessions", "--session-gap-minutes", "--reason-category", "--reason", "--record-to"}) {
+    FakeArgv fa{"--gate", flag, "1"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --record");
+  }
+}
+
+TEST_CASE("parseCommandLine(): --gate --applies reads paths and takes only --applicability", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--gate", "--applies"};
+    const auto parsed = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    const GateRequest& gate = requireGate(parsed);
+    CHECK(gate.mode == GateRequest::Mode::Applies);
+    CHECK_FALSE(gate.applicabilityPath.has_value());
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--applicability", "a.txt"};
+    const auto parsed = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    const GateRequest& gate = requireGate(parsed);
+    CHECK(*gate.applicabilityPath == "a.txt");
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--runs", "3"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--json"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--record"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--record and --applies may not be combined");
+  }
+  {
+    FakeArgv fa{"--gate", "--applicability", "a.txt"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applicability requires --applies");
+  }
+}
+
+TEST_CASE("parseCommandLine(): --warmup-seconds is the additive warmup duration of the benchmark",
+          "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.benchmark.has_value());
+    CHECK(result.benchmark->warmupSeconds == 0.0);  // the default: warmup frames only
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--warmup-seconds", "90"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.benchmark.has_value());
+    CHECK(result.benchmark->warmupSeconds == 90.0);
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--warmup-seconds", "2.5"};
+    CHECK(parseCommandLine(fa.argc(), fa.argv(), whitelist).benchmark->warmupSeconds == 2.5);
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--warmup-seconds", "-3"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "invalid --warmup-seconds");
+  }
+  {
+    FakeArgv fa{"--warmup-seconds", "3"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --benchmark");
+  }
+}
+
+TEST_CASE("parseCommandLine(): --help lists the command lines of the gate", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv fa{"--help"};
+  const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  requireUsage(result, "usage: atlantis_runtime [--scene <name>]");  // the existing first line is untouched
+  CHECK(result.message.find("atlantis_runtime --gate [--scene <name>]") != std::string::npos);
+  CHECK(result.message.find("--gate --record --record-to <dir> --reason-category <1-4> --reason <text>") !=
+        std::string::npos);
+  CHECK(result.message.find("--gate --applies") != std::string::npos);
+  CHECK(result.message.find("--warmup-seconds") != std::string::npos);
+}
