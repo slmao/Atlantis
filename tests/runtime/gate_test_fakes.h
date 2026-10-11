@@ -29,6 +29,7 @@ class FakeClock final : public gate::Clock {
     slept += seconds;
     ++sleeps;
   }
+  std::string isoUtc() override { return "2026-10-12T00:00:00Z"; }
   double now = 0.0;
   double slept = 0.0;
   int sleeps = 0;

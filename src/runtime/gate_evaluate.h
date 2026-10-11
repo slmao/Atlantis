@@ -55,4 +55,11 @@ struct Verdict {
 
 [[nodiscard]] int exitCodeFor(std::string_view result) noexcept;
 
+// Spec 0060 R2 / ADR-0119 D3: the smallest relative regression, in percent, that a gate of
+// `candidateRuns` runs against this baseline `set` detects 90 % of the time -- the tolerance the
+// rule gives plus 1.28 standard errors of the candidate's median. Per tier: counters are exact (0);
+// CPU is read off `cpu_active_ms` and GPU off `gpu_busy_ms`; a tier whose metric the set lacks is null.
+// Written into a recorded baseline so the contract states its resolution per hardware profile.
+[[nodiscard]] Value computeMdr(const Value& set, const GatePolicy& policy, unsigned int candidateRuns);
+
 }  // namespace atlantis::runtime::gate

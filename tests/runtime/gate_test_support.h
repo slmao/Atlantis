@@ -7,13 +7,28 @@
 #include "../../src/runtime/gate_json.h"
 #include "../../src/runtime/gate_policy.h"
 
+#include <cstdio>
+#include <filesystem>
 #include <map>
+#include <random>
 #include <string>
 
 namespace gate_test {
 
 namespace gate = atlantis::runtime::gate;
 using gate::Value;
+
+// A temporary directory name no other process of the suite shares: ctest runs every TEST_CASE in
+// its own process, in parallel, so a fixed name would be removed and rewritten under a neighbour.
+[[nodiscard]] inline std::filesystem::path uniqueTempDir(const std::string& prefix) {
+  static const std::string suffix = [] {
+    std::random_device device;
+    char text[32];
+    std::snprintf(text, sizeof(text), "%08x%08x", device(), device());
+    return std::string(text);
+  }();
+  return std::filesystem::temp_directory_path() / (prefix + "_" + suffix);
+}
 
 struct DocumentIdentity {
   std::string scene = "bistro";

@@ -325,4 +325,25 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   return finish(result, std::move(doc));
 }
 
+Value computeMdr(const Value& set, const GatePolicy& policy, unsigned int candidateRuns) {
+  Value out = Value::object();
+  out.set("counter", num(0.0));
+  const auto tierPct = [&](Tier tier, const char* key) -> Value {
+    const Aggregate a = readAggregate(set, key);
+    if (!a.available || a.center == 0.0) return Value();
+    const TierPolicy& tp = policy.tierPolicy(tier);
+    const double runs = std::max(1.0, static_cast<double>(candidateRuns));
+    const double count = std::max(1.0, a.n);
+    const double tolerance = std::max({tp.absFloor, std::abs(a.center) * tp.maxPct / 100.0,
+                                       policy.protocol.k * a.sigma * 1.25 * std::sqrt(1.0 / count + 1.0 / runs)});
+    // The standard error of a median of `runs` runs is about 1.2533 sigma / sqrt(runs); 1.2816 is the
+    // one-sided 90 % point of the normal distribution.
+    const double standardError = 1.2533 * a.sigma / std::sqrt(runs);
+    return num((tolerance + 1.2816 * standardError) / std::abs(a.center) * 100.0);
+  };
+  out.set("cpu", tierPct(Tier::Cpu, "cpu_active_ms"));
+  out.set("gpu", tierPct(Tier::Gpu, "gpu_busy_ms"));
+  return out;
+}
+
 }  // namespace atlantis::runtime::gate

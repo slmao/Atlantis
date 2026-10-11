@@ -3,9 +3,12 @@
 #include <atlantis/connection/json.h>
 
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
+#include <sstream>
 #include <thread>
 
 namespace atlantis::runtime::gate {
@@ -21,6 +24,18 @@ class SystemClock final : public Clock {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
   }
   void sleepSeconds(double seconds) override { std::this_thread::sleep_for(std::chrono::duration<double>(seconds)); }
+  std::string isoUtc() override {
+    const std::time_t now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm utc{};
+#if defined(_WIN32)
+    gmtime_s(&utc, &now);
+#else
+    gmtime_r(&now, &utc);
+#endif
+    std::ostringstream text;
+    text << std::put_time(&utc, "%Y-%m-%dT%H:%M:%SZ");
+    return text.str();
+  }
 };
 
 // A child's outcome as the exit code the gate returns without a verdict, or 0 for a clean run.

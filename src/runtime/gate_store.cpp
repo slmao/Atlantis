@@ -3,6 +3,7 @@
 #include "gate_set.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -144,6 +145,192 @@ LoadedBaseline loadBaseline(const std::string& path) {
   }
   out.document = std::move(parsed.value());
   return out;
+}
+
+std::string deriveProfileId(const Value& identity) {
+  std::string source;
+  for (const std::string_view key : {"gpu", "os", "refresh_hz"}) {
+    const Value* value = identity.find(key);
+    if (value == nullptr) continue;
+    if (!source.empty()) source.push_back(' ');
+    source += value->isString() ? value->asString() : (value->isNumber() ? value->numberText() : std::string());
+    if (key == "refresh_hz") source += "hz";
+  }
+  std::string id;
+  bool dash = true;  // swallow leading separators
+  for (const char raw : source) {
+    const char c = static_cast<char>(std::tolower(static_cast<unsigned char>(raw)));
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+      id.push_back(c);
+      dash = false;
+    } else if (!dash) {
+      id.push_back('-');
+      dash = true;
+    }
+  }
+  while (!id.empty() && id.back() == '-') id.pop_back();
+  return id.empty() ? std::string("unknown-profile") : id;
+}
+
+bool isValidProfileId(std::string_view id) {
+  if (id.empty() || id.size() > 100) return false;
+  for (const char c : id) {
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+  }
+  return id.front() != '-' && id.back() != '-';
+}
+
+Value makeBaseline(Value set, const BaselineProvenance& provenance, Value mdr) {
+  Value sessions = Value::array();
+  for (const std::string& start : provenance.sessionStarts) {
+    Value session = Value::object();
+    session.set("start", Value::string(start));
+    session.set("runs", count(provenance.runsPerSession));
+    sessions.push(std::move(session));
+  }
+  Value reason = Value::object();
+  reason.set("category", Value::number(static_cast<std::int64_t>(provenance.reasonCategory)));
+  reason.set("text", Value::string(provenance.reasonText));
+  Value block = Value::object();
+  block.set("profile", Value::string(provenance.profile));
+  block.set("recorded_commit", Value::string(provenance.recordedCommit));
+  block.set("git_dirty", Value::boolean(provenance.gitDirty));
+  block.set("recorded_at", Value::string(provenance.recordedAt));
+  block.set("sessions", std::move(sessions));
+  block.set("reason", std::move(reason));
+  set.set("mdr", std::move(mdr));
+  set.set("baseline", std::move(block));
+  return set;
+}
+
+std::vector<std::string> validateStore(const std::string& baselinesDir) {
+  std::vector<std::string> problems;
+  const auto profiles = listProfiles(baselinesDir);
+  if (profiles.isErr()) {
+    problems.push_back(profiles.error());
+    return problems;
+  }
+  for (const Profile& profile : profiles.value()) {
+    std::error_code error;
+    std::vector<fs::path> files;
+    for (const auto& entry : fs::recursive_directory_iterator(profile.directory, error)) {
+      if (entry.is_regular_file()) files.push_back(entry.path());
+    }
+    std::sort(files.begin(), files.end());
+    for (const fs::path& file : files) {
+      const std::string name = file.filename().string();
+      const std::string where = file.string();
+      if (file.parent_path() == fs::path(profile.directory) && name == "profile.json") continue;
+      if (name.size() <= kBaselineSuffix.size() ||
+          name.compare(name.size() - kBaselineSuffix.size(), kBaselineSuffix.size(), kBaselineSuffix) != 0) {
+        problems.push_back(where + ": not a baseline file (a profile directory holds profile.json and *" +
+                           std::string(kBaselineSuffix) + " only)");
+        continue;
+      }
+      const LoadedBaseline loaded = loadBaseline(where);
+      if (!loaded.error.empty()) {
+        problems.push_back(loaded.error);
+        continue;
+      }
+      const Value& doc = loaded.document;
+      const Value* block = doc.find("baseline");
+      const auto field = [&](std::initializer_list<std::string_view> path) { return at(*block, path); };
+      if (const Value* p = field({"profile"}); p == nullptr || !p->isString() || p->asString() != profile.id) {
+        problems.push_back(where + ": baseline.profile is not '" + profile.id + "'");
+      }
+      if (const Value* c = field({"recorded_commit"}); c == nullptr || !c->isString()) {
+        problems.push_back(where + ": baseline.recorded_commit is missing");
+      }
+      if (const Value* s = field({"sessions"}); s == nullptr || !s->isArray() || s->asArray().empty()) {
+        problems.push_back(where + ": baseline.sessions is missing or empty");
+      }
+      const auto category = numberOf(field({"reason", "category"}));
+      if (!category || *category < 1.0 || *category > 4.0) {
+        problems.push_back(where + ": baseline.reason.category is not 1, 2, 3 or 4 (ADR-0118 D3)");
+      }
+      if (const Value* t = field({"reason", "text"}); t == nullptr || !t->isString() || t->asString().empty()) {
+        problems.push_back(where + ": baseline.reason.text is empty (a baseline is only recorded with a stated reason)");
+      }
+      const Value identity = identityOf(doc);
+      bool same = true;
+      for (const std::string_view key : identityKeys()) {
+        const Value* a = identity.find(key);
+        const Value* b = profile.identity.find(key);
+        if (a == nullptr || b == nullptr || !(*a == *b)) same = false;
+      }
+      if (!same) problems.push_back(where + ": its meta is not the identity of profile '" + profile.id + "'");
+      const Value* idle = at(doc, {"protocol", "idle_wait"});
+      const auto preheat = numberOf(at(doc, {"protocol", "preheat_seconds"}));
+      if (idle == nullptr || !idle->isBool() || !idle->asBool() || !preheat || *preheat <= 0.0) {
+        problems.push_back(where + ": it was not recorded under the full protocol (idle wait and a preheat)");
+      }
+      const Value* aggregate = doc.find("aggregate");
+      if (aggregate == nullptr || !aggregate->isObject() || aggregate->asObject().empty()) {
+        problems.push_back(where + ": it has no aggregate");
+      }
+      const Value* scene = at(doc, {"scene", "name"});
+      const Value* variant = at(doc, {"settings", "variant"});
+      const auto width = numberOf(at(doc, {"settings", "resolution", "width"}));
+      const auto height = numberOf(at(doc, {"settings", "resolution", "height"}));
+      if (scene == nullptr || !scene->isString() || variant == nullptr || !variant->isString() || !width || !height) {
+        problems.push_back(where + ": its scene, variant or resolution is missing");
+      } else {
+        const std::string expected = baselinePath(profile, scene->asString(), variant->asString(),
+                                                  static_cast<unsigned int>(*width), static_cast<unsigned int>(*height));
+        std::error_code ignored;
+        if (!fs::equivalent(fs::path(expected), file, ignored)) {
+          problems.push_back(where + ": it belongs at " + expected + " (the store layout)");
+        }
+      }
+    }
+  }
+  return problems;
+}
+
+atlantis::Result<WrittenFiles, std::string> writeCandidate(const std::string& recordTo, const Profile& profile,
+                                                           const Value& baseline, std::string_view scene,
+                                                           std::string_view variant, unsigned int width,
+                                                           unsigned int height, std::string_view label) {
+  using Out = atlantis::Result<WrittenFiles, std::string>;
+  if (recordTo.empty()) return Out::Err("no destination was named");
+  if (!isValidProfileId(profile.id)) return Out::Err("'" + profile.id + "' is not a valid profile id (a-z, 0-9, '-')");
+  WrittenFiles files;
+  std::error_code error;
+  const fs::path profileDir = fs::path(recordTo) / profile.id;
+  fs::create_directories(profileDir / std::string(scene), error);
+  if (error) return Out::Err("cannot create " + profileDir.string() + ": " + error.message());
+
+  const fs::path profileFile = profileDir / "profile.json";
+  std::string existing;
+  if (readText(profileFile, existing)) {
+    const auto parsed = json::parse(existing);
+    if (parsed.isErr()) return Out::Err(profileFile.string() + " exists and is not valid JSON");
+    const Value* identity = parsed.value().find("identity");
+    if (identity == nullptr || !(*identity == profile.identity)) {
+      return Out::Err(profileFile.string() +
+                      " describes different hardware; choose another --profile id (a profile's identity is never rewritten)");
+    }
+  } else {
+    Value doc = Value::object();
+    doc.set("schema", Value::string(std::string(kProfileSchema)));
+    doc.set("id", Value::string(profile.id));
+    doc.set("label", Value::string(std::string(label)));
+    doc.set("identity", profile.identity);
+    std::ofstream out(profileFile, std::ios::binary | std::ios::trunc);
+    if (!out) return Out::Err("cannot write " + profileFile.string());
+    out << json::write(doc) << "\n";
+    files.profileCreated = true;
+  }
+  files.profileFile = profileFile.string();
+
+  Profile where = profile;
+  where.directory = profileDir.string();
+  const std::string baselineFile = baselinePath(where, scene, variant, width, height);
+  std::ofstream out(baselineFile, std::ios::binary | std::ios::trunc);
+  if (!out) return Out::Err("cannot write " + baselineFile);
+  out << json::write(baseline) << "\n";
+  files.baselineFile = baselineFile;
+  return Out::Ok(std::move(files));
 }
 
 }  // namespace atlantis::runtime::gate

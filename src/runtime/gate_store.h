@@ -59,4 +59,51 @@ struct LoadedBaseline {
 };
 [[nodiscard]] LoadedBaseline loadBaseline(const std::string& path);
 
+// A profile id for a machine identity: lowercase letters, digits and '-', e.g.
+// `intel-r-arc-tm-b370-gpu-windows-60hz`. A person may choose a nicer one with --profile.
+[[nodiscard]] std::string deriveProfileId(const Value& identity);
+[[nodiscard]] bool isValidProfileId(std::string_view id);
+
+// The provenance a recorded baseline carries (ADR-0118 D3): where and when it was recorded, from
+// which commit, over how many sessions, and the stated reason.
+struct BaselineProvenance {
+  std::string profile;
+  std::string recordedCommit;
+  bool gitDirty = false;
+  std::string recordedAt;                       // YYYY-MM-DDTHH:MM:SSZ
+  std::vector<std::string> sessionStarts;       // one per session
+  unsigned int runsPerSession = 0;
+  unsigned int reasonCategory = 0;              // 1..4
+  std::string reasonText;
+};
+
+// `set` with its `baseline` block (profile, recorded_commit, git_dirty, recorded_at, sessions,
+// reason) and `mdr` added, in a fixed order.
+[[nodiscard]] Value makeBaseline(Value set, const BaselineProvenance& provenance, Value mdr);
+
+struct WrittenFiles {
+  std::string profileFile;
+  std::string baselineFile;
+  bool profileCreated = false;
+};
+
+// Writes `<recordTo>/<profile.id>/profile.json` (created when absent; an existing one must have the
+// same identity, else the write is refused) and the baseline file at the store layout's path. It
+// writes where the caller says and nowhere else: the committed store is only ever changed by a
+// reviewed PR that commits what this wrote (ADR-0118 D3).
+[[nodiscard]] atlantis::Result<WrittenFiles, std::string> writeCandidate(const std::string& recordTo,
+                                                                         const Profile& profile,
+                                                                         const Value& baseline,
+                                                                         std::string_view scene,
+                                                                         std::string_view variant,
+                                                                         unsigned int width, unsigned int height,
+                                                                         std::string_view label);
+
+// The store's guard (ADR-0118 D3): every problem found under `baselinesDir`, as one line each, or
+// none. A baseline must be an `atlantis.benchmark.set/1` document recorded under the full protocol,
+// with a `baseline` block naming its profile, a commit, its sessions and a reason (category 1 to 4
+// and text); it must sit under the profile whose identity its `meta` carries, at the layout's path;
+// and nothing else may live in a profile directory. An empty or absent store has no problems.
+[[nodiscard]] std::vector<std::string> validateStore(const std::string& baselinesDir);
+
 }  // namespace atlantis::runtime::gate

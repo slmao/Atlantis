@@ -53,7 +53,7 @@ double wobble(std::size_t i) { return 0.0005 * (static_cast<double>(i % 3) - 1.0
 
 struct Fixture {
   Fixture() {
-    root = fs::temp_directory_path() / "atlantis_gate_run_test";
+    root = gate_test::uniqueTempDir("atlantis_gate_run_test");
     fs::remove_all(root);
     fs::create_directories(root);
   }
@@ -346,7 +346,7 @@ TEST_CASE("an unreadable policy, an unknown profile and a broken store are initi
   }
 }
 
-TEST_CASE("--profile names the profile explicitly", "[runtime][gate][run]") {
+TEST_CASE("naming the profile explicitly selects it", "[runtime][gate][run]") {
   Fixture f;
   f.writeStore();
   cli::GateRequest r = request();
@@ -356,7 +356,7 @@ TEST_CASE("--profile names the profile explicitly", "[runtime][gate][run]") {
   CHECK(f.run(r).exitCode == 0);
 }
 
-TEST_CASE("--output writes the same document the gate prints", "[runtime][gate][run]") {
+TEST_CASE("with --output the gate writes the same document the gate prints", "[runtime][gate][run]") {
   Fixture f;
   f.writeStore();
   cli::GateRequest r = request();

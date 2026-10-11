@@ -37,7 +37,7 @@ gate::ChildResult exited(int code) {
 
 struct TempDir {
   TempDir() {
-    path = fs::temp_directory_path() / "atlantis_gate_orchestrate_test";
+    path = gate_test::uniqueTempDir("atlantis_gate_orchestrate_test");
     fs::remove_all(path);
     fs::create_directories(path);
   }
@@ -147,7 +147,7 @@ TEST_CASE("a session waits for idle, preheats once, then runs R children in orde
   CHECK(fs::is_empty(dir.path));
 }
 
-TEST_CASE("--idle-wait off skips the machine check, and no preheat skips the preheat", "[runtime][gate][orchestrate]") {
+TEST_CASE("turning the idle wait off skips the machine check, and no preheat skips the preheat", "[runtime][gate][orchestrate]") {
   TempDir dir;
   FakeClock clock;
   FakeSampler sampler({10.0});  // a busy machine: would time out if it were asked

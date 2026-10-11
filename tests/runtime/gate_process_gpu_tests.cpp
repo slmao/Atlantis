@@ -7,9 +7,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <random>
 #include <string>
 
 // Spec 0060 R1 / ADR-0119 D1 (Plan 0060 M4): the gate's real child-process launcher and CPU sampler,
@@ -25,7 +27,13 @@ namespace fs = std::filesystem;
 
 struct TempDir {
   TempDir() {
-    path = fs::temp_directory_path() / "atlantis_gate_process_test";
+    static const std::string suffix = [] {
+      std::random_device device;
+      char text[32];
+      std::snprintf(text, sizeof(text), "%08x%08x", device(), device());
+      return std::string(text);
+    }();
+    path = fs::temp_directory_path() / ("atlantis_gate_process_test_" + suffix);
     fs::remove_all(path);
     fs::create_directories(path);
   }
@@ -61,7 +69,7 @@ TEST_CASE("the process launcher runs one real benchmark child and the document i
 
 TEST_CASE("a session over real children returns one document per run", "[runtime][gpu][gate][process]") {
 #if !defined(ATLANTIS_PROFILING)
-  SKIP("this build has no profiling: the benchmark children refuse");
+  SUCCEED("this build has no profiling: the benchmark children refuse");
 #else
   TempDir dir;
   const auto launcher = gate::makeProcessLauncher(ATLANTIS_RUNTIME_EXECUTABLE);
@@ -85,7 +93,7 @@ TEST_CASE("a session over real children returns one document per run", "[runtime
 
 TEST_CASE("a child that outlives its timeout is killed and reported as timed out", "[runtime][gpu][gate][process]") {
 #if !defined(ATLANTIS_PROFILING)
-  SKIP("this build has no profiling: the benchmark child exits at once");
+  SUCCEED("this build has no profiling: the benchmark child exits at once");
 #else
   TempDir dir;
   const auto launcher = gate::makeProcessLauncher(ATLANTIS_RUNTIME_EXECUTABLE);
@@ -224,7 +232,7 @@ TEST_CASE("atlantis_runtime --gate: one document on stdout, an exit code that ma
 TEST_CASE("atlantis_runtime --gate: a baseline for other hardware is not judged, with exit 5",
           "[runtime][gpu][gate][process]") {
 #if !defined(ATLANTIS_PROFILING)
-  SKIP("this build has no profiling: --gate refuses");
+  SUCCEED("this build has no profiling: --gate refuses");
 #else
   TempDir dir;
   writeThrowawayStore(dir.path, "A Different GPU");

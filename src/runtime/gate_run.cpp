@@ -211,6 +211,143 @@ class TempDirScope {
   return verdict.exitCode;
 }
 
+// `--gate --record`: the protocol over several sessions, written as a candidate baseline at the path
+// the caller named. It never judges and never touches the committed store by itself.
+[[nodiscard]] int runRecord(const GateRequest& request, GateEnvironment& env) {
+  std::ostream& out = *env.out;
+  std::ostream& err = *env.err;
+
+  const std::string policyPath = request.policyPath.value_or(env.performanceDir + "/gate_policy.json");
+  const auto loaded = loadPolicy(policyPath);
+  if (loaded.isErr()) {
+    err << "atlantis_runtime: --gate --record: " << loaded.error() << "\n";
+    return bench::kExitInitFailure;
+  }
+  const GatePolicy& policy = loaded.value();
+
+  RunPlan plan;
+  plan.scene = request.sceneName;
+  plan.variant = request.variant;
+  plan.width = request.width;
+  plan.height = request.height;
+  plan.runs = request.runs.value_or(policy.protocol.runs);
+  plan.preheatSeconds = request.preheatSeconds.value_or(policy.protocol.preheatSeconds);
+  plan.idleWait = request.idleWait;
+  plan.childTimeoutSeconds = policy.protocol.childTimeoutSeconds;
+  plan.idle = policy.protocol.idle;
+  plan.tempDir = env.tempDir;
+
+  // A baseline is only ever recorded under the policy's full protocol: a smoke run is not a measurement.
+  if (!plan.idleWait || plan.preheatSeconds < policy.protocol.preheatSeconds || plan.runs < policy.protocol.runs) {
+    err << "atlantis_runtime: --gate --record needs the policy's full protocol (idle wait on, a preheat of at least "
+        << formatNumber(policy.protocol.preheatSeconds) << " s, at least " << policy.protocol.runs
+        << " runs per session); --idle-wait off, a shorter --preheat-seconds and a smaller --runs are for smoke runs\n";
+    return bench::kExitInitFailure;
+  }
+  if (request.profileId.has_value() && *request.profileId != "auto" && !isValidProfileId(*request.profileId)) {
+    err << "atlantis_runtime: --gate --record: '" << *request.profileId << "' is not a valid profile id (a-z, 0-9, '-')\n";
+    return bench::kExitInitFailure;
+  }
+
+  const TempDirScope tempDir(env.tempDir);
+  std::vector<Value> documents;
+  std::vector<std::string> starts;
+  for (unsigned int session = 1; session <= request.sessions; ++session) {
+    if (session > 1) {
+      err << "atlantis_runtime: --gate --record: waiting " << formatNumber(request.sessionGapMinutes)
+          << " minutes before session " << session << " of " << request.sessions << "\n";
+      env.clock->sleepSeconds(request.sessionGapMinutes * 60.0);
+    }
+    err << "atlantis_runtime: --gate --record: session " << session << " of " << request.sessions << "\n";
+    starts.push_back(env.clock->isoUtc());
+    SessionResult result = runSession(plan, *env.launcher, *env.sampler, *env.clock);
+    if (result.exitCode != 0) {
+      err << "atlantis_runtime: --gate --record: " << result.message << "\n";
+      return result.exitCode;
+    }
+    for (Value& document : result.runDocuments) documents.push_back(std::move(document));
+  }
+
+  Protocol protocol;
+  protocol.runs = plan.runs;
+  protocol.preheatSeconds = plan.preheatSeconds;
+  protocol.idleWait = plan.idleWait;
+  protocol.k = policy.protocol.k;
+  auto set = buildSet(protocol, documents);
+  if (set.isErr()) {
+    err << "atlantis_runtime: --gate --record: the runs do not make a set (did the hardware or build change "
+           "between sessions?): "
+        << set.error() << "\n";
+    return bench::kExitRuntimeFailure;
+  }
+
+  const Value identity = identityOf(set.value());
+  Profile profile;
+  profile.id = request.profileId.has_value() && *request.profileId != "auto" ? *request.profileId : deriveProfileId(identity);
+  profile.identity = identity;
+  std::string label;
+  for (const std::string_view key : {"gpu", "cpu", "os", "driver"}) {
+    if (const Value* value = identity.find(key); value != nullptr && value->isString()) {
+      if (!label.empty()) label += " / ";
+      label += value->asString();
+    }
+  }
+
+  BaselineProvenance provenance;
+  provenance.profile = profile.id;
+  if (const Value* revision = at(set.value(), {"meta", "build", "git_revision"}); revision != nullptr && revision->isString()) {
+    provenance.recordedCommit = revision->asString();
+  }
+  if (const Value* dirty = at(set.value(), {"meta", "build", "git_dirty"}); dirty != nullptr && dirty->isBool()) {
+    provenance.gitDirty = dirty->asBool();
+  }
+  provenance.recordedAt = env.clock->isoUtc();
+  provenance.sessionStarts = starts;
+  provenance.runsPerSession = plan.runs;
+  provenance.reasonCategory = request.reasonCategory;
+  provenance.reasonText = request.reasonText;
+  if (provenance.gitDirty) {
+    err << "atlantis_runtime: --gate --record: warning: the build was made from a tree with uncommitted changes; "
+           "a baseline for the committed store is recorded from a clean build of the commit it names\n";
+  }
+
+  Value mdr = computeMdr(set.value(), policy, plan.runs);
+  Value baseline = makeBaseline(std::move(set.value()), provenance, std::move(mdr));
+
+  const auto width = static_cast<unsigned int>(numberOf(at(baseline, {"settings", "resolution", "width"})).value_or(request.width));
+  const auto height = static_cast<unsigned int>(numberOf(at(baseline, {"settings", "resolution", "height"})).value_or(request.height));
+  const auto written = writeCandidate(request.recordTo, profile, baseline, request.sceneName,
+                                      std::string(cli::toString(request.variant)), width, height, label);
+  if (written.isErr()) {
+    err << "atlantis_runtime: --gate --record: " << written.error() << "\n";
+    return bench::kExitInitFailure;
+  }
+
+  const std::string serialized = json::write(baseline);
+  if (request.outputPath.has_value() && !writeFile(*request.outputPath, serialized + "\n")) {
+    err << "atlantis_runtime: --gate --record: cannot write " << *request.outputPath << "\n";
+    return bench::kExitInitFailure;
+  }
+  if (request.json) {
+    out << serialized << "\n";
+  } else {
+    out << "recorded baseline for profile " << profile.id << (written.value().profileCreated ? " (new profile)" : "")
+        << "\n  baseline: " << written.value().baselineFile << "\n  profile:  " << written.value().profileFile
+        << "\n  runs: " << documents.size() << " in " << request.sessions << " sessions; commit "
+        << (provenance.recordedCommit.empty() ? "unknown" : provenance.recordedCommit)
+        << (provenance.gitDirty ? "+dirty" : "") << "\n  reason (category " << request.reasonCategory
+        << "): " << request.reasonText << "\n";
+    if (const Value* cpu = at(baseline, {"mdr", "cpu"}); cpu != nullptr && cpu->isNumber()) {
+      out << "  minimum detectable regression: cpu " << formatNumber(*numberOf(cpu)) << " %";
+      if (const Value* gpu = at(baseline, {"mdr", "gpu"}); gpu != nullptr && gpu->isNumber()) {
+        out << ", gpu " << formatNumber(*numberOf(gpu)) << " %";
+      }
+      out << "\n";
+    }
+  }
+  return bench::kExitOk;
+}
+
 }  // namespace
 
 int runGateWith(const GateRequest& request, GateEnvironment& environment) {
@@ -219,8 +356,7 @@ int runGateWith(const GateRequest& request, GateEnvironment& environment) {
     case GateRequest::Mode::Gate:
       return runProtocol(request, environment);
     case GateRequest::Mode::Record:
-      err << "atlantis_runtime: --gate --record: not yet wired (Plan 0060 M6)\n";
-      return bench::kExitRuntimeFailure;
+      return runRecord(request, environment);
     case GateRequest::Mode::Applies:
       err << "atlantis_runtime: --gate --applies: not yet wired (Plan 0060 M8)\n";
       return bench::kExitRuntimeFailure;

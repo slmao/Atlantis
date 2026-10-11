@@ -1,0 +1,289 @@
+#include "../../src/runtime/gate_run.h"
+
+#include "../../src/runtime/gate_store.h"
+#include "gate_test_fakes.h"
+#include "gate_test_support.h"
+
+#include <atlantis/connection/json.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <sstream>
+#include <string>
+#include <vector>
+
+// Spec 0060 R3, R4 / ADR-0118 D3, ADR-0119 D6 (Plan 0060 M6): `--gate --record` -- the protocol over
+// several sessions, the provenance and the reason on the baseline, and the refusals that keep a
+// smoke run or a nameless change out of the store. A fake launcher and clock; no device.
+
+namespace {
+
+namespace gate = atlantis::runtime::gate;
+namespace cli = atlantis::runtime::cli;
+namespace json = atlantis::connection::json;
+namespace fs = std::filesystem;
+using gate_test::DocumentIdentity;
+using gate_test::FakeClock;
+using gate_test::FakeLauncher;
+using gate_test::FakeSampler;
+using gate_test::makeRun;
+
+std::map<std::string, double> metricsAt(double jitter) {
+  return {{"cpu_active_ms", 12.0 * (1.0 + jitter)}, {"gpu_busy_ms", 17.0 * (1.0 + jitter)},
+          {"zones.RenderExtraction", 4.5}, {"passes.draw.gpu_ms", 14.0 * (1.0 + jitter)},
+          {"draw_calls", 4778.0}, {"lights_point", 59.0}, {"renderables_total", 2909.0}, {"frame_ms", 28.0}};
+}
+
+double wobble(std::size_t i) { return 0.001 * (static_cast<double>(i % 5) - 2.0); }
+
+struct Fixture {
+  Fixture() {
+    root = gate_test::uniqueTempDir("atlantis_gate_record_test");
+    fs::remove_all(root);
+    fs::create_directories(root);
+  }
+  ~Fixture() { fs::remove_all(root); }
+
+  struct Outcome {
+    int exitCode = -1;
+    std::string out;
+    std::string err;
+    std::size_t launches = 0;
+    double slept = 0.0;
+  };
+
+  Outcome run(const cli::GateRequest& request, FakeLauncher& launcher) {
+    FakeClock clock;
+    FakeSampler idle({99.0});
+    std::ostringstream out;
+    std::ostringstream err;
+    gate::GateEnvironment env;
+    env.launcher = &launcher;
+    env.sampler = &idle;
+    env.clock = &clock;
+    env.tempDir = (root / "tmp").string();
+    env.performanceDir = ATLANTIS_PERFORMANCE_DIR;
+    env.out = &out;
+    env.err = &err;
+    Outcome outcome;
+    outcome.exitCode = gate::runGateWith(request, env);
+    outcome.out = out.str();
+    outcome.err = err.str();
+    outcome.launches = launcher.calls.size();
+    outcome.slept = clock.slept;
+    return outcome;
+  }
+
+  cli::GateRequest recordRequest(unsigned int sessions = 2) const {
+    cli::GateRequest r;
+    r.mode = cli::GateRequest::Mode::Record;
+    r.sceneName = "bistro";
+    r.sessions = sessions;
+    r.sessionGapMinutes = 1.5;
+    r.reasonCategory = 4;
+    r.reasonText = "initial baseline for the test profile";
+    r.recordTo = (root / "out").string();
+    return r;
+  }
+
+  fs::path root;
+};
+
+FakeLauncher steadyLauncher() {
+  FakeLauncher launcher;
+  launcher.makeDocument = [](std::size_t i) { return makeRun(metricsAt(wobble(i))); };
+  return launcher;
+}
+
+}  // namespace
+
+TEST_CASE("recording runs the protocol once per session, waits between sessions, and writes a baseline",
+          "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  const auto o = f.run(f.recordRequest(2), launcher);
+  REQUIRE(o.exitCode == 0);
+  CHECK(o.launches == 12);  // two sessions of one preheat and five runs
+  CHECK(o.slept >= 90.0);   // the gap of 1.5 minutes between the sessions
+  CHECK(o.out.find("recorded baseline for profile test-gpu-windows-60hz (new profile)") != std::string::npos);
+
+  const std::string store = (f.root / "out").string();
+  const auto listed = gate::listProfiles(store);
+  REQUIRE(listed.isOk());
+  REQUIRE(listed.value().size() == 1);
+  CHECK(listed.value()[0].id == "test-gpu-windows-60hz");
+  const auto baseline = gate::loadBaseline(gate::baselinePath(listed.value()[0], "bistro", "baseline", 1920, 1080));
+  REQUIRE(baseline.error.empty());
+  REQUIRE_FALSE(baseline.notFound);
+  const json::Value& doc = baseline.document;
+  CHECK(*gate::numberOf(gate::at(doc, {"aggregate", "cpu_active_ms", "n"})) == 10.0);  // both sessions' runs
+  CHECK(*gate::numberOf(gate::at(doc, {"protocol", "runs"})) == 5.0);
+  CHECK(gate::at(doc, {"protocol", "idle_wait"})->asBool());
+  CHECK(*gate::numberOf(gate::at(doc, {"protocol", "preheat_seconds"})) == 90.0);
+  CHECK(gate::at(doc, {"baseline", "profile"})->asString() == "test-gpu-windows-60hz");
+  CHECK(gate::at(doc, {"baseline", "recorded_at"})->asString() == "2026-10-12T00:00:00Z");
+  CHECK(gate::at(doc, {"baseline", "sessions"})->asArray().size() == 2);
+  CHECK(*gate::numberOf(gate::at(doc, {"baseline", "reason", "category"})) == 4.0);
+  CHECK(gate::at(doc, {"baseline", "reason", "text"})->asString() == "initial baseline for the test profile");
+  CHECK(gate::at(doc, {"mdr", "cpu"})->isNumber());
+  CHECK(gate::at(doc, {"mdr", "gpu"})->isNumber());
+  CHECK(*gate::numberOf(gate::at(doc, {"mdr", "counter"})) == 0.0);
+  CHECK(gate::validateStore(store).empty());  // what it wrote passes the store's own guard
+}
+
+TEST_CASE("with --json the recording prints the baseline document itself", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  cli::GateRequest r = f.recordRequest(1);
+  r.json = true;
+  const auto o = f.run(r, launcher);
+  REQUIRE(o.exitCode == 0);
+  const auto parsed = json::parse(o.out);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().find("schema")->asString() == "atlantis.benchmark.set/1");
+  CHECK(parsed.value().find("baseline") != nullptr);
+  CHECK(std::count(o.out.begin(), o.out.end(), '\n') == 1);
+}
+
+TEST_CASE("with --output the recording also writes the baseline document", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  cli::GateRequest r = f.recordRequest(1);
+  r.outputPath = (f.root / "report.json").string();
+  REQUIRE(f.run(r, launcher).exitCode == 0);
+  std::ifstream in(f.root / "report.json", std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto parsed = json::parse(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().find("baseline") != nullptr);
+}
+
+TEST_CASE("a recorded baseline is judged against, end to end, by the gate", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  REQUIRE(f.run(f.recordRequest(2), launcher).exitCode == 0);
+
+  FakeLauncher candidate = steadyLauncher();
+  cli::GateRequest gateRequest;
+  gateRequest.sceneName = "bistro";
+  gateRequest.json = true;
+  gateRequest.baselinesDir = (f.root / "out").string();
+  const auto pass = f.run(gateRequest, candidate);
+  CHECK(pass.exitCode == 0);
+
+  FakeLauncher slower;
+  slower.makeDocument = [](std::size_t i) {
+    auto m = metricsAt(wobble(i));
+    m["cpu_active_ms"] *= 1.3;
+    return makeRun(m);
+  };
+  CHECK(f.run(gateRequest, slower).exitCode == 4);
+}
+
+TEST_CASE("a smoke protocol is never recorded", "[runtime][gate][record]") {
+  struct Case {
+    const char* what;
+    std::function<void(cli::GateRequest&)> change;
+  };
+  const Case cases[] = {
+      {"idle wait off", [](cli::GateRequest& r) { r.idleWait = false; }},
+      {"a short preheat", [](cli::GateRequest& r) { r.preheatSeconds = 5.0; }},
+      {"too few runs", [](cli::GateRequest& r) { r.runs = 2; }},
+  };
+  for (const Case& c : cases) {
+    INFO(c.what);
+    Fixture f;
+    FakeLauncher launcher = steadyLauncher();
+    cli::GateRequest r = f.recordRequest(1);
+    c.change(r);
+    const auto o = f.run(r, launcher);
+    CHECK(o.exitCode == 1);
+    CHECK(o.err.find("full protocol") != std::string::npos);
+    CHECK(o.launches == 0);
+    CHECK_FALSE(fs::exists(f.root / "out"));
+  }
+}
+
+TEST_CASE("a child failure in any session stops the recording and writes nothing", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  gate::ChildResult environment;
+  environment.exitCode = 3;
+  launcher.scripted[8] = environment;  // the third call of the second session
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.launches == 9);
+  CHECK_FALSE(fs::exists(f.root / "out"));
+}
+
+TEST_CASE("sessions on different hardware or builds do not make one baseline", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher;
+  launcher.makeDocument = [](std::size_t i) {
+    DocumentIdentity id;
+    if (i >= 6) id.gpu = "Swapped GPU";  // the second session ran elsewhere
+    return makeRun(metricsAt(wobble(i)), id);
+  };
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 2);
+  CHECK(o.err.find("do not make a set") != std::string::npos);
+  CHECK_FALSE(fs::exists(f.root / "out"));
+}
+
+TEST_CASE("a named profile id is used, and a bad id is refused before anything runs", "[runtime][gate][record]") {
+  {
+    Fixture f;
+    FakeLauncher launcher = steadyLauncher();
+    cli::GateRequest r = f.recordRequest(1);
+    r.profileId = "reference-laptop";
+    REQUIRE(f.run(r, launcher).exitCode == 0);
+    CHECK(fs::exists(f.root / "out" / "reference-laptop" / "profile.json"));
+    CHECK(fs::exists(f.root / "out" / "reference-laptop" / "bistro" / "bistro_baseline_1920x1080.baseline.json"));
+  }
+  {
+    Fixture f;
+    FakeLauncher launcher = steadyLauncher();
+    cli::GateRequest r = f.recordRequest(1);
+    r.profileId = "Not A Slug";
+    const auto o = f.run(r, launcher);
+    CHECK(o.exitCode == 1);
+    CHECK(o.launches == 0);
+  }
+}
+
+TEST_CASE("recording over a profile id that describes other hardware is refused and changes nothing",
+          "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher first = steadyLauncher();
+  REQUIRE(f.run(f.recordRequest(1), first).exitCode == 0);
+  const fs::path profileFile = f.root / "out" / "test-gpu-windows-60hz" / "profile.json";
+  std::ifstream before(profileFile, std::ios::binary);
+  const std::string profileBefore((std::istreambuf_iterator<char>(before)), std::istreambuf_iterator<char>());
+
+  FakeLauncher other;
+  other.makeDocument = [](std::size_t i) {
+    DocumentIdentity id;
+    id.cpu = "A Different CPU";
+    return makeRun(metricsAt(wobble(i)), id);
+  };
+  cli::GateRequest r = f.recordRequest(1);
+  r.profileId = "test-gpu-windows-60hz";  // the same id, other hardware
+  const auto o = f.run(r, other);
+  CHECK(o.exitCode == 1);
+  CHECK(o.err.find("different hardware") != std::string::npos);
+  std::ifstream after(profileFile, std::ios::binary);
+  CHECK(std::string((std::istreambuf_iterator<char>(after)), std::istreambuf_iterator<char>()) == profileBefore);
+}
+
+TEST_CASE("an unreadable policy is an initialization failure", "[runtime][gate][record]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  cli::GateRequest r = f.recordRequest(1);
+  r.policyPath = (f.root / "no_policy.json").string();
+  CHECK(f.run(r, launcher).exitCode == 1);
+  CHECK(launcher.calls.empty());
+}

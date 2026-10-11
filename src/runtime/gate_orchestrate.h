@@ -28,6 +28,8 @@ class Clock {
   virtual ~Clock() = default;
   [[nodiscard]] virtual double nowSeconds() = 0;
   virtual void sleepSeconds(double seconds) = 0;
+  // The wall-clock time as `YYYY-MM-DDTHH:MM:SSZ`, for the provenance of a recorded baseline.
+  [[nodiscard]] virtual std::string isoUtc() = 0;
 };
 
 // Cumulative system CPU times (any consistent unit); nullopt when the platform cannot say.
