@@ -1,5 +1,6 @@
 #include "../../src/runtime/gate_orchestrate.h"
 
+#include "gate_test_fakes.h"
 #include "gate_test_support.h"
 
 #include <atlantis/connection/json.h>
@@ -24,65 +25,9 @@ namespace gate = atlantis::runtime::gate;
 namespace json = atlantis::connection::json;
 namespace fs = std::filesystem;
 
-class FakeClock final : public gate::Clock {
- public:
-  double nowSeconds() override { return now; }
-  void sleepSeconds(double seconds) override {
-    now += seconds;
-    slept += seconds;
-    ++sleeps;
-  }
-  double now = 0.0;
-  double slept = 0.0;
-  int sleeps = 0;
-};
-
-// One interval per read(): the idle percentage it reports, in order; the last repeats.
-class FakeSampler final : public gate::CpuSampler {
- public:
-  explicit FakeSampler(std::vector<double> idlePercents) : idle(std::move(idlePercents)) {}
-  std::optional<gate::CpuTimes> read() override {
-    ++reads;
-    if (unavailable) return std::nullopt;
-    if (reads > 1) {
-      const double pct = idle[std::min(idle.size() - 1, static_cast<std::size_t>(reads - 2))];
-      times.total += 1000;
-      times.idle += static_cast<std::uint64_t>(pct * 10.0);
-    }
-    return times;
-  }
-  std::vector<double> idle;
-  bool unavailable = false;
-  int reads = 0;
-  gate::CpuTimes times;
-};
-
-// Records every launch; writes a benchmark document to the child's --output unless told not to.
-class FakeLauncher final : public gate::ChildLauncher {
- public:
-  gate::ChildResult run(const gate::ChildSpec& spec) override {
-    calls.push_back(spec);
-    const std::size_t index = calls.size() - 1;
-    gate::ChildResult result;
-    if (const auto it = scripted.find(index); it != scripted.end()) result = it->second;
-    if (result.status == gate::ChildResult::Status::Exited && result.exitCode == 0 && writeDocuments) {
-      for (std::size_t i = 0; i + 1 < spec.args.size(); ++i) {
-        if (spec.args[i] != "--output") continue;
-        std::ofstream out(spec.args[i + 1], std::ios::binary);
-        if (malformed) {
-          out << "{not json";
-        } else {
-          out << json::write(gate_test::makeRun({{"cpu_active_ms", 12.0 + static_cast<double>(index)}})) << "\n";
-        }
-      }
-    }
-    return result;
-  }
-  std::vector<gate::ChildSpec> calls;
-  std::map<std::size_t, gate::ChildResult> scripted;
-  bool writeDocuments = true;
-  bool malformed = false;
-};
+using gate_test::FakeClock;
+using gate_test::FakeLauncher;
+using gate_test::FakeSampler;
 
 gate::ChildResult exited(int code) {
   gate::ChildResult r;

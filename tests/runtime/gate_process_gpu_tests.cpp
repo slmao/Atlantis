@@ -1,4 +1,6 @@
 #include "../../src/runtime/gate_orchestrate.h"
+#include "../../src/runtime/gate_set.h"
+#include "../../src/runtime/gate_store.h"
 
 #include <atlantis/connection/json.h>
 
@@ -128,6 +130,126 @@ TEST_CASE("the running executable knows its own path", "[runtime][gpu][gate][pro
   const std::string path = gate::currentExecutablePath();
   CHECK_FALSE(path.empty());
   CHECK(fs::exists(fs::path(path)));
+}
+
+// Plan 0060 M5: the real executable's `--gate`, end to end on the default scene. A baseline is made
+// from two real children (not recorded: the recording flow is M6), then the gate runs against it.
+// What is asserted is structure and exit-code membership, never a time.
+namespace {
+
+using atlantis::connection::json::Value;
+
+[[nodiscard]] std::string readAll(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+// cmd.exe strips one outer pair of quotes, so the whole command is quoted once more.
+[[nodiscard]] int runExecutable(const std::string& args, const fs::path& stdoutFile) {
+  const std::string command = "\"\"" + std::string(ATLANTIS_RUNTIME_EXECUTABLE) + "\" " + args + " > \"" +
+                              stdoutFile.string() + "\" 2> NUL\"";
+  return std::system(command.c_str());
+}
+
+// A store with one profile (named for `gpu` in its identity) and a baseline from two real runs.
+void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
+  const auto launcher = gate::makeProcessLauncher(ATLANTIS_RUNTIME_EXECUTABLE);
+  const auto sampler = gate::makeSystemCpuSampler();
+  const auto clock = gate::makeSystemClock();
+  gate::RunPlan plan;
+  plan.scene = "integrated_showcase_demo";
+  plan.width = 1280;
+  plan.height = 720;
+  plan.runs = 2;
+  plan.preheatSeconds = 0.0;
+  plan.idleWait = false;
+  plan.childTimeoutSeconds = 120.0;
+  plan.tempDir = (root / "children").string();
+  fs::create_directories(plan.tempDir);
+  const gate::SessionResult session = gate::runSession(plan, *launcher, *sampler, *clock);
+  REQUIRE(session.exitCode == 0);
+  gate::Protocol protocol;
+  protocol.runs = 2;
+  protocol.preheatSeconds = 0.0;
+  protocol.idleWait = false;
+  auto set = gate::buildSet(protocol, session.runDocuments);
+  REQUIRE(set.isOk());
+  Value doc = set.value();
+  Value provenance = Value::object();
+  provenance.set("profile", Value::string("smoke-profile"));
+  provenance.set("recorded_commit", Value::string("smoke"));
+  doc.set("baseline", std::move(provenance));
+
+  Value identity = gate::identityOf(doc);
+  if (!profileGpu.empty()) identity.set("gpu", Value::string(profileGpu));
+  Value profile = Value::object();
+  profile.set("schema", Value::string("atlantis.benchmark.profile/1"));
+  profile.set("id", Value::string("smoke-profile"));
+  profile.set("label", Value::string("smoke"));
+  profile.set("identity", std::move(identity));
+  const fs::path profileDir = root / "store" / "smoke-profile";
+  fs::create_directories(profileDir / "integrated_showcase_demo");
+  std::ofstream(profileDir / "profile.json", std::ios::binary) << atlantis::connection::json::write(profile) << "\n";
+  std::ofstream(profileDir / "integrated_showcase_demo" / "integrated_showcase_demo_baseline_1280x720.baseline.json",
+                std::ios::binary)
+      << atlantis::connection::json::write(doc) << "\n";
+}
+
+}  // namespace
+
+TEST_CASE("atlantis_runtime --gate: one document on stdout, an exit code that matches it, on the default scene",
+          "[runtime][gpu][gate][process]") {
+  TempDir dir;
+#if !defined(ATLANTIS_PROFILING)
+  // A build without profiling refuses with the documented environment code and prints no verdict.
+  CHECK(runExecutable("--gate --json", dir.path / "out.txt") == 3);
+  CHECK(readAll(dir.path / "out.txt").empty());
+#else
+  writeThrowawayStore(dir.path, "");
+  const std::string common = "--gate --scene integrated_showcase_demo --resolution 1280x720 --runs 2 "
+                             "--preheat-seconds 0 --idle-wait off --json --policy \"" +
+                             std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
+                             (dir.path / "store").string() + "\"";
+  const int code = runExecutable(common, dir.path / "verdict.txt");
+  CHECK((code == 0 || code == 4 || code == 5));  // a verdict, never a crash and never a usage error
+  const auto parsed = atlantis::connection::json::parse(readAll(dir.path / "verdict.txt"));
+  REQUIRE(parsed.isOk());  // a log line on stdout would fail this
+  const Value& verdict = parsed.value();
+  CHECK(verdict.find("schema")->asString() == "atlantis.benchmark.gate/1");
+  CHECK(*gate::numberOf(verdict.find("exit_code")) == static_cast<double>(code));
+  CHECK_FALSE(gate::at(verdict, {"protocol", "conformant"})->asBool());  // a smoke run says so
+#endif
+}
+
+TEST_CASE("atlantis_runtime --gate: a baseline for other hardware is not judged, with exit 5",
+          "[runtime][gpu][gate][process]") {
+#if !defined(ATLANTIS_PROFILING)
+  SKIP("this build has no profiling: --gate refuses");
+#else
+  TempDir dir;
+  writeThrowawayStore(dir.path, "A Different GPU");
+  const std::string args = "--gate --scene integrated_showcase_demo --resolution 1280x720 --runs 2 "
+                           "--preheat-seconds 0 --idle-wait off --json --policy \"" +
+                           std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
+                           (dir.path / "store").string() + "\"";
+  CHECK(runExecutable(args, dir.path / "verdict.txt") == 5);
+  const auto parsed = atlantis::connection::json::parse(readAll(dir.path / "verdict.txt"));
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().find("verdict")->asString() == "incomparable");
+#endif
+}
+
+TEST_CASE("atlantis_runtime --gate: usage errors and an absent scene use the documented codes",
+          "[runtime][gpu][gate][process]") {
+  TempDir dir;
+  CHECK(runExecutable("--gate --runs 0", dir.path / "a.txt") == 1);
+  CHECK(runExecutable("--gate --benchmark integrated_showcase_demo", dir.path / "a.txt") == 1);
+  CHECK(runExecutable("--gate --record", dir.path / "a.txt") == 1);  // no reason: refused
+  CHECK(readAll(dir.path / "a.txt").empty());
+#if defined(ATLANTIS_PROFILING)
+  CHECK(runExecutable("--gate --scene no_such_scene --json", dir.path / "b.txt") == 3);
+  CHECK(readAll(dir.path / "b.txt").empty());
+#endif
 }
 
 #endif

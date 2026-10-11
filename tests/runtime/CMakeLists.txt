@@ -45,10 +45,14 @@ add_executable(atlantis_runtime_tests
   ../../src/runtime/gate_policy.cpp
   ../../src/runtime/gate_evaluate.cpp
   ../../src/runtime/gate_orchestrate.cpp
+  ../../src/runtime/gate_process_windows.cpp
+  ../../src/runtime/gate_store.cpp
+  ../../src/runtime/gate_run.cpp
   gate_set_tests.cpp
   gate_policy_tests.cpp
   gate_evaluate_tests.cpp
   gate_orchestrate_tests.cpp
+  gate_run_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -133,6 +137,8 @@ add_executable(atlantis_runtime_gpu_tests
   # Plan 0060 M4 (ADR-0119 D1): the gate's real child-process launcher and CPU sampler.
   ../../src/runtime/gate_orchestrate.cpp
   ../../src/runtime/gate_process_windows.cpp
+  ../../src/runtime/gate_set.cpp
+  ../../src/runtime/gate_store.cpp
   gate_process_gpu_tests.cpp
 )
 
@@ -165,7 +171,9 @@ target_include_directories(atlantis_runtime_gpu_tests PRIVATE ${CMAKE_SOURCE_DIR
 
 if(WIN32)
   # Plan 0059 M9: the process-level benchmark test runs the real executable.
-  target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE ATLANTIS_RUNTIME_EXECUTABLE="$<TARGET_FILE:atlantis_runtime>")
+  target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE ATLANTIS_RUNTIME_EXECUTABLE="$<TARGET_FILE:atlantis_runtime>"
+    # Plan 0060 M5: the gate's process-level tests read the committed policy file.
+    ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance")
   add_dependencies(atlantis_runtime_gpu_tests atlantis_runtime)
 endif()
 
