@@ -4,13 +4,16 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-10
 - **Related Plan(s):** [Plan 0059](../plans/0059-profiling-instrumentation.md)
-  (`Draft`; pending Joint Human Review).
+  (`Approved`; Joint Human Review 2026-10-11,
+  [PR #243](https://github.com/slmao/Atlantis/pull/243)) — implemented, merged
+  [PR #244](https://github.com/slmao/Atlantis/pull/244).
 - **Approval:** slmao, 2026-10-10 (chat rulings on Q1–Q12; review of this
   Spec's own branch PR, [PR #242](https://github.com/slmao/Atlantis/pull/242),
   merged). The rulings are recorded once in
   [Plan 0059](../plans/0059-profiling-instrumentation.md); the open-question
   text below keeps the options as the record of what was weighed. Implementation
-  still awaits the Plan's separate Joint Human Review.
+  was authorized by the Plan's separate Joint Human Review (2026-10-11,
+  [PR #243](https://github.com/slmao/Atlantis/pull/243)).
 - **Related ADR(s)** (all `Accepted` 2026-10-10, together with this Spec's
   approval):
   - [ADR-0114](../adr/0114-profiling-api-build-configuration-and-recorder.md):
