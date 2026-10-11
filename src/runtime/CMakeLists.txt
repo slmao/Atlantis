@@ -96,7 +96,9 @@ if(WIN32)
 # Plan 0059 M9 (ADR-0117 D1): the benchmark is executable-private like cli.cpp and
 # editor_attachment.cpp -- never added to atlantis_runtime_host.
 add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp
-  benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp)
+  benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
+  # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
+  gate_set.cpp)
 
 # Plan 0059 M9 (ADR-0117 D6): what the result document records about the build,
 # read at configure time -- the configuration, the source revision (and whether the

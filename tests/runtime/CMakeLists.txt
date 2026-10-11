@@ -39,6 +39,10 @@ add_executable(atlantis_runtime_tests
   ../../src/runtime/benchmark_loop.cpp
   benchmark_report_tests.cpp
   benchmark_loop_tests.cpp
+  # Plan 0060 (ADR-0119): the performance gate's GPU-independent parts, compiled here as
+  # atlantis_runtime compiles them.
+  ../../src/runtime/gate_set.cpp
+  gate_set_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
