@@ -54,6 +54,14 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.protocol.k > 0.0);
   CHECK(policy.protocol.preheatSeconds == 60.0);  // the owner's ruling on the M7 stop (Q11)
   CHECK(policy.protocol.pinProcess);              // the children run pinned
+  CHECK(policy.protocol.runs == 5);               // the locked calibration numbers (Plan 0060 M7)
+  CHECK(policy.protocol.k == 3.0);
+  CHECK(policy.cpu.maxPct == 5.0);
+  CHECK(policy.gpu.maxPct == 10.0);
+  CHECK(policy.dispersionFactor == 4.0);
+  CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file
+  CHECK_FALSE(policy.measured.date.empty());
+  CHECK_FALSE(policy.measured.profile.empty());
   CHECK(policy.cpu.absFloor >= 0.0);
   CHECK(policy.gpu.maxPct > policy.cpu.maxPct);  // the noisier tier has the wider allowance
   CHECK(policy.counter.maxPct == 0.0);           // counters are exact
@@ -68,6 +76,10 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(gate::gatedTier(policy, "passes.draw.cpu_record_ms") == gate::Tier::Cpu);
   CHECK(gate::gatedTier(policy, "gpu_busy_ms") == gate::Tier::Gpu);
   CHECK(gate::gatedTier(policy, "passes.draw.gpu_ms") == gate::Tier::Gpu);
+  // The shadow pass's GPU time is report-only (the calibration study's one demotion), its CPU time is not.
+  CHECK_FALSE(gate::gatedTier(policy, "passes.shadow.gpu_ms").has_value());
+  CHECK(gate::isReported(policy, "passes.shadow.gpu_ms"));
+  CHECK(gate::gatedTier(policy, "passes.shadow.cpu_record_ms") == gate::Tier::Cpu);
   CHECK_FALSE(gate::gatedTier(policy, "frame_ms").has_value());
   CHECK(gate::isReported(policy, "frame_ms"));
   CHECK(gate::isReported(policy, "wait_previous_gpu_ms"));
@@ -98,6 +110,22 @@ TEST_CASE("a measured block, once filled, is read back", "[runtime][gate][policy
   CHECK(parsed.value().measured.present());
   CHECK(parsed.value().measured.study == "calibration-1");
   CHECK(parsed.value().measured.profile == "p");
+}
+
+TEST_CASE("a reported metric is never gated, even when a gated pattern also matches it", "[runtime][gate][policy]") {
+  // The wildcard gates every pass's GPU time...
+  std::string text = mutated(R"("gpu": ["gpu_busy_ms"])", R"("gpu": ["passes.*.gpu_ms"])");
+  const auto gatedAll = gate::parsePolicy(parseOrDie(text));
+  REQUIRE(gatedAll.isOk());
+  CHECK(gate::gatedTier(gatedAll.value(), "passes.shadow.gpu_ms") == gate::Tier::Gpu);
+  // ...until one pass is named in `reported`: that one is out, the others stay in.
+  const std::string needle = R"("reported": ["frame_ms", "wait_*"])";
+  text.replace(text.find(needle), needle.size(), R"("reported": ["passes.shadow.gpu_ms", "wait_*"])");
+  const auto demoted = gate::parsePolicy(parseOrDie(text));
+  REQUIRE(demoted.isOk());
+  CHECK_FALSE(gate::gatedTier(demoted.value(), "passes.shadow.gpu_ms").has_value());
+  CHECK(gate::isReported(demoted.value(), "passes.shadow.gpu_ms"));
+  CHECK(gate::gatedTier(demoted.value(), "passes.draw.gpu_ms") == gate::Tier::Gpu);
 }
 
 TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][policy]") {

@@ -79,7 +79,8 @@ struct GatePolicy {
 // else is literal. `passes.*.gpu_ms` matches `passes.draw.gpu_ms`.
 [[nodiscard]] bool matchesPattern(std::string_view pattern, std::string_view key);
 
-// The tier `key` is gated in, or nullopt when it is not gated (a reported or unlisted metric).
+// The tier `key` is gated in, or nullopt when it is not gated (a reported or unlisted metric). A key
+// matched by `reported` is not gated even if a gated pattern matches it too.
 [[nodiscard]] std::optional<Tier> gatedTier(const GatePolicy& policy, std::string_view key);
 [[nodiscard]] bool isReported(const GatePolicy& policy, std::string_view key);
 [[nodiscard]] bool isWorkload(const GatePolicy& policy, std::string_view key);

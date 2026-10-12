@@ -169,6 +169,9 @@ bool matchesPattern(std::string_view pattern, std::string_view key) {
 }
 
 std::optional<Tier> gatedTier(const GatePolicy& policy, std::string_view key) {
+  // A metric named in `reported` is never gated, even when a gated pattern also matches it: that is how
+  // one metric of a wildcard (`passes.*.gpu_ms`) is demoted to report-only without listing the rest.
+  if (anyMatch(policy.reported, key)) return std::nullopt;
   if (anyMatch(policy.gatedCounter, key)) return Tier::Counter;
   if (anyMatch(policy.gatedCpu, key)) return Tier::Cpu;
   if (anyMatch(policy.gatedGpu, key)) return Tier::Gpu;
