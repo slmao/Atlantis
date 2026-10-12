@@ -28,6 +28,12 @@ child opts out of process power throttling and runs at high priority, so the OS 
 thread on a slow core; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
 browser started during it shows up as an `inconclusive` verdict.
 
+**Run on mains power.** The gate does not check the power source. On the reference laptop (an integrated GPU) the
+GPU time of the same scene moved from about 16.5 ms on mains power to about 28 ms on battery within one recording, a
+shift no tolerance can absorb; a baseline or a candidate measured on battery is not evidence. The baseline's
+`baseline.sessions` stamps say when each session ran; if the GPU values of its sessions split into two levels,
+record it again.
+
 | Flag | Meaning |
 |---|---|
 | `--scene`, `--variant`, `--resolution` | What to measure; `bistro`, `baseline`, 1920x1080 by default (the committed baseline). |
