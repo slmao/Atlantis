@@ -1130,6 +1130,16 @@ loop around `runFrame()` and writes the `atlantis.benchmark/1` document.
 `runFrame()` itself gains only `ATL_PROFILE_*` lines; its other text is guarded
 unchanged. See [profiling.md](../process/profiling.md).
 
+Since Plan 0060 (Spec 0060, ADR-0118, ADR-0119) the same startup layer hosts `--gate`
+(`gate_*` sources, Windows only, private to the executable, never part of
+`atlantis_runtime_host`): it launches child `--benchmark` processes (each pinned to
+a high priority class with process power throttling off), aggregates their documents
+into `atlantis.benchmark.set/1`, compares that to a committed baseline under
+`tests/performance/baselines/` with a pure evaluator and prints an
+`atlantis.benchmark.gate/1` verdict. It adds no module, no dependency and no public
+API, and touches nothing in the frame path. See
+[performance-contract.md](../process/performance-contract.md).
+
 **Extension points:** the headless entry point (offscreen target
 construction instead of Platform/Presentation) remains a future,
 unimplemented Runtime-level (or Tools-level) concern that would reuse the

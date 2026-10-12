@@ -1,6 +1,7 @@
 #include "gate_run.h"
 
 #include "benchmark_run.h"
+#include "gate_applies.h"
 #include "gate_evaluate.h"
 #include "gate_policy.h"
 #include "gate_set.h"
@@ -354,18 +355,36 @@ class TempDirScope {
   return bench::kExitOk;
 }
 
+// `--gate --applies`: one changed path per line on stdin; prints {"applies", "matched"}. It judges
+// nothing, so a docs-only change is exit 0 with applies false -- and an unreadable file is never a
+// quiet "no".
+[[nodiscard]] int runApplies(const GateRequest& request, GateEnvironment& env) {
+  const std::string path = request.applicabilityPath.value_or(env.performanceDir + "/applicability.txt");
+  const auto loaded = loadApplicability(path);
+  if (loaded.isErr()) {
+    *env.err << "atlantis_runtime: --gate --applies: " << loaded.error() << "\n";
+    return bench::kExitInitFailure;
+  }
+  std::vector<std::string> paths;
+  std::string line;
+  while (env.in != nullptr && std::getline(*env.in, line)) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (!line.empty()) paths.push_back(line);
+  }
+  *env.out << json::write(toValue(evaluateApplicability(loaded.value(), paths))) << "\n";
+  return bench::kExitOk;
+}
+
 }  // namespace
 
 int runGateWith(const GateRequest& request, GateEnvironment& environment) {
-  std::ostream& err = *environment.err;
   switch (request.mode) {
     case GateRequest::Mode::Gate:
       return runProtocol(request, environment);
     case GateRequest::Mode::Record:
       return runRecord(request, environment);
     case GateRequest::Mode::Applies:
-      err << "atlantis_runtime: --gate --applies: not yet wired (Plan 0060 M8)\n";
-      return bench::kExitRuntimeFailure;
+      return runApplies(request, environment);
   }
   return bench::kExitRuntimeFailure;
 }
@@ -396,6 +415,7 @@ int runGate(const GateRequest& request) {
   environment.tempDir = (fs::temp_directory_path() / ("atlantis_gate_" + std::to_string(static_cast<unsigned long long>(
                               std::chrono::steady_clock::now().time_since_epoch().count())))).string();
   environment.performanceDir = ATLANTIS_PERFORMANCE_DIR;
+  environment.in = &std::cin;
   environment.out = &std::cout;
   environment.err = &std::cerr;
   return runGateWith(request, environment);

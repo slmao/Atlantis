@@ -76,6 +76,8 @@ scene is absent and the exit code is 3). Flags:
 | `--baseline <path>` | | Adds a `comparison` section against an earlier document. |
 | `--series` | off | Adds the raw per-frame series. |
 | `--gpu-timing=on\|off` | on | `off` removes the timestamp writes to quantify their own cost. |
+| `--warmup-seconds <s>` | 0 | A timed warmup before the frame-count one; used by the gate's preheat. |
+| `--pin-process on\|off` | off | Opts the process out of power throttling and raises its priority class; used by the gate's children (a failure exits 3). |
 
 Exit codes: `0` success; `1` usage error or initialization failure; `2` runtime
 failure (no frame presented, the variant did not take); `3` environment mismatch
@@ -89,7 +91,9 @@ n}`, or `null` with a reason where the hardware or build cannot supply it),
 optional `series` and `comparison`. Percentiles are nearest-rank. Comparison
 reports `comparable: false` with reasons when the schema, scene, content pin,
 resolution, variant, build, GPU or driver differ. Benchmark results are
-hardware-specific: keep them as PR evidence, do not commit them.
+hardware-specific: keep them as PR evidence, do not commit them. The one exception is the
+baseline store behind the regression gate, which commits curated, provenance-stamped sets under
+`tests/performance/baselines/` by a dedicated PR: see [performance-contract.md](performance-contract.md).
 
 **Reading the waits.** The previous frame's fence wait runs at the top of
 `acquireNextTarget()`, so `WaitPreviousGpu` is nested in `Acquire`:

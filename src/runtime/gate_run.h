@@ -22,6 +22,7 @@ struct GateEnvironment {
   Clock* clock = nullptr;
   std::string tempDir;         // created and removed by the run
   std::string performanceDir;  // holds gate_policy.json and baselines/ unless the request names others
+  std::istream* in = nullptr;   // stdin: the changed paths for --applies
   std::ostream* out = nullptr;  // stdout: the verdict document, and only that
   std::ostream* err = nullptr;  // stderr: progress and problems
 };

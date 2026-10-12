@@ -47,6 +47,7 @@ add_executable(atlantis_runtime_tests
   ../../src/runtime/gate_orchestrate.cpp
   ../../src/runtime/gate_process_windows.cpp
   ../../src/runtime/gate_store.cpp
+  ../../src/runtime/gate_applies.cpp
   ../../src/runtime/gate_run.cpp
   gate_set_tests.cpp
   gate_policy_tests.cpp
@@ -55,6 +56,7 @@ add_executable(atlantis_runtime_tests
   gate_run_tests.cpp
   gate_store_tests.cpp
   gate_record_tests.cpp
+  gate_applies_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
