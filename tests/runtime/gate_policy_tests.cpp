@@ -26,6 +26,7 @@ constexpr const char* kValidPolicy = R"({
   "gated": {"counter": ["draw_calls"], "cpu": ["cpu_active_ms", "passes.*.cpu_record_ms"], "gpu": ["gpu_busy_ms"]},
   "reported": ["frame_ms", "wait_*"],
   "workload": ["lights_point"],
+  "record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20},
   "measured": {}
 })";
 
@@ -60,6 +61,10 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.cpu.maxPct == 5.0);
   CHECK(policy.gpu.maxPct == 10.0);
   CHECK(policy.dispersionFactor == 4.0);
+  // The record-time quality bar: above what the calibration study could resolve (cpu 5.4-6.5 %, gpu 10.6-19.1 %
+  // for a 3-session baseline), below the recordings that motivated it (cpu 18.2 %, gpu 21.5 %).
+  CHECK(policy.record.maxMdrCpuPct == 10.0);
+  CHECK(policy.record.maxMdrGpuPct == 20.0);
   CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file
   CHECK_FALSE(policy.measured.date.empty());
   CHECK_FALSE(policy.measured.profile.empty());
@@ -99,6 +104,8 @@ TEST_CASE("a valid policy parses into its numbers", "[runtime][gate][policy]") {
   CHECK(policy.protocol.idle.cpuIdlePct == 90.0);
   CHECK(policy.protocol.idle.timeoutSeconds == 120.0);
   CHECK(policy.dispersionFactor == 3.0);
+  CHECK(policy.record.maxMdrCpuPct == 10.0);
+  CHECK(policy.record.maxMdrGpuPct == 20.0);
   CHECK(policy.cpu.absFloor == 0.1);
   CHECK(policy.gpu.maxPct == 10.0);
   CHECK(policy.counter.metricTolerancePct.at("fragment_invocations") == 0.1);
@@ -150,6 +157,10 @@ TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][p
       {R"("gpu": ["gpu_busy_ms"])", R"("gpu": "gpu_busy_ms")", "gpu"},
       {R"("reported": ["frame_ms", "wait_*"])", R"("reported": [1])", "reported"},
       {R"("measured": {})", R"("measuredx": {})", "measured"},
+      {R"("record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20},)", "", "record"},
+      {R"("max_mdr_cpu_pct": 10,)", "", "max_mdr_cpu_pct"},
+      {R"("max_mdr_gpu_pct": 20)", R"("max_mdr_gpu_pct": "twenty")", "max_mdr_gpu_pct"},
+      {R"("max_mdr_cpu_pct": 10,)", R"("max_mdr_cpu_pct": 0,)", "bounds must be positive"},
       {R"("dispersion_factor": 3,)", R"("dispersion_factor": 0.5,)", "dispersion_factor"},
       {R"("fragment_invocations": 0.1)", R"("fragment_invocations": -0.1)", "fragment_invocations"},
   };

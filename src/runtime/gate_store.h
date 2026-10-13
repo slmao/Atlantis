@@ -13,6 +13,7 @@
 // Private to the atlantis_runtime executable's startup layer (see gate_set.h); GPU-independent.
 
 #include "gate_json.h"
+#include "gate_policy.h"
 
 #include <atlantis/result.h>
 
@@ -104,6 +105,9 @@ struct WrittenFiles {
 // with a `baseline` block naming its profile, a commit, its sessions and a reason (category 1 to 4
 // and text); it must sit under the profile whose identity its `meta` carries, at the layout's path;
 // and nothing else may live in a profile directory. An empty or absent store has no problems.
-[[nodiscard]] std::vector<std::string> validateStore(const std::string& baselinesDir);
+//
+// With `bar`, a baseline whose recorded minimum detectable regression exceeds the record-time quality bar
+// (Spec 0060 Correction 2026-10-14) is a problem too: a recording the bar would have refused is not committed.
+[[nodiscard]] std::vector<std::string> validateStore(const std::string& baselinesDir, const RecordPolicy* bar = nullptr);
 
 }  // namespace atlantis::runtime::gate

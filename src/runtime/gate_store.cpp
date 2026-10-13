@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <utility>
 
 namespace atlantis::runtime::gate {
 
@@ -208,7 +210,7 @@ Value makeBaseline(Value set, const BaselineProvenance& provenance, Value mdr) {
   return set;
 }
 
-std::vector<std::string> validateStore(const std::string& baselinesDir) {
+std::vector<std::string> validateStore(const std::string& baselinesDir, const RecordPolicy* bar) {
   std::vector<std::string> problems;
   const auto profiles = listProfiles(baselinesDir);
   if (profiles.isErr()) {
@@ -268,6 +270,17 @@ std::vector<std::string> validateStore(const std::string& baselinesDir) {
       const Value* recordedPin = field({"pin"});
       if (pin == nullptr || !pin->isObject() || recordedPin == nullptr || !(*recordedPin == *pin)) {
         problems.push_back(where + ": protocol.pin and baseline.pin are missing or differ (the pinning state is part of a baseline)");
+      }
+      if (bar != nullptr) {
+        for (const auto& [tier, bound] : {std::pair<std::string_view, double>{"cpu", bar->maxMdrCpuPct},
+                                          std::pair<std::string_view, double>{"gpu", bar->maxMdrGpuPct}}) {
+          const auto mdr = numberOf(at(doc, {"mdr", tier}));
+          if (mdr && *mdr > bound) {
+            problems.push_back(where + ": its " + std::string(tier) + " minimum detectable regression " +
+                               formatNumber(std::round(*mdr * 10.0) / 10.0) + " % is above the record bar of " +
+                               formatNumber(bound) + " % (a recording the bar would have refused)");
+          }
+        }
       }
       const Value* power = at(doc, {"protocol", "power"});
       const Value* recordedPower = field({"power"});

@@ -134,6 +134,18 @@ PolicyResult parsePolicy(const Value& document) {
   if (auto error = readStrings(document, "reported", policy.reported)) return PolicyResult::Err(*error);
   if (auto error = readStrings(document, "workload", policy.workload)) return PolicyResult::Err(*error);
 
+  const Value* record = document.find("record");
+  if (record == nullptr || !record->isObject()) return PolicyResult::Err("'record' is missing");
+  if (auto error = readNumber(*record, "max_mdr_cpu_pct", 0.0, policy.record.maxMdrCpuPct)) {
+    return PolicyResult::Err("record: " + *error);
+  }
+  if (auto error = readNumber(*record, "max_mdr_gpu_pct", 0.0, policy.record.maxMdrGpuPct)) {
+    return PolicyResult::Err("record: " + *error);
+  }
+  if (policy.record.maxMdrCpuPct <= 0.0 || policy.record.maxMdrGpuPct <= 0.0) {
+    return PolicyResult::Err("record: the bounds must be positive");
+  }
+
   const Value* measured = document.find("measured");
   if (measured == nullptr || !measured->isObject()) return PolicyResult::Err("'measured' is missing");
   for (const auto& [name, target] :

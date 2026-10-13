@@ -11,9 +11,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 
 #ifndef ATLANTIS_PERFORMANCE_DIR
@@ -134,6 +136,24 @@ class PowerWatch {
   bool required_;
   std::vector<std::string> seen_;
 };
+
+// Spec 0060 Correction 2026-10-14: the record-time quality bar. A recording whose own spread leaves a minimum
+// detectable regression above the policy's bound for a tier cannot gate that tier at the resolution the contract
+// promises, and is refused rather than committed; the bound is the policy's, fixed before any recording, so a
+// refusal is measurement hygiene and never a way to pick a recording that happens to pass.
+[[nodiscard]] std::optional<std::string> recordQualityProblem(const Value& mdr, const RecordPolicy& bar) {
+  std::string problem;
+  for (const auto& [tier, bound] : {std::pair<std::string_view, double>{"cpu", bar.maxMdrCpuPct},
+                                    std::pair<std::string_view, double>{"gpu", bar.maxMdrGpuPct}}) {
+    const auto value = numberOf(mdr.find(tier));
+    if (!value || *value <= bound) continue;  // an unavailable tier is not gated, so it has no resolution to bound
+    if (!problem.empty()) problem += ", ";
+    problem += std::string(tier) + " " + formatNumber(std::round(*value * 10.0) / 10.0) + " % (bound " +
+               formatNumber(bound) + " %)";
+  }
+  if (problem.empty()) return std::nullopt;
+  return problem;
+}
 
 [[nodiscard]] int runProtocol(const GateRequest& request, GateEnvironment& env) {
   std::ostream& out = *env.out;
@@ -369,6 +389,16 @@ class PowerWatch {
   }
 
   Value mdr = computeMdr(set.value(), policy, plan.runs);
+  if (const auto problem = recordQualityProblem(mdr, policy.record)) {
+    err << "atlantis_runtime: --gate --record: refused, nothing was written: this recording is too noisy to gate at "
+           "the resolution the contract promises (minimum detectable regression "
+        << *problem
+        << "). Its sessions' run-level values spread more than the policy's record bar (record.max_mdr_*_pct) allows, "
+           "usually because the machine was not quiet or a CPU or GPU performance state changed between the sessions. "
+           "Close other applications, stay on mains power, let the machine settle, and record again; the bar is the "
+           "policy's, fixed before any recording, and is not raised to make a recording pass\n";
+    return bench::kExitEnvironment;
+  }
   Value baseline = makeBaseline(std::move(set.value()), provenance, std::move(mdr));
 
   const auto width = static_cast<unsigned int>(numberOf(at(baseline, {"settings", "resolution", "width"})).value_or(request.width));

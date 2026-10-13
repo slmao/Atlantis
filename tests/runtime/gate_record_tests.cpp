@@ -102,6 +102,31 @@ FakeLauncher steadyLauncher() {
   return launcher;
 }
 
+// A recording whose sessions disagree: the CPU level sits at one of three states per session, so the pooled run-level
+// spread (and with it the minimum detectable regression) is far above the bar. The GPU time stays steady.
+FakeLauncher noisyCpuLauncher() {
+  FakeLauncher launcher;
+  launcher.makeDocument = [](std::size_t i) {
+    auto m = metricsAt(wobble(i));
+    const double states[] = {0.85, 1.0, 1.25};
+    m["cpu_active_ms"] *= states[(i / 6) % 3] * (1.0 + 0.04 * (static_cast<double>(i % 5) - 2.0));
+    return makeRun(m);
+  };
+  return launcher;
+}
+
+// The same, on the GPU: its time sits at different levels from session to session (the battery/mains case).
+FakeLauncher noisyGpuLauncher() {
+  FakeLauncher launcher;
+  launcher.makeDocument = [](std::size_t i) {
+    auto m = metricsAt(wobble(i));
+    const double states[] = {1.0, 1.7, 1.0};
+    m["gpu_busy_ms"] *= states[(i / 6) % 3] * (1.0 + 0.04 * (static_cast<double>(i % 5) - 2.0));
+    return makeRun(m);
+  };
+  return launcher;
+}
+
 }  // namespace
 
 TEST_CASE("recording runs the protocol once per session, waits between sessions, and writes a baseline",
@@ -319,4 +344,69 @@ TEST_CASE("an unreadable policy is an initialization failure", "[runtime][gate][
   r.policyPath = (f.root / "no_policy.json").string();
   CHECK(f.run(r, launcher).exitCode == 1);
   CHECK(launcher.calls.empty());
+}
+
+// Spec 0060 Correction 2026-10-14: the record-time quality bar.
+
+TEST_CASE("a recording too noisy on the CPU is refused with exit 3 and writes nothing", "[runtime][gate][record][bar]") {
+  Fixture f;
+  FakeLauncher launcher = noisyCpuLauncher();
+  const auto o = f.run(f.recordRequest(3), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.launches == 18);  // all three sessions ran: the bar judges the recording, not a session
+  CHECK(o.out.empty());
+  CHECK_FALSE(fs::exists(f.root / "out"));  // not a candidate file, not a profile directory
+  CHECK(o.err.find("refused, nothing was written") != std::string::npos);
+  CHECK(o.err.find("cpu ") != std::string::npos);
+  CHECK(o.err.find("(bound 10 %)") != std::string::npos);
+  CHECK(o.err.find("record again") != std::string::npos);
+  CHECK(o.err.find("not raised to make a recording pass") != std::string::npos);
+}
+
+TEST_CASE("a recording too noisy on the GPU is refused too, naming the tier", "[runtime][gate][record][bar]") {
+  Fixture f;
+  FakeLauncher launcher = noisyGpuLauncher();
+  const auto o = f.run(f.recordRequest(3), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK_FALSE(fs::exists(f.root / "out"));
+  CHECK(o.err.find("gpu ") != std::string::npos);
+  CHECK(o.err.find("(bound 20 %)") != std::string::npos);
+  CHECK(o.err.find("cpu ") == std::string::npos);  // the quiet tier is not blamed
+}
+
+TEST_CASE("a steady recording passes the bar and its numbers are inside it", "[runtime][gate][record][bar]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  const auto o = f.run(f.recordRequest(3), launcher);
+  REQUIRE(o.exitCode == 0);
+  const auto listed = gate::listProfiles((f.root / "out").string());
+  REQUIRE(listed.isOk());
+  REQUIRE(listed.value().size() == 1);
+  const auto baseline = gate::loadBaseline(gate::baselinePath(listed.value()[0], "bistro", "baseline", 1920, 1080));
+  REQUIRE(baseline.error.empty());
+  CHECK(*gate::numberOf(gate::at(baseline.document, {"mdr", "cpu"})) <= 10.0);
+  CHECK(*gate::numberOf(gate::at(baseline.document, {"mdr", "gpu"})) <= 20.0);
+}
+
+TEST_CASE("it is the policy's bound that refuses, not a fixed number", "[runtime][gate][record][bar]") {
+  Fixture f;
+  // The same noisy recording against a policy file whose bounds are lifted: it is recorded. This proves the
+  // refusal comes from the policy's record.max_mdr_* members; the committed policy is never edited to do this.
+  std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+  std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto replaceOnce = [&](const std::string& needle, const std::string& replacement) {
+    const auto at = text.find(needle);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, needle.size(), replacement);
+  };
+  replaceOnce("\"max_mdr_cpu_pct\": 10", "\"max_mdr_cpu_pct\": 1000");
+  replaceOnce("\"max_mdr_gpu_pct\": 20", "\"max_mdr_gpu_pct\": 1000");
+  const fs::path lifted = f.root / "lifted_policy.json";
+  { std::ofstream out(lifted, std::ios::binary); out << text; }
+  FakeLauncher launcher = noisyCpuLauncher();
+  cli::GateRequest r = f.recordRequest(3);
+  r.policyPath = lifted.string();
+  const auto o = f.run(r, launcher);
+  CHECK(o.exitCode == 0);
+  CHECK(fs::exists(f.root / "out"));
 }

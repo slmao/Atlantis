@@ -54,6 +54,13 @@ struct MeasuredBlock {
   [[nodiscard]] bool present() const noexcept { return !study.empty(); }
 };
 
+// The record-time quality bar (Spec 0060 Correction 2026-10-14): `--record` refuses a recording whose
+// minimum detectable regression, per tier, exceeds these bounds (percent of the metric's center).
+struct RecordPolicy {
+  double maxMdrCpuPct = 10.0;
+  double maxMdrGpuPct = 20.0;
+};
+
 struct GatePolicy {
   unsigned int version = 1;
   ProtocolPolicy protocol;
@@ -66,6 +73,7 @@ struct GatePolicy {
   std::vector<std::string> gatedGpu;
   std::vector<std::string> reported;
   std::vector<std::string> workload;
+  RecordPolicy record;
   MeasuredBlock measured;
 
   [[nodiscard]] const TierPolicy& tierPolicy(Tier tier) const noexcept;

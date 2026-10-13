@@ -14,13 +14,19 @@ No CI runs it, and no CTest asserts a measured time.
 
 ## Running the gate
 
-Build with profiling on, Release, on the machine that has a baseline for it (the verdict says if it has none):
+Build with profiling on and **Tracy off**, Release, on the machine that has a baseline for it (the verdict says if it
+has none):
 
 ```
-cmake -S . -B build-prof -DATLANTIS_PROFILING=ON
+cmake -S . -B build-prof -DATLANTIS_PROFILING=ON -DATLANTIS_PROFILING_TRACY=OFF
 cmake --build build-prof --config Release
 build-prof/src/runtime/Release/atlantis_runtime --gate --json
 ```
+
+The Tracy switch is part of a baseline's identity (`meta.build.tracy`) and defaults to on with profiling: the
+reference baseline is the profiling-on, Tracy-off configuration (Spec 0060's build config B), and a Tracy-on build is
+`incomparable` against it. Configure from a clean checkout of the commit you mean to measure: the build records its git
+revision and dirty flag when CMake configures, not when it builds.
 
 One command, one verdict document on stdout, one exit code. It takes about three minutes: it waits for the machine to
 be idle, runs one discarded **preheat** of 60 s, then five independent `--benchmark` processes, each **pinned** (the
@@ -99,7 +105,12 @@ atlantis_runtime --gate --record --record-to <dir> --reason-category <1-4> --rea
 ```
 
 It runs the protocol over three sessions at least ten minutes apart (about 30 minutes), writes the candidate under
-`<dir>` and nothing else. The PR that commits it names one reason category, as ADR-0042 does for goldens:
+`<dir>` and nothing else. It also **refuses a recording that is too noisy**: if the recording's own minimum detectable
+regression (below) exceeds the policy's record bar (`record.max_mdr_cpu_pct`, 10 %, and `record.max_mdr_gpu_pct`, 20 %),
+it exits 3, prints the numbers and writes nothing; record again on a quiet machine on mains power. The bar is a
+pre-declared objective criterion, fixed in the policy before any recording: refusing a recording by it is measurement
+hygiene, while recording until a baseline happens to pass an acceptance run would be cherry-picking. Do not raise the
+bounds to get a recording through, and say how many recordings the bar refused when you commit the one that passed. The PR that commits it names one reason category, as ADR-0042 does for goldens:
 
 1. **performance change**: an intentional change to the frame cost, naming it (an accepted regression gets an explicit
    justification: there are no per-metric exemptions, only a refreshed baseline);
@@ -116,6 +127,7 @@ place, belongs to another profile, or was not recorded under the full protocol.
 The gate states its own resolution rather than promising one: each baseline carries `mdr`, the smallest relative
 regression (per tier) that a five-run gate detects 90 % of the time against that profile's noise. Counters are exact.
 On the reference machine the calibration study measured a CPU resolution of 5-7 % and a GPU resolution of 10-16 %
-for a one-session baseline. On noisier hardware the GPU tier resolves only large regressions; a smaller one is not reliably caught, and the
+for a one-session baseline (5.4-6.5 % and 10.6-19.1 % for a three-session one; that range is why the record bar sits at
+10 % and 20 %). On noisier hardware the GPU tier resolves only large regressions; a smaller one is not reliably caught, and the
 escalation for a regression that matters (interleaved comparison against a freshly built baseline binary) is named in
 Spec 0060, not built.
