@@ -84,6 +84,19 @@ guard accepts only a baseline recorded on `mains`; the policy's `protocol.requir
 `--require-mains on|off` is the smoke override (a run with it off is not conformant and `--record` refuses it). It
 landed after PR-1 had merged, as its own PR.
 
+**Owner ruling on the M10 stop, 2026-10-14 (chat), recorded once here.** The first M10 recording (3 sessions, mains)
+had a `cpu_active_ms` spread of 6.46-10.98 ms and a CPU minimum detectable regression of 18.2 %; against it, 20 live gates
+on the unchanged build gave 9 pass, 7 fail and 4 inconclusive, and M10 stopped (nothing committed). Ruled: **a
+record-time quality bar**. `--record` refuses (exit 3, no store write) a recording whose minimum detectable regression
+exceeds the policy's `record.max_mdr_cpu_pct` / `record.max_mdr_gpu_pct`, fixed from the calibration data at 10 % and
+20 % (above what a three-session baseline resolved in the study, CPU 5.4-6.5 % and GPU 10.6-19.1 %, below the bad
+case); the store guard applies the same bar to a committed baseline. The bar is a pre-declared objective criterion, so
+refusing a recording by it is measurement hygiene, and re-recording until an acceptance run passes would be
+cherry-picking: the bar exists to make that distinction mechanical, and a recording that passes it but still fails the
+20-gate acceptance stops M10 for a protocol answer, not a threshold change. Recorded as a Spec Correction (below), with no
+ADR amendment or supersession: ADR-0119 D4/D6 are unchanged (the policy holds the numbers; `--record` runs the protocol
+and writes a candidate).
+
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

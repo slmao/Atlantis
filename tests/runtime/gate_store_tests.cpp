@@ -439,7 +439,10 @@ TEST_CASE("the guard finds every way a committed baseline can be wrong", "[runti
 }
 
 TEST_CASE("the committed baseline store passes its own guard", "[runtime][gate][store]") {
-  const auto problems = gate::validateStore(std::string(ATLANTIS_PERFORMANCE_DIR) + "/baselines");
+  const auto policy = gate::loadPolicy(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json");
+  REQUIRE(policy.isOk());
+  // With the record bar: a committed baseline is one the bar would have accepted.
+  const auto problems = gate::validateStore(std::string(ATLANTIS_PERFORMANCE_DIR) + "/baselines", &policy.value().record);
   for (const std::string& problem : problems) UNSCOPED_INFO(problem);
   CHECK(problems.empty());  // vacuously true until a baseline is committed
 }
@@ -463,4 +466,35 @@ TEST_CASE("the minimum detectable regression follows from the baseline's noise b
   const json::Value noisy = gate_test::makeSet({{"cpu_active_ms", {12.0, 1.0, 15.0}}});
   CHECK(*gate::numberOf(gate::computeMdr(noisy, policy, 5).find("cpu")) > 15.0);
   CHECK(gate::computeMdr(noisy, policy, 5).find("gpu")->isNull());
+}
+
+TEST_CASE("the guard, given the record bar, refuses a committed baseline the bar would have refused",
+          "[runtime][gate][store][bar]") {
+  TempStore store;
+  const std::string baselineFile = writeValidStore(store);
+  const gate::RecordPolicy bar{10.0, 20.0};
+  const auto setMdr = [&](double cpu, double gpu) {
+    auto parsed = json::parse(readAll(baselineFile));
+    REQUIRE(parsed.isOk());
+    json::Value doc = parsed.value();
+    json::Value mdr = json::Value::object();
+    mdr.set("counter", gate::num(0.0));
+    mdr.set("cpu", gate::num(cpu));
+    mdr.set("gpu", gate::num(gpu));
+    doc.set("mdr", std::move(mdr));
+    std::ofstream out(baselineFile, std::ios::binary | std::ios::trunc);
+    out << json::write(doc) << "\n";
+  };
+  const auto mentions = [](const std::vector<std::string>& problems, const std::string& text) {
+    return std::any_of(problems.begin(), problems.end(), [&](const std::string& p) { return p.find(text) != std::string::npos; });
+  };
+  setMdr(6.5, 17.2);  // what the calibration study could resolve
+  CHECK(gate::validateStore(store.dir(), &bar).empty());
+  setMdr(18.2, 11.6);  // the M10 recording that motivated the bar
+  CHECK(mentions(gate::validateStore(store.dir(), &bar), "cpu minimum detectable regression 18.2 %"));
+  CHECK(gate::validateStore(store.dir()).empty());  // without a bar the guard is as before
+  setMdr(6.5, 21.5);  // the recording that spanned battery and mains
+  CHECK(mentions(gate::validateStore(store.dir(), &bar), "gpu minimum detectable regression 21.5 %"));
+  setMdr(10.0, 20.0);  // exactly at the bound is inside it
+  CHECK(gate::validateStore(store.dir(), &bar).empty());
 }

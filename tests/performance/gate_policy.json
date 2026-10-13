@@ -77,6 +77,10 @@
     "lights_directional",
     "lights_point"
   ],
+  "record": {
+    "max_mdr_cpu_pct": 10,
+    "max_mdr_gpu_pct": 20
+  },
   "measured": {
     "study": "calibration-2-pinned",
     "date": "2026-10-12",
@@ -84,6 +88,7 @@
     "protocol": "12 sessions x 5 pinned runs (60 runs), 60 s preheat, 6 min between sessions, 2 sessions after a broad rebuild",
     "rule": "1980 (3-session baseline, 1 candidate session) combinations; k=3 (bootstrap false-fail upper 95 % bound 0.00 %), cpu 5 %, gpu 10 %, smallest dispersion_factor with inconclusive <= 10 % (4: 2.83 %, bootstrap upper 8.24 %)",
     "demoted": "passes.shadow.gpu_ms is report-only: at the Spec defaults it is the only metric that false-fails (6.1 % of combinations; its session medians span 2.30 to 2.81 ms, a per-session shift larger than 10 %), and no other metric fails",
-    "mdr": "a single-session baseline resolves cpu 5.1-6.5 % and gpu 10.5-16.1 % (90 % detection), counters exact"
+    "mdr": "a single-session baseline resolves cpu 5.1-6.5 % and gpu 10.5-16.1 % (90 % detection), counters exact",
+    "record_bar": "record-time bar on a 3-session baseline's minimum detectable regression: cpu 10 %, gpu 20 %. Of the 220 three-session baselines the 12 calibration sessions allow, cpu resolves 5.4-6.5 % (bar 10 % refuses none) and gpu 10.6-19.1 % (p99 17.2 %; bar 20 % refuses none); the two recordings that motivated the bar resolve cpu 18.2 % and gpu 21.5 % (a recording spanning battery and mains) and are refused"
   }
 }

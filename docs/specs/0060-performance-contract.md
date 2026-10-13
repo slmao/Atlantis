@@ -11,6 +11,22 @@
   recorded once in [Plan 0060](../plans/0060-performance-contract.md); the
   open-question text below keeps the options as the record of what was weighed.
   Implementation still awaits the Plan's separate Joint Human Review.
+  **Correction (2026-10-14, post-Approval, owner ruling on the M10 stop after
+  [PR #248](https://github.com/slmao/Atlantis/pull/248)/[#250](https://github.com/slmao/Atlantis/pull/250)):**
+  the record flow had no quality bar.
+  - **The approved text** (R2, R4, Q6, Risks) records a baseline over three sessions of five runs and leaves a noisy
+    one to the PR's review ("a bad one is refreshed under category 3"); `--record` accepted any recording.
+  - **Why that is not enough:** the first M10 recording (mains power, clean build) had a `cpu_active_ms` spread of
+    6.46-10.98 ms and a CPU minimum detectable regression of 18.2 %; 20 live gates on the unchanged build gave
+    9 pass, 7 fail and 4 inconclusive. Review by eye was the only defence, and re-recording until an acceptance run
+    passes would be cherry-picking.
+  - **Corrected:** `--record` refuses (exit 3, no store write, the numbers and how to re-record printed) a recording
+    whose minimum detectable regression exceeds the policy's `record.max_mdr_cpu_pct` / `record.max_mdr_gpu_pct`
+    (10 % and 20 %: above the 5.4-6.5 % and 10.6-19.1 % that three-session baselines resolved in the calibration
+    study, below the 18.2 % case); the store guard applies the same bar to a committed baseline. The bound is the
+    policy's, fixed before any recording, so a refusal is measurement hygiene, not selection.
+  - **ADRs:** ADR-0118 and ADR-0119 are unchanged (D4 already has the policy hold the numbers and the baseline ship
+    its minimum detectable regression; D6 `--record` still runs the protocol and writes a candidate).
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
@@ -169,7 +185,9 @@ Also out of scope (proposed by this draft):
 - **R2 — Noise band** (Q2). A baseline ships with a per-metric estimated noise
   band (robust sigma of its run-level values across multiple sessions) and the
   minimum regression the gate can resolve at that noise. The gate's tolerance for a
-  metric derives from the baseline's band, never from the candidate alone.
+  metric derives from the baseline's band, never from the candidate alone. (Correction
+  2026-10-14: a recording whose own minimum detectable regression exceeds the policy's
+  record bar is refused at record time.)
 - **R3 — Committed baseline store** (Q5). Baselines are committed files scoped to a
   hardware profile; a baseline identifies the scene, variant, resolution, build
   configuration, protocol and the profile it was recorded on. The gate only reads
@@ -447,6 +465,8 @@ Risks:
   baseline refresh PR per driver change on that profile.
 - **A noisy baseline recorded once poisons the contract.** Recording spans several
   sessions and the PR reviews its band; a bad one is refreshed under category 3.
+  (Correction 2026-10-14: `--record` itself refuses a recording above the policy's
+  record bar, so review no longer has to catch it by eye.)
 - **A gate people skip.** Local/manual gates depend on the applicability rule being
   visible (PR template, Definition of Done) and on the one-command surface being
   cheap enough to run.
