@@ -96,7 +96,9 @@ if(WIN32)
 # Plan 0059 M9 (ADR-0117 D1): the benchmark is executable-private like cli.cpp and
 # editor_attachment.cpp -- never added to atlantis_runtime_host.
 add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp
-  benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp)
+  benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
+  # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
+  gate_set.cpp gate_policy.cpp gate_evaluate.cpp gate_orchestrate.cpp gate_process_windows.cpp gate_store.cpp gate_applies.cpp gate_run.cpp)
 
 # Plan 0059 M9 (ADR-0117 D6): what the result document records about the build,
 # read at configure time -- the configuration, the source revision (and whether the
@@ -120,6 +122,8 @@ if(ATLANTIS_PROVENANCE_LINES)
   string(REGEX REPLACE "^source_commit: ([0-9a-f]+).*" "\\1" ATLANTIS_BISTRO_CONTENT_PIN_TEXT "${ATLANTIS_PROVENANCE_LINES}")
 endif()
 target_compile_definitions(atlantis_runtime PRIVATE
+  # Plan 0060 M5: where the gate finds gate_policy.json and baselines/ unless told otherwise.
+  ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
   ATLANTIS_BUILD_TYPE="$<CONFIG>"
   ATLANTIS_GIT_REVISION="${ATLANTIS_GIT_REVISION_TEXT}"
   ATLANTIS_GIT_DIRTY=${ATLANTIS_GIT_DIRTY_VALUE}

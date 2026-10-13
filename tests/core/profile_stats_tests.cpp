@@ -65,3 +65,46 @@ TEST_CASE("nearestRank takes a sorted span directly", "[profile][stats]") {
   CHECK(nearestRank(sorted, 100) == 40.0);
   CHECK(nearestRank(sorted, 1) == 10.0);
 }
+
+// Spec 0060 / ADR-0119 D7: the robust statistics, against values worked out by hand.
+
+using atlantis::profile::median;
+using atlantis::profile::medianAbsoluteDeviation;
+using atlantis::profile::robustSigma;
+
+TEST_CASE("the median of an odd count is the middle value, of an even count the mean of the middle two",
+          "[profile][stats][robust]") {
+  CHECK(median(std::vector<double>{5.0, 1.0, 3.0}) == 3.0);
+  CHECK(median(std::vector<double>{4.0, 1.0, 3.0, 2.0}) == 2.5);
+  CHECK(median(std::vector<double>{7.0}) == 7.0);
+  CHECK(median(std::vector<double>{}) == 0.0);
+}
+
+TEST_CASE("the median ignores ties and leaves the caller's samples untouched", "[profile][stats][robust]") {
+  const std::vector<double> samples{2.0, 2.0, 2.0, 9.0, 2.0};
+  CHECK(median(samples) == 2.0);
+  CHECK(samples[3] == 9.0);
+}
+
+TEST_CASE("the median absolute deviation is the median of the distances to the median", "[profile][stats][robust]") {
+  // 1 2 3 4 100: median 3, deviations 2 1 0 1 97 -> sorted 0 1 1 2 97 -> MAD 1.
+  const std::vector<double> samples{1.0, 2.0, 3.0, 4.0, 100.0};
+  CHECK(medianAbsoluteDeviation(samples) == 1.0);
+  CHECK(robustSigma(samples) == Approx(1.4826));
+}
+
+TEST_CASE("identical samples have a zero MAD and a zero robust sigma", "[profile][stats][robust]") {
+  const std::vector<double> samples{4.0, 4.0, 4.0, 4.0};
+  CHECK(medianAbsoluteDeviation(samples) == 0.0);
+  CHECK(robustSigma(samples) == 0.0);
+  CHECK(robustSigma(std::vector<double>{3.0}) == 0.0);
+  CHECK(robustSigma(std::vector<double>{}) == 0.0);
+}
+
+TEST_CASE("one outlier barely moves the median or the MAD", "[profile][stats][robust]") {
+  const std::vector<double> clean{10.0, 10.2, 9.8, 10.1, 9.9};
+  std::vector<double> dirty = clean;
+  dirty.push_back(1000.0);
+  CHECK(median(dirty) == Approx(10.05));
+  CHECK(medianAbsoluteDeviation(dirty) < 0.3);
+}

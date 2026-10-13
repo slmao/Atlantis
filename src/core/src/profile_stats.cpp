@@ -33,4 +33,23 @@ Stats computeStats(std::span<const double> samples) {
   return stats;
 }
 
+double median(std::span<const double> samples) {
+  if (samples.empty()) return 0.0;
+  std::vector<double> sorted(samples.begin(), samples.end());
+  std::sort(sorted.begin(), sorted.end());
+  const std::size_t n = sorted.size();
+  return n % 2 == 1 ? sorted[n / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0;
+}
+
+double medianAbsoluteDeviation(std::span<const double> samples) {
+  if (samples.empty()) return 0.0;
+  const double center = median(samples);
+  std::vector<double> deviations;
+  deviations.reserve(samples.size());
+  for (const double v : samples) deviations.push_back(v < center ? center - v : v - center);
+  return median(deviations);
+}
+
+double robustSigma(std::span<const double> samples) { return 1.4826 * medianAbsoluteDeviation(samples); }
+
 }  // namespace atlantis::profile

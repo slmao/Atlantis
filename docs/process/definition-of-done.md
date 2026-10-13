@@ -37,6 +37,12 @@ absence of relevance must be obvious, not assumed.
 - [ ] Vulkan Validation Layers run clean (no errors, no warnings) for any
       code path that touches the GPU
 - [ ] Headless verification performed for any rendering-adjacent change
+- [ ] The performance gate (`atlantis_runtime --gate`) run and its verdict reported for any change
+      `atlantis_runtime --gate --applies` selects (the frame path; see
+      [performance-contract.md](performance-contract.md)), or marked N/A with the reason - including
+      `incomparable` where no baseline exists yet for the machine's hardware profile. A baseline is
+      changed only by a dedicated, human-reviewed PR that names a reason category, never by an agent
+      without an explicit human instruction
 
 ## Documentation
 

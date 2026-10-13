@@ -53,6 +53,27 @@ keeps its original option text; these rulings bind it.
 | Q11 | The preheat length is measured under the protocol at implementation (observed cold-start transition ≈ 5 runs). |
 | Q12 | An accepted regression goes through a category-1 baseline refresh with a stated reason; no per-metric exemptions. |
 
+**Owner ruling on the M7 stop, 2026-10-11 (chat), recorded once here.** The first calibration study (11 valid
+sessions, 55 runs, preheat 60 / 90 / 120 s, run before any pinning) showed session-level machine performance states
+that no preheat removes: `cpu_active_ms` 12.8 ms in most sessions and 7-8 ms in others, `passes.shadow.gpu_ms`
+2.1-2.25 ms against 2.9 ms; the Spec defaults gave 5.8 % false failures and 23 % `inconclusive`; the preheat rule
+(consecutive runs within 2 % on at least 90 % of sessions) failed at every duration. Ruled:
+
+- **Option A.** Inside the benchmark child process only, opt out of process power throttling
+  (`PROCESS_POWER_THROTTLING_EXECUTION_SPEED` off) and raise the priority class to HIGH, as the new
+  `--pin-process on|off` flag of `--benchmark` (default off, so a plain benchmark is unchanged) and of `--gate`
+  (default: the policy's `protocol.pin_process`, which is on). Executable-private, no change to the measured loop. This
+  is process-level measurement-environment control, inside the spirit of Spec 0060's "no hardware clock/power control"
+  non-goal; a pinned run that cannot be pinned exits 3 rather than pose as one.
+- The **pinning state** is recorded as `protocol.pin` in `set/1` and `gate/1` and as `baseline.pin` in a baseline's
+  provenance, and the evaluator treats a difference as `incomparable`: a pinned run never compares against an unpinned
+  baseline. (`profile.json` stays a hardware identity; the pin lives with each baseline.)
+- **Preheat 60 s** (Q11).
+- **M7 is re-run in full under the final protocol** (at least 60 runs, at least 6 sessions), the stop rule unchanged:
+  all tiers meet their rules, lock the defaults; only `passes.shadow.gpu_ms` remains an offender, the owner
+  pre-authorizes demoting shadow alone to report-only and everything else is locked per the Spec's defaults; anything
+  broader, stop and report. The pre-pin data is kept as evidence of why the pin exists.
+
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

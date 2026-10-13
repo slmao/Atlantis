@@ -146,3 +146,57 @@ TEST_CASE("no presented frame within the timeout ends the run", "[runtime][bench
   CHECK(run.calls <= 17);
   CHECK(result.presentedMeasured == 0);
 }
+
+// Plan 0060 M4 (ADR-0119 D1): the warmup phase may also last a fixed time, so the gate's preheat
+// is a duration and not a frame count.
+
+TEST_CASE("a warmup duration keeps warming past the warmup frames until the time has passed",
+          "[runtime][benchmark][loop]") {
+  FakeRun run;
+  std::chrono::steady_clock::time_point clock{};
+  // 1 ms per frame on the fake clock; 20 ms of warmup duration, 4 warmup frames, 10 measured.
+  bm::LoopOptions options{.warmup = 4, .warmupDuration = milliseconds(20), .frames = 10};
+  const auto result = bm::runMeasuredLoop(options, hooksFor(run, {}, clock));
+  REQUIRE(result.status == bm::LoopStatus::Ok);
+  CHECK(result.warmupRecords >= 20);  // at least the duration's worth of frames
+  CHECK(result.measuredRecords == 10);
+  CHECK(result.presentedMeasured == 10);
+  CHECK(run.calls == static_cast<int>(result.warmupRecords) + 10 + 1);
+}
+
+TEST_CASE("a warmup duration shorter than the warmup frames changes nothing", "[runtime][benchmark][loop]") {
+  FakeRun withDuration;
+  std::chrono::steady_clock::time_point clockA{};
+  const auto a = bm::runMeasuredLoop({.warmup = 8, .warmupDuration = milliseconds(3), .frames = 5},
+                                     hooksFor(withDuration, {}, clockA));
+  FakeRun plain;
+  std::chrono::steady_clock::time_point clockB{};
+  const auto b = bm::runMeasuredLoop({.warmup = 8, .frames = 5}, hooksFor(plain, {}, clockB));
+  REQUIRE(a.status == bm::LoopStatus::Ok);
+  REQUIRE(b.status == bm::LoopStatus::Ok);
+  CHECK(a.warmupRecords == b.warmupRecords);
+  CHECK(a.measuredRecords == b.measuredRecords);
+  CHECK(withDuration.calls == plain.calls);
+}
+
+TEST_CASE("a warmup duration works with no warmup frames at all", "[runtime][benchmark][loop]") {
+  FakeRun run;
+  std::chrono::steady_clock::time_point clock{};
+  const auto result = bm::runMeasuredLoop({.warmup = 0, .warmupDuration = milliseconds(7), .frames = 3},
+                                          hooksFor(run, {}, clock));
+  REQUIRE(result.status == bm::LoopStatus::Ok);
+  CHECK(result.warmupRecords >= 7);
+  CHECK(result.measuredRecords == 3);
+}
+
+TEST_CASE("the measured frames after a timed warmup are the frames that followed it", "[runtime][benchmark][loop]") {
+  FakeRun run;
+  std::chrono::steady_clock::time_point clock{};
+  const auto result = bm::runMeasuredLoop({.warmup = 2, .warmupDuration = milliseconds(15), .frames = 4},
+                                          hooksFor(run, {}, clock));
+  REQUIRE(result.status == bm::LoopStatus::Ok);
+  for (std::size_t i = result.warmupRecords; i < result.warmupRecords + result.measuredRecords; ++i) {
+    CHECK(result.records[i].presented);
+  }
+  CHECK(result.records.size() == result.warmupRecords + 4 + 1);  // the extra frame is last
+}

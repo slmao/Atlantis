@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "protocol": {
+    "runs": 5,
+    "preheat_seconds": 60,
+    "k": 3,
+    "child_timeout_seconds": 300,
+    "pin_process": true,
+    "idle": {
+      "cpu_idle_pct": 90,
+      "window_seconds": 10,
+      "timeout_seconds": 120
+    }
+  },
+  "dispersion_factor": 4,
+  "tiers": {
+    "counter": {
+      "abs_floor": 0,
+      "max_pct": 0,
+      "metric_tolerance_pct": {
+        "fragment_invocations": 0.1,
+        "ia_primitives": 0.1
+      }
+    },
+    "cpu": {
+      "abs_floor": 0.1,
+      "max_pct": 5
+    },
+    "gpu": {
+      "abs_floor": 0.25,
+      "max_pct": 10
+    }
+  },
+  "gated": {
+    "counter": [
+      "draw_calls",
+      "triangles",
+      "pipeline_binds",
+      "descriptor_set_binds",
+      "descriptor_writes",
+      "vertex_buffer_binds",
+      "index_buffer_binds",
+      "push_constants",
+      "upload_bytes",
+      "uniform_write_bytes",
+      "materials_realized",
+      "fragment_invocations",
+      "ia_primitives"
+    ],
+    "cpu": [
+      "cpu_active_ms",
+      "zones.RenderExtraction",
+      "zones.Renderer",
+      "zones.RenderGraph",
+      "passes.*.cpu_record_ms"
+    ],
+    "gpu": [
+      "gpu_busy_ms",
+      "passes.*.gpu_ms"
+    ]
+  },
+  "reported": [
+    "passes.shadow.gpu_ms",
+    "frame_ms",
+    "cpu_ms",
+    "acquire_ms",
+    "present_ms",
+    "wait_*",
+    "gpu_span_ms",
+    "renderables_drawn",
+    "renderables_skipped",
+    "renderables_culled"
+  ],
+  "workload": [
+    "renderables_total",
+    "lights_directional",
+    "lights_point"
+  ],
+  "measured": {
+    "study": "calibration-2-pinned",
+    "date": "2026-10-12",
+    "profile": "Intel(R) Arc(TM) B370 GPU / Intel(R) Core(TM) Ultra 5 338H, driver 101.8509, Vulkan 1.4.335, FIFO 60 Hz",
+    "protocol": "12 sessions x 5 pinned runs (60 runs), 60 s preheat, 6 min between sessions, 2 sessions after a broad rebuild",
+    "rule": "1980 (3-session baseline, 1 candidate session) combinations; k=3 (bootstrap false-fail upper 95 % bound 0.00 %), cpu 5 %, gpu 10 %, smallest dispersion_factor with inconclusive <= 10 % (4: 2.83 %, bootstrap upper 8.24 %)",
+    "demoted": "passes.shadow.gpu_ms is report-only: at the Spec defaults it is the only metric that false-fails (6.1 % of combinations; its session medians span 2.30 to 2.81 ms, a per-session shift larger than 10 %), and no other metric fails",
+    "mdr": "a single-session baseline resolves cpu 5.1-6.5 % and gpu 10.5-16.1 % (90 % detection), counters exact"
+  }
+}

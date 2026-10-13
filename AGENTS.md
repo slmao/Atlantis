@@ -329,7 +329,13 @@ Backend file, loopback-only; no other module names a Tracy or Vulkan profiling
 type. `atlantis_runtime --benchmark <scene> [--warmup N] [--frames N]
 [--resolution WxH] [--variant V] [--json] [--output P] [--baseline P] [--series]
 [--gpu-timing=on|off]` writes the `atlantis.benchmark/1` document and is
-executable-private; a performance number is never a test verdict. The
+executable-private; a performance number is never a test verdict. Since Spec 0060
+(ADR-0118/ADR-0119) `atlantis_runtime --gate` is the executable-private,
+Windows-only performance regression gate that launches child `--benchmark`
+processes and judges them against a committed per-hardware-profile baseline
+under `tests/performance/baselines/` (operator note
+[docs/process/performance-contract.md](docs/process/performance-contract.md));
+it adds no module, no dependency and no public API. The
 `runFrame()` diff guard now reads: identical to its base text except added
 `ATL_PROFILE_*` lines and `debugName` members.
 
@@ -496,6 +502,21 @@ default.
   golden-update-reason rule. This is currently a **local/manual** gate —
   no CI pipeline exists yet — so it's run and reported by whoever opens
   the PR, alongside a clean Vulkan Validation Layers run.
+- A change to the frame path - the paths in
+  [tests/performance/applicability.txt](tests/performance/applicability.txt),
+  which `atlantis_runtime --gate --applies` evaluates - runs the performance
+  gate (`atlantis_runtime --gate --json`, Spec 0060, ADR-0118/ADR-0119,
+  operator note [docs/process/performance-contract.md](docs/process/performance-contract.md))
+  and reports its verdict, or states N/A with the reason (no baseline for the
+  machine's hardware profile is `incomparable`, not a pass). Like image
+  regression it is a **local/manual** gate: no CI runs it and no CTest asserts a
+  measured time. A committed baseline under `tests/performance/baselines/` is
+  changed only by a dedicated, human-reviewed PR that names one reason
+  category (performance change, reference-environment change, approved
+  rebaseline, initial baseline). **An agent never records, refreshes or
+  commits a baseline without an explicit human instruction**, and never edits
+  the policy numbers in `tests/performance/gate_policy.json` to make a gate
+  pass.
 - No PR merges with failing tests, or with validation-layer warnings/
   errors on any GPU-touching path.
 - Build and run the relevant tests after every implementation step, not

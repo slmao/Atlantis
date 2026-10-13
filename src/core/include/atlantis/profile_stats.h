@@ -24,4 +24,13 @@ struct Stats {
 // Sorts a copy of `samples`.
 [[nodiscard]] Stats computeStats(std::span<const double> samples);
 
+// Spec 0060 / ADR-0119 D7: the robust statistics the gate's aggregation and
+// noise band use. Each sorts a copy; empty input gives 0. The median of an even
+// count is the mean of the two middle values.
+[[nodiscard]] double median(std::span<const double> samples);
+// The median of |x - median(x)|.
+[[nodiscard]] double medianAbsoluteDeviation(std::span<const double> samples);
+// 1.4826 x MAD: the standard deviation a normal distribution with this MAD has.
+[[nodiscard]] double robustSigma(std::span<const double> samples);
+
 }  // namespace atlantis::profile

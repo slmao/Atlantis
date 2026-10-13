@@ -18,6 +18,9 @@ namespace atlantis::runtime::benchmark {
 
 struct LoopOptions {
   unsigned int warmup = 0;   // presented frames run and not measured
+  // Plan 0060 M4 (ADR-0119 D1): the warmup phase also lasts at least this long (measured from the
+  // loop's start). Zero: warmup frames only, as before. The measured frames are unchanged.
+  std::chrono::milliseconds warmupDuration{0};
   unsigned int frames = 1;   // presented frames measured
   // No presented frame for this long ends the run: a minimized or occluded window
   // renders nothing, and waiting would never end.
@@ -50,8 +53,9 @@ struct LoopResult {
   std::size_t skippedMeasured = 0;  // measured-range frames that never reached Present
 };
 
-// Starts the recorder, runs frames until `warmup + frames` of them have been
-// presented, runs one more, and stops the recorder. Frames that never reach
+// Starts the recorder, runs frames until the warmup (`warmup` presented frames and at
+// least `warmupDuration`) and then `frames` more have been presented, runs one more, and
+// stops the recorder. Frames that never reach
 // Present are run and counted but belong to no total.
 [[nodiscard]] LoopResult runMeasuredLoop(const LoopOptions& options, const LoopHooks& hooks);
 

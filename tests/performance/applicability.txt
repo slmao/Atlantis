@@ -1,0 +1,36 @@
+# Which changes require the performance gate (Spec 0060 R9, ADR-0118 D5, Plan 0060 P9).
+#
+# A pull request that changes a path matched by an `include:` pattern below runs
+#   atlantis_runtime --gate --json
+# on the machine that opens it and reports the verdict, or states N/A with the reason (for example,
+# no baseline exists yet for the machine's hardware profile: the verdict is then `incomparable`).
+# A path matched by both an include and an exclude is an include; the exclude list documents what is
+# exempt on purpose. An agent asks the same question of a change set with
+#   git diff --name-only origin/main... | atlantis_runtime --gate --applies
+#
+# Patterns are repository-relative: `*` stays within one directory, `**` crosses directories,
+# `**/` is zero or more directories, `?` is one character.
+
+include:
+src/renderer/**
+src/render_graph/**
+src/rhi/**
+src/vulkan_backend/**
+src/runtime/**
+src/world/**
+shaders/**
+src/core/**/profile*
+CMakeLists.txt
+cmake/**
+tests/performance/**
+
+exclude:
+docs/**
+android/**
+src/editor/**
+src/gameplay_sdk/**
+src/csharp/**
+src/remote/**
+src/cli/**
+src/connection/**
+tests/**

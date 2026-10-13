@@ -26,6 +26,7 @@ here. Explain N/A checks rather than claiming they passed. -->
 - Build / unit tests:
 - Headless / image regression / human golden review:
 - Vulkan Validation Layers:
+- Performance gate (`atlantis_runtime --gate --applies` selects the change; verdict or N/A with the reason; a baseline refresh names one reason category 1-4):
 - Documentation / links / whitespace:
 
 <!-- Historical compaction: include base commit, before/after structural metrics

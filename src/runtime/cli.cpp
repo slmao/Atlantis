@@ -2,6 +2,8 @@
 
 #include <atlantis/assert.h>
 
+#include <charconv>
+
 namespace atlantis::runtime::cli {
 
 namespace {
@@ -16,7 +18,13 @@ constexpr std::string_view kUsageText =
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
     "                        [--variant <v>] [--json] [--output <path>] [--baseline <path>] [--series]\n"
-    "                        [--gpu-timing=on|off]\n"
+    "                        [--gpu-timing=on|off] [--warmup-seconds <s>] [--pin-process on|off]\n"
+    "       atlantis_runtime --gate [--scene <name>] [--variant <v>] [--resolution <W>x<H>] [--runs <n>]\n"
+    "                        [--baselines <dir>] [--profile <id>|auto] [--policy <file>] [--json]\n"
+    "                        [--output <path>] [--idle-wait on|off] [--preheat-seconds <s>] [--pin-process on|off]\n"
+    "       atlantis_runtime --gate --record --record-to <dir> --reason-category <1-4> --reason <text>\n"
+    "                        [--sessions <n>] [--session-gap-minutes <m>] [the --gate options above]\n"
+    "       atlantis_runtime --gate --applies [--applicability <file>]   (changed paths on stdin)\n"
     "\n"
     "<name> is one of: integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo, "
     "pbr_materials_showcase\n"
@@ -49,6 +57,26 @@ constexpr std::string_view kUsageText =
   }
   if (value < minimum || value > maximum) return false;
   out = static_cast<unsigned int>(value);
+  return true;
+}
+
+// A decimal number with an optional fraction ("90", "2.5"), in [minimum, maximum].
+[[nodiscard]] bool parseDecimal(std::string_view text, double minimum, double maximum, double& out) {
+  if (text.empty() || text.size() > 12) return false;
+  std::size_t dots = 0;
+  for (const char c : text) {
+    if (c == '.') {
+      ++dots;
+    } else if (c < '0' || c > '9') {
+      return false;
+    }
+  }
+  if (dots > 1 || text.front() == '.' || text.back() == '.') return false;
+  double value = 0.0;
+  const auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+  if (result.ec != std::errc() || result.ptr != text.data() + text.size()) return false;
+  if (value < minimum || value > maximum) return false;
+  out = value;
   return true;
 }
 
@@ -89,6 +117,13 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int jsonCount = 0, outputCount = 0, baselineCount = 0, seriesCount = 0, gpuTimingCount = 0;
   std::string_view benchmarkScene, warmupText, framesText, resolutionText, variantText, outputPath, baselinePath;
   std::string_view gpuTimingText;
+  // Plan 0060 M3 (ADR-0119 D5): --gate and its options; --warmup-seconds is the benchmark's.
+  int gateCount = 0, recordCount = 0, appliesCount = 0, runsCount = 0, baselinesCount = 0, profileCount = 0;
+  int policyCount = 0, idleWaitCount = 0, preheatCount = 0, sessionsCount = 0, gapCount = 0, categoryCount = 0;
+  int reasonCount = 0, recordToCount = 0, applicabilityCount = 0, warmupSecondsCount = 0, pinCount = 0;
+  std::string_view pinText;
+  std::string_view runsText, baselinesDir, profileId, policyPath, idleWaitText, preheatText, sessionsText, gapText;
+  std::string_view categoryText, reasonText, recordTo, applicabilityPath, warmupSecondsText;
 
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -145,6 +180,68 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
     } else if (arg.rfind("--gpu-timing=", 0) == 0) {
       if (++gpuTimingCount > 1) return makeError("--gpu-timing supplied more than once");
       gpuTimingText = arg.substr(std::string_view("--gpu-timing=").size());
+    } else if (arg == "--warmup-seconds") {
+      if (++warmupSecondsCount > 1) return makeError("--warmup-seconds supplied more than once");
+      if (i + 1 >= argc) return makeError("--warmup-seconds requires a value");
+      warmupSecondsText = argv[++i];
+    } else if (arg == "--pin-process") {
+      if (++pinCount > 1) return makeError("--pin-process supplied more than once");
+      if (i + 1 >= argc) return makeError("--pin-process requires a value");
+      pinText = argv[++i];
+    } else if (arg == "--gate") {
+      if (++gateCount > 1) return makeError("--gate supplied more than once");
+    } else if (arg == "--record") {
+      if (++recordCount > 1) return makeError("--record supplied more than once");
+    } else if (arg == "--applies") {
+      if (++appliesCount > 1) return makeError("--applies supplied more than once");
+    } else if (arg == "--runs") {
+      if (++runsCount > 1) return makeError("--runs supplied more than once");
+      if (i + 1 >= argc) return makeError("--runs requires a value");
+      runsText = argv[++i];
+    } else if (arg == "--baselines") {
+      if (++baselinesCount > 1) return makeError("--baselines supplied more than once");
+      if (i + 1 >= argc) return makeError("--baselines requires a value");
+      baselinesDir = argv[++i];
+    } else if (arg == "--profile") {
+      if (++profileCount > 1) return makeError("--profile supplied more than once");
+      if (i + 1 >= argc) return makeError("--profile requires a value");
+      profileId = argv[++i];
+    } else if (arg == "--policy") {
+      if (++policyCount > 1) return makeError("--policy supplied more than once");
+      if (i + 1 >= argc) return makeError("--policy requires a value");
+      policyPath = argv[++i];
+    } else if (arg == "--idle-wait") {
+      if (++idleWaitCount > 1) return makeError("--idle-wait supplied more than once");
+      if (i + 1 >= argc) return makeError("--idle-wait requires a value");
+      idleWaitText = argv[++i];
+    } else if (arg == "--preheat-seconds") {
+      if (++preheatCount > 1) return makeError("--preheat-seconds supplied more than once");
+      if (i + 1 >= argc) return makeError("--preheat-seconds requires a value");
+      preheatText = argv[++i];
+    } else if (arg == "--sessions") {
+      if (++sessionsCount > 1) return makeError("--sessions supplied more than once");
+      if (i + 1 >= argc) return makeError("--sessions requires a value");
+      sessionsText = argv[++i];
+    } else if (arg == "--session-gap-minutes") {
+      if (++gapCount > 1) return makeError("--session-gap-minutes supplied more than once");
+      if (i + 1 >= argc) return makeError("--session-gap-minutes requires a value");
+      gapText = argv[++i];
+    } else if (arg == "--reason-category") {
+      if (++categoryCount > 1) return makeError("--reason-category supplied more than once");
+      if (i + 1 >= argc) return makeError("--reason-category requires a value");
+      categoryText = argv[++i];
+    } else if (arg == "--reason") {
+      if (++reasonCount > 1) return makeError("--reason supplied more than once");
+      if (i + 1 >= argc) return makeError("--reason requires a value");
+      reasonText = argv[++i];
+    } else if (arg == "--record-to") {
+      if (++recordToCount > 1) return makeError("--record-to supplied more than once");
+      if (i + 1 >= argc) return makeError("--record-to requires a value");
+      recordTo = argv[++i];
+    } else if (arg == "--applicability") {
+      if (++applicabilityCount > 1) return makeError("--applicability supplied more than once");
+      if (i + 1 >= argc) return makeError("--applicability requires a value");
+      applicabilityPath = argv[++i];
     } else if (arg == "--help") {
       if (++helpCount > 1) return makeError("--help supplied more than once");
     } else if (arg == "--list-scenes") {
@@ -181,10 +278,124 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   if (editorCount > 0 && execCount > 0) return makeError("--editor and --exec may not be combined");
   // Spec 0059 / ADR-0117 D1: the benchmark measures a scene; nothing else may drive it.
   const int benchmarkOptions = warmupCount + framesCount + resolutionCount + variantCount + jsonCount + outputCount +
-                               baselineCount + seriesCount + gpuTimingCount;
-  if (benchmarkCount == 0 && benchmarkOptions > 0) {
+                               baselineCount + seriesCount + gpuTimingCount + warmupSecondsCount + pinCount;
+  // Plan 0060 M3: --variant, --resolution, --json and --output are shared with --gate; the rest are the
+  // benchmark's alone.
+  const int benchmarkOnlyOptions = warmupCount + framesCount + baselineCount + seriesCount + gpuTimingCount +
+                                   warmupSecondsCount;
+  const int gateOnlyOptions = runsCount + baselinesCount + profileCount + policyCount + idleWaitCount + preheatCount +
+                              recordCount + appliesCount + sessionsCount + gapCount + categoryCount + reasonCount +
+                              recordToCount + applicabilityCount;
+  if (benchmarkCount == 0 && gateCount == 0 && benchmarkOptions > 0) {
     return makeError("--warmup, --frames, --resolution, --variant, --json, --output, --baseline, --series and "
                      "--gpu-timing require --benchmark");
+  }
+  if (gateCount == 0 && gateOnlyOptions > 0) {
+    return makeError("--runs, --baselines, --profile, --policy, --idle-wait, --preheat-seconds, --record, --applies, "
+                     "--sessions, --session-gap-minutes, --reason-category, --reason, --record-to and --applicability "
+                     "require --gate");
+  }
+  if (gateCount > 0) {
+    if (benchmarkCount > 0 || execCount > 0 || listenCount > 0 || sessionFileCount > 0 || editorCount > 0 ||
+        helpCount > 0 || listScenesCount > 0) {
+      return makeError("--gate may not be combined with --benchmark, --exec, --listen, --session-file, --editor, "
+                       "--help or --list-scenes");
+    }
+    if (benchmarkOnlyOptions > 0) {
+      return makeError("--warmup, --frames, --baseline, --series, --gpu-timing and --warmup-seconds require "
+                       "--benchmark");
+    }
+    GateRequest request;
+    if (sceneCount > 0) request.sceneName = std::string(requestedSceneName);
+    if (const SceneWhitelistEntry* entry = findByName(whitelist, request.sceneName)) request.scene = entry->selection;
+    if (recordCount > 0 && appliesCount > 0) return makeError("--record and --applies may not be combined");
+    request.mode = recordCount > 0 ? GateRequest::Mode::Record
+                                   : (appliesCount > 0 ? GateRequest::Mode::Applies : GateRequest::Mode::Gate);
+    if (request.mode == GateRequest::Mode::Applies) {
+      if (sceneCount + variantCount + resolutionCount + runsCount + baselinesCount + profileCount + policyCount +
+              idleWaitCount + preheatCount + pinCount + jsonCount + outputCount + sessionsCount + gapCount +
+              categoryCount + reasonCount + recordToCount >
+          0) {
+        return makeError("--applies takes only --applicability");
+      }
+    } else if (applicabilityCount > 0) {
+      return makeError("--applicability requires --applies");
+    }
+    if (request.mode != GateRequest::Mode::Record &&
+        sessionsCount + gapCount + categoryCount + reasonCount + recordToCount > 0) {
+      return makeError("--sessions, --session-gap-minutes, --reason-category, --reason and --record-to require "
+                       "--record");
+    }
+    if (variantCount > 0) {
+      const auto variant = parseVariant(variantText);
+      if (!variant.has_value()) return makeError(std::string("unrecognized --variant value: ").append(variantText));
+      request.variant = *variant;
+    }
+    if (resolutionCount > 0) {
+      const auto x = resolutionText.find('x');
+      if (x == std::string_view::npos || !parseUnsigned(resolutionText.substr(0, x), 1, 16384, request.width) ||
+          !parseUnsigned(resolutionText.substr(x + 1), 1, 16384, request.height)) {
+        return makeError(std::string("invalid --resolution (expected <W>x<H>): ").append(resolutionText));
+      }
+    }
+    if (runsCount > 0) {
+      unsigned int runs = 0;
+      if (!parseUnsigned(runsText, 1, 100, runs)) return makeError(std::string("invalid --runs: ").append(runsText));
+      request.runs = runs;
+    }
+    if (preheatCount > 0) {
+      double seconds = 0.0;
+      if (!parseDecimal(preheatText, 0.0, 3600.0, seconds)) {
+        return makeError(std::string("invalid --preheat-seconds: ").append(preheatText));
+      }
+      request.preheatSeconds = seconds;
+    }
+    if (idleWaitCount > 0) {
+      if (idleWaitText == "on") {
+        request.idleWait = true;
+      } else if (idleWaitText == "off") {
+        request.idleWait = false;
+      } else {
+        return makeError(std::string("invalid --idle-wait value (on or off): ").append(idleWaitText));
+      }
+    }
+    if (pinCount > 0) {
+      if (pinText == "on") {
+        request.pinProcess = true;
+      } else if (pinText == "off") {
+        request.pinProcess = false;
+      } else {
+        return makeError(std::string("invalid --pin-process value (on or off): ").append(pinText));
+      }
+    }
+    if (baselinesCount > 0) request.baselinesDir = std::string(baselinesDir);
+    if (profileCount > 0) request.profileId = std::string(profileId);
+    if (policyCount > 0) request.policyPath = std::string(policyPath);
+    request.json = jsonCount > 0;
+    if (outputCount > 0) request.outputPath = std::string(outputPath);
+    if (applicabilityCount > 0) request.applicabilityPath = std::string(applicabilityPath);
+    if (request.mode == GateRequest::Mode::Record) {
+      if (recordToCount == 0 || categoryCount == 0 || reasonCount == 0) {
+        return makeError("--record requires --record-to, --reason-category and --reason (a baseline is only ever "
+                         "recorded with a stated reason)");
+      }
+      if (!parseUnsigned(categoryText, 1, 4, request.reasonCategory)) {
+        return makeError(std::string("invalid --reason-category (1 to 4): ").append(categoryText));
+      }
+      if (reasonText.empty() || reasonText.size() > 2000) return makeError("--reason must be 1 to 2000 characters");
+      request.reasonText = std::string(reasonText);
+      request.recordTo = std::string(recordTo);
+      if (sessionsCount > 0 && !parseUnsigned(sessionsText, 1, 20, request.sessions)) {
+        return makeError(std::string("invalid --sessions: ").append(sessionsText));
+      }
+      if (gapCount > 0 && !parseDecimal(gapText, 0.0, 1440.0, request.sessionGapMinutes)) {
+        return makeError(std::string("invalid --session-gap-minutes: ").append(gapText));
+      }
+    }
+    CommandLineResult result;
+    result.outcome = CommandLineOutcome::RunScene;
+    result.gate = std::move(request);
+    return result;
   }
   if (benchmarkCount > 0) {
     if (sceneCount > 0 || execCount > 0 || listenCount > 0 || sessionFileCount > 0 || editorCount > 0 ||
@@ -212,6 +423,18 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       const auto variant = parseVariant(variantText);
       if (!variant.has_value()) return makeError(std::string("unrecognized --variant value: ").append(variantText));
       request.variant = *variant;
+    }
+    if (pinCount > 0) {
+      if (pinText == "on") {
+        request.pinProcess = true;
+      } else if (pinText == "off") {
+        request.pinProcess = false;
+      } else {
+        return makeError(std::string("invalid --pin-process value (on or off): ").append(pinText));
+      }
+    }
+    if (warmupSecondsCount > 0 && !parseDecimal(warmupSecondsText, 0.0, 3600.0, request.warmupSeconds)) {
+      return makeError(std::string("invalid --warmup-seconds: ").append(warmupSecondsText));
     }
     request.json = jsonCount > 0;
     if (outputCount > 0) request.outputPath = std::string(outputPath);
