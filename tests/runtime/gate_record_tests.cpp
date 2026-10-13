@@ -29,6 +29,7 @@ namespace fs = std::filesystem;
 using gate_test::DocumentIdentity;
 using gate_test::FakeClock;
 using gate_test::FakeLauncher;
+using gate_test::FakePower;
 using gate_test::FakeSampler;
 using gate_test::makeRun;
 
@@ -63,6 +64,7 @@ struct Fixture {
     std::ostringstream err;
     gate::GateEnvironment env;
     env.launcher = &launcher;
+    env.power = &power;
     env.sampler = &idle;
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
@@ -91,6 +93,7 @@ struct Fixture {
   }
 
   fs::path root;
+  FakePower power;  // mains unless a test says otherwise
 };
 
 FakeLauncher steadyLauncher() {
@@ -126,6 +129,8 @@ TEST_CASE("recording runs the protocol once per session, waits between sessions,
   CHECK(*gate::numberOf(gate::at(doc, {"protocol", "preheat_seconds"})) == 60.0);
   CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(true));
   CHECK(*gate::at(doc, {"baseline", "pin"}) == gate::pinValue(true));  // the pinning state is in the provenance
+  CHECK(gate::at(doc, {"protocol", "power"})->asString() == "mains");
+  CHECK(gate::at(doc, {"baseline", "power"})->asString() == "mains");  // and so is the power source
   CHECK(gate::at(doc, {"baseline", "profile"})->asString() == "test-gpu-windows-60hz");
   CHECK(gate::at(doc, {"baseline", "recorded_at"})->asString() == "2026-10-12T00:00:00Z");
   CHECK(gate::at(doc, {"baseline", "sessions"})->asArray().size() == 2);
@@ -196,6 +201,7 @@ TEST_CASE("a smoke protocol is never recorded", "[runtime][gate][record]") {
       {"a short preheat", [](cli::GateRequest& r) { r.preheatSeconds = 5.0; }},
       {"too few runs", [](cli::GateRequest& r) { r.runs = 2; }},
       {"unpinned children", [](cli::GateRequest& r) { r.pinProcess = false; }},
+      {"no mains-power precondition", [](cli::GateRequest& r) { r.requireMains = false; }},
   };
   for (const Case& c : cases) {
     INFO(c.what);
@@ -209,6 +215,30 @@ TEST_CASE("a smoke protocol is never recorded", "[runtime][gate][record]") {
     CHECK(o.launches == 0);
     CHECK_FALSE(fs::exists(f.root / "out"));
   }
+}
+
+TEST_CASE("recording on battery power is refused before any child starts", "[runtime][gate][record][power]") {
+  Fixture f;
+  f.power = FakePower({gate::PowerSource::Battery});
+  FakeLauncher launcher = steadyLauncher();
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.launches == 0);
+  CHECK(o.out.empty());
+  CHECK(o.err.find("battery") != std::string::npos);
+  CHECK_FALSE(fs::exists(f.root / "out"));
+}
+
+TEST_CASE("a charger pulled between the sessions stops the recording and writes nothing",
+          "[runtime][gate][record][power]") {
+  Fixture f;
+  // Reads: before session 1, after session 1, then battery before session 2.
+  f.power = FakePower({gate::PowerSource::Mains, gate::PowerSource::Mains, gate::PowerSource::Battery});
+  FakeLauncher launcher = steadyLauncher();
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.launches == 6);  // only the first session ran
+  CHECK_FALSE(fs::exists(f.root / "out"));
 }
 
 TEST_CASE("a child failure in any session stops the recording and writes nothing", "[runtime][gate][record]") {

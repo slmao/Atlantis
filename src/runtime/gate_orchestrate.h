@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace atlantis::runtime::gate {
@@ -53,6 +54,26 @@ enum class IdleResult {
 // Samples once a second; the window must be unbroken: any interval under `cpuIdlePct`
 // restarts it. Returns when a window completes or the timeout passes.
 [[nodiscard]] IdleResult waitForIdle(const IdlePolicy& policy, CpuSampler& sampler, Clock& clock);
+
+// Where the machine's power comes from (owner ruling after the Plan 0060 M7 study: the integrated
+// GPU runs about 1.7x slower on battery, a shift no tolerance can absorb). The gate and `--record`
+// run on mains power only; the source is recorded in every document.
+enum class PowerSource { Mains, Battery, Unknown };
+
+[[nodiscard]] constexpr std::string_view toString(PowerSource source) noexcept {
+  switch (source) {
+    case PowerSource::Mains: return "mains";
+    case PowerSource::Battery: return "battery";
+    case PowerSource::Unknown: return "unknown";
+  }
+  return "unknown";
+}
+
+class PowerProbe {
+ public:
+  virtual ~PowerProbe() = default;
+  [[nodiscard]] virtual PowerSource read() = 0;
+};
 
 struct ChildSpec {
   std::vector<std::string> args;  // everything after the executable
@@ -120,6 +141,8 @@ struct SessionResult {
 [[nodiscard]] std::unique_ptr<Clock> makeSystemClock();
 #if defined(_WIN32)
 [[nodiscard]] std::unique_ptr<CpuSampler> makeSystemCpuSampler();
+// GetSystemPowerStatus: AC line online is mains, offline is battery, anything else unknown.
+[[nodiscard]] std::unique_ptr<PowerProbe> makeSystemPowerProbe();
 // Launches `executablePath` as the child; children die with this process (a job object).
 [[nodiscard]] std::unique_ptr<ChildLauncher> makeProcessLauncher(std::string executablePath);
 // The running executable's own path.

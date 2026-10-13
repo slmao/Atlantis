@@ -6,6 +6,7 @@
     "k": 3,
     "child_timeout_seconds": 300,
     "pin_process": true,
+    "require_mains_power": true,
     "idle": {
       "cpu_idle_pct": 90,
       "window_seconds": 10,

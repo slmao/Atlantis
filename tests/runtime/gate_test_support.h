@@ -158,6 +158,7 @@ struct SetProtocol {
   bool idleWait = true;
   double k = 3.0;
   bool pin = true;
+  std::string power = "mains";
 };
 
 // A set/1 document straight from aggregates (the evaluator reads nothing else of it).
@@ -171,6 +172,7 @@ struct SetProtocol {
   p.set("idle_wait", Value::boolean(protocol.idleWait));
   p.set("k", gate::num(protocol.k));
   p.set("pin", gate::pinValue(protocol.pin));
+  p.set("power", Value::string(protocol.power));
   p.set("child_stderr", Value::string("discarded"));
   doc.set("protocol", std::move(p));
   addIdentity(doc, id);
@@ -196,6 +198,7 @@ struct SetProtocol {
   policy.protocol.preheatSeconds = 60.0;
   policy.protocol.k = 3.0;
   policy.protocol.pinProcess = true;
+  policy.protocol.requireMainsPower = true;
   policy.dispersionFactor = 3.0;
   policy.counter.metricTolerancePct = {{"fragment_invocations", 0.1}, {"ia_primitives", 0.1}};
   policy.cpu.absFloor = 0.10;

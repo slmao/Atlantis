@@ -20,6 +20,7 @@ struct GateEnvironment {
   ChildLauncher* launcher = nullptr;
   CpuSampler* sampler = nullptr;
   Clock* clock = nullptr;
+  PowerProbe* power = nullptr;  // where the machine's power comes from
   std::string tempDir;         // created and removed by the run
   std::string performanceDir;  // holds gate_policy.json and baselines/ unless the request names others
   std::istream* in = nullptr;   // stdin: the changed paths for --applies

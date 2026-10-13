@@ -344,6 +344,36 @@ TEST_CASE("the exit codes are 0 for pass, 4 for fail and 5 for not judged", "[ru
   CHECK(gate::kExitNotJudged == 5);
 }
 
+TEST_CASE("a mains run is never judged against a battery baseline, or anything else", "[runtime][gate][evaluate]") {
+  SetProtocol battery;
+  battery.power = "battery";
+  for (const char* other : {"battery", "mixed", "unknown"}) {
+    SetProtocol p;
+    p.power = other;
+    const auto against = gate::evaluate(makeSet(baselineAggregates(), {}, p), makeSet(baselineAggregates()), testPolicy(), ref());
+    INFO(other);
+    CHECK(against.result == "incomparable");
+    const auto& reasons = against.document.find("reasons")->asArray();
+    REQUIRE(reasons.size() == 1);
+    CHECK(reasons[0].asString().find("protocol.power differs") != std::string::npos);
+    CHECK_FALSE(gate::at(against.document, {"protocol", "conformant"})->asBool());
+  }
+  // Two battery sets agree with each other, but neither is evidence: the run is not conformant.
+  const auto both = gate::evaluate(makeSet(baselineAggregates(), {}, battery), makeSet(baselineAggregates(), {}, battery),
+                                   testPolicy(), ref());
+  CHECK(gate::at(both.document, {"protocol", "power"})->asString() == "battery");
+  CHECK_FALSE(gate::at(both.document, {"protocol", "conformant"})->asBool());
+  // On mains it is conformant.
+  const auto mains = gate::evaluate(makeSet(baselineAggregates()), makeSet(baselineAggregates()), testPolicy(), ref());
+  CHECK(gate::at(mains.document, {"protocol", "conformant"})->asBool());
+  // A policy that does not ask for mains does not make a battery run non-conformant.
+  gate::GatePolicy relaxed = testPolicy();
+  relaxed.protocol.requireMainsPower = false;
+  const auto lenient = gate::evaluate(makeSet(baselineAggregates(), {}, battery), makeSet(baselineAggregates(), {}, battery),
+                                      relaxed, ref());
+  CHECK(gate::at(lenient.document, {"protocol", "conformant"})->asBool());
+}
+
 TEST_CASE("a pinned run is never judged against an unpinned baseline, or the other way round", "[runtime][gate][evaluate]") {
   SetProtocol unpinned;
   unpinned.pin = false;

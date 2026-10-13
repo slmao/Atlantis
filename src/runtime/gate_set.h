@@ -35,6 +35,8 @@ struct Protocol {
   bool idleWait = true;
   double k = 3.0;
   bool pin = false;  // the children ran with --pin-process on
+  // The power source the sessions ran on: `mains`, `battery`, `unknown`, or `mixed` when it changed.
+  std::string power = "unknown";
 };
 
 // The pinning state a run was made under, as the documents record it: a pinned run is never

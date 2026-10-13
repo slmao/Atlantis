@@ -175,6 +175,23 @@ bool pinCurrentProcess(std::string& error) {
 
 std::unique_ptr<CpuSampler> makeSystemCpuSampler() { return std::make_unique<WindowsCpuSampler>(); }
 
+namespace {
+
+class WindowsPowerProbe final : public PowerProbe {
+ public:
+  PowerSource read() override {
+    SYSTEM_POWER_STATUS status{};
+    if (GetSystemPowerStatus(&status) == 0) return PowerSource::Unknown;
+    if (status.ACLineStatus == 1) return PowerSource::Mains;
+    if (status.ACLineStatus == 0) return PowerSource::Battery;
+    return PowerSource::Unknown;  // 255: the status is not known
+  }
+};
+
+}  // namespace
+
+std::unique_ptr<PowerProbe> makeSystemPowerProbe() { return std::make_unique<WindowsPowerProbe>(); }
+
 std::unique_ptr<ChildLauncher> makeProcessLauncher(std::string executablePath) {
   return std::make_unique<ProcessLauncher>(std::move(executablePath));
 }

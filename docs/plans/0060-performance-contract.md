@@ -74,6 +74,16 @@ that no preheat removes: `cpu_active_ms` 12.8 ms in most sessions and 7-8 ms in 
   pre-authorizes demoting shadow alone to report-only and everything else is locked per the Spec's defaults; anything
   broader, stop and report. The pre-pin data is kept as evidence of why the pin exists.
 
+**Owner ruling after the M7 study and PR-1's acceptance, 2026-10-12 (chat), recorded once here.** During the M9
+baseline recording the integrated GPU's time moved from about 16.6 ms to about 28 ms when the laptop went onto
+battery, a shift no tolerance absorbs. Ruled: **a power-source precondition** of the same shape as the idle
+precondition. The gate and `--gate --record` refuse to run on battery power (exit 3, executable-private, a Windows
+power-status query, no change to any measurement); the source is recorded as `protocol.power` in `set/1` and `gate/1`
+and as `baseline.power` in the baseline provenance, the evaluator treats a difference as `incomparable`, and the store
+guard accepts only a baseline recorded on `mains`; the policy's `protocol.require_mains_power` is on, and
+`--require-mains on|off` is the smoke override (a run with it off is not conformant and `--record` refuses it). It
+landed after PR-1 had merged, as its own PR.
+
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

@@ -42,6 +42,7 @@ struct ProtocolPolicy {
   double k = 3.0;
   double childTimeoutSeconds = 300.0;
   bool pinProcess = true;  // the children run pinned (owner ruling on the M7 stop)
+  bool requireMainsPower = true;  // the gate refuses to run on battery (owner ruling after the M7 study)
   IdlePolicy idle;
 };
 

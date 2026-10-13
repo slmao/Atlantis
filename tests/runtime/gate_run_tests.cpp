@@ -30,6 +30,7 @@ namespace fs = std::filesystem;
 using gate_test::DocumentIdentity;
 using gate_test::FakeClock;
 using gate_test::FakeLauncher;
+using gate_test::FakePower;
 using gate_test::FakeSampler;
 using gate_test::makeRun;
 
@@ -66,6 +67,7 @@ struct Fixture {
     gate::Protocol protocol;
     protocol.preheatSeconds = 60.0;
     protocol.pin = true;
+    protocol.power = "mains";
     auto set = gate::buildSet(protocol, runs);
     REQUIRE(set.isOk());
     json::Value doc = set.value();
@@ -113,6 +115,7 @@ struct Fixture {
     std::ostringstream err;
     gate::GateEnvironment env;
     env.launcher = &launcher;
+    env.power = &power;
     env.sampler = sampler != nullptr ? sampler : &idle;
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
@@ -130,6 +133,7 @@ struct Fixture {
   }
 
   fs::path root;
+  FakePower power;  // mains unless a test says otherwise
 };
 
 cli::GateRequest request() {
@@ -411,4 +415,78 @@ TEST_CASE("an unpinned smoke run against a pinned baseline is not judged", "[run
   for (const auto& call : o.calls) {
     CHECK(std::find(call.args.begin(), call.args.end(), "--pin-process") == call.args.end());
   }
+}
+
+// Owner ruling after the M7 study: the gate runs on mains power only, and records the source.
+
+TEST_CASE("a gate run on mains power records it, is conformant and is judged", "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  const auto o = f.run(request());
+  CHECK(o.exitCode == 0);
+  CHECK(gate::at(o.verdict, {"protocol", "power"})->asString() == "mains");
+  CHECK(gate::at(o.verdict, {"protocol", "conformant"})->asBool());
+  CHECK(f.power.reads == 2);  // before the session and after it
+}
+
+TEST_CASE("a gate run on battery power is refused before any child starts", "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  f.power = FakePower({gate::PowerSource::Battery});
+  const auto o = f.run(request());
+  CHECK(o.exitCode == 3);
+  CHECK(o.out.empty());  // no verdict
+  CHECK(o.calls.empty());  // no preheat, no run
+  CHECK(o.err.find("battery") != std::string::npos);
+  CHECK(o.err.find("charger") != std::string::npos);
+}
+
+TEST_CASE("a machine that cannot say where its power comes from is refused too", "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  f.power = FakePower({gate::PowerSource::Unknown});
+  const auto o = f.run(request());
+  CHECK(o.exitCode == 3);
+  CHECK(o.out.empty());
+  CHECK(o.calls.empty());
+  CHECK(o.err.find("cannot tell") != std::string::npos);
+}
+
+TEST_CASE("a charger pulled during the session voids the run", "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  f.power = FakePower({gate::PowerSource::Mains, gate::PowerSource::Battery});
+  const auto o = f.run(request());
+  CHECK(o.exitCode == 3);
+  CHECK(o.out.empty());  // the runs were made but no verdict is printed
+  CHECK_FALSE(o.calls.empty());
+  CHECK(o.err.find("went onto battery power during the session") != std::string::npos);
+}
+
+TEST_CASE("turning the mains requirement off lets a smoke run go on battery, and says so", "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  f.power = FakePower({gate::PowerSource::Battery});
+  cli::GateRequest r = request();
+  r.requireMains = false;
+  const auto o = f.run(r);
+  CHECK(gate::at(o.verdict, {"protocol", "power"})->asString() == "battery");
+  CHECK_FALSE(gate::at(o.verdict, {"protocol", "conformant"})->asBool());
+  // A battery run never compares against a mains baseline.
+  CHECK(o.exitCode == 5);
+  CHECK(verdictOf(o) == "incomparable");
+  const auto& reasons = o.verdict.find("reasons")->asArray();
+  REQUIRE_FALSE(reasons.empty());
+  CHECK(reasons[0].asString().find("protocol.power differs") != std::string::npos);
+}
+
+TEST_CASE("a source that changes between the reads is recorded as mixed when the precondition is off",
+          "[runtime][gate][run][power]") {
+  Fixture f;
+  f.writeStore();
+  f.power = FakePower({gate::PowerSource::Mains, gate::PowerSource::Battery});
+  cli::GateRequest r = request();
+  r.requireMains = false;
+  const auto o = f.run(r);
+  CHECK(gate::at(o.verdict, {"protocol", "power"})->asString() == "mixed");
 }

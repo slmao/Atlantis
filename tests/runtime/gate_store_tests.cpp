@@ -50,6 +50,7 @@ json::Value setOf(const DocumentIdentity& identity = {}, bool idleWait = true, d
   protocol.idleWait = idleWait;
   protocol.preheatSeconds = preheat;
   protocol.pin = true;
+  protocol.power = "mains";
   const auto set = gate::buildSet(protocol, runs);
   REQUIRE(set.isOk());
   return set.value();
@@ -395,6 +396,26 @@ TEST_CASE("the guard finds every way a committed baseline can be wrong", "[runti
                    });
                  }),
                  "protocol.pin and baseline.pin"));
+  // The power source too: a baseline is only ever recorded on mains power, and the provenance mirrors it.
+  CHECK(mentions(problemsFor([&](const TempStore&, const std::string& f) {
+                   rewrite(f, [](json::Value& d) {
+                     json::Value block = *d.find("baseline");
+                     block.set("power", json::Value::string("battery"));
+                     d.set("baseline", std::move(block));
+                   });
+                 }),
+                 "protocol.power and baseline.power"));
+  CHECK(mentions(problemsFor([&](const TempStore&, const std::string& f) {
+                   rewrite(f, [](json::Value& d) {
+                     json::Value protocol = *d.find("protocol");
+                     protocol.set("power", json::Value::string("battery"));
+                     d.set("protocol", std::move(protocol));
+                     json::Value block = *d.find("baseline");
+                     block.set("power", json::Value::string("battery"));
+                     d.set("baseline", std::move(block));
+                   });
+                 }),
+                 "only recorded on mains power"));
   // A baseline in the wrong place, and a stray file.
   CHECK(mentions(problemsFor([&](const TempStore& s, const std::string& f) {
                    fs::rename(f, s.root / "test-profile" / "bistro" / "wrong_name.baseline.json");

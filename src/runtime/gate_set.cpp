@@ -94,6 +94,7 @@ ResultValue buildSet(const Protocol& protocol, std::span<const Value> runDocumen
   protocolValue.set("idle_wait", Value::boolean(protocol.idleWait));
   protocolValue.set("k", num(protocol.k));
   protocolValue.set("pin", pinValue(protocol.pin));
+  protocolValue.set("power", Value::string(protocol.power));
   protocolValue.set("child_stderr", Value::string("discarded"));
   set.set("protocol", std::move(protocolValue));
 

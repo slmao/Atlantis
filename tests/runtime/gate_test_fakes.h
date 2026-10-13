@@ -55,6 +55,20 @@ class FakeSampler final : public gate::CpuSampler {
   gate::CpuTimes times;
 };
 
+// The power source per read(): the sources it reports, in order; the last repeats.
+class FakePower final : public gate::PowerProbe {
+ public:
+  explicit FakePower(std::vector<gate::PowerSource> sequence = {gate::PowerSource::Mains})
+      : sources(std::move(sequence)) {}
+  gate::PowerSource read() override {
+    const gate::PowerSource source = sources[std::min(sources.size() - 1, reads)];
+    ++reads;
+    return source;
+  }
+  std::vector<gate::PowerSource> sources;
+  std::size_t reads = 0;
+};
+
 // Records every launch; writes the document `makeDocument(callIndex)` to the child's --output
 // unless told not to (call 0 is the preheat when the plan has one).
 class FakeLauncher final : public gate::ChildLauncher {
