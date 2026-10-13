@@ -862,3 +862,45 @@ TEST_CASE("parseCommandLine(): --pin-process is the benchmark's and the gate's p
     requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
   }
 }
+
+TEST_CASE("parseCommandLine(): --require-mains is the gate's mains-power override", "[runtime][cli][gate]") {
+  const auto whitelist = makeFixtureWhitelist();
+  {
+    FakeArgv fa{"--gate"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.gate.has_value());
+    CHECK_FALSE(result.gate->requireMains.has_value());  // the policy decides
+  }
+  {
+    FakeArgv fa{"--gate", "--require-mains", "off"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    REQUIRE(result.gate.has_value());
+    REQUIRE(result.gate->requireMains.has_value());
+    CHECK_FALSE(*result.gate->requireMains);
+  }
+  {
+    FakeArgv fa{"--gate", "--record", "--require-mains", "on"};
+    const auto result = parseCommandLine(fa.argc(), fa.argv(), whitelist);
+    requireError(result, "--reason-category");  // it parses; the record options are what is missing
+  }
+  for (const char* bad : {"maybe", "1", ""}) {
+    FakeArgv fa{"--gate", "--require-mains", bad};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "invalid --require-mains");
+  }
+  {
+    FakeArgv fa{"--gate", "--require-mains", "on", "--require-mains", "off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--require-mains supplied more than once");
+  }
+  {
+    FakeArgv fa{"--require-mains", "off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --gate");
+  }
+  {
+    FakeArgv fa{"--benchmark", "integrated_showcase_demo", "--require-mains", "off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "require --gate");
+  }
+  {
+    FakeArgv fa{"--gate", "--applies", "--require-mains", "off"};
+    requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
+  }
+}

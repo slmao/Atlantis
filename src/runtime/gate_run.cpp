@@ -9,6 +9,7 @@
 
 #include <atlantis/connection/json.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -95,6 +96,45 @@ class TempDirScope {
   return out.str();
 }
 
+// The power source across one gate invocation, read before and after every session (owner ruling after the
+// Plan 0060 M7 study). With the precondition on -- the policy's `require_mains_power`, unless the request says
+// `--require-mains off` for a smoke run -- anything but mains is refused with exit 3 and no verdict; either way
+// the source is what the documents record.
+class PowerWatch {
+ public:
+  PowerWatch(PowerProbe* probe, bool required) : probe_(probe), required_(required) {}
+
+  // 0 when the run may go on, else the exit code (3) after saying why on `err`.
+  [[nodiscard]] int check(std::ostream& err, std::string_view command, std::string_view when) {
+    const PowerSource source = probe_ != nullptr ? probe_->read() : PowerSource::Unknown;
+    const std::string name(toString(source));
+    if (std::find(seen_.begin(), seen_.end(), name) == seen_.end()) seen_.push_back(name);
+    if (!required_ || source == PowerSource::Mains) return 0;
+    err << "atlantis_runtime: " << command << ": ";
+    if (source == PowerSource::Battery) {
+      err << (when == "after" ? "the machine went onto battery power during the session"
+                              : "the machine is on battery power")
+          << " (the GPU runs far slower on battery, a shift no tolerance absorbs): connect the charger and run "
+             "again; --require-mains off is for smoke runs\n";
+    } else {
+      err << "cannot tell whether the machine is on mains power: run on a machine that reports it; "
+             "--require-mains off is for smoke runs\n";
+    }
+    return bench::kExitEnvironment;
+  }
+
+  // `mains`, `battery`, `unknown`, or `mixed` when it changed between reads.
+  [[nodiscard]] std::string value() const {
+    if (seen_.empty()) return "unknown";
+    return seen_.size() == 1 ? seen_.front() : "mixed";
+  }
+
+ private:
+  PowerProbe* probe_;
+  bool required_;
+  std::vector<std::string> seen_;
+};
+
 [[nodiscard]] int runProtocol(const GateRequest& request, GateEnvironment& env) {
   std::ostream& out = *env.out;
   std::ostream& err = *env.err;
@@ -124,11 +164,14 @@ class TempDirScope {
   plan.tempDir = env.tempDir;
 
   const TempDirScope tempDir(env.tempDir);
+  PowerWatch power(env.power, request.requireMains.value_or(policy.protocol.requireMainsPower));
+  if (const int code = power.check(err, "--gate", "before"); code != 0) return code;
   SessionResult session = runSession(plan, *env.launcher, *env.sampler, *env.clock);
   if (session.exitCode != 0) {
     err << "atlantis_runtime: --gate: " << session.message << "\n";
     return session.exitCode;
   }
+  if (const int code = power.check(err, "--gate", "after"); code != 0) return code;
 
   Protocol protocol;
   protocol.runs = plan.runs;
@@ -136,6 +179,7 @@ class TempDirScope {
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
   protocol.pin = plan.pin;
+  protocol.power = power.value();
   const auto set = buildSet(protocol, session.runDocuments);
   if (set.isErr()) {
     err << "atlantis_runtime: --gate: the runs do not make a set: " << set.error() << "\n";
@@ -242,12 +286,14 @@ class TempDirScope {
   plan.tempDir = env.tempDir;
 
   // A baseline is only ever recorded under the policy's full protocol: a smoke run is not a measurement.
+  const bool requireMains = request.requireMains.value_or(policy.protocol.requireMainsPower);
   if (!plan.idleWait || plan.preheatSeconds < policy.protocol.preheatSeconds || plan.runs < policy.protocol.runs ||
-      plan.pin != policy.protocol.pinProcess) {
+      plan.pin != policy.protocol.pinProcess || requireMains != policy.protocol.requireMainsPower) {
     err << "atlantis_runtime: --gate --record needs the policy's full protocol (idle wait on, a preheat of at least "
         << formatNumber(policy.protocol.preheatSeconds) << " s, at least " << policy.protocol.runs
-        << " runs per session, children pinned as the policy says); --idle-wait off, a shorter --preheat-seconds, a "
-           "smaller --runs and a different --pin-process are for smoke runs\n";
+        << " runs per session, children pinned as the policy says, mains power as the policy says); --idle-wait off, a shorter "
+           "--preheat-seconds, a smaller --runs, a different --pin-process and a different --require-mains are for "
+           "smoke runs\n";
     return bench::kExitInitFailure;
   }
   if (request.profileId.has_value() && *request.profileId != "auto" && !isValidProfileId(*request.profileId)) {
@@ -258,6 +304,7 @@ class TempDirScope {
   const TempDirScope tempDir(env.tempDir);
   std::vector<Value> documents;
   std::vector<std::string> starts;
+  PowerWatch power(env.power, requireMains);
   for (unsigned int session = 1; session <= request.sessions; ++session) {
     if (session > 1) {
       err << "atlantis_runtime: --gate --record: waiting " << formatNumber(request.sessionGapMinutes)
@@ -265,12 +312,14 @@ class TempDirScope {
       env.clock->sleepSeconds(request.sessionGapMinutes * 60.0);
     }
     err << "atlantis_runtime: --gate --record: session " << session << " of " << request.sessions << "\n";
+    if (const int code = power.check(err, "--gate --record", "before"); code != 0) return code;
     starts.push_back(env.clock->isoUtc());
     SessionResult result = runSession(plan, *env.launcher, *env.sampler, *env.clock);
     if (result.exitCode != 0) {
       err << "atlantis_runtime: --gate --record: " << result.message << "\n";
       return result.exitCode;
     }
+    if (const int code = power.check(err, "--gate --record", "after"); code != 0) return code;
     for (Value& document : result.runDocuments) documents.push_back(std::move(document));
   }
 
@@ -280,6 +329,7 @@ class TempDirScope {
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
   protocol.pin = plan.pin;
+  protocol.power = power.value();
   auto set = buildSet(protocol, documents);
   if (set.isErr()) {
     err << "atlantis_runtime: --gate --record: the runs do not make a set (did the hardware or build change "
@@ -407,10 +457,12 @@ int runGate(const GateRequest& request) {
   }
   const auto launcher = makeProcessLauncher(currentExecutablePath());
   const auto sampler = makeSystemCpuSampler();
+  const auto power = makeSystemPowerProbe();
   const auto clock = makeSystemClock();
   GateEnvironment environment;
   environment.launcher = launcher.get();
   environment.sampler = sampler.get();
+  environment.power = power.get();
   environment.clock = clock.get();
   environment.tempDir = (fs::temp_directory_path() / ("atlantis_gate_" + std::to_string(static_cast<unsigned long long>(
                               std::chrono::steady_clock::now().time_since_epoch().count())))).string();

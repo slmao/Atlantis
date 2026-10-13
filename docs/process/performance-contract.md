@@ -28,11 +28,13 @@ child opts out of process power throttling and runs at high priority, so the OS 
 thread on a slow core; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
 browser started during it shows up as an `inconclusive` verdict.
 
-**Run on mains power.** The gate does not check the power source. On the reference laptop (an integrated GPU) the
-GPU time of the same scene moved from about 16.5 ms on mains power to about 28 ms on battery within one recording, a
-shift no tolerance can absorb; a baseline or a candidate measured on battery is not evidence. The baseline's
-`baseline.sessions` stamps say when each session ran; if the GPU values of its sessions split into two levels,
-record it again.
+**Mains power only.** The gate and `--gate --record` refuse to run on battery (exit 3, before any child starts), and
+refuse again if the charger is pulled during a session. On the reference laptop (an integrated GPU) the GPU time of the
+same scene moved from about 16.5 ms on mains power to about 28 ms on battery within one recording, a shift no
+tolerance can absorb. The source is read with the Windows power status (`GetSystemPowerStatus`) before and after every
+session and recorded as `protocol.power` (`mains`, `battery`, `unknown` or `mixed`) in `set/1` and `gate/1` and as
+`baseline.power` in a baseline's provenance; a machine that cannot say where its power comes from is refused too, and a
+run on any source but `mains` is never compared with a mains baseline (`incomparable`).
 
 | Flag | Meaning |
 |---|---|
@@ -40,7 +42,7 @@ record it again.
 | `--json` | The verdict document on stdout (else a short summary). |
 | `--output <path>` | The verdict also to a file. |
 | `--baselines <dir>`, `--profile <id>\|auto`, `--policy <file>` | Another store, a named profile, another policy. |
-| `--runs`, `--preheat-seconds`, `--idle-wait on\|off`, `--pin-process on\|off` | Smoke overrides. A run that departs from the policy says `protocol.conformant: false` and is not evidence for a PR; `--record` refuses it. |
+| `--runs`, `--preheat-seconds`, `--idle-wait on\|off`, `--pin-process on\|off`, `--require-mains on\|off` | Smoke overrides (`--require-mains off` lets a run go on battery, recorded as such). A run that departs from the policy says `protocol.conformant: false` and is not evidence for a PR; `--record` refuses it. |
 
 ## Reading a verdict
 
@@ -54,7 +56,7 @@ record it again.
 | 5 | `inconclusive` | Not judged: the session was noisier than the baseline's own spread (`dispersion.exceeded`). Run it again on a quiet machine. |
 | 1 | | Usage error or an unreadable policy or store. |
 | 2 | | A benchmark child failed, timed out or wrote no document. |
-| 3 | | Unsupported build (no `ATLANTIS_PROFILING`), the scene is absent, the machine would not go idle in time, or pinning failed. |
+| 3 | | Unsupported build (no `ATLANTIS_PROFILING`), the scene is absent, the machine would not go idle in time, pinning failed, or the machine is on battery power (or cannot say). |
 
 A counter that grew (`draw_calls`, `descriptor_writes`, ...) fails the gate whatever the noise: counters are
 deterministic. CPU and GPU metrics are compared against the baseline's noise band; their tolerance is the largest of an
@@ -85,7 +87,7 @@ item is N/A with that reason. A `fail` or `inconclusive` is reported with its ve
 Baselines are committed under `tests/performance/baselines/<profile>/`: a `profile.json` (the hardware identity: OS,
 CPU, GPU, driver, Vulkan version, present mode, refresh rate, matched exactly) and one baseline per scene, variant and
 resolution, each recorded over three sessions of five runs with the pinned protocol and carrying its provenance (commit,
-sessions, pinning state, the stated reason) and the minimum detectable regression of its profile. A different driver is a
+sessions, pinning state, power source, the stated reason) and the minimum detectable regression of its profile. A different driver is a
 different profile, so a driver update retires the baseline until it is refreshed.
 
 A baseline is only ever changed by a **dedicated PR**, reviewed by a human, never bundled into another change, never

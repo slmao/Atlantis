@@ -43,6 +43,8 @@ const std::vector<Field> kIdentity = {
     {"meta.display.refresh_hz", {"meta", "display", "refresh_hz"}},
     // A pinned run never compares against an unpinned baseline (owner ruling on the M7 stop).
     {"protocol.pin", {"protocol", "pin"}},
+    // A mains baseline is never compared with anything else (owner ruling after the M7 study).
+    {"protocol.power", {"protocol", "power"}},
 };
 
 [[nodiscard]] std::string describe(const Value* value) {
@@ -99,14 +101,17 @@ struct Aggregate {
   const Value* pin = at(candidate, {"protocol", "pin"});
   const Value expectedPin = pinValue(policy.protocol.pinProcess);
   const bool pinned = pin != nullptr && *pin == expectedPin;
+  const Value* power = at(candidate, {"protocol", "power"});
+  const bool onMains = power != nullptr && power->isString() && power->asString() == "mains";
   const bool conformant = idleWait && preheat >= policy.protocol.preheatSeconds && runs >= policy.protocol.runs &&
-                          k == policy.protocol.k && pinned;
+                          k == policy.protocol.k && pinned && (onMains || !policy.protocol.requireMainsPower);
   Value out = Value::object();
   out.set("runs", num(runs));
   out.set("preheat_seconds", num(preheat));
   out.set("idle_wait", Value::boolean(idleWait));
   out.set("k", num(k));
   out.set("pin", pin != nullptr ? *pin : Value());
+  out.set("power", power != nullptr ? *power : Value());
   out.set("conformant", Value::boolean(conformant));
   return out;
 }

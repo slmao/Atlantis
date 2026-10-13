@@ -219,6 +219,7 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   protocol.preheatSeconds = 0.0;
   protocol.idleWait = false;
   protocol.pin = true;
+  protocol.power = "mains";
   auto set = gate::buildSet(protocol, session.runDocuments);
   REQUIRE(set.isOk());
   Value doc = set.value();
@@ -254,7 +255,7 @@ TEST_CASE("atlantis_runtime --gate: one document on stdout, an exit code that ma
 #else
   writeThrowawayStore(dir.path, "");
   const std::string common = "--gate --scene integrated_showcase_demo --resolution 1280x720 --runs 2 "
-                             "--preheat-seconds 0 --idle-wait off --json --policy \"" +
+                             "--preheat-seconds 0 --idle-wait off --require-mains off --json --policy \"" +
                              std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
                              (dir.path / "store").string() + "\"";
   const int code = runExecutable(common, dir.path / "verdict.txt");
@@ -276,7 +277,7 @@ TEST_CASE("atlantis_runtime --gate: a baseline for other hardware is not judged,
   TempDir dir;
   writeThrowawayStore(dir.path, "A Different GPU");
   const std::string args = "--gate --scene integrated_showcase_demo --resolution 1280x720 --runs 2 "
-                           "--preheat-seconds 0 --idle-wait off --json --policy \"" +
+                           "--preheat-seconds 0 --idle-wait off --require-mains off --json --policy \"" +
                            std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
                            (dir.path / "store").string() + "\"";
   CHECK(runExecutable(args, dir.path / "verdict.txt") == 5);
@@ -300,3 +301,32 @@ TEST_CASE("atlantis_runtime --gate: usage errors and an absent scene use the doc
 }
 
 #endif
+
+// Owner ruling after the M7 study: the real executable's `--gate` runs on mains power only. The machine
+// running this test decides which half of the contract it can see, so it asks the same probe the gate does.
+TEST_CASE("atlantis_runtime --gate: runs on mains power and refuses on battery, as this machine's power says",
+          "[runtime][gpu][gate][process][power]") {
+#if !defined(ATLANTIS_PROFILING)
+  SUCCEED("this build has no profiling: --gate refuses before it looks at the power");
+#elif !defined(_WIN32)
+  SUCCEED("the gate is Windows only");
+#else
+  TempDir dir;
+  writeThrowawayStore(dir.path, "A Different GPU");
+  const std::string args = "--gate --scene integrated_showcase_demo --resolution 1280x720 --runs 1 "
+                           "--preheat-seconds 0 --idle-wait off --json --policy \"" +
+                           std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
+                           (dir.path / "store").string() + "\"";
+  const auto source = gate::makeSystemPowerProbe()->read();
+  const int code = runExecutable(args, dir.path / "verdict.txt");
+  if (source == gate::PowerSource::Mains) {
+    CHECK((code == 0 || code == 4 || code == 5));  // a verdict
+    const auto parsed = atlantis::connection::json::parse(readAll(dir.path / "verdict.txt"));
+    REQUIRE(parsed.isOk());
+    CHECK(gate::at(parsed.value(), {"protocol", "power"})->asString() == "mains");
+  } else {
+    CHECK(code == 3);  // refused: nothing measured, nothing printed
+    CHECK(readAll(dir.path / "verdict.txt").empty());
+  }
+#endif
+}

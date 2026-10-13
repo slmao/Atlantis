@@ -155,6 +155,18 @@ TEST_CASE("the same runs always give the same bytes", "[runtime][gate][set]") {
   CHECK(parsed.value() == a.value());
 }
 
+TEST_CASE("the power source is recorded in the set", "[runtime][gate][set]") {
+  const std::vector<json::Value> runs{makeRun({{"cpu_active_ms", 12.0}})};
+  CHECK(gate::at(gate::buildSet(protocol(), runs).value(), {"protocol", "power"})->asString() == "unknown");  // never assumed
+  for (const char* source : {"mains", "battery", "mixed"}) {
+    gate::Protocol p = protocol();
+    p.power = source;
+    const auto set = gate::buildSet(p, runs);
+    REQUIRE(set.isOk());
+    CHECK(gate::at(set.value(), {"protocol", "power"})->asString() == source);
+  }
+}
+
 TEST_CASE("the pinning state is recorded in the set", "[runtime][gate][set]") {
   CHECK(gate::at(gate::pinValue(true), {"power_throttling"})->asString() == "disabled");
   CHECK(gate::at(gate::pinValue(true), {"priority_class"})->asString() == "high");

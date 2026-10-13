@@ -98,6 +98,11 @@ PolicyResult parsePolicy(const Value& document) {
   const Value* pin = protocol->find("pin_process");
   if (pin == nullptr || !pin->isBool()) return PolicyResult::Err("protocol: 'pin_process' is missing or not a boolean");
   policy.protocol.pinProcess = pin->asBool();
+  const Value* mains = protocol->find("require_mains_power");
+  if (mains == nullptr || !mains->isBool()) {
+    return PolicyResult::Err("protocol: 'require_mains_power' is missing or not a boolean");
+  }
+  policy.protocol.requireMainsPower = mains->asBool();
   const Value* idle = protocol->find("idle");
   if (idle == nullptr || !idle->isObject()) return PolicyResult::Err("protocol.idle is missing");
   if (auto error = readNumber(*idle, "cpu_idle_pct", 0.0, policy.protocol.idle.cpuIdlePct)) {

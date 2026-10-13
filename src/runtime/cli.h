@@ -121,6 +121,7 @@ struct GateRequest {
   std::optional<double> preheatSeconds;        // --preheat-seconds: the policy's value when absent
   bool idleWait = true;                        // --idle-wait on|off
   std::optional<bool> pinProcess;              // --pin-process on|off: the policy's value when absent
+  std::optional<bool> requireMains;            // --require-mains on|off: the policy's value when absent
   std::optional<std::string> baselinesDir;     // --baselines
   std::optional<std::string> profileId;        // --profile <id>|auto (auto: match this machine)
   std::optional<std::string> policyPath;       // --policy
