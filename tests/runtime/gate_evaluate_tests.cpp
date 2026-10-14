@@ -202,6 +202,11 @@ TEST_CASE("a noisy candidate session is inconclusive, not a pass or a fail", "[r
   REQUIRE(exceeded.size() == 1);
   CHECK(exceeded[0].asString() == "gpu_busy_ms");
   CHECK(verdict.document.find("comparable")->asBool());
+  CHECK(gate::at(verdict.document, {"dispersion", "reported"})->asArray().empty());
+  const auto& deciding = gate::at(verdict.document, {"dispersion", "metrics"})->asArray();
+  REQUIRE(deciding.size() == 2);  // the verdict says which metrics can decide
+  CHECK(deciding[0].asString() == "cpu_active_ms");
+  CHECK(deciding[1].asString() == "gpu_busy_ms");
 }
 
 TEST_CASE("noise withholds a verdict on a CPU or GPU regression it cannot confirm", "[runtime][gate][evaluate]") {
@@ -397,4 +402,93 @@ TEST_CASE("the verdict records the pinning state and conformance needs it", "[ru
   const auto pinned = run(same());
   CHECK(*gate::at(pinned.document, {"protocol", "pin"}) == gate::pinValue(true));
   CHECK(gate::at(pinned.document, {"protocol", "conformant"})->asBool());
+}
+
+// Spec 0060 Correction 2026-10-14: only the headline totals' dispersion can make a verdict inconclusive.
+
+TEST_CASE("a headline metric's dispersion trip makes the verdict inconclusive, on either tier", "[runtime][gate][evaluate][dispersion]") {
+  auto cpu = same();
+  cpu["cpu_active_ms"].sigma = 2.0;  // baseline 0.1, factor 3: the limit is 0.3
+  auto verdict = run(cpu);
+  CHECK(verdict.result == "inconclusive");
+  CHECK(gate::at(verdict.document, {"dispersion", "exceeded"})->asArray().size() == 1);
+  auto gpu = same();
+  gpu["gpu_busy_ms"].sigma = 5.0;
+  verdict = run(gpu);
+  CHECK(verdict.result == "inconclusive");
+  CHECK(gate::at(verdict.document, {"dispersion", "exceeded"})->asArray()[0].asString() == "gpu_busy_ms");
+}
+
+TEST_CASE("a zone or pass metric's dispersion trip is reported and never makes the verdict inconclusive",
+          "[runtime][gate][evaluate][dispersion]") {
+  auto candidate = same();
+  candidate["zones.RenderExtraction"].sigma = 5.0;  // baseline 0.05: 100 x
+  candidate["passes.draw.gpu_ms"].sigma = 8.0;      // baseline 0.5: 16 x
+  const auto verdict = run(candidate);
+  CHECK(verdict.result == "pass");
+  CHECK(verdict.exitCode == gate::kExitPass);
+  CHECK(gate::at(verdict.document, {"dispersion", "exceeded"})->asArray().empty());
+  const auto& reported = gate::at(verdict.document, {"dispersion", "reported"})->asArray();
+  REQUIRE(reported.size() == 2);
+  CHECK(reported[0].asString() == "passes.draw.gpu_ms");  // in the baseline's key order
+  CHECK(reported[1].asString() == "zones.RenderExtraction");
+  CHECK(statusOf(verdict, "zones.RenderExtraction") == "ok");  // still judged, by the tolerance rule
+}
+
+TEST_CASE("a noisy zone is judged by the tolerance rule alone: a real regression fails, it is not withheld",
+          "[runtime][gate][evaluate][dispersion]") {
+  auto candidate = same();
+  candidate["zones.RenderExtraction"].center = 5.5;  // 4.5 + 1.0, far past 5 % and the noise term
+  candidate["zones.RenderExtraction"].sigma = 3.0;
+  const auto verdict = run(candidate);
+  CHECK(statusOf(verdict, "zones.RenderExtraction") == "regressed");
+  CHECK(verdict.result == "fail");
+  CHECK(verdict.exitCode == gate::kExitFail);
+  CHECK(gate::at(verdict.document, {"dispersion", "reported"})->asArray().size() == 1);
+}
+
+TEST_CASE("a headline trip still withholds a verdict while a zone is also noisy", "[runtime][gate][evaluate][dispersion]") {
+  auto candidate = withCenter("cpu_active_ms", 14.0);  // a regression in a session whose total is unstable
+  candidate["cpu_active_ms"].sigma = 2.0;
+  candidate["zones.RenderExtraction"].sigma = 3.0;
+  const auto verdict = run(candidate);
+  CHECK(verdict.result == "inconclusive");
+  CHECK(gate::at(verdict.document, {"dispersion", "exceeded"})->asArray().size() == 1);
+  CHECK(gate::at(verdict.document, {"dispersion", "reported"})->asArray().size() == 1);
+}
+
+TEST_CASE("the dispersion floor applies to a headline metric whose baseline is quiet", "[runtime][gate][evaluate][dispersion]") {
+  auto baseline = baselineAggregates();
+  baseline["gpu_busy_ms"].sigma = 0.0;
+  auto candidate = same();
+  candidate["gpu_busy_ms"].sigma = 0.2;  // the tier floor 0.25 / k 3 x factor 3 = 0.25
+  CHECK(gate::evaluate(makeSet(candidate), makeSet(baseline), testPolicy(), ref()).result == "pass");
+  candidate["gpu_busy_ms"].sigma = 0.4;
+  CHECK(gate::evaluate(makeSet(candidate), makeSet(baseline), testPolicy(), ref()).result == "inconclusive");
+}
+
+TEST_CASE("each gated metric carries the baseline's and the candidate's sigma, and they survive the text",
+          "[runtime][gate][evaluate][dispersion]") {
+  auto candidate = same();
+  candidate["gpu_busy_ms"].sigma = 0.9;
+  candidate["zones.RenderExtraction"].sigma = 0.07;
+  const auto verdict = run(candidate);
+  CHECK(*gate::numberOf(metric(verdict, "gpu_busy_ms").find("baseline_sigma")) == 0.6);
+  CHECK(*gate::numberOf(metric(verdict, "gpu_busy_ms").find("candidate_sigma")) == 0.9);
+  CHECK(*gate::numberOf(metric(verdict, "zones.RenderExtraction").find("candidate_sigma")) == 0.07);
+  CHECK(*gate::numberOf(metric(verdict, "draw_calls").find("baseline_sigma")) == 0.0);  // counters too: exact, no spread
+  const auto parsed = json::parse(json::write(verdict.document));
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value() == verdict.document);
+  CHECK(*gate::numberOf(gate::at(parsed.value(), {"metrics", "gpu_busy_ms", "candidate_sigma"})) == 0.9);
+  // The same inputs give the same bytes (the document stays deterministic).
+  CHECK(json::write(run(candidate).document) == json::write(verdict.document));
+}
+
+TEST_CASE("an unavailable metric has no sigma to report", "[runtime][gate][evaluate][dispersion]") {
+  auto candidate = same();
+  candidate.erase("gpu_busy_ms");
+  const auto verdict = run(candidate);
+  CHECK(statusOf(verdict, "gpu_busy_ms") == "unavailable");
+  CHECK(metric(verdict, "gpu_busy_ms").find("candidate_sigma") == nullptr);
 }

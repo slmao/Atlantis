@@ -490,3 +490,22 @@ TEST_CASE("a source that changes between the reads is recorded as mixed when the
   const auto o = f.run(r);
   CHECK(gate::at(o.verdict, {"protocol", "power"})->asString() == "mixed");
 }
+
+TEST_CASE("a session whose zones are noisy but whose totals are steady is judged, with the noise reported",
+          "[runtime][gate][run][dispersion]") {
+  Fixture f;
+  f.writeStore();
+  const auto o = f.run(request(), [](std::size_t i) {
+    auto m = metricsAt(1.0, wobble(i));
+    const double factors[] = {1.0, 0.6, 1.0, 1.5, 0.8, 1.3};  // a different run every time, median 1.0 over the five runs
+    m["zones.RenderExtraction"] *= factors[i % 6];
+    return makeRun(m);
+  });
+  CHECK(o.exitCode == 0);
+  CHECK(verdictOf(o) == "pass");
+  CHECK(gate::at(o.verdict, {"dispersion", "exceeded"})->asArray().empty());
+  const auto& reported = gate::at(o.verdict, {"dispersion", "reported"})->asArray();
+  REQUIRE(reported.size() == 1);
+  CHECK(reported[0].asString() == "zones.RenderExtraction");
+  CHECK(*gate::numberOf(gate::at(o.verdict, {"metrics", "zones.RenderExtraction", "candidate_sigma"})) > 0.5);
+}

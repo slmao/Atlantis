@@ -21,6 +21,7 @@ constexpr const char* kValidPolicy = R"({
   "protocol": {"runs": 5, "preheat_seconds": 60, "k": 3, "child_timeout_seconds": 300, "pin_process": true, "require_mains_power": true,
                "idle": {"cpu_idle_pct": 90, "window_seconds": 10, "timeout_seconds": 120}},
   "dispersion_factor": 3,
+  "dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],
   "tiers": {"counter": {"abs_floor": 0, "max_pct": 0, "metric_tolerance_pct": {"fragment_invocations": 0.1}},
             "cpu": {"abs_floor": 0.1, "max_pct": 5}, "gpu": {"abs_floor": 0.25, "max_pct": 10}},
   "gated": {"counter": ["draw_calls"], "cpu": ["cpu_active_ms", "passes.*.cpu_record_ms"], "gpu": ["gpu_busy_ms"]},
@@ -61,6 +62,13 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.cpu.maxPct == 5.0);
   CHECK(policy.gpu.maxPct == 10.0);
   CHECK(policy.dispersionFactor == 4.0);
+  // Only the headline totals can make a verdict inconclusive (Spec 0060 Correction 2026-10-14).
+  REQUIRE(policy.dispersionMetrics.size() == 2);
+  CHECK(gate::isDispersionMetric(policy, "cpu_active_ms"));
+  CHECK(gate::isDispersionMetric(policy, "gpu_busy_ms"));
+  CHECK_FALSE(gate::isDispersionMetric(policy, "zones.Renderer"));
+  CHECK_FALSE(gate::isDispersionMetric(policy, "passes.draw.cpu_record_ms"));
+  CHECK_FALSE(gate::isDispersionMetric(policy, "passes.draw.gpu_ms"));
   // The record-time quality bar: above what the calibration study could resolve (cpu 5.4-6.5 %, gpu 10.6-19.1 %
   // for a 3-session baseline), below the recordings that motivated it (cpu 18.2 %, gpu 21.5 %).
   CHECK(policy.record.maxMdrCpuPct == 10.0);
@@ -104,6 +112,7 @@ TEST_CASE("a valid policy parses into its numbers", "[runtime][gate][policy]") {
   CHECK(policy.protocol.idle.cpuIdlePct == 90.0);
   CHECK(policy.protocol.idle.timeoutSeconds == 120.0);
   CHECK(policy.dispersionFactor == 3.0);
+  CHECK(policy.dispersionMetrics == std::vector<std::string>{"cpu_active_ms", "gpu_busy_ms"});
   CHECK(policy.record.maxMdrCpuPct == 10.0);
   CHECK(policy.record.maxMdrGpuPct == 20.0);
   CHECK(policy.cpu.absFloor == 0.1);
@@ -123,7 +132,7 @@ TEST_CASE("a measured block, once filled, is read back", "[runtime][gate][policy
 
 TEST_CASE("a reported metric is never gated, even when a gated pattern also matches it", "[runtime][gate][policy]") {
   // The wildcard gates every pass's GPU time...
-  std::string text = mutated(R"("gpu": ["gpu_busy_ms"])", R"("gpu": ["passes.*.gpu_ms"])");
+  std::string text = mutated(R"("gpu": ["gpu_busy_ms"])", R"("gpu": ["gpu_busy_ms", "passes.*.gpu_ms"])");
   const auto gatedAll = gate::parsePolicy(parseOrDie(text));
   REQUIRE(gatedAll.isOk());
   CHECK(gate::gatedTier(gatedAll.value(), "passes.shadow.gpu_ms") == gate::Tier::Gpu);
@@ -162,6 +171,11 @@ TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][p
       {R"("max_mdr_gpu_pct": 20)", R"("max_mdr_gpu_pct": "twenty")", "max_mdr_gpu_pct"},
       {R"("max_mdr_cpu_pct": 10,)", R"("max_mdr_cpu_pct": 0,)", "bounds must be positive"},
       {R"("dispersion_factor": 3,)", R"("dispersion_factor": 0.5,)", "dispersion_factor"},
+      {R"("dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],)", "", "dispersion_metrics"},
+      {R"("dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],)", R"("dispersion_metrics": "cpu_active_ms",)", "dispersion_metrics"},
+      {R"("dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],)", R"("dispersion_metrics": [],)", "dispersion_metrics"},
+      {R"("dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],)", R"("dispersion_metrics": ["draw_calls"],)", "not a gated CPU or GPU metric"},
+      {R"("dispersion_metrics": ["cpu_active_ms", "gpu_busy_ms"],)", R"("dispersion_metrics": ["frame_ms"],)", "not a gated CPU or GPU metric"},
       {R"("fragment_invocations": 0.1)", R"("fragment_invocations": -0.1)", "fragment_invocations"},
   };
   for (const auto& c : cases) {

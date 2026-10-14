@@ -65,6 +65,9 @@ struct GatePolicy {
   unsigned int version = 1;
   ProtocolPolicy protocol;
   double dispersionFactor = 3.0;
+  // The metrics whose candidate dispersion can make a verdict `inconclusive` (Spec 0060 Correction 2026-10-14):
+  // the headline totals. Every other gated CPU/GPU metric's dispersion is reported, never deciding.
+  std::vector<std::string> dispersionMetrics;
   TierPolicy counter;
   TierPolicy cpu;
   TierPolicy gpu;
@@ -93,5 +96,7 @@ struct GatePolicy {
 [[nodiscard]] std::optional<Tier> gatedTier(const GatePolicy& policy, std::string_view key);
 [[nodiscard]] bool isReported(const GatePolicy& policy, std::string_view key);
 [[nodiscard]] bool isWorkload(const GatePolicy& policy, std::string_view key);
+// True when `key`'s dispersion is one of the policy's `dispersion_metrics` (the ones that can decide).
+[[nodiscard]] bool isDispersionMetric(const GatePolicy& policy, std::string_view key);
 
 }  // namespace atlantis::runtime::gate

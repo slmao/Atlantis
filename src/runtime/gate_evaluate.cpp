@@ -226,7 +226,9 @@ Verdict notJudged(const Value& candidate, const GatePolicy& policy, const Baseli
   doc.set("metrics", Value::object());
   Value dispersion = Value::object();
   dispersion.set("factor", num(policy.dispersionFactor));
+  dispersion.set("metrics", stringArray(policy.dispersionMetrics));
   dispersion.set("exceeded", Value::array());
+  dispersion.set("reported", Value::array());
   doc.set("dispersion", std::move(dispersion));
   doc.set("reported", Value::object());
   doc.set("summary", emptySummary());
@@ -259,7 +261,7 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   // (2)-(4) Per metric, in the order the baseline lists them (sorted keys).
   Value metrics = Value::object();
   std::vector<std::string> regressed, improved, ignored, unavailable;
-  std::vector<std::string> counterRegressed, exceeded;
+  std::vector<std::string> counterRegressed, exceeded, noisy;
   std::size_t ok = 0;
   Value reported = Value::object();
 
@@ -279,6 +281,9 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
       const Value change = changeValue(b.center, c.center);
       for (const auto& [name, value] : change.asObject()) entry.set(name, value);
       entry.set("tolerance", num(judged.tolerance));
+      // The spread behind the comparison, so a later look at the dispersion rule can be replayed from the verdict.
+      entry.set("baseline_sigma", num(b.sigma));
+      entry.set("candidate_sigma", num(c.sigma));
       entry.set("tolerance_source", Value::string(judged.source));
       entry.set("status", Value::string(judged.status));
       metrics.set(key, std::move(entry));
@@ -293,11 +298,15 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
       } else {
         ++ok;
       }
-      // Dispersion: only the noisy tiers; a deterministic counter has none to speak of.
+      // Dispersion: only the noisy tiers (a deterministic counter has none to speak of), and only the policy's
+      // headline metrics can make the verdict inconclusive; any other metric that is as noisy is reported and
+      // judged by the tolerance rule alone (Spec 0060 Correction 2026-10-14).
       if (*tier != Tier::Counter) {
         const TierPolicy& tp = policy.tierPolicy(*tier);
         const double reference = std::max(b.sigma, tp.absFloor / policy.protocol.k);
-        if (c.sigma > policy.dispersionFactor * reference) exceeded.push_back(key);
+        if (c.sigma > policy.dispersionFactor * reference) {
+          (isDispersionMetric(policy, key) ? exceeded : noisy).push_back(key);
+        }
       }
     } else if (isReported(policy, key) && b.available && c.available) {
       reported.set(key, changeValue(b.center, c.center));
@@ -331,7 +340,9 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   doc.set("metrics", std::move(metrics));
   Value dispersion = Value::object();
   dispersion.set("factor", num(policy.dispersionFactor));
+  dispersion.set("metrics", stringArray(policy.dispersionMetrics));
   dispersion.set("exceeded", stringArray(exceeded));
+  dispersion.set("reported", stringArray(noisy));
   doc.set("dispersion", std::move(dispersion));
   doc.set("reported", std::move(reported));
   doc.set("summary", std::move(summary));
