@@ -59,10 +59,12 @@ run on any source but `mains` is never compared with a mains baseline (`incompar
 | 0 | `pass` | No gated metric regressed beyond its tolerance. Improvements are listed and never fail the gate. |
 | 4 | `fail` | A gated metric regressed. `summary.regressed` names them; `metrics.<key>` carries `baseline`, `candidate`, `delta`, `delta_pct`, `tolerance` and `tolerance_source` (`floor`, `max_pct`, `noise`, `exact`, `relative`). |
 | 5 | `incomparable` | Not judged: this machine matches no baseline profile, the profile has no baseline for this scene, variant and resolution, the workload counters differ (the scene changed), or the run and the baseline differ in hardware, build, validation or pinning. `reasons` says which and what to do. |
-| 5 | `inconclusive` | Not judged: the session was noisier than the baseline's own spread (`dispersion.exceeded`). Run it again on a quiet machine. |
+| 5 | `inconclusive` | Not judged: the session's total CPU or GPU time (`cpu_active_ms`, `gpu_busy_ms`) was noisier than the baseline's own spread (`dispersion.exceeded`). Run it again on a quiet machine. A zone or pass that was noisy while the totals were steady is listed in `dispersion.reported` and does not withhold the verdict. |
 | 1 | | Usage error or an unreadable policy or store. |
 | 2 | | A benchmark child failed, timed out or wrote no document. |
 | 3 | | Unsupported build (no `ATLANTIS_PROFILING`), the scene is absent, the machine would not go idle in time, pinning failed, or the machine is on battery power (or cannot say). |
+
+Each gated metric in the verdict carries `baseline_sigma` and `candidate_sigma`, the spread behind its comparison.
 
 A counter that grew (`draw_calls`, `descriptor_writes`, ...) fails the gate whatever the noise: counters are
 deterministic. CPU and GPU metrics are compared against the baseline's noise band; their tolerance is the largest of an

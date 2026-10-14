@@ -97,6 +97,17 @@ cherry-picking: the bar exists to make that distinction mechanical, and a record
 ADR amendment or supersession: ADR-0119 D4/D6 are unchanged (the policy holds the numbers; `--record` runs the protocol
 and writes a candidate).
 
+**Owner ruling on the M10 marathon stop, 2026-10-14 (chat), recorded once here.** The accepted baseline (bar-passing, four
+refused attempts before it, mains, clean build of `c2d348d`) was judged by 20 consecutive live gates on the unchanged
+build: 15 pass, 0 fail, 5 inconclusive (25 %). That is the watch item the previous ruling named, and M10 stopped again;
+nothing was committed. An offline study (no code, no recordings) replayed nine candidate dispersion rules and could not
+replay the live sessions' run-level values for the rules that need them, because `gate/1` kept only centers. Ruled:
+**rule (g)**, the dispersion check judges the policy's `dispersion_metrics` (`cpu_active_ms`, `gpu_busy_ms`) only; every
+other gated metric's dispersion is reported and never deciding (exact replay on the live sessions: 19 pass, 1 inconclusive,
+0 fail); **`baseline_sigma` and `candidate_sigma` per metric in `gate/1`**; the **m10b baseline is kept** (no re-record),
+with a fresh 20-gate live acceptance under the new rule. Recorded as a Spec Correction (second, 2026-10-14) with no ADR
+amendment or supersession: ADR-0119 D4 does not enumerate the metrics whose dispersion counts, so which ones are checked is
+the policy's, as the numbers are.
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes
@@ -226,10 +237,12 @@ populated once M7 lands.
 and refresh rate, then the workload counters; any mismatch, or no profile match in the
 store, → `incomparable` (exit 5); (2) *counters* — `candidate > center + tolerance`
 (tolerance 0 except the relative tolerance) → `regressed`; a counter regression is
-deterministic and ends in `fail` regardless of noise; (3) *dispersion* — if any gated
-CPU or GPU metric's candidate dispersion (robust sigma of the R run values) exceeds
-`dispersion_factor × baseline sigma` the verdict is `inconclusive` (exit 5) unless a
-counter regressed; (4) *CPU and GPU tiers* — `regressed`, `improved`, `ignored_floor`
+deterministic and ends in `fail` regardless of noise; (3) *dispersion* — if the candidate
+dispersion (robust sigma of the R run values) of any of the policy's `dispersion_metrics`
+(the headline totals `cpu_active_ms` and `gpu_busy_ms`; Correction 2026-10-14, was "any
+gated CPU or GPU metric") exceeds `dispersion_factor × baseline sigma` (floored at the
+tier's `abs_floor ÷ k`) the verdict is `inconclusive` (exit 5) unless a counter regressed;
+the other gated metrics' dispersion is reported (`dispersion.reported`), never deciding; (4) *CPU and GPU tiers* — `regressed`, `improved`, `ignored_floor`
 or `ok` per the tolerance rule of ADR-0119 D3; (5) any `regressed` → `fail` (exit 4),
 else `pass` (exit 0). Improvements never fail.
 

@@ -27,6 +27,28 @@
     policy's, fixed before any recording, so a refusal is measurement hygiene, not selection.
   - **ADRs:** ADR-0118 and ADR-0119 are unchanged (D4 already has the policy hold the numbers and the baseline ship
     its minimum detectable regression; D6 `--record` still runs the protocol and writes a candidate).
+  **Correction (2026-10-14, second, post-Approval, owner ruling on the dispersion study after the M10 acceptance
+  run):** which metrics' dispersion can make a verdict `inconclusive`.
+  - **The approved text** (Honesty, Testing, Risks; Plan 0060 P6 "any gated CPU or GPU metric") withholds the verdict
+    when the candidate's own run dispersion exceeds the band; the implementation applied
+    `dispersion_factor × baseline sigma` to every gated CPU and GPU metric.
+  - **Why that is not enough:** on the accepted baseline (bar-passing, mains, clean build), 20 live gates on the
+    unchanged build gave 15 pass, 0 fail and **5 inconclusive (25 %, limit 10 %)**. About 38 gated metrics each carry
+    their own test, several against a baseline sigma of 0.03 ms, so any one of them tripping withholds the whole
+    verdict, and four of the five withheld sessions tripped only zone or pass metrics while the totals were steady.
+  - **Corrected:** the dispersion check judges the policy's `dispersion_metrics`, the headline totals `cpu_active_ms`
+    and `gpu_busy_ms`, against `dispersion_factor × the baseline's robust sigma`, floored at the tier's
+    `abs_floor ÷ k`. The dispersion of every other gated CPU or GPU metric is reported in the verdict's `dispersion`
+    section (`dispersion.reported`) and never makes a verdict `inconclusive`; those metrics are judged by the
+    tolerance rule alone. Counters are unchanged. `gate/1` also carries `baseline_sigma` and `candidate_sigma` per
+    metric, so a later rule study can replay a verdict (the study that led here could not).
+  - **Evidence:** an offline replay of nine candidate rules over the 12 calibration sessions, the accepted baseline and
+    the first M10 recording (the control reproduces M7: 0.00 % false-fail, 2.83 % inconclusive). Replayed exactly on
+    the 20 live sessions the adopted rule gives 19 pass, 1 inconclusive, 0 fail; its false-fail is within 0.01 pp of the control's
+    (0.22 % and 0.57-0.58 % on the two pools, all single-metric cross-day level drift) and its detection is not lower.
+  - **ADRs:** ADR-0118 and ADR-0119 are unchanged: D4 says `inconclusive` is returned when the candidate runs' own
+    dispersion exceeds a policy multiple of the baseline band and does not enumerate the metrics; which metrics are
+    checked is the policy's (`dispersion_metrics`), as the numbers are.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
@@ -240,7 +262,9 @@ Also out of scope (proposed by this draft):
   is platform-independent and tested everywhere the suites run. Android is not
   measured.
 - **Honesty:** the gate states what it could not decide. A noisy session yields
-  `inconclusive`, not a guessed pass or fail.
+  `inconclusive`, not a guessed pass or fail. (Correction 2026-10-14: "noisy" is judged on the
+  headline totals `cpu_active_ms` and `gpu_busy_ms`; the noise of any other gated metric is
+  reported, not deciding.)
 
 ## Proposed Design
 
@@ -418,7 +442,8 @@ tier assignment from the policy; `ignored_floor`; improvements never failing;
 workload-counter changes becoming `incomparable`; every `comparable: false` reason
 (scene, content pin, resolution, variant, build, validation, GPU, driver, CPU, OS,
 present mode, refresh rate); a missing profile; `inconclusive` when the candidate's
-own run dispersion exceeds the band; exit codes; the verdict being byte-identical
+own run dispersion exceeds the band for a headline metric (Correction 2026-10-14) and not for
+any other; exit codes; the verdict being byte-identical
 for identical inputs; schema validity of both new documents; the refresh-category
 requirement on `--record`.
 
@@ -459,7 +484,9 @@ Risks:
   (Q10).
 - **A shared-package iGPU couples CPU and GPU clocks**; a heavy background process
   or a build just before the gate moves both. The idle precondition and the
-  dispersion check are the mitigation; they cannot remove all of it.
+  dispersion check are the mitigation; they cannot remove all of it. (Correction 2026-10-14:
+  the check is on the headline totals; a single-session comparison also cannot tell that a
+  whole session ran in a fast CPU state, which reads as an improvement.)
 - **Baseline staleness.** A driver update silently changes the profile identity
   (driver is part of it), so the gate refuses rather than comparing; the cost is a
   baseline refresh PR per driver change on that profile.

@@ -134,6 +134,19 @@ PolicyResult parsePolicy(const Value& document) {
   if (auto error = readStrings(document, "reported", policy.reported)) return PolicyResult::Err(*error);
   if (auto error = readStrings(document, "workload", policy.workload)) return PolicyResult::Err(*error);
 
+  if (auto error = readStrings(document, "dispersion_metrics", policy.dispersionMetrics)) {
+    return PolicyResult::Err(*error);
+  }
+  if (policy.dispersionMetrics.empty()) return PolicyResult::Err("'dispersion_metrics' is empty");
+  for (const std::string& metric : policy.dispersionMetrics) {
+    // A literal entry must name a gated CPU or GPU metric; a dispersion check on anything else would never run.
+    if (metric.find('*') != std::string::npos) continue;
+    const auto tier = gatedTier(policy, metric);
+    if (!tier || *tier == Tier::Counter) {
+      return PolicyResult::Err("'dispersion_metrics' entry '" + metric + "' is not a gated CPU or GPU metric");
+    }
+  }
+
   const Value* record = document.find("record");
   if (record == nullptr || !record->isObject()) return PolicyResult::Err("'record' is missing");
   if (auto error = readNumber(*record, "max_mdr_cpu_pct", 0.0, policy.record.maxMdrCpuPct)) {
@@ -197,5 +210,6 @@ std::optional<Tier> gatedTier(const GatePolicy& policy, std::string_view key) {
 
 bool isReported(const GatePolicy& policy, std::string_view key) { return anyMatch(policy.reported, key); }
 bool isWorkload(const GatePolicy& policy, std::string_view key) { return anyMatch(policy.workload, key); }
+bool isDispersionMetric(const GatePolicy& policy, std::string_view key) { return anyMatch(policy.dispersionMetrics, key); }
 
 }  // namespace atlantis::runtime::gate

@@ -200,6 +200,7 @@ struct SetProtocol {
   policy.protocol.pinProcess = true;
   policy.protocol.requireMainsPower = true;
   policy.dispersionFactor = 3.0;
+  policy.dispersionMetrics = {"cpu_active_ms", "gpu_busy_ms"};
   policy.counter.metricTolerancePct = {{"fragment_invocations", 0.1}, {"ia_primitives", 0.1}};
   policy.cpu.absFloor = 0.10;
   policy.cpu.maxPct = 5.0;
