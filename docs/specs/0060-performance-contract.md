@@ -44,8 +44,8 @@
     metric, so a later rule study can replay a verdict (the study that led here could not).
   - **Evidence:** an offline replay of nine candidate rules over the 12 calibration sessions, the accepted baseline and
     the first M10 recording (the control reproduces M7: 0.00 % false-fail, 2.83 % inconclusive). Replayed exactly on
-    the 20 live sessions the adopted rule gives 19 pass, 1 inconclusive, 0 fail; its false-fail equals the control's
-    (0.22 % and 0.58 % on the two pools, all single-metric cross-day level drift) and its detection is not lower.
+    the 20 live sessions the adopted rule gives 19 pass, 1 inconclusive, 0 fail; its false-fail is within 0.01 pp of the control's
+    (0.22 % and 0.57-0.58 % on the two pools, all single-metric cross-day level drift) and its detection is not lower.
   - **ADRs:** ADR-0118 and ADR-0119 are unchanged: D4 says `inconclusive` is returned when the candidate runs' own
     dispersion exceeds a policy multiple of the baseline band and does not enumerate the metrics; which metrics are
     checked is the policy's (`dispersion_metrics`), as the numbers are.
