@@ -255,9 +255,6 @@ int runCanary(const cli::CanaryRequest& request) {
   const RecordingGuard recording;
   std::array<std::vector<double>, gate::kCanaryComponentCount> measured;
   const unsigned int total = gate::kCanaryWarmup + gate::kCanaryRepetitions;
-  std::optional<std::uint64_t> previousFrame;
-  unsigned int previousIndex = 0;
-
   const auto collect = [&](std::uint64_t frameId, unsigned int index) {
     std::array<double, gate::kCanaryComponentCount> times{};
     if (!regionTimes(frameId, times)) return false;
@@ -267,6 +264,9 @@ int runCanary(const cli::CanaryRequest& request) {
     return true;
   };
 
+  // One repetition at a time: record, submit, wait for the device, read the frame's GPU regions. Nothing is ever
+  // pending while the next repetition records (a descriptor the previous one used is not rewritten under it), and
+  // the GPU timestamps have arrived by the time they are read.
   for (unsigned int i = 0; i < total; ++i) {
     profile::beginFrame();
     const std::uint64_t frameId = profile::currentFrameId();
@@ -274,18 +274,11 @@ int runCanary(const cli::CanaryRequest& request) {
       std::cerr << "atlantis_runtime: --canary: a canary submission failed\n";
       return bench::kExitRuntimeFailure;
     }
-    // This submit() drained the previous one, so the previous frame's GPU timestamps have arrived.
-    if (previousFrame && !collect(*previousFrame, previousIndex)) {
+    if (!resources->device->waitIdle().isOk()) return bench::kExitRuntimeFailure;
+    if (!collect(frameId, i)) {
       std::cerr << "atlantis_runtime: --canary: no GPU timestamps arrived for a canary frame\n";
       return bench::kExitRuntimeFailure;
     }
-    previousFrame = frameId;
-    previousIndex = i;
-  }
-  if (!resources->device->waitIdle().isOk()) return bench::kExitRuntimeFailure;
-  if (previousFrame && !collect(*previousFrame, previousIndex)) {
-    std::cerr << "atlantis_runtime: --canary: no GPU timestamps arrived for the last canary frame\n";
-    return bench::kExitRuntimeFailure;
   }
 
   const json::Value document = gate::buildCanaryDocument(metaValue(), measured);
