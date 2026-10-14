@@ -26,6 +26,7 @@ constexpr std::string_view kUsageText =
     "       atlantis_runtime --gate --record --record-to <dir> --reason-category <1-4> --reason <text>\n"
     "                        [--sessions <n>] [--session-gap-minutes <m>] [the --gate options above]\n"
     "       atlantis_runtime --gate --applies [--applicability <file>]   (changed paths on stdin)\n"
+    "       atlantis_runtime --canary [--output <path>] [--json] [--pin-process on|off]\n"
     "\n"
     "<name> is one of: integrated_showcase_demo, ibl_material_demo, pbr_normal_map_demo, "
     "pbr_materials_showcase\n"
@@ -122,7 +123,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int gateCount = 0, recordCount = 0, appliesCount = 0, runsCount = 0, baselinesCount = 0, profileCount = 0;
   int policyCount = 0, idleWaitCount = 0, preheatCount = 0, sessionsCount = 0, gapCount = 0, categoryCount = 0;
   int reasonCount = 0, recordToCount = 0, applicabilityCount = 0, warmupSecondsCount = 0, pinCount = 0;
-  int requireMainsCount = 0;
+  int requireMainsCount = 0, canaryCount = 0;
   std::string_view pinText, requireMainsText;
   std::string_view runsText, baselinesDir, profileId, policyPath, idleWaitText, preheatText, sessionsText, gapText;
   std::string_view categoryText, reasonText, recordTo, applicabilityPath, warmupSecondsText;
@@ -190,6 +191,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++pinCount > 1) return makeError("--pin-process supplied more than once");
       if (i + 1 >= argc) return makeError("--pin-process requires a value");
       pinText = argv[++i];
+    } else if (arg == "--canary") {
+      if (++canaryCount > 1) return makeError("--canary supplied more than once");
     } else if (arg == "--require-mains") {
       if (++requireMainsCount > 1) return makeError("--require-mains supplied more than once");
       if (i + 1 >= argc) return makeError("--require-mains requires a value");
@@ -292,6 +295,34 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   const int gateOnlyOptions = runsCount + baselinesCount + profileCount + policyCount + idleWaitCount + preheatCount +
                               recordCount + appliesCount + sessionsCount + gapCount + categoryCount + reasonCount +
                               recordToCount + applicabilityCount + requireMainsCount;
+  if (canaryCount > 0) {
+    if (benchmarkCount > 0 || gateCount > 0 || execCount > 0 || listenCount > 0 || sessionFileCount > 0 ||
+        editorCount > 0 || helpCount > 0 || listScenesCount > 0 || sceneCount > 0) {
+      return makeError("--canary may not be combined with --benchmark, --gate, --scene, --exec, --listen, "
+                       "--session-file, --editor, --help or --list-scenes");
+    }
+    if (warmupCount + framesCount + resolutionCount + variantCount + baselineCount + seriesCount + gpuTimingCount +
+            warmupSecondsCount + gateOnlyOptions >
+        0) {
+      return makeError("--canary takes only --output, --json and --pin-process");
+    }
+    CanaryRequest request;
+    request.json = jsonCount > 0;
+    if (outputCount > 0) request.outputPath = std::string(outputPath);
+    if (pinCount > 0) {
+      if (pinText == "on") {
+        request.pinProcess = true;
+      } else if (pinText == "off") {
+        request.pinProcess = false;
+      } else {
+        return makeError(std::string("invalid --pin-process value (on or off): ").append(pinText));
+      }
+    }
+    CommandLineResult result;
+    result.outcome = CommandLineOutcome::RunScene;
+    result.canary = std::move(request);
+    return result;
+  }
   if (benchmarkCount == 0 && gateCount == 0 && benchmarkOptions > 0) {
     return makeError("--warmup, --frames, --resolution, --variant, --json, --output, --baseline, --series and "
                      "--gpu-timing require --benchmark");

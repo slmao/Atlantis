@@ -71,6 +71,8 @@ struct Fixture {
     auto set = gate::buildSet(protocol, runs);
     REQUIRE(set.isOk());
     json::Value doc = set.value();
+    doc.set("canary", gate_test::canaryOf({gate_test::kStableCanary, gate_test::kStableCanary, gate_test::kStableCanary,
+                                           gate_test::kStableCanary}));
     if (withProvenance) {
       json::Value provenance = json::Value::object();
       provenance.set("profile", json::Value::string("test-profile"));
@@ -158,7 +160,7 @@ TEST_CASE("an unchanged candidate passes: exit 0 and exactly one gate document o
   CHECK(gate::at(o.verdict, {"baseline", "profile"})->asString() == "test-profile");
   CHECK(gate::at(o.verdict, {"baseline", "commit"})->asString() == "abc123");
   CHECK(gate::at(o.verdict, {"protocol", "conformant"})->asBool());
-  CHECK(o.calls.size() == 6);  // the preheat and the five runs of the policy
+  CHECK(o.calls.size() == 8);  // the canary, the preheat, the five runs of the policy, the canary
   for (const auto& call : o.calls) {
     const auto it = std::find(call.args.begin(), call.args.end(), "--pin-process");
     REQUIRE(it != call.args.end());
@@ -306,7 +308,7 @@ TEST_CASE("a child failure ends the gate with that failure's exit code and no ve
     CHECK(o.exitCode == c.expected);
     CHECK(o.out.empty());  // stdout carries a verdict or nothing
     CHECK_FALSE(o.err.empty());
-    CHECK(o.calls.size() == c.call + 1);
+    CHECK(o.calls.size() == c.call + 2);  // the start canary, then the children up to the failing one
   }
 }
 
@@ -389,7 +391,7 @@ TEST_CASE("a smoke run says it did not follow the protocol", "[runtime][gate][ru
   const auto o = f.run(r);
   CHECK_FALSE(gate::at(o.verdict, {"protocol", "conformant"})->asBool());
   CHECK(o.err.find("did not follow the policy") != std::string::npos);
-  CHECK(o.calls.size() == 2);  // no preheat
+  CHECK(o.calls.size() == 4);  // no preheat: the canary, two runs, the canary
 }
 
 TEST_CASE("the same inputs give the same bytes", "[runtime][gate][run]") {
@@ -508,4 +510,156 @@ TEST_CASE("a session whose zones are noisy but whose totals are steady is judged
   REQUIRE(reported.size() == 1);
   CHECK(reported[0].asString() == "zones.RenderExtraction");
   CHECK(*gate::numberOf(gate::at(o.verdict, {"metrics", "zones.RenderExtraction", "candidate_sigma"})) > 0.5);
+}
+
+// Spec 0060 Correction 2026-10-15 (GPU-state canary), through the fakes: the canary children around the session,
+// the start-of-session refusal, the verdict classification, a canary child that fails.
+
+namespace {
+
+// A candidate whose GPU tier is 30 % slower (the totals and the main pass).
+json::Value gpuSlowRun(std::size_t i) {
+  auto m = metricsAt(1.0, wobble(i));
+  m["gpu_busy_ms"] *= 1.3;
+  m["passes.draw.gpu_ms"] *= 1.3;
+  return makeRun(m);
+}
+
+}  // namespace
+
+TEST_CASE("the gate measures the canary after the idle wait and again after the runs", "[runtime][gate][run][canary]") {
+  Fixture f;
+  f.writeStore();
+  const auto o = f.run(request());
+  REQUIRE(o.calls.size() == 8);  // canary, preheat, five runs, canary
+  CHECK(o.calls.front().args[0] == "--canary");
+  CHECK(o.calls.back().args[0] == "--canary");
+  for (std::size_t i = 1; i + 1 < o.calls.size(); ++i) CHECK(o.calls[i].args[0] == "--benchmark");
+  const auto pin = std::find(o.calls.front().args.begin(), o.calls.front().args.end(), "--pin-process");
+  REQUIRE(pin != o.calls.front().args.end());
+  CHECK(*(pin + 1) == "on");  // the canary child is pinned like the benchmark children
+  CHECK(verdictOf(o) == "pass");
+  CHECK(gate::at(o.verdict, {"machine_state", "classification"})->asString() == "stable");
+  CHECK_FALSE(gate::at(o.verdict, {"canary", "shifted"})->asBool());
+}
+
+TEST_CASE("a GPU regression with a stable canary fails; with the canary shifted at the end it is withheld",
+          "[runtime][gate][run][canary]") {
+  {
+    Fixture f;
+    f.writeStore();
+    const auto o = f.run(request(), gpuSlowRun);
+    CHECK(o.exitCode == 4);
+    CHECK(verdictOf(o) == "fail");
+    CHECK(gate::at(o.verdict, {"machine_state", "classification"})->asString() == "stable");
+  }
+  {
+    Fixture f;
+    f.writeStore();
+    FakeLauncher launcher;
+    launcher.canaryMs = [](const std::string& phase) {
+      return phase == "end" ? gate_test::CanaryMs{3.74, 3.8 * 2.0, 4.09 * 2.0} : gate_test::kStableCanary;
+    };
+    const auto o = f.run(request(), gpuSlowRun, &launcher);
+    CHECK(o.exitCode == 5);
+    CHECK(verdictOf(o) == "inconclusive");
+    CHECK(gate::at(o.verdict, {"machine_state", "classification"})->asString() == "shifted");
+    CHECK(gate::at(o.verdict, {"machine_state", "explains"})->asArray().size() >= 1);
+    CHECK(o.verdict.find("reasons")->asArray()[0].asString().find("machine state") != std::string::npos);
+  }
+}
+
+TEST_CASE("a canary already shifted at the start refuses the session before the preheat and the runs",
+          "[runtime][gate][run][canary]") {
+  Fixture f;
+  f.writeStore();
+  FakeLauncher launcher;
+  launcher.canaryMs = [](const std::string&) { return gate_test::CanaryMs{3.74, 3.8 * 1.5, 4.09 * 1.5}; };
+  const auto o = f.run(request(), {}, &launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.out.empty());  // no verdict
+  CHECK(o.calls.size() == 1);  // only the start canary: no preheat, no run
+  CHECK(o.err.find("at the start of the session the GPU canary ran slower") != std::string::npos);
+  CHECK(o.err.find("bw +50 %") != std::string::npos);
+  CHECK(o.err.find("settle") != std::string::npos);
+}
+
+TEST_CASE("the start check does not refuse a machine the store does not recognise, or a faster one",
+          "[runtime][gate][run][canary]") {
+  {
+    Fixture f;
+    f.writeStore();
+    FakeLauncher launcher;
+    launcher.canaryMs = [](const std::string&) { return gate_test::CanaryMs{3.74 * 3, 3.8 * 3, 4.09 * 3}; };
+    launcher.canaryIdentity.gpu = "Some Other GPU";
+    const auto o = f.run(request(), {}, &launcher);
+    CHECK(o.calls.size() == 8);  // went on to measure: the store does not know this canary machine, so nothing is refused early
+    CHECK(o.exitCode == 0);      // the GPU tier is stable, so the shifted canary is noted and the run passes
+  }
+  {
+    Fixture f;
+    f.writeStore();
+    FakeLauncher launcher;
+    launcher.canaryMs = [](const std::string&) { return gate_test::CanaryMs{3.74 * 0.5, 3.8 * 0.5, 4.09 * 0.5}; };
+    const auto o = f.run(request(), {}, &launcher);
+    CHECK(o.calls.size() == 8);
+    CHECK(o.exitCode == 0);
+  }
+}
+
+TEST_CASE("a canary child that fails ends the gate with that failure's exit code and no verdict",
+          "[runtime][gate][run][canary]") {
+  const struct {
+    std::size_t canaryCall;  // 0: the start canary, 1: the end canary
+    int exitCode;
+    int expected;
+    std::size_t calls;
+  } cases[] = {{0, 3, 3, 1}, {0, 2, 2, 1}, {1, 3, 3, 8}, {1, 1, 1, 8}};
+  for (const auto& c : cases) {
+    Fixture f;
+    f.writeStore();
+    FakeLauncher launcher;
+    gate::ChildResult failure;
+    failure.exitCode = c.exitCode;
+    launcher.scriptedCanary[c.canaryCall] = failure;
+    const auto o = f.run(request(), {}, &launcher);
+    INFO("canary call " << c.canaryCall << " exit " << c.exitCode);
+    CHECK(o.exitCode == c.expected);
+    CHECK(o.out.empty());
+    CHECK(o.calls.size() == c.calls);
+    CHECK(o.err.find("GPU canary") != std::string::npos);
+  }
+}
+
+TEST_CASE("a canary document the gate cannot read is a runtime failure", "[runtime][gate][run][canary]") {
+  Fixture f;
+  f.writeStore();
+  FakeLauncher launcher;
+  launcher.writeDocuments = false;  // the children exit 0 and write nothing
+  const auto o = f.run(request(), {}, &launcher);
+  CHECK(o.exitCode == 2);
+  CHECK(o.out.empty());
+}
+
+TEST_CASE("a baseline recorded before the canary is not comparable, and says to record it again",
+          "[runtime][gate][run][canary]") {
+  Fixture f;
+  f.writeStore();
+  // Strip the canary reference from the stored baseline.
+  const auto path = f.root / "store" / "test-profile" / "bistro" / "bistro_baseline_1920x1080.baseline.json";
+  std::ifstream in(path, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();
+  auto parsed = json::parse(text);
+  REQUIRE(parsed.isOk());
+  json::Value doc = parsed.value();
+  json::Value rebuilt = json::Value::object();
+  for (const auto& [key, value] : doc.asObject()) {
+    if (key != "canary") rebuilt.set(key, value);
+  }
+  { std::ofstream out(path, std::ios::binary | std::ios::trunc); out << json::write(rebuilt) << "\n"; }
+  const auto o = f.run(request());
+  CHECK(o.exitCode == 5);
+  CHECK(verdictOf(o) == "incomparable");
+  CHECK(o.verdict.find("reasons")->asArray()[0].asString().find("baseline has no GPU canary reference") != std::string::npos);
 }

@@ -4,15 +4,19 @@
 // gate's GPU-free tests -- exactly the members the gate reads, with every metric a
 // stats object whose p50 is the given value. No device, no clock.
 
+#include "../../src/runtime/gate_canary.h"
 #include "../../src/runtime/gate_json.h"
 #include "../../src/runtime/gate_policy.h"
 #include "../../src/runtime/gate_set.h"
 
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <optional>
 #include <random>
 #include <string>
+#include <vector>
 
 namespace gate_test {
 
@@ -161,9 +165,38 @@ struct SetProtocol {
   std::string power = "mains";
 };
 
+// The GPU canary (Spec 0060 Correction 2026-10-15) the way a stable machine reads it, in ms: alu, bw, tex.
+inline constexpr std::array<double, 3> kStableCanary = {3.74, 3.80, 4.09};
+
+using CanaryMs = std::array<double, 3>;
+
+// A set's `canary` member from readings (phases "start", "end", "start", ... in order).
+[[nodiscard]] inline Value canaryOf(const std::vector<CanaryMs>& readings) {
+  std::vector<std::pair<std::string, gate::CanaryReading>> list;
+  for (std::size_t i = 0; i < readings.size(); ++i) {
+    gate::CanaryReading reading;
+    reading.ms = readings[i];
+    list.emplace_back(i % 2 == 0 ? "start" : "end", reading);
+  }
+  return gate::canarySetValue(list);
+}
+
+// What a test passes for a set's canary: the stable reading (the default), none at all, or these readings.
+struct CanarySpec {
+  enum class Kind { Stable, Omit, Readings } kind = Kind::Stable;
+  std::vector<CanaryMs> readings;
+  [[nodiscard]] static CanarySpec omit() { return {Kind::Omit, {}}; }
+  [[nodiscard]] static CanarySpec of(std::vector<CanaryMs> r) { return {Kind::Readings, std::move(r)}; }
+  // The stable reading, scaled per component (a shifted machine): {1.0, 1.0, 1.0} is stable.
+  [[nodiscard]] static CanarySpec scaled(double alu, double bw, double tex) {
+    const CanaryMs m = {kStableCanary[0] * alu, kStableCanary[1] * bw, kStableCanary[2] * tex};
+    return of({m, m});
+  }
+};
+
 // A set/1 document straight from aggregates (the evaluator reads nothing else of it).
 [[nodiscard]] inline Value makeSet(const std::map<std::string, Agg>& aggregates, const DocumentIdentity& id = {},
-                                   const SetProtocol& protocol = {}) {
+                                   const SetProtocol& protocol = {}, const CanarySpec& canary = {}) {
   Value doc = Value::object();
   doc.set("schema", Value::string("atlantis.benchmark.set/1"));
   Value p = Value::object();
@@ -187,7 +220,27 @@ struct SetProtocol {
     aggregate.set(key, std::move(entry));
   }
   doc.set("aggregate", std::move(aggregate));
+  switch (canary.kind) {
+    case CanarySpec::Kind::Stable: doc.set("canary", canaryOf({kStableCanary, kStableCanary})); break;
+    case CanarySpec::Kind::Readings: doc.set("canary", canaryOf(canary.readings)); break;
+    case CanarySpec::Kind::Omit: break;
+  }
   return doc;
+}
+
+// An atlantis.benchmark.canary/1 document as the child writes it, for the machine `id` describes.
+[[nodiscard]] inline Value makeCanaryDocument(const CanaryMs& ms, const DocumentIdentity& id = {}) {
+  Value system = Value::object();
+  system.set("os", Value::string(id.os));
+  system.set("cpu", Value::string(id.cpu));
+  system.set("gpu", Value::string(id.gpu));
+  system.set("driver", Value::string(id.driver));
+  system.set("vulkan_api", Value::string(id.vulkanApi));
+  Value meta = Value::object();
+  meta.set("system", std::move(system));
+  std::array<std::vector<double>, 3> repetitions;
+  for (std::size_t c = 0; c < 3; ++c) repetitions[c] = {ms[c], ms[c], ms[c]};
+  return gate::buildCanaryDocument(std::move(meta), repetitions);
 }
 
 // The Spec's proposed defaults, written out here so a test's numbers do not move when
@@ -201,6 +254,9 @@ struct SetProtocol {
   policy.protocol.requireMainsPower = true;
   policy.dispersionFactor = 3.0;
   policy.dispersionMetrics = {"cpu_active_ms", "gpu_busy_ms"};
+  policy.canary.maxShiftPct = 8.0;
+  policy.canary.required = true;
+  policy.record.maxCanarySpreadPct = 5.0;
   policy.counter.metricTolerancePct = {{"fragment_invocations", 0.1}, {"ia_primitives", 0.1}};
   policy.cpu.absFloor = 0.10;
   policy.cpu.maxPct = 5.0;

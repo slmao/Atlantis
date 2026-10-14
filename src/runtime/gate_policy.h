@@ -59,6 +59,18 @@ struct MeasuredBlock {
 struct RecordPolicy {
   double maxMdrCpuPct = 10.0;
   double maxMdrGpuPct = 20.0;
+  // A recording's own GPU canary readings may not spread by more than this (max / min - 1, percent): a
+  // recording made across two GPU states is not a baseline for either.
+  double maxCanarySpreadPct = 5.0;
+};
+
+// The GPU-state canary (Spec 0060 Correction 2026-10-15; gate_canary.h).
+struct CanaryPolicy {
+  // A session's slowest canary reading above the baseline's reference by more than this (percent) means the
+  // machine's GPU is not in the state the baseline was recorded in.
+  double maxShiftPct = 8.0;
+  // A baseline without a canary reference, or a run without a canary reading, is not comparable.
+  bool required = true;
 };
 
 struct GatePolicy {
@@ -77,6 +89,7 @@ struct GatePolicy {
   std::vector<std::string> reported;
   std::vector<std::string> workload;
   RecordPolicy record;
+  CanaryPolicy canary;
   MeasuredBlock measured;
 
   [[nodiscard]] const TierPolicy& tierPolicy(Tier tier) const noexcept;

@@ -1,3 +1,4 @@
+#include "../../src/runtime/gate_canary.h"
 #include "../../src/runtime/gate_orchestrate.h"
 #include "../../src/runtime/gate_set.h"
 #include "../../src/runtime/gate_store.h"
@@ -14,6 +15,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -209,6 +211,7 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   plan.preheatSeconds = 0.0;
   plan.idleWait = false;
   plan.pin = true;  // the real children run pinned, as the policy asks
+  plan.canary = true;  // and the real GPU canary is measured around the runs
   plan.childTimeoutSeconds = 120.0;
   plan.tempDir = (root / "children").string();
   fs::create_directories(plan.tempDir);
@@ -223,6 +226,13 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   auto set = gate::buildSet(protocol, session.runDocuments);
   REQUIRE(set.isOk());
   Value doc = set.value();
+  std::vector<std::pair<std::string, gate::CanaryReading>> readings;
+  for (const auto& [phase, document] : session.canaryDocuments) {
+    const auto reading = gate::extractCanaryReading(document);
+    REQUIRE(reading.isOk());
+    readings.emplace_back(phase, reading.value());
+  }
+  doc.set("canary", gate::canarySetValue(readings));
   Value provenance = Value::object();
   provenance.set("profile", Value::string("smoke-profile"));
   provenance.set("recorded_commit", Value::string("smoke"));
@@ -259,6 +269,13 @@ TEST_CASE("atlantis_runtime --gate: one document on stdout, an exit code that ma
                              std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json\" --baselines \"" +
                              (dir.path / "store").string() + "\"";
   const int code = runExecutable(common, dir.path / "verdict.txt");
+  if (code == 3) {
+    // The GPU canary already ran slower than the baseline's reference at the start of the session -- this test runs
+    // beside other GPU processes, which is exactly what the start-of-session precondition exists to refuse. It
+    // prints no verdict, and the other cases below are not reachable.
+    CHECK(readAll(dir.path / "verdict.txt").empty());
+    return;
+  }
   CHECK((code == 0 || code == 4 || code == 5));  // a verdict, never a crash and never a usage error
   const auto parsed = atlantis::connection::json::parse(readAll(dir.path / "verdict.txt"));
   REQUIRE(parsed.isOk());  // a log line on stdout would fail this
@@ -328,5 +345,51 @@ TEST_CASE("atlantis_runtime --gate: runs on mains power and refuses on battery, 
     CHECK(code == 3);  // refused: nothing measured, nothing printed
     CHECK(readAll(dir.path / "verdict.txt").empty());
   }
+#endif
+}
+
+// Spec 0060 Correction 2026-10-15 (GPU-state canary): the real child, on this machine's device.
+
+TEST_CASE("atlantis_runtime --canary: a real run writes a valid document with a reading for every component",
+          "[runtime][gpu][gate][process][canary]") {
+  TempDir dir;
+  const auto launcher = gate::makeProcessLauncher(ATLANTIS_RUNTIME_EXECUTABLE);
+  gate::ChildSpec spec;
+  const std::string output = (dir.path / "canary.json").string();
+  spec.args = {"--canary", "--output", output, "--pin-process", "on"};
+  spec.timeoutSeconds = 120.0;
+  const gate::ChildResult result = launcher->run(spec);
+  REQUIRE(result.status == gate::ChildResult::Status::Exited);
+#if defined(ATLANTIS_PROFILING)
+  REQUIRE(result.exitCode == 0);
+  std::ifstream in(output, std::ios::binary);
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const auto parsed = atlantis::connection::json::parse(text);
+  REQUIRE(parsed.isOk());
+  const auto reading = gate::extractCanaryReading(parsed.value());
+  REQUIRE(reading.isOk());
+  for (const double ms : reading.value().ms) {
+    CHECK(ms > 0.0);  // a reading, not a time budget: nothing here asserts how fast the machine is
+    CHECK(std::isfinite(ms));
+  }
+  CHECK(*gate::numberOf(gate::at(parsed.value(), {"components", "alu", "n"})) == static_cast<double>(gate::kCanaryRepetitions));
+  CHECK(gate::at(parsed.value(), {"meta", "system", "gpu"})->isString());  // the machine identity the start check matches on
+  CHECK(gate::at(parsed.value(), {"meta", "build", "profiling"})->asBool());
+#else
+  CHECK(result.exitCode == 3);  // a build without profiling refuses, with the documented code
+  CHECK_FALSE(fs::exists(output));
+#endif
+}
+
+TEST_CASE("atlantis_runtime --canary: the document goes to stdout alone without --output",
+          "[runtime][gpu][gate][process][canary]") {
+#if !defined(ATLANTIS_PROFILING)
+  SUCCEED("this build has no profiling: --canary refuses");
+#else
+  TempDir dir;
+  CHECK(runExecutable("--canary", dir.path / "stdout.txt") == 0);
+  const auto parsed = atlantis::connection::json::parse(readAll(dir.path / "stdout.txt"));
+  REQUIRE(parsed.isOk());  // a log line on stdout would fail this
+  CHECK(parsed.value().find("schema")->asString() == "atlantis.benchmark.canary/1");
 #endif
 }

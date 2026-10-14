@@ -8,6 +8,7 @@
 #include <atlantis/runtime/runtime_control_host.h>
 
 #include "benchmark_run.h"
+#include "canary_run.h"
 #include "gate_run.h"
 #include "cli.h"
 #include "editor_attachment.h"
@@ -107,6 +108,13 @@ int main(int argc, char** argv) {
   if (cliResult.outcome == CommandLineOutcome::PrintErrorAndExit) {
     std::cerr << cliResult.message;
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
+
+  // Spec 0060 Correction 2026-10-15: `--canary` runs the gate's fixed GPU micro-workload on a headless
+  // device; stdout carries the one document, so the log sink moves to stderr first.
+  if (cliResult.canary.has_value()) {
+    const atlantis::runtime::benchmark::StderrLogScope canaryLogs;
+    return atlantis::runtime::canary::runCanary(*cliResult.canary);
   }
 
   // Plan 0060 M3 (ADR-0119 D5): `--gate` launches child --benchmark runs and judges them; it

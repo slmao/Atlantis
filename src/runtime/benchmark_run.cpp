@@ -112,6 +112,9 @@ bool writeFile(const std::string& path, const std::string& content) {
 
 }  // namespace
 
+BuildInfo currentBuildInfo() { return buildInfo(); }
+std::string currentCpuBrand() { return cpuBrand(); }
+
 StderrLogScope::StderrLogScope() { atlantis::log::initialize(std::make_shared<StderrLogSink>()); }
 StderrLogScope::~StderrLogScope() { atlantis::log::initialize(nullptr); }
 

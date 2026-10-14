@@ -1,5 +1,7 @@
 #include "gate_evaluate.h"
 
+#include "gate_canary.h"
+
 #include "gate_set.h"
 
 #include <algorithm>
@@ -230,6 +232,11 @@ Verdict notJudged(const Value& candidate, const GatePolicy& policy, const Baseli
   dispersion.set("exceeded", Value::array());
   dispersion.set("reported", Value::array());
   doc.set("dispersion", std::move(dispersion));
+  doc.set("canary", Value());
+  Value state = Value::object();
+  state.set("classification", Value::string("unjudged"));
+  state.set("explains", Value::array());
+  doc.set("machine_state", std::move(state));
   doc.set("reported", Value::object());
   doc.set("summary", emptySummary());
   return finish("incomparable", std::move(doc));
@@ -256,12 +263,16 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
                         formatNumber(c.center) + " (the scene is not the one the baseline measured)");
     }
   }
+  // The GPU canary (Spec 0060 Correction 2026-10-15): without a reading on both sides, under one workload id, the
+  // machine's GPU state cannot be told apart from the code's.
+  const CanaryJudgment canary = judgeCanary(candidate, baseline, policy.canary.maxShiftPct);
+  if (!canary.measured && policy.canary.required) reasons.push_back(canary.problem);
   if (!reasons.empty()) return notJudged(candidate, policy, baselineRef, std::move(reasons));
 
   // (2)-(4) Per metric, in the order the baseline lists them (sorted keys).
   Value metrics = Value::object();
   std::vector<std::string> regressed, improved, ignored, unavailable;
-  std::vector<std::string> counterRegressed, exceeded, noisy;
+  std::vector<std::string> counterRegressed, cpuRegressed, gpuRegressed, exceeded, noisy;
   std::size_t ok = 0;
   Value reported = Value::object();
 
@@ -290,6 +301,8 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
       if (judged.status == "regressed") {
         regressed.push_back(key);
         if (*tier == Tier::Counter) counterRegressed.push_back(key);
+        if (*tier == Tier::Cpu) cpuRegressed.push_back(key);
+        if (*tier == Tier::Gpu) gpuRegressed.push_back(key);
       } else if (judged.status == "improved") {
         improved.push_back(key);
       } else if (judged.status == "ignored_floor") {
@@ -320,13 +333,36 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   summary.set("unavailable", stringArray(unavailable));
   summary.set("ok", count(ok));
 
+  // The verdict. Counters are deterministic and fail whatever the machine's state; a noisy headline total withholds
+  // the verdict; a CPU regression fails (the GPU canary says nothing about the CPU); a GPU regression fails when
+  // the canary is stable (the code did it) and is withheld when the canary shifted (the machine's GPU state did it,
+  // and the same shift would hide or fake any GPU change). Four cases: canary stable or shifted x GPU stable or
+  // regressed.
   std::string result = "pass";
+  std::vector<std::string> stateReasons;
+  std::vector<std::string> explained;
   if (!counterRegressed.empty()) {
     result = "fail";
   } else if (!exceeded.empty()) {
     result = "inconclusive";
-  } else if (!regressed.empty()) {
+  } else if (!cpuRegressed.empty()) {
     result = "fail";
+  } else if (!gpuRegressed.empty()) {
+    if (canary.measured && canary.shifted) {
+      result = "inconclusive";
+      explained = gpuRegressed;
+      std::string components;
+      for (const std::string& name : canary.shiftedComponents) {
+        if (!components.empty()) components += ", ";
+        components += name + " +" + formatNumber(std::round(canary.shiftPct[canaryComponentIndex(name)] * 10.0) / 10.0) + " %";
+      }
+      stateReasons.push_back("machine state: the GPU canary ran slower than the baseline's reference (" + components +
+                        "; limit " + formatNumber(canary.thresholdPct) +
+                        " %), so the GPU regression cannot be attributed to the code: run again when the machine is in "
+                        "the state the baseline was recorded in");
+    } else {
+      result = "fail";
+    }
   }
 
   Value doc = Value::object();
@@ -336,7 +372,7 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   doc.set("baseline", baselineValue(baselineRef));
   doc.set("protocol", protocolValue(candidate, policy));
   doc.set("comparable", Value::boolean(true));
-  doc.set("reasons", Value::array());
+  doc.set("reasons", stringArray(stateReasons));
   doc.set("metrics", std::move(metrics));
   Value dispersion = Value::object();
   dispersion.set("factor", num(policy.dispersionFactor));
@@ -344,6 +380,11 @@ Verdict evaluate(const Value& candidate, const Value& baseline, const GatePolicy
   dispersion.set("exceeded", stringArray(exceeded));
   dispersion.set("reported", stringArray(noisy));
   doc.set("dispersion", std::move(dispersion));
+  doc.set("canary", canaryJudgmentValue(canary));
+  Value state = Value::object();
+  state.set("classification", Value::string(!canary.measured ? "unmeasured" : (canary.shifted ? "shifted" : "stable")));
+  state.set("explains", stringArray(explained));
+  doc.set("machine_state", std::move(state));
   doc.set("reported", std::move(reported));
   doc.set("summary", std::move(summary));
   return finish(result, std::move(doc));

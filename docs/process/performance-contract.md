@@ -29,7 +29,8 @@ reference baseline is the profiling-on, Tracy-off configuration (Spec 0060's bui
 revision and dirty flag when CMake configures, not when it builds.
 
 One command, one verdict document on stdout, one exit code. It takes about three minutes: it waits for the machine to
-be idle, runs one discarded **preheat** of 60 s, then five independent `--benchmark` processes, each **pinned** (the
+be idle, measures the **GPU canary** (below), runs one discarded **preheat** of 60 s, then five independent
+`--benchmark` processes, measures the canary again, each child **pinned** (the
 child opts out of process power throttling and runs at high priority, so the OS scheduler does not park the render
 thread on a slow core; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
 browser started during it shows up as an `inconclusive` verdict.
@@ -59,10 +60,10 @@ run on any source but `mains` is never compared with a mains baseline (`incompar
 | 0 | `pass` | No gated metric regressed beyond its tolerance. Improvements are listed and never fail the gate. |
 | 4 | `fail` | A gated metric regressed. `summary.regressed` names them; `metrics.<key>` carries `baseline`, `candidate`, `delta`, `delta_pct`, `tolerance` and `tolerance_source` (`floor`, `max_pct`, `noise`, `exact`, `relative`). |
 | 5 | `incomparable` | Not judged: this machine matches no baseline profile, the profile has no baseline for this scene, variant and resolution, the workload counters differ (the scene changed), or the run and the baseline differ in hardware, build, validation or pinning. `reasons` says which and what to do. |
-| 5 | `inconclusive` | Not judged: the session's total CPU or GPU time (`cpu_active_ms`, `gpu_busy_ms`) was noisier than the baseline's own spread (`dispersion.exceeded`). Run it again on a quiet machine. A zone or pass that was noisy while the totals were steady is listed in `dispersion.reported` and does not withhold the verdict. |
+| 5 | `inconclusive` | Not judged, for one of two reasons. The session's total CPU or GPU time (`cpu_active_ms`, `gpu_busy_ms`) was noisier than the baseline's own spread (`dispersion.exceeded`): run it again on a quiet machine; a zone or pass that was noisy while the totals were steady is listed in `dispersion.reported` and does not withhold the verdict. Or the **machine's GPU was in another state** than the baseline's (`machine_state.classification` is `shifted`, `reasons` says by how much): the GPU tier regressed, but the canary shows the machine, not necessarily the code, moved; run it again later. |
 | 1 | | Usage error or an unreadable policy or store. |
 | 2 | | A benchmark child failed, timed out or wrote no document. |
-| 3 | | Unsupported build (no `ATLANTIS_PROFILING`), the scene is absent, the machine would not go idle in time, pinning failed, or the machine is on battery power (or cannot say). |
+| 3 | | Unsupported build (no `ATLANTIS_PROFILING`), the scene is absent, the machine would not go idle in time, pinning failed, the machine is on battery power (or cannot say), or the GPU canary was already above the baseline's reference at the start of the session (nothing was spent: wait and run again). |
 
 Each gated metric in the verdict carries `baseline_sigma` and `candidate_sigma`, the spread behind its comparison.
 
@@ -90,6 +91,29 @@ It prints `{"applies": bool, "matched": [...]}` and judges nothing. A PR it sele
 says N/A with the reason; where no baseline exists yet for the machine's profile the verdict is `incomparable` and the
 item is N/A with that reason. A `fail` or `inconclusive` is reported with its verdict; the merge decision is a human's.
 
+## The GPU canary and machine state
+
+The GPU of a laptop can sit in a slower state for hours, for no reason the frame can show: on the reference machine the
+main pass read 25-60 % slow for most of one run of twenty gates, on mains power, and was normal the day before. From the
+frame's own numbers that is indistinguishable from a real regression in the main pass, so the gate carries a measurement
+the code under test cannot move: a **fixed GPU micro-workload** (`atlantis_runtime --canary`: an ALU-bound, a
+write-bandwidth-bound and a read-bandwidth-bound fragment workload, embedded in the executable, nothing shared with the
+renderer), measured right after the idle wait and right after the last run of every session, about a second each. Its
+readings are in the set (`canary`) and in the verdict (`canary`, `machine_state`):
+
+| Canary | GPU tier | Verdict |
+|---|---|---|
+| stable | stable | `pass` |
+| stable | `regressed` | `fail`: the machine was in the baseline's state, so the code did it |
+| shifted | stable | `pass`, the shift noted in `machine_state` |
+| shifted | `regressed` | `inconclusive`, reason stated: the machine's state, not necessarily the code, moved |
+
+"Shifted" means a component's slowest reading is more than `canary.max_shift_pct` (8 %) above the baseline's reference;
+a faster machine never counts. CPU and counter regressions are never excused by it. A baseline recorded before the canary
+existed, or a different canary workload, is `incomparable`. A gate that finds on a bad-state day only machine-state
+outcomes has told the truth, not failed: run it again later, or on a machine in the baseline's state. Do not raise
+`canary.max_shift_pct` to make a gate pass. See [ADR-0120](../adr/0120-gpu-state-canary-and-machine-state-classification.md).
+
 ## The baseline store and its refresh
 
 Baselines are committed under `tests/performance/baselines/<profile>/`: a `profile.json` (the hardware identity: OS,
@@ -109,7 +133,9 @@ atlantis_runtime --gate --record --record-to <dir> --reason-category <1-4> --rea
 It runs the protocol over three sessions at least ten minutes apart (about 30 minutes), writes the candidate under
 `<dir>` and nothing else. It also **refuses a recording that is too noisy**: if the recording's own minimum detectable
 regression (below) exceeds the policy's record bar (`record.max_mdr_cpu_pct`, 10 %, and `record.max_mdr_gpu_pct`, 20 %),
-it exits 3, prints the numbers and writes nothing; record again on a quiet machine on mains power. The bar is a
+it exits 3, prints the numbers and writes nothing; record again on a quiet machine on mains power. A recording is also
+refused when its own GPU canary readings spread by more than `record.max_canary_spread_pct` (5 %): it was made across two
+GPU states. The recording carries the canary reference (`canary` in the baseline). The bar is a
 pre-declared objective criterion, fixed in the policy before any recording: refusing a recording by it is measurement
 hygiene, while recording until a baseline happens to pass an acceptance run would be cherry-picking. Do not raise the
 bounds to get a recording through, and say how many recordings the bar refused when you commit the one that passed. The PR that commits it names one reason category, as ADR-0042 does for goldens:

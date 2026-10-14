@@ -78,9 +78,14 @@
     "lights_directional",
     "lights_point"
   ],
+  "canary": {
+    "max_shift_pct": 8,
+    "required": true
+  },
   "record": {
     "max_mdr_cpu_pct": 10,
-    "max_mdr_gpu_pct": 20
+    "max_mdr_gpu_pct": 20,
+    "max_canary_spread_pct": 5
   },
   "measured": {
     "study": "calibration-2-pinned",
@@ -90,6 +95,7 @@
     "rule": "1980 (3-session baseline, 1 candidate session) combinations; k=3 (bootstrap false-fail upper 95 % bound 0.00 %), cpu 5 %, gpu 10 %, smallest dispersion_factor with inconclusive <= 10 % (4: 2.83 %, bootstrap upper 8.24 %)",
     "demoted": "passes.shadow.gpu_ms is report-only: at the Spec defaults it is the only metric that false-fails (6.1 % of combinations; its session medians span 2.30 to 2.81 ms, a per-session shift larger than 10 %), and no other metric fails",
     "mdr": "a single-session baseline resolves cpu 5.1-6.5 % and gpu 10.5-16.1 % (90 % detection), counters exact",
+    "canary": "the fixed GPU canary (ADR-0120; Spec 0060 third Correction 2026-10-15): max_shift_pct 8 is about 5 x the largest spread of its readings across separate child runs on the reference machine (alu 0.1 %, bw 1.7 %, tex 1.2 % over ten runs), far below the shifts it must catch (the slow GPU state read the memory-bound components about 2.1 x); record.max_canary_spread_pct 5 allows a recording about 3 x that spread. Whether the canary tracks the state that moves the main pass is validated live at the first acceptance run, not here",
     "record_bar": "record-time bar on a 3-session baseline's minimum detectable regression: cpu 10 %, gpu 20 %. Of the 220 three-session baselines the 12 calibration sessions allow, cpu resolves 5.4-6.5 % (bar 10 % refuses none) and gpu 10.6-19.1 % (p99 17.2 %; bar 20 % refuses none); the two recordings that motivated the bar resolve cpu 18.2 % and gpu 21.5 % (a recording spanning battery and mains) and are refused",
     "dispersion_rule": "the dispersion check can make a verdict inconclusive only on dispersion_metrics (cpu_active_ms, gpu_busy_ms); with every gated CPU/GPU metric checked, 20 live gates on the accepted baseline gave 5 inconclusive (25 %); replayed exactly the headline-only rule gives 1 of 20, with false-fail equal to the control and detection not lower (offline study, Spec 0060 second Correction 2026-10-14)"
   }

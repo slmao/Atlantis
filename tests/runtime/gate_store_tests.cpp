@@ -482,6 +482,8 @@ TEST_CASE("the guard, given the record bar, refuses a committed baseline the bar
     mdr.set("cpu", gate::num(cpu));
     mdr.set("gpu", gate::num(gpu));
     doc.set("mdr", std::move(mdr));
+    doc.set("canary", gate_test::canaryOf({gate_test::kStableCanary, gate_test::kStableCanary, gate_test::kStableCanary,
+                                           gate_test::kStableCanary}));
     std::ofstream out(baselineFile, std::ios::binary | std::ios::trunc);
     out << json::write(doc) << "\n";
   };
@@ -496,5 +498,48 @@ TEST_CASE("the guard, given the record bar, refuses a committed baseline the bar
   setMdr(6.5, 21.5);  // the recording that spanned battery and mains
   CHECK(mentions(gate::validateStore(store.dir(), &bar), "gpu minimum detectable regression 21.5 %"));
   setMdr(10.0, 20.0);  // exactly at the bound is inside it
+  CHECK(gate::validateStore(store.dir(), &bar).empty());
+}
+
+TEST_CASE("the guard, given the record bar, wants a GPU canary reference whose readings agree",
+          "[runtime][gate][store][canary]") {
+  TempStore store;
+  const std::string baselineFile = writeValidStore(store);
+  const gate::RecordPolicy bar{10.0, 20.0, 5.0};
+  const auto setCanary = [&](const std::vector<gate_test::CanaryMs>& readings) {
+    auto parsed = json::parse(readAll(baselineFile));
+    REQUIRE(parsed.isOk());
+    json::Value doc = parsed.value();
+    if (readings.empty()) {
+      json::Value rebuilt = json::Value::object();
+      for (const auto& [key, value] : doc.asObject()) {
+        if (key != "canary") rebuilt.set(key, value);
+      }
+      doc = std::move(rebuilt);
+    } else {
+      doc.set("canary", gate_test::canaryOf(readings));
+    }
+    std::ofstream out(baselineFile, std::ios::binary | std::ios::trunc);
+    out << json::write(doc) << "\n";
+  };
+  const auto mentions = [](const std::vector<std::string>& problems, const std::string& text) {
+    return std::any_of(problems.begin(), problems.end(), [&](const std::string& p) { return p.find(text) != std::string::npos; });
+  };
+  const gate_test::CanaryMs high = {gate_test::kStableCanary[0], gate_test::kStableCanary[1] * 1.12,
+                                    gate_test::kStableCanary[2]};
+  const gate_test::CanaryMs slightlyHigh = {gate_test::kStableCanary[0], gate_test::kStableCanary[1] * 1.04,
+                                            gate_test::kStableCanary[2]};
+
+  setCanary({});
+  CHECK(mentions(gate::validateStore(store.dir(), &bar), "no GPU canary reference"));
+  CHECK(gate::validateStore(store.dir()).empty());  // without a bar the guard is as before
+
+  setCanary({gate_test::kStableCanary, gate_test::kStableCanary, gate_test::kStableCanary, gate_test::kStableCanary});
+  CHECK(gate::validateStore(store.dir(), &bar).empty());
+
+  setCanary({gate_test::kStableCanary, gate_test::kStableCanary, high, high});  // two GPU states in one recording
+  CHECK(mentions(gate::validateStore(store.dir(), &bar), "GPU canary readings spread 12 %"));
+
+  setCanary({gate_test::kStableCanary, slightlyHigh});  // 4 %: inside the bar
   CHECK(gate::validateStore(store.dir(), &bar).empty());
 }

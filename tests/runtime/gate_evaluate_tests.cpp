@@ -492,3 +492,138 @@ TEST_CASE("an unavailable metric has no sigma to report", "[runtime][gate][evalu
   CHECK(statusOf(verdict, "gpu_busy_ms") == "unavailable");
   CHECK(metric(verdict, "gpu_busy_ms").find("candidate_sigma") == nullptr);
 }
+
+// Spec 0060 Correction 2026-10-15 (GPU-state canary): the four cases, canary stable or shifted x GPU tier stable or
+// regressed, and what the canary does not explain.
+
+namespace {
+
+gate::Verdict runWithCanary(std::map<std::string, Agg> candidate, const gate_test::CanarySpec& canary,
+                            const gate::GatePolicy& policy = testPolicy()) {
+  return gate::evaluate(makeSet(candidate, {}, {}, canary), makeSet(baselineAggregates()), policy, ref());
+}
+
+// The GPU tier regressed: the totals and the main pass +25 % (17 -> 21.25 ms, 14 -> 17.5 ms).
+std::map<std::string, Agg> gpuRegressed() {
+  auto candidate = baselineAggregates();
+  candidate["gpu_busy_ms"].center = 21.25;
+  candidate["passes.draw.gpu_ms"].center = 17.5;
+  return candidate;
+}
+
+const gate_test::CanarySpec kShifted = gate_test::CanarySpec::scaled(1.0, 2.0, 2.0);  // memory-bound components x2
+
+}  // namespace
+
+TEST_CASE("canary stable and GPU stable: a pass", "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(same(), gate_test::CanarySpec{});
+  CHECK(verdict.result == "pass");
+  CHECK(gate::at(verdict.document, {"machine_state", "classification"})->asString() == "stable");
+  CHECK_FALSE(gate::at(verdict.document, {"canary", "shifted"})->asBool());
+  CHECK(gate::at(verdict.document, {"machine_state", "explains"})->asArray().empty());
+}
+
+TEST_CASE("canary stable and GPU regressed: the code did it, the gate fails", "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(gpuRegressed(), gate_test::CanarySpec{});
+  CHECK(verdict.result == "fail");
+  CHECK(verdict.exitCode == gate::kExitFail);
+  CHECK(statusOf(verdict, "gpu_busy_ms") == "regressed");
+  CHECK(gate::at(verdict.document, {"machine_state", "classification"})->asString() == "stable");
+  CHECK(gate::at(verdict.document, {"machine_state", "explains"})->asArray().empty());
+  CHECK(gate::at(verdict.document, {"reasons"})->asArray().empty());
+}
+
+TEST_CASE("canary shifted and GPU stable: a pass, with the shift noted", "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(same(), kShifted);
+  CHECK(verdict.result == "pass");
+  CHECK(gate::at(verdict.document, {"machine_state", "classification"})->asString() == "shifted");
+  CHECK(gate::at(verdict.document, {"canary", "shifted"})->asBool());
+  CHECK(gate::at(verdict.document, {"machine_state", "explains"})->asArray().empty());
+}
+
+TEST_CASE("canary shifted and GPU regressed: the machine state, withheld as inconclusive with the reason",
+          "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(gpuRegressed(), kShifted);
+  CHECK(verdict.result == "inconclusive");
+  CHECK(verdict.exitCode == gate::kExitNotJudged);
+  CHECK(verdict.document.find("comparable")->asBool());
+  CHECK(statusOf(verdict, "gpu_busy_ms") == "regressed");  // the numbers are not hidden
+  CHECK(gate::at(verdict.document, {"machine_state", "classification"})->asString() == "shifted");
+  const auto& explains = gate::at(verdict.document, {"machine_state", "explains"})->asArray();
+  REQUIRE(explains.size() == 2);
+  CHECK(explains[0].asString() == "gpu_busy_ms");
+  CHECK(explains[1].asString() == "passes.draw.gpu_ms");
+  const auto& reasons = verdict.document.find("reasons")->asArray();
+  REQUIRE(reasons.size() == 1);
+  CHECK(reasons[0].asString().find("machine state") != std::string::npos);
+  CHECK(reasons[0].asString().find("bw +100 %") != std::string::npos);
+  CHECK(reasons[0].asString().find("tex +100 %") != std::string::npos);
+  CHECK(reasons[0].asString().find("alu") == std::string::npos);  // the stable component is not blamed
+}
+
+TEST_CASE("a shifted canary explains the GPU tier and nothing else", "[runtime][gate][evaluate][canary]") {
+  auto cpu = same();
+  cpu["cpu_active_ms"].center = 14.0;  // a real CPU regression
+  CHECK(runWithCanary(cpu, kShifted).result == "fail");
+  auto both = gpuRegressed();
+  both["cpu_active_ms"].center = 14.0;
+  CHECK(runWithCanary(both, kShifted).result == "fail");  // the CPU regression stands whatever the GPU did
+  auto counter = gpuRegressed();
+  counter["draw_calls"].center = 4779.0;
+  CHECK(runWithCanary(counter, kShifted).result == "fail");  // a counter is exact
+}
+
+TEST_CASE("a faster canary cannot explain a GPU regression away", "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(gpuRegressed(), gate_test::CanarySpec::scaled(0.7, 0.7, 0.7));
+  CHECK(verdict.result == "fail");
+  CHECK(gate::at(verdict.document, {"machine_state", "classification"})->asString() == "stable");
+}
+
+TEST_CASE("one shifted canary component is enough, and each is judged against the same limit",
+          "[runtime][gate][evaluate][canary]") {
+  const auto verdict = runWithCanary(gpuRegressed(), gate_test::CanarySpec::scaled(1.0, 1.0, 1.09));
+  CHECK(verdict.result == "inconclusive");
+  CHECK(gate::at(verdict.document, {"canary", "shifted_components"})->asArray().size() == 1);
+  CHECK(runWithCanary(gpuRegressed(), gate_test::CanarySpec::scaled(1.05, 1.05, 1.05)).result == "fail");  // inside 8 %
+}
+
+TEST_CASE("a global GPU slowdown with the canary stable fails at every size (M7 injection model)",
+          "[runtime][gate][evaluate][canary]") {
+  for (const double slowdown : {0.20, 0.30, 0.50}) {
+    auto candidate = baselineAggregates();
+    for (auto& [key, agg] : candidate) {
+      if (key == "gpu_busy_ms" || key == "passes.draw.gpu_ms") agg.center *= 1.0 + slowdown;
+    }
+    INFO(slowdown);
+    CHECK(runWithCanary(candidate, gate_test::CanarySpec{}).result == "fail");
+    CHECK(runWithCanary(candidate, kShifted).result == "inconclusive");  // the same numbers on a shifted machine
+  }
+}
+
+TEST_CASE("without a canary on either side the runs are not comparable, unless the policy does not ask for one",
+          "[runtime][gate][evaluate][canary]") {
+  const auto noCandidate = runWithCanary(same(), gate_test::CanarySpec::omit());
+  CHECK(noCandidate.result == "incomparable");
+  CHECK(noCandidate.exitCode == gate::kExitNotJudged);
+  CHECK(noCandidate.document.find("reasons")->asArray()[0].asString().find("this run has no GPU canary") != std::string::npos);
+  const auto noBaseline = gate::evaluate(makeSet(same()), makeSet(baselineAggregates(), {}, {}, gate_test::CanarySpec::omit()),
+                                         testPolicy(), ref());
+  CHECK(noBaseline.result == "incomparable");
+  CHECK(noBaseline.document.find("reasons")->asArray()[0].asString().find("baseline has no GPU canary reference") != std::string::npos);
+  CHECK(gate::at(noBaseline.document, {"machine_state", "classification"})->asString() == "unjudged");
+
+  gate::GatePolicy lenient = testPolicy();
+  lenient.canary.required = false;
+  const auto passes = runWithCanary(same(), gate_test::CanarySpec::omit(), lenient);
+  CHECK(passes.result == "pass");
+  CHECK(gate::at(passes.document, {"machine_state", "classification"})->asString() == "unmeasured");
+  CHECK(runWithCanary(gpuRegressed(), gate_test::CanarySpec::omit(), lenient).result == "fail");  // nothing to explain it
+}
+
+TEST_CASE("the verdict with a canary is still byte-deterministic and round-trips", "[runtime][gate][evaluate][canary]") {
+  const auto first = runWithCanary(gpuRegressed(), kShifted);
+  CHECK(json::write(first.document) == json::write(runWithCanary(gpuRegressed(), kShifted).document));
+  const auto parsed = json::parse(json::write(first.document));
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value() == first.document);
+}

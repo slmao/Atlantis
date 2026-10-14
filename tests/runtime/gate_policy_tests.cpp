@@ -27,7 +27,8 @@ constexpr const char* kValidPolicy = R"({
   "gated": {"counter": ["draw_calls"], "cpu": ["cpu_active_ms", "passes.*.cpu_record_ms"], "gpu": ["gpu_busy_ms"]},
   "reported": ["frame_ms", "wait_*"],
   "workload": ["lights_point"],
-  "record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20},
+  "canary": {"max_shift_pct": 8, "required": true},
+  "record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20, "max_canary_spread_pct": 5},
   "measured": {}
 })";
 
@@ -73,6 +74,10 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   // for a 3-session baseline), below the recordings that motivated it (cpu 18.2 %, gpu 21.5 %).
   CHECK(policy.record.maxMdrCpuPct == 10.0);
   CHECK(policy.record.maxMdrGpuPct == 20.0);
+  // The GPU canary: above its measured noise (0.1-1.7 % across child runs), far below the shifts it must catch.
+  CHECK(policy.canary.maxShiftPct == 8.0);
+  CHECK(policy.canary.required);
+  CHECK(policy.record.maxCanarySpreadPct == 5.0);
   CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file
   CHECK_FALSE(policy.measured.date.empty());
   CHECK_FALSE(policy.measured.profile.empty());
@@ -115,6 +120,9 @@ TEST_CASE("a valid policy parses into its numbers", "[runtime][gate][policy]") {
   CHECK(policy.dispersionMetrics == std::vector<std::string>{"cpu_active_ms", "gpu_busy_ms"});
   CHECK(policy.record.maxMdrCpuPct == 10.0);
   CHECK(policy.record.maxMdrGpuPct == 20.0);
+  CHECK(policy.canary.maxShiftPct == 8.0);
+  CHECK(policy.canary.required);
+  CHECK(policy.record.maxCanarySpreadPct == 5.0);
   CHECK(policy.cpu.absFloor == 0.1);
   CHECK(policy.gpu.maxPct == 10.0);
   CHECK(policy.counter.metricTolerancePct.at("fragment_invocations") == 0.1);
@@ -166,8 +174,14 @@ TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][p
       {R"("gpu": ["gpu_busy_ms"])", R"("gpu": "gpu_busy_ms")", "gpu"},
       {R"("reported": ["frame_ms", "wait_*"])", R"("reported": [1])", "reported"},
       {R"("measured": {})", R"("measuredx": {})", "measured"},
-      {R"("record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20},)", "", "record"},
+      {R"("record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20, "max_canary_spread_pct": 5},)", "", "record"},
       {R"("max_mdr_cpu_pct": 10,)", "", "max_mdr_cpu_pct"},
+      {R"("canary": {"max_shift_pct": 8, "required": true},)", "", "canary"},
+      {R"("max_shift_pct": 8,)", "", "max_shift_pct"},
+      {R"("max_shift_pct": 8,)", R"("max_shift_pct": 0,)", "max_shift_pct"},
+      {R"("required": true)", R"("required": "yes")", "required"},
+      {R"(, "max_canary_spread_pct": 5)", "", "max_canary_spread_pct"},
+      {R"("max_canary_spread_pct": 5)", R"("max_canary_spread_pct": -1)", "max_canary_spread_pct"},
       {R"("max_mdr_gpu_pct": 20)", R"("max_mdr_gpu_pct": "twenty")", "max_mdr_gpu_pct"},
       {R"("max_mdr_cpu_pct": 10,)", R"("max_mdr_cpu_pct": 0,)", "bounds must be positive"},
       {R"("dispersion_factor": 3,)", R"("dispersion_factor": 0.5,)", "dispersion_factor"},

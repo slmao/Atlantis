@@ -7,6 +7,7 @@
 // Private to the atlantis_runtime executable's startup layer, like
 // editor_attachment.h: never added to atlantis_runtime_host.
 
+#include "benchmark_report.h"
 #include "cli.h"
 
 #include <atlantis/runtime/bootstrap_config.h>
@@ -34,6 +35,11 @@ class StderrLogScope {
   StderrLogScope(const StderrLogScope&) = delete;
   StderrLogScope& operator=(const StderrLogScope&) = delete;
 };
+
+// The build configuration and the CPU brand string this executable reports in its documents' meta; the canary
+// (canary_run.h) writes the same blocks.
+[[nodiscard]] BuildInfo currentBuildInfo();
+[[nodiscard]] std::string currentCpuBrand();
 
 // `config` is the fully populated bootstrap configuration for the scene (the
 // caller owns paths and shader pairs, as for any scene run); the benchmark sets

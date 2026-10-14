@@ -158,6 +158,20 @@ PolicyResult parsePolicy(const Value& document) {
   if (policy.record.maxMdrCpuPct <= 0.0 || policy.record.maxMdrGpuPct <= 0.0) {
     return PolicyResult::Err("record: the bounds must be positive");
   }
+  if (auto error = readNumber(*record, "max_canary_spread_pct", 0.0, policy.record.maxCanarySpreadPct)) {
+    return PolicyResult::Err("record: " + *error);
+  }
+  if (policy.record.maxCanarySpreadPct <= 0.0) return PolicyResult::Err("record: the canary spread bound must be positive");
+
+  const Value* canary = document.find("canary");
+  if (canary == nullptr || !canary->isObject()) return PolicyResult::Err("'canary' is missing");
+  if (auto error = readNumber(*canary, "max_shift_pct", 0.0, policy.canary.maxShiftPct)) {
+    return PolicyResult::Err("canary: " + *error);
+  }
+  if (policy.canary.maxShiftPct <= 0.0) return PolicyResult::Err("canary: 'max_shift_pct' must be positive");
+  const Value* required = canary->find("required");
+  if (required == nullptr || !required->isBool()) return PolicyResult::Err("canary: 'required' is missing or not a boolean");
+  policy.canary.required = required->asBool();
 
   const Value* measured = document.find("measured");
   if (measured == nullptr || !measured->isObject()) return PolicyResult::Err("'measured' is missing");
