@@ -78,6 +78,7 @@ class FakeLauncher final : public gate::ChildLauncher {
  public:
   gate::ChildResult run(const gate::ChildSpec& spec) override {
     calls.push_back(spec);
+    if (onLaunch) onLaunch(spec);
     if (!spec.args.empty() && spec.args[0] == "--canary") return runCanary(spec);
     const std::size_t index = benchmarkCalls++;
     gate::ChildResult result;
@@ -107,6 +108,8 @@ class FakeLauncher final : public gate::ChildLauncher {
   // The reading the canary child reports, by phase ("start" or "end"; from its output file's name).
   std::function<CanaryMs(const std::string&)> canaryMs = [](const std::string&) { return kStableCanary; };
   DocumentIdentity canaryIdentity;
+  // Called at the start of every launch (benchmark or canary), before anything is written.
+  std::function<void(const gate::ChildSpec&)> onLaunch;
   std::function<Value(std::size_t)> makeDocument;
   bool writeDocuments = true;
   bool malformed = false;

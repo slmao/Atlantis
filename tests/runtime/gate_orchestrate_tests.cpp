@@ -392,3 +392,43 @@ TEST_CASE("the canary child's arguments are --canary, its output, and the pin wh
   p.pin = false;
   CHECK(gate::canaryArguments(p, "out.json").size() == 3);
 }
+
+TEST_CASE("the end canary waits for the GPU to settle out of the benchmark children's tail; the start canary does not",
+          "[runtime][gate][orchestrate][canary]") {
+  TempDir dir;
+  FakeClock clock;
+  FakeSampler sampler({99.0});
+  FakeLauncher launcher;
+  std::vector<double> sleptAtLaunch;
+  std::vector<std::string> kind;
+  launcher.onLaunch = [&](const gate::ChildSpec& spec) {
+    sleptAtLaunch.push_back(clock.slept);
+    kind.push_back(spec.args[0]);
+  };
+  gate::RunPlan p = plan(dir);
+  p.canary = true;
+  p.canarySettleSeconds = 3.0;
+  REQUIRE(gate::runSession(p, launcher, sampler, clock).exitCode == 0);
+  REQUIRE(kind.size() == 6);  // canary, preheat, three runs, canary
+  CHECK(kind.front() == "--canary");
+  CHECK(kind.back() == "--canary");
+  CHECK(sleptAtLaunch[5] - sleptAtLaunch[4] == 3.0);  // between the last run and the end canary
+  CHECK(sleptAtLaunch[1] - sleptAtLaunch[0] == 0.0);  // none between the start canary and the preheat
+  for (std::size_t i = 2; i <= 4; ++i) CHECK(sleptAtLaunch[i] == sleptAtLaunch[i - 1]);  // none between the runs
+
+  // The default plan settles for no time at all, and a plan without a canary never sleeps for one.
+  TempDir dir2;
+  FakeClock clock2;
+  FakeLauncher launcher2;
+  gate::RunPlan q = plan(dir2);
+  q.canary = true;
+  REQUIRE(gate::runSession(q, launcher2, sampler, clock2).exitCode == 0);
+  TempDir dir3;
+  FakeClock clock3;
+  FakeLauncher launcher3;
+  gate::RunPlan r = plan(dir3);
+  r.canarySettleSeconds = 3.0;  // set, but no canary to wait for
+  REQUIRE(gate::runSession(r, launcher3, sampler, clock3).exitCode == 0);
+  CHECK(clock.slept - clock2.slept == 3.0);
+  CHECK(clock3.slept == clock2.slept);
+}

@@ -71,6 +71,11 @@ struct CanaryPolicy {
   double maxShiftPct = 8.0;
   // A baseline without a canary reference, or a run without a canary reading, is not comparable.
   bool required = true;
+  // Seconds to wait after the last run before the end-of-session canary. Right after a benchmark child exits the
+  // GPU is in a transient (the first canary repetitions read about 2.4 x slow and are normal about a second
+  // later); that is the benchmark's own tail, not the machine's state, and measuring inside it makes every
+  // session look shifted.
+  double settleSeconds = 3.0;
 };
 
 struct GatePolicy {

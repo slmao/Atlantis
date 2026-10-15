@@ -30,7 +30,8 @@ revision and dirty flag when CMake configures, not when it builds.
 
 One command, one verdict document on stdout, one exit code. It takes about three minutes: it waits for the machine to
 be idle, measures the **GPU canary** (below), runs one discarded **preheat** of 60 s, then five independent
-`--benchmark` processes, measures the canary again, each child **pinned** (the
+`--benchmark` processes, waits 3 s and measures the canary again (right after a benchmark child exits the GPU is in
+that child's tail for about a second, which is not the machine's state), each child **pinned** (the
 child opts out of process power throttling and runs at high priority, so the OS scheduler does not park the render
 thread on a slow core; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
 browser started during it shows up as an `inconclusive` verdict.
@@ -98,7 +99,7 @@ main pass read 25-60 % slow for most of one run of twenty gates, on mains power,
 frame's own numbers that is indistinguishable from a real regression in the main pass, so the gate carries a measurement
 the code under test cannot move: a **fixed GPU micro-workload** (`atlantis_runtime --canary`: an ALU-bound, a
 write-bandwidth-bound and a read-bandwidth-bound fragment workload, embedded in the executable, nothing shared with the
-renderer), measured right after the idle wait and right after the last run of every session, about a second each. Its
+renderer), measured right after the idle wait and `canary.settle_seconds` (3 s) after the last run of every session, about a second each. Its
 readings are in the set (`canary`) and in the verdict (`canary`, `machine_state`):
 
 | Canary | GPU tier | Verdict |

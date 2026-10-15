@@ -235,7 +235,11 @@ SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSample
     }
     out.runDocuments.push_back(std::move(*document));
   }
-  if (plan.canary && !measureCanary(plan, launcher, "end", out)) return out;
+  if (plan.canary) {
+    // Let the GPU settle out of the benchmark children's tail before reading the machine's state.
+    if (plan.canarySettleSeconds > 0.0) clock.sleepSeconds(plan.canarySettleSeconds);
+    if (!measureCanary(plan, launcher, "end", out)) return out;
+  }
   return out;
 }
 
