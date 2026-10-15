@@ -2,6 +2,7 @@
 
 #include "benchmark_run.h"
 #include "gate_applies.h"
+#include "gate_canary.h"
 #include "gate_evaluate.h"
 #include "gate_policy.h"
 #include "gate_set.h"
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -155,6 +157,70 @@ class PowerWatch {
   return problem;
 }
 
+// The canary readings of one session's canary documents, each labelled `<label>.<phase>` (or the phase alone when
+// there is no label). An unusable document is a message for the caller's exit 2.
+[[nodiscard]] std::optional<std::string> collectCanary(const std::vector<std::pair<std::string, Value>>& documents,
+                                                       const std::string& label,
+                                                       std::vector<std::pair<std::string, CanaryReading>>& readings) {
+  for (const auto& [phase, document] : documents) {
+    const auto reading = extractCanaryReading(document);
+    if (reading.isErr()) return "the GPU canary (" + phase + ") is not usable: " + reading.error();
+    readings.emplace_back(label.empty() ? phase : label + "." + phase, reading.value());
+  }
+  return std::nullopt;
+}
+
+// The start-of-session precondition (Spec 0060 Correction 2026-10-15): when the baseline this session will be judged
+// against can be found from the canary child's own machine identity, and the canary is already above that baseline's
+// reference by more than the policy's limit, the session is refused before the preheat and the runs are spent
+// (exit 3). A machine the store does not recognise is not refused here; the verdict says why it cannot be judged.
+[[nodiscard]] std::function<std::optional<std::string>(const Value&)> makeStartCheck(
+    const GateRequest& request, const GatePolicy& policy, const std::string& baselinesDir) {
+  return [sceneName = request.sceneName, variant = std::string(cli::toString(request.variant)), width = request.width,
+          height = request.height, profileId = request.profileId, baselinesDir,
+          maxShiftPct = policy.canary.maxShiftPct](const Value& document) -> std::optional<std::string> {
+    const auto reading = extractCanaryReading(document);
+    const Value* system = canarySystem(document);
+    if (reading.isErr() || system == nullptr) return std::nullopt;
+    const auto profiles = listProfiles(baselinesDir);
+    if (profiles.isErr()) return std::nullopt;
+    const Profile* chosen = nullptr;
+    int matches = 0;
+    for (const Profile& profile : profiles.value()) {
+      bool same = true;
+      if (profileId.has_value() && *profileId != "auto") {
+        same = profile.id == *profileId;
+      } else {
+        for (const std::string_view key : {"os", "cpu", "gpu", "driver", "vulkan_api"}) {
+          const Value* a = system->find(key);
+          const Value* b = profile.identity.find(key);
+          if (a == nullptr || b == nullptr || !(*a == *b)) same = false;
+        }
+      }
+      if (same) {
+        chosen = &profile;
+        ++matches;
+      }
+    }
+    if (matches != 1) return std::nullopt;
+    const auto baseline = loadBaseline(baselinePath(*chosen, sceneName, variant, width, height));
+    if (baseline.notFound || !baseline.error.empty()) return std::nullopt;
+    Value probe = Value::object();
+    probe.set("canary", canarySetValue({{"start", reading.value()}}));
+    const CanaryJudgment judgment = judgeCanary(probe, baseline.document, maxShiftPct);
+    if (!judgment.measured || !judgment.shifted) return std::nullopt;
+    std::string components;
+    for (const std::string& name : judgment.shiftedComponents) {
+      if (!components.empty()) components += ", ";
+      components += name + " +" + formatNumber(std::round(judgment.shiftPct[canaryComponentIndex(name)] * 10.0) / 10.0) + " %";
+    }
+    return "at the start of the session the GPU canary ran slower than the baseline's reference (" + components +
+           "; limit " + formatNumber(maxShiftPct) +
+           " %): the machine's GPU is not in the state the baseline was recorded in. Let the machine settle (the state "
+           "usually passes within minutes) and run the gate again";
+  };
+}
+
 [[nodiscard]] int runProtocol(const GateRequest& request, GateEnvironment& env) {
   std::ostream& out = *env.out;
   std::ostream& err = *env.err;
@@ -181,6 +247,8 @@ class PowerWatch {
   plan.childTimeoutSeconds = policy.protocol.childTimeoutSeconds;
   plan.idle = policy.protocol.idle;
   plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
+  plan.canary = policy.canary.required;
+  if (plan.canary) plan.startCheck = makeStartCheck(request, policy, baselinesDir);
   plan.tempDir = env.tempDir;
 
   const TempDirScope tempDir(env.tempDir);
@@ -200,12 +268,20 @@ class PowerWatch {
   protocol.k = policy.protocol.k;
   protocol.pin = plan.pin;
   protocol.power = power.value();
-  const auto set = buildSet(protocol, session.runDocuments);
+  auto set = buildSet(protocol, session.runDocuments);
   if (set.isErr()) {
     err << "atlantis_runtime: --gate: the runs do not make a set: " << set.error() << "\n";
     return bench::kExitRuntimeFailure;
   }
-  const Value& candidate = set.value();
+  Value& candidate = set.value();
+  if (plan.canary) {
+    std::vector<std::pair<std::string, CanaryReading>> readings;
+    if (const auto problem = collectCanary(session.canaryDocuments, "", readings)) {
+      err << "atlantis_runtime: --gate: " << *problem << "\n";
+      return bench::kExitRuntimeFailure;
+    }
+    candidate.set("canary", canarySetValue(readings));
+  }
 
   // Which baseline: this machine's profile (or the one --profile names), then the file for the
   // scene, variant and resolution the runs actually used.
@@ -303,6 +379,7 @@ class PowerWatch {
   plan.childTimeoutSeconds = policy.protocol.childTimeoutSeconds;
   plan.idle = policy.protocol.idle;
   plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
+  plan.canary = policy.canary.required;
   plan.tempDir = env.tempDir;
 
   // A baseline is only ever recorded under the policy's full protocol: a smoke run is not a measurement.
@@ -325,6 +402,7 @@ class PowerWatch {
   std::vector<Value> documents;
   std::vector<std::string> starts;
   PowerWatch power(env.power, requireMains);
+  std::vector<std::pair<std::string, CanaryReading>> canaryReadings;
   for (unsigned int session = 1; session <= request.sessions; ++session) {
     if (session > 1) {
       err << "atlantis_runtime: --gate --record: waiting " << formatNumber(request.sessionGapMinutes)
@@ -340,6 +418,12 @@ class PowerWatch {
       return result.exitCode;
     }
     if (const int code = power.check(err, "--gate --record", "after"); code != 0) return code;
+    if (plan.canary) {
+      if (const auto problem = collectCanary(result.canaryDocuments, "s" + std::to_string(session), canaryReadings)) {
+        err << "atlantis_runtime: --gate --record: " << *problem << "\n";
+        return bench::kExitRuntimeFailure;
+      }
+    }
     for (Value& document : result.runDocuments) documents.push_back(std::move(document));
   }
 
@@ -356,6 +440,21 @@ class PowerWatch {
            "between sessions?): "
         << set.error() << "\n";
     return bench::kExitRuntimeFailure;
+  }
+  if (plan.canary) {
+    set.value().set("canary", canarySetValue(canaryReadings));
+    // A recording made in one GPU state: its canary readings agree. One that straddled two states is a baseline for
+    // neither (the same objective bar as the minimum detectable regression, fixed in the policy beforehand).
+    const double spread = canarySpreadPct(set.value());
+    if (spread < 0.0 || spread > policy.record.maxCanarySpreadPct) {
+      err << "atlantis_runtime: --gate --record: refused, nothing was written: this recording's GPU canary readings "
+          << "spread " << formatNumber(std::round(spread * 10.0) / 10.0) << " % across its sessions (bound "
+          << formatNumber(policy.record.maxCanarySpreadPct)
+          << " %), so the machine's GPU was not in one state while it was recorded. Let the machine settle, stay on "
+             "mains power, and record again; the bound is the policy's, fixed before any recording, and is not "
+             "raised to make a recording pass\n";
+      return bench::kExitEnvironment;
+    }
   }
 
   const Value identity = identityOf(set.value());

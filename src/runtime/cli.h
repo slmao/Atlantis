@@ -100,6 +100,15 @@ struct BenchmarkRequest {
   bool pinProcess = false;
 };
 
+// Spec 0060 Correction 2026-10-15 (GPU-state canary): `--canary [--output <path>] [--json] [--pin-process on|off]`.
+// Runs the gate's fixed GPU micro-workload on a headless device and writes an atlantis.benchmark.canary/1
+// document. Mutually exclusive with every other mode; the gate launches it as a child.
+struct CanaryRequest {
+  std::optional<std::string> outputPath;  // the document to a file (stdout too with --json; stdout alone without)
+  bool json = false;
+  bool pinProcess = false;  // --pin-process on|off, as for --benchmark
+};
+
 // Plan 0060 M3 (ADR-0119 D5): `--gate [...]`, `--gate --record ...` and `--gate --applies`.
 // Mutually exclusive with --benchmark, --exec, --listen, --session-file, --editor, --help
 // and --list-scenes. The gate itself runs no frames: it launches child --benchmark runs.
@@ -170,6 +179,9 @@ struct CommandLineResult {
   // Plan 0060 M3: populated only when outcome == RunScene and --gate was given; then
   // selectedScene and benchmark are empty.
   std::optional<GateRequest> gate;
+  // Spec 0060 Correction 2026-10-15: populated only when outcome == RunScene and --canary was given; then
+  // selectedScene, benchmark and gate are empty.
+  std::optional<CanaryRequest> canary;
 };
 
 // Pure function: no I/O, no std::exit, no read of any CMake macro,

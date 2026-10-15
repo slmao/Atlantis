@@ -904,3 +904,42 @@ TEST_CASE("parseCommandLine(): --require-mains is the gate's mains-power overrid
     requireError(parseCommandLine(fa.argc(), fa.argv(), whitelist), "--applies takes only --applicability");
   }
 }
+
+TEST_CASE("parseCommandLine(): --canary is the gate's GPU canary child", "[runtime][cli][canary]") {
+  const auto whitelist = makeFixtureWhitelist();
+  const auto parse = [&](std::initializer_list<std::string_view> args) {
+    FakeArgv fa{args};
+    return parseCommandLine(fa.argc(), fa.argv(), whitelist);
+  };
+  {
+    const auto result = parse({"--canary"});
+    REQUIRE(result.outcome == CommandLineOutcome::RunScene);
+    REQUIRE(result.canary.has_value());
+    CHECK_FALSE(result.canary->json);
+    CHECK_FALSE(result.canary->pinProcess);
+    CHECK_FALSE(result.canary->outputPath.has_value());
+    CHECK_FALSE(result.benchmark.has_value());
+    CHECK_FALSE(result.gate.has_value());
+  }
+  {
+    const auto result = parse({"--canary", "--output", "c.json", "--json", "--pin-process", "on"});
+    REQUIRE(result.canary.has_value());
+    CHECK(result.canary->json);
+    CHECK(result.canary->pinProcess);
+    REQUIRE(result.canary->outputPath.has_value());
+    CHECK(*result.canary->outputPath == "c.json");
+  }
+  requireError(parse({"--canary", "--benchmark", "integrated_showcase_demo"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--gate"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--help"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--list-scenes"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--editor"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--scene", "integrated_showcase_demo"}), "--canary may not be combined with");
+  requireError(parse({"--canary", "--variant", "baseline"}), "--canary takes only --output, --json and --pin-process");
+  requireError(parse({"--canary", "--resolution", "1280x720"}), "--canary takes only --output, --json and --pin-process");
+  requireError(parse({"--canary", "--warmup", "10"}), "--canary takes only --output, --json and --pin-process");
+  requireError(parse({"--canary", "--runs", "5"}), "--canary takes only --output, --json and --pin-process");
+  requireError(parse({"--canary", "--require-mains", "off"}), "--canary takes only --output, --json and --pin-process");
+  requireError(parse({"--canary", "--canary"}), "--canary supplied more than once");
+  requireError(parse({"--canary", "--pin-process", "maybe"}), "invalid --pin-process");
+}

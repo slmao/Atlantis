@@ -49,6 +49,36 @@
   - **ADRs:** ADR-0118 and ADR-0119 are unchanged: D4 says `inconclusive` is returned when the candidate runs' own
     dispersion exceeds a policy multiple of the baseline band and does not enumerate the metrics; which metrics are
     checked is the policy's (`dispersion_metrics`), as the numbers are.
+  **Correction (2026-10-15, third, post-Approval, owner ruling on the m10c stop):** the GPU tier on a machine whose
+  GPU has two states, and what the acceptance run promises.
+  - **The approved text** (Honesty, A1, R11, the iGPU Risk) treats a GPU regression as the code's; A1 asks for at
+    least 20 consecutive live gates on the unchanged build with no `fail` and `inconclusive` at most 10 %.
+  - **Why that cannot hold:** with the dispersion rule corrected, 20 live gates on the accepted baseline gave 4 pass,
+    4 fail and 12 inconclusive. The CPU was quiet; from the fourth gate on the GPU tier read 25-60 % slower (the
+    main pass carried the whole shift: `draw`/`Opaque` 1.27-1.71 ×, `shadow` and the full-screen passes about 1.0-1.1 ×)
+    and was normal again for one gate, on mains power, the day after twenty normal sessions. No tolerance absorbs a
+    bimodal GPU, and the frame's own numbers cannot separate this state from a real main-pass regression (the
+    identifiability argument in ADR-0120).
+  - **Corrected:** the gate owns a fixed GPU canary (`atlantis_runtime --canary`, three fragment workloads that share
+    no code with the renderer), measured after the idle wait and after the last run of every session and in every
+    recording session, its reference stored in the baseline. A GPU regression with the canary **stable** fails; with the
+    canary **shifted** beyond the policy's `canary.max_shift_pct` it is `inconclusive`, reason stated (a machine-state
+    outcome); a shifted canary at the start of the session is refused (exit 3). CPU-tier and counter regressions are
+    unaffected. A baseline or a run without a canary reading is `incomparable`; `--record` refuses a recording whose
+    canary readings spread beyond `record.max_canary_spread_pct`. gate/1 gains `canary` and `machine_state`.
+  - **Acceptance reframed (A1, R11):** at least 20 consecutive live gates on the unchanged build return **no `fail`**;
+    outcomes classified as machine state (canary shifted: `inconclusive` with that reason, or the start-of-session
+    refusal) are **reported separately and are not failures**; `inconclusive` for any other reason stays at most 10 % of
+    the gates. The contract's promise is never to lie, not always to pass: a machine whose GPU is in a bad state for a
+    day cannot deliver 20 verdicts, and the gate says so. The gate's baselines carry the canary reference, so a baseline
+    recorded before it is recorded again (a refresh under category 4 while no baseline is committed).
+  - **Premise:** that the canary tracks the state that moves the main pass is validated live, at the first acceptance
+    run (an injected global GPU slowdown with the canary stable must fail; machine-state outcomes must be withheld),
+    not by this Correction.
+  - **ADRs:** [ADR-0120](../adr/0120-gpu-state-canary-and-machine-state-classification.md) is new. It supersedes
+    ADR-0119 D7's "no new measurement" for the canary only, and records the canary, the four-case verdict model and
+    the start-of-session precondition; ADR-0119 D4's `inconclusive` account gains the machine-state cause. ADR-0118
+    and the rest of ADR-0119 are unchanged.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
@@ -264,7 +294,8 @@ Also out of scope (proposed by this draft):
 - **Honesty:** the gate states what it could not decide. A noisy session yields
   `inconclusive`, not a guessed pass or fail. (Correction 2026-10-14: "noisy" is judged on the
   headline totals `cpu_active_ms` and `gpu_busy_ms`; the noise of any other gated metric is
-  reported, not deciding.)
+  reported, not deciding. Correction 2026-10-15: a GPU regression on a machine whose GPU canary
+  has shifted is withheld as `inconclusive`, the reason being the machine's state.)
 
 ## Proposed Design
 
@@ -454,7 +485,9 @@ there; none is a CTest — Spec 0059 R13):
    protocol-conformant runs over at least six sessions (at least two after a build)
    yields a bootstrap false-failure estimate per gate of at most 1 % (95 % upper
    bound at most 3 %); and at least 20 consecutive live gates on the unchanged build
-   return no `fail`, with `inconclusive` at most 10 %.
+   return no `fail`, with `inconclusive` at most 10 %. (Correction 2026-10-15: outcomes
+   classified as machine state are reported separately and are not failures; `inconclusive` for
+   any other reason stays at most 10 %.)
 2. **A2 — injected slowdowns fail with a per-metric report.** Using an uncommitted
    local patch (documented in the PR): a calibrated CPU spin in a named zone at
    several magnitudes (including +10 % of `cpu_active_ms`), a doubled draw loop for
@@ -471,7 +504,8 @@ there; none is a CTest — Spec 0059 R13):
 6. **R11:** all goldens byte-identical in configurations A, B, C; `--benchmark` and
    `--baseline` output unchanged; Vulkan validation clean; Android `assembleDebug`
    unchanged; the gate's baselines for the reference profile recorded under the
-   protocol and committed through the refresh flow (category 4).
+   protocol and committed through the refresh flow (category 4). (Correction 2026-10-15: each
+   baseline carries the GPU canary reference.)
 
 ## Risks & Open Questions
 
@@ -486,7 +520,10 @@ Risks:
   or a build just before the gate moves both. The idle precondition and the
   dispersion check are the mitigation; they cannot remove all of it. (Correction 2026-10-14:
   the check is on the headline totals; a single-session comparison also cannot tell that a
-  whole session ran in a fast CPU state, which reads as an improvement.)
+  whole session ran in a fast CPU state, which reads as an improvement. Correction 2026-10-15:
+  the GPU can also sit in a slow state for hours that only a measurement independent of the code
+  can recognise; the canary classifies it, and what it cannot recognise would read as a code
+  regression.)
 - **Baseline staleness.** A driver update silently changes the profile identity
   (driver is part of it), so the gate refuses rather than comparing; the cost is a
   baseline refresh PR per driver change on that profile.

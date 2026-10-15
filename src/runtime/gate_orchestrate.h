@@ -16,6 +16,7 @@
 #include "gate_policy.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -108,6 +109,11 @@ struct RunPlan {
   double childTimeoutSeconds = 300.0;
   IdlePolicy idle;
   bool pin = false;     // the children run with --pin-process on
+  // Spec 0060 Correction 2026-10-15: measure the GPU canary (a `--canary` child) after the idle wait and again
+  // after the last run. `startCheck`, when set, sees the first reading's document and may refuse the session
+  // (a message: exit 3) before the preheat and the runs are spent.
+  bool canary = false;
+  std::function<std::optional<std::string>(const Value&)> startCheck;
   std::string tempDir;  // where each child writes its document; the caller creates it
 };
 
@@ -118,12 +124,17 @@ struct SessionResult {
   int exitCode = 0;
   std::string message;
   std::vector<Value> runDocuments;  // atlantis.benchmark/1, one per measured run, in order
+  // atlantis.benchmark.canary/1, each labelled with its phase ("start", "end"), in order; empty without a canary.
+  std::vector<std::pair<std::string, Value>> canaryDocuments;
 };
 
 // Idle wait (if the plan asks), the discarded preheat (if its length is above zero), then the
 // runs. Stops at the first failure.
 [[nodiscard]] SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSampler& sampler,
                                        Clock& clock);
+
+// The arguments of one canary child (`--canary --output <path> [--pin-process on]`).
+[[nodiscard]] std::vector<std::string> canaryArguments(const RunPlan& plan, const std::string& outputPath);
 
 // The arguments of one child run (`--benchmark <scene> ...`), for the run at `outputPath`; with a
 // warmup duration it is the preheat (a single measured frame, result discarded).

@@ -41,6 +41,7 @@ add_executable(atlantis_runtime_tests
   benchmark_loop_tests.cpp
   # Plan 0060 (ADR-0119): the performance gate's GPU-independent parts, compiled here as
   # atlantis_runtime compiles them.
+  ../../src/runtime/gate_canary.cpp
   ../../src/runtime/gate_set.cpp
   ../../src/runtime/gate_policy.cpp
   ../../src/runtime/gate_evaluate.cpp
@@ -57,6 +58,7 @@ add_executable(atlantis_runtime_tests
   gate_store_tests.cpp
   gate_record_tests.cpp
   gate_applies_tests.cpp
+  gate_canary_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -139,6 +141,7 @@ add_executable(atlantis_runtime_gpu_tests
   ../../src/runtime/benchmark_variants.cpp
   ../../src/runtime/benchmark_run.cpp
   # Plan 0060 M4 (ADR-0119 D1): the gate's real child-process launcher and CPU sampler.
+  ../../src/runtime/gate_canary.cpp
   ../../src/runtime/gate_orchestrate.cpp
   ../../src/runtime/gate_process_windows.cpp
   ../../src/runtime/gate_set.cpp

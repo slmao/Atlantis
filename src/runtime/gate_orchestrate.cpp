@@ -128,6 +128,45 @@ std::vector<std::string> childArguments(const RunPlan& plan, const std::string& 
   return args;
 }
 
+std::vector<std::string> canaryArguments(const RunPlan& plan, const std::string& outputPath) {
+  std::vector<std::string> args = {"--canary", "--output", outputPath};
+  if (plan.pin) {
+    args.push_back("--pin-process");
+    args.push_back("on");
+  }
+  return args;
+}
+
+namespace {
+
+// One canary child. False, with `out` carrying the exit code and the reason, when it fails.
+[[nodiscard]] bool measureCanary(const RunPlan& plan, ChildLauncher& launcher, const std::string& phase,
+                                 SessionResult& out) {
+  const std::string what = "the GPU canary (" + phase + ")";
+  const std::string output = (fs::path(plan.tempDir) / ("canary_" + phase + ".json")).string();
+  ChildSpec spec;
+  spec.args = canaryArguments(plan, output);
+  spec.timeoutSeconds = plan.childTimeoutSeconds;
+  const ChildResult result = launcher.run(spec);
+  if (const Mapped mapped = mapChild(result, what); mapped.exitCode != 0) {
+    removeQuietly(output);
+    out.exitCode = mapped.exitCode;
+    out.message = mapped.message;
+    return false;
+  }
+  std::optional<Value> document = readDocument(output);
+  removeQuietly(output);
+  if (!document) {
+    out.exitCode = 2;
+    out.message = what + ": the canary process wrote no valid document";
+    return false;
+  }
+  out.canaryDocuments.emplace_back(phase, std::move(*document));
+  return true;
+}
+
+}  // namespace
+
 SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSampler& sampler, Clock& clock) {
   SessionResult out;
 
@@ -146,6 +185,17 @@ SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSample
         out.message = "cannot read the system CPU times to check that the machine is idle; --idle-wait off skips "
                       "the check (the run is then marked non-conformant)";
         return out;
+    }
+  }
+
+  if (plan.canary) {
+    if (!measureCanary(plan, launcher, "start", out)) return out;
+    if (plan.startCheck) {
+      if (const std::optional<std::string> refusal = plan.startCheck(out.canaryDocuments.back().second)) {
+        out.exitCode = 3;
+        out.message = *refusal;
+        return out;
+      }
     }
   }
 
@@ -185,6 +235,7 @@ SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSample
     }
     out.runDocuments.push_back(std::move(*document));
   }
+  if (plan.canary && !measureCanary(plan, launcher, "end", out)) return out;
   return out;
 }
 

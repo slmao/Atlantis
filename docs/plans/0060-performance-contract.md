@@ -108,6 +108,23 @@ other gated metric's dispersion is reported and never deciding (exact replay on 
 with a fresh 20-gate live acceptance under the new rule. Recorded as a Spec Correction (second, 2026-10-14) with no ADR
 amendment or supersession: ADR-0119 D4 does not enumerate the metrics whose dispersion counts, so which ones are checked is
 the policy's, as the numbers are.
+
+**Owner ruling on the m10c stop, 2026-10-15 (chat), recorded once here.** With the dispersion rule corrected, 20 live gates
+on the accepted m10b baseline (the m10c run) gave 4 pass, 4 fail and 12 inconclusive: CPU quiet, the GPU tier 25-60 % slow
+from the fourth gate on, on mains power, the main pass carrying the whole shift. M10 stopped a third time; nothing was
+committed. An offline check on those 20 sessions (no code, no recordings) confirmed that the shift is pass-selective, not
+proportional across passes. Ruled: **a code-independent GPU canary** (a fixed GPU micro-workload the gate owns, outside the
+renderer's diff surface, measured per session and at the start-of-session check, its reference in the baseline) with the
+rule GPU regression + canary stable = `fail`, GPU regression + canary shifted = machine state, `inconclusive` with the
+reason (or exit 3 if caught at the start of the session); the self-referential probe and the bare proportional heuristic
+were rejected as observationally equivalent to a global real regression in single-session data; and **the 20-gate acceptance
+reframed** to "no fail on unchanged code; machine-state outcomes reported separately and not counted as failures". Recorded as
+a Spec Correction (third, 2026-10-15) and as new ADR-0120, which supersedes ADR-0119 D7's "no new measurement" for the canary
+only. The m10b baseline predates the canary and lacks its reference, so M10 re-records the baseline (the reason, not
+preference). Implementation note: the "proportional" clause of the ruling is dropped from the rule (the offline check showed
+the observed state is not proportional); the four-case matrix, canary stable or shifted x GPU tier stable or regressed, is what
+is built. A real regression coinciding with a state shift is therefore withheld rather than failed, and is judged on a re-run
+in the baseline's state.
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

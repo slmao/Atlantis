@@ -267,3 +267,128 @@ TEST_CASE("the system clock moves forward and can sleep", "[runtime][gate][orche
   clock->sleepSeconds(0.01);
   CHECK(clock->nowSeconds() >= before);
 }
+
+// Spec 0060 Correction 2026-10-15 (GPU-state canary): the canary children around a session.
+
+TEST_CASE("a session with a canary measures it after the idle wait and again after the runs",
+          "[runtime][gate][orchestrate][canary]") {
+  TempDir dir;
+  FakeClock clock;
+  FakeSampler sampler({99.0});
+  FakeLauncher launcher;
+  gate::RunPlan p = plan(dir);
+  p.canary = true;
+  const auto result = gate::runSession(p, launcher, sampler, clock);
+  REQUIRE(result.exitCode == 0);
+  REQUIRE(launcher.calls.size() == 6);  // canary, preheat, three runs, canary
+  CHECK(launcher.calls[0].args[0] == "--canary");
+  CHECK(launcher.calls[1].args[0] == "--benchmark");
+  CHECK(launcher.calls[5].args[0] == "--canary");
+  CHECK(argAfter(launcher.calls[0], "--output").find("canary_start.json") != std::string::npos);
+  CHECK(argAfter(launcher.calls[5], "--output").find("canary_end.json") != std::string::npos);
+  CHECK(argAfter(launcher.calls[0], "--pin-process") == "on");
+  CHECK(launcher.calls[0].timeoutSeconds == 300.0);
+  REQUIRE(result.canaryDocuments.size() == 2);
+  CHECK(result.canaryDocuments[0].first == "start");
+  CHECK(result.canaryDocuments[1].first == "end");
+  CHECK(result.canaryDocuments[0].second.find("schema")->asString() == "atlantis.benchmark.canary/1");
+  CHECK(result.runDocuments.size() == 3);
+  CHECK(fs::is_empty(dir.path));
+  CHECK(clock.slept >= 10.0);  // the idle wait ran before the first child, the canary included
+}
+
+TEST_CASE("a plan without a canary launches none", "[runtime][gate][orchestrate][canary]") {
+  TempDir dir;
+  FakeClock clock;
+  FakeSampler sampler({99.0});
+  FakeLauncher launcher;
+  const auto result = gate::runSession(plan(dir), launcher, sampler, clock);
+  REQUIRE(result.exitCode == 0);
+  CHECK(launcher.canaryCallCount() == 0);
+  CHECK(result.canaryDocuments.empty());
+}
+
+TEST_CASE("the start check can refuse a session before the preheat and the runs are spent",
+          "[runtime][gate][orchestrate][canary]") {
+  TempDir dir;
+  FakeClock clock;
+  FakeSampler sampler({99.0});
+  FakeLauncher launcher;
+  gate::RunPlan p = plan(dir);
+  p.canary = true;
+  json::Value seen;
+  p.startCheck = [&](const json::Value& document) -> std::optional<std::string> {
+    seen = document;
+    return std::string("the machine is not in the baseline's GPU state");
+  };
+  const auto result = gate::runSession(p, launcher, sampler, clock);
+  CHECK(result.exitCode == 3);
+  CHECK(result.message == "the machine is not in the baseline's GPU state");
+  CHECK(launcher.calls.size() == 1);  // the start canary only
+  CHECK(seen.find("schema") != nullptr);  // the check saw the canary document
+  CHECK(fs::is_empty(dir.path));
+
+  // A check that finds nothing wrong lets the session go on.
+  TempDir dir2;
+  FakeLauncher launcher2;
+  gate::RunPlan q = plan(dir2);
+  q.canary = true;
+  q.startCheck = [](const json::Value&) -> std::optional<std::string> { return std::nullopt; };
+  CHECK(gate::runSession(q, launcher2, sampler, clock).exitCode == 0);
+  CHECK(launcher2.calls.size() == 6);
+}
+
+TEST_CASE("a canary child that fails ends the session with its failure, a document it did not write with exit 2",
+          "[runtime][gate][orchestrate][canary]") {
+  const struct {
+    std::size_t canaryCall;
+    gate::ChildResult::Status status;
+    int exitCode;
+    int expected;
+    std::size_t calls;
+  } cases[] = {{0, gate::ChildResult::Status::Exited, 3, 3, 1},       {0, gate::ChildResult::Status::Exited, 2, 2, 1},
+               {0, gate::ChildResult::Status::TimedOut, 0, 2, 1},     {0, gate::ChildResult::Status::LaunchFailed, 0, 1, 1},
+               {1, gate::ChildResult::Status::Exited, 3, 3, 6},       {1, gate::ChildResult::Status::Exited, 2, 2, 6}};
+  for (const auto& c : cases) {
+    TempDir dir;
+    FakeClock clock;
+    FakeSampler sampler({99.0});
+    FakeLauncher launcher;
+    gate::ChildResult failure;
+    failure.status = c.status;
+    failure.exitCode = c.exitCode;
+    launcher.scriptedCanary[c.canaryCall] = failure;
+    gate::RunPlan p = plan(dir);
+    p.canary = true;
+    const auto result = gate::runSession(p, launcher, sampler, clock);
+    INFO("canary call " << c.canaryCall << " exit " << c.exitCode);
+    CHECK(result.exitCode == c.expected);
+    CHECK(launcher.calls.size() == c.calls);
+    CHECK(result.message.find("GPU canary") != std::string::npos);
+  }
+  TempDir dir;
+  FakeClock clock;
+  FakeSampler sampler({99.0});
+  FakeLauncher launcher;
+  launcher.malformed = true;
+  gate::RunPlan p = plan(dir);
+  p.canary = true;
+  const auto result = gate::runSession(p, launcher, sampler, clock);
+  CHECK(result.exitCode == 2);
+  CHECK(result.message.find("canary process wrote no valid document") != std::string::npos);
+}
+
+TEST_CASE("the canary child's arguments are --canary, its output, and the pin when the plan pins",
+          "[runtime][gate][orchestrate][canary]") {
+  TempDir dir;
+  gate::RunPlan p = plan(dir);
+  auto args = gate::canaryArguments(p, "out.json");
+  REQUIRE(args.size() == 5);
+  CHECK(args[0] == "--canary");
+  CHECK(args[1] == "--output");
+  CHECK(args[2] == "out.json");
+  CHECK(args[3] == "--pin-process");
+  CHECK(args[4] == "on");
+  p.pin = false;
+  CHECK(gate::canaryArguments(p, "out.json").size() == 3);
+}

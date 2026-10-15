@@ -6,6 +6,7 @@
 
 #include <atlantis/connection/json.h>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -29,6 +30,7 @@ namespace fs = std::filesystem;
 using gate_test::DocumentIdentity;
 using gate_test::FakeClock;
 using gate_test::FakeLauncher;
+using Catch::Approx;
 using gate_test::FakePower;
 using gate_test::FakeSampler;
 using gate_test::makeRun;
@@ -135,7 +137,7 @@ TEST_CASE("recording runs the protocol once per session, waits between sessions,
   FakeLauncher launcher = steadyLauncher();
   const auto o = f.run(f.recordRequest(2), launcher);
   REQUIRE(o.exitCode == 0);
-  CHECK(o.launches == 12);  // two sessions of one preheat and five runs
+  CHECK(o.launches == 16);  // two sessions of a canary, one preheat, five runs and a canary
   CHECK(o.slept >= 90.0);   // the gap of 1.5 minutes between the sessions
   CHECK(o.out.find("recorded baseline for profile test-gpu-windows-60hz (new profile)") != std::string::npos);
 
@@ -262,7 +264,7 @@ TEST_CASE("a charger pulled between the sessions stops the recording and writes 
   FakeLauncher launcher = steadyLauncher();
   const auto o = f.run(f.recordRequest(2), launcher);
   CHECK(o.exitCode == 3);
-  CHECK(o.launches == 6);  // only the first session ran
+  CHECK(o.launches == 8);  // only the first session ran
   CHECK_FALSE(fs::exists(f.root / "out"));
 }
 
@@ -274,7 +276,7 @@ TEST_CASE("a child failure in any session stops the recording and writes nothing
   launcher.scripted[8] = environment;  // the third call of the second session
   const auto o = f.run(f.recordRequest(2), launcher);
   CHECK(o.exitCode == 3);
-  CHECK(o.launches == 9);
+  CHECK(o.launches == 12);  // session 1 (8 children) and session 2 up to the failing one
   CHECK_FALSE(fs::exists(f.root / "out"));
 }
 
@@ -353,7 +355,7 @@ TEST_CASE("a recording too noisy on the CPU is refused with exit 3 and writes no
   FakeLauncher launcher = noisyCpuLauncher();
   const auto o = f.run(f.recordRequest(3), launcher);
   CHECK(o.exitCode == 3);
-  CHECK(o.launches == 18);  // all three sessions ran: the bar judges the recording, not a session
+  CHECK(o.launches == 24);  // all three sessions ran: the bar judges the recording, not a session
   CHECK(o.out.empty());
   CHECK_FALSE(fs::exists(f.root / "out"));  // not a candidate file, not a profile directory
   CHECK(o.err.find("refused, nothing was written") != std::string::npos);
@@ -409,4 +411,99 @@ TEST_CASE("it is the policy's bound that refuses, not a fixed number", "[runtime
   const auto o = f.run(r, launcher);
   CHECK(o.exitCode == 0);
   CHECK(fs::exists(f.root / "out"));
+}
+
+// Spec 0060 Correction 2026-10-15 (GPU-state canary): a recording carries the canary reference, and one made across
+// two GPU states is refused.
+
+TEST_CASE("a recording carries the GPU canary reference of all its sessions", "[runtime][gate][record][canary]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  const auto o = f.run(f.recordRequest(2), launcher);
+  REQUIRE(o.exitCode == 0);
+  CHECK(launcher.canaryCallCount() == 4);  // start and end of each of the two sessions
+  const std::string store = (f.root / "out").string();
+  const auto listed = gate::listProfiles(store);
+  REQUIRE(listed.isOk());
+  const auto baseline = gate::loadBaseline(gate::baselinePath(listed.value()[0], "bistro", "baseline", 1920, 1080));
+  REQUIRE(baseline.error.empty());
+  const json::Value& doc = baseline.document;
+  CHECK(gate::at(doc, {"canary", "workload"})->asString() == "gate-canary/1");
+  const auto& measurements = gate::at(doc, {"canary", "measurements"})->asArray();
+  REQUIRE(measurements.size() == 4);
+  CHECK(measurements[0].find("phase")->asString() == "s1.start");
+  CHECK(measurements[1].find("phase")->asString() == "s1.end");
+  CHECK(measurements[2].find("phase")->asString() == "s2.start");
+  CHECK(*gate::numberOf(gate::at(doc, {"canary", "aggregate", "bw", "n"})) == 4.0);
+  CHECK(*gate::numberOf(gate::at(doc, {"canary", "aggregate", "bw", "center"})) == Approx(3.8));
+  CHECK(gate::canarySpreadPct(doc) == Approx(0.0).margin(1e-9));
+  const auto policy = gate::loadPolicy(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json");
+  REQUIRE(policy.isOk());
+  CHECK(gate::validateStore(store, &policy.value().record).empty());  // what it wrote passes the guard with the bar
+}
+
+TEST_CASE("a recording whose GPU canary moved between sessions is refused with exit 3 and writes nothing",
+          "[runtime][gate][record][canary]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  int measured = 0;
+  launcher.canaryMs = [&measured](const std::string&) {
+    const bool secondSession = measured++ >= 2;  // reads 0,1 are session 1; 2,3 are session 2
+    const double slow = secondSession ? 1.20 : 1.0;
+    return gate_test::CanaryMs{3.74, 3.8 * slow, 4.09 * slow};
+  };
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.out.empty());
+  CHECK_FALSE(fs::exists(f.root / "out"));
+  CHECK(o.err.find("refused, nothing was written") != std::string::npos);
+  CHECK(o.err.find("GPU canary readings spread 20 %") != std::string::npos);
+  CHECK(o.err.find("bound 5 %") != std::string::npos);
+  CHECK(o.err.find("not raised to make a recording pass") != std::string::npos);
+}
+
+TEST_CASE("readings that agree within the bar are recorded, and the bar is the policy's", "[runtime][gate][record][canary]") {
+  {
+    Fixture f;
+    FakeLauncher launcher = steadyLauncher();
+    int measured = 0;
+    launcher.canaryMs = [&measured](const std::string&) {
+      const double drift = 1.0 + 0.01 * static_cast<double>(measured++);  // 0, 1, 2, 3 % : spread 3 %
+      return gate_test::CanaryMs{3.74, 3.8 * drift, 4.09};
+    };
+    CHECK(f.run(f.recordRequest(2), launcher).exitCode == 0);
+  }
+  {
+    // The same 20 % straddle against a policy file whose bound is lifted is recorded: the refusal is the policy's.
+    Fixture f;
+    std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string needle = "\"max_canary_spread_pct\": 5";
+    const auto at = text.find(needle);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, needle.size(), "\"max_canary_spread_pct\": 500");
+    const fs::path lifted = f.root / "lifted_policy.json";
+    { std::ofstream out(lifted, std::ios::binary); out << text; }
+    FakeLauncher launcher = steadyLauncher();
+    int measured = 0;
+    launcher.canaryMs = [&measured](const std::string&) {
+      const double slow = measured++ >= 2 ? 1.20 : 1.0;
+      return gate_test::CanaryMs{3.74, 3.8 * slow, 4.09 * slow};
+    };
+    cli::GateRequest r = f.recordRequest(2);
+    r.policyPath = lifted.string();
+    CHECK(f.run(r, launcher).exitCode == 0);
+  }
+}
+
+TEST_CASE("a canary child that fails stops the recording and writes nothing", "[runtime][gate][record][canary]") {
+  Fixture f;
+  FakeLauncher launcher = steadyLauncher();
+  gate::ChildResult failure;
+  failure.exitCode = 3;
+  launcher.scriptedCanary[1] = failure;  // the end canary of the first session
+  const auto o = f.run(f.recordRequest(2), launcher);
+  CHECK(o.exitCode == 3);
+  CHECK(o.launches == 8);
+  CHECK_FALSE(fs::exists(f.root / "out"));
 }

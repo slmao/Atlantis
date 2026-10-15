@@ -70,12 +70,16 @@ class FakePower final : public gate::PowerProbe {
 };
 
 // Records every launch; writes the document `makeDocument(callIndex)` to the child's --output
-// unless told not to (call 0 is the preheat when the plan has one).
+// unless told not to (call 0 is the preheat when the plan has one). A `--canary` child writes the canary
+// document `canaryMs(phase)` says instead and does not count in the benchmark children's call index, so
+// `makeDocument` and `scripted` mean the same with or without a canary in the plan; `scriptedCanary` is keyed by
+// the canary children's own call index.
 class FakeLauncher final : public gate::ChildLauncher {
  public:
   gate::ChildResult run(const gate::ChildSpec& spec) override {
     calls.push_back(spec);
-    const std::size_t index = calls.size() - 1;
+    if (!spec.args.empty() && spec.args[0] == "--canary") return runCanary(spec);
+    const std::size_t index = benchmarkCalls++;
     gate::ChildResult result;
     if (const auto it = scripted.find(index); it != scripted.end()) result = it->second;
     if (result.status == gate::ChildResult::Status::Exited && result.exitCode == 0 && writeDocuments) {
@@ -94,11 +98,41 @@ class FakeLauncher final : public gate::ChildLauncher {
     }
     return result;
   }
+  [[nodiscard]] std::size_t canaryCallCount() const { return canaryCalls; }
+  [[nodiscard]] std::size_t benchmarkCallCount() const { return benchmarkCalls; }
+
   std::vector<gate::ChildSpec> calls;
   std::map<std::size_t, gate::ChildResult> scripted;
+  std::map<std::size_t, gate::ChildResult> scriptedCanary;
+  // The reading the canary child reports, by phase ("start" or "end"; from its output file's name).
+  std::function<CanaryMs(const std::string&)> canaryMs = [](const std::string&) { return kStableCanary; };
+  DocumentIdentity canaryIdentity;
   std::function<Value(std::size_t)> makeDocument;
   bool writeDocuments = true;
   bool malformed = false;
+
+ private:
+  gate::ChildResult runCanary(const gate::ChildSpec& spec) {
+    const std::size_t index = canaryCalls++;
+    gate::ChildResult result;
+    if (const auto it = scriptedCanary.find(index); it != scriptedCanary.end()) result = it->second;
+    if (result.status != gate::ChildResult::Status::Exited || result.exitCode != 0 || !writeDocuments) return result;
+    for (std::size_t i = 0; i + 1 < spec.args.size(); ++i) {
+      if (spec.args[i] != "--output") continue;
+      const std::string& path = spec.args[i + 1];
+      const std::string phase = path.find("canary_end") != std::string::npos ? "end" : "start";
+      std::ofstream out(path, std::ios::binary);
+      if (malformed) {
+        out << "{not json";
+      } else {
+        out << atlantis::connection::json::write(makeCanaryDocument(canaryMs(phase), canaryIdentity)) << "\n";
+      }
+    }
+    return result;
+  }
+
+  std::size_t benchmarkCalls = 0;
+  std::size_t canaryCalls = 0;
 };
 
 }  // namespace gate_test

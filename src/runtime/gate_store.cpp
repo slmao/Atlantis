@@ -1,5 +1,6 @@
 #include "gate_store.h"
 
+#include "gate_canary.h"
 #include "gate_set.h"
 
 #include <algorithm>
@@ -272,6 +273,14 @@ std::vector<std::string> validateStore(const std::string& baselinesDir, const Re
         problems.push_back(where + ": protocol.pin and baseline.pin are missing or differ (the pinning state is part of a baseline)");
       }
       if (bar != nullptr) {
+        const double spread = canarySpreadPct(doc);
+        if (spread < 0.0) {
+          problems.push_back(where + ": it has no GPU canary reference (record it again with a build that has the canary)");
+        } else if (spread > bar->maxCanarySpreadPct) {
+          problems.push_back(where + ": its GPU canary readings spread " + formatNumber(std::round(spread * 10.0) / 10.0) +
+                             " % across the recording, above the record bar of " + formatNumber(bar->maxCanarySpreadPct) +
+                             " % (a recording the bar would have refused)");
+        }
         for (const auto& [tier, bound] : {std::pair<std::string_view, double>{"cpu", bar->maxMdrCpuPct},
                                           std::pair<std::string_view, double>{"gpu", bar->maxMdrGpuPct}}) {
           const auto mdr = numberOf(at(doc, {"mdr", tier}));
