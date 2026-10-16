@@ -113,6 +113,7 @@ struct RunPlan {
   // after the last run. `startCheck`, when set, sees the first reading's document and may refuse the session
   // (a message: exit 3) before the preheat and the runs are spent.
   bool canary = false;
+  double canarySettleSeconds = 0.0;  // slept after the last run, before the end canary
   std::function<std::optional<std::string>(const Value&)> startCheck;
   std::string tempDir;  // where each child writes its document; the caller creates it
 };

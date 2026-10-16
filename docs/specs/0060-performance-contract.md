@@ -79,6 +79,21 @@
     ADR-0119 D7's "no new measurement" for the canary only, and records the canary, the four-case verdict model and
     the start-of-session precondition; ADR-0119 D4's `inconclusive` account gains the machine-state cause. ADR-0118
     and the rest of ADR-0119 are unchanged.
+  **Correction (2026-10-16, fourth, post-Approval, found by the Phase 2 recording of the first canary-bearing baseline):**
+  when the end-of-session canary is read.
+  - **The approved text** (the third Correction; ADR-0120 D2) reads the canary "right after the last run" of a session.
+  - **Why that is not enough:** twelve consecutive recording attempts were refused by the canary-spread bar, with
+    spreads of 14-1732 %, while a hand-run session on the same machine read normally. The cause is the reading, not the
+    machine: a canary started at once after a benchmark child exits catches that child's tail, and its first repetitions
+    read about 2.4 × slow (a maximum of 8.6-9.3 ms against 3.8 ms) and are normal about a second later (started 2 s
+    later, every maximum is under 4.2 ms). Every session therefore looked shifted at its end, and every recording
+    straddled "two states".
+  - **Corrected:** the gate sleeps the policy's `canary.settle_seconds` (3) after the last run before the end canary; the
+    start canary is unchanged (it follows the idle wait). With the settle, eight readings over four simulated sessions
+    spread 0.8 % (`alu`), 1.9 % (`bw`) and 0.5 % (`tex`), inside the 5 % recording bar and far inside the 8 % shift limit.
+  - **ADRs:** unchanged. ADR-0120 D2 fixes *that* the canary is read at the end of a session, and the settle is a policy
+    parameter of *when* (like the preheat), so no decision changes; if that reading of "right after the last run" is
+    wrong, a superseding ADR would follow.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated

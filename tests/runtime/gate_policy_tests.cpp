@@ -27,7 +27,7 @@ constexpr const char* kValidPolicy = R"({
   "gated": {"counter": ["draw_calls"], "cpu": ["cpu_active_ms", "passes.*.cpu_record_ms"], "gpu": ["gpu_busy_ms"]},
   "reported": ["frame_ms", "wait_*"],
   "workload": ["lights_point"],
-  "canary": {"max_shift_pct": 8, "required": true},
+  "canary": {"max_shift_pct": 8, "required": true, "settle_seconds": 3},
   "record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20, "max_canary_spread_pct": 5},
   "measured": {}
 })";
@@ -77,6 +77,7 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   // The GPU canary: above its measured noise (0.1-1.7 % across child runs), far below the shifts it must catch.
   CHECK(policy.canary.maxShiftPct == 8.0);
   CHECK(policy.canary.required);
+  CHECK(policy.canary.settleSeconds == 3.0);  // past the benchmark's tail (about a second), see the policy file
   CHECK(policy.record.maxCanarySpreadPct == 5.0);
   CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file
   CHECK_FALSE(policy.measured.date.empty());
@@ -176,8 +177,10 @@ TEST_CASE("a malformed policy is refused, naming the member", "[runtime][gate][p
       {R"("measured": {})", R"("measuredx": {})", "measured"},
       {R"("record": {"max_mdr_cpu_pct": 10, "max_mdr_gpu_pct": 20, "max_canary_spread_pct": 5},)", "", "record"},
       {R"("max_mdr_cpu_pct": 10,)", "", "max_mdr_cpu_pct"},
-      {R"("canary": {"max_shift_pct": 8, "required": true},)", "", "canary"},
+      {R"("canary": {"max_shift_pct": 8, "required": true, "settle_seconds": 3},)", "", "canary"},
       {R"("max_shift_pct": 8,)", "", "max_shift_pct"},
+      {R"(, "settle_seconds": 3)", "", "settle_seconds"},
+      {R"("settle_seconds": 3)", R"("settle_seconds": -1)", "settle_seconds"},
       {R"("max_shift_pct": 8,)", R"("max_shift_pct": 0,)", "max_shift_pct"},
       {R"("required": true)", R"("required": "yes")", "required"},
       {R"(, "max_canary_spread_pct": 5)", "", "max_canary_spread_pct"},

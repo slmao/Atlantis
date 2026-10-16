@@ -248,6 +248,7 @@ class PowerWatch {
   plan.idle = policy.protocol.idle;
   plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
   plan.canary = policy.canary.required;
+  plan.canarySettleSeconds = policy.canary.settleSeconds;
   if (plan.canary) plan.startCheck = makeStartCheck(request, policy, baselinesDir);
   plan.tempDir = env.tempDir;
 
@@ -380,6 +381,7 @@ class PowerWatch {
   plan.idle = policy.protocol.idle;
   plan.pin = request.pinProcess.value_or(policy.protocol.pinProcess);
   plan.canary = policy.canary.required;
+  plan.canarySettleSeconds = policy.canary.settleSeconds;
   plan.tempDir = env.tempDir;
 
   // A baseline is only ever recorded under the policy's full protocol: a smoke run is not a measurement.

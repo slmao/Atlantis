@@ -125,6 +125,13 @@ preference). Implementation note: the "proportional" clause of the ruling is dro
 the observed state is not proportional); the four-case matrix, canary stable or shifted x GPU tier stable or regressed, is what
 is built. A real regression coinciding with a state shift is therefore withheld rather than failed, and is judged on a re-run
 in the baseline's state.
+
+**Finding of the Phase 2 recording, 2026-10-16, recorded once here.** After the canary merged (#253), twelve attempts to
+record the first canary-bearing baseline were all refused by the canary-spread bar (14-1732 %), while a hand-run session read
+normally. Diagnosis (local, uncommitted instrumentation): the end canary, started at once after the last benchmark child exits,
+catches that child's tail (first repetitions ~2.4 x slow, normal ~1 s later). Fixed by a policy `canary.settle_seconds` (3)
+slept before the end canary (fourth Spec Correction, no ADR change). The twelve refusals are disclosed in PR-2. The canary's
+premise about the *state* is still to be validated live at the acceptance run.
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

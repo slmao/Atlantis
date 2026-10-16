@@ -507,3 +507,25 @@ TEST_CASE("a canary child that fails stops the recording and writes nothing", "[
   CHECK(o.launches == 8);
   CHECK_FALSE(fs::exists(f.root / "out"));
 }
+
+TEST_CASE("the canary settle comes from the policy, once per session, before the end canary",
+          "[runtime][gate][record][canary]") {
+  const auto sleptFor = [](const std::string& settleText) {
+    Fixture f;
+    std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string needle = "\"settle_seconds\": 3";
+    const auto at = text.find(needle);
+    REQUIRE(at != std::string::npos);
+    text.replace(at, needle.size(), "\"settle_seconds\": " + settleText);
+    const fs::path file = f.root / "settle_policy.json";
+    { std::ofstream out(file, std::ios::binary); out << text; }
+    FakeLauncher launcher = steadyLauncher();
+    cli::GateRequest r = f.recordRequest(2);
+    r.policyPath = file.string();
+    const auto o = f.run(r, launcher);
+    REQUIRE(o.exitCode == 0);
+    return o.slept;
+  };
+  CHECK(sleptFor("3") - sleptFor("0") == 6.0);  // two sessions, three seconds each
+}
