@@ -432,3 +432,33 @@ TEST_CASE("the end canary waits for the GPU to settle out of the benchmark child
   CHECK(clock.slept - clock2.slept == 3.0);
   CHECK(clock3.slept == clock2.slept);
 }
+
+TEST_CASE("the performance-core mask is the highest efficiency class of group 0", "[runtime][gate][orchestrate]") {
+  using atlantis::runtime::gate::CpuCore;
+  // A 12-core hybrid layout as the OS reports it: 4 P (class 2), 4 E (class 1), 4 LP-E (class 0).
+  std::vector<CpuCore> hybrid;
+  for (unsigned i = 0; i < 4; ++i) hybrid.push_back({0, i, 2});
+  for (unsigned i = 4; i < 8; ++i) hybrid.push_back({0, i, 1});
+  for (unsigned i = 8; i < 12; ++i) hybrid.push_back({0, i, 0});
+  CHECK(atlantis::runtime::gate::performanceCoreMask(hybrid) == 0x00FULL);
+
+  // Two classes only; the order of the list does not matter.
+  std::vector<CpuCore> twoClass = {{0, 3, 0}, {0, 0, 1}, {0, 2, 0}, {0, 1, 1}};
+  CHECK(atlantis::runtime::gate::performanceCoreMask(twoClass) == 0x3ULL);
+}
+
+TEST_CASE("the performance-core mask does not restrict a homogeneous or unknown CPU", "[runtime][gate][orchestrate]") {
+  using atlantis::runtime::gate::CpuCore;
+  CHECK(atlantis::runtime::gate::performanceCoreMask({}) == 0);
+  std::vector<CpuCore> homogeneous;
+  for (unsigned i = 0; i < 8; ++i) homogeneous.push_back({0, i, 0});
+  CHECK(atlantis::runtime::gate::performanceCoreMask(homogeneous) == 0);
+}
+
+TEST_CASE("the performance-core mask ignores cores outside group 0", "[runtime][gate][orchestrate]") {
+  using atlantis::runtime::gate::CpuCore;
+  std::vector<CpuCore> grouped = {{0, 0, 1}, {0, 1, 0}, {1, 0, 1}, {1, 1, 0}};
+  CHECK(atlantis::runtime::gate::performanceCoreMask(grouped) == 0x1ULL);
+  std::vector<CpuCore> onlyElsewhere = {{0, 0, 0}, {1, 0, 1}};
+  CHECK(atlantis::runtime::gate::performanceCoreMask(onlyElsewhere) == 0);
+}

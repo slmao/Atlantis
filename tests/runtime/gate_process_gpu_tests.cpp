@@ -154,6 +154,12 @@ TEST_CASE("pinning the process opts out of power throttling and raises the prior
   REQUIRE(GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)));
   CHECK((state.ControlMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) != 0);  // the process controls it
   CHECK((state.StateMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) == 0);    // and throttling is off
+  // The affinity is the highest-efficiency-class cores, or untouched on a homogeneous CPU.
+  DWORD_PTR processMask = 0;
+  DWORD_PTR systemMask = 0;
+  REQUIRE(GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask));
+  CHECK(processMask != 0);
+  CHECK((processMask & systemMask) == processMask);
 }
 
 TEST_CASE("a pinned benchmark child runs and writes its document", "[runtime][gpu][gate][process]") {

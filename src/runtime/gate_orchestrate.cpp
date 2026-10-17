@@ -2,6 +2,7 @@
 
 #include <atlantis/connection/json.h>
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -241,6 +242,22 @@ SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSample
     if (!measureCanary(plan, launcher, "end", out)) return out;
   }
   return out;
+}
+
+std::uint64_t performanceCoreMask(std::span<const CpuCore> cores) {
+  if (cores.empty()) return 0;
+  unsigned lowest = cores.front().efficiencyClass;
+  unsigned highest = lowest;
+  for (const CpuCore& core : cores) {
+    lowest = std::min(lowest, core.efficiencyClass);
+    highest = std::max(highest, core.efficiencyClass);
+  }
+  if (lowest == highest) return 0;  // homogeneous: every core is already the "performance" class
+  std::uint64_t mask = 0;
+  for (const CpuCore& core : cores) {
+    if (core.efficiencyClass == highest && core.group == 0 && core.index < 64) mask |= std::uint64_t{1} << core.index;
+  }
+  return mask;
 }
 
 }  // namespace atlantis::runtime::gate

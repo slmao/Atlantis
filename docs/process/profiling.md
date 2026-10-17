@@ -77,7 +77,7 @@ scene is absent and the exit code is 3). Flags:
 | `--series` | off | Adds the raw per-frame series. |
 | `--gpu-timing=on\|off` | on | `off` removes the timestamp writes to quantify their own cost. |
 | `--warmup-seconds <s>` | 0 | A timed warmup before the frame-count one; used by the gate's preheat. |
-| `--pin-process on\|off` | off | Opts the process out of power throttling and raises its priority class; used by the gate's children (a failure exits 3). |
+| `--pin-process on\|off` | off | Opts the process out of power throttling, raises its priority class and restricts it to the highest-efficiency-class cores (the P cores of a hybrid CPU; no restriction on a homogeneous CPU); used by the gate's children (a failure exits 3). |
 
 Exit codes: `0` success; `1` usage error or initialization failure; `2` runtime
 failure (no frame presented, the variant did not take); `3` environment mismatch

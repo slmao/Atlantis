@@ -132,6 +132,12 @@ normally. Diagnosis (local, uncommitted instrumentation): the end canary, starte
 catches that child's tail (first repetitions ~2.4 x slow, normal ~1 s later). Fixed by a policy `canary.settle_seconds` (3)
 slept before the end canary (fourth Spec Correction, no ADR change). The twelve refusals are disclosed in PR-2. The canary's
 premise about the *state* is still to be validated live at the acceptance run.
+**Finding of the Phase 2 acceptance, 2026-10-17, recorded once here.** The 20-gate acceptance on the first canary-bearing
+baseline gave 17 `fail` on unchanged code with the canary stable: a ~15 % CPU offset caused by the core class the render
+threads land on (P 9.2-9.5 ms, E 11.1-12.8, LP-E 10.9-11.3, all cores 9.5-11.0; GPU unmoved). Owner ruling "按这个方向做":
+the pinned protocol also restricts the child to the highest-`EfficiencyClass` cores (fifth Spec Correction; `protocol.pin`
+gains `cores`; no ADR change, ADR-0119 D7 read as before). The baseline is re-recorded and the acceptance re-run after the
+correction merges; the refused attempts so far are still disclosed in PR-2.
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

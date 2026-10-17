@@ -10,6 +10,7 @@
 #endif
 #include <windows.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -168,6 +169,31 @@ bool pinCurrentProcess(std::string& error) {
   }
   if (!SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS)) {
     error = "SetPriorityClass(HIGH_PRIORITY_CLASS) failed with error " + std::to_string(GetLastError());
+    return false;
+  }
+  // Restrict the process to the highest efficiency class (the P cores of a hybrid CPU), so the
+  // scheduler cannot put the render threads on an E or LP-E core between sessions.
+  ULONG length = 0;
+  GetSystemCpuSetInformation(nullptr, 0, &length, GetCurrentProcess(), 0);
+  std::vector<std::uint8_t> buffer(length);
+  if (length == 0 ||
+      !GetSystemCpuSetInformation(reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buffer.data()), length, &length,
+                                  GetCurrentProcess(), 0)) {
+    error = "GetSystemCpuSetInformation failed with error " + std::to_string(GetLastError());
+    return false;
+  }
+  std::vector<CpuCore> cores;
+  for (ULONG offset = 0; offset < length;) {
+    const auto* info = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION*>(buffer.data() + offset);
+    if (info->Size == 0) break;
+    if (info->Type == CpuSetInformation) {
+      cores.push_back({info->CpuSet.Group, info->CpuSet.LogicalProcessorIndex, info->CpuSet.EfficiencyClass});
+    }
+    offset += info->Size;
+  }
+  const std::uint64_t mask = performanceCoreMask(cores);
+  if (mask != 0 && !SetProcessAffinityMask(GetCurrentProcess(), static_cast<DWORD_PTR>(mask))) {
+    error = "SetProcessAffinityMask failed with error " + std::to_string(GetLastError());
     return false;
   }
   return true;

@@ -32,8 +32,9 @@ One command, one verdict document on stdout, one exit code. It takes about three
 be idle, measures the **GPU canary** (below), runs one discarded **preheat** of 60 s, then five independent
 `--benchmark` processes, waits 3 s and measures the canary again (right after a benchmark child exits the GPU is in
 that child's tail for about a second, which is not the machine's state), each child **pinned** (the
-child opts out of process power throttling and runs at high priority, so the OS scheduler does not park the render
-thread on a slow core; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
+child opts out of process power throttling, runs at high priority and is restricted to the cores of the highest
+efficiency class -- the P cores of a hybrid CPU -- so the OS scheduler neither parks the render thread on a slow core nor
+moves it between core classes from one session to the next; a child that cannot be pinned exits 3). Leave the machine alone while it runs; a build or a
 browser started during it shows up as an `inconclusive` verdict.
 
 **Mains power only.** The gate and `--gate --record` refuse to run on battery (exit 3, before any child starts), and

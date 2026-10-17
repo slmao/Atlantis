@@ -37,6 +37,7 @@ Value pinValue(bool pinned) {
   Value out = Value::object();
   out.set("power_throttling", Value::string(pinned ? "disabled" : "default"));
   out.set("priority_class", Value::string(pinned ? "high" : "normal"));
+  out.set("cores", Value::string(pinned ? "highest_efficiency_class" : "all"));
   return out;
 }
 
