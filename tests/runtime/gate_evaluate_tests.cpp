@@ -627,3 +627,32 @@ TEST_CASE("the verdict with a canary is still byte-deterministic and round-trips
   REQUIRE(parsed.isOk());
   CHECK(parsed.value() == first.document);
 }
+
+// Spec 0060 sixth Correction 2026-10-17: the GPU tier is report-only in the committed policy.
+TEST_CASE("with the GPU tier report-only, a GPU slowdown is reported and never decides", "[runtime][gate][evaluate][gpureport]") {
+  gate::GatePolicy policy = testPolicy();
+  policy.gatedGpu.clear();
+  policy.reported.push_back("gpu_busy_ms");
+  policy.reported.push_back("passes.*.gpu_ms");
+  policy.dispersionMetrics = {"cpu_active_ms"};
+  policy.canary.required = false;
+
+  auto slow = baselineAggregates();
+  for (auto& [key, agg] : slow) {
+    if (key == "gpu_busy_ms" || key == "passes.draw.gpu_ms") agg.center *= 1.5;
+  }
+  const auto verdict = gate::evaluate(makeSet(slow), makeSet(baselineAggregates()), policy, ref());
+  CHECK(verdict.result == "pass");
+  CHECK(gate::at(verdict.document, {"metrics", "gpu_busy_ms"}) == nullptr);
+  const json::Value* reported = gate::at(verdict.document, {"reported", "gpu_busy_ms"});
+  REQUIRE(reported != nullptr);  // shown, with its change
+  CHECK(gate::numberOf(reported->find("delta")) > 0.0);
+
+  // The CPU and counter tiers still decide.
+  auto cpuSlow = slow;
+  cpuSlow["cpu_active_ms"].center *= 1.2;
+  CHECK(gate::evaluate(makeSet(cpuSlow), makeSet(baselineAggregates()), policy, ref()).result == "fail");
+  auto counter = slow;
+  counter["draw_calls"].center += 1.0;
+  CHECK(gate::evaluate(makeSet(counter), makeSet(baselineAggregates()), policy, ref()).result == "fail");
+}

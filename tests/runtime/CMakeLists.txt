@@ -104,6 +104,7 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
 # baseline store) under tests/performance/.
 target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
+  ATLANTIS_GATE_ALL_TIERS_POLICY="${CMAKE_SOURCE_DIR}/tests/runtime/data/gate_policy_all_tiers.json"
 )
 add_dependencies(atlantis_runtime_tests atlantis_asset_catalog)
 if(DEFINED ATLANTIS_bistro_scene_TARGET)
@@ -180,7 +181,8 @@ if(WIN32)
   # Plan 0059 M9: the process-level benchmark test runs the real executable.
   target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE ATLANTIS_RUNTIME_EXECUTABLE="$<TARGET_FILE:atlantis_runtime>"
     # Plan 0060 M5: the gate's process-level tests read the committed policy file.
-    ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance")
+    ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
+    ATLANTIS_GATE_ALL_TIERS_POLICY="${CMAKE_SOURCE_DIR}/tests/runtime/data/gate_policy_all_tiers.json")
   add_dependencies(atlantis_runtime_gpu_tests atlantis_runtime)
 endif()
 

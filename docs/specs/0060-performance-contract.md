@@ -121,6 +121,35 @@
     process affinity is the same class of OS scheduling control as the priority class and EcoQoS opt-out already ruled
     inside it, and it touches neither the measured loop nor any hardware setting. If the owner reads D7 as covering
     scheduling, a superseding ADR would follow this Correction before the baseline is re-recorded.
+  **Correction (2026-10-17, sixth, post-Approval, owner ruling "take option 1" after the Phase 2 acceptance stopped again):**
+  the GPU tier is report-only.
+  - **The approved text** (and the third Correction, ADR-0120) gates the GPU tier (`gpu_busy_ms`, `passes.*.gpu_ms`) at a
+    10 % tolerance, with a fixed GPU canary classifying a machine-state shift.
+  - **Why that is not enough:** on the first baseline recorded under the corrected pinning (accepted: cpu resolution 5.6 %,
+    gpu 11.5 %, canary readings within 0.15 %), nine live gates gave 3 `pass` and 6 `fail`, every fail on
+    `passes.Opaque.gpu_ms` and `passes.draw.gpu_ms` (+9-15 % against a 10 % tolerance; `gpu_busy_ms` 18.0-18.8 ms against
+    16.79), with `cpu_active_ms` within +1.2 % and the canary within 0.3 % of its reference every time. The baseline's own
+    15 runs are bimodal on the GPU: 9 read `gpu_busy_ms` 16.5-16.8 ms (Opaque 12.3-12.6) and 6 read 17.3-19.7 (Opaque
+    13.2-15.3), and its center landed in the fast state while the candidate sessions sat in the slow one. A gate after
+    15 minutes idle read 18.81 ms, so heat soak does not explain it. The canary, which reads GPU-wide and memory-bound
+    slowdowns, does not move with this main-pass state: the premise the third Correction left to be validated live is
+    falsified for this state, and the gate fails unchanged code on the GPU tier. Separately, the canary's `tex` component
+    flipped between 4.1 ms and 15-22 ms from one process to the next for a stretch of the same afternoon (the pre-change
+    binary and unpinned runs too), refusing a recording at a 435 % spread and showing the canary is itself unreliable here.
+  - **Corrected:** in the policy, `gated.gpu` is empty and `gpu_busy_ms` and `passes.*.gpu_ms` are `reported`; they appear
+    in every verdict's `reported` section with their change and never decide. `dispersion_metrics` is `cpu_active_ms`
+    (a dispersion check on a metric that is not gated would never run). `canary.required` is `false`: no canary child
+    is launched, no start-of-session refusal, no canary spread bar, no canary reference in a recording. A tier that gates
+    nothing states no minimum detectable regression (`mdr.gpu` is absent), so the GPU record bar cannot refuse a recording.
+    CPU and counter tiers are unchanged and still decide. The GPU engine path (tier, canary, bars) stays in the code and
+    in its tests, run against an all-tiers fixture policy, and is switched back on by editing the policy once a control
+    that tracks the main-pass state exists. The Spec's injected-GPU-slowdown requirement can no longer fail the gate; the
+    acceptance injects a CPU slowdown (fails) and shows a GPU slowdown reported and not deciding.
+  - **ADRs:** unchanged. ADR-0119 puts which metrics are gated in the policy data file ("reported and never gated" is
+    already a state a metric can be in; `passes.shadow.gpu_ms` was demoted the same way), and this changes that data, not
+    a decision. ADR-0120's canary machinery is kept intact and merely not asked for. A control that tracks the main-pass
+    state (a ratio to an unaffected pass, or a state-aware baseline) is a new decision and would need its own ADR; this
+    Correction does not make it.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
@@ -536,6 +565,8 @@ there; none is a CTest — Spec 0059 R13):
    the GPU, and one extra draw call per frame (a counter regression) each fail the
    gate, the report names the regressed metrics, and the smallest reliably detected
    magnitude per tier is recorded as that profile's minimum detectable regression.
+   (Correction 2026-10-17: the GPU tier is report-only, so the doubled draw loop is shown *reported*, not failing,
+   and the minimum detectable regression is recorded for the CPU tier only.)
 3. **A3 — one command, one deterministic verdict.** A coding agent runs
    `atlantis_runtime --gate --json` and reads the verdict and exit code; the same
    inputs reproduce the verdict byte for byte.
