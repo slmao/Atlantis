@@ -94,6 +94,33 @@
   - **ADRs:** unchanged. ADR-0120 D2 fixes *that* the canary is read at the end of a session, and the settle is a policy
     parameter of *when* (like the preheat), so no decision changes; if that reading of "right after the last run" is
     wrong, a superseding ADR would follow.
+  **Correction (2026-10-17, fifth, post-Approval, owner ruling "按这个方向做" after the Phase 2 acceptance run of the
+  canary-bearing baseline failed 17 of 20):** the pinned protocol also restricts the benchmark child to the cores of the
+  highest efficiency class.
+  - **The approved text** (the M7 owner ruling, Option A: power throttling off and HIGH priority) controls how the OS
+    scheduler treats the process but not *which cores* it may use. The first Spec text never mentions the cores.
+  - **Why that is not enough:** the 20-gate acceptance on a freshly recorded, quality-bar-accepted baseline gave 17 `fail`
+    (`cpu_active_ms`, `passes.draw.cpu_record_ms`, `passes.shadow.cpu_record_ms`, `zones.RenderGraph`) with the GPU canary
+    stable, i.e. a CPU-level offset of about 15 % between the baseline's sessions and the candidates', on unchanged code.
+    The cause is the core class the render threads land on. This machine (Core Ultra 5 338H) has 4 P, 4 E and 4 LP-E logical
+    cores and a pinned process may be scheduled on any of them. Pinning the same pinned `bistro` benchmark to a core set
+    (a diagnostic hook, local and reverted; four repetitions each, `cpu_active_ms` p50) reads: P cores 9.21-9.53 ms
+    (spread 3.4 %), P+E 9.31-9.56, LP-E 10.93-11.25, E 11.09-12.82 (spread 15.6 %), all cores 9.47-10.98 (spread 16 %).
+    `gpu_busy_ms` does not move (16.1-17.5 ms in every set). A 12-run series with per-core utilisation logged agrees: the
+    runs whose threads sat on E or LP-E cores are the slow ones. A baseline therefore records "whichever class the
+    scheduler chose in those three sessions", and a candidate session lands elsewhere with no change to the code.
+  - **Corrected:** `--pin-process on` additionally sets the process affinity (`SetProcessAffinityMask`, processor group 0)
+    to the logical processors of the highest `EfficiencyClass` that `GetSystemCpuSetInformation` reports -- the P cores of
+    a hybrid CPU. A homogeneous CPU (one class), or one with no such core in group 0, is left unrestricted. The pin state
+    gains a member: `protocol.pin` is `{power_throttling, priority_class, cores}` with `cores` `highest_efficiency_class`
+    when pinned and `all` when not, so a pinned run still never compares against an unpinned baseline (the evaluator
+    identity is unchanged: it compares `protocol.pin` whole). A pinned process that cannot be restricted exits 3, like one
+    that cannot be pinned today. Baselines recorded before this Correction (none are committed) carry the old pin shape and
+    would read `incomparable`.
+  - **ADRs:** unchanged. ADR-0119 D7 forbids the gate from *controlling hardware* (clocks, power limits, firmware);
+    process affinity is the same class of OS scheduling control as the priority class and EcoQoS opt-out already ruled
+    inside it, and it touches neither the measured loop nor any hardware setting. If the owner reads D7 as covering
+    scheduling, a superseding ADR would follow this Correction before the baseline is re-recorded.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated

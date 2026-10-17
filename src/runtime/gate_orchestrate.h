@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -148,6 +149,20 @@ struct SessionResult {
 // measurement-environment control, not a hardware clock or power setting. Returns false with a
 // reason when the platform refuses (a pinned run that could not be pinned must not pose as one).
 [[nodiscard]] bool pinCurrentProcess(std::string& error);
+
+// One logical processor as the OS reports it: its processor group, its index inside the group, and
+// its efficiency class (higher = more performant; a homogeneous CPU reports one class throughout).
+struct CpuCore {
+  unsigned group = 0;
+  unsigned index = 0;
+  unsigned efficiencyClass = 0;
+};
+
+// The affinity mask (group 0) of the cores of the highest efficiency class -- the P cores of a hybrid
+// CPU -- that the pinned benchmark children are restricted to (Spec 0060 Correction 2026-10-17:
+// which class the render threads land on moved cpu_active_ms by ~15 % between sessions). 0 means
+// "no restriction": the CPU is homogeneous, the list is empty, or no highest-class core is in group 0.
+[[nodiscard]] std::uint64_t performanceCoreMask(std::span<const CpuCore> cores);
 
 // The real implementations (Windows only; gate_process_windows.cpp).
 [[nodiscard]] std::unique_ptr<Clock> makeSystemClock();

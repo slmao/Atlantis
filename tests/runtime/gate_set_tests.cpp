@@ -172,6 +172,8 @@ TEST_CASE("the pinning state is recorded in the set", "[runtime][gate][set]") {
   CHECK(gate::at(gate::pinValue(true), {"priority_class"})->asString() == "high");
   CHECK(gate::at(gate::pinValue(false), {"power_throttling"})->asString() == "default");
   CHECK(gate::at(gate::pinValue(false), {"priority_class"})->asString() == "normal");
+  CHECK(gate::at(gate::pinValue(true), {"cores"})->asString() == "highest_efficiency_class");
+  CHECK(gate::at(gate::pinValue(false), {"cores"})->asString() == "all");
   const std::vector<json::Value> runs{makeRun({{"cpu_active_ms", 12.0}})};
   gate::Protocol pinned = protocol();
   pinned.pin = true;
