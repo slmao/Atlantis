@@ -394,6 +394,8 @@ Value computeMdr(const Value& set, const GatePolicy& policy, unsigned int candid
   Value out = Value::object();
   out.set("counter", num(0.0));
   const auto tierPct = [&](Tier tier, const char* key) -> Value {
+    // A tier that gates no metric (Spec 0060 sixth Correction: the GPU tier is report-only) has no resolution to state.
+    if ((tier == Tier::Cpu && policy.gatedCpu.empty()) || (tier == Tier::Gpu && policy.gatedGpu.empty())) return Value();
     const Aggregate a = readAggregate(set, key);
     if (!a.available || a.center == 0.0) return Value();
     const TierPolicy& tp = policy.tierPolicy(tier);

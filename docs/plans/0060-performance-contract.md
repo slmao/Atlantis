@@ -138,6 +138,12 @@ threads land on (P 9.2-9.5 ms, E 11.1-12.8, LP-E 10.9-11.3, all cores 9.5-11.0; 
 the pinned protocol also restricts the child to the highest-`EfficiencyClass` cores (fifth Spec Correction; `protocol.pin`
 gains `cores`; no ADR change, ADR-0119 D7 read as before). The baseline is re-recorded and the acceptance re-run after the
 correction merges; the refused attempts so far are still disclosed in PR-2.
+**Finding of the second Phase 2 acceptance, 2026-10-17, recorded once here.** With the CPU regime controlled (fifth
+Correction; CPU within +1.2 % of the baseline in every gate), nine live gates still gave 3 pass / 6 fail, all on the GPU
+main-pass metrics, with the canary stable: the machine's main-pass GPU state is bimodal (the baseline's own runs read 16.5-16.8
+and 17.3-19.7 ms) and the canary does not track it. Owner ruling "take option 1": the GPU tier is report-only (sixth Spec
+Correction, no ADR change). The acceptance is re-run on the CPU and counter tiers; the injected slowdown is a CPU one; a GPU
+slowdown is shown reported and not deciding. A main-pass control is a follow-up Spec/ADR, not part of Plan 0060's M10.
 **Not separately listed in the tasking** (Q3 scope = `bistro`/`baseline` with
 variants diagnostic; Q4 two new documents; Q6 four refresh categories and
 `--record` over S = 3 sessions of R = 5; Q7 `atlantis_runtime --gate`; Q8 exit codes

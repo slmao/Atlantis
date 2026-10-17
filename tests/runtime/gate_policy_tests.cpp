@@ -63,10 +63,10 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.cpu.maxPct == 5.0);
   CHECK(policy.gpu.maxPct == 10.0);
   CHECK(policy.dispersionFactor == 4.0);
-  // Only the headline totals can make a verdict inconclusive (Spec 0060 Correction 2026-10-14).
-  REQUIRE(policy.dispersionMetrics.size() == 2);
+  // Only the headline total can make a verdict inconclusive (Spec 0060 Corrections 2026-10-14 and 2026-10-17).
+  REQUIRE(policy.dispersionMetrics.size() == 1);
   CHECK(gate::isDispersionMetric(policy, "cpu_active_ms"));
-  CHECK(gate::isDispersionMetric(policy, "gpu_busy_ms"));
+  CHECK_FALSE(gate::isDispersionMetric(policy, "gpu_busy_ms"));
   CHECK_FALSE(gate::isDispersionMetric(policy, "zones.Renderer"));
   CHECK_FALSE(gate::isDispersionMetric(policy, "passes.draw.cpu_record_ms"));
   CHECK_FALSE(gate::isDispersionMetric(policy, "passes.draw.gpu_ms"));
@@ -76,7 +76,7 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.record.maxMdrGpuPct == 20.0);
   // The GPU canary: above its measured noise (0.1-1.7 % across child runs), far below the shifts it must catch.
   CHECK(policy.canary.maxShiftPct == 8.0);
-  CHECK(policy.canary.required);
+  CHECK_FALSE(policy.canary.required);  // the GPU tier is report-only, so nothing needs the canary (sixth Correction)
   CHECK(policy.canary.settleSeconds == 3.0);  // past the benchmark's tail (about a second), see the policy file
   CHECK(policy.record.maxCanarySpreadPct == 5.0);
   CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file
@@ -87,17 +87,19 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(policy.counter.maxPct == 0.0);           // counters are exact
   CHECK_FALSE(policy.gatedCounter.empty());
   CHECK_FALSE(policy.gatedCpu.empty());
-  CHECK_FALSE(policy.gatedGpu.empty());
+  CHECK(policy.gatedGpu.empty());  // Spec 0060 sixth Correction 2026-10-17: the GPU tier is report-only
   // Every metric the Spec names is in the tier the Spec names.
   CHECK(gate::gatedTier(policy, "draw_calls") == gate::Tier::Counter);
   CHECK(gate::gatedTier(policy, "descriptor_writes") == gate::Tier::Counter);
   CHECK(gate::gatedTier(policy, "cpu_active_ms") == gate::Tier::Cpu);
   CHECK(gate::gatedTier(policy, "zones.RenderExtraction") == gate::Tier::Cpu);
   CHECK(gate::gatedTier(policy, "passes.draw.cpu_record_ms") == gate::Tier::Cpu);
-  CHECK(gate::gatedTier(policy, "gpu_busy_ms") == gate::Tier::Gpu);
-  CHECK(gate::gatedTier(policy, "passes.draw.gpu_ms") == gate::Tier::Gpu);
-  // The shadow pass's GPU time is report-only (the calibration study's one demotion), its CPU time is not.
+  // Every GPU time is reported and none is gated; a shadow pass's CPU time is still gated.
+  CHECK_FALSE(gate::gatedTier(policy, "gpu_busy_ms").has_value());
+  CHECK_FALSE(gate::gatedTier(policy, "passes.draw.gpu_ms").has_value());
   CHECK_FALSE(gate::gatedTier(policy, "passes.shadow.gpu_ms").has_value());
+  CHECK(gate::isReported(policy, "gpu_busy_ms"));
+  CHECK(gate::isReported(policy, "passes.draw.gpu_ms"));
   CHECK(gate::isReported(policy, "passes.shadow.gpu_ms"));
   CHECK(gate::gatedTier(policy, "passes.shadow.cpu_record_ms") == gate::Tier::Cpu);
   CHECK_FALSE(gate::gatedTier(policy, "frame_ms").has_value());
@@ -105,6 +107,16 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   CHECK(gate::isReported(policy, "wait_previous_gpu_ms"));
   CHECK(gate::isWorkload(policy, "lights_point"));
   CHECK(gate::isWorkload(policy, "renderables_total"));
+}
+
+TEST_CASE("the all-tiers fixture still gates the GPU tier, so the engine's GPU path stays tested", "[runtime][gate][policy]") {
+  const auto loaded = gate::loadPolicy(ATLANTIS_GATE_ALL_TIERS_POLICY);
+  REQUIRE(loaded.isOk());
+  const gate::GatePolicy& policy = loaded.value();
+  CHECK(gate::gatedTier(policy, "gpu_busy_ms") == gate::Tier::Gpu);
+  CHECK(gate::gatedTier(policy, "passes.draw.gpu_ms") == gate::Tier::Gpu);
+  CHECK(gate::isDispersionMetric(policy, "gpu_busy_ms"));
+  CHECK(policy.canary.required);
 }
 
 TEST_CASE("a valid policy parses into its numbers", "[runtime][gate][policy]") {

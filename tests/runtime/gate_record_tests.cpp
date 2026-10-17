@@ -59,7 +59,7 @@ struct Fixture {
     double slept = 0.0;
   };
 
-  Outcome run(const cli::GateRequest& request, FakeLauncher& launcher) {
+  Outcome run(cli::GateRequest request, FakeLauncher& launcher) {
     FakeClock clock;
     FakeSampler idle({99.0});
     std::ostringstream out;
@@ -71,6 +71,9 @@ struct Fixture {
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
     env.performanceDir = ATLANTIS_PERFORMANCE_DIR;
+    // The engine's GPU tier and canary are exercised against the all-tiers policy; the committed policy has the GPU
+    // tier report-only (Spec 0060 sixth Correction), which its own tests cover.
+    if (!request.policyPath.has_value()) request.policyPath = ATLANTIS_GATE_ALL_TIERS_POLICY;
     env.out = &out;
     env.err = &err;
     Outcome outcome;
@@ -394,7 +397,7 @@ TEST_CASE("it is the policy's bound that refuses, not a fixed number", "[runtime
   Fixture f;
   // The same noisy recording against a policy file whose bounds are lifted: it is recorded. This proves the
   // refusal comes from the policy's record.max_mdr_* members; the committed policy is never edited to do this.
-  std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+  std::ifstream in(std::string(ATLANTIS_GATE_ALL_TIERS_POLICY), std::ios::binary);
   std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   const auto replaceOnce = [&](const std::string& needle, const std::string& replacement) {
     const auto at = text.find(needle);
@@ -437,7 +440,7 @@ TEST_CASE("a recording carries the GPU canary reference of all its sessions", "[
   CHECK(*gate::numberOf(gate::at(doc, {"canary", "aggregate", "bw", "n"})) == 4.0);
   CHECK(*gate::numberOf(gate::at(doc, {"canary", "aggregate", "bw", "center"})) == Approx(3.8));
   CHECK(gate::canarySpreadPct(doc) == Approx(0.0).margin(1e-9));
-  const auto policy = gate::loadPolicy(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json");
+  const auto policy = gate::loadPolicy(std::string(ATLANTIS_GATE_ALL_TIERS_POLICY));
   REQUIRE(policy.isOk());
   CHECK(gate::validateStore(store, &policy.value().record).empty());  // what it wrote passes the guard with the bar
 }
@@ -476,7 +479,7 @@ TEST_CASE("readings that agree within the bar are recorded, and the bar is the p
   {
     // The same 20 % straddle against a policy file whose bound is lifted is recorded: the refusal is the policy's.
     Fixture f;
-    std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+    std::ifstream in(std::string(ATLANTIS_GATE_ALL_TIERS_POLICY), std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const std::string needle = "\"max_canary_spread_pct\": 5";
     const auto at = text.find(needle);
@@ -512,7 +515,7 @@ TEST_CASE("the canary settle comes from the policy, once per session, before the
           "[runtime][gate][record][canary]") {
   const auto sleptFor = [](const std::string& settleText) {
     Fixture f;
-    std::ifstream in(std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json", std::ios::binary);
+    std::ifstream in(std::string(ATLANTIS_GATE_ALL_TIERS_POLICY), std::ios::binary);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     const std::string needle = "\"settle_seconds\": 3";
     const auto at = text.find(needle);
@@ -528,4 +531,24 @@ TEST_CASE("the canary settle comes from the policy, once per session, before the
     return o.slept;
   };
   CHECK(sleptFor("3") - sleptFor("0") == 6.0);  // two sessions, three seconds each
+}
+
+// Spec 0060 sixth Correction 2026-10-17: under the committed policy the GPU tier gates nothing, so a recording is
+// not refused for GPU spread and carries no GPU resolution.
+TEST_CASE("under the committed policy a recording is not refused for GPU spread", "[runtime][gate][record][gpureport]") {
+  Fixture f;
+  FakeLauncher launcher = noisyGpuLauncher();
+  auto r = f.recordRequest(3);
+  r.policyPath = std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json";
+  const auto o = f.run(r, launcher);
+  REQUIRE(o.exitCode == 0);
+  CHECK(o.launches == 18);  // three sessions of a preheat and five runs: no canary children
+  const auto listed = gate::listProfiles((f.root / "out").string());
+  REQUIRE(listed.isOk());
+  REQUIRE(listed.value().size() == 1);
+  const auto baseline = gate::loadBaseline(gate::baselinePath(listed.value()[0], "bistro", "baseline", 1920, 1080));
+  REQUIRE(baseline.error.empty());
+  CHECK(gate::at(baseline.document, {"canary"}) == nullptr);
+  CHECK_FALSE(gate::numberOf(gate::at(baseline.document, {"mdr", "gpu"})).has_value());
+  CHECK(gate::numberOf(gate::at(baseline.document, {"mdr", "cpu"})).has_value());
 }

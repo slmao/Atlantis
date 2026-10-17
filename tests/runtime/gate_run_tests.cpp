@@ -122,6 +122,9 @@ struct Fixture {
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
     env.performanceDir = ATLANTIS_PERFORMANCE_DIR;
+    // The engine's GPU tier and canary are exercised against the all-tiers policy; the committed policy has the GPU
+    // tier report-only (Spec 0060 sixth Correction), which its own tests cover.
+    if (!request.policyPath.has_value()) request.policyPath = ATLANTIS_GATE_ALL_TIERS_POLICY;
     env.out = &out;
     env.err = &err;
     if (!request.baselinesDir.has_value()) request.baselinesDir = (root / "store").string();
@@ -662,4 +665,18 @@ TEST_CASE("a baseline recorded before the canary is not comparable, and says to 
   CHECK(o.exitCode == 5);
   CHECK(verdictOf(o) == "incomparable");
   CHECK(o.verdict.find("reasons")->asArray()[0].asString().find("baseline has no GPU canary reference") != std::string::npos);
+}
+
+// Spec 0060 sixth Correction 2026-10-17: under the committed policy the GPU tier is report-only and the canary is
+// not asked for, so a session is the preheat and the runs and nothing else.
+TEST_CASE("under the committed policy a session measures no canary", "[runtime][gate][run][gpureport]") {
+  Fixture f;
+  f.writeStore();
+  auto r = request();
+  r.policyPath = std::string(ATLANTIS_PERFORMANCE_DIR) + "/gate_policy.json";
+  const auto o = f.run(r);
+  CHECK(o.exitCode == 0);
+  CHECK(verdictOf(o) == "pass");
+  CHECK(o.calls.size() == 6);  // the preheat and the five runs of the policy
+  for (const auto& call : o.calls) CHECK(std::find(call.args.begin(), call.args.end(), "--canary") == call.args.end());
 }

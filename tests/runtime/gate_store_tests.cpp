@@ -454,6 +454,8 @@ TEST_CASE("the minimum detectable regression follows from the baseline's noise b
   policy.cpu.maxPct = 5.0;
   policy.gpu.absFloor = 0.25;
   policy.gpu.maxPct = 10.0;
+  policy.gatedCpu = {"cpu_active_ms"};
+  policy.gatedGpu = {"gpu_busy_ms"};
   const json::Value set = gate_test::makeSet({{"cpu_active_ms", {12.0, 0.1, 15.0}}, {"gpu_busy_ms", {17.0, 0.6, 15.0}}});
   const json::Value mdr = gate::computeMdr(set, policy, 5);
   CHECK(*gate::numberOf(mdr.find("counter")) == 0.0);
@@ -466,6 +468,10 @@ TEST_CASE("the minimum detectable regression follows from the baseline's noise b
   const json::Value noisy = gate_test::makeSet({{"cpu_active_ms", {12.0, 1.0, 15.0}}});
   CHECK(*gate::numberOf(gate::computeMdr(noisy, policy, 5).find("cpu")) > 15.0);
   CHECK(gate::computeMdr(noisy, policy, 5).find("gpu")->isNull());
+  // A tier that gates nothing states no resolution (Spec 0060 sixth Correction: the GPU tier is report-only).
+  policy.gatedGpu.clear();
+  CHECK(gate::computeMdr(set, policy, 5).find("gpu")->isNull());
+  CHECK(gate::numberOf(gate::computeMdr(set, policy, 5).find("cpu")).has_value());
 }
 
 TEST_CASE("the guard, given the record bar, refuses a committed baseline the bar would have refused",

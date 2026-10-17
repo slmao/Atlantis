@@ -75,7 +75,7 @@ absolute floor, a percentage of the baseline and the measured noise. The policy 
 [tests/performance/gate_policy.json](../../tests/performance/gate_policy.json), holds every number; its `measured`
 block names the calibration study that fixed them (12 sessions of 5 pinned runs on the reference machine:
 a 60 s preheat, a tolerance of 5 % on CPU metrics and 10 % on GPU metrics, `k` = 3, a dispersion factor of 4).
-One metric is report-only on purpose: `passes.shadow.gpu_ms`, whose per-session level moved by more than the GPU
+The GPU tier is report-only (see the GPU canary section); before that, one metric was report-only on purpose: `passes.shadow.gpu_ms`, whose per-session level moved by more than the GPU
 tolerance between otherwise identical sessions, so gating it would fail unchanged code. It stays in every verdict's
 `reported` section; a metric named in the policy's `reported` list is never gated, even when a gated pattern matches it.
 
@@ -94,6 +94,14 @@ says N/A with the reason; where no baseline exists yet for the machine's profile
 item is N/A with that reason. A `fail` or `inconclusive` is reported with its verdict; the merge decision is a human's.
 
 ## The GPU canary and machine state
+
+> **Current state (Spec 0060 sixth Correction 2026-10-17): the GPU tier is report-only.** `gated.gpu` in the policy is empty and
+> `canary.required` is `false`: the GPU times (`gpu_busy_ms`, `passes.*.gpu_ms`) are in every verdict's `reported` section with
+> their change, and never decide; no canary child runs and a recording carries no canary reference or GPU resolution. The reason
+> is measured: the reference machine's main-pass GPU state is bimodal (the committed baseline's runs read 16.5-16.8 and
+> 17.3-19.7 ms), the canary below does not track it, and 6 of 9 gates failed unchanged code on the GPU tier. What follows
+> describes the machinery, which stays in the code and is switched back on in the policy once a control that tracks the
+> main-pass state exists.
 
 The GPU of a laptop can sit in a slower state for hours, for no reason the frame can show: on the reference machine the
 main pass read 25-60 % slow for most of one run of twenty gates, on mains power, and was normal the day before. From the
