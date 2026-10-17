@@ -172,6 +172,7 @@ PolicyResult parsePolicy(const Value& document) {
   const Value* required = canary->find("required");
   if (required == nullptr || !required->isBool()) return PolicyResult::Err("canary: 'required' is missing or not a boolean");
   policy.canary.required = required->asBool();
+  policy.record.requireCanary = policy.canary.required;
   if (auto error = readNumber(*canary, "settle_seconds", 0.0, policy.canary.settleSeconds)) {
     return PolicyResult::Err("canary: " + *error);
   }

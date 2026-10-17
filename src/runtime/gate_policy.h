@@ -62,6 +62,9 @@ struct RecordPolicy {
   // A recording's own GPU canary readings may not spread by more than this (max / min - 1, percent): a
   // recording made across two GPU states is not a baseline for either.
   double maxCanarySpreadPct = 5.0;
+  // Whether a committed baseline must carry a canary reference: set from `canary.required` when the policy loads,
+  // so a policy that does not ask for the canary (the GPU tier is report-only) does not demand it of the store.
+  bool requireCanary = true;
 };
 
 // The GPU-state canary (Spec 0060 Correction 2026-10-15; gate_canary.h).
