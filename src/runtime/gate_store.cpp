@@ -275,7 +275,9 @@ std::vector<std::string> validateStore(const std::string& baselinesDir, const Re
       if (bar != nullptr) {
         const double spread = canarySpreadPct(doc);
         if (spread < 0.0) {
-          problems.push_back(where + ": it has no GPU canary reference (record it again with a build that has the canary)");
+          if (bar->requireCanary) {
+            problems.push_back(where + ": it has no GPU canary reference (record it again with a build that has the canary)");
+          }
         } else if (spread > bar->maxCanarySpreadPct) {
           problems.push_back(where + ": its GPU canary readings spread " + formatNumber(std::round(spread * 10.0) / 10.0) +
                              " % across the recording, above the record bar of " + formatNumber(bar->maxCanarySpreadPct) +
