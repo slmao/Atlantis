@@ -348,11 +348,14 @@ inline constexpr float kMinDot = 1e-4f;
 // per-fragment lighting contribution, unclamped. Never called by any
 // real rendering path -- test-and-verification-only, like
 // computeLambertianDiffuse() itself. Since Plan 0061 (ADR-0121 D1) a point
-// light is evaluated only where its attenuation is > 0, as in the shaders.
+// light is evaluated only where its attenuation is > 0, as in the shaders; since Plan 0061 Stage 2
+// (ADR-0122 D3) only the lights set in pointLightMask (a cluster's mask; all lights by default), in
+// ascending index.
 [[nodiscard]] Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal,
                                              const Vec3& cameraWorldPosition, const Vec3& baseColor,
                                              float metallicFactor, float roughnessFactor,
-                                             const FrameLightingData& lighting);
+                                             const FrameLightingData& lighting,
+                                             std::uint64_t pointLightMask = ~std::uint64_t{0});
 
 // Moved out of runtime_application.cpp's own anonymous namespace (where
 // an identically-shaped copy previously lived) so tests/runtime/ can

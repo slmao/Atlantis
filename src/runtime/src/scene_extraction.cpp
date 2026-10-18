@@ -439,7 +439,7 @@ Vec3 computeLambertianDiffuse(const Vec3& worldPosition, const Vec3& worldNormal
 // concern, matching computeLambertianDiffuse()'s own convention).
 Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal, const Vec3& cameraWorldPosition,
                                const Vec3& baseColor, float metallicFactor, float roughnessFactor,
-                               const FrameLightingData& lighting) {
+                               const FrameLightingData& lighting, std::uint64_t pointLightMask) {
   const float metallic = std::clamp(metallicFactor, 0.0f, 1.0f);
   const float roughness = std::clamp(roughnessFactor, 0.0f, 1.0f);
   const float alpha = std::max(roughness * roughness, kMinAlpha);
@@ -492,6 +492,8 @@ Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal
   }
 
   for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+    // Plan 0061 Stage 2 (ADR-0122 D3): the cluster's mask, walked in ascending index.
+    if (((pointLightMask >> j) & 1u) == 0) continue;
     const FrameLightingData::PointLightGpu& pl = lighting.pointLights[j];
     const Vec3 toLight{pl.position[0] - worldPosition.x, pl.position[1] - worldPosition.y,
                         pl.position[2] - worldPosition.z};

@@ -832,3 +832,24 @@ TEST_CASE("buildClusterLightData(): its header matches the transcription, and it
   REQUIRE(misses == 0);
   REQUIRE(wrongMisses > 0);
 }
+
+// Plan 0061 Stage 2 M3b (Plan P6/P7): the twin's mask walk. The twin keeps its pre-existing radiance grouping
+// (color * (intensity * atten), Plan 0061 P4), so it is compared with itself: walking a fragment's cluster mask
+// gives the all-lights result bit for bit.
+TEST_CASE("computePbrDirectLighting() walking a cluster mask equals its all-lights result bit for bit",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  std::size_t mismatches = 0;
+  for (const ClusteredCase& k : c.cases) {
+    FrameLightingData pointOnly = c.lightings[k.fragment.lighting];
+    pointOnly.directionalLightCount = 0;
+    const std::uint64_t mask = oracleFor(k)[shaderClusterIndex(c.frames[k.frame], k.fragment.position)];
+    const Fragment& f = k.fragment;
+    const Vec3 masked =
+        computePbrDirectLighting(f.position, f.normal, f.camera, f.baseColor, f.metallic, f.roughness, pointOnly, mask);
+    const Vec3 all =
+        computePbrDirectLighting(f.position, f.normal, f.camera, f.baseColor, f.metallic, f.roughness, pointOnly);
+    if (!sameBits(masked, all)) ++mismatches;
+  }
+  REQUIRE(mismatches == 0);
+}
