@@ -1,10 +1,12 @@
 # ADR 0122: Clustered Light Association
 
-- **Status:** Proposed
-- **Date:** 2026-10-19
-- **Deciders:** slmao (pending)
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0061](../specs/0061-point-light-cost.md), Revision 1 (Stage 2; `Draft`)
+- **Status:** Accepted
+- **Date:** 2026-10-19 (accepted 2026-10-19)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-10-19 (owner rulings on Spec 0061 Revision 1 Q6–Q11, recorded once in
+  [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md); the ADR text was reviewed in
+  [PR #264](https://github.com/slmao/Atlantis/pull/264), merged).
+- **Related Spec:** [Spec 0061](../specs/0061-point-light-cost.md), Revision 1 (Stage 2; `Approved` 2026-10-19)
 - **Related ADR(s):**
   - [ADR-0121](0121-point-light-association-model.md): the point-light association model. **Decision 3 ("no
     precomputed association structure is adopted") is superseded here**: its first reopening condition is met by
