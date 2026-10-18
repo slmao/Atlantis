@@ -522,6 +522,12 @@ void writeCamera(ShadowTestRig& rig) {
   // tail must still be written, as the buffer is not zero-initialised.
   *reinterpret_cast<atlantis::runtime::FogData*>(cameraData + atlantis::runtime::kCameraUniformFogOffsetBytes /
                                                                    sizeof(float)) = atlantis::runtime::FogData{};
+  // Plan 0061 Stage 2 (Plan P5): the cluster region from the real builder -- this file's lights are
+  // directional only, so every mask is empty.
+  const atlantis::runtime::ClusterLightData clusterLightData =
+      atlantis::runtime::buildClusterLightData(FrameLightingData{}, CameraMatrices{view, projection});
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformClusterOffsetBytes / sizeof(float), &clusterLightData,
+              sizeof(clusterLightData));
 }
 
 // Writes one Directional light (P10's own fixed color/intensity, caller-
@@ -930,6 +936,11 @@ TEST_CASE("Directional shadow leaves the IBL/ambient term untouched: shadowed vs
       }
       auto* lightingData = reinterpret_cast<FrameLightingData*>(cameraData + 32);
       *lightingData = lighting;
+      // Plan 0061 Stage 2 (Plan P5): the cluster region, from the real builder.
+      const atlantis::runtime::ClusterLightData clusterLightData =
+          atlantis::runtime::buildClusterLightData(lighting, CameraMatrices{view, projection});
+      std::memcpy(cameraData + atlantis::runtime::kCameraUniformClusterOffsetBytes / sizeof(float),
+                  &clusterLightData, sizeof(clusterLightData));
 
       const CameraMatrices lightSpaceMatrices = computeShadowLightSpaceMatrices(direction);
       const Mat4& lightSpaceView = lightSpaceMatrices.view;

@@ -61,6 +61,12 @@ struct CameraUniform {
     float4x4 lightSpaceProjection;
     // Plan 0043: density 0 means fog off (every writer writes this tail).
     FogData fog;
+    // Plan 0061 Stage 2 (ADR-0122 D2): the cluster light masks after FogData, mirroring
+    // scene_extraction.h's ClusterLightData -- cluster c's 64-bit mask is clusterMasks[c / 2].xy
+    // (c even) or .zw (c odd); grid 12x7x16 = 1344 clusters, 672 uint4.
+    uint4 clusterGrid;
+    float4 clusterSlicing;
+    uint4 clusterMasks[672];
 };
 
 [[vk::binding(0, 0)]]
@@ -166,6 +172,27 @@ float3 applyHeightFog(float3 lit, float3 worldPosition) {
     return lit * (1.0 - f) + camera.fog.color * f;
 }
 
+// Plan 0061 Stage 2 (Spec 0061 Revision 1 S2-R4, ADR-0122 D3): the cluster of
+// a world position, from the frame's own view and projection (extent-
+// independent). Integer clamps keep the index in range for any input,
+// including a helper lane's extrapolated position.
+uint computeClusterIndex(float3 worldPosition) {
+    float4 viewPosition = mul(camera.view, float4(worldPosition, 1.0));
+    float4 clip = mul(camera.projection, viewPosition);
+    float2 ndc = clip.xy / clip.w;
+    int gx = int(camera.clusterGrid.x);
+    int gy = int(camera.clusterGrid.y);
+    int gz = int(camera.clusterGrid.z);
+    int x = clamp(int(floor((ndc.x * 0.5 + 0.5) * float(gx))), 0, gx - 1);
+    int y = clamp(int(floor((ndc.y * 0.5 + 0.5) * float(gy))), 0, gy - 1);
+    float viewZ = -viewPosition.z;
+    int z = 0;
+    if (viewZ >= camera.clusterSlicing.y) {
+        z = clamp(1 + int(floor(log(viewZ / camera.clusterSlicing.y) * camera.clusterSlicing.w)), 1, gz - 1);
+    }
+    return uint(x + gx * (y + gy * z));
+}
+
 [shader("fragment")]
 float4 fragmentMain(Varying input) : SV_Target {
     float4 texColor = baseColorSampler.Sample(input.uv);
@@ -226,34 +253,44 @@ float4 fragmentMain(Varying input) : SV_Target {
         }
     }
 
-    for (uint j = 0; j < camera.pointLightCount; ++j) {
-        float3 toLight = camera.pointLights[j].position - input.worldPosition;
-        float dist = max(length(toLight), kPointLightDistanceEpsilon);
-        float3 L = toLight / dist;
-        float NdotL = max(dot(N, L), 0.0);
-        float atten = clamp(1.0 - dist / camera.pointLights[j].range, 0.0, 1.0);
-        // Plan 0061 M3 (Spec 0061 R3, ADR-0121 D1): the BRDF only where atten > 0 --
-        // a skipped light's term would be exactly +0, so the sum is bit-identical.
-        if (NdotL > 0.0 && atten > 0.0) {
-            float3 radiance = camera.pointLights[j].color * camera.pointLights[j].intensity * atten;
-            float NdotV = max(dot(N, V), kMinDot);
-            float3 H = normalize(L + V);
-            float NdotH = max(dot(N, H), 0.0);
-            float VdotH = max(dot(V, H), 0.0);
+    // Plan 0061 Stage 2 (ADR-0122 D3): only the lights that may reach this fragment's cluster, in
+    // ascending index (low word, then high word, low bit first); the body is Stage 1's, unchanged.
+    uint clusterIndex = computeClusterIndex(input.worldPosition);
+    uint4 clusterMaskPair = camera.clusterMasks[clusterIndex >> 1];
+    uint2 pointLightMask = (clusterIndex & 1u) != 0u ? clusterMaskPair.zw : clusterMaskPair.xy;
+    for (uint maskWord = 0; maskWord < 2; ++maskWord) {
+        uint maskBits = maskWord == 0 ? pointLightMask.x : pointLightMask.y;
+        while (maskBits != 0u) {
+            uint j = maskWord * 32u + firstbitlow(maskBits);
+            maskBits &= maskBits - 1u;
+            float3 toLight = camera.pointLights[j].position - input.worldPosition;
+            float dist = max(length(toLight), kPointLightDistanceEpsilon);
+            float3 L = toLight / dist;
+            float NdotL = max(dot(N, L), 0.0);
+            float atten = clamp(1.0 - dist / camera.pointLights[j].range, 0.0, 1.0);
+            // Plan 0061 M3 (Spec 0061 R3, ADR-0121 D1): the BRDF only where atten > 0 --
+            // a skipped light's term would be exactly +0, so the sum is bit-identical.
+            if (NdotL > 0.0 && atten > 0.0) {
+                float3 radiance = camera.pointLights[j].color * camera.pointLights[j].intensity * atten;
+                float NdotV = max(dot(N, V), kMinDot);
+                float3 H = normalize(L + V);
+                float NdotH = max(dot(N, H), 0.0);
+                float VdotH = max(dot(V, H), 0.0);
 
-            float D = (alpha * alpha) / (kPi * pow(NdotH * NdotH * (alpha * alpha - 1.0) + 1.0, 2.0));
+                float D = (alpha * alpha) / (kPi * pow(NdotH * NdotH * (alpha * alpha - 1.0) + 1.0, 2.0));
 
-            float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-            float G1V = NdotV / (NdotV * (1.0 - k) + k);
-            float G1L = NdotL / (NdotL * (1.0 - k) + k);
-            float G = G1V * G1L;
+                float k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+                float G1V = NdotV / (NdotV * (1.0 - k) + k);
+                float G1L = NdotL / (NdotL * (1.0 - k) + k);
+                float G = G1V * G1L;
 
-            float3 F = F0 + (float3(1.0, 1.0, 1.0) - F0) * pow(1.0 - VdotH, 5.0);
+                float3 F = F0 + (float3(1.0, 1.0, 1.0) - F0) * pow(1.0 - VdotH, 5.0);
 
-            float3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, kMinDot);
-            float3 kD = (float3(1.0, 1.0, 1.0) - F) * (1.0 - metallic);
+                float3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, kMinDot);
+                float3 kD = (float3(1.0, 1.0, 1.0) - F) * (1.0 - metallic);
 
-            accumulated += (kD * diffuseColor / kPi + specular) * radiance * NdotL;
+                accumulated += (kD * diffuseColor / kPi + specular) * radiance * NdotL;
+            }
         }
     }
 

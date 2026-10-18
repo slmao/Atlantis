@@ -179,6 +179,35 @@ static_assert(offsetof(FogData, maxOpacity) == 24);
 static_assert(offsetof(FogData, _pad) == 28);
 static_assert(sizeof(FogData) == 32);
 
+// Plan 0061 Stage 2 (Spec 0061 Revision 1 S2-R1/S2-R3, ADR-0122 D1-D2): the
+// clustered light association, appended to the camera uniform block after
+// FogData. One 64-bit mask per cluster: bit j set when point light j may
+// reach the cluster -- the mask width is kMaxPointLights. Cluster
+// c = x + Cx * (y + Cy * z); x/y tile clip-space xy (y = 0 at the top, the
+// projection's own flipped convention), z slices view depth: slice 0 is
+// [zNear, z1], slices 1..Cz-1 are exponential from z1 to zFar.
+inline constexpr std::uint32_t kClusterGridX = 12;
+inline constexpr std::uint32_t kClusterGridY = 7;
+inline constexpr std::uint32_t kClusterGridZ = 16;
+inline constexpr std::uint32_t kClusterCount = kClusterGridX * kClusterGridY * kClusterGridZ;
+inline constexpr float kClusterNearSliceFarZ = 3.0f;  // z1, Revision 1 S2-Inv-2's drafting value
+static_assert(kMaxPointLights == 64, "a cluster mask is one 64-bit word pair: kMaxPointLights is its width (ADR-0122)");
+static_assert(kClusterCount % 2 == 0, "masks pack two clusters per std140 uint4");
+
+// The shader declares `uint4 clusterGrid; float4 clusterSlicing;
+// uint4 clusterMasks[kClusterCount / 2];` -- masks[2c] is cluster c's bits
+// 0-31, masks[2c + 1] its bits 32-63, two clusters per uint4 element.
+struct alignas(16) ClusterLightData {
+  std::uint32_t grid[4] = {kClusterGridX, kClusterGridY, kClusterGridZ, 0};  // offset 0
+  float slicing[4] = {};                    // offset 16: zNear, z1, zFar, logScale = (Cz - 1) / ln(zFar / z1)
+  std::uint32_t masks[kClusterCount * 2] = {};  // offset 32
+};
+static_assert(std::is_standard_layout_v<ClusterLightData>);
+static_assert(offsetof(ClusterLightData, grid) == 0);
+static_assert(offsetof(ClusterLightData, slicing) == 16);
+static_assert(offsetof(ClusterLightData, masks) == 32);
+static_assert(sizeof(ClusterLightData) == 32 + 8 * kClusterCount);
+
 // Plan 0040 Milestone 0 (human-ruled O1): the camera/lighting uniform
 // Buffer's total byte size, derived from its named parts -- the value the
 // eleven .slang CameraUniform declarations describe and
@@ -203,7 +232,8 @@ inline constexpr std::size_t kCameraUniformLightSpaceOffsetBytes =
     kCameraUniformIrradianceShOffsetBytes + 144 /* SH9: float4[9] */;
 inline constexpr std::size_t kCameraUniformFogOffsetBytes =
     kCameraUniformLightSpaceOffsetBytes + 128 /* light-space view + projection */;
-inline constexpr std::size_t kCameraUniformBufferSizeBytes = kCameraUniformFogOffsetBytes + sizeof(FogData);
+inline constexpr std::size_t kCameraUniformClusterOffsetBytes = kCameraUniformFogOffsetBytes + sizeof(FogData);
+inline constexpr std::size_t kCameraUniformBufferSizeBytes = kCameraUniformClusterOffsetBytes + sizeof(ClusterLightData);
 // Plan 0040: 128 / 2224 / 2240 / 2384 at N = 64 (lit_textured's shorter
 // block ends at 2224); Plan 0043: FogData at 2512, total 2544.
 // pbr_reflection_cross_check_tests.cpp proves each against live slangc
@@ -213,7 +243,27 @@ static_assert(kCameraUniformWorldPositionOffsetBytes == 2224);
 static_assert(kCameraUniformIrradianceShOffsetBytes == 2240);
 static_assert(kCameraUniformLightSpaceOffsetBytes == 2384);
 static_assert(kCameraUniformFogOffsetBytes == 2512);
-static_assert(kCameraUniformBufferSizeBytes == 2544);
+static_assert(kCameraUniformClusterOffsetBytes == 2544);
+// Plan 0061 Stage 2: the cluster region at 2544; at 12x7x16 the block is 13,328 bytes.
+static_assert(kCameraUniformBufferSizeBytes == 2544 + 32 + 8 * kClusterCount);
+// ADR-0122 D2: the whole block within the Vulkan-guaranteed maxUniformBufferRange (Android).
+static_assert(kCameraUniformBufferSizeBytes <= 16384, "the camera block must fit the guaranteed 16 KB uniform range");
+
+// Plan 0061 Stage 2 (ADR-0122 D1, D4): builds the frame's cluster masks on the
+// frame thread from the same lighting and camera matrices the frame uploads.
+// zNear/zFar come from camera.projection (perspectiveMatrix()'s form).
+// Conservative by construction: with the radius inflated to
+// range * (1 + 1e-3) + 0.01 m, a light is set in every cluster that its
+// sphere can meet -- every slice its depth range meets, and every tile whose
+// two bounding half-spaces (planes through the eye) it reaches and that its
+// slice-clipped screen bounds cover; each test is necessary for the sphere to
+// meet the cluster, so every light a fragment would evaluate (atten > 0) is in
+// its cluster's mask. Pure; no state.
+[[nodiscard]] ClusterLightData buildClusterLightData(const FrameLightingData& lighting, const CameraMatrices& camera);
+
+// The all-lights fill: every cluster's mask holds bits 0..pointLightCount-1 --
+// the trivially conservative association (the control build and test oracle).
+[[nodiscard]] ClusterLightData allLightsClusterLightData(const FrameLightingData& lighting, const CameraMatrices& camera);
 
 // Plan 0019 Section P8: a deliberate, disclosed, narrow break from this
 // file's own "raw values only, no atlantis::world:: type" style --
@@ -298,11 +348,14 @@ inline constexpr float kMinDot = 1e-4f;
 // per-fragment lighting contribution, unclamped. Never called by any
 // real rendering path -- test-and-verification-only, like
 // computeLambertianDiffuse() itself. Since Plan 0061 (ADR-0121 D1) a point
-// light is evaluated only where its attenuation is > 0, as in the shaders.
+// light is evaluated only where its attenuation is > 0, as in the shaders; since Plan 0061 Stage 2
+// (ADR-0122 D3) only the lights set in pointLightMask (a cluster's mask; all lights by default), in
+// ascending index.
 [[nodiscard]] Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal,
                                              const Vec3& cameraWorldPosition, const Vec3& baseColor,
                                              float metallicFactor, float roughnessFactor,
-                                             const FrameLightingData& lighting);
+                                             const FrameLightingData& lighting,
+                                             std::uint64_t pointLightMask = ~std::uint64_t{0});
 
 // Moved out of runtime_application.cpp's own anonymous namespace (where
 // an identically-shaped copy previously lived) so tests/runtime/ can

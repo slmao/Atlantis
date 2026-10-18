@@ -204,6 +204,10 @@ atlantis::Result<connection::CapturedImage, connection::ControlError> RuntimeApp
   std::memcpy(shadowLightSpaceData + 16, lightSpaceProjection.data(), sizeof(float) * 16);
   *reinterpret_cast<FogData*>(cameraData + kCameraUniformFogOffsetBytes / sizeof(float)) =
       extractFogData(activeCamera->camera.fog);
+  // Plan 0061 Stage 2: the cluster region, as runFrame() writes it.
+  const ClusterLightData clusterLightData =
+      buildClusterLightData(lighting.value(), camera.value());
+  std::memcpy(cameraData + kCameraUniformClusterOffsetBytes / sizeof(float), &clusterLightData, sizeof(clusterLightData));
 
   // The draw arguments, as runFrame() assembles them.
   const std::vector<DrawItem> drawItems = assembleCaptureDrawItems(collectRenderables(*scene_));

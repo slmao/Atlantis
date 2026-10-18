@@ -239,6 +239,10 @@ void writeCameraBuffer(atlantis::rhi::Buffer& buffer, const std::array<float, 16
   // tail must still be written, as the buffer is not zero-initialised.
   const atlantis::runtime::FogData fogOff{};
   std::memcpy(data + atlantis::runtime::kCameraUniformFogOffsetBytes, &fogOff, sizeof(atlantis::runtime::FogData));
+  // Plan 0061 Stage 2 (Plan P5): the cluster region, from the real builder.
+  const atlantis::runtime::ClusterLightData clusterLightData =
+      atlantis::runtime::buildClusterLightData(lighting, atlantis::runtime::CameraMatrices{view, projection});
+  std::memcpy(data + atlantis::runtime::kCameraUniformClusterOffsetBytes, &clusterLightData, sizeof(clusterLightData));
 }
 
 [[nodiscard]] FrameLightingData oneDirectionalLight(float intensity) {

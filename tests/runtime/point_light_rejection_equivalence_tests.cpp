@@ -406,3 +406,450 @@ TEST_CASE("computePbrDirectLighting() matches its frozen pre-change point loop b
   INFO("first mismatching fragment index " << firstMismatch << " of " << c.fragments.size());
   REQUIRE(mismatches == 0);
 }
+
+// --- Stage 2: the clustered association (Plan 0061 Stage 2 M2; Spec 0061 Revision 1 S2-R2/S2-T2; ADR-0122) ---
+//
+// Three more test-local transcriptions: (a) the shader's cluster assignment from worldPosition (Plan P3), (b) a
+// brute-force reference builder (every light whose inflated sphere meets a cluster's corner AABB), and (c) the
+// mask-walking loop with Stage 1's body. Revision 1's three conditions are encoded below, each with a deliberately
+// wrong variant the test must catch: (1) the margin, (2) the mapping, (3) the index order.
+
+namespace {
+
+using atlantis::runtime::CameraMatrices;
+using atlantis::runtime::lookAtMatrix;
+using atlantis::runtime::Mat4;
+using atlantis::runtime::perspectiveMatrix;
+
+// Plan P2's grid, test-local; M3 pins scene_extraction.h's constants to these.
+constexpr std::uint32_t kTestGridX = 12;
+constexpr std::uint32_t kTestGridY = 7;
+constexpr std::uint32_t kTestGridZ = 16;
+constexpr std::uint32_t kTestClusterCount = kTestGridX * kTestGridY * kTestGridZ;
+constexpr float kTestNearSliceFarZ = 3.0f;  // z1
+
+struct TestClusterFrame {
+  CameraMatrices camera;
+  Vec3 eye, right, up, back;
+  float sx = 0.0f, sy = 0.0f, zNear = 0.0f, zFar = 0.0f, logScale = 0.0f;
+  std::array<float, kTestGridZ + 1> sliceBound{};
+};
+
+// The header and slice bounds as Plan P2/P4 define them, from the camera matrices alone.
+TestClusterFrame testClusterFrame(const CameraMatrices& camera) {
+  TestClusterFrame f;
+  f.camera = camera;
+  const Mat4& v = camera.view;
+  const Mat4& p = camera.projection;
+  f.right = {v[0], v[4], v[8]};
+  f.up = {v[1], v[5], v[9]};
+  f.back = {v[2], v[6], v[10]};
+  f.eye = {-(v[12] * f.right.x + v[13] * f.up.x + v[14] * f.back.x),
+           -(v[12] * f.right.y + v[13] * f.up.y + v[14] * f.back.y),
+           -(v[12] * f.right.z + v[13] * f.up.z + v[14] * f.back.z)};
+  f.sx = p[0];
+  f.sy = p[5];
+  f.zNear = p[14] / p[10];
+  f.zFar = p[14] / (p[10] + 1.0f);
+  f.logScale = static_cast<float>(kTestGridZ - 1) / std::log(f.zFar / kTestNearSliceFarZ);
+  f.sliceBound[0] = std::min(f.zNear, kTestNearSliceFarZ) * (1.0f - 1e-3f);
+  for (std::uint32_t k = 1; k < kTestGridZ; ++k) {
+    f.sliceBound[k] = kTestNearSliceFarZ * std::exp(static_cast<float>(k - 1) / f.logScale);
+  }
+  f.sliceBound[kTestGridZ] = std::max(f.zFar, kTestNearSliceFarZ) * (1.0f + 1e-3f);
+  return f;
+}
+
+std::array<float, 4> transform(const Mat4& m, float x, float y, float z, float w) {  // column-major
+  return {m[0] * x + m[4] * y + m[8] * z + m[12] * w, m[1] * x + m[5] * y + m[9] * z + m[13] * w,
+          m[2] * x + m[6] * y + m[10] * z + m[14] * w, m[3] * x + m[7] * y + m[11] * z + m[15] * w};
+}
+
+// (a) Plan P3, transcribed: the cluster of a world position, from the frame's view and projection. xShift > 0 is
+// the deliberately wrong mapping of Condition 2's self-check.
+std::uint32_t shaderClusterIndex(const TestClusterFrame& f, const Vec3& p, int xShift = 0) {
+  const auto view = transform(f.camera.view, p.x, p.y, p.z, 1.0f);
+  const auto clip = transform(f.camera.projection, view[0], view[1], view[2], view[3]);
+  const float ndcX = clip[0] / clip[3];
+  const float ndcY = clip[1] / clip[3];
+  const int gx = static_cast<int>(kTestGridX), gy = static_cast<int>(kTestGridY), gz = static_cast<int>(kTestGridZ);
+  int x = std::clamp(static_cast<int>(std::floor((ndcX * 0.5f + 0.5f) * static_cast<float>(gx))), 0, gx - 1);
+  x = std::clamp(x + xShift, 0, gx - 1);
+  const int y = std::clamp(static_cast<int>(std::floor((ndcY * 0.5f + 0.5f) * static_cast<float>(gy))), 0, gy - 1);
+  const float viewZ = -view[2];
+  int z = 0;
+  if (viewZ >= kTestNearSliceFarZ) {
+    z = std::clamp(1 + static_cast<int>(std::floor(std::log(viewZ / kTestNearSliceFarZ) * f.logScale)), 1, gz - 1);
+  }
+  return static_cast<std::uint32_t>(x + gx * (y + gy * z));
+}
+
+Vec3 clusterPoint(const TestClusterFrame& f, float ndcX, float ndcY, float depth) {
+  const float vx = ndcX * depth / f.sx;
+  const float vy = ndcY * depth / f.sy;
+  return {f.eye.x + vx * f.right.x + vy * f.up.x - depth * f.back.x,
+          f.eye.y + vx * f.right.y + vy * f.up.y - depth * f.back.y,
+          f.eye.z + vx * f.right.z + vy * f.up.z - depth * f.back.z};
+}
+
+// (b) The brute-force reference builder: every light whose sphere meets a cluster's corner AABB. withMargin false
+// with radiusScale < 1 is Condition 1's deliberately wrong (under-sized) variant.
+std::vector<std::uint64_t> oracleMasks(const TestClusterFrame& f, const FrameLightingData& lighting,
+                                       bool withMargin = true, float radiusScale = 1.0f) {
+  std::vector<std::uint64_t> masks(kTestClusterCount, 0);
+  for (std::uint32_t z = 0; z < kTestGridZ; ++z) {
+    for (std::uint32_t y = 0; y < kTestGridY; ++y) {
+      for (std::uint32_t x = 0; x < kTestGridX; ++x) {
+        float lo[3] = {1e30f, 1e30f, 1e30f}, hi[3] = {-1e30f, -1e30f, -1e30f};
+        for (std::uint32_t c = 0; c < 8; ++c) {
+          const Vec3 q = clusterPoint(f, -1.0f + 2.0f * static_cast<float>(x + (c & 1u)) / kTestGridX,
+                                      -1.0f + 2.0f * static_cast<float>(y + ((c >> 1) & 1u)) / kTestGridY,
+                                      f.sliceBound[z + ((c >> 2) & 1u)]);
+          const float qv[3] = {q.x, q.y, q.z};
+          for (int i = 0; i < 3; ++i) {
+            lo[i] = std::min(lo[i], qv[i]);
+            hi[i] = std::max(hi[i], qv[i]);
+          }
+        }
+        const std::uint32_t cluster = x + kTestGridX * (y + kTestGridY * z);
+        for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+          const auto& pl = lighting.pointLights[j];
+          const float radius = withMargin ? pl.range * (1.0f + 1e-3f) + 0.01f : pl.range * radiusScale;
+          float d2 = 0.0f;
+          for (int i = 0; i < 3; ++i) {
+            const float e = std::max({lo[i] - pl.position[i], 0.0f, pl.position[i] - hi[i]});
+            d2 += e * e;
+          }
+          if (d2 <= radius * radius) masks[cluster] |= std::uint64_t{1} << j;
+        }
+      }
+    }
+  }
+  return masks;
+}
+
+std::uint64_t allLightsMask(const FrameLightingData& lighting) {
+  return lighting.pointLightCount >= 64 ? ~std::uint64_t{0} : (std::uint64_t{1} << lighting.pointLightCount) - 1;
+}
+
+// (c) The mask-walking loop: the set bits low to high (descending is Condition 3's deliberately wrong order), each
+// light through Stage 1's body exactly as shaderPointLoop() transcribes it.
+Vec3 shaderMaskWalk(const Fragment& f, const FrameLightingData& lighting, std::uint64_t mask, bool descending = false) {
+  const Surface s = surfaceOf(f);
+  Vec3 accumulated{0.0f, 0.0f, 0.0f};
+  for (int step = 0; step < 64; ++step) {
+    const std::uint32_t j = static_cast<std::uint32_t>(descending ? 63 - step : step);
+    if (((mask >> j) & 1u) == 0 || j >= lighting.pointLightCount) continue;
+    const FrameLightingData::PointLightGpu& pl = lighting.pointLights[j];
+    const Vec3 toLight{pl.position[0] - f.position.x, pl.position[1] - f.position.y, pl.position[2] - f.position.z};
+    const float dist = std::max(length3(toLight), kPointLightDistanceEpsilon);
+    const Vec3 L{toLight.x / dist, toLight.y / dist, toLight.z / dist};
+    const float NdotL = std::max(dot3(s.N, L), 0.0f);
+    const float atten = std::clamp(1.0f - dist / pl.range, 0.0f, 1.0f);
+    if (!(NdotL > 0.0f && atten > 0.0f)) continue;
+    const Vec3 radiance{pl.color[0] * pl.intensity * atten, pl.color[1] * pl.intensity * atten,
+                        pl.color[2] * pl.intensity * atten};
+    accumulated = add3(accumulated, shaderBranchTerm(s, L, NdotL, radiance));
+  }
+  return accumulated;
+}
+
+// Conservativeness at one fragment: every light with transcribed atten > 0 is set in the mask.
+bool everyReachingLightInMask(const Fragment& f, const FrameLightingData& lighting, std::uint64_t mask) {
+  for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+    const auto& pl = lighting.pointLights[j];
+    const Vec3 toLight{pl.position[0] - f.position.x, pl.position[1] - f.position.y, pl.position[2] - f.position.z};
+    const float dist = std::max(length3(toLight), kPointLightDistanceEpsilon);
+    const float atten = std::clamp(1.0f - dist / pl.range, 0.0f, 1.0f);
+    if (atten > 0.0f && ((mask >> j) & 1u) == 0) return false;
+  }
+  return true;
+}
+
+struct ClusteredCase {
+  Fragment fragment;   // fragment.lighting indexes ClusteredCorpus::lightings
+  std::size_t frame;   // index into ClusteredCorpus::frames
+};
+
+struct ClusteredCorpus {
+  std::vector<FrameLightingData> lightings;
+  std::vector<TestClusterFrame> frames;
+  std::vector<ClusteredCase> cases;
+};
+
+const ClusteredCorpus& clusteredCorpus() {
+  static const ClusteredCorpus built = [] {
+    ClusteredCorpus c;
+    std::mt19937 rng(0x0062u);  // fixed seed: deterministic
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+
+    c.lightings.push_back(corpus().lightings[0]);  // Bistro's 59 overlay lights
+    FrameLightingData dense{};                     // 64 random lights across the same footprint, overlapping
+    dense.pointLightCount = kMaxPointLights;
+    for (std::uint32_t j = 0; j < kMaxPointLights; ++j) {
+      auto& pl = dense.pointLights[j];
+      pl.position[0] = -45.0f + 90.0f * unit(rng);
+      pl.position[1] = 8.0f * unit(rng);
+      pl.position[2] = -35.0f + 85.0f * unit(rng);
+      pl.range = 1.0f + 9.0f * unit(rng);
+      for (float& v : pl.color) v = unit(rng);
+      pl.intensity = 20.0f * unit(rng);
+    }
+    c.lightings.push_back(dense);
+
+    // The benchmark camera and three seeded random cameras over the footprint.
+    const float fov = 1.0472f, aspect = 16.0f / 9.0f, nearZ = 0.1f, farZ = 200.0f;
+    std::vector<std::array<float, 6>> poses = {{-22.0f, 1.7f, 22.0f, 0.0f, -0.86f, 0.0f}};
+    for (int i = 0; i < 3; ++i) {
+      poses.push_back({-35.0f + 60.0f * unit(rng), 1.5f + 4.5f * unit(rng), -25.0f + 60.0f * unit(rng),
+                       -0.3f + 0.6f * unit(rng), -3.14159f + 6.28318f * unit(rng), 0.0f});
+    }
+    for (const auto& pose : poses) {
+      const float pitch = pose[3], yaw = pose[4];
+      const Vec3 forward{-std::sin(yaw) * std::cos(pitch), std::sin(pitch), -std::cos(yaw) * std::cos(pitch)};
+      CameraMatrices camera;
+      camera.view = lookAtMatrix(pose[0], pose[1], pose[2], pose[0] + forward.x, pose[1] + forward.y,
+                                 pose[2] + forward.z);
+      camera.projection = perspectiveMatrix(fov, aspect, nearZ, farZ);
+      c.frames.push_back(testClusterFrame(camera));
+    }
+
+    // Fragments inside every cluster of every frame, for both light sets: interiors, and points on cluster faces,
+    // edges and corners at +-1 and +-2 ULP in ndc and on slice boundaries.
+    const auto nudged = [&](float v) {
+      const int k = static_cast<int>(unit(rng) * 5.0f);  // 0, +-1, +-2 ULP
+      float r = v;
+      for (int i = 0; i < (k + 1) / 2; ++i) r = std::nextafter(r, k % 2 ? 1e9f : -1e9f);
+      return r;
+    };
+    std::size_t cycle = 0;
+    for (std::size_t frame = 0; frame < c.frames.size(); ++frame) {
+      const TestClusterFrame& f = c.frames[frame];
+      for (std::size_t lights = 0; lights < c.lightings.size(); ++lights) {
+        for (std::uint32_t z = 0; z < kTestGridZ; ++z) {
+          const float d0 = std::max(f.sliceBound[z], f.zNear), d1 = std::min(f.sliceBound[z + 1], f.zFar);
+          for (std::uint32_t y = 0; y < kTestGridY; ++y) {
+            for (std::uint32_t x = 0; x < kTestGridX; ++x) {
+              for (int sample = 0; sample < 4; ++sample) {
+                float u = unit(rng), v = unit(rng), w = unit(rng);
+                const bool boundary = sample >= 2;
+                if (boundary) {  // snap one to three coordinates onto the cluster's faces
+                  if (unit(rng) < 0.6f) u = unit(rng) < 0.5f ? 0.0f : 1.0f;
+                  if (unit(rng) < 0.6f) v = unit(rng) < 0.5f ? 0.0f : 1.0f;
+                  if (unit(rng) < 0.6f) w = unit(rng) < 0.5f ? 0.0f : 1.0f;
+                }
+                float ndcX = -1.0f + 2.0f * (static_cast<float>(x) + u) / kTestGridX;
+                float ndcY = -1.0f + 2.0f * (static_cast<float>(y) + v) / kTestGridY;
+                float depth = d0 + (d1 - d0) * w;
+                if (boundary) {
+                  ndcX = nudged(ndcX);
+                  ndcY = nudged(ndcY);
+                  depth = nudged(depth);
+                }
+                if (depth < f.zNear || depth > f.zFar || std::abs(ndcX) > 1.0f || std::abs(ndcY) > 1.0f) continue;
+                const auto& m = kMaterials[cycle++ % kMaterials.size()];
+                Fragment fr{clusterPoint(f, ndcX, ndcY, depth), unitVector(rng), f.eye,
+                            {unit(rng), unit(rng), unit(rng)}, m[0], m[1], lights};
+                c.cases.push_back({fr, frame});
+              }
+            }
+          }
+        }
+        // Near-range fragments for Condition 1's self-check: inside the frustum, 0.92 * range from a light.
+        const FrameLightingData& lighting = c.lightings[lights];
+        for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+          const auto& pl = lighting.pointLights[j];
+          for (int k = 0; k < 24; ++k) {
+            const Vec3 dir = unitVector(rng);
+            const Vec3 p{pl.position[0] + dir.x * 0.92f * pl.range, pl.position[1] + dir.y * 0.92f * pl.range,
+                         pl.position[2] + dir.z * 0.92f * pl.range};
+            const auto view = transform(f.camera.view, p.x, p.y, p.z, 1.0f);
+            const auto clip = transform(f.camera.projection, view[0], view[1], view[2], view[3]);
+            const float depth = -view[2];
+            if (depth < f.zNear || depth > f.zFar || std::abs(clip[0] / clip[3]) > 1.0f ||
+                std::abs(clip[1] / clip[3]) > 1.0f) {
+              continue;
+            }
+            const auto& m = kMaterials[cycle++ % kMaterials.size()];
+            c.cases.push_back({Fragment{p, unitVector(rng), f.eye, {0.7f, 0.6f, 0.5f}, m[0], m[1], lights}, frame});
+          }
+        }
+      }
+    }
+    return c;
+  }();
+  return built;
+}
+
+// The oracle masks per (frame, light set), built once.
+const std::vector<std::vector<std::uint64_t>>& corpusOracleMasks() {
+  static const std::vector<std::vector<std::uint64_t>> masks = [] {
+    const ClusteredCorpus& c = clusteredCorpus();
+    std::vector<std::vector<std::uint64_t>> out;
+    for (const auto& frame : c.frames) {
+      for (const auto& lighting : c.lightings) out.push_back(oracleMasks(frame, lighting));
+    }
+    return out;
+  }();
+  return masks;
+}
+
+const std::vector<std::uint64_t>& oracleFor(const ClusteredCase& k) {
+  return corpusOracleMasks()[k.frame * clusteredCorpus().lightings.size() + k.fragment.lighting];
+}
+
+}  // namespace
+
+TEST_CASE("Clustered association, Condition 1 (margin): every light a fragment reaches is in its cluster's mask, "
+          "and an under-sized radius is caught",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  REQUIRE(c.cases.size() >= 40000);
+  std::size_t misses = 0;
+  std::uint64_t reachingChecks = 0;
+  for (const ClusteredCase& k : c.cases) {
+    const FrameLightingData& lighting = c.lightings[k.fragment.lighting];
+    const std::uint64_t mask = oracleFor(k)[shaderClusterIndex(c.frames[k.frame], k.fragment.position)];
+    if (!everyReachingLightInMask(k.fragment, lighting, mask)) ++misses;
+    for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+      const auto& pl = lighting.pointLights[j];
+      const Vec3 t{pl.position[0] - k.fragment.position.x, pl.position[1] - k.fragment.position.y,
+                   pl.position[2] - k.fragment.position.z};
+      if (std::clamp(1.0f - std::max(length3(t), kPointLightDistanceEpsilon) / pl.range, 0.0f, 1.0f) > 0.0f) {
+        ++reachingChecks;
+      }
+    }
+  }
+  REQUIRE(reachingChecks > 20000);
+  REQUIRE(misses == 0);
+
+  // The deliberately wrong variant: no margin and radii at 0.9 * range must leave some reaching light out.
+  std::size_t wrongMisses = 0;
+  for (std::size_t frame = 0; frame < c.frames.size(); ++frame) {
+    for (std::size_t lights = 0; lights < c.lightings.size(); ++lights) {
+      const auto shrunk = oracleMasks(c.frames[frame], c.lightings[lights], false, 0.9f);
+      for (const ClusteredCase& k : c.cases) {
+        if (k.frame != frame || k.fragment.lighting != lights) continue;
+        if (!everyReachingLightInMask(k.fragment, c.lightings[lights],
+                                      shrunk[shaderClusterIndex(c.frames[frame], k.fragment.position)])) {
+          ++wrongMisses;
+        }
+      }
+    }
+  }
+  REQUIRE(wrongMisses > 0);
+}
+
+TEST_CASE("Clustered association, Condition 2 (mapping): fragments on cluster faces and corners, re-projected "
+          "through the shader's assignment, keep every reaching light; a shifted assignment is caught",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  std::size_t misses = 0;
+  std::size_t shiftedMisses = 0;
+  for (const ClusteredCase& k : c.cases) {
+    const TestClusterFrame& f = c.frames[k.frame];
+    const FrameLightingData& lighting = c.lightings[k.fragment.lighting];
+    const auto& masks = oracleFor(k);
+    if (!everyReachingLightInMask(k.fragment, lighting, masks[shaderClusterIndex(f, k.fragment.position)])) ++misses;
+    if (!everyReachingLightInMask(k.fragment, lighting, masks[shaderClusterIndex(f, k.fragment.position, 1)])) {
+      ++shiftedMisses;
+    }
+  }
+  REQUIRE(misses == 0);
+  REQUIRE(shiftedMisses > 0);
+}
+
+TEST_CASE("Clustered association, Condition 3 (order): the ascending mask walk equals Stage 1's loop bit for bit, "
+          "with the reference masks and with the all-lights mask; a descending walk is caught",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  std::size_t mismatches = 0, allLightsMismatches = 0, descendingMismatches = 0;
+  std::size_t firstMismatch = 0;
+  for (std::size_t i = 0; i < c.cases.size(); ++i) {
+    const ClusteredCase& k = c.cases[i];
+    const FrameLightingData& lighting = c.lightings[k.fragment.lighting];
+    const std::uint64_t mask = oracleFor(k)[shaderClusterIndex(c.frames[k.frame], k.fragment.position)];
+    const Vec3 stage1 = shaderPointLoop(k.fragment, lighting, Rejection::Stage1).accumulated;
+    if (!sameBits(shaderMaskWalk(k.fragment, lighting, mask), stage1) && mismatches++ == 0) firstMismatch = i;
+    if (!sameBits(shaderMaskWalk(k.fragment, lighting, allLightsMask(lighting)), stage1)) ++allLightsMismatches;
+    if (!sameBits(shaderMaskWalk(k.fragment, lighting, allLightsMask(lighting), true), stage1)) ++descendingMismatches;
+  }
+  INFO("first mismatching case " << firstMismatch << " of " << c.cases.size());
+  REQUIRE(mismatches == 0);
+  REQUIRE(allLightsMismatches == 0);
+  REQUIRE(descendingMismatches > 0);
+}
+
+// Plan 0061 Stage 2 M3 (Plan P7, as ruled at the M1 checkpoint): the real builder against the conservativeness
+// property itself -- its masks are not compared bit for bit with the corner-AABB oracle, since the per-light
+// half-space test it uses (rev 3) is neither a subset nor a superset of the AABB test.
+static_assert(atlantis::runtime::kClusterGridX == kTestGridX && atlantis::runtime::kClusterGridY == kTestGridY &&
+              atlantis::runtime::kClusterGridZ == kTestGridZ);
+static_assert(atlantis::runtime::kClusterNearSliceFarZ == kTestNearSliceFarZ);
+
+TEST_CASE("buildClusterLightData(): its header matches the transcription, and its masks keep every reaching light; "
+          "a builder fed shrunk ranges is caught",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+  std::vector<std::vector<std::uint64_t>> real;
+  std::vector<std::vector<std::uint64_t>> shrunk;
+  for (const TestClusterFrame& f : c.frames) {
+    for (const FrameLightingData& lighting : c.lightings) {
+      const atlantis::runtime::ClusterLightData data = atlantis::runtime::buildClusterLightData(lighting, f.camera);
+      REQUIRE(data.grid[0] == kTestGridX);
+      REQUIRE(data.grid[1] == kTestGridY);
+      REQUIRE(data.grid[2] == kTestGridZ);
+      REQUIRE(bits(data.slicing[0]) == bits(f.zNear));
+      REQUIRE(bits(data.slicing[1]) == bits(kTestNearSliceFarZ));
+      REQUIRE(bits(data.slicing[2]) == bits(f.zFar));
+      REQUIRE(bits(data.slicing[3]) == bits(f.logScale));
+      std::vector<std::uint64_t> masks(kTestClusterCount);
+      for (std::uint32_t cl = 0; cl < kTestClusterCount; ++cl) {
+        masks[cl] = data.masks[2 * cl] | (std::uint64_t{data.masks[2 * cl + 1]} << 32);
+        REQUIRE((masks[cl] & ~allLightsMask(lighting)) == 0);  // no bit at or past pointLightCount
+      }
+      real.push_back(std::move(masks));
+
+      FrameLightingData smaller = lighting;  // the deliberately wrong input: every range at 0.9x
+      for (std::uint32_t j = 0; j < smaller.pointLightCount; ++j) smaller.pointLights[j].range *= 0.9f;
+      const atlantis::runtime::ClusterLightData wrong = atlantis::runtime::buildClusterLightData(smaller, f.camera);
+      std::vector<std::uint64_t> wrongMasks(kTestClusterCount);
+      for (std::uint32_t cl = 0; cl < kTestClusterCount; ++cl) {
+        wrongMasks[cl] = wrong.masks[2 * cl] | (std::uint64_t{wrong.masks[2 * cl + 1]} << 32);
+      }
+      shrunk.push_back(std::move(wrongMasks));
+    }
+  }
+  std::size_t misses = 0, wrongMisses = 0;
+  for (const ClusteredCase& k : c.cases) {
+    const std::size_t set = k.frame * c.lightings.size() + k.fragment.lighting;
+    const std::uint32_t cluster = shaderClusterIndex(c.frames[k.frame], k.fragment.position);
+    const FrameLightingData& lighting = c.lightings[k.fragment.lighting];
+    if (!everyReachingLightInMask(k.fragment, lighting, real[set][cluster])) ++misses;
+    if (!everyReachingLightInMask(k.fragment, lighting, shrunk[set][cluster])) ++wrongMisses;
+  }
+  REQUIRE(misses == 0);
+  REQUIRE(wrongMisses > 0);
+}
+
+// Plan 0061 Stage 2 M3b (Plan P6/P7): the twin's mask walk. The twin keeps its pre-existing radiance grouping
+// (color * (intensity * atten), Plan 0061 P4), so it is compared with itself: walking a fragment's cluster mask
+// gives the all-lights result bit for bit.
+TEST_CASE("computePbrDirectLighting() walking a cluster mask equals its all-lights result bit for bit",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  std::size_t mismatches = 0;
+  for (const ClusteredCase& k : c.cases) {
+    FrameLightingData pointOnly = c.lightings[k.fragment.lighting];
+    pointOnly.directionalLightCount = 0;
+    const std::uint64_t mask = oracleFor(k)[shaderClusterIndex(c.frames[k.frame], k.fragment.position)];
+    const Fragment& f = k.fragment;
+    const Vec3 masked =
+        computePbrDirectLighting(f.position, f.normal, f.camera, f.baseColor, f.metallic, f.roughness, pointOnly, mask);
+    const Vec3 all =
+        computePbrDirectLighting(f.position, f.normal, f.camera, f.baseColor, f.metallic, f.roughness, pointOnly);
+    if (!sameBits(masked, all)) ++mismatches;
+  }
+  REQUIRE(mismatches == 0);
+}

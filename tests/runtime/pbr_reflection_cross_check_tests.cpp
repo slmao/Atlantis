@@ -41,7 +41,10 @@ using atlantis::renderer::PbrSheenPushConstants;
 using atlantis::runtime::CameraWorldPositionData;
 using atlantis::runtime::FogData;
 using atlantis::runtime::FrameLightingData;
+using atlantis::runtime::ClusterLightData;
 using atlantis::runtime::kCameraUniformBufferSizeBytes;
+using atlantis::runtime::kCameraUniformClusterOffsetBytes;
+using atlantis::runtime::kClusterCount;
 using atlantis::runtime::kCameraUniformFogOffsetBytes;
 using atlantis::runtime::kCameraUniformIrradianceShOffsetBytes;
 using atlantis::runtime::kCameraUniformLightingOffsetBytes;
@@ -287,7 +290,7 @@ TEST_CASE("pbr_direct_lit CameraUniform: an explicit 144-byte pad plus the 128-b
   const auto fog = findFieldLayout(*jsonText, "fog");
   REQUIRE(fog.has_value());
   CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));
-  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
+  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformClusterOffsetBytes));  // 2544
 
   fs::remove_all(outputDir, ec);
 }
@@ -319,7 +322,7 @@ TEST_CASE("pbr_ibl CameraUniform: the light-space pair follows irradianceSh, tot
   const auto fog = findFieldLayout(*jsonText, "fog");
   REQUIRE(fog.has_value());
   CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));
-  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
+  CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformClusterOffsetBytes));  // 2544
 
   fs::remove_all(outputDir, ec);
 }
@@ -404,6 +407,7 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
       CHECK_FALSE(findFieldLayout(*jsonText, "cameraWorldPosition").has_value());
       CHECK_FALSE(findFieldLayout(*jsonText, "lightSpaceProjection").has_value());
       CHECK_FALSE(findFieldLayout(*jsonText, "fog").has_value());  // Plan 0043: non-PBR, unfogged (Q6)
+      CHECK_FALSE(findFieldLayout(*jsonText, "clusterMasks").has_value());  // Plan 0061: prefix block
     } else {
       const auto cameraWorldPosition = findFieldLayout(*jsonText, "cameraWorldPosition");
       const auto shRegion = findFieldLayout(*jsonText, shader.shRegionField);
@@ -431,7 +435,7 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
       REQUIRE(fog.has_value());
       CHECK(fog->offset == static_cast<long>(kCameraUniformFogOffsetBytes));  // 2512
       CHECK(fog->size == static_cast<long>(sizeof(FogData)));                  // 32
-      CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 2544
+      CHECK(fog->offset + fog->size == static_cast<long>(kCameraUniformClusterOffsetBytes));  // 2544
       const struct {
         const char* name;
         long offset;
@@ -451,6 +455,21 @@ TEST_CASE("CameraUniform: a real slangc reflection of every one of the eleven de
         CHECK(layout->offset == field.offset);
         CHECK(layout->size == field.size);
       }
+      // Plan 0061 Stage 2 (Plan P2, ADR-0122 D2): the cluster region after FogData, closing the block.
+      const auto clusterGrid = findFieldLayout(*jsonText, "clusterGrid");
+      const auto clusterSlicing = findFieldLayout(*jsonText, "clusterSlicing");
+      const auto clusterMasks = findFieldLayout(*jsonText, "clusterMasks");
+      REQUIRE(clusterGrid.has_value());
+      REQUIRE(clusterSlicing.has_value());
+      REQUIRE(clusterMasks.has_value());
+      CHECK(clusterGrid->offset == static_cast<long>(kCameraUniformClusterOffsetBytes + offsetof(ClusterLightData, grid)));
+      CHECK(clusterGrid->size == 16);
+      CHECK(clusterSlicing->offset ==
+            static_cast<long>(kCameraUniformClusterOffsetBytes + offsetof(ClusterLightData, slicing)));
+      CHECK(clusterSlicing->size == 16);
+      CHECK(clusterMasks->offset == static_cast<long>(kCameraUniformClusterOffsetBytes + offsetof(ClusterLightData, masks)));
+      CHECK(clusterMasks->size == static_cast<long>(8 * kClusterCount));
+      CHECK(clusterMasks->offset + clusterMasks->size == static_cast<long>(kCameraUniformBufferSizeBytes));  // 13328
       ++fogBlocksChecked;
     }
     ++shadersChecked;
