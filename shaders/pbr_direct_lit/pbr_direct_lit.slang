@@ -259,11 +259,13 @@ float4 fragmentMain(Varying input) : SV_Target {
         float dist = max(length(toLight), kPointLightDistanceEpsilon);
         float3 L = toLight / dist;
         float NdotL = max(dot(N, L), 0.0);
-        if (NdotL > 0.0) {
-            // Spec 0019 D6's own precedent, reused verbatim: explicitly
-            // non-physical, linear falloff -- zero at range, one at
-            // dist == 0.
-            float atten = clamp(1.0 - dist / camera.pointLights[j].range, 0.0, 1.0);
+        // Spec 0019 D6's own precedent, reused verbatim: explicitly
+        // non-physical, linear falloff -- zero at range, one at
+        // dist == 0.
+        float atten = clamp(1.0 - dist / camera.pointLights[j].range, 0.0, 1.0);
+        // Plan 0061 M3 (Spec 0061 R3, ADR-0121 D1): the BRDF only where atten > 0 --
+        // a skipped light's term would be exactly +0, so the sum is bit-identical.
+        if (NdotL > 0.0 && atten > 0.0) {
             float3 radiance = camera.pointLights[j].color * camera.pointLights[j].intensity * atten;
             float NdotV = max(dot(N, V), kMinDot);
             float3 H = normalize(L + V);

@@ -297,7 +297,8 @@ inline constexpr float kMinDot = 1e-4f;
 // pre-accumulation step; this returns only the accumulated
 // per-fragment lighting contribution, unclamped. Never called by any
 // real rendering path -- test-and-verification-only, like
-// computeLambertianDiffuse() itself.
+// computeLambertianDiffuse() itself. Since Plan 0061 (ADR-0121 D1) a point
+// light is evaluated only where its attenuation is > 0, as in the shaders.
 [[nodiscard]] Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal,
                                              const Vec3& cameraWorldPosition, const Vec3& baseColor,
                                              float metallicFactor, float roughnessFactor,
