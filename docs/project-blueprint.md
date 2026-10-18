@@ -870,7 +870,19 @@ milestone being listed does not authorize starting it — see Section 1.
     [ADR-0117](adr/0117-benchmark-host-json-schema-and-baseline-comparison.md);
     operator note [docs/process/profiling.md](process/profiling.md)). Its first
     Bistro measurement found the scene GPU-bound, with point lighting the
-    dominant cost.
+    dominant cost;
+  - since [Spec 0061](specs/0061-point-light-cost.md) (merged
+    [PR #263](https://github.com/slmao/Atlantis/pull/263) and
+    [PR #266](https://github.com/slmao/Atlantis/pull/266), baselines refreshed in
+    [PR #267](https://github.com/slmao/Atlantis/pull/267)), the first optimization judged under the
+    Performance Contract: Bistro's point-light cost. Stage 1 skips each light's BRDF where its attenuation
+    is exactly zero; Stage 2 replaces the full 59-light loop with a CPU-built clustered light
+    association, a 64-bit mask per cluster of a 12×7×16 grid carried in the camera uniform block (no
+    RHI, binding or pass change). Both keep the image byte-identical by construction, proven by a
+    bitwise CPU test, the goldens and full-frame captures
+    ([ADR-0121](adr/0121-point-light-association-model.md),
+    [ADR-0122](adr/0122-clustered-light-association.md)). The point-light cost fell from 10.19 to
+    0.61 ms and Bistro's frame p50 from 27.97 to 18.96 ms on the reference machine.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -887,7 +899,7 @@ milestone being listed does not authorize starting it — see Section 1.
     (managed hosting inside the Runtime, the hot-path work — binary protocol
     v2, generated marshaling — NuGet dependencies, Android C#, C# editor
     extensions) — named only, not designed or scaffolded;
-  - optimization driven by Spec 0059's measurements, culling, a second frame
+  - further optimization beyond Spec 0061's point-light work, culling, a second frame
     in flight, a CI performance gate, an in-engine profiler UI, Android
     measurement (Spec 0059 Non-Goals) and an `atlantis benchmark` launcher
     (ADR-0117) — named only, not designed or scaffolded;
