@@ -13,9 +13,15 @@
     (the precedent), ADR-0106 (`atlantis.remote/1`), ADR-0001, ADR-0004.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — to be recorded here once the owner has
-  reviewed this Plan and Spec 0060 together and explicitly authorized
-  implementation.
+- **Joint Human Review:** slmao, 2026-10-11 — reviewed this Plan and
+  [Spec 0060](../specs/0060-performance-contract.md) together; **J1–J12 ruled as recommended** (chat rulings,
+  2026-10-11; [PR #247](https://github.com/slmao/Atlantis/pull/247), merged 2026-10-11T09:27Z, is the review's close);
+  implementation authorized from Milestone 1. Implemented and merged in PRs
+  [#248](https://github.com/slmao/Atlantis/pull/248), [#250](https://github.com/slmao/Atlantis/pull/250)–[#257](https://github.com/slmao/Atlantis/pull/257)
+  and [#258](https://github.com/slmao/Atlantis/pull/258).
+- **Implementation:** M1–M9 merged in [PR #248](https://github.com/slmao/Atlantis/pull/248); six Spec Corrections and
+  two follow-ups merged in [#250](https://github.com/slmao/Atlantis/pull/250)–[#257](https://github.com/slmao/Atlantis/pull/257);
+  the first committed baseline (M10) in [PR #258](https://github.com/slmao/Atlantis/pull/258).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
