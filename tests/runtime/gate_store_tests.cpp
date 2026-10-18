@@ -501,6 +501,11 @@ TEST_CASE("the guard, given the record bar, refuses a committed baseline the bar
   setMdr(18.2, 11.6);  // the M10 recording that motivated the bar
   CHECK(mentions(gate::validateStore(store.dir(), &bar), "cpu minimum detectable regression 18.2 %"));
   CHECK(gate::validateStore(store.dir()).empty());  // without a bar the guard is as before
+  // A policy that does not ask for the canary (the GPU tier is report-only, Spec 0060 sixth Correction) does not
+  // demand a reference of the store either.
+  gate::RecordPolicy noCanary = bar;
+  noCanary.requireCanary = false;
+  CHECK_FALSE(mentions(gate::validateStore(store.dir(), &noCanary), "no GPU canary reference"));
   setMdr(6.5, 21.5);  // the recording that spanned battery and mains
   CHECK(mentions(gate::validateStore(store.dir(), &bar), "gpu minimum detectable regression 21.5 %"));
   setMdr(10.0, 20.0);  // exactly at the bound is inside it

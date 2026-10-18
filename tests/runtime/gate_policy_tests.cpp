@@ -77,6 +77,7 @@ TEST_CASE("the committed policy file loads and describes the three tiers", "[run
   // The GPU canary: above its measured noise (0.1-1.7 % across child runs), far below the shifts it must catch.
   CHECK(policy.canary.maxShiftPct == 8.0);
   CHECK_FALSE(policy.canary.required);  // the GPU tier is report-only, so nothing needs the canary (sixth Correction)
+  CHECK_FALSE(policy.record.requireCanary);  // and the store guard does not ask for one
   CHECK(policy.canary.settleSeconds == 3.0);  // past the benchmark's tail (about a second), see the policy file
   CHECK(policy.record.maxCanarySpreadPct == 5.0);
   CHECK(policy.measured.present());  // the calibration study that fixed them is named in the file

@@ -150,6 +150,9 @@
     a decision. ADR-0120's canary machinery is kept intact and merely not asked for. A control that tracks the main-pass
     state (a ratio to an unaffected pass, or a state-aware baseline) is a new decision and would need its own ADR; this
     Correction does not make it.
+  - **Follow-up found by the first committed baseline (2026-10-18):** `validateStore` still demanded a canary reference of every
+    committed baseline, so the committed-store guard test failed on the first baseline recorded under this Correction. The guard
+    now asks for the canary only when the policy does (`record.requireCanary`, set from `canary.required`); ADRs unchanged.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
