@@ -1,12 +1,16 @@
 # Spec: Point-Light Cost in the Forward PBR Path
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-18
-- **Related Plan(s):** None yet. A Plan is drafted only after this Spec is approved.
-- **Approval:** pending
+- **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (`Draft`; implementation awaits its Joint Human
+  Review).
+- **Approval:** slmao, 2026-10-18 (owner rulings on Q1–Q5; review of this Spec's own branch PR,
+  [PR #261](https://github.com/slmao/Atlantis/pull/261), merged). The rulings are recorded once in
+  [Plan 0061](../plans/0061-point-light-cost.md); the open-question text below keeps the options as the record of what
+  was weighed. Ruled scope: Stage 1 only.
 - **Related ADR(s):**
-  [ADR-0121](../adr/0121-point-light-association-model.md) (`Proposed`): the point-light association model, i.e.
+  [ADR-0121](../adr/0121-point-light-association-model.md) (`Accepted` 2026-10-18): the point-light association model, i.e.
   which lights a fragment evaluates and in what order, the equivalence invariant any association must keep, and
   the conditions under which a precomputed association structure would be reopened. It supersedes
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md) Decision 5 in part and
@@ -348,7 +352,7 @@ A mask iterated low bit first is ascending by construction.
 
 ## Architectural Impact
 
-**Yes.** There is one decision, recorded in [ADR-0121](../adr/0121-point-light-association-model.md) (`Proposed`):
+**Yes.** There is one decision, recorded in [ADR-0121](../adr/0121-point-light-association-model.md) (`Accepted` 2026-10-18):
 **the point-light association model.** Which lights a fragment evaluates is decided per fragment, inside the existing
 loop, by exact range rejection on the shader's own attenuation value. The ADR also does three other things:
 

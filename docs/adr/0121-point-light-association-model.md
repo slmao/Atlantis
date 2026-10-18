@@ -1,10 +1,12 @@
 # ADR 0121: Point-Light Association Model
 
-- **Status:** Proposed
-- **Date:** 2026-10-18
-- **Deciders:** slmao (pending)
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0061](../specs/0061-point-light-cost.md) (`Draft`)
+- **Status:** Accepted
+- **Date:** 2026-10-18 (accepted 2026-10-18)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-10-18 (owner rulings on Spec 0061 Q1–Q5, recorded once in
+  [Plan 0061](../plans/0061-point-light-cost.md); the ADR text was reviewed in
+  [PR #261](https://github.com/slmao/Atlantis/pull/261), merged).
+- **Related Spec:** [Spec 0061](../specs/0061-point-light-cost.md) (`Approved` 2026-10-18)
 - **Related ADR(s):**
   - [ADR-0088](0088-frame-lighting-data-successor-structure-and-binding-strategy.md): `FrameLightingData`'s
     structure, capacity and binding. **Decision 5 ("shader-side iteration cost is unchanged … the five iterating ones
