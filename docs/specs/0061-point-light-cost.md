@@ -4,15 +4,34 @@
   2026-10-19; see [Revision 1](#revision-1--stage-2-clustered-light-association).
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-18 (Revision 1: 2026-10-19)
-- **Implementation:** Stage 1 merged in [PR #263](https://github.com/slmao/Atlantis/pull/263).
-- **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (Stage 1; implemented in PR #263);
-  [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md) (`Draft`; implementation awaits its Joint Human Review).
+- **Implementation:** merged — Stage 1 in [PR #263](https://github.com/slmao/Atlantis/pull/263), Stage 2 in
+  [PR #266](https://github.com/slmao/Atlantis/pull/266), the folded baseline refresh in
+  [PR #267](https://github.com/slmao/Atlantis/pull/267).
+- **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (Stage 1, `Approved`; Joint Human Review
+  2026-10-18 recorded in its header); [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md) (`Approved`; Joint
+  Human Review 2026-10-19 recorded in its header).
 - **Approval:** slmao, 2026-10-18 (owner rulings on Q1–Q5; review of this Spec's own branch PR,
   [PR #261](https://github.com/slmao/Atlantis/pull/261), merged). The rulings are recorded once in
   [Plan 0061](../plans/0061-point-light-cost.md); the open-question text below keeps the options as the record of what
   was weighed. Ruled scope: Stage 1 only. **Revision 1:** slmao, 2026-10-19 (owner rulings Q6–Q11, recorded once
   in [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md); review of
   [PR #264](https://github.com/slmao/Atlantis/pull/264), merged).
+  **Correction (2026-10-19, post-implementation, Stage 2 Plan ruling J4; recorded in the post-merge docs
+  update):** which goldens exercise the point-light paths.
+  - **The approved text** (Testing & Verification Plan, T2; Revision 1, S2-R3) names `bistro_demo` (59 lights) and
+    `multi_light_demo` (≥ 8 lights) as the comparisons that exercise rejection, and says the Bistro and multi-light
+    goldens render through the Runtime path.
+  - **Why that cannot hold:** `multi_light_demo` renders through `lighting_demo_fixture`, that is through
+    `lit_textured`, whose camera block is a prefix and which neither stage touches. It never exercised Stage 1's
+    rejection and does not exercise Stage 2's masks. The Bistro golden renders through
+    `pbr_normal_map_demo_fixture` (via `emissive_demo_fixture.h`), a test-side writer of the camera block, not the
+    Runtime path.
+  - **Corrected:** the golden coverage of both stages on Bistro runs through `pbr_normal_map_demo_fixture`'s PBR
+    shaders. Since Stage 2 that fixture fills the cluster region with the real builder (Stage 2 Plan P5). The
+    Runtime writers are covered by the three Bistro captures (V1–V3), byte-identical across Stage 1, Stage 2 and
+    the all-lights control (PR #266). `multi_light_demo` is a `lit_textured` regression guard only.
+  - **Unchanged:** R2's and S2-R2's contracts, all 67×2 goldens byte-identical, met in PRs #263 and #266.
+    `lit_textured` remains a named follow-up (Q5).
 - **Related ADR(s):**
   [ADR-0121](../adr/0121-point-light-association-model.md) (`Accepted` 2026-10-18): the point-light association model, i.e.
   which lights a fragment evaluates and in what order, the equivalence invariant any association must keep, and

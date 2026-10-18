@@ -11,10 +11,16 @@
     [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md) (goldens),
     [ADR-0118](../adr/0118-performance-contract.md)/[ADR-0119](../adr/0119-benchmark-gate-protocol-and-verdict.md)
     (the gate), ADR-0004.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — the owner's review of this Plan together with Spec 0061, explicitly authorizing
-  implementation.
+- **Joint Human Review:** slmao, 2026-10-18 — reviewed this Plan and
+  [Spec 0061](../specs/0061-point-light-cost.md) together; **J1–J4 ruled as recommended** (the owner's implementation
+  tasking, 2026-10-18; [PR #262](https://github.com/slmao/Atlantis/pull/262), merged, is the review's close);
+  implementation authorized from Milestone 1. The M1 checkpoint ruling (2026-10-18, proceed with Stage 1 after
+  decision-table row B) is recorded in [PR #263](https://github.com/slmao/Atlantis/pull/263).
+- **Implementation:** M1–M5 merged in [PR #263](https://github.com/slmao/Atlantis/pull/263) (Stage 1: 20.0 % of the
+  point-light cost removed, R7 fired); its baseline follow-ups (Q4a, Q4b) folded into
+  [PR #267](https://github.com/slmao/Atlantis/pull/267) per the Stage 2 Plan's Q11.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source

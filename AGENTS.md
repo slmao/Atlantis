@@ -337,7 +337,10 @@ under `tests/performance/baselines/` (operator note
 [docs/process/performance-contract.md](docs/process/performance-contract.md));
 it adds no module, no dependency and no public API. The
 `runFrame()` diff guard now reads: identical to its base text except added
-`ATL_PROFILE_*` lines and `debugName` members.
+`ATL_PROFILE_*` lines, `debugName` members and, since Spec 0061 Stage 2
+(PR #266), the ten lines of the cluster-mask build and region write
+(`runtime_application.cpp:1617–1626`, under the `ClusterBuild` zone); a
+further frame-path change enumerates its `runFrame()` lines in its PR.
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics

@@ -13,10 +13,19 @@
     D3/D4 as amended by ADR-0122, [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md),
     [ADR-0118](../adr/0118-performance-contract.md)/[ADR-0119](../adr/0119-benchmark-gate-protocol-and-verdict.md),
     ADR-0004, ADR-0062.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending — the owner's review of this Plan together with Spec 0061 Revision 1, explicitly
-  authorizing implementation.
+- **Joint Human Review:** slmao, 2026-10-19 — reviewed this Plan and Spec 0061 Revision 1 together; **J1–J4 ruled as
+  recommended**, with two additions: the `runFrame()` lines enumerated and disclosed in the implementation PR (J1),
+  and J4's Spec correction note carried by the post-merge docs update (the owner's implementation tasking,
+  2026-10-19; [PR #265](https://github.com/slmao/Atlantis/pull/265), merged, is the review's close); implementation
+  authorized from Milestone 1. The M1 checkpoint rulings (2026-10-19: optimize the CPU build and re-run; then
+  proceed, with `fragment_invocations` admitted in the declared gate `fail`, the no-point-lights control reported as a
+  measured miss, the rev 3 builder with a property-based M3 check, and the `WorldMatrix` capture procedure) are
+  recorded in [PR #266](https://github.com/slmao/Atlantis/pull/266).
+- **Implementation:** M1–M5 merged in [PR #266](https://github.com/slmao/Atlantis/pull/266); the folded category-1
+  refresh of `bistro/baseline` and the `no-point-lights` baseline (Q11) in
+  [PR #267](https://github.com/slmao/Atlantis/pull/267).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
