@@ -1,23 +1,25 @@
 # Spec: Point-Light Cost in the Forward PBR Path
 
-- **Status:** Approved (Stage 1). **Revision 1 (Stage 2, clustered light association), 2026-10-19: `Draft`**,
-  pending the owner's review; see [Revision 1](#revision-1--stage-2-clustered-light-association).
+- **Status:** Approved (Stage 1, 2026-10-18). **Revision 1 (Stage 2, clustered light association): `Approved`**
+  2026-10-19; see [Revision 1](#revision-1--stage-2-clustered-light-association).
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-18 (Revision 1: 2026-10-19)
 - **Implementation:** Stage 1 merged in [PR #263](https://github.com/slmao/Atlantis/pull/263).
-- **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (`Draft`; implementation awaits its Joint Human
-  Review).
+- **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (Stage 1; implemented in PR #263);
+  [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md) (`Draft`; implementation awaits its Joint Human Review).
 - **Approval:** slmao, 2026-10-18 (owner rulings on Q1–Q5; review of this Spec's own branch PR,
   [PR #261](https://github.com/slmao/Atlantis/pull/261), merged). The rulings are recorded once in
   [Plan 0061](../plans/0061-point-light-cost.md); the open-question text below keeps the options as the record of what
-  was weighed. Ruled scope: Stage 1 only.
+  was weighed. Ruled scope: Stage 1 only. **Revision 1:** slmao, 2026-10-19 (owner rulings Q6–Q11, recorded once
+  in [Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md); review of
+  [PR #264](https://github.com/slmao/Atlantis/pull/264), merged).
 - **Related ADR(s):**
   [ADR-0121](../adr/0121-point-light-association-model.md) (`Accepted` 2026-10-18): the point-light association model, i.e.
   which lights a fragment evaluates and in what order, the equivalence invariant any association must keep, and
   the conditions under which a precomputed association structure would be reopened. It supersedes
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md) Decision 5 in part and
   extends [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md) D-1's evaluation guard.
-  Revision 1: [ADR-0122](../adr/0122-clustered-light-association.md) (`Proposed`), the clustered light association:
+  Revision 1: [ADR-0122](../adr/0122-clustered-light-association.md) (`Accepted` 2026-10-19), the clustered light association:
   a CPU-built per-cluster 64-bit light mask carried in an appended region of the camera uniform block. It
   supersedes ADR-0121 D3 and parts of ADR-0088 D3–D5.
 
@@ -360,8 +362,9 @@ A mask iterated low bit first is ascending by construction.
 
 ## Revision 1 — Stage 2: Clustered Light Association
 
-**Status of this section: `Draft` (2026-10-19), a proposal awaiting the owner's review.** It is directed by the
-owner's tasking of 2026-10-19. It revises Spec 0061 to authorize and shape Stage 2. Stage 1's approved text above
+**Status of this section: `Approved` (slmao, 2026-10-19; rulings Q6–Q11 in
+[Plan 0061 Stage 2](../plans/0061-stage2-clustered-lights.md); [PR #264](https://github.com/slmao/Atlantis/pull/264)).**
+It is directed by the owner's tasking of 2026-10-19. It revises Spec 0061 to authorize and shape Stage 2. Stage 1's approved text above
 is unchanged and stays binding, and Stage 2 builds on it.
 
 ### S2 motivation: what Stage 1 measured
@@ -668,7 +671,7 @@ Relationship to existing decisions:
 No module boundary, dependency, public API, threading model or ownership model changes.
 
 **Revision 1 (Stage 2).** One further decision, recorded in
-[ADR-0122](../adr/0122-clustered-light-association.md) (`Proposed`): **the clustered light association**. A
+[ADR-0122](../adr/0122-clustered-light-association.md) (`Accepted` 2026-10-19): **the clustered light association**. A
 CPU-built 64-bit mask per cluster, rebuilt each frame on the frame thread, travels in a region appended to the
 existing camera uniform block (≤ 16,384 bytes). Shaders map `worldPosition` to its cluster and iterate the mask in
 ascending order, keeping Stage 1's predicate. It supersedes ADR-0121 D3, which had adopted no structure (its
