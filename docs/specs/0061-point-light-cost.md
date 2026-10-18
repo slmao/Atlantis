@@ -1,8 +1,10 @@
 # Spec: Point-Light Cost in the Forward PBR Path
 
-- **Status:** Approved
+- **Status:** Approved (Stage 1). **Revision 1 (Stage 2, clustered light association), 2026-10-19: `Draft`**,
+  pending the owner's review; see [Revision 1](#revision-1--stage-2-clustered-light-association).
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Created:** 2026-10-18
+- **Created:** 2026-10-18 (Revision 1: 2026-10-19)
+- **Implementation:** Stage 1 merged in [PR #263](https://github.com/slmao/Atlantis/pull/263).
 - **Related Plan(s):** [Plan 0061](../plans/0061-point-light-cost.md) (`Draft`; implementation awaits its Joint Human
   Review).
 - **Approval:** slmao, 2026-10-18 (owner rulings on Q1–Q5; review of this Spec's own branch PR,
@@ -15,6 +17,9 @@
   the conditions under which a precomputed association structure would be reopened. It supersedes
   [ADR-0088](../adr/0088-frame-lighting-data-successor-structure-and-binding-strategy.md) Decision 5 in part and
   extends [ADR-0067](../adr/0067-pbr-direct-lighting-brdf-and-push-constant-contract.md) D-1's evaluation guard.
+  Revision 1: [ADR-0122](../adr/0122-clustered-light-association.md) (`Proposed`), the clustered light association:
+  a CPU-built per-cluster 64-bit light mask carried in an appended region of the camera uniform block. It
+  supersedes ADR-0121 D3 and parts of ADR-0088 D3–D5.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
@@ -340,15 +345,302 @@ footprints (2–6 m) are large relative to a 16- or 32-pixel wave at 1080p, so d
 to range boundaries. Phase 1's P1 measures the real effect, which is why the target is stated as a reduction of `L`
 rather than as an operation count.
 
-### Stage 2: precomputed association (conditional; not specified here)
+### Stage 2: precomputed association (conditional)
 
-Stage 2 is named so that its trigger and constraints are on the record. It is designed only by a revision of this
-Spec with its own ADR, when R7 fires.
+Stage 2 was named here so that its trigger and constraints were on the record, to be designed only by a revision of
+this Spec with its own ADR when R7 fired. R7 fired on Stage 1's measurement
+([PR #263](https://github.com/slmao/Atlantis/pull/263): 80 % of `L` remains). The design is
+**[Revision 1 — Stage 2: Clustered Light Association](#revision-1--stage-2-clustered-light-association)** below,
+recorded in [ADR-0122](../adr/0122-clustered-light-association.md).
 
-The candidates, which I-5 discriminates, are a per-draw 64-bit light mask built during extraction, and a CPU-built
+The candidates, which I-5 discriminates, were a per-draw 64-bit light mask built during extraction, and a CPU-built
 clustered (froxel) light list. Both must keep R2's invariant: conservative bounds with a margin that absorbs
 interpolation and device division precision, since an extra light costs only time, and ascending-index iteration.
 A mask iterated low bit first is ascending by construction.
+
+## Revision 1 — Stage 2: Clustered Light Association
+
+**Status of this section: `Draft` (2026-10-19), a proposal awaiting the owner's review.** It is directed by the
+owner's tasking of 2026-10-19. It revises Spec 0061 to authorize and shape Stage 2. Stage 1's approved text above
+is unchanged and stays binding, and Stage 2 builds on it.
+
+### S2 motivation: what Stage 1 measured
+
+From [PR #263](https://github.com/slmao/Atlantis/pull/263) (reference machine, 1920×1080, interleaved runs; `L` as
+defined in R5):
+
+- **Stage 1 removed 20.0 % of `L`** (10.19 → 8.15 ms), against R5's ≥ 50 % target. R7 fires: the residual is 80 %.
+- **The cost is the per-light loop itself.** Phase 1's P2 probe kept every per-light load and the preamble,
+  evaluated no BRDF, and still cost 81–86 % of `L`. The P2 floor is ≈ 8.2 ms for 59 iterations, about **0.14 ms of
+  `draw` time per light iterated per fragment**. Iterating fewer lights is the only remaining lever.
+- **`L` is sub-linear in fragments** (×3.3 fragments gives ×1.46 `L`), consistent with helper-lane overshading on
+  Bistro's micro-triangles. Lane work, not counted fragments, is what a structure has to reduce.
+- **I-5's structures.**
+  - Clustered (froxel) association averages 0.79 lights per cluster at 16×9×24.
+  - Per-draw lists leave the largest meshes 27–34 lights.
+  - Re-evaluated during drafting at grids that fit the guaranteed uniform budget (S2-Inv-2 below), clusters
+    average 1.3–2.0 lights.
+
+### S2 pre-drafting investigation (cited against real files)
+
+**S2-Inv-1: what the RHI can carry today.**
+- `CommandList::bindUniformBuffer(Buffer&)` (`src/rhi/include/atlantis/rhi/command_list.h:68`) takes **no binding
+  index**. One uniform buffer per pipeline, bound at binding 0.
+- `BufferPurpose` (`types.h:122`) is `{Vertex, Index, Uniform, Readback, Staging}`: **no storage buffer**.
+- Indexed bindings exist only for sampled textures (`bindTexture(binding, …)`). There is no compute dispatch.
+
+So per-cluster data can travel without an RHI change only inside the existing camera uniform block. Any second
+buffer binding is an RHI surface change (ADR-0020/0025) with its own ADR.
+
+**S2-Inv-2: the budget.**
+- The camera block is `kCameraUniformBufferSizeBytes` = 2,544 bytes (`scene_extraction.h:206-216`). The
+  Vulkan-guaranteed `maxUniformBufferRange` is 16,384 bytes, the floor Spec 0040 holds every design to for Android.
+- After a 32-byte header, 13,808 bytes remain: **at most 1,726 clusters at one 64-bit mask each**, with masks
+  packed two per `uint4`, since std140 gives a `uint2` array element a 16-byte stride.
+- `kMaxPointLights` = 64 is exactly one 64-bit mask.
+
+Lights per cluster on the benchmark camera, at candidate grids, with ADR-0122 D4's inflated radii, a near slice of
+0.1–3 m and exponential slices to 200 m (indicative only; the camera's own frustum, unweighted by coverage):
+
+| Grid (x×y×z) | Clusters | Mask bytes | Fits 16 KB | Mean lights | Max | Mean, slices ≤ 60 m |
+|---|---|---|---|---|---|---|
+| 16×9×8 | 1,152 | 9,216 | yes | 1.97 | 17 | 3.01 |
+| 12×7×16 | 1,344 | 10,752 | yes | 1.39 | 14 | 2.01 |
+| 16×8×12 | 1,536 | 12,288 | yes | 1.48 | 14 | 2.19 |
+| 8×5×40 | 1,600 | 12,800 | yes | 1.29 | 11 | 1.84 |
+| 16×9×24 | 3,456 | 27,648 | **no** | 1.07 | 11 | 1.51 |
+
+Depth slicing matters more than tile count for Bistro's short-range lights.
+
+**S2-Inv-3: who writes the block.**
+- The Runtime: `runtime_application.cpp` and `frame_capture.cpp`.
+- Seven image-regression fixtures, `shadow_gpu_tests.cpp`, and three runtime tests.
+
+Each sizes and fills the block from the `scene_extraction.h` constants, and each must fill an appended region.
+
+**S2-Inv-4: who declares the block.**
+- The ten PBR shaders declare the full block; `lit_textured` declares only the prefix up to `pointLights`.
+- `pbr_reflection_cross_check_tests.cpp` (Plan 0040 O4, "11/11") reflects all eleven and checks the ten PBR blocks
+  end at `kCameraUniformBufferSizeBytes`.
+
+An appended region is therefore declared by the ten PBR shaders, and the cross-check extends to it. The prefix rule
+for `lit_textured` stands.
+
+### S2 goals and non-goals
+
+**Goals.**
+- Cut the Stage 1 residual to a stated, measured target (S2-R5), with the image byte-identical under an explicit
+  contract (S2-R2).
+- Do so without an RHI, binding, descriptor, RenderGraph or Renderer API change.
+
+**Non-goals.** Everything in Spec 0061's Non-Goals carries over: no geometry culling, depth prepass, job system,
+GPU-driven scene, compute, renderer rewrite, attenuation change, or `kMaxPointLights` change. In addition:
+- no wave or subgroup intrinsics (Q8);
+- no storage-buffer or second-uniform binding (Q6);
+- no change to `lit_textured` (Q5 stands);
+- no change to the directional light, IBL, emissive, fog or bloom paths.
+
+### S2 requirements
+
+1. **S2-R1: the structure.** A per-frame, CPU-built clustered light mask, per ADR-0122 D1:
+   - one 64-bit mask per cluster;
+   - grid `Cx × Cy × Cz` fixed by the Plan from the S2-Inv-2 candidates;
+   - built on the frame thread in Runtime's extraction adapter, from the same `FrameLightingData` and camera
+     matrices the frame uploads;
+   - with a profile zone of its own.
+2. **S2-R2: the equivalence contract,** stated before code (the analysis is under S2 design). For every non-helper
+   fragment, the clustered loop evaluates exactly the lights Stage 1 evaluates, in the same order, through the same
+   expression.
+   - **Outcome A, the contract:** all 67×2 golden comparisons stay byte-identical (no golden file touched), and the
+     full-frame Bistro captures of S2-T4 are byte-identical to Stage 1's.
+   - **Outcome B** is R2's existing procedure, unchanged in its bound (max |Δ| ≤ 1 of 255, category 1, a dedicated
+     PR cut from the implementation branch per Plan 0061 J2). Its control build is the **all-lights mask** (bits
+     0 … `pointLightCount`−1 set in every cluster):
+     - if the control reproduces the movement, it is code-generation drift in the new loop structure;
+     - if the control matches Stage 1 while the clustered build does not, the association is not conservative.
+       That is a defect fixed in code, never a golden update.
+3. **S2-R3: the carrier.** The masks travel in a region appended to the camera uniform block after `FogData`
+   (ADR-0122 D2), with a header holding the grid dimensions and depth-slicing parameters.
+   - The total block size is **≤ 16,384 bytes**, enforced by a `static_assert` on the derived size.
+   - There is no new binding, no RHI change, no RenderGraph pass and no Renderer API change.
+   - The ten PBR shaders declare the extended block; the 11/11 reflection cross-check extends to it.
+   - Every writer listed in S2-Inv-3 fills the region. The all-lights fill is the permitted default for writers
+     that do not exercise clustering. The Runtime path, which the Bistro and multi-light goldens render through,
+     uses the real builder.
+4. **S2-R4: fragment-side association** (ADR-0122 D3).
+   - The four looping PBR shaders compute the cluster from `input.worldPosition` through `camera.view` and
+     `camera.projection` (extent-independent), with clamped indices.
+   - They iterate the mask's set bits low to high, keeping Stage 1's body and predicate unchanged.
+   - No other shader term changes.
+5. **S2-R5: measured effect, thresholds fixed now.** `L` is measured as in R5, interleaved, at 1920×1080 on the
+   reference machine. "Before" is the Stage 1 build (≈ 8.15 ms in PR #263).
+   - **Target:** `L` after Stage 2 **≤ 2.0 ms**. That removes at least 75 % of the Stage 1 residual, and Stages 1
+     and 2 together remove at least 80 % of the original ≈ 10.2 ms.
+   - **Expectation: 0.7–1.5 ms.** The basis: about 3–4 lights per lane, once wave unions at cluster boundaries are
+     counted over S2-Inv-2's 1.3–2.0, at ≈ 0.14 ms per iterated light, gives 0.4–0.6 ms. Adding 0.2–0.5 ms for the
+     per-fragment cluster lookup on overshaded lanes, and about 0.05 ms for the in-range BRDFs, gives the range.
+   - **Abort line:** `L` > **4.0 ms** at the prototype checkpoint (Stage 2 removes less than half of the Stage 1
+     residual). The work stops, does not merge, and returns to review.
+   - **Control:** `passes.draw.gpu_ms(no-point-lights)` rises by no more than **0.15 ms** over the Stage 1 build:
+     the lookup's fixed cost with zero lights.
+   - **Frame p50** (reported, not a target of its own): expected **19–20 ms**, from 26.07 ms. Under the current
+     CPU/GPU serialization, `frame ≈ cpu_active + gpu_busy`, about 9.0 + 9.4–10.6 ms. The no-point-lights frame,
+     17.7 ms, is the floor.
+6. **S2-R6: contract verdicts and the counter change.** The gated CPU tier stays non-regressed:
+   - the cluster build costs **≤ 0.10 ms per frame** by its own zone;
+   - `cpu_active_ms` and `zones.RenderExtraction` stay within the gate's tolerance.
+
+   By design, **`uniform_write_bytes` grows by exactly the appended region's size.** The Plan states the exact value
+   once the grid is fixed: for example, 12×7×16 gives 2,672 + 32 + 10,752 = 13,456. Every other deterministic
+   counter stays identical. `fragment_invocations` may move by timing-dependent early-Z, as Stage 1 showed (+0.086 %).
+
+   **The implementation PR's pre-declared gate outcome is therefore `fail`, with `summary.regressed` exactly
+   `["uniform_write_bytes"]` at the declared value** (plus `fragment_invocations` only if it leaves its 0.1 %
+   tolerance), and the CPU tier ok. Any other regressed metric is a real failure.
+
+   After the merge, the owner instructs the **category-1 baseline refresh** (reason: performance change — the
+   clustered association adds a per-frame cluster upload of N bytes and cuts `L` by X ms), as its own PR. The gate
+   then passes against the refreshed baseline. No agent records or commits a baseline unprompted, and
+   `gate_policy.json` is not edited.
+7. **S2-R7: scope guard.** Threading (ADR-0004), module boundaries and the RenderGraph's role are unchanged, since
+   no new GPU work exists. No GPU-driven, geometry-culling or job-system element is introduced.
+
+### S2 design
+
+**CPU build** (Runtime extraction adapter, frame thread):
+1. Clear the masks.
+2. For each point light: compute the cluster index range its inflated sphere can touch (clip-space xy extent and
+   view-depth extent, conservatively), then set bit `j` in every cluster in that range whose world-space bounds the
+   inflated sphere intersects.
+3. Write the header and masks into the block region.
+
+For 59 lights this is a few thousand box tests and a ~13 KB write. The ≤ 0.10 ms budget (S2-R6) is measured, not
+assumed.
+
+**Shader** (the four looping PBR shaders; normative shape, names illustrative):
+
+```
+float4 clip  = mul(camera.projection, mul(camera.view, float4(input.worldPosition, 1.0)));
+float  viewZ = -mul(camera.view, float4(input.worldPosition, 1.0)).z;
+uint   c     = clusterIndex(clip.xy / clip.w, viewZ);           // clamped into the grid
+uint2  mask  = loadClusterMask(c);                               // from the appended region
+for (each set bit j of mask, low word then high word, low bit first) {
+    ... Stage 1's per-light body, unchanged, including `if (NdotL > 0.0 && atten > 0.0)` ...
+}
+```
+
+**Equivalence analysis: the sorted-superset claim.** The claim is that a conservative, index-sorted cluster list,
+with out-of-range fragments still skipped by Stage 1's range check, reproduces the same summation terms in the same
+order, and therefore inherits Stage 1's bit-exactness proof. **It holds, under three conditions the design makes
+explicit.**
+
+- *The argument.* Stage 1 adds, in ascending `j`, the term of every light with `NdotL_j > 0 ∧ atten_j > 0`, and
+  nothing else. Every other light's term would be exactly `+0` (R2's proof, mechanised in Plan 0061 M2).
+  - Let the cluster's set `S` contain every `j` with `atten_j > 0` at this fragment.
+  - The clustered loop then visits each such `j` and applies the same predicate, so it adds exactly those terms.
+  - Any extra `j ∈ S` has `atten_j = 0` and is skipped by the same predicate.
+  - It visits `S` in ascending order, and the per-light expression is unchanged in source.
+
+  The sequence of floating-point additions is therefore identical, term for term and in order, so the result is
+  bitwise identical under the language's floating-point semantics. No new numerical argument is needed.
+- *Condition 1: conservative against the device's arithmetic, not exact geometry.* `atten_j > 0` is decided by the
+  device, which computes `dist` with its own `length`, `max` and division (Vulkan allows 2.5 ULP for division). An
+  exact sphere-versus-box test could exclude a light whose true distance is a hair over `range`, but whose
+  device-computed `atten` comes out tiny and positive. The inflation `range · (1 + 10⁻³) + 0.01 m` exceeds any such
+  rounding by orders of magnitude at Bistro's scale.
+- *Condition 2: the fragment lies inside its assigned cluster's bounds.* The cluster is computed from the same
+  `worldPosition` the light computation uses, re-projected with the frame's own matrices. The only discrepancy is
+  rounding in that re-projection at cluster faces, which the 0.01 m margin absorbs. The near slice begins at the near
+  plane, the last slice ends at the far plane, and indices are clamped, so every fragment that survives clipping has
+  a cluster. Helper lanes may extrapolate outside, but they write nothing.
+- *Condition 3: the same per-light expression.* Only the source of `j` changes (a bit scan instead of a counter).
+  Driver code generation inside the body could still differ. That is the one point Stage 1's argument never bound,
+  and it is checked exactly as in Stage 1: goldens, full-frame captures, and the all-lights control.
+
+These conditions also give the GPU-free tests (S2-T2) their exact property: for any fragment inside the frustum,
+every light with device-semantics `atten > 0` is in its cluster's mask.
+
+**The all-lights control** is the clustered build with every cluster's mask set to all lights. It is both the
+Outcome B diagnostic and a cost probe: it measures the new loop structure and lookup without any culling.
+
+### S2 checkpoint and decision table (thresholds fixed before measuring)
+
+Stage 2 is implemented first as an end-to-end **prototype** (builder, carrier and shader path, Runtime path only),
+measured interleaved against the Stage 1 build, before the fixture, cross-check and polish work. The checkpoint
+reports `L`, the no-point-lights control, the all-lights control, the cluster-build zone, and the full-frame
+captures:
+
+| Row | Prototype finding | Meaning | Consequence |
+|---|---|---|---|
+| A | `L` ≤ 2.0 ms; all-lights control frame byte-identical to Stage 1, and its `draw` time ≤ Stage 1's + 0.5 ms | Works as designed | Continue to merge-ready work. |
+| B | 2.0 < `L` ≤ 4.0 ms | Works, but misses the target | One grid re-selection within the S2-Inv-2 budget is allowed; then report, and continue only on the owner's go. |
+| C | `L` > 4.0 ms (abort line), **or** the all-lights control is slower than Stage 1 by more than 0.5 ms, **or** the cluster build exceeds 0.10 ms | The structure or its overhead does not pay | Stop. No merge. Revision 1 returns to review. |
+
+A moved golden or capture at any point enters S2-R2's procedure, independent of the row.
+
+### S2 testing and verification
+
+- **S2-T1, checkpoint report (S2-R5):** the decision table's inputs, with commands and session layout (the
+  checkpoint precedes the merge-ready work, like Phase 1).
+- **S2-T2, GPU-free tests (S2-R1, S2-R2, S2-R3):**
+  - **Builder conservativeness:** fragments sampled inside every cluster's frustum region, including faces,
+    corners and the near and far slices, for Bistro's lights and seeded random lights. Every light whose
+    shader-transcribed `atten > 0` is in the mask of the cluster that the shader-transcribed assignment picks.
+  - **Loop equivalence:** a clustered-loop transcription equals Stage 1's loop transcription bitwise over Plan
+    0061's M2 corpus plus frustum-sampled fragments.
+  - **Layout:** `static_assert`s pin the region's offsets and the ≤ 16,384-byte total.
+  - **The all-lights fill** equals Stage 1 bitwise.
+- **S2-T3, goldens (S2-R2):** all 67×2 byte-identical, in Debug and Release and in config B.
+- **S2-T4, full-frame captures (S2-R2):** Bistro at three viewpoints, byte-identical to the Stage 1 build:
+  - the benchmark camera;
+  - a street-level view inside the string-light runs;
+  - a view facing the neon signage.
+
+  The latter two are set with `property set` over the CLI before `runtime step --capture`. The all-lights control
+  is captured at the same viewpoints.
+- **S2-T5, reflection (S2-R3):** the 11/11 cross-check extended to the new region, green.
+- **S2-T6, performance (S2-R5, S2-R6):**
+  - interleaved four-arm before/after: {Stage 1, Stage 2} × {`baseline`, `no-point-lights`};
+  - the cluster-build zone;
+  - `--gate --json` with its pre-declared `fail` on `uniform_write_bytes` alone;
+  - `--gate --applies`.
+- **S2-T7, Validation Layers, platforms and diff review:**
+  - the fatal-validation GPU suites, which check that the bound range covers the grown block;
+  - one Debug Bistro benchmark with validation on;
+  - Android `assembleDebug`, logging the emulator's `maxUniformBufferRange` if cheap (Spec 0040 R2);
+  - a diff limited to the Plan's file list.
+
+### S2 risks
+
+- **Lane-divergent masks.** A wave straddling clusters runs to its longest mask, with divergent light-array
+  indices. Measured by the checkpoint (rows B and C); Q8 holds the remedy in reserve.
+- **Budget tightness.** The grid and header must stay ≤ 16,384 bytes forever after. A future block addition competes
+  with the masks for the same budget.
+- **Over-conservative margins** inflate per-cluster counts at grazing views. The cost is measured, and correctness
+  is unaffected.
+- **Fixture churn.** Every writer listed in S2-Inv-3 must fill the region. The all-lights fill keeps that
+  mechanical, and S2-T5 and the goldens catch a missed declaration.
+- **Code-generation drift in the new loop** moves a golden. S2-R2's control isolates it, and Outcome B is bounded.
+- **One machine.** Interleaved arms control the machine state, as in Stage 1. Android stays unmeasured.
+
+### S2 open questions for the owner
+
+- **Q6: the carrier.** (a) The appended camera-block region (ADR-0122 D2); (b) a storage buffer (an RHI ADR); (c) a
+  second uniform at a new binding index. **Recommend (a):** no RHI change, and 64 lights fit the guarantee. (b) is
+  the path if `kMaxPointLights` or the grid must grow.
+- **Q7: the grid.** The Plan fixes it from S2-Inv-2's candidates by the checkpoint. **Recommend 12×7×16 as the
+  starting point** (1.39 mean, 10,752 bytes, leaving about 3 KB of the block budget free), with row B's one
+  re-selection as the tuning allowance.
+- **Q8: wave-uniform iteration** with subgroup OR. Excluded now, reopened only if rows B or C attribute the miss to
+  divergence, and then with a capability gate in its own ADR. **Recommend excluding it from this revision.**
+- **Q9: the thresholds** (S2-R5, the decision table). Target ≤ 2.0 ms, expectation 0.7–1.5 ms, abort > 4.0 ms,
+  no-point-lights control ≤ +0.15 ms, all-lights control ≤ +0.5 ms, cluster build ≤ 0.10 ms. Are these the numbers?
+- **Q10: gate sequencing.** (a) Merge the implementation PR with its pre-declared `fail` on `uniform_write_bytes`
+  alone, then the owner-instructed category-1 refresh (the owner's stated flow); (b) record the candidate baseline
+  from the implementation branch and merge it in a dedicated PR immediately after. **Recommend (a)**, as directed.
+- **Q11: the pending Stage 1 baseline follow-ups** (Q4a, the category-1 refresh; Q4b, the no-point-lights
+  baseline). Stage 2 changes `uniform_write_bytes` for both variants, so a baseline recorded now is retired at Stage
+  2's merge. **Recommend folding both into one refresh after Stage 2 merges.**
 
 ## Architectural Impact
 
@@ -374,6 +666,17 @@ Relationship to existing decisions:
   why it needs its own ADR.
 
 No module boundary, dependency, public API, threading model or ownership model changes.
+
+**Revision 1 (Stage 2).** One further decision, recorded in
+[ADR-0122](../adr/0122-clustered-light-association.md) (`Proposed`): **the clustered light association**. A
+CPU-built 64-bit mask per cluster, rebuilt each frame on the frame thread, travels in a region appended to the
+existing camera uniform block (≤ 16,384 bytes). Shaders map `worldPosition` to its cluster and iterate the mask in
+ascending order, keeping Stage 1's predicate. It supersedes ADR-0121 D3, which had adopted no structure (its
+reopening condition was met by measurement), and builds on ADR-0121 D1, D2 and D4. It supersedes ADR-0088 D3's
+sizing (still one uniform buffer), couples ADR-0088 D4's `kMaxPointLights` to the mask width, and further
+supersedes D5. There is no RHI, binding, descriptor, RenderGraph or Renderer API change, and no module boundary,
+dependency, threading or ownership change. The data flow changes: a new per-frame region, and `uniform_write_bytes`
+grows (S2-R6).
 
 ## Alternatives Considered
 
@@ -481,7 +784,8 @@ Definition of Done.
 
 ## Out of Scope / Future Work
 
-- **Stage 2 light-association structures** (P), (K) and (G), under R7 and ADR-0121's reopening conditions.
+- **Beyond Revision 1:** a storage-buffer carrier, for more than 64 lights or a finer grid (ADR-0122's deferred
+  alternative); wave-uniform iteration (Q8); per-draw masks (P) and compute-built lists (G), both rejected for now.
 - **Overdraw reduction:** a depth prepass, or front-to-back opaque ordering. 2.86 shaded fragments per pixel
   multiply every per-fragment cost, lighting included. This needs its own Spec, since it changes pass structure and
   counters.
