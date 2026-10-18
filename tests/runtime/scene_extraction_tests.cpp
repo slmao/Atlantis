@@ -1176,7 +1176,21 @@ TEST_CASE("FogData: the camera uniform grows by exactly one 32-byte FogData tail
   STATIC_REQUIRE(atlantis::runtime::kCameraUniformFogOffsetBytes ==
                  atlantis::runtime::kCameraUniformLightSpaceOffsetBytes + 128);
   STATIC_REQUIRE(atlantis::runtime::kCameraUniformFogOffsetBytes % 16 == 0);
-  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes ==
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformClusterOffsetBytes ==
                  atlantis::runtime::kCameraUniformFogOffsetBytes + sizeof(atlantis::runtime::FogData));
-  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes == 2544);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformClusterOffsetBytes == 2544);
+}
+
+// Plan 0061 Stage 2 (Plan P2, ADR-0122 D2): the cluster region closes the block -- 32 header bytes plus one
+// 64-bit mask per cluster, within the Vulkan-guaranteed 16 KB uniform range; uniform_write_bytes is the block
+// plus the 128-byte light-space buffer (runtime_application.cpp), 13,456 at 12x7x16.
+TEST_CASE("ClusterLightData: the camera uniform ends with the cluster region, within the guaranteed 16 KB",
+          "[runtime][scene_extraction][clustered-lights]") {
+  STATIC_REQUIRE(atlantis::runtime::kClusterCount == 12 * 7 * 16);
+  STATIC_REQUIRE(sizeof(atlantis::runtime::ClusterLightData) == 32 + 8 * 1344);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes ==
+                 atlantis::runtime::kCameraUniformClusterOffsetBytes + sizeof(atlantis::runtime::ClusterLightData));
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes == 13328);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes <= 16384);
+  STATIC_REQUIRE(atlantis::runtime::kCameraUniformBufferSizeBytes + 128 == 13456);  // declared uniform_write_bytes
 }

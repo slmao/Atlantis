@@ -1614,6 +1614,16 @@ void RuntimeApplication::runFrame() {
   auto* fogData = reinterpret_cast<FogData*>(cameraData + kCameraUniformFogOffsetBytes / sizeof(float));
   *fogData = extractFogData(cameraComponent.fog);
 
+  // Plan 0061 Stage 2 (ADR-0122 D1-D2): the cluster masks, built on this thread from the lighting and
+  // camera matrices written above, into the region after FogData.
+  {
+    ATL_PROFILE_SCOPE("ClusterBuild");
+    // Built into a CPU-side local, then copied once: the mapped block is only ever written, never read back.
+    const ClusterLightData clusterLightData =
+        buildClusterLightData(lightingResult.value(), extractionResult.value());
+    std::memcpy(cameraData + kCameraUniformClusterOffsetBytes / sizeof(float), &clusterLightData, sizeof(clusterLightData));
+  }
+
   // Plan 0015 Section D10: knownMeshAssetIds is meshResourceMap_'s own
   // key set, collected once per frame (not once per entity) -- passed
   // to resolveMeshAsset() for the membership check; meshResourceMap_

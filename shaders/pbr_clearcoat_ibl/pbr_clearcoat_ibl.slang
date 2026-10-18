@@ -68,6 +68,12 @@ struct CameraUniform {
     float4x4 lightSpaceProjection;
     // Plan 0043: density 0 means fog off (every writer writes this tail).
     FogData fog;
+    // Plan 0061 Stage 2 (ADR-0122 D2): the cluster light masks after FogData, mirroring
+    // scene_extraction.h's ClusterLightData -- cluster c's 64-bit mask is clusterMasks[c / 2].xy
+    // (c even) or .zw (c odd); grid 12x7x16 = 1344 clusters, 672 uint4.
+    uint4 clusterGrid;
+    float4 clusterSlicing;
+    uint4 clusterMasks[672];
 };
 
 [[vk::binding(0, 0)]]

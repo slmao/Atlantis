@@ -5,7 +5,10 @@
 #include <atlantis/world/world_matrix.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 namespace atlantis::runtime {
@@ -502,6 +505,155 @@ Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal
   }
 
   return accumulated;
+}
+
+// Plan 0061 Stage 2 (ADR-0122 D1, D4): the cluster masks.
+namespace {
+
+struct ClusterFrame {
+  Vec3 eye, right, up, back;   // camera basis, from the view matrix's rows
+  float sx = 0.0f, sy = 0.0f;  // ndc.x = sx * vx / depth, ndc.y = sy * vy / depth (sy < 0: y flipped)
+  float zNear = 0.0f, zFar = 0.0f;
+  std::array<float, kClusterGridZ + 1> sliceBound{};  // slice k spans [sliceBound[k], sliceBound[k + 1]]
+};
+
+ClusterFrame clusterFrameOf(const CameraMatrices& camera, ClusterLightData& data) {
+  const Mat4& v = camera.view;
+  const Mat4& p = camera.projection;
+  ClusterFrame f;
+  f.right = {v[0], v[4], v[8]};
+  f.up = {v[1], v[5], v[9]};
+  f.back = {v[2], v[6], v[10]};
+  f.eye = {-(v[12] * f.right.x + v[13] * f.up.x + v[14] * f.back.x),
+           -(v[12] * f.right.y + v[13] * f.up.y + v[14] * f.back.y),
+           -(v[12] * f.right.z + v[13] * f.up.z + v[14] * f.back.z)};
+  f.sx = p[0];
+  f.sy = p[5];
+  // perspectiveMatrix(): p[10] = far / (near - far), p[14] = near * far / (near - far).
+  f.zNear = p[14] / p[10];
+  f.zFar = p[14] / (p[10] + 1.0f);
+  const float z1 = kClusterNearSliceFarZ;
+  const float logScale = static_cast<float>(kClusterGridZ - 1) / std::log(f.zFar / z1);
+  data.slicing[0] = f.zNear;
+  data.slicing[1] = z1;
+  data.slicing[2] = f.zFar;
+  data.slicing[3] = logScale;
+  // The shader's slice function, z = d < z1 ? 0 : clamp(1 + floor(ln(d / z1) * logScale), 1, Cz - 1), gives
+  // slice k >= 1 the depths [z1 * e^((k - 1) / logScale), z1 * e^(k / logScale)); the outer ends widen by 1e-3
+  // so the first and last slices hold every fragment that survives clipping.
+  f.sliceBound[0] = std::min(f.zNear, z1) * (1.0f - 1e-3f);
+  for (std::uint32_t k = 1; k < kClusterGridZ; ++k) {
+    f.sliceBound[k] = z1 * std::exp(static_cast<float>(k - 1) / logScale);
+  }
+  f.sliceBound[kClusterGridZ] = std::max(f.zFar, z1) * (1.0f + 1e-3f);
+  return f;
+}
+
+// Tile index of an ndc coordinate, clamped into [0, count - 1].
+std::uint32_t tileOf(float ndc, std::uint32_t count) {
+  const float t = std::floor((ndc * 0.5f + 0.5f) * static_cast<float>(count));
+  return static_cast<std::uint32_t>(std::clamp(t, 0.0f, static_cast<float>(count - 1)));
+}
+
+void setMaskBit(ClusterLightData& data, std::uint32_t cluster, std::uint32_t light) {
+  data.masks[2 * cluster + (light >> 5)] |= 1u << (light & 31u);
+}
+
+}  // namespace
+
+ClusterLightData buildClusterLightData(const FrameLightingData& lighting, const CameraMatrices& camera) {
+  ClusterLightData data;
+  const ClusterFrame f = clusterFrameOf(camera, data);
+  if (lighting.pointLightCount == 0) return data;
+
+  // The tile boundaries' half-spaces. A cluster lies in ndc.x >= L, i.e. sx * vx - L * depth >= 0 for depth > 0
+  // (a plane through the eye); likewise for y with sy. The planes' unit-normal scale is 1 / sqrt(k^2 + L^2).
+  std::array<float, kClusterGridX + 1> boundX{}, scaleX{};
+  std::array<float, kClusterGridY + 1> boundY{}, scaleY{};
+  for (std::uint32_t i = 0; i <= kClusterGridX; ++i) {
+    boundX[i] = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(kClusterGridX);
+    scaleX[i] = 1.0f / std::sqrt(f.sx * f.sx + boundX[i] * boundX[i]);
+  }
+  for (std::uint32_t i = 0; i <= kClusterGridY; ++i) {
+    boundY[i] = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(kClusterGridY);
+    scaleY[i] = 1.0f / std::sqrt(f.sy * f.sy + boundY[i] * boundY[i]);
+  }
+
+  // A slice's screen bounds that lie wholly outside the viewport by more than this contribute no cluster.
+  constexpr float kNdcSlack = 1e-3f;
+  for (std::uint32_t j = 0; j < lighting.pointLightCount; ++j) {
+    const auto& pl = lighting.pointLights[j];
+    const float radius = pl.range * (1.0f + 1e-3f) + 0.01f;  // ADR-0122 D4
+    const Vec3 rel{pl.position[0] - f.eye.x, pl.position[1] - f.eye.y, pl.position[2] - f.eye.z};
+    const float vx = dot(rel, f.right);
+    const float vy = dot(rel, f.up);
+    const float depth = -dot(rel, f.back);
+    const float dNear = depth - radius;
+    const float dFar = depth + radius;
+    if (dFar < f.sliceBound[0] || dNear > f.sliceBound[kClusterGridZ]) continue;
+
+    // Tile columns and rows the sphere can reach: it must meet both bounding half-spaces of the tile (a
+    // necessary condition for meeting the cluster, so conservative).
+    std::array<bool, kClusterGridX> columnReached{};
+    std::array<bool, kClusterGridY> rowReached{};
+    float previous = (f.sx * vx - boundX[0] * depth) * scaleX[0];
+    for (std::uint32_t x = 0; x < kClusterGridX; ++x) {
+      const float next = (f.sx * vx - boundX[x + 1] * depth) * scaleX[x + 1];
+      columnReached[x] = previous >= -radius && next <= radius;
+      previous = next;
+    }
+    previous = (f.sy * vy - boundY[0] * depth) * scaleY[0];
+    for (std::uint32_t y = 0; y < kClusterGridY; ++y) {
+      const float next = (f.sy * vy - boundY[y + 1] * depth) * scaleY[y + 1];
+      rowReached[y] = previous >= -radius && next <= radius;
+      previous = next;
+    }
+
+    // Candidate slices: every slice whose depth range meets [dNear, dFar].
+    std::uint32_t zMin = 0;
+    while (zMin + 1 < kClusterGridZ && f.sliceBound[zMin + 1] < dNear) ++zMin;
+    std::uint32_t zMax = zMin;
+    while (zMax + 1 < kClusterGridZ && f.sliceBound[zMax + 1] <= dFar) ++zMax;
+
+    for (std::uint32_t z = zMin; z <= zMax; ++z) {
+      // The part of the sphere inside slice z lies in the box [vx +- r] x [vy +- r] x [a, b]; its screen bounds
+      // are that box's extreme ratios. a >= sliceBound[0] > 0, so the ratios are always defined.
+      const float a = std::max(f.sliceBound[z], dNear);
+      const float b = std::min(f.sliceBound[z + 1], dFar);
+      const float xs[4] = {f.sx * (vx - radius) / a, f.sx * (vx - radius) / b, f.sx * (vx + radius) / a,
+                           f.sx * (vx + radius) / b};
+      const float ys[4] = {f.sy * (vy - radius) / a, f.sy * (vy - radius) / b, f.sy * (vy + radius) / a,
+                           f.sy * (vy + radius) / b};
+      const float xLo = std::min(std::min(xs[0], xs[1]), std::min(xs[2], xs[3]));
+      const float xHi = std::max(std::max(xs[0], xs[1]), std::max(xs[2], xs[3]));
+      const float yLo = std::min(std::min(ys[0], ys[1]), std::min(ys[2], ys[3]));
+      const float yHi = std::max(std::max(ys[0], ys[1]), std::max(ys[2], ys[3]));
+      if (xHi < -1.0f - kNdcSlack || xLo > 1.0f + kNdcSlack || yHi < -1.0f - kNdcSlack || yLo > 1.0f + kNdcSlack) {
+        continue;
+      }
+      const std::uint32_t xMin = tileOf(xLo, kClusterGridX), xMax = tileOf(xHi, kClusterGridX);
+      const std::uint32_t yMin = tileOf(yLo, kClusterGridY), yMax = tileOf(yHi, kClusterGridY);
+      for (std::uint32_t y = yMin; y <= yMax; ++y) {
+        if (!rowReached[y]) continue;
+        for (std::uint32_t x = xMin; x <= xMax; ++x) {
+          if (columnReached[x]) setMaskBit(data, x + kClusterGridX * (y + kClusterGridY * z), j);
+        }
+      }
+    }
+  }
+  return data;
+}
+
+ClusterLightData allLightsClusterLightData(const FrameLightingData& lighting, const CameraMatrices& camera) {
+  ClusterLightData data;
+  (void)clusterFrameOf(camera, data);
+  const std::uint32_t count = std::min(lighting.pointLightCount, kMaxPointLights);
+  const std::uint64_t all = count >= 64 ? ~std::uint64_t{0} : ((std::uint64_t{1} << count) - 1);
+  for (std::uint32_t c = 0; c < kClusterCount; ++c) {
+    data.masks[2 * c] = static_cast<std::uint32_t>(all);
+    data.masks[2 * c + 1] = static_cast<std::uint32_t>(all >> 32);
+  }
+  return data;
 }
 
 namespace {

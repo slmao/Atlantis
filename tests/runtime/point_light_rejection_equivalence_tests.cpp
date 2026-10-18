@@ -779,3 +779,56 @@ TEST_CASE("Clustered association, Condition 3 (order): the ascending mask walk e
   REQUIRE(allLightsMismatches == 0);
   REQUIRE(descendingMismatches > 0);
 }
+
+// Plan 0061 Stage 2 M3 (Plan P7, as ruled at the M1 checkpoint): the real builder against the conservativeness
+// property itself -- its masks are not compared bit for bit with the corner-AABB oracle, since the per-light
+// half-space test it uses (rev 3) is neither a subset nor a superset of the AABB test.
+static_assert(atlantis::runtime::kClusterGridX == kTestGridX && atlantis::runtime::kClusterGridY == kTestGridY &&
+              atlantis::runtime::kClusterGridZ == kTestGridZ);
+static_assert(atlantis::runtime::kClusterNearSliceFarZ == kTestNearSliceFarZ);
+
+TEST_CASE("buildClusterLightData(): its header matches the transcription, and its masks keep every reaching light; "
+          "a builder fed shrunk ranges is caught",
+          "[runtime][point-light-rejection][clustered-lights]") {
+  const ClusteredCorpus& c = clusteredCorpus();
+  const auto bits = [](float v) { return std::bit_cast<std::uint32_t>(v); };
+  std::vector<std::vector<std::uint64_t>> real;
+  std::vector<std::vector<std::uint64_t>> shrunk;
+  for (const TestClusterFrame& f : c.frames) {
+    for (const FrameLightingData& lighting : c.lightings) {
+      const atlantis::runtime::ClusterLightData data = atlantis::runtime::buildClusterLightData(lighting, f.camera);
+      REQUIRE(data.grid[0] == kTestGridX);
+      REQUIRE(data.grid[1] == kTestGridY);
+      REQUIRE(data.grid[2] == kTestGridZ);
+      REQUIRE(bits(data.slicing[0]) == bits(f.zNear));
+      REQUIRE(bits(data.slicing[1]) == bits(kTestNearSliceFarZ));
+      REQUIRE(bits(data.slicing[2]) == bits(f.zFar));
+      REQUIRE(bits(data.slicing[3]) == bits(f.logScale));
+      std::vector<std::uint64_t> masks(kTestClusterCount);
+      for (std::uint32_t cl = 0; cl < kTestClusterCount; ++cl) {
+        masks[cl] = data.masks[2 * cl] | (std::uint64_t{data.masks[2 * cl + 1]} << 32);
+        REQUIRE((masks[cl] & ~allLightsMask(lighting)) == 0);  // no bit at or past pointLightCount
+      }
+      real.push_back(std::move(masks));
+
+      FrameLightingData smaller = lighting;  // the deliberately wrong input: every range at 0.9x
+      for (std::uint32_t j = 0; j < smaller.pointLightCount; ++j) smaller.pointLights[j].range *= 0.9f;
+      const atlantis::runtime::ClusterLightData wrong = atlantis::runtime::buildClusterLightData(smaller, f.camera);
+      std::vector<std::uint64_t> wrongMasks(kTestClusterCount);
+      for (std::uint32_t cl = 0; cl < kTestClusterCount; ++cl) {
+        wrongMasks[cl] = wrong.masks[2 * cl] | (std::uint64_t{wrong.masks[2 * cl + 1]} << 32);
+      }
+      shrunk.push_back(std::move(wrongMasks));
+    }
+  }
+  std::size_t misses = 0, wrongMisses = 0;
+  for (const ClusteredCase& k : c.cases) {
+    const std::size_t set = k.frame * c.lightings.size() + k.fragment.lighting;
+    const std::uint32_t cluster = shaderClusterIndex(c.frames[k.frame], k.fragment.position);
+    const FrameLightingData& lighting = c.lightings[k.fragment.lighting];
+    if (!everyReachingLightInMask(k.fragment, lighting, real[set][cluster])) ++misses;
+    if (!everyReachingLightInMask(k.fragment, lighting, shrunk[set][cluster])) ++wrongMisses;
+  }
+  REQUIRE(misses == 0);
+  REQUIRE(wrongMisses > 0);
+}

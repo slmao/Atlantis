@@ -624,6 +624,11 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
   *reinterpret_cast<atlantis::runtime::FogData*>(cameraData + atlantis::runtime::kCameraUniformFogOffsetBytes /
                                                                    sizeof(float)) =
       atlantis::runtime::extractFogData(cameraComponent.fog);
+  // Plan 0061 Stage 2 (Plan P5): the cluster region, from the real builder, as the Runtime writes it.
+  const atlantis::runtime::ClusterLightData clusterLightData =
+      atlantis::runtime::buildClusterLightData(lightingResult.value(), extractionResult.value());
+  std::memcpy(cameraData + atlantis::runtime::kCameraUniformClusterOffsetBytes / sizeof(float), &clusterLightData,
+              sizeof(clusterLightData));
 
   const std::vector<RenderableExtractionInput> renderables = collectRenderables(*fixture.scene);
   const std::vector<atlantis::asset_system::AssetId> referencedMaterialIds =
