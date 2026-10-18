@@ -9,7 +9,8 @@
 </p>
 
 <p align="center"><em>Atlantis rendering the <a href="https://developer.nvidia.com/orca/amazon-lumberyard-bistro">Amazon Bistro</a> reference scene —
-glTF import, 64 point lights, emissive materials, alpha cutout, height fog, and bloom, in one frame.</em></p>
+glTF import, 59 point lights through a clustered light association, emissive materials, alpha cutout, height fog,
+and bloom, in one frame.</em></p>
 
 Atlantis is a long-term, real-time rendering engine written in C++20,
 built on a backend-independent RHI (currently Vulkan) and a RenderGraph,
@@ -29,7 +30,10 @@ status of every module.
   lighting (SH irradiance, prefiltered specular, DFG LUT), tangent-space
   normal mapping
 - Clearcoat, sheen (cloth), and anisotropy BRDF extensions
-- Up to 64 concurrent point lights + 1 directional light with shadow
+- Up to 64 point lights + 1 directional light with shadow; point lights are
+  associated per view-space cluster on the CPU (a 64-bit light mask per
+  cluster), so each fragment evaluates only the lights that can reach it —
+  with the image provably unchanged
 - Emissive materials (factor + texture)
 - Alpha blending and alpha testing (cutout) with back-to-front CPU
   draw-order sorting
@@ -44,12 +48,36 @@ status of every module.
 - A build-time Slang → SPIR-V shader pipeline
 - A deterministic authoring-source → runtime-artifact Asset System
 - Image-regression testing against human-reviewed golden images
-  (30+ goldens, zero tolerance)
+  (30 golden images, 67 comparisons per configuration, zero tolerance)
 
-**Sample scenes** — `--list-scenes` in the Runtime binary:
-integrated showcase (multi-object PBR), IBL material demo, normal-map
-demo, clearcoat/sheen/anisotropy showcase, transparency demo, fog demo,
-bloom demo, and the full Bistro reference scene.
+**Runtime, tools & SDKs**
+- A Runtime ECS world with GUID-stable identity, an asset catalog, schema
+  reflection, and an authoring scene baked into the runtime world
+- One client connection to a running Runtime — query, command, event and
+  transaction — with the `atlantis` CLI as its client; a Runtime started
+  with `--listen` is attachable over loopback (`atlantis.remote/1`)
+- A minimal editor (`--editor`: hierarchy, schema-generated inspector,
+  viewport, transform gizmo) built on Dear ImGui, as an ordinary client
+- Gameplay SDKs in C++ and C# (.NET 10, zero NuGet dependencies) with
+  typed bindings generated from the schema
+
+**Performance**
+- `ATL_PROFILE_*` instrumentation that compiles to nothing by default, GPU
+  timestamps and counters, RenderDoc-readable names, an optional Tracy sink
+- `atlantis_runtime --benchmark`: a fixed-resolution measured loop with a
+  versioned JSON report
+- A Performance Contract: `atlantis_runtime --gate` judges a change against
+  committed per-hardware baselines (counters exact, CPU gated, GPU
+  reported); see [docs/process/performance-contract.md](docs/process/performance-contract.md)
+- Measured under it: on the reference iGPU, Bistro's point-light cost went
+  from 10.19 to 0.61 ms and its median frame time from 27.97 to 18.96 ms
+  ([Spec 0061](docs/specs/0061-point-light-cost.md))
+
+**Sample scenes** — `--list-scenes` in the Runtime binary: integrated
+showcase (multi-object PBR), IBL material demo, normal-map demo,
+clearcoat/sheen/anisotropy showcase, and the full Bistro reference scene
+(once its content is fetched — see Building). The transparency, fog and
+bloom demos are image-regression scenes.
 
 iOS is a future target — backend undecided (MoltenVK vs. a native Metal
 RHI backend). Linux is not a target platform.
@@ -124,9 +152,17 @@ $env:VULKAN_SDK = 'C:\VulkanSDK\<version>'
 
 The Vulkan SDK is an external prerequisite installed separately, not a
 dependency this project downloads (see [ADR-0006](docs/adr/0006-dependency-management.md)'s
-external-system-dependency category). The unit test framework (Catch2 v3)
-remains the only dependency CMake fetches automatically, via
-`FetchContent` on first configure.
+external-system-dependency category). The remaining third-party libraries
+are fetched by CMake `FetchContent` on first configure, each pinned by
+version and hash: Catch2 v3 (tests), stb, Dear ImGui (the editor), cgltf
+(the host-only glTF importer) and, in a profiling build only, Tracy. The
+C# SDK builds only when a .NET 10 SDK is found.
+
+The Bistro scene's content is large and never committed. Fetch it once
+(pinned and SHA-256 verified), then re-configure:
+```
+tools/content/fetch_bistro.ps1
+```
 
 ```
 cmake -S . -B build
@@ -149,18 +185,21 @@ A bare `ctest` runs every registered test regardless of label, including
 the GPU-required ones — prefer the explicit `-LE gpu`/`-L gpu` commands
 above. See [tests/README.md](tests/README.md) for what each suite covers.
 
-Run the real product binary (see
-[docs/specs/0032-runtime-sample-scene-selection.md](docs/specs/0032-runtime-sample-scene-selection.md)
-for the `--scene`/`--list-scenes`/`--help` flags):
+Run the real product binary (`--help` lists every mode):
 ```
-build/src/runtime/Debug/atlantis_runtime.exe
+build/src/runtime/Debug/atlantis_runtime.exe --scene bistro
 ```
-(path varies by generator/configuration). See
-[examples/](examples/) for smaller, single-purpose demo programs.
+(path varies by generator/configuration). Beyond `--scene` and
+`--list-scenes`, it accepts `--listen <port>` (attachable by the
+`atlantis` CLI), `--editor`, and, in a profiling build
+(`-DATLANTIS_PROFILING=ON`), `--benchmark <scene>` and `--gate`; see
+[docs/process/profiling.md](docs/process/profiling.md) and
+[docs/process/performance-contract.md](docs/process/performance-contract.md).
+See [examples/](examples/) for smaller, single-purpose demo programs.
 
 ## Status
 
-Engineering-foundation stage. See [docs/specs/README.md](docs/specs/README.md) for
+In active development. See [docs/specs/README.md](docs/specs/README.md) for
 the full, authoritative registry of every Spec's status, its Plan, and
 its implementation PR(s).
 
