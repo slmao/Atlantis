@@ -4,7 +4,9 @@
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-11
 - **Related Plan(s):** [Plan 0060](../plans/0060-performance-contract.md)
-  (`Draft`; pending Joint Human Review).
+  (`Draft`; pending Joint Human Review) — implemented and merged, M1–M9 in
+  [PR #248](https://github.com/slmao/Atlantis/pull/248), the first baseline in
+  [PR #258](https://github.com/slmao/Atlantis/pull/258) (see the registry row and the Plan's status block).
 - **Approval:** slmao, 2026-10-11 (chat rulings on the ADR split and Q1, Q2, Q5,
   Q9, Q10, Q11, Q12; review of this Spec's own branch PR,
   [PR #246](https://github.com/slmao/Atlantis/pull/246), merged). The rulings are

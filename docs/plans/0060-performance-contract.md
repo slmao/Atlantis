@@ -16,6 +16,10 @@
 - **Joint Human Review:** pending — to be recorded here once the owner has
   reviewed this Plan and Spec 0060 together and explicitly authorized
   implementation.
+- **Implementation:** M1–M9 merged in [PR #248](https://github.com/slmao/Atlantis/pull/248); six Spec Corrections and
+  two follow-ups merged in [#250](https://github.com/slmao/Atlantis/pull/250)–[#257](https://github.com/slmao/Atlantis/pull/257);
+  the first committed baseline (M10) in [PR #258](https://github.com/slmao/Atlantis/pull/258). The repository holds no record
+  of this Plan's Joint Human Review, and this note does not write one.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
