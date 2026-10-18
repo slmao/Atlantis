@@ -11,7 +11,7 @@
     [ADR-0114](../adr/0114-profiling-api-build-configuration-and-recorder.md)
     (nearest-rank statistics), [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
     (the precedent), ADR-0106 (`atlantis.remote/1`), ADR-0001, ADR-0004.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Joint Human Review:** slmao, 2026-10-11 — reviewed this Plan and
   [Spec 0060](../specs/0060-performance-contract.md) together; **J1–J12 ruled as recommended** (chat rulings,
@@ -166,7 +166,7 @@ milestone is hard to change if any ruling differs.
   rulings above and Spec 0060's review PR #246.
 - `docs/specs/README.md`: the 0060 row updated (status, Plan link).
 
-The Plan stays `Draft` until the Joint Human Review.
+The Plan stayed `Draft` until the Joint Human Review recorded in the status block above.
 
 ## Pre-drafting reading (cited, not restated)
 
