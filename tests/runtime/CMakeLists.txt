@@ -59,6 +59,7 @@ add_executable(atlantis_runtime_tests
   gate_record_tests.cpp
   gate_applies_tests.cpp
   gate_canary_tests.cpp
+  point_light_rejection_equivalence_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_tests
@@ -105,6 +106,11 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
 target_compile_definitions(atlantis_runtime_tests PRIVATE
   ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
   ATLANTIS_GATE_ALL_TIERS_POLICY="${CMAKE_SOURCE_DIR}/tests/runtime/data/gate_policy_all_tiers.json"
+)
+# Plan 0061 M2 (P5): the equivalence test reads Bistro's point lights from the committed overlay
+# (lights only -- no content/bistro needed).
+target_compile_definitions(atlantis_runtime_tests PRIVATE
+  ATLANTIS_BISTRO_OVERLAY_SCENE_PATH="${CMAKE_SOURCE_DIR}/assets/bistro/bistro_overlay.scene.txt"
 )
 add_dependencies(atlantis_runtime_tests atlantis_asset_catalog)
 if(DEFINED ATLANTIS_bistro_scene_TARGET)

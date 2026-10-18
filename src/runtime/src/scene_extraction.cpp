@@ -496,7 +496,9 @@ Vec3 computePbrDirectLighting(const Vec3& worldPosition, const Vec3& worldNormal
     const Vec3 L = normalize(toLight, dist);
     const float atten = std::clamp(1.0f - dist / pl.range, 0.0f, 1.0f);
     const Vec3 radiance = vecScale(Vec3{pl.color[0], pl.color[1], pl.color[2]}, pl.intensity * atten);
-    accumulateLight(L, radiance);
+    // Plan 0061 M3 (ADR-0121 D1): the shaders' atten > 0 rejection; accumulateLight's own
+    // NdotL <= 0 return is the other half of their predicate.
+    if (atten > 0.0f) accumulateLight(L, radiance);
   }
 
   return accumulated;
