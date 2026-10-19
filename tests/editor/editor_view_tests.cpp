@@ -483,3 +483,128 @@ TEST_CASE("X toggles the Gizmo's space and Ctrl snaps while the Viewport is hove
   key(driver, Key::LeftCtrl, false);
   CHECK_FALSE(fixture.editor->gizmo().snap());
 }
+
+// --- Plan 0063 M4 (P8; Spec 0063 R9): Undo/Redo in the toolbar and on Ctrl+Z,
+// Ctrl+Y and Ctrl+Shift+Z -- not inside a text field, not during a drag -- and
+// the history's status line; scripted input, headless. -----------------------------
+
+namespace {
+
+using atlantis::editor::HistoryResult;
+
+// The Runtime applies what was submitted, then the editor runs one frame.
+void settleRound(Driver& driver, int count = 1) {
+  for (int i = 0; i < count; ++i) {
+    driver.fixture.runtime.frame();
+    driver.idle(1);
+  }
+}
+
+void chord(Driver& driver, Key k, bool shift = false) {
+  const KeyModifiers held{true, shift, false};
+  driver.frame({KeyChanged{Key::LeftCtrl, true, held}});
+  if (shift) driver.frame({KeyChanged{Key::LeftShift, true, held}});
+  driver.frame({KeyChanged{k, true, held}});
+  driver.frame({KeyChanged{k, false, held}});
+  if (shift) driver.frame({KeyChanged{Key::LeftShift, false, KeyModifiers{true, false, false}}});
+  driver.frame({KeyChanged{Key::LeftCtrl, false, KeyModifiers{}}});
+}
+
+// Light.intensity of the fixture's directional light, through the test's connection.
+[[nodiscard]] float sunIntensity(EditorFixture& fixture) {
+  auto& c = *fixture.connection;
+  const auto* light = text::findType(c.schema(), "Light");
+  REQUIRE(light != nullptr);
+  return std::get<float>(c.getProperty({kSun, light->id, fieldOf(c, "Light.intensity")}).value());
+}
+
+// Selects the sun and commits Light.intensity = value through the Inspector, settled.
+void editSun(Driver& driver, float value) {
+  auto& inspector = driver.fixture.editor->inspector();
+  std::size_t index = inspector.fields().size();
+  for (std::size_t i = 0; i < inspector.fields().size(); ++i) {
+    if (inspector.fields()[i].path == "Light.intensity") index = i;
+  }
+  REQUIRE(index < inspector.fields().size());
+  (void)inspector.commit(index, value);
+  settleRound(driver, 2);
+}
+
+}  // namespace
+
+TEST_CASE("Ctrl+Z undoes, Ctrl+Y and Ctrl+Shift+Z redo", "[editor][view][history]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  selectInHierarchy(driver, kSun);
+  editSun(driver, 6.0f);
+  REQUIRE(fixture.editor->history().canUndo());
+  chord(driver, Key::Z);
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 1.2f);
+  chord(driver, Key::Y);
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 6.0f);
+  chord(driver, Key::Z);
+  settleRound(driver, 2);
+  chord(driver, Key::Z, /*shift=*/true);
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 6.0f);
+}
+
+TEST_CASE("Ctrl+Z in a text field is the field's; during a Gizmo drag it is ignored", "[editor][view][history]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  selectInHierarchy(driver, kSun);
+  editSun(driver, 6.0f);
+  driver.click("hierarchy:filter");
+  chord(driver, Key::Z);
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 6.0f);
+  CHECK(fixture.editor->history().undoDepth() == 1);
+
+  // Leave the text field, then hold a drag on the mesh: Ctrl+Z does nothing.
+  driver.frame({KeyChanged{Key::Escape, true, KeyModifiers{}}});
+  driver.frame({KeyChanged{Key::Escape, false, KeyModifiers{}}});
+  selectInHierarchy(driver, kMesh);
+  auto& gizmo = fixture.editor->gizmo();
+  REQUIRE(gizmo.available());
+  gizmo.beginDrag(atlantis::editor::GizmoAxis::X);
+  chord(driver, Key::Z);
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 6.0f);
+  gizmo.endDrag();
+}
+
+TEST_CASE("the Undo and Redo buttons act only when enabled", "[editor][view][history]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  driver.idle(2);
+  REQUIRE(fixture.editor->widgetRect("toolbar:Undo").has_value());
+  driver.click("toolbar:Undo");  // nothing to undo
+  CHECK(fixture.editor->history().notice().empty());
+  selectInHierarchy(driver, kSun);
+  editSun(driver, 6.0f);
+  driver.click("toolbar:Undo");
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 1.2f);
+  CHECK(fixture.editor->history().canRedo());
+  driver.click("toolbar:Redo");
+  settleRound(driver, 2);
+  CHECK(sunIntensity(fixture) == 6.0f);
+}
+
+TEST_CASE("the status line tells why an undo was refused", "[editor][view][history]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  selectInHierarchy(driver, kSun);
+  editSun(driver, 6.0f);
+  auto other = fixture.endpoint.open();
+  const auto* light = text::findType(other->schema(), "Light");
+  (void)other->submit(access::SetProperty{{kSun, light->id, fieldOf(*other, "Light.intensity")}, 5.0f});
+  settleRound(driver);
+  chord(driver, Key::Z);
+  settleRound(driver);
+  CHECK(sunIntensity(fixture) == 5.0f);
+  CHECK(fixture.editor->history().notice().find("changed elsewhere") != std::string::npos);
+  CHECK(fixture.editor->widgetRect("status:history").has_value());
+}

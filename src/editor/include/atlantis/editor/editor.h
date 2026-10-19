@@ -119,7 +119,8 @@ class Editor {
   // "toolbar:Play|Pause|Step|Translate|Rotate|Scale", "viewport"; since Plan
   // 0062 also "toolbar:SceneCam|EditorCam|Align|World|Local|Markers" and
   // "hierarchy:filter-hidden" (the note shown when the filter hides the
-  // selection; its button clears the filter). Empty when
+  // selection; its button clears the filter); since Plan 0063 also
+  // "toolbar:Undo|Redo" and "status:history". Empty when
   // the widget was not drawn (scrolled away, collapsed).
   [[nodiscard]] std::optional<UiRect> widgetRect(std::string_view key) const;
 
