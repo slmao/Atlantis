@@ -246,8 +246,17 @@ derives from Platform's input events; its output is an engine-neutral UI draw
 list the host hands to Renderer's overlay pass. The `atlantis_runtime`
 executable hosts it (`--editor`) through an executable-private adapter
 (`src/runtime/editor_attachment.*`); `atlantis_runtime_host` never links it.
-Android builds the library but hosts no editor. See
-[ADR-0107](docs/adr/0107-editor-ui-library-selection.md)–[ADR-0109](docs/adr/0109-platform-input-events.md).
+Android builds the library but hosts no editor. Since Spec 0062 (E1, ADR-0123)
+the editor camera is the editor's own state, never written to the World: the
+host also gives it the scene camera's pose and lens and the answers to its pick
+request and bounds subject, and takes back the Viewport camera, a pick request
+(a world ray) and a bounds subject — plain values, request/response, one frame
+deferred. Picking and bounds are `RuntimeApplication` services
+(`pickRenderable()`, `renderableLocalBounds()`) over CPU mesh geometry kept only
+under `BootstrapConfig::retainPickGeometry` (set by `--editor` alone); they are
+not World verbs and nothing reaches them over Atlantis Remote. See
+[ADR-0107](docs/adr/0107-editor-ui-library-selection.md)–[ADR-0109](docs/adr/0109-platform-input-events.md)
+and [ADR-0123](docs/adr/0123-editor-viewport-camera-and-picking-host-services.md).
 
 Atlantis Gameplay SDK (Spec 0057, `Approved`) is a client library over
 `RuntimeConnection`: a reflective layer (types and fields by name or id,
@@ -302,7 +311,10 @@ it). Since Spec 0056 `RuntimeApplication` accepts a frame overlay
 differs in exactly four named places (ADR-0108 D4) — the scene renders into a
 sampleable offscreen Viewport target and the overlay's UI is drawn over the
 swapchain image — and the `atlantis_runtime` executable alone links Atlantis
-Editor to host it (`--editor`). Runtime owns the loaded scene's bake
+Editor to host it (`--editor`). Since Spec 0062 a fifth named place (ADR-0123
+D1) draws the Viewport from the overlay's camera when it supplies a usable one
+(exposure, fog and bloom stay the active camera's); the capture path follows
+the drawn camera. Runtime owns the loaded scene's bake
 output (`world::BakedScene`, Spec 0051) and is the sole place a
 `World`-driven scene is turned into `atlantis::renderer::DrawItem`s, via a
 Runtime-private extraction adapter (`scene_extraction.h`/`.cpp`) — not a
@@ -339,8 +351,11 @@ it adds no module, no dependency and no public API. The
 `runFrame()` diff guard now reads: identical to its base text except added
 `ATL_PROFILE_*` lines, `debugName` members and, since Spec 0061 Stage 2
 (PR #266), the ten lines of the cluster-mask build and region write
-(`runtime_application.cpp:1617–1626`, under the `ClusterBuild` zone); a
-further frame-path change enumerates its `runFrame()` lines in its PR.
+(`runtime_application.cpp:1621–1630` since Spec 0062, under the `ClusterBuild`
+zone) and, since Spec 0062, the three camera lines of the overlay's place 5
+(`runtime_application.cpp:1477–1479`: the `frameCamera` choice and the two reads
+that take it); a further
+frame-path change enumerates its `runFrame()` lines in its PR.
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle
 abstraction — it is to *operating systems* what RHI is to *graphics

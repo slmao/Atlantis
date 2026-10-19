@@ -874,7 +874,8 @@ Renderer header (both checked by `tests/cli/cli_boundary_tests.cpp`).
 **Status: Approved** (Spec 0056,
 [ADR-0107](../adr/0107-editor-ui-library-selection.md),
 [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md),
-[ADR-0109](../adr/0109-platform-input-events.md)).
+[ADR-0109](../adr/0109-platform-input-events.md); Spec 0062,
+[ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md)).
 
 **Responsibilities:** the minimal editor (`atlantis::editor`) — a flat
 Hierarchy kept current by events, an Inspector generated from the schema's
@@ -882,14 +883,21 @@ descriptors, a Viewport showing the Runtime's own rendering, and a Transform
 Gizmo writing `WorldMatrix` as one transaction per frame — as one more
 ordinary client: every World access through `RuntimeConnection`, play / pause
 / step through `RuntimeControl`. UI-free models (`model/`) under a Dear ImGui
-view layer (`src/view/`, one ImGui context per `Editor`).
+view layer (`src/view/`, one ImGui context per `Editor`). Since Spec 0062 (E1):
+an editor camera with orbit, pan, dolly and fly navigation (client state, never
+written to the World), Viewport picking (markers for lights and cameras
+client-side, geometry through the host), selection sync and the Gizmo's
+world/local space and snapping.
 
 **Depends on:** Atlantis Connection and the UI library (`ImGui::ImGui`, Dear
 ImGui's four core sources, pinned; no stock backend) only — no Runtime, ECS,
 Platform, RHI, Renderer, Vulkan or OS include; UI-library headers only under
 `src/view/` (checked by `tests/editor/editor_boundary_tests.cpp`). Input is
 the editor's own plain values; output an engine-neutral UI draw list and the
-Viewport size it wants.
+Viewport size it wants. Since Spec 0062 (ADR-0123 D3) the host also passes in
+the scene camera's pose and lens and the answers to the last pick request and
+bounds subject, and takes the Viewport camera, a pick request and a bounds
+subject back — plain values, one frame deferred, no callback.
 
 **Depended on by:** the `atlantis_runtime` executable (`--editor`), through
 the executable-private `src/runtime/editor_attachment.*`; never
@@ -1072,7 +1080,10 @@ Shader System (both targets), Asset System, World, Core, and — since Spec
 endpoint); the `atlantis_runtime` executable alone also links Atlantis CLI,
 which it hosts (`--exec`), and — since Spec 0055 — Atlantis Remote's server
 half (`--listen`), and — since Spec 0056 — Atlantis Editor (`--editor`),
-attached as the frame's overlay (`FrameOverlay`, ADR-0108 D4). Since Spec 0055
+attached as the frame's overlay (`FrameOverlay`, ADR-0108 D4; since Spec 0062
+the overlay may also supply the Viewport's camera, ADR-0123 D1, and
+`RuntimeApplication` answers its picks and bounds over CPU mesh geometry kept
+only under `BootstrapConfig::retainPickGeometry`, ADR-0123 D2). Since Spec 0055
 `atlantis_runtime_host` also links the existing `Stb::Stb` (PRIVATE; frame
 captures written as PNG). **Not** RenderGraph as a link dependency — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally; the few one-pass graphs
