@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace atlantis::runtime {
@@ -90,15 +91,37 @@ void EditorAttachment::update() {
     context.deltaSeconds = std::clamp(std::chrono::duration<float>(now - *lastUpdate_).count(), 1e-4f, 1.0f);
   }
   lastUpdate_ = now;
-  // J7: the frame data walks every draw item (milliseconds on Bistro), so the
-  // camera is computed only while a Gizmo is shown.
-  if (editor_->wantsCamera()) {
-    auto frame = application_.captureFrameData();
-    if (frame.isOk()) context.camera = editor::CameraMatrices{frame.value().view, frame.value().projection};
+  // Plan 0062 P3 (J4): the scene camera's pose and lens -- no draw-item walk.
+  if (const std::optional<ActiveCameraInput> scene = application_.activeCameraPose(); scene.has_value()) {
+    context.sceneCamera = editor::CameraPose{
+        scene->worldMatrix, editor::CameraLens{scene->camera.fovYRadians, scene->camera.nearZ, scene->camera.farZ}};
   }
+  context.pickAnswer = std::exchange(pickAnswer_, std::nullopt);
+  context.selectionBounds = selectionBounds_;
   editor_->frame(pending_, context);
   pending_.clear();
   toRendererDrawList(editor_->drawList(), drawList_);
+
+  // Plan 0062 P3/P8 (ADR-0123 D2, D3): this frame's requests, answered now,
+  // between frames, and handed to the next editor frame.
+  if (const std::optional<editor::PickRequest>& request = editor_->pickRequest(); request.has_value()) {
+    const std::optional<PickHit> hit =
+        application_.pickRenderable(PickRay{request->ray.origin, request->ray.direction});
+    pickAnswer_ = editor::PickAnswer{request->id, hit.has_value() ? std::optional(hit->entity) : std::nullopt,
+                                     hit.has_value() ? hit->distance : 0.0f};
+  }
+  selectionBounds_.reset();
+  if (const std::optional<atlantis::asset_system::EntityGuid> subject = editor_->boundsSubject(); subject.has_value()) {
+    if (const std::optional<LocalBounds> bounds = application_.renderableLocalBounds(*subject); bounds.has_value()) {
+      selectionBounds_ = editor::SelectionBounds{*subject, bounds->min, bounds->max};
+    }
+  }
+}
+
+std::optional<ViewportCameraOverride> EditorAttachment::viewportCamera() const {
+  const std::optional<editor::CameraPose> pose = editor_->viewportCamera();
+  if (!pose.has_value()) return std::nullopt;
+  return ViewportCameraOverride{pose->worldMatrix, pose->lens.fovYRadians, pose->lens.nearZ, pose->lens.farZ};
 }
 
 atlantis::rhi::Extent2D EditorAttachment::viewportExtent() const {

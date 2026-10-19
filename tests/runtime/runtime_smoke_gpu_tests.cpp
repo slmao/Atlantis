@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -1497,6 +1498,261 @@ TEST_CASE("Editor north star: Bistro's point light 6b63b12c 12 to 24, and the ca
                        std::array<float, 3>{-39.615f, 3.255f, -5.032f}, /*imageChanges=*/false);
     runEditorNorthStar(host, "425c3b17-dcac-4148-831c-22a454829357", 4.5f, 9.0f,
                        std::array<float, 3>{-7.966f, 3.42f, 9.084f});
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+#endif
+}
+
+// --- Plan 0062 M6 (Spec 0062 north star; R1-R7): the editor camera, a click
+// that picks through the host, selection sync, the bounds box, a snapped Local
+// rotation and F, end to end with the editor attached, under fatal Validation
+// Layers. Input reaches the editor as Platform events, injected after each
+// frame's own pump so the window's real pointer cannot interleave. ---------------
+
+namespace {
+
+namespace platform = atlantis::platform;
+
+// One atlantis_runtime loop iteration, with `events` delivered to the editor
+// after the frame's own Platform pump.
+void frameWith(EditorHost& host, const std::vector<platform::PlatformEvent>& events) {
+  host.control.beforeFrame();
+  host.app.runFrame();
+  host.control.afterFrame();
+  for (const platform::PlatformEvent& event : events) host.editor.onPlatformEvent(event);
+  host.editor.update();
+  REQUIRE(host.app.shouldContinue());
+}
+
+[[nodiscard]] atlantis::editor::PixelRect viewportRect(atlantis::editor::Editor& editor) {
+  const auto image = editor.widgetRect("viewport");
+  REQUIRE(image.has_value());
+  return {static_cast<float>(image->x), static_cast<float>(image->y), static_cast<float>(image->width),
+          static_cast<float>(image->height)};
+}
+
+[[nodiscard]] atlantis::editor::CameraMatrices viewportMatrices(atlantis::editor::Editor& editor) {
+  const auto rect = viewportRect(editor);
+  const auto matrices = editor.camera().matrices(rect.width / rect.height);
+  REQUIRE(matrices.has_value());
+  return *matrices;
+}
+
+// Whether the UI draws anything in the selection colour (the bounds box; no
+// Gizmo drag is in progress).
+[[nodiscard]] bool drawsSelectionColour(const atlantis::renderer::UiDrawList& list) {
+  for (const auto& v : list.vertices) {
+    if (std::fabs(v.r - 250.0f / 255.0f) < 1e-3f && std::fabs(v.g - 220.0f / 255.0f) < 1e-3f &&
+        std::fabs(v.b - 60.0f / 255.0f) < 1e-3f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The first Renderable (in GUID order) whose bounds centre, clicked, picks
+// itself: the "known cube" of the north star, chosen by geometry.
+struct Target {
+  atlantis::asset_system::EntityGuid entity;
+  std::array<float, 3> center{};
+  std::array<float, 2> pixel{};
+};
+
+[[nodiscard]] Target findClickableRenderable(EditorHost& host) {
+  atlantis::editor::Editor& editor = host.editor.editor();
+  auto connection = host.app.openConnection();
+  const auto* renderable = atlantis::connection::text::findType(connection->schema(), "Renderable");
+  const auto* worldMatrix = atlantis::connection::text::findType(connection->schema(), "WorldMatrix");
+  REQUIRE(renderable != nullptr);
+  REQUIRE(worldMatrix != nullptr);
+  const auto rect = viewportRect(editor);
+  const auto camera = viewportMatrices(editor);
+  for (const auto& entity : connection->listEntities()) {
+    if (connection->getProperty({entity, renderable->id, renderable->fields[0].id}).isErr()) continue;
+    const auto bounds = host.app.renderableLocalBounds(entity);
+    if (!bounds.has_value()) continue;
+    atlantis::editor::MatrixColumns m{};
+    for (std::size_t k = 0; k < 4; ++k) {
+      m[k] = std::get<std::array<float, 4>>(connection->getProperty({entity, worldMatrix->id, worldMatrix->fields[k].id}).value());
+    }
+    const std::array<float, 3> local{(bounds->min[0] + bounds->max[0]) * 0.5f, (bounds->min[1] + bounds->max[1]) * 0.5f,
+                                     (bounds->min[2] + bounds->max[2]) * 0.5f};
+    const std::array<float, 3> center{m[0][0] * local[0] + m[1][0] * local[1] + m[2][0] * local[2] + m[3][0],
+                                      m[0][1] * local[0] + m[1][1] * local[1] + m[2][1] * local[2] + m[3][1],
+                                      m[0][2] * local[0] + m[1][2] * local[1] + m[2][2] * local[2] + m[3][2]};
+    const auto pixel = atlantis::editor::pixelOf(camera, rect, center);
+    if (!pixel.has_value() || (*pixel)[0] < rect.x + 30.0f || (*pixel)[0] > rect.x + rect.width - 30.0f ||
+        (*pixel)[1] < rect.y + 30.0f || (*pixel)[1] > rect.y + rect.height - 30.0f) {
+      continue;
+    }
+    const auto ray = atlantis::editor::rayThroughPixel(camera, rect, (*pixel)[0], (*pixel)[1]);
+    const auto hit = host.app.pickRenderable(atlantis::runtime::PickRay{ray.origin, ray.direction});
+    if (hit.has_value() && hit->entity == entity) return Target{entity, center, *pixel};
+  }
+  FAIL("no Renderable picks itself at its projected centre");
+  return {};
+}
+
+}  // namespace
+
+TEST_CASE("Editor E1 north star: orbit, click a mesh, selection sync, bounds, snapped Local rotation, F",
+          "[runtime][gpu][editor][north_star]") {
+  BootstrapConfig config = buildSmokeConfig();
+  config.retainPickGeometry = true;  // as `--editor` sets it
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    atlantis::editor::Editor& editor = host.editor.editor();
+    for (int i = 0; i < 3; ++i) host.frame();
+
+    // The editor camera starts from the scene camera: the image is the scene camera's, byte for byte.
+    REQUIRE(editor.camera().mode() == atlantis::editor::ViewportCameraMode::Editor);
+    REQUIRE(editor.viewportCamera().has_value());
+    const auto editorImage = RuntimeSmokeTestAccess::readViewport(app);
+    editor.camera().setMode(atlantis::editor::ViewportCameraMode::Scene);
+    host.frame();
+    host.frame();
+    CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == editorImage.pixels));
+    editor.camera().setMode(atlantis::editor::ViewportCameraMode::Editor);
+
+    // Orbit with Alt + left drag on the image (scripted Platform input).
+    const auto rect = viewportRect(editor);
+    const float startX = rect.x + rect.width * 0.5f;
+    const float startY = rect.y + rect.height * 0.5f;
+    const auto sceneData = app.captureFrameData();
+    REQUIRE(sceneData.isOk());
+    const auto scenePose = app.activeCameraPose();
+    REQUIRE(scenePose.has_value());
+    frameWith(host, {platform::PointerMoved{startX, startY}});
+    frameWith(host, {platform::KeyChanged{platform::Key::LeftAlt, true, {false, false, true}}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, true, startX, startY}});
+    frameWith(host, {platform::PointerMoved{startX + 40.0f, startY - 10.0f}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, false, startX + 40.0f, startY - 10.0f}});
+    frameWith(host, {platform::KeyChanged{platform::Key::LeftAlt, false, {}}});
+    host.frame();
+    CHECK_FALSE(editor.hierarchy().selection().has_value());  // an orbit does not pick
+    const auto orbited = app.captureFrameData();
+    REQUIRE(orbited.isOk());
+    CHECK_FALSE(orbited.value().view == sceneData.value().view);  // the frame draws the editor camera (ruling Q3, F-a)
+    CHECK(app.activeCameraPose()->worldMatrix == scenePose->worldMatrix);  // the World's camera is untouched
+    CHECK_FALSE(drawsSelectionColour(host.editor.drawList()));
+
+    // Click a mesh: the host answers by the next frame; the Hierarchy, the
+    // Inspector and the Gizmo follow, and the bounds box is drawn.
+    const Target target = findClickableRenderable(host);
+    const float px = target.pixel[0];
+    const float py = target.pixel[1];
+    frameWith(host, {platform::PointerMoved{px, py}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, true, px, py}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, false, px, py}});
+    host.frame();  // the answer arrives
+    host.frame();  // and the bounds for the new selection
+    REQUIRE(editor.hierarchy().selection() == target.entity);
+    CHECK(editor.inspector().subject() == target.entity);
+    CHECK(editor.gizmo().subject() == target.entity);
+    CHECK(editor.gizmo().available());
+    CHECK(drawsSelectionColour(host.editor.drawList()));
+
+    // Local space, a Rotate drag with snapping: 0.3 rad snaps to exactly one 15 degree step.
+    auto& gizmo = editor.gizmo();
+    const auto before = atlantis::editor::decompose(*gizmo.matrix());
+    REQUIRE(before.has_value());
+    gizmo.setSpace(atlantis::editor::GizmoSpace::Local);
+    gizmo.setMode(atlantis::editor::GizmoMode::Rotate);
+    gizmo.setSnap(true);
+    gizmo.beginDrag(atlantis::editor::GizmoAxis::Y);
+    gizmo.dragTo(0.3f);
+    gizmo.endDrag();
+    gizmo.setSnap(false);
+    REQUIRE(gizmo.flush().has_value());  // the release's final value, as the editor's frame flushes it
+    host.frame();                          // applied by the next frame
+    const auto after = atlantis::editor::decompose(*gizmo.matrix());
+    REQUIRE(after.has_value());
+    // R_before^T * R_after is a rotation about the local y by the step: its
+    // (x, x) and (z, x) entries are cos and -sin of the step.
+    float cosine = 0.0f;
+    float sine = 0.0f;
+    for (std::size_t i = 0; i < 3; ++i) {
+      cosine += before->rotation[0 + i] * after->rotation[0 + i];
+      sine += before->rotation[6 + i] * after->rotation[0 + i];
+    }
+    CHECK(std::fabs(std::atan2(-sine, cosine) - atlantis::editor::kRotateSnapRadians) < 1e-5f);
+    for (std::size_t i = 0; i < 3; ++i) CHECK(std::fabs(before->translation[i] - after->translation[i]) < 1e-6f);
+
+    // F frames the selection: its bounds centre comes to the Viewport's centre.
+    frameWith(host, {platform::PointerMoved{startX, startY}});
+    frameWith(host, {platform::KeyChanged{platform::Key::F, true, {}}});
+    frameWith(host, {platform::KeyChanged{platform::Key::F, false, {}}});
+    const auto framed = viewportMatrices(editor);
+    const auto pivot = editor.camera().editor().pivot();
+    const auto ndc = atlantis::editor::projectToNdc(framed, pivot);
+    REQUIRE(ndc.has_value());
+    CHECK(std::fabs((*ndc)[0]) < 1e-3f);
+    CHECK(std::fabs((*ndc)[1]) < 1e-3f);
+    const auto bounds = app.renderableLocalBounds(target.entity);
+    REQUIRE(bounds.has_value());
+    const auto& m = *gizmo.matrix();
+    const std::array<float, 3> local{(bounds->min[0] + bounds->max[0]) * 0.5f, (bounds->min[1] + bounds->max[1]) * 0.5f,
+                                     (bounds->min[2] + bounds->max[2]) * 0.5f};
+    for (std::size_t i = 0; i < 3; ++i) {
+      const float world = m[0][i] * local[0] + m[1][i] * local[1] + m[2][i] * local[2] + m[3][i];
+      CHECK(std::fabs(pivot[i] - world) < 1e-3f);
+    }
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity; the pick time is reported",
+          "[runtime][gpu][editor][north_star][bistro]") {
+#if !defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
+  SKIP("Bistro content is not present (the content-gated build step was not declared)");
+#else
+  BootstrapConfig config = buildSmokeConfig();
+  config.sceneAsset = atlantis::asset_system::deriveAssetGuid(
+      sceneGuidFromDefinition(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID), "scene");
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  config.retainPickGeometry = true;
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    atlantis::editor::Editor& editor = host.editor.editor();
+    for (int i = 0; i < 3; ++i) host.frame();
+    const auto rect = viewportRect(editor);
+    const float cx = rect.x + rect.width * 0.5f;
+    const float cy = rect.y + rect.height * 0.5f;
+    frameWith(host, {platform::PointerMoved{cx, cy}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, true, cx, cy}});
+    frameWith(host, {platform::PointerButtonChanged{platform::PointerButton::Left, false, cx, cy}});
+    host.frame();
+    REQUIRE(editor.hierarchy().selection().has_value());
+    WARN("Bistro centre click selected " << atlantis::asset_system::toString(*editor.hierarchy().selection()));
+
+    // The host's pick time over a 16 x 9 grid of rays through the Viewport
+    // (Spec 0062 Non-functional: reported, never a verdict).
+    const auto camera = viewportMatrices(editor);
+    double worst = 0.0;
+    double total = 0.0;
+    int hits = 0;
+    for (int row = 0; row < 9; ++row) {
+      for (int column = 0; column < 16; ++column) {
+        const float x = rect.x + (static_cast<float>(column) + 0.5f) * rect.width / 16.0f;
+        const float y = rect.y + (static_cast<float>(row) + 0.5f) * rect.height / 9.0f;
+        const auto ray = atlantis::editor::rayThroughPixel(camera, rect, x, y);
+        const auto begin = std::chrono::steady_clock::now();
+        const auto hit = app.pickRenderable(atlantis::runtime::PickRay{ray.origin, ray.direction});
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
+        worst = std::max(worst, ms);
+        total += ms;
+        if (hit.has_value()) ++hits;
+      }
+    }
+    WARN("Bistro pickRenderable(): worst " << worst << " ms, mean " << total / 144.0 << " ms over 144 rays, " << hits
+                                           << " hits");
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif

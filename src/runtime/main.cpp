@@ -335,6 +335,9 @@ int main(int argc, char** argv) {
   config.bloomCompositeFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.spv";
   config.bloomCompositeFragmentShaderReflectionPath = std::string(ATLANTIS_RUNTIME_BLOOM_COMPOSITE_SHADER_DIR) + "/bloom_composite.frag.refl.json";
   config.enableValidationLayers = true;
+  // Plan 0062 P5 (Spec 0062 ruling Q4, G-a): the editor's pick geometry, kept
+  // only when an editor is hosted.
+  config.retainPickGeometry = cliResult.editor;
 
   // Spec 0059 / ADR-0117 D1: the benchmark owns its whole run, including the
   // application's creation, so it can set the window size before the window exists.
