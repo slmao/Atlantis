@@ -4,6 +4,7 @@
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
+#include <atlantis/editor/model/viewport_camera.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -473,4 +474,156 @@ TEST_CASE("no Gizmo without a WorldMatrix, or on a sheared one", "[editor][model
   gizmo.setSubject(std::nullopt);
   CHECK_FALSE(gizmo.available());
   CHECK_FALSE(gizmo.flush().has_value());
+}
+
+// --- The editor camera (Plan 0062 M1; Spec 0062 R1, R2, R6) ----------------------
+
+namespace {
+
+using atlantis::editor::CameraPose;
+using atlantis::editor::ViewportCameraModel;
+using Vec3 = std::array<float, 3>;
+
+[[nodiscard]] float distance(const Vec3& a, const Vec3& b) {
+  return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+}
+
+// A camera at `eye` looking down -z.
+[[nodiscard]] ViewportCameraModel cameraAt(const Vec3& eye) {
+  CameraPose pose;
+  pose.worldMatrix[12] = eye[0];
+  pose.worldMatrix[13] = eye[1];
+  pose.worldMatrix[14] = eye[2];
+  pose.lens = atlantis::editor::CameraLens{1.0472f, 0.1f, 100.0f};
+  ViewportCameraModel camera;
+  camera.reset(pose);
+  return camera;
+}
+
+// Pixels of the Viewport (width x height) where `point` projects.
+[[nodiscard]] std::array<float, 2> pixelOf(const ViewportCameraModel& camera, const Vec3& point, float width,
+                                           float height) {
+  const auto matrices = camera.matrices(width / height);
+  REQUIRE(matrices.has_value());
+  const auto ndc = atlantis::editor::projectToNdc(*matrices, point);
+  REQUIRE(ndc.has_value());
+  return {((*ndc)[0] + 1.0f) * 0.5f * width, ((*ndc)[1] + 1.0f) * 0.5f * height};
+}
+
+}  // namespace
+
+TEST_CASE("an editor camera reset from a pose round-trips its eye, direction and lens", "[editor][model][camera]") {
+  ViewportCameraModel source = cameraAt({1.0f, 2.0f, 3.0f});
+  source.look(-120.0f, 60.0f);
+  ViewportCameraModel copy;
+  copy.reset(source.pose());
+  CHECK(distance(copy.eye(), source.eye()) < 1e-6f);
+  CHECK(std::fabs(copy.yaw() - source.yaw()) < 1e-5f);
+  CHECK(std::fabs(copy.pitch() - source.pitch()) < 1e-5f);
+  CHECK(copy.lens() == source.lens());
+}
+
+TEST_CASE("looking turns about the eye, right and down for a drag right and down, pitch clamped at 89 degrees",
+          "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({0.0f, 0.0f, 5.0f});
+  const Vec3 eye = camera.eye();
+  camera.look(100.0f, 0.0f);
+  CHECK(camera.forward()[0] > 0.0f);  // looks right (+x)
+  CHECK(camera.eye() == eye);
+  camera.look(0.0f, 100.0f);
+  CHECK(camera.forward()[1] < 0.0f);  // looks down
+  camera.look(0.0f, -100000.0f);
+  CHECK(camera.pitch() == ViewportCameraModel::kMaxPitchRadians);
+  CHECK(camera.matrices(1.0f).has_value());  // never the host's degenerate basis
+  camera.look(0.0f, 100000.0f);
+  CHECK(camera.pitch() == -ViewportCameraModel::kMaxPitchRadians);
+}
+
+TEST_CASE("orbiting keeps the pivot and its distance", "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({0.0f, 1.0f, 10.0f});
+  const Vec3 pivot = camera.pivot();
+  const float d = camera.pivotDistance();
+  camera.orbit(250.0f, -80.0f);
+  CHECK(distance(camera.pivot(), pivot) < 1e-4f);
+  CHECK(std::fabs(distance(camera.eye(), pivot) - d) < 1e-4f);
+  CHECK(camera.eye()[0] < 0.0f);  // a drag right carries the eye left around the pivot
+}
+
+TEST_CASE("panning keeps the point under the pointer at the pivot's depth under it", "[editor][model][camera]") {
+  constexpr float kWidth = 800.0f;
+  constexpr float kHeight = 450.0f;
+  ViewportCameraModel camera = cameraAt({0.0f, 0.0f, 10.0f});
+  camera.look(30.0f, 20.0f);
+  const Vec3 pivot = camera.pivot();
+  const auto before = pixelOf(camera, pivot, kWidth, kHeight);
+  camera.pan(37.0f, -12.0f, kHeight);
+  const auto after = pixelOf(camera, pivot, kWidth, kHeight);
+  CHECK(std::fabs(after[0] - (before[0] + 37.0f)) < 1e-2f);
+  CHECK(std::fabs(after[1] - (before[1] - 12.0f)) < 1e-2f);
+}
+
+TEST_CASE("dollying moves toward the pivot and stops at its floor", "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({0.0f, 0.0f, 10.0f});
+  const Vec3 pivot = camera.pivot();
+  camera.dolly(1.0f);
+  CHECK(std::fabs(camera.pivotDistance() - 10.0f * ViewportCameraModel::kWheelDollyFactor) < 1e-5f);
+  CHECK(distance(camera.pivot(), pivot) < 1e-5f);
+  camera.dollyDrag(50.0f);
+  CHECK(camera.pivotDistance() < 10.0f * ViewportCameraModel::kWheelDollyFactor);
+  camera.dolly(1000.0f);
+  CHECK(camera.pivotDistance() == ViewportCameraModel::kMinPivotDistance);
+  CHECK(distance(camera.pivot(), pivot) < 1e-4f);
+}
+
+TEST_CASE("flying moves speed x time along the camera's axes, x4 when fast", "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({0.0f, 0.0f, 0.0f});
+  camera.fly({0.0f, 0.0f, 1.0f}, 0.5f, false);
+  CHECK(std::fabs(camera.eye()[2] + ViewportCameraModel::kDefaultFlySpeed * 0.5f) < 1e-5f);
+  camera.fly({1.0f, 0.0f, 0.0f}, 0.25f, true);
+  CHECK(std::fabs(camera.eye()[0] - ViewportCameraModel::kDefaultFlySpeed * 0.25f * 4.0f) < 1e-5f);
+  camera.fly({0.0f, 1.0f, 0.0f}, 0.1f, false);
+  CHECK(std::fabs(camera.eye()[1] - ViewportCameraModel::kDefaultFlySpeed * 0.1f) < 1e-5f);
+  camera.scaleFlySpeed(1.0f);
+  CHECK(std::fabs(camera.flySpeed() - ViewportCameraModel::kDefaultFlySpeed * 1.25f) < 1e-5f);
+  camera.scaleFlySpeed(-1000.0f);
+  CHECK(camera.flySpeed() == ViewportCameraModel::kMinFlySpeed);
+}
+
+TEST_CASE("framing puts the center at the pivot and fits the sphere to the vertical field of view",
+          "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({0.0f, 0.0f, 10.0f});
+  camera.look(40.0f, 25.0f);
+  const Vec3 center{3.0f, -1.0f, 2.0f};
+  camera.frame(center, 2.0f);
+  CHECK(distance(camera.pivot(), center) < 1e-4f);
+  CHECK(std::fabs(camera.pivotDistance() * std::sin(camera.lens().fovYRadians * 0.5f) - 2.0f) < 1e-4f);
+  const auto matrices = camera.matrices(1.0f);
+  REQUIRE(matrices.has_value());
+  const auto ndc = atlantis::editor::projectToNdc(*matrices, center);
+  REQUIRE(ndc.has_value());
+  CHECK(std::fabs((*ndc)[0]) < 1e-4f);
+  CHECK(std::fabs((*ndc)[1]) < 1e-4f);
+  const float kept = camera.pivotDistance();
+  camera.frame({0.0f, 0.0f, 0.0f}, 0.0f);  // no bounds: the distance is kept
+  CHECK(camera.pivotDistance() == kept);
+}
+
+TEST_CASE("the ray through a pixel passes through the point that projected there", "[editor][model][camera]") {
+  ViewportCameraModel camera = cameraAt({1.0f, 2.0f, 9.0f});
+  camera.look(-50.0f, 30.0f);
+  const auto matrices = camera.matrices(1.6f);
+  REQUIRE(matrices.has_value());
+  const Vec3 point{0.5f, 0.3f, -2.0f};
+  const auto ndc = atlantis::editor::projectToNdc(*matrices, point);
+  REQUIRE(ndc.has_value());
+  const auto ray = atlantis::editor::rayThroughNdc(*matrices, (*ndc)[0], (*ndc)[1]);
+  CHECK(distance(ray.origin, camera.eye()) < 1e-4f);
+  const float t = distance(ray.origin, point);
+  const Vec3 along{ray.origin[0] + ray.direction[0] * t, ray.origin[1] + ray.direction[1] * t,
+                   ray.origin[2] + ray.direction[2] * t};
+  CHECK(distance(along, point) < 1e-3f);
+  const Vec3 f = camera.forward();
+  const Vec3& e = camera.eye();
+  const float alongForward = (point[0] - e[0]) * f[0] + (point[1] - e[1]) * f[1] + (point[2] - e[2]) * f[2];
+  CHECK(std::fabs(atlantis::editor::viewDepth(*matrices, point) - alongForward) < 1e-4f);
 }

@@ -6,6 +6,7 @@
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
+#include <atlantis/editor/model/viewport_camera.h>
 #include <atlantis/editor/ui_draw_list.h>
 
 #include <array>
@@ -37,13 +38,6 @@ struct ViewportSize {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   friend bool operator==(const ViewportSize&, const ViewportSize&) = default;
-};
-
-// The frame's camera, column-major, exactly as the Runtime's frame data holds
-// it (Spec 0055 C1).
-struct CameraMatrices {
-  std::array<float, 16> view{};
-  std::array<float, 16> projection{};
 };
 
 struct FrameContext {

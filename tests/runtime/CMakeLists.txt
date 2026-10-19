@@ -60,11 +60,17 @@ add_executable(atlantis_runtime_tests
   gate_applies_tests.cpp
   gate_canary_tests.cpp
   point_light_rejection_equivalence_tests.cpp
+  # Plan 0062 M1 (ADR-0123 D1): the editor's copy of the camera convention,
+  # held to extractCameraMatrices().
+  editor_camera_convention_tests.cpp
 )
 
+# Plan 0062 M1: Atlantis::Editor is linked by this test executable only, for
+# the camera convention cross-check; atlantis_runtime_host never links it.
 target_link_libraries(atlantis_runtime_tests
   PRIVATE
     Atlantis::RuntimeHost
+    Atlantis::Editor
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )
