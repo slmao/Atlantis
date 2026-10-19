@@ -14,6 +14,7 @@ add_library(atlantis_editor STATIC
   src/model/gizmo.cpp
   # Plan 0062 M1/M4: the editor camera, and Viewport picking and markers.
   src/model/viewport_camera.cpp
+  src/model/viewport_picking.cpp
   # The view layer: the only sources that include the UI library.
   src/view/editor_view.cpp
 )

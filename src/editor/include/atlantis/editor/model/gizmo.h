@@ -40,6 +40,15 @@ inline constexpr float kShearTolerance = 1e-4f;
 
 enum class GizmoMode : std::uint8_t { Translate, Rotate, Scale };
 enum class GizmoAxis : std::uint8_t { X, Y, Z };
+// Plan 0062 P9 (Spec 0062 R7): the axes Translate and Rotate use -- the
+// world's, or the entity's own (its normalized rotation columns). Scale always
+// uses the entity's own axes.
+enum class GizmoSpace : std::uint8_t { World, Local };
+
+// Plan 0062 P9: snapping steps, measured from the drag's start (Ctrl held).
+inline constexpr float kTranslateSnap = 0.5f;          // world units
+inline constexpr float kRotateSnapRadians = 0.2617994f;  // 15 degrees
+inline constexpr float kScaleSnap = 0.1f;              // of the factor
 
 // Borrows the connection, which must outlive it. Frame thread only, between
 // Runtime frames (ADR-0105); not thread-safe.
@@ -64,17 +73,31 @@ class GizmoModel {
   [[nodiscard]] GizmoMode mode() const noexcept { return mode_; }
   void setMode(GizmoMode mode);
 
+  // Plan 0062 P9: World or Local (not while dragging), and snapping, which
+  // applies to the amounts dragTo() receives from then on.
+  [[nodiscard]] GizmoSpace space() const noexcept { return space_; }
+  void setSpace(GizmoSpace space);
+  [[nodiscard]] bool snap() const noexcept { return snap_; }
+  void setSnap(bool snap) noexcept { snap_ = snap; }
+
+  // The world-space unit direction of `axis` for the current mode and space:
+  // a world axis (Translate, Rotate in World), or the entity's own axis --
+  // from the drag's start while dragging. Requires available().
+  [[nodiscard]] std::array<float, 3> axisDirection(GizmoAxis axis) const;
+
   [[nodiscard]] bool dragging() const noexcept { return dragAxis_.has_value(); }
   [[nodiscard]] std::optional<GizmoAxis> dragAxis() const noexcept { return dragAxis_; }
 
-  // Starts a drag along a world axis, from the current matrix. Requires
-  // available() and no drag in progress (programmer error otherwise).
+  // Starts a drag along an axis (axisDirection()), from the current matrix.
+  // Requires available() and no drag in progress (programmer error otherwise).
   void beginDrag(GizmoAxis axis);
   // The drag's amount, from its start: Translate -- world units along the
-  // axis (only column3 changes, the other columns bit for bit as they were);
-  // Rotate -- radians about the world axis; Scale -- a factor on the
-  // entity's own axis of the same index (its local axes, so a rotated entity
-  // gains no shear). A non-finite amount is ignored.
+  // axis direction (only column3 changes, the other columns bit for bit as
+  // they were); Rotate -- radians about the axis direction; Scale -- a factor
+  // on the entity's own axis of the same index (its local axes, so a rotated
+  // entity gains no shear). With snapping, the amount is first rounded to its
+  // step (kTranslateSnap, kRotateSnapRadians, kScaleSnap; a scale factor no
+  // smaller than one step). A non-finite amount is ignored.
   void dragTo(float amount);
   void endDrag();
 
@@ -90,6 +113,8 @@ class GizmoModel {
   std::optional<atlantis::asset_system::EntityGuid> subject_;
   std::optional<MatrixColumns> matrix_;
   GizmoMode mode_ = GizmoMode::Translate;
+  GizmoSpace space_ = GizmoSpace::World;
+  bool snap_ = false;
   std::optional<GizmoAxis> dragAxis_;
   MatrixColumns dragStart_{};
   Trs dragStartTrs_;

@@ -2,6 +2,7 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/connection/text.h>
+#include <atlantis/editor/model/viewport_camera.h>
 
 #include <cmath>
 #include <string>
@@ -15,8 +16,6 @@ namespace connection = atlantis::connection;
 using atlantis::asset_system::EntityGuid;
 
 namespace {
-
-using Vec3 = std::array<float, 3>;
 
 [[nodiscard]] float dot(const Vec3& a, const Vec3& b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 [[nodiscard]] Vec3 cross(const Vec3& a, const Vec3& b) {
@@ -137,6 +136,28 @@ void GizmoModel::setMode(GizmoMode mode) {
   if (!dragging()) mode_ = mode;
 }
 
+void GizmoModel::setSpace(GizmoSpace space) {
+  if (!dragging()) space_ = space;
+}
+
+std::array<float, 3> GizmoModel::axisDirection(GizmoAxis axis) const {
+  const auto k = static_cast<std::size_t>(axis);
+  const bool local = mode_ == GizmoMode::Scale || space_ == GizmoSpace::Local;
+  if (!local) {
+    Vec3 unit{0.0f, 0.0f, 0.0f};
+    unit[k] = 1.0f;
+    return unit;
+  }
+  const std::optional<Trs> trs = dragging() ? std::optional<Trs>(dragStartTrs_)
+                                            : (matrix_.has_value() ? decompose(*matrix_) : std::nullopt);
+  ATLANTIS_CHECK_MSG(trs.has_value(), "GizmoModel::axisDirection(): no Gizmo");
+  if (!trs.has_value()) return {0.0f, 0.0f, 0.0f};
+  // The rotation column; a reflection (a negative x scale) flips the x axis
+  // the entity's own frame points along.
+  const float sign = k == 0 && trs->scale[0] < 0.0f ? -1.0f : 1.0f;
+  return {trs->rotation[k * 3 + 0] * sign, trs->rotation[k * 3 + 1] * sign, trs->rotation[k * 3 + 2] * sign};
+}
+
 void GizmoModel::beginDrag(GizmoAxis axis) {
   ATLANTIS_CHECK_MSG(available() && !dragging(), "GizmoModel::beginDrag(): no Gizmo, or a drag in progress");
   if (!available() || dragging()) return;
@@ -148,16 +169,31 @@ void GizmoModel::beginDrag(GizmoAxis axis) {
 void GizmoModel::dragTo(float amount) {
   if (!dragging() || !std::isfinite(amount)) return;
   const auto axis = static_cast<std::size_t>(*dragAxis_);
+  if (snap_) {
+    switch (mode_) {
+      case GizmoMode::Translate: amount = std::round(amount / kTranslateSnap) * kTranslateSnap; break;
+      case GizmoMode::Rotate: amount = std::round(amount / kRotateSnapRadians) * kRotateSnapRadians; break;
+      case GizmoMode::Scale: amount = std::fmax(std::round(amount / kScaleSnap) * kScaleSnap, kScaleSnap); break;
+    }
+  }
   switch (mode_) {
     case GizmoMode::Translate: {
       MatrixColumns columns = dragStart_;
-      columns[3][axis] = dragStart_[3][axis] + amount;
+      if (space_ == GizmoSpace::World) {
+        columns[3][axis] = dragStart_[3][axis] + amount;
+      } else {
+        const Vec3 direction = axisDirection(*dragAxis_);
+        for (std::size_t i = 0; i < 3; ++i) columns[3][i] = dragStart_[3][i] + direction[i] * amount;
+      }
       matrix_ = columns;
       break;
     }
     case GizmoMode::Rotate: {
       Trs trs = dragStartTrs_;
-      trs.rotation = multiply(axisRotation(*dragAxis_, amount), dragStartTrs_.rotation);
+      // World: about the world axis (R_axis * R). Local: about the entity's own
+      // axis (R * R_axis), which leaves that axis where it was.
+      trs.rotation = space_ == GizmoSpace::World ? multiply(axisRotation(*dragAxis_, amount), dragStartTrs_.rotation)
+                                                 : multiply(dragStartTrs_.rotation, axisRotation(*dragAxis_, amount));
       matrix_ = compose(trs);
       break;
     }

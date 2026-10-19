@@ -26,7 +26,6 @@ namespace access = atlantis::world::access;
 namespace connection = atlantis::connection;
 namespace text = atlantis::connection::text;
 using atlantis::asset_system::EntityGuid;
-using atlantis::editor::CameraMatrices;
 using atlantis::editor::FrameContext;
 using atlantis::editor::InputEvent;
 using atlantis::editor::PointerButton;
@@ -232,7 +231,7 @@ TEST_CASE("a Gizmo handle dragged in the Viewport moves the entity along the axi
   EditorFixture fixture;
   Driver driver(fixture);
   selectInHierarchy(driver, kMesh);
-  REQUIRE(fixture.editor->wantsCamera());
+  REQUIRE(fixture.editor->gizmo().available());
 
   // A camera at (0, 0, 10) looking down -z, 60 degree vertical field of view,
   // Vulkan clip space (y down, depth 0..1), column-major.
@@ -241,10 +240,12 @@ TEST_CASE("a Gizmo handle dragged in the Viewport moves the entity along the axi
   const float f = 1.0f / std::tan(0.5236f);
   constexpr float n = 0.1f;
   constexpr float far = 100.0f;
-  CameraMatrices camera;
-  camera.view = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -10, 1};
-  camera.projection = {f / aspect, 0, 0, 0, 0, -f, 0, 0, 0, 0, far / (n - far), -1, 0, 0, far * n / (n - far), 0};
-  driver.context.camera = camera;
+  // Plan 0062 J4: the host gives the scene camera's pose and lens; the editor
+  // camera starts from it exactly (ruling Q6, D-a).
+  atlantis::editor::CameraPose pose;
+  pose.worldMatrix = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 10, 1};
+  pose.lens = atlantis::editor::CameraLens{2.0f * 0.5236f, n, far};
+  driver.context.sceneCamera = pose;
   driver.idle(1);
 
   // The X handle: from the entity's projected origin toward +x on screen.

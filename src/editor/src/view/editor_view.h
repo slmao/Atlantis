@@ -6,6 +6,8 @@
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
+#include <atlantis/editor/model/viewport_camera.h>
+#include <atlantis/editor/model/viewport_picking.h>
 #include <atlantis/editor/ui_draw_list.h>
 
 #include <memory>
@@ -20,13 +22,19 @@
 namespace atlantis::editor::detail {
 
 // What one UI frame shows and acts on: the models (the view calls exactly
-// their public actions) and the Runtime's control and status.
+// their public actions) and the Runtime's control and status; since Plan 0062,
+// the Viewport's camera and picking, the selection's bounds from the host,
+// and whether markers are shown.
 struct ViewModels {
   HierarchyModel& hierarchy;
   InspectorModel& inspector;
   GizmoModel& gizmo;
   atlantis::connection::RuntimeControl& control;
   atlantis::connection::RuntimeStatus status;
+  ViewportCameraState& camera;
+  ViewportPicking& picking;
+  const std::optional<SelectionBounds>& selectionBounds;
+  bool& showMarkers;
 };
 
 class EditorView {

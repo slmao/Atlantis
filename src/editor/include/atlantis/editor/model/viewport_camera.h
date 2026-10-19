@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 #include <optional>
 
 // Plan 0062 M1 (Spec 0062 R1-R3; ADR-0123 D1): the editor camera -- client
@@ -88,7 +89,9 @@ class ViewportCameraModel {
   void reset(const CameraPose& pose);
 
   // The pose the host renders: column 0 right, column 1 up, column 2 -forward,
-  // column 3 the eye.
+  // column 3 the eye. Until the first navigation after a reset() whose pitch
+  // needed no clamp, the reset pose's own world matrix, bit for bit -- so a
+  // camera taken from the scene draws exactly the scene camera's image.
   [[nodiscard]] CameraPose pose() const;
   [[nodiscard]] std::optional<CameraMatrices> matrices(float aspect) const { return cameraMatrices(pose(), aspect); }
 
@@ -127,12 +130,55 @@ class ViewportCameraModel {
  private:
   void setDirection(float yaw, float pitch);
 
+  std::optional<Mat4> resetWorldMatrix_;  // cleared by every navigation
   Vec3 eye_{0.0f, 0.0f, 0.0f};
   float yaw_ = 0.0f;
   float pitch_ = 0.0f;
   float pivotDistance_ = kDefaultPivotDistance;
   float flySpeed_ = kDefaultFlySpeed;
   CameraLens lens_;
+};
+
+// Plan 0062 P1/P7 (Spec 0062 R1, R3; rulings Q6 D-a): which camera the
+// Viewport shows -- the scene's active camera, or the editor camera.
+enum class ViewportCameraMode : std::uint8_t { Scene, Editor };
+
+// The Viewport's camera: the mode, the editor camera, and the scene camera's
+// pose as the host last gave it. The editor camera starts in Editor mode and
+// is initialized from the first scene pose it receives, so the first image is
+// the scene camera's; until then the Viewport shows the scene camera. Not
+// thread-safe.
+class ViewportCameraState {
+ public:
+  // Every frame: the scene camera's pose, or none if the host has none.
+  void setScenePose(const std::optional<CameraPose>& pose);
+  [[nodiscard]] const std::optional<CameraPose>& scenePose() const noexcept { return scenePose_; }
+
+  [[nodiscard]] ViewportCameraMode mode() const noexcept { return mode_; }
+  void setMode(ViewportCameraMode mode) noexcept { mode_ = mode; }
+  // Re-initializes the editor camera from the scene camera (no-op without one).
+  void align();
+  // Before a navigation input acts: in Scene mode, switches to Editor mode
+  // starting from the scene camera's pose (R2).
+  void beginNavigation();
+
+  [[nodiscard]] ViewportCameraModel& editor() noexcept { return editor_; }
+  [[nodiscard]] const ViewportCameraModel& editor() const noexcept { return editor_; }
+  [[nodiscard]] bool editorInitialized() const noexcept { return initialized_; }
+
+  // The pose the Viewport is drawn from: the editor camera's in Editor mode
+  // once initialized, otherwise the scene camera's (none without one).
+  [[nodiscard]] std::optional<CameraPose> pose() const;
+  // What the host is handed: the editor camera's pose in Editor mode once
+  // initialized; none (the scene camera) otherwise.
+  [[nodiscard]] std::optional<CameraPose> override() const;
+  [[nodiscard]] std::optional<CameraMatrices> matrices(float aspect) const;
+
+ private:
+  ViewportCameraMode mode_ = ViewportCameraMode::Editor;
+  ViewportCameraModel editor_;
+  bool initialized_ = false;
+  std::optional<CameraPose> scenePose_;
 };
 
 }  // namespace atlantis::editor

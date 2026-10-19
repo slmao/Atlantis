@@ -117,6 +117,7 @@ Ray rayThroughNdc(const CameraMatrices& camera, float ndcX, float ndcY) {
 
 void ViewportCameraModel::reset(const CameraPose& pose) {
   const Mat4& m = pose.worldMatrix;
+  resetWorldMatrix_.reset();
   eye_ = {m[12], m[13], m[14]};
   lens_ = pose.lens;
   const Vec3 negColumn2{-m[8], -m[9], -m[10]};
@@ -126,7 +127,9 @@ void ViewportCameraModel::reset(const CameraPose& pose) {
     return;
   }
   const Vec3 f = scale(negColumn2, 1.0f / len);
-  setDirection(std::atan2(-f[0], -f[2]), std::asin(std::clamp(f[1], -1.0f, 1.0f)));
+  const float pitch = std::asin(std::clamp(f[1], -1.0f, 1.0f));
+  setDirection(std::atan2(-f[0], -f[2]), pitch);
+  if (pitch == pitch_) resetWorldMatrix_ = m;
 }
 
 void ViewportCameraModel::setDirection(float yaw, float pitch) {
@@ -147,6 +150,7 @@ Vec3 ViewportCameraModel::up() const { return cross(right(), forward()); }
 Vec3 ViewportCameraModel::pivot() const { return add(eye_, scale(forward(), pivotDistance_)); }
 
 CameraPose ViewportCameraModel::pose() const {
+  if (resetWorldMatrix_.has_value()) return CameraPose{*resetWorldMatrix_, lens_};
   const Vec3 f = forward();
   const Vec3 r = right();
   const Vec3 u = cross(r, f);
@@ -158,16 +162,19 @@ CameraPose ViewportCameraModel::pose() const {
 }
 
 void ViewportCameraModel::look(float dxPixels, float dyPixels) {
+  resetWorldMatrix_.reset();
   setDirection(yaw_ - dxPixels * kLookRadiansPerPixel, pitch_ - dyPixels * kLookRadiansPerPixel);
 }
 
 void ViewportCameraModel::orbit(float dxPixels, float dyPixels) {
+  resetWorldMatrix_.reset();
   const Vec3 center = pivot();
   setDirection(yaw_ - dxPixels * kOrbitRadiansPerPixel, pitch_ - dyPixels * kOrbitRadiansPerPixel);
   eye_ = add(center, scale(forward(), -pivotDistance_));
 }
 
 void ViewportCameraModel::pan(float dxPixels, float dyPixels, float viewportHeightPixels) {
+  resetWorldMatrix_.reset();
   if (!(viewportHeightPixels > 0.0f)) return;
   // World units per pixel at the pivot's depth.
   const float unitsPerPixel = 2.0f * pivotDistance_ * std::tan(lens_.fovYRadians * 0.5f) / viewportHeightPixels;
@@ -175,18 +182,21 @@ void ViewportCameraModel::pan(float dxPixels, float dyPixels, float viewportHeig
 }
 
 void ViewportCameraModel::dolly(float notches) {
+  resetWorldMatrix_.reset();
   const Vec3 center = pivot();
   pivotDistance_ = std::max(kMinPivotDistance, pivotDistance_ * std::pow(kWheelDollyFactor, notches));
   eye_ = add(center, scale(forward(), -pivotDistance_));
 }
 
 void ViewportCameraModel::dollyDrag(float dyPixels) {
+  resetWorldMatrix_.reset();
   const Vec3 center = pivot();
   pivotDistance_ = std::max(kMinPivotDistance, pivotDistance_ * std::exp(-kDragDollyPerPixel * dyPixels));
   eye_ = add(center, scale(forward(), -pivotDistance_));
 }
 
 void ViewportCameraModel::fly(const Vec3& direction, float deltaSeconds, bool fast) {
+  resetWorldMatrix_.reset();
   if (!(deltaSeconds > 0.0f)) return;
   const float distance = flySpeed_ * (fast ? kFastFlyFactor : 1.0f) * deltaSeconds;
   const Vec3 move = add(add(scale(right(), direction[0]), scale(Vec3{0.0f, 1.0f, 0.0f}, direction[1])),
@@ -199,10 +209,47 @@ void ViewportCameraModel::scaleFlySpeed(float notches) {
 }
 
 void ViewportCameraModel::frame(const Vec3& center, float radius) {
+  resetWorldMatrix_.reset();
   if (radius > 0.0f && std::isfinite(radius)) {
     pivotDistance_ = std::max(kMinPivotDistance, radius / std::sin(lens_.fovYRadians * 0.5f));
   }
   eye_ = add(center, scale(forward(), -pivotDistance_));
+}
+
+void ViewportCameraState::setScenePose(const std::optional<CameraPose>& pose) {
+  scenePose_ = pose;
+  if (!initialized_ && scenePose_.has_value()) {
+    editor_.reset(*scenePose_);
+    initialized_ = true;
+  }
+}
+
+void ViewportCameraState::align() {
+  if (!scenePose_.has_value()) return;
+  editor_.reset(*scenePose_);
+  initialized_ = true;
+}
+
+void ViewportCameraState::beginNavigation() {
+  if (mode_ == ViewportCameraMode::Editor) return;
+  align();
+  mode_ = ViewportCameraMode::Editor;
+}
+
+std::optional<CameraPose> ViewportCameraState::pose() const {
+  if (const std::optional<CameraPose> editor = override(); editor.has_value()) return editor;
+  return scenePose_;
+}
+
+std::optional<CameraPose> ViewportCameraState::override() const {
+  if (mode_ != ViewportCameraMode::Editor || !initialized_) return std::nullopt;
+  return editor_.pose();
+}
+
+std::optional<CameraMatrices> ViewportCameraState::matrices(float aspect) const {
+  const std::optional<CameraPose> drawn = pose();
+  if (!drawn.has_value()) return std::nullopt;
+  return cameraMatrices(*drawn, aspect);
 }
 
 }  // namespace atlantis::editor

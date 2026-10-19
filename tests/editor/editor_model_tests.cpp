@@ -627,3 +627,270 @@ TEST_CASE("the ray through a pixel passes through the point that projected there
   const float alongForward = (point[0] - e[0]) * f[0] + (point[1] - e[1]) * f[1] + (point[2] - e[2]) * f[2];
   CHECK(std::fabs(atlantis::editor::viewDepth(*matrices, point) - alongForward) < 1e-4f);
 }
+
+// --- Viewport picking, markers, selection sync, the camera state and the Gizmo's
+// space and snapping (Plan 0062 M4; Spec 0062 R1, R4-R7) -----------------------------
+
+namespace {
+
+using atlantis::editor::CameraLens;
+using atlantis::editor::Editor;
+using atlantis::editor::FrameContext;
+using atlantis::editor::GizmoSpace;
+using atlantis::editor::Marker;
+using atlantis::editor::MarkerKind;
+using atlantis::editor::PickAnswer;
+using atlantis::editor::PixelRect;
+using atlantis::editor::SelectionBounds;
+using atlantis::editor::ViewportCameraMode;
+using atlantis::editor::ViewportCameraState;
+using atlantis::editor::ViewportPicking;
+
+const EntityGuid kPoint = guid("52052052-0003-4052-8052-000000000003");
+
+// A scene camera at (0, 0, 10) looking down -z.
+[[nodiscard]] CameraPose sceneCameraAt10() {
+  CameraPose pose;
+  pose.worldMatrix[14] = 10.0f;
+  pose.lens = CameraLens{1.0472f, 0.1f, 100.0f};
+  return pose;
+}
+
+[[nodiscard]] atlantis::editor::CameraMatrices matricesOf(const CameraPose& pose, float aspect) {
+  const auto matrices = atlantis::editor::cameraMatrices(pose, aspect);
+  REQUIRE(matrices.has_value());
+  return *matrices;
+}
+
+}  // namespace
+
+TEST_CASE("a marker is picked within its radius, the nearest to the camera first", "[editor][model][picking]") {
+  const PixelRect rect{100.0f, 50.0f, 800.0f, 400.0f};
+  const auto camera = matricesOf(sceneCameraAt10(), 2.0f);
+  const std::vector<Marker> markers{Marker{kSun, MarkerKind::Light, {0.0f, 0.0f, 0.0f}},
+                                    Marker{kCamera, MarkerKind::Camera, {0.0f, 0.0f, 5.0f}},  // nearer, same pixel
+                                    Marker{kPoint, MarkerKind::Light, {0.0f, 0.0f, 20.0f}}};  // behind the camera
+  const auto at = atlantis::editor::pixelOf(camera, rect, {0.0f, 0.0f, 0.0f});
+  REQUIRE(at.has_value());
+  CHECK(atlantis::editor::pickMarker(markers, camera, rect, (*at)[0] + 6.0f, (*at)[1] + 6.0f) == kCamera);
+  CHECK_FALSE(atlantis::editor::pickMarker(markers, camera, rect, (*at)[0] + 8.0f, (*at)[1] + 8.0f).has_value());
+  CHECK(atlantis::editor::pickMarker(std::span<const Marker>(markers).first(1), camera, rect, (*at)[0], (*at)[1]) ==
+        kSun);
+}
+
+TEST_CASE("markers are the Light and Camera entities without a Renderable, at their WorldMatrix translation",
+          "[editor][model][picking]") {
+  EditorFixture fixture;
+  HierarchyModel hierarchy(*fixture.connection);
+  hierarchy.update();
+  ViewportPicking picking(*fixture.connection);
+  picking.updateMarkers(hierarchy);
+  std::set<std::string> found;
+  for (const Marker& marker : picking.markers()) {
+    found.insert(atlantis::asset_system::toString(marker.entity));
+    const MatrixColumns m = readMatrix(*fixture.connection, marker.entity);
+    CHECK(marker.position == Vec3{m[3][0], m[3][1], m[3][2]});
+    CHECK(marker.kind == (marker.entity == kCamera ? MarkerKind::Camera : MarkerKind::Light));
+  }
+  CHECK(found == std::set<std::string>{atlantis::asset_system::toString(kSun), atlantis::asset_system::toString(kPoint),
+                                       atlantis::asset_system::toString(kCamera)});
+}
+
+TEST_CASE("a click requests a geometry pick; its answer selects, a miss clears, a stale answer is dropped",
+          "[editor][model][picking]") {
+  EditorFixture fixture;
+  HierarchyModel hierarchy(*fixture.connection);
+  hierarchy.update();
+  ViewportPicking picking(*fixture.connection);
+  picking.updateMarkers(hierarchy);
+  const PixelRect rect{0.0f, 0.0f, 640.0f, 480.0f};
+  const auto camera = matricesOf(sceneCameraAt10(), 640.0f / 480.0f);
+
+  // Away from every marker: a request whose ray goes through the clicked pixel.
+  picking.click(hierarchy, camera, rect, 600.0f, 40.0f);
+  REQUIRE(picking.request().has_value());
+  const auto first = *picking.request();
+  CHECK(first.ray == atlantis::editor::rayThroughPixel(camera, rect, 600.0f, 40.0f));
+  CHECK(picking.answer(hierarchy, PickAnswer{first.id, kMesh, 4.0f}));
+  CHECK(hierarchy.selection() == kMesh);
+
+  // A miss clears the selection.
+  picking.click(hierarchy, camera, rect, 600.0f, 40.0f);
+  CHECK(picking.answer(hierarchy, PickAnswer{picking.request()->id, std::nullopt, 0.0f}));
+  CHECK_FALSE(hierarchy.selection().has_value());
+
+  // A newer request supersedes an older one; the older answer is dropped.
+  picking.click(hierarchy, camera, rect, 600.0f, 40.0f);
+  const std::uint64_t older = picking.request()->id;
+  picking.click(hierarchy, camera, rect, 610.0f, 40.0f);
+  CHECK_FALSE(picking.answer(hierarchy, PickAnswer{older, kMesh, 1.0f}));
+  CHECK_FALSE(hierarchy.selection().has_value());
+
+  // A selection made after the request wins over its answer.
+  const std::uint64_t latest = picking.request()->id;
+  hierarchy.select(kSun);
+  CHECK_FALSE(picking.answer(hierarchy, PickAnswer{latest, kMesh, 1.0f}));
+  CHECK(hierarchy.selection() == kSun);
+
+  // A click on a marker selects at once, with no request.
+  picking.clearRequest();
+  const MatrixColumns cameraMatrix = readMatrix(*fixture.connection, kCamera);
+  const auto cameraMarker =
+      atlantis::editor::pixelOf(camera, rect, Vec3{cameraMatrix[3][0], cameraMatrix[3][1], cameraMatrix[3][2]});
+  REQUIRE(cameraMarker.has_value());
+  picking.click(hierarchy, camera, rect, (*cameraMarker)[0], (*cameraMarker)[1]);
+  CHECK(hierarchy.selection() == kCamera);
+  CHECK_FALSE(picking.request().has_value());
+  // Hidden markers are not picked: the click becomes a request.
+  picking.click(hierarchy, camera, rect, (*cameraMarker)[0], (*cameraMarker)[1], /*withMarkers=*/false);
+  CHECK(picking.request().has_value());
+}
+
+TEST_CASE("the editor takes up a pick answer and the selection's bounds, and asks the host for the next frame",
+          "[editor][model][picking]") {
+  EditorFixture fixture;
+  Editor& editor = *fixture.editor;
+  FrameContext context{1280, 720};
+  context.sceneCamera = sceneCameraAt10();
+  editor.frame({}, context);
+  // Ruling Q6 (D-a): the editor camera, started from the scene camera exactly.
+  CHECK(editor.camera().mode() == ViewportCameraMode::Editor);
+  CHECK(editor.viewportCamera() == context.sceneCamera);
+  CHECK_FALSE(editor.pickRequest().has_value());
+  CHECK_FALSE(editor.boundsSubject().has_value());
+
+  const PixelRect rect{0.0f, 0.0f, 640.0f, 480.0f};
+  editor.picking().click(editor.hierarchy(), matricesOf(*context.sceneCamera, 640.0f / 480.0f), rect, 600.0f, 40.0f);
+  REQUIRE(editor.pickRequest().has_value());
+  context.pickAnswer = PickAnswer{editor.pickRequest()->id, kMesh, 3.0f};
+  editor.frame({}, context);
+  CHECK(editor.hierarchy().selection() == kMesh);
+  CHECK(editor.inspector().subject() == kMesh);
+  CHECK(editor.gizmo().subject() == kMesh);
+  CHECK_FALSE(editor.pickRequest().has_value());  // taken by the host, cleared by the next frame
+  CHECK(editor.boundsSubject() == kMesh);
+
+  // Destroying the selection clears it, and the subjects follow.
+  context.pickAnswer.reset();
+  (void)fixture.connection->submit(access::DestroyEntity{kMesh});
+  fixture.runtime.frame();
+  editor.frame({}, context);
+  CHECK_FALSE(editor.hierarchy().selection().has_value());
+  CHECK_FALSE(editor.inspector().subject().has_value());
+  CHECK_FALSE(editor.gizmo().subject().has_value());
+  CHECK_FALSE(editor.boundsSubject().has_value());
+}
+
+TEST_CASE("the Viewport camera: Scene mode hands the host nothing; navigating from it switches to the editor camera",
+          "[editor][model][camera]") {
+  ViewportCameraState state;
+  CHECK_FALSE(state.pose().has_value());
+  CHECK_FALSE(state.override().has_value());  // nothing to start from yet
+  state.setScenePose(sceneCameraAt10());
+  CHECK(state.editorInitialized());
+  CHECK(state.override() == sceneCameraAt10());
+  state.setMode(ViewportCameraMode::Scene);
+  CHECK_FALSE(state.override().has_value());
+  CHECK(state.pose() == sceneCameraAt10());
+  state.beginNavigation();
+  CHECK(state.mode() == ViewportCameraMode::Editor);
+  state.editor().orbit(40.0f, 0.0f);
+  CHECK_FALSE(state.override() == sceneCameraAt10());
+  // A moved scene camera does not move the editor camera; Align does.
+  CameraPose moved = sceneCameraAt10();
+  moved.worldMatrix[12] = 3.0f;
+  state.setScenePose(moved);
+  CHECK_FALSE(state.override() == moved);
+  state.align();
+  CHECK(state.override() == moved);
+}
+
+TEST_CASE("Local translate and rotate use the entity's own axes; World is unchanged", "[editor][model][gizmo]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  GizmoModel gizmo(c);
+  gizmo.setSubject(kMesh);  // rotated (0.1, 0.2, 0.3), scaled (1, 2, 1)
+  REQUIRE(gizmo.available());
+  const MatrixColumns start = *gizmo.matrix();
+  const auto trs = decompose(start);
+  REQUIRE(trs.has_value());
+
+  gizmo.setSpace(GizmoSpace::Local);
+  const auto axisY = gizmo.axisDirection(GizmoAxis::Y);
+  for (std::size_t i = 0; i < 3; ++i) CHECK(std::fabs(axisY[i] - trs->rotation[3 + i]) < 1e-6f);
+  gizmo.beginDrag(GizmoAxis::Y);
+  gizmo.dragTo(2.0f);
+  for (std::size_t i = 0; i < 3; ++i) {
+    CHECK(std::fabs((*gizmo.matrix())[3][i] - (start[3][i] + 2.0f * axisY[i])) < 1e-5f);
+  }
+  for (std::size_t k = 0; k < 3; ++k) CHECK((*gizmo.matrix())[k] == start[k]);
+  gizmo.endDrag();
+  (void)gizmo.flush();
+  fixture.runtime.frame();
+  gizmo.update();
+
+  // Local rotate about the entity's z: its z axis stays put, its x moves.
+  gizmo.setMode(GizmoMode::Rotate);
+  const auto axisZ = gizmo.axisDirection(GizmoAxis::Z);
+  gizmo.beginDrag(GizmoAxis::Z);
+  gizmo.dragTo(0.7f);
+  const auto rotated = decompose(*gizmo.matrix());
+  REQUIRE(rotated.has_value());
+  for (std::size_t i = 0; i < 3; ++i) CHECK(std::fabs(rotated->rotation[6 + i] - axisZ[i]) < 1e-5f);
+  CHECK(std::fabs(rotated->rotation[0] - trs->rotation[0]) > 1e-3f);
+  gizmo.endDrag();
+
+  // World space keeps world axes for Translate and Rotate; Scale is always local.
+  gizmo.setSpace(GizmoSpace::World);
+  CHECK(gizmo.axisDirection(GizmoAxis::X) == std::array<float, 3>{1.0f, 0.0f, 0.0f});
+  gizmo.setMode(GizmoMode::Scale);
+  CHECK(std::fabs(gizmo.axisDirection(GizmoAxis::X)[0] - 1.0f) > 1e-4f);
+}
+
+TEST_CASE("snapping rounds the drag amount to its step, still one transaction per frame", "[editor][model][gizmo]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  GizmoModel gizmo(c);
+  gizmo.setSubject(kMesh);
+  REQUIRE(gizmo.available());
+  const MatrixColumns start = *gizmo.matrix();
+  Changes changes(c, kMesh);
+  gizmo.setSnap(true);
+  gizmo.beginDrag(GizmoAxis::X);
+  gizmo.dragTo(0.74f);
+  CHECK((*gizmo.matrix())[3][0] == start[3][0] + 0.5f);
+  gizmo.dragTo(0.76f);
+  CHECK((*gizmo.matrix())[3][0] == start[3][0] + 1.0f);
+  REQUIRE(gizmo.flush().has_value());
+  gizmo.endDrag();
+  REQUIRE(gizmo.flush().has_value());  // the release's final value
+  CHECK_FALSE(gizmo.flush().has_value());
+  fixture.runtime.frame();
+  CHECK(changes.drain().size() == 8);  // two four-column transactions
+  gizmo.update();
+
+  // Rotate about world y by one 15 degree step: the x axis turns by exactly that.
+  gizmo.setMode(GizmoMode::Rotate);
+  const auto before = decompose(*gizmo.matrix());
+  REQUIRE(before.has_value());
+  gizmo.beginDrag(GizmoAxis::Y);
+  gizmo.dragTo(0.30f);  // 17.2 degrees -> 15
+  const auto after = decompose(*gizmo.matrix());
+  gizmo.endDrag();
+  REQUIRE(after.has_value());
+  // The x axis turns about world y; its angle in the xz plane changes by the step.
+  const float beforeAngle = std::atan2(before->rotation[2], before->rotation[0]);
+  const float afterAngle = std::atan2(after->rotation[2], after->rotation[0]);
+  CHECK(std::fabs(std::fabs(afterAngle - beforeAngle) - atlantis::editor::kRotateSnapRadians) < 1e-4f);
+  CHECK(std::fabs(after->rotation[1] - before->rotation[1]) < 1e-5f);  // its height is unchanged
+
+  gizmo.setMode(GizmoMode::Scale);
+  const auto scaleBefore = decompose(*gizmo.matrix());
+  REQUIRE(scaleBefore.has_value());
+  gizmo.beginDrag(GizmoAxis::Z);
+  gizmo.dragTo(1.27f);
+  CHECK(std::fabs(decompose(*gizmo.matrix())->scale[2] - scaleBefore->scale[2] * 1.3f) < 1e-4f);
+  gizmo.dragTo(0.01f);  // never below one step
+  CHECK(std::fabs(decompose(*gizmo.matrix())->scale[2] - scaleBefore->scale[2] * 0.1f) < 1e-4f);
+  gizmo.endDrag();
+}
