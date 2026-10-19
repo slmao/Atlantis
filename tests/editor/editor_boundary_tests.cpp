@@ -62,6 +62,8 @@ struct Include {
 const std::vector<std::string_view> kAllowedAtlantisPrefixes = {
     "atlantis/connection/", "atlantis/world/access/", "atlantis/schema.h",
     "atlantis/result.h",    "atlantis/assert.h",      "atlantis/asset_system/asset_guid.h",
+    // Plan 0063 P9 (Spec 0063 ruling Q1, A-a): the Editor Transaction's address is Spec 0049 R7's.
+    "atlantis/asset_system/scene_property_address.h",
     "atlantis/editor/",
 };
 

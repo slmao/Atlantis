@@ -1,6 +1,7 @@
 #include "editor_fixture.h"
 
 #include <atlantis/connection/text.h>
+#include <atlantis/editor/model/edit_history.h>
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
@@ -11,8 +12,11 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <random>
 #include <set>
+#include <span>
+#include <utility>
 #include <string>
 #include <variant>
 #include <vector>
@@ -893,4 +897,241 @@ TEST_CASE("snapping rounds the drag amount to its step, still one transaction pe
   gizmo.dragTo(0.01f);  // never below one step
   CHECK(std::fabs(decompose(*gizmo.matrix())->scale[2] - scaleBefore->scale[2] * 0.1f) < 1e-4f);
   gizmo.endDrag();
+}
+
+// --- The edit history over a scripted edit target (Plan 0063 M1; Spec 0063 R1,
+// R3-R6, R8): no connection -- the history needs only the EditTarget interface.
+
+namespace {
+
+using atlantis::editor::AddressedValue;
+using atlantis::editor::EditHandle;
+using atlantis::editor::EditHistory;
+using atlantis::editor::EditTarget;
+using atlantis::editor::EditTransaction;
+using atlantis::editor::HistoryResult;
+using atlantis::editor::Invalidation;
+using atlantis::editor::PropertyWrite;
+using atlantis::editor::Settlement;
+using SceneAddress = atlantis::asset_system::scene::PropertyAddress;
+
+// A world of addressed values whose transactions settle when the test says.
+class ScriptedTarget final : public EditTarget {
+ public:
+  std::optional<access::PropertyValue> read(const SceneAddress& address) override {
+    const auto it = values.find(address);
+    if (it == values.end()) return std::nullopt;
+    return it->second;
+  }
+  EditHandle submit(std::span<const AddressedValue> writes) override {
+    const EditHandle handle{next++, 1};
+    submitted.emplace_back(writes.begin(), writes.end());
+    track(handle, writes);
+    return handle;
+  }
+  void track(EditHandle handle, std::span<const AddressedValue> writes) override {
+    tracked.push_back({handle, std::vector<AddressedValue>(writes.begin(), writes.end()), Settlement::Pending});
+  }
+  Settlement settlement(EditHandle handle) const override {
+    for (const auto& t : tracked) {
+      if (t.handle == handle) return t.settlement;
+    }
+    return Settlement::Pending;
+  }
+  std::string refusalText(EditHandle) const override { return "scripted refusal"; }
+  void update(std::span<const access::CommandFailure>) override {}
+  std::vector<Invalidation> drainInvalidations() override { return std::exchange(invalidations, {}); }
+
+  // The world applies (writing its values) or refuses the tracked handle.
+  void apply(EditHandle handle) {
+    for (auto& t : tracked) {
+      if (t.handle != handle) continue;
+      for (const auto& [address, value] : t.writes) values[address] = value;
+      t.settlement = Settlement::Applied;
+    }
+  }
+  void refuse(EditHandle handle) {
+    for (auto& t : tracked) {
+      if (t.handle == handle) t.settlement = Settlement::Refused;
+    }
+  }
+  [[nodiscard]] EditHandle last() const { return tracked.back().handle; }
+
+  struct Tracked {
+    EditHandle handle;
+    std::vector<AddressedValue> writes;
+    Settlement settlement;
+  };
+  std::map<SceneAddress, access::PropertyValue> values;
+  std::vector<Tracked> tracked;
+  std::vector<std::vector<AddressedValue>> submitted;
+  std::vector<Invalidation> invalidations;
+  std::uint64_t next = 1000;
+};
+
+[[nodiscard]] SceneAddress addressOf(const EntityGuid& entity, std::uint64_t component, std::uint64_t field) {
+  return SceneAddress{entity, atlantis::schema::TypeId{component}, atlantis::schema::FieldId{field}};
+}
+
+// An edit of `count` float writes on `entity`, from `from` to `to`, made the
+// way the Inspector or the Gizmo makes one: written to the scripted world
+// directly, then recorded with its handle.
+EditHandle makeEdit(ScriptedTarget& target, EditHistory& history, const EntityGuid& entity, float from, float to,
+                    std::size_t count = 1, std::string label = "edit") {
+  EditTransaction edit{std::move(label), {}};
+  for (std::size_t i = 0; i < count; ++i) {
+    const SceneAddress address = addressOf(entity, 7, 100 + i);
+    target.values[address] = from;
+    edit.writes.push_back(PropertyWrite{address, from, to});
+  }
+  const EditHandle handle{target.next++, count};
+  history.record(edit, handle);
+  return handle;
+}
+
+}  // namespace
+
+TEST_CASE("an edit is undoable once applied; undo and redo write before and after as one submission each",
+          "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  const EditHandle handle = makeEdit(target, history, kMesh, 1.0f, 2.0f, 4, "Move 52052052");
+  CHECK(history.waiting());
+  CHECK_FALSE(history.canUndo());
+  CHECK(history.undo() == HistoryResult::Waiting);
+  target.apply(handle);
+  history.update({});
+  REQUIRE(history.canUndo());
+  CHECK(history.undoLabel() == "Move 52052052");
+
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  REQUIRE(target.submitted.size() == 1);
+  REQUIRE(target.submitted[0].size() == 4);
+  for (std::size_t i = 0; i < 4; ++i) {
+    CHECK(target.submitted[0][i].first == addressOf(kMesh, 7, 100 + i));  // in order
+    CHECK(target.submitted[0][i].second == access::PropertyValue{1.0f});  // before
+  }
+  CHECK(history.redo() == HistoryResult::Waiting);  // the undo is pending
+  target.apply(target.last());
+  history.update({});
+  CHECK(history.undoDepth() == 0);
+  REQUIRE(history.canRedo());
+
+  REQUIRE(history.redo() == HistoryResult::Submitted);
+  for (const auto& [address, value] : target.submitted[1]) CHECK(value == access::PropertyValue{2.0f});  // after
+  target.apply(target.last());
+  history.update({});
+  CHECK(history.undoDepth() == 1);
+  CHECK(history.redoDepth() == 0);
+  CHECK(history.undo() == HistoryResult::Submitted);
+}
+
+TEST_CASE("a refused edit is not kept; nothing to undo is reported", "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  CHECK(history.undo() == HistoryResult::NothingTo);
+  const EditHandle handle = makeEdit(target, history, kMesh, 1.0f, 2.0f);
+  target.refuse(handle);
+  history.update({});
+  CHECK_FALSE(history.waiting());
+  CHECK(history.undoDepth() == 0);
+  CHECK(history.notice().find("refused") != std::string::npos);
+}
+
+TEST_CASE("a new edit clears redo; the history is at most 128 deep; clear() forgets everything",
+          "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  target.apply(makeEdit(target, history, kMesh, 1.0f, 2.0f));
+  history.update({});
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  target.apply(target.last());
+  history.update({});
+  REQUIRE(history.redoDepth() == 1);
+  target.apply(makeEdit(target, history, kSun, 3.0f, 4.0f));
+  CHECK(history.redoDepth() == 0);
+  history.update({});
+
+  for (int i = 0; i < 200; ++i) {
+    target.apply(makeEdit(target, history, kMesh, static_cast<float>(i), static_cast<float>(i + 1)));
+    history.update({});
+  }
+  CHECK(history.undoDepth() == EditHistory::kMaxDepth);
+  history.clear();
+  CHECK(history.undoDepth() == 0);
+  CHECK_FALSE(history.waiting());
+}
+
+TEST_CASE("an undo overtaken by a new edit is not redoable once it applies", "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  target.apply(makeEdit(target, history, kMesh, 1.0f, 2.0f));
+  history.update({});
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  const EditHandle undo = target.last();
+  target.apply(makeEdit(target, history, kSun, 3.0f, 4.0f));  // a new edit while the undo is pending
+  target.apply(undo);
+  history.update({});
+  CHECK(history.redoDepth() == 0);
+  CHECK(history.undoDepth() == 1);  // the new edit
+}
+
+TEST_CASE("a value changed elsewhere refuses the step, submits nothing and drops the entry",
+          "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  target.apply(makeEdit(target, history, kMesh, 1.0f, 2.0f, 2, "first"));
+  history.update({});
+  target.apply(makeEdit(target, history, kSun, 3.0f, 4.0f, 1, "second"));
+  history.update({});
+  target.values[addressOf(kSun, 7, 100)] = 5.0f;  // another writer
+  CHECK(history.undo() == HistoryResult::ChangedElsewhere);
+  CHECK(target.submitted.empty());
+  CHECK(history.notice().find("changed elsewhere") != std::string::npos);
+  CHECK(history.undoLabel() == "first");  // the next one is still undoable
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+
+  // Redo checks `before` the same way.
+  target.apply(target.last());
+  history.update({});
+  target.values[addressOf(kMesh, 7, 101)] = 9.0f;
+  CHECK(history.redo() == HistoryResult::ChangedElsewhere);
+  CHECK(history.redoDepth() == 0);
+}
+
+TEST_CASE("a destroyed entity or removed component drops the entries naming it, even if the GUID returns",
+          "[editor][model][history]") {
+  ScriptedTarget target;
+  EditHistory history(target);
+  target.apply(makeEdit(target, history, kMesh, 1.0f, 2.0f, 1, "mesh"));
+  history.update({});
+  target.apply(makeEdit(target, history, kSun, 3.0f, 4.0f, 1, "sun"));
+  history.update({});
+  target.apply(makeEdit(target, history, kCamera, 5.0f, 6.0f, 1, "camera"));
+  history.update({});
+
+  // The mesh is destroyed and its GUID re-created: its entry stays dropped.
+  target.invalidations.push_back(Invalidation{kMesh, std::nullopt});
+  history.update({});
+  CHECK(history.undoDepth() == 2);
+  // A different component of the sun is removed: its entry stays; the edited one goes.
+  target.invalidations.push_back(Invalidation{kSun, atlantis::schema::TypeId{8}});
+  history.update({});
+  CHECK(history.undoDepth() == 2);
+  target.invalidations.push_back(Invalidation{kSun, atlantis::schema::TypeId{7}});
+  history.update({});
+  CHECK(history.undoDepth() == 1);
+  CHECK(history.undoLabel() == "camera");
+
+  // An unreadable address at undo time drops the entry too.
+  target.values.erase(addressOf(kCamera, 7, 100));
+  CHECK(history.undo() == HistoryResult::Invalidated);
+  CHECK(history.undoDepth() == 0);
+
+  // An invalidation that arrives while an edit is pending drops it when it settles.
+  const EditHandle pending = makeEdit(target, history, kPoint, 1.0f, 2.0f, 1, "pending");
+  target.invalidations.push_back(Invalidation{kPoint, std::nullopt});
+  target.apply(pending);
+  history.update({});
+  CHECK(history.undoDepth() == 0);
 }
