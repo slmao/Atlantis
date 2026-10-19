@@ -184,6 +184,7 @@ struct EditorView::State {
   std::optional<ImVec2> clickStart;
   std::uint64_t seenSelectionGeneration = 0;
   bool scrollToSelection = false;
+  bool clearFilter = false;  // the note's button, applied at the next Hierarchy panel
 
   void feed(std::span<const InputEvent> input);
   void record(const std::string& key);
@@ -339,6 +340,12 @@ void EditorView::State::hierarchyPanel(ViewModels& models) {
     seenSelectionGeneration = models.hierarchy.selectionGeneration();
     scrollToSelection = models.hierarchy.selection().has_value();
   }
+  if (clearFilter) {
+    // The text box may still hold its own copy of the text: let go of it first.
+    if (ImGui::GetActiveID() == ImGui::GetID("##filter")) ImGui::ClearActiveID();
+    filter.fill('\0');
+    clearFilter = false;
+  }
   ImGui::SetNextItemWidth(-1.0f);
   ImGui::InputTextWithHint("##filter", "filter: GUID prefix or component", filter.data(), filter.size());
   record("hierarchy:filter");
@@ -350,9 +357,9 @@ void EditorView::State::hierarchyPanel(ViewModels& models) {
       if (models.hierarchy.rows()[visible[i]].entity == *selection) selectedRow = static_cast<int>(i);
     }
     if (!selectedRow.has_value()) {
-      ImGui::TextDisabled("Selected %s is hidden by the filter.", atlantis::asset_system::toString(*selection).c_str());
+      ImGui::TextDisabled("The selection is hidden by the filter.");
       ImGui::SameLine();
-      if (ImGui::SmallButton("Clear filter")) filter.fill('\0');
+      if (ImGui::SmallButton("Clear")) clearFilter = true;
       record("hierarchy:filter-hidden");
     }
   }

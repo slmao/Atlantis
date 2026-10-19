@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <variant>
@@ -283,4 +284,202 @@ TEST_CASE("a Gizmo handle dragged in the Viewport moves the entity along the axi
   CHECK(std::fabs((a[0] - b[0]) - expected) < 1e-3f);
   CHECK(a[1] == b[1]);
   CHECK(a[2] == b[2]);
+}
+
+// --- Plan 0062 M5 (P10; Spec 0062 R1, R2, R4, R6, R7): navigation, clicks that
+// pick, Esc, the Hierarchy following a selection made elsewhere, and the Gizmo's
+// space and snapping keys -- scripted input, headless. -------------------------------
+
+namespace {
+
+using atlantis::editor::CameraLens;
+using atlantis::editor::CameraPose;
+using atlantis::editor::GizmoSpace;
+using atlantis::editor::Key;
+using atlantis::editor::KeyChanged;
+using atlantis::editor::KeyModifiers;
+using atlantis::editor::ViewportCameraMode;
+using atlantis::editor::WheelScrolled;
+
+// The scene camera the host reports: at (0, 0, 10) looking down -z.
+[[nodiscard]] CameraPose sceneCamera() {
+  CameraPose pose;
+  pose.worldMatrix[14] = 10.0f;
+  pose.lens = CameraLens{1.0472f, 0.1f, 100.0f};
+  return pose;
+}
+
+// A Driver with the scene camera set and a few frames run.
+void start(Driver& driver) {
+  driver.context.sceneCamera = sceneCamera();
+  driver.idle(2);
+}
+
+// A point on the Viewport image far from every marker and from the Gizmo: near
+// its bottom-left corner.
+[[nodiscard]] Point emptyViewportPoint(Driver& driver) {
+  const auto image = driver.fixture.editor->widgetRect("viewport");
+  REQUIRE(image.has_value());
+  return Point{static_cast<float>(image->x) + 20.0f,
+               static_cast<float>(image->y) + static_cast<float>(image->height) - 20.0f};
+}
+
+void button(Driver& driver, PointerButton which, bool down, Point p) {
+  driver.frame({PointerButtonChanged{which, down, p.x, p.y}});
+}
+
+void key(Driver& driver, Key k, bool down, KeyModifiers modifiers = {}) { driver.frame({KeyChanged{k, down, modifiers}}); }
+
+}  // namespace
+
+TEST_CASE("a right drag on the Viewport looks around; the wheel dollies; neither picks", "[editor][view][camera]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  start(driver);
+  auto& camera = fixture.editor->camera();
+  REQUIRE(fixture.editor->viewportCamera() == sceneCamera());  // ruling Q6, D-a
+  const Point p = emptyViewportPoint(driver);
+  driver.moveTo(p);
+  button(driver, PointerButton::Right, true, p);
+  driver.moveTo(Point{p.x + 100.0f, p.y});
+  button(driver, PointerButton::Right, false, Point{p.x + 100.0f, p.y});
+  CHECK(camera.editor().forward()[0] > 0.0f);  // looks right
+  CHECK_FALSE(fixture.editor->viewportCamera() == sceneCamera());
+  CHECK_FALSE(fixture.editor->pickRequest().has_value());
+
+  const float distance = camera.editor().pivotDistance();
+  driver.frame({WheelScrolled{0.0f, 1.0f}});
+  CHECK(std::fabs(camera.editor().pivotDistance() - distance * 0.85f) < 1e-4f);
+  CHECK_FALSE(fixture.editor->pickRequest().has_value());
+}
+
+TEST_CASE("an Alt + left drag orbits about the pivot and does not pick", "[editor][view][camera]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  start(driver);
+  auto& camera = fixture.editor->camera();
+  const auto pivot = camera.editor().pivot();
+  const Point p = emptyViewportPoint(driver);
+  driver.moveTo(p);
+  key(driver, Key::LeftAlt, true, KeyModifiers{false, false, true});
+  driver.press(p);
+  driver.moveTo(Point{p.x + 60.0f, p.y - 20.0f});
+  driver.release(Point{p.x + 60.0f, p.y - 20.0f});
+  key(driver, Key::LeftAlt, false);
+  CHECK_FALSE(fixture.editor->pickRequest().has_value());
+  const auto moved = camera.editor().pivot();
+  for (std::size_t i = 0; i < 3; ++i) CHECK(std::fabs(moved[i] - pivot[i]) < 1e-3f);
+  CHECK(camera.editor().eye()[0] < 0.0f);
+}
+
+TEST_CASE("in Scene mode a navigation switches the Viewport to the editor camera, from the scene camera",
+          "[editor][view][camera]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  start(driver);
+  driver.click("toolbar:SceneCam");
+  REQUIRE(fixture.editor->camera().mode() == ViewportCameraMode::Scene);
+  CHECK_FALSE(fixture.editor->viewportCamera().has_value());
+  const Point p = emptyViewportPoint(driver);
+  driver.moveTo(p);
+  button(driver, PointerButton::Middle, true, p);
+  driver.moveTo(Point{p.x + 15.0f, p.y});
+  button(driver, PointerButton::Middle, false, Point{p.x + 15.0f, p.y});
+  CHECK(fixture.editor->camera().mode() == ViewportCameraMode::Editor);
+  REQUIRE(fixture.editor->viewportCamera().has_value());
+  CHECK(fixture.editor->viewportCamera()->worldMatrix[12] < 0.0f);  // panned: the scene follows the pointer right
+  driver.click("toolbar:Align");
+  CHECK(fixture.editor->viewportCamera() == sceneCamera());
+}
+
+TEST_CASE("a click on the Viewport requests one pick; a drag of four pixels or more requests none",
+          "[editor][view][picking]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  start(driver);
+  const Point p = emptyViewportPoint(driver);
+  driver.moveTo(p);
+  driver.press(p);
+  driver.release(Point{p.x + 2.0f, p.y + 1.0f});
+  REQUIRE(fixture.editor->pickRequest().has_value());
+  const auto request = *fixture.editor->pickRequest();
+  driver.idle(1);
+  CHECK_FALSE(fixture.editor->pickRequest().has_value());  // one request, taken by the host
+
+  // The host's answer selects; the Hierarchy, Inspector and Gizmo follow.
+  driver.context.pickAnswer = atlantis::editor::PickAnswer{request.id, kMesh, 5.0f};
+  driver.idle(1);
+  driver.context.pickAnswer.reset();
+  CHECK(fixture.editor->hierarchy().selection() == kMesh);
+  CHECK(fixture.editor->inspector().subject() == kMesh);
+  CHECK(fixture.editor->gizmo().subject() == kMesh);
+
+  driver.moveTo(p);
+  driver.press(p);
+  driver.moveTo(Point{p.x + 4.0f, p.y});
+  driver.release(Point{p.x + 4.0f, p.y});
+  CHECK_FALSE(fixture.editor->pickRequest().has_value());
+
+  // Esc clears the selection.
+  key(driver, Key::Escape, true);
+  key(driver, Key::Escape, false);
+  CHECK_FALSE(fixture.editor->hierarchy().selection().has_value());
+}
+
+TEST_CASE("a selection made outside the Hierarchy scrolls its row into view; one the filter hides is named",
+          "[editor][view][hierarchy]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  // Enough entities that most rows lie below the panel.
+  EntityGuid last;
+  for (int i = 0; i < 120; ++i) {
+    char text[40];
+    std::snprintf(text, sizeof(text), "77777777-0000-4077-8077-%012d", i);
+    last = guid(text);
+    (void)c.submit(access::CreateEntity{last});
+  }
+  fixture.runtime.frame();
+  Driver driver(fixture);
+  start(driver);
+  const std::string row = "hierarchy:" + atlantis::asset_system::toString(last);
+  CHECK_FALSE(fixture.editor->widgetRect(row).has_value());  // below the panel, not drawn
+  fixture.editor->hierarchy().select(last);                   // as a pick answer selects
+  driver.idle(2);
+  const auto rect = fixture.editor->widgetRect(row);
+  REQUIRE(rect.has_value());
+  CHECK(rect->y >= 0);
+  CHECK(rect->y + static_cast<std::int32_t>(rect->height) <= static_cast<std::int32_t>(driver.context.windowHeight));
+
+  // Filter to the lights; the selection is hidden, and the note's button clears the filter.
+  driver.click("hierarchy:filter");
+  for (const char ch : std::string("Light")) {
+    atlantis::editor::TextEntered typed;
+    typed.utf8[0] = ch;
+    typed.size = 1;
+    driver.frame({typed});
+  }
+  driver.idle(1);
+  REQUIRE(fixture.editor->widgetRect("hierarchy:filter-hidden").has_value());
+  driver.click("hierarchy:filter-hidden");
+  driver.idle(1);
+  CHECK_FALSE(fixture.editor->widgetRect("hierarchy:filter-hidden").has_value());
+}
+
+TEST_CASE("X toggles the Gizmo's space and Ctrl snaps while the Viewport is hovered", "[editor][view][gizmo]") {
+  EditorFixture fixture;
+  Driver driver(fixture);
+  start(driver);
+  selectInHierarchy(driver, kMesh);
+  const Point p = emptyViewportPoint(driver);
+  driver.moveTo(p);
+  key(driver, Key::X, true);
+  key(driver, Key::X, false);
+  CHECK(fixture.editor->gizmo().space() == GizmoSpace::Local);
+  driver.click("toolbar:World");
+  CHECK(fixture.editor->gizmo().space() == GizmoSpace::World);
+  driver.moveTo(p);
+  key(driver, Key::LeftCtrl, true, KeyModifiers{true, false, false});
+  CHECK(fixture.editor->gizmo().snap());
+  key(driver, Key::LeftCtrl, false);
+  CHECK_FALSE(fixture.editor->gizmo().snap());
 }
