@@ -57,7 +57,8 @@ status of every module.
   transaction — with the `atlantis` CLI as its client; a Runtime started
   with `--listen` is attachable over loopback (`atlantis.remote/1`)
 - A minimal editor (`--editor`: hierarchy, schema-generated inspector,
-  viewport, transform gizmo) built on Dear ImGui, as an ordinary client
+  viewport with a free editor camera and click picking, transform gizmo with
+  world/local space and snapping) built on Dear ImGui, as an ordinary client
 - Gameplay SDKs in C++ and C# (.NET 10, zero NuGet dependencies) with
   typed bindings generated from the schema
 

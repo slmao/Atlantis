@@ -18,6 +18,7 @@
   `tests/performance/baselines/` or `gate_policy.json`, every golden byte-identical, the `runFrame()` lines
   enumerated in the implementation PR, and the gate verdict and Bistro pick time reported as measured. J6's
   interaction run is the owner's.
+- **Implementation:** M1–M7 merged in [PR #271](https://github.com/slmao/Atlantis/pull/271).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
