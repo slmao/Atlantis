@@ -32,6 +32,7 @@
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
 #include <atlantis/runtime/scene_extraction.h>
+#include <atlantis/runtime/scene_load.h>
 #include <atlantis/world/access/runtime_world_access.h>
 #include <atlantis/world/ecs/entity_id.h>
 #include <atlantis/world/scene_instantiation.h>
@@ -137,6 +138,16 @@ class RuntimeApplication {
   // camera is substituted. Empty without a scene or an active camera. Frame
   // thread only.
   [[nodiscard]] std::optional<ActiveCameraInput> activeCameraPose() const;
+
+  // Plan 0062 P3 (Spec 0062 R4, R6; ADR-0123 D2): the editor's pick services,
+  // over the CPU geometry kept when BootstrapConfig::retainPickGeometry was
+  // set (empty otherwise). pickRenderable(): the nearest entity with a
+  // Renderable and a WorldMatrix that `ray` (world space, unit direction)
+  // hits, at its current WorldMatrix, both triangle faces, alpha masks
+  // ignored. renderableLocalBounds(): the local bounds of the entity's
+  // Renderable mesh. Between frames, frame thread only.
+  [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
+  [[nodiscard]] std::optional<LocalBounds> renderableLocalBounds(const atlantis::asset_system::EntityGuid& entity) const;
 
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
@@ -370,6 +381,9 @@ class RuntimeApplication {
   // these).
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap_;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap_;
+  // Plan 0062 P5 (ADR-0123 D2): CPU pick geometry per mesh AssetId, published
+  // with meshResourceMap_; empty unless BootstrapConfig::retainPickGeometry.
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry_;
   // CPU payload exists only until first-frame realization has submitted and
   // waitIdle() has succeeded. Empty also represents no configured environment.
   std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;

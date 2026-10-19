@@ -1274,6 +1274,77 @@ TEST_CASE("Runtime with an overlay camera: the Viewport is drawn from it, and fr
   fs::remove_all(dir, ec);
 }
 
+// --- Plan 0062 M3 (Spec 0062 R4, R6, R9; ruling Q4 G-a; ADR-0123 D2): pick
+// geometry exists only when the configuration asks for it. -----------------------
+
+namespace {
+
+// The ray from the active camera's eye toward the first Renderable's origin;
+// `target` is that entity.
+[[nodiscard]] atlantis::runtime::PickRay rayAtFirstRenderable(RuntimeApplication& app,
+                                                              atlantis::asset_system::EntityGuid& target) {
+  auto connection = app.openConnection();
+  const auto* renderable = atlantis::connection::text::findType(connection->schema(), "Renderable");
+  const auto* worldMatrix = atlantis::connection::text::findType(connection->schema(), "WorldMatrix");
+  REQUIRE(renderable != nullptr);
+  REQUIRE(worldMatrix != nullptr);
+  std::array<float, 4> at{};
+  bool found = false;
+  for (const auto& entity : connection->listEntities()) {
+    if (connection->getProperty({entity, renderable->id, renderable->fields[0].id}).isErr()) continue;
+    at = std::get<std::array<float, 4>>(connection->getProperty({entity, worldMatrix->id, worldMatrix->fields[3].id}).value());
+    target = entity;
+    found = true;
+    break;
+  }
+  REQUIRE(found);
+  const auto pose = app.activeCameraPose();
+  REQUIRE(pose.has_value());
+  const std::array<float, 3> eye{pose->worldMatrix[12], pose->worldMatrix[13], pose->worldMatrix[14]};
+  std::array<float, 3> direction{at[0] - eye[0], at[1] - eye[1], at[2] - eye[2]};
+  const float length = std::sqrt(direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]);
+  for (float& d : direction) d /= length;
+  return atlantis::runtime::PickRay{eye, direction};
+}
+
+}  // namespace
+
+// Each in its own TEST_CASE: one application per process.
+TEST_CASE("Runtime keeps no pick geometry by default", "[runtime][gpu][editor][picking]") {
+  BootstrapConfig config = buildSmokeConfig();  // retainPickGeometry is off by default
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  atlantis::asset_system::EntityGuid target;
+  const auto ray = rayAtFirstRenderable(app, target);
+  CHECK_FALSE(app.pickRenderable(ray).has_value());
+  CHECK_FALSE(app.renderableLocalBounds(target).has_value());
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime under retainPickGeometry picks a Renderable and answers its bounds",
+          "[runtime][gpu][editor][picking]") {
+  BootstrapConfig config = buildSmokeConfig();
+  config.retainPickGeometry = true;
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  atlantis::asset_system::EntityGuid target;
+  const auto ray = rayAtFirstRenderable(app, target);
+  const auto hit = app.pickRenderable(ray);
+  REQUIRE(hit.has_value());
+  CHECK(hit->distance > 0.0f);
+  const auto bounds = app.renderableLocalBounds(hit->entity);
+  REQUIRE(bounds.has_value());
+  for (std::size_t axis = 0; axis < 3; ++axis) CHECK(bounds->min[axis] <= bounds->max[axis]);
+  CHECK(app.renderableLocalBounds(target).has_value());
+  // Straight up from high above the scene: nothing.
+  CHECK_FALSE(app.pickRenderable(atlantis::runtime::PickRay{{0.0f, 1.0e4f, 0.0f}, {0.0f, 1.0f, 0.0f}}).has_value());
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
 // --- Plan 0056 M7 (Spec 0056 north star, ruling Q8): the editor drives the
 // World through its own model actions -- the calls its view makes on a click
 // (M5 covers the clicks) -- with the editor attached to the frame, under fatal

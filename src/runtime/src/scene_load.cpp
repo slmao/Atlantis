@@ -15,6 +15,8 @@
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/world/scene_instantiation.h>
 
+#include "scene_picking.h"
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -79,6 +81,7 @@ struct LoadedScene {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;  // Plan 0062 P5
 };
 
 [[nodiscard]] atlantis::Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
@@ -167,6 +170,7 @@ struct LoadedScene {
   // only when distinctMeshIds is non-empty -- see this function's own
   // header comment on why a test may pass nullptr otherwise.
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;
   for (std::size_t i = 0; i < distinctMeshIds.size(); ++i) {
     auto meshAssetResult = atlantis::asset_system::loadStaticMeshAsset(resolvedMeshEntries[i]->artifact,
                                                                         resolvedMeshEntries[i]->metadata);
@@ -198,6 +202,15 @@ struct LoadedScene {
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
     }
     meshResourceMap.emplace(distinctMeshIds[i], std::move(createResult.value()));
+    // Plan 0062 P5 (ADR-0123 D2): the same asset data, before it is dropped.
+    if (config.retainPickGeometry) {
+      pickGeometry.emplace(distinctMeshIds[i],
+                           meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
+                               ? detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
+                                                           meshAssetData.indices32())
+                               : detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
+                                                           meshAssetData.indices()));
+    }
   }
 
   // Plan 0018 Section P11: load each distinct material's own CPU-only
@@ -301,7 +314,7 @@ struct LoadedScene {
   }
 
   return ResultT::Ok(LoadedScene{std::move(scene), std::move(meshResourceMap), std::move(materialDataMap),
-                                  std::move(textureDataMap)});
+                                  std::move(textureDataMap), std::move(pickGeometry)});
 }
 
 }  // namespace
@@ -324,7 +337,7 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
   //     any caller-owned state until this Ok() is actually consumed.
   return ResultT::Ok(SceneLoadOutcome{std::move(baked), std::move(parts.meshResourceMap),
                                        std::move(parts.materialDataMap), std::move(parts.textureDataMap),
-                                       config.sceneAsset});
+                                       config.sceneAsset, std::move(parts.pickGeometry)});
 }
 
 }  // namespace atlantis::runtime

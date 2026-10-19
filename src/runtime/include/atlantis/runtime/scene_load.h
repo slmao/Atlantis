@@ -13,7 +13,10 @@
 #include <atlantis/world/scene_instantiation.h>
 #include <atlantis/world/world.h>
 
+#include <array>
+#include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace atlantis::runtime {
 
@@ -29,6 +32,38 @@ namespace atlantis::runtime {
 // the Runtime World Runtime's frame reads -- not an authoring world::World.
 // Its EntityGuid -> EntityId map (scene.entities) is the EntityRef
 // resolver's input (ADR-0097 D6).
+// Plan 0062 P5 (ADR-0123 D2): one mesh's CPU geometry for picking -- its
+// positions (the vertex layout's location-0 Float3), its triangle list's
+// indices widened to 32 bits, and its local axis-aligned bounds. Retained
+// only when BootstrapConfig::retainPickGeometry is set.
+struct PickMeshGeometry {
+  std::vector<std::array<float, 3>> positions;
+  std::vector<std::uint32_t> indices;
+  std::array<float, 3> localMin{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> localMax{0.0f, 0.0f, 0.0f};
+};
+
+// Plan 0062 P3 (ADR-0123 D2, D3): the pick service's ray (world space; the
+// direction unit length) and its answer -- the nearest hit entity and the
+// distance to it along the ray.
+struct PickRay {
+  std::array<float, 3> origin{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> direction{0.0f, 0.0f, -1.0f};
+};
+
+struct PickHit {
+  atlantis::asset_system::EntityGuid entity;
+  float distance = 0.0f;
+  friend bool operator==(const PickHit&, const PickHit&) = default;
+};
+
+// An entity's mesh local bounds (RuntimeApplication::renderableLocalBounds()).
+struct LocalBounds {
+  std::array<float, 3> min{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> max{0.0f, 0.0f, 0.0f};
+  friend bool operator==(const LocalBounds&, const LocalBounds&) = default;
+};
+
 struct SceneLoadOutcome {
   atlantis::world::BakedScene scene;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
@@ -36,6 +71,9 @@ struct SceneLoadOutcome {
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
   // Plan 0047 P17: the loaded scene's persistent identity.
   atlantis::asset_system::AssetGuid sceneGuid;
+  // Plan 0062 P5: keyed by mesh AssetId; empty unless the configuration
+  // asked for it (BootstrapConfig::retainPickGeometry).
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;
 };
 
 // Plan 0015 Section D10, steps (a)-(g) -- factored out of

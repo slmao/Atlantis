@@ -20,6 +20,8 @@ add_library(atlantis_runtime_host STATIC
   # and its diagnostics ring, and capture of the frame just run.
   src/runtime_control_host.cpp
   src/frame_capture.cpp
+  # Plan 0062 P6 (ADR-0123 D2): the editor's pick services, CPU only.
+  src/scene_picking.cpp
 )
 add_library(Atlantis::RuntimeHost ALIAS atlantis_runtime_host)
 

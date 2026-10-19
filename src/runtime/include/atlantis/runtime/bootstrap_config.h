@@ -174,6 +174,11 @@ struct BootstrapConfig {
   // 0 x 0 (the default) leaves it to the OS, as it always was. Windows only.
   unsigned int requestedClientWidth = 0;
   unsigned int requestedClientHeight = 0;
+  // Plan 0062 P5 (Spec 0062 ruling Q4, G-a; ADR-0123 D2): keep a CPU copy of
+  // each loaded mesh's positions, indices and local bounds for the editor's
+  // pick services (RuntimeApplication::pickRenderable()). Off by default, at
+  // zero cost; only atlantis_runtime's `--editor` sets it.
+  bool retainPickGeometry = false;
 };
 
 // GPU/window-independent validation for the optional environment portion.

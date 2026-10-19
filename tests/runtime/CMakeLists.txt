@@ -63,6 +63,8 @@ add_executable(atlantis_runtime_tests
   # Plan 0062 M1 (ADR-0123 D1): the editor's copy of the camera convention,
   # held to extractCameraMatrices().
   editor_camera_convention_tests.cpp
+  # Plan 0062 M3 (ADR-0123 D2): the pick services, GPU-free.
+  scene_picking_tests.cpp
 )
 
 # Plan 0062 M1: Atlantis::Editor is linked by this test executable only, for
