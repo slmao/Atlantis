@@ -1471,8 +1471,9 @@ void RuntimeApplication::runFrame() {
   }
   activeCameraEntity_ = scene_->activeCamera;  // cached for logging only; scene_ is the source of truth
 
-  const Mat4& cameraWorldMatrix = activeCamera->worldMatrix;
-  const atlantis::world::Camera cameraComponent = activeCamera->camera;
+  const ActiveCameraInput frameCamera = overlay_ ? overlayFrameCamera(*activeCamera) : *activeCamera;  // Plan 0062 P4, place 5
+  const Mat4& cameraWorldMatrix = frameCamera.worldMatrix;
+  const atlantis::world::Camera cameraComponent = frameCamera.camera;
 
   const float aspect =
       currentExtent.height != 0 ? static_cast<float>(currentExtent.width) / static_cast<float>(currentExtent.height)
@@ -2138,6 +2139,41 @@ Extent2D RuntimeApplication::overlayViewportExtent() {
 
 // Plan 0056 P7, place 3: the scene's target is the Viewport target.
 atlantis::rhi::RenderTarget& RuntimeApplication::overlayViewportTarget() { return *overlayViewportTarget_; }
+
+// Plan 0062 P4, place 5 (ADR-0123 D1): the overlay's camera in place of the
+// active camera's world matrix and lens -- only if the frame can use it, so
+// editor input never fails the lifecycle; exposure, fog and bloom stay the
+// active camera's.
+ActiveCameraInput RuntimeApplication::overlayFrameCamera(const ActiveCameraInput& active) {
+  const std::optional<ViewportCameraOverride> supplied = overlay_->viewportCamera();
+  if (!supplied.has_value()) return active;
+  bool usable = std::isfinite(supplied->fovYRadians) && std::isfinite(supplied->nearZ) &&
+                std::isfinite(supplied->farZ) && supplied->fovYRadians > 0.0f && supplied->fovYRadians < 3.1415926f &&
+                supplied->nearZ > 0.0f && supplied->farZ > supplied->nearZ;
+  for (const float value : supplied->worldMatrix) usable = usable && std::isfinite(value);
+  usable = usable && extractCameraMatrices(supplied->worldMatrix, supplied->fovYRadians, supplied->nearZ,
+                                           supplied->farZ, 1.0f)
+                         .isOk();
+  if (!usable) {
+    if (!overlayCameraRejectionLogged_) {
+      ATLANTIS_LOG_ERROR("the overlay's Viewport camera is unusable -- drawing the scene's active camera");
+      overlayCameraRejectionLogged_ = true;
+    }
+    return active;
+  }
+  overlayCameraRejectionLogged_ = false;
+  ActiveCameraInput substituted = active;
+  substituted.worldMatrix = supplied->worldMatrix;
+  substituted.camera.fovYRadians = supplied->fovYRadians;
+  substituted.camera.nearZ = supplied->nearZ;
+  substituted.camera.farZ = supplied->farZ;
+  return substituted;
+}
+
+std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {
+  if (!scene_) return std::nullopt;
+  return collectActiveCamera(*scene_);
+}
 
 // Plan 0056 P7, place 4: the overlay's UI into the swapchain image, sampling
 // the Viewport target the scene was just drawn into (left in ShaderRead), and

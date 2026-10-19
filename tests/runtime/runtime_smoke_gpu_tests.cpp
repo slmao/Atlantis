@@ -1067,8 +1067,12 @@ class FakeOverlay final : public atlantis::runtime::FrameOverlay {
   [[nodiscard]] atlantis::rhi::Extent2D viewportExtent() const override { return extent; }
   [[nodiscard]] const atlantis::renderer::UiDrawList& drawList() const override { return list; }
   [[nodiscard]] atlantis::runtime::FontAtlasPixels fontAtlas() const override { return {1, 1, atlas}; }
+  [[nodiscard]] std::optional<atlantis::runtime::ViewportCameraOverride> viewportCamera() const override {
+    return camera;
+  }
 
   atlantis::rhi::Extent2D extent{320, 200};
+  std::optional<atlantis::runtime::ViewportCameraOverride> camera;  // Plan 0062 M2
   atlantis::renderer::UiDrawList list;
   std::array<std::uint8_t, 4> atlas{255, 255, 255, 255};
   int events = 0;
@@ -1165,6 +1169,109 @@ TEST_CASE("Runtime with an overlay attached: resizing the Viewport recreates the
   app.runFrame();
   CHECK(RuntimeSmokeTestAccess::viewportTargetExtent(app) == atlantis::rhi::Extent2D{1, 1});
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);  // shutdown() detaches
+}
+
+// --- Plan 0062 M2 (Spec 0062 R3, R9; ADR-0123 D1, D3; ruling Q3 F-a): the
+// Viewport rendered from an overlay's camera, under fatal Validation Layers. ----
+
+TEST_CASE("Runtime with an overlay camera: the Viewport is drawn from it, and frame data and captures follow it",
+          "[runtime][gpu][editor][camera]") {
+  namespace fs = std::filesystem;
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  FakeOverlay overlay;
+  REQUIRE(app.attachOverlay(overlay, overlayShaders()).isOk());
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto scenePose = app.activeCameraPose();
+  REQUIRE(scenePose.has_value());
+  const float aspect = 320.0f / 200.0f;
+  const auto sceneData = app.captureFrameData();
+  REQUIRE(sceneData.isOk());
+  const auto sceneImage = RuntimeSmokeTestAccess::readViewport(app);
+
+  // The scene camera's own pose and lens, supplied: byte for byte the same frame.
+  atlantis::runtime::ViewportCameraOverride same{scenePose->worldMatrix, scenePose->camera.fovYRadians,
+                                                 scenePose->camera.nearZ, scenePose->camera.farZ};
+  overlay.camera = same;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(app.captureFrameData().value() == sceneData.value());
+  const auto sameImage = RuntimeSmokeTestAccess::readViewport(app);
+  CHECK((sameImage.pixels == sceneImage.pixels));
+
+  // Another camera: moved back and up, a narrower lens.
+  atlantis::runtime::ViewportCameraOverride other = same;
+  other.worldMatrix[12] += 1.5f;
+  other.worldMatrix[13] += 1.0f;
+  other.worldMatrix[14] += 3.0f;
+  other.fovYRadians = 0.8f;
+  other.nearZ = 0.2f;
+  other.farZ = 60.0f;
+  overlay.camera = other;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto expected = atlantis::runtime::extractCameraMatrices(other.worldMatrix, other.fovYRadians, other.nearZ,
+                                                                 other.farZ, aspect);
+  REQUIRE(expected.isOk());
+  const std::array<float, 32> written = RuntimeSmokeTestAccess::cameraMatrixFloats(app);  // the frame's camera block
+  CHECK(std::equal(written.begin(), written.begin() + 16, expected.value().view.begin()));
+  CHECK(std::equal(written.begin() + 16, written.end(), expected.value().projection.begin()));
+  const auto otherData = app.captureFrameData();
+  REQUIRE(otherData.isOk());
+  CHECK(otherData.value().view == expected.value().view);
+  CHECK(otherData.value().projection == expected.value().projection);
+  CHECK(otherData.value().directionalLights == sceneData.value().directionalLights);
+  const auto otherImage = RuntimeSmokeTestAccess::readViewport(app);
+  CHECK_FALSE((otherImage.pixels == sceneImage.pixels));
+  CHECK(app.activeCameraPose()->worldMatrix == scenePose->worldMatrix);  // the World's camera is untouched
+
+  // A capture renders the camera drawn: it equals the Viewport target.
+  const fs::path dir = fs::temp_directory_path() / "atlantis_editor_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const auto captured = app.captureImage((dir / "override.png").string());
+  REQUIRE(captured.isOk());
+  const auto decoded = atlantis::image_regression::decodePng(dir / "override.png");
+  REQUIRE(decoded.isOk());
+  const bool bgra = otherImage.format == atlantis::rhi::Format::Bgra8Unorm ||
+                    otherImage.format == atlantis::rhi::Format::Bgra8Srgb;
+  const auto& png = decoded.value().pixels.rgba8;
+  REQUIRE(png.size() == otherImage.pixels.size());
+  std::size_t mismatches = 0;
+  for (std::size_t i = 0; i < otherImage.pixels.size(); i += 4) {
+    if (png[i] != otherImage.pixels[i + (bgra ? 2 : 0)] || png[i + 1] != otherImage.pixels[i + 1] ||
+        png[i + 2] != otherImage.pixels[i + (bgra ? 0 : 2)]) {
+      ++mismatches;
+    }
+  }
+  CHECK(mismatches == 0);
+
+  // An unusable camera (looking straight up; then a near plane of zero) is
+  // ignored: the scene's camera is drawn and the frame goes on.
+  atlantis::runtime::ViewportCameraOverride up = same;
+  up.worldMatrix = {1, 0, 0, 0, 0, 0, -1, 0, 0, -1, 0, 0, 0, 1, 0, 1};
+  overlay.camera = up;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(app.captureFrameData().value() == sceneData.value());
+  atlantis::runtime::ViewportCameraOverride zeroNear = other;
+  zeroNear.nearZ = 0.0f;
+  overlay.camera = zeroNear;
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(app.captureFrameData().value() == sceneData.value());
+
+  // No camera: the scene's again.
+  overlay.camera.reset();
+  app.runFrame();
+  CHECK(app.captureFrameData().value() == sceneData.value());
+  CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == sceneImage.pixels));
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
 }
 
 // --- Plan 0056 M7 (Spec 0056 north star, ruling Q8): the editor drives the
