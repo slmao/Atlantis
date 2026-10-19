@@ -882,7 +882,15 @@ milestone being listed does not authorize starting it — see Section 1.
     bitwise CPU test, the goldens and full-frame captures
     ([ADR-0121](adr/0121-point-light-association-model.md),
     [ADR-0122](adr/0122-clustered-light-association.md)). The point-light cost fell from 10.19 to
-    0.61 ms and Bistro's frame p50 from 27.97 to 18.96 ms on the reference machine.
+    0.61 ms and Bistro's frame p50 from 27.97 to 18.96 ms on the reference machine;
+  - since [Spec 0062](specs/0062-editor-viewport-navigation-picking.md) (merged
+    [PR #271](https://github.com/slmao/Atlantis/pull/271)), the editor's first iteration (E1): an editor
+    camera with orbit, pan, dolly and fly navigation, Viewport picking, selection sync across Viewport,
+    Hierarchy, Inspector and Gizmo, and the Gizmo's world/local space and snapping — inside the World's
+    closed verb surface. The editor camera is the editor's own state, handed to the host as a pose and lens;
+    geometry picking and mesh bounds are host services over CPU mesh geometry kept only under `--editor`;
+    lights and cameras are picked client-side
+    ([ADR-0123](adr/0123-editor-viewport-camera-and-picking-host-services.md)).
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -906,9 +914,10 @@ milestone being listed does not authorize starting it — see Section 1.
   - custom components, a time model or scheduler, Runtime-hosted game
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);
-  - the editor's tree Hierarchy, picking, free camera, Custom Inspectors,
-    undo/redo, saving and Android hosting (Spec 0056 Non-Goals / Out of
-    Scope);
+  - the editor's tree Hierarchy, Custom Inspectors, undo/redo, saving and
+    Android hosting (Spec 0056 Non-Goals / Out of Scope); picking for remote
+    clients and agents, pixel-exact or alpha-accurate picking and a rendered
+    selection outline (Spec 0062 Out of Scope);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 

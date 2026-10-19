@@ -3,8 +3,10 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-19
+- **Implementation:** merged — M1–M7 in [PR #271](https://github.com/slmao/Atlantis/pull/271).
 - **Related Plan(s):** [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md) (`Approved`; Joint
-  Human Review 2026-10-19 recorded in its header). Drafted together with this Spec at the maintainer's direction.
+  Human Review 2026-10-19 recorded in its header; implemented in PR #271). Drafted together with this Spec at the
+  maintainer's direction.
 - **Approval:** slmao, 2026-10-19 — owner rulings Q1–Q6, each as its recommendation (Q1 C-a, Q2 K-a, Q3 F-a,
   Q4 G-a, Q5 B-a, Q6 D-a), recorded once in [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md);
   review of this Spec's own branch PR, [PR #270](https://github.com/slmao/Atlantis/pull/270). The open-question
