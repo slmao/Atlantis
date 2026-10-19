@@ -5,6 +5,7 @@
 #include <atlantis/schema.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -58,6 +59,10 @@ class HierarchyModel {
   [[nodiscard]] const std::optional<atlantis::asset_system::EntityGuid>& selection() const noexcept {
     return selection_;
   }
+  // Plan 0062 P8: counts every change of selection() -- a select() of a
+  // different value, or a destroyed selection cleared -- so a late answer can
+  // tell whether the selection moved since it was asked for.
+  [[nodiscard]] std::uint64_t selectionGeneration() const noexcept { return selectionGeneration_; }
 
  private:
   void listAll();
@@ -67,6 +72,7 @@ class HierarchyModel {
   std::optional<atlantis::connection::SubscriptionId> subscription_;
   std::vector<HierarchyRow> rows_;
   std::optional<atlantis::asset_system::EntityGuid> selection_;
+  std::uint64_t selectionGeneration_ = 0;
 };
 
 }  // namespace atlantis::editor

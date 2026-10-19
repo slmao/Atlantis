@@ -41,9 +41,11 @@ class EditorAttachment final : public FrameOverlay {
   EditorAttachment& operator=(const EditorAttachment&) = delete;
 
   // The editor's frame, between Runtime frames: the input the last frame's
-  // pump delivered, the window size, and -- only while the editor shows a
-  // Gizmo (J7) -- the frame's camera from captureFrameData(). Every
-  // connection call happens here, between frames (ADR-0105).
+  // pump delivered, the window size, the scene's active camera, and the
+  // answers to the last frame's pick request and bounds subject; then -- Plan
+  // 0062 (ADR-0123 D2, D3) -- the new pick request and bounds subject are
+  // answered through the application's pick services, for the next frame.
+  // Every connection call happens here, between frames (ADR-0105).
   void update();
 
   [[nodiscard]] atlantis::editor::Editor& editor() noexcept { return *editor_; }
@@ -53,6 +55,8 @@ class EditorAttachment final : public FrameOverlay {
   [[nodiscard]] atlantis::rhi::Extent2D viewportExtent() const override;
   [[nodiscard]] const atlantis::renderer::UiDrawList& drawList() const override;
   [[nodiscard]] FontAtlasPixels fontAtlas() const override;
+  // Plan 0062 P2: the editor camera, when the editor shows it.
+  [[nodiscard]] std::optional<ViewportCameraOverride> viewportCamera() const override;
 
  private:
   RuntimeApplication& application_;
@@ -64,6 +68,9 @@ class EditorAttachment final : public FrameOverlay {
   std::uint32_t windowWidth_ = 1280;
   std::uint32_t windowHeight_ = 720;
   std::optional<std::chrono::steady_clock::time_point> lastUpdate_;
+  // Plan 0062: the answers the next editor frame receives.
+  std::optional<atlantis::editor::PickAnswer> pickAnswer_;
+  std::optional<atlantis::editor::SelectionBounds> selectionBounds_;
 };
 
 // The editor's input value for a Platform input event; empty for every other

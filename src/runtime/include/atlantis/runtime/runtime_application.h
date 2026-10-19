@@ -31,6 +31,8 @@
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/runtime/lifecycle_state.h>
 #include <atlantis/runtime/platform_session.h>
+#include <atlantis/runtime/scene_extraction.h>
+#include <atlantis/runtime/scene_load.h>
 #include <atlantis/world/access/runtime_world_access.h>
 #include <atlantis/world/ecs/entity_id.h>
 #include <atlantis/world/scene_instantiation.h>
@@ -130,6 +132,23 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
   captureImage(const std::string& path);
 
+  // Plan 0062 P3 (Spec 0062 R3; ADR-0123 D1, D3): between frames, the scene's
+  // active camera -- its world matrix and Camera component, as the frame reads
+  // them (collectActiveCamera(), no draw-item walk) and before any overlay
+  // camera is substituted. Empty without a scene or an active camera. Frame
+  // thread only.
+  [[nodiscard]] std::optional<ActiveCameraInput> activeCameraPose() const;
+
+  // Plan 0062 P3 (Spec 0062 R4, R6; ADR-0123 D2): the editor's pick services,
+  // over the CPU geometry kept when BootstrapConfig::retainPickGeometry was
+  // set (empty otherwise). pickRenderable(): the nearest entity with a
+  // Renderable and a WorldMatrix that `ray` (world space, unit direction)
+  // hits, at its current WorldMatrix, both triangle faces, alpha masks
+  // ignored. renderableLocalBounds(): the local bounds of the entity's
+  // Renderable mesh. Between frames, frame thread only.
+  [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
+  [[nodiscard]] std::optional<LocalBounds> renderableLocalBounds(const atlantis::asset_system::EntityGuid& entity) const;
+
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
 
@@ -159,6 +178,10 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::rhi::RenderTarget& overlayViewportTarget();
   void drawOverlayInto(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target);
   void releaseOverlayResources();
+  // Plan 0062 P4, place 5: `active` with the overlay's camera, when it
+  // supplies one the frame can use, in place of its world matrix and lens.
+  // Called only while overlay_ is set, by runFrame() and the capture path.
+  [[nodiscard]] ActiveCameraInput overlayFrameCamera(const ActiveCameraInput& active);
 
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).
@@ -336,6 +359,8 @@ class RuntimeApplication {
   // presentation's format like the output-transform one. Released by
   // detachOverlay() (and so by shutdown()) before the Device.
   FrameOverlay* overlay_ = nullptr;
+  // Plan 0062 P4: an unusable overlay camera is logged once per run of them.
+  bool overlayCameraRejectionLogged_ = false;
   std::vector<std::uint32_t> overlayVertexSpirv_;
   std::vector<std::uint32_t> overlayFragmentSpirv_;
   std::unique_ptr<atlantis::rhi::SampledTexture> overlayFontAtlas_;
@@ -356,6 +381,9 @@ class RuntimeApplication {
   // these).
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap_;
   std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap_;
+  // Plan 0062 P5 (ADR-0123 D2): CPU pick geometry per mesh AssetId, published
+  // with meshResourceMap_; empty unless BootstrapConfig::retainPickGeometry.
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry_;
   // CPU payload exists only until first-frame realization has submitted and
   // waitIdle() has succeeded. Empty also represents no configured environment.
   std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;

@@ -85,7 +85,10 @@ void HierarchyModel::refresh(const EntityGuid& entity) {
   auto components = connection_.listComponents(entity);
   if (components.isErr()) {
     if (listed) rows_.erase(at);
-    if (selection_ == entity) selection_.reset();
+    if (selection_ == entity) {
+      selection_.reset();
+      ++selectionGeneration_;
+    }
     return;
   }
   if (listed) {
@@ -132,6 +135,7 @@ void HierarchyModel::select(std::optional<EntityGuid> entity) {
         [](const HierarchyRow& a, const HierarchyRow& b) { return a.entity < b.entity; });
     if (!listed) entity.reset();
   }
+  if (entity != selection_) ++selectionGeneration_;
   selection_ = entity;
 }
 

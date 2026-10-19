@@ -4,7 +4,9 @@
 #include <atlantis/renderer/ui_overlay.h>
 #include <atlantis/rhi/types.h>
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -22,6 +24,18 @@ struct FontAtlasPixels {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::span<const std::uint8_t> rgba;
+};
+
+// Plan 0062 P2 (Spec 0062 R3; ADR-0123 D1, D3): a camera to render the
+// Viewport from in place of the scene's active camera's pose and lens. The
+// eye is column 3 of the world matrix and the forward direction -column 2, as
+// extractCameraMatrices() reads a camera; exposure, fog and bloom stay the
+// active camera's.
+struct ViewportCameraOverride {
+  std::array<float, 16> worldMatrix{};  // column-major
+  float fovYRadians = 0.0f;
+  float nearZ = 0.0f;
+  float farZ = 0.0f;
 };
 
 // Not thread-safe: the frame thread only (ADR-0004).
@@ -43,6 +57,13 @@ class FrameOverlay {
 
   // Read once, by RuntimeApplication::attachOverlay(), and uploaded once.
   [[nodiscard]] virtual FontAtlasPixels fontAtlas() const = 0;
+
+  // Plan 0062 P2: the camera the Viewport is rendered from this frame, or
+  // none for the scene's active camera. Read by runFrame() and by the capture
+  // path, which report and render the camera drawn (ADR-0123 D3). An override
+  // the frame cannot use (non-finite, a degenerate direction, a lens outside
+  // 0 < near < far and 0 < fov < pi) is ignored for the active camera.
+  [[nodiscard]] virtual std::optional<ViewportCameraOverride> viewportCamera() const { return std::nullopt; }
 };
 
 // The overlay pass's shader pair (shaders/editor_ui), as SPIR-V files.

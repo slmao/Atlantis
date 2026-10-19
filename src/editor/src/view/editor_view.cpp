@@ -98,30 +98,32 @@ class ContextScope {
 
 using Vec3 = std::array<float, 3>;
 
-// A world point through the frame's view and projection (column-major) to
-// Viewport-panel pixels; empty behind the camera.
+// A world point through the Viewport camera's view and projection
+// (column-major) to Viewport-panel pixels; empty behind the camera.
 [[nodiscard]] std::optional<ImVec2> project(const CameraMatrices& camera, const Vec3& point, ImVec2 origin,
                                            ImVec2 size) {
-  std::array<float, 4> view{};
-  for (int row = 0; row < 4; ++row) {
-    view[row] = camera.view[0 * 4 + row] * point[0] + camera.view[1 * 4 + row] * point[1] +
-                camera.view[2 * 4 + row] * point[2] + camera.view[3 * 4 + row];
-  }
-  std::array<float, 4> clip{};
-  for (int row = 0; row < 4; ++row) {
-    clip[row] = camera.projection[0 * 4 + row] * view[0] + camera.projection[1 * 4 + row] * view[1] +
-                camera.projection[2 * 4 + row] * view[2] + camera.projection[3 * 4 + row] * view[3];
-  }
-  if (!(clip[3] > 1e-6f)) return std::nullopt;
-  const float ndcX = clip[0] / clip[3];
-  const float ndcY = clip[1] / clip[3];
-  return ImVec2(origin.x + (ndcX + 1.0f) * 0.5f * size.x, origin.y + (ndcY + 1.0f) * 0.5f * size.y);
+  const std::optional<std::array<float, 2>> pixel =
+      pixelOf(camera, PixelRect{origin.x, origin.y, size.x, size.y}, point);
+  if (!pixel.has_value()) return std::nullopt;
+  return ImVec2((*pixel)[0], (*pixel)[1]);
 }
 
-// Whether world axis `axis` points toward the camera (view space looks down -z).
-[[nodiscard]] bool facesCamera(const CameraMatrices& camera, std::size_t axis) {
-  return camera.view[axis * 4 + 2] > 0.0f;
+// Whether a world direction points toward the camera (view space looks down -z).
+[[nodiscard]] bool facesCamera(const CameraMatrices& camera, const Vec3& direction) {
+  return camera.view[2] * direction[0] + camera.view[6] * direction[1] + camera.view[10] * direction[2] > 0.0f;
 }
+
+// A world point through a column-major 4x4.
+[[nodiscard]] Vec3 transformPoint(const MatrixColumns& m, const Vec3& p) {
+  return {m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0],
+          m[0][1] * p[0] + m[1][1] * p[1] + m[2][1] * p[2] + m[3][1],
+          m[0][2] * p[0] + m[1][2] * p[1] + m[2][2] * p[2] + m[3][2]};
+}
+
+// Plan 0062 P8: a click is a press and release this close together (pixels).
+constexpr float kClickSlopPixels = 4.0f;
+constexpr ImU32 kSelectionColor = IM_COL32(250, 220, 60, 255);
+constexpr ImU32 kMarkerColor = IM_COL32(235, 235, 235, 230);
 
 [[nodiscard]] float length(ImVec2 v) { return std::sqrt(v.x * v.x + v.y * v.y); }
 
@@ -169,15 +171,33 @@ struct EditorView::State {
     ImVec2 start;
     AxisHandle handle;
     float startAngle = 0.0f;
+    bool towardCamera = false;  // the axis points toward the camera (Rotate's screen direction)
   };
   std::optional<Drag> drag;
+
+  // Plan 0062 P10: the navigation drag in progress (it holds the pointer from
+  // press to release), a left press that may become a click, and the
+  // Hierarchy's view of the selection (to scroll to a selection made
+  // elsewhere).
+  enum class Navigation : std::uint8_t { None, Look, Orbit, Pan, Dolly };
+  Navigation navigation = Navigation::None;
+  std::optional<ImVec2> clickStart;
+  std::uint64_t seenSelectionGeneration = 0;
+  bool scrollToSelection = false;
+  bool clearFilter = false;  // the note's button, applied at the next Hierarchy panel
 
   void feed(std::span<const InputEvent> input);
   void record(const std::string& key);
   void layout(const FrameContext& context, ViewModels& models);
   void hierarchyPanel(ViewModels& models);
   void viewportPanel(const FrameContext& context, ViewModels& models);
-  void gizmo(const FrameContext& context, ViewModels& models, ImVec2 origin, ImVec2 size, bool hovered);
+  void navigate(const FrameContext& context, ViewModels& models, bool hovered, float viewportHeight);
+  void frameSelection(ViewModels& models);
+  void drawMarkers(ViewModels& models, const CameraMatrices& camera, ImVec2 origin, ImVec2 size);
+  void drawBounds(ViewModels& models, const CameraMatrices& camera, ImVec2 origin, ImVec2 size);
+  // Returns whether a handle was grabbed this frame.
+  bool gizmo(ViewModels& models, const std::optional<CameraMatrices>& camera, ImVec2 origin, ImVec2 size,
+             bool hovered, bool mayGrab);
   void inspectorPanel(ViewModels& models);
   void fieldControl(ViewModels& models, std::size_t index);
   void translate(const ImDrawData& data);
@@ -312,34 +332,68 @@ void EditorView::State::layout(const FrameContext& context, ViewModels& models) 
   ImGui::End();
 }
 
-// R2: the flat entity list, filtered, only the visible rows emitted.
+// R2: the flat entity list, filtered, only the visible rows emitted. Plan
+// 0062 P10 (Spec 0062 R6): a selection made elsewhere scrolls its row into
+// view once; one the filter hides is named, with a way to clear the filter.
 void EditorView::State::hierarchyPanel(ViewModels& models) {
+  if (models.hierarchy.selectionGeneration() != seenSelectionGeneration) {
+    seenSelectionGeneration = models.hierarchy.selectionGeneration();
+    scrollToSelection = models.hierarchy.selection().has_value();
+  }
+  if (clearFilter) {
+    // The text box may still hold its own copy of the text: let go of it first.
+    if (ImGui::GetActiveID() == ImGui::GetID("##filter")) ImGui::ClearActiveID();
+    filter.fill('\0');
+    clearFilter = false;
+  }
   ImGui::SetNextItemWidth(-1.0f);
   ImGui::InputTextWithHint("##filter", "filter: GUID prefix or component", filter.data(), filter.size());
   record("hierarchy:filter");
   const std::vector<std::size_t> visible = models.hierarchy.filtered(filter.data());
   ImGui::TextDisabled("%zu of %zu entities", visible.size(), models.hierarchy.rows().size());
+  std::optional<int> selectedRow;
+  if (const auto& selection = models.hierarchy.selection(); selection.has_value()) {
+    for (std::size_t i = 0; i < visible.size(); ++i) {
+      if (models.hierarchy.rows()[visible[i]].entity == *selection) selectedRow = static_cast<int>(i);
+    }
+    if (!selectedRow.has_value()) {
+      ImGui::TextDisabled("The selection is hidden by the filter.");
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Clear")) clearFilter = true;
+      record("hierarchy:filter-hidden");
+    }
+  }
   if (!ImGui::BeginChild("##rows")) {
     ImGui::EndChild();
     return;
   }
   ImGuiListClipper clipper;
   clipper.Begin(static_cast<int>(visible.size()));
+  const bool scrolling = scrollToSelection && selectedRow.has_value();
+  if (scrolling) clipper.IncludeItemByIndex(*selectedRow);
   while (clipper.Step()) {
     for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
       const HierarchyRow& row = models.hierarchy.rows()[visible[static_cast<std::size_t>(i)]];
       const std::string guidText = atlantis::asset_system::toString(row.entity);
       const std::string label = guidText + "  " + models.hierarchy.componentNames(row) + "##" + guidText;
       const bool selected = models.hierarchy.selection() == row.entity;
-      if (ImGui::Selectable(label.c_str(), selected)) models.hierarchy.select(row.entity);
+      if (ImGui::Selectable(label.c_str(), selected)) {
+        models.hierarchy.select(row.entity);
+        seenSelectionGeneration = models.hierarchy.selectionGeneration();  // chosen here: no scroll
+      }
+      if (scrolling && i == *selectedRow) ImGui::SetScrollHereY(0.5f);
       record("hierarchy:" + guidText);
     }
   }
+  if (scrolling) scrollToSelection = false;
   ImGui::EndChild();
 }
 
 // R4 + R6: the toolbar (Play / Pause / Step, the Gizmo mode, the status) over
-// the Runtime's rendered frame, with the Gizmo drawn on it.
+// the Runtime's rendered frame, with the Gizmo drawn on it. Plan 0062 P10
+// (Spec 0062 R1, R2, R4-R7): the Gizmo space, the camera mode, Align and the
+// markers toggle; navigation, clicks that pick, markers and the selection's
+// bounds box.
 void EditorView::State::viewportPanel(const FrameContext& context, ViewModels& models) {
   ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 6.0f, ImGui::GetCursorPosY() + 4.0f));
   if (ImGui::Button("Play")) models.control.resume();
@@ -363,8 +417,34 @@ void EditorView::State::viewportPanel(const FrameContext& context, ViewModels& m
     record(std::string("toolbar:") + name);
   }
   ImGui::SameLine();
+  ImGui::TextUnformatted("|");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("World", models.gizmo.space() == GizmoSpace::World)) models.gizmo.setSpace(GizmoSpace::World);
+  record("toolbar:World");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Local", models.gizmo.space() == GizmoSpace::Local)) models.gizmo.setSpace(GizmoSpace::Local);
+  record("toolbar:Local");
+  ImGui::SameLine();
   ImGui::Text("| %s  frame %llu", models.status.paused ? "paused" : "running",
               static_cast<unsigned long long>(models.status.frame));
+
+  // The second row: the Viewport's camera and the markers.
+  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 6.0f);
+  if (ImGui::RadioButton("Scene camera", models.camera.mode() == ViewportCameraMode::Scene)) {
+    models.camera.setMode(ViewportCameraMode::Scene);
+  }
+  record("toolbar:SceneCam");
+  ImGui::SameLine();
+  if (ImGui::RadioButton("Editor camera", models.camera.mode() == ViewportCameraMode::Editor)) {
+    models.camera.setMode(ViewportCameraMode::Editor);
+  }
+  record("toolbar:EditorCam");
+  ImGui::SameLine();
+  if (ImGui::Button("Align")) models.camera.align();
+  record("toolbar:Align");
+  ImGui::SameLine();
+  ImGui::Checkbox("Markers", &models.showMarkers);
+  record("toolbar:Markers");
 
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   const ImVec2 available = ImGui::GetContentRegionAvail();
@@ -372,39 +452,237 @@ void EditorView::State::viewportPanel(const FrameContext& context, ViewModels& m
                               static_cast<std::uint32_t>(std::max(available.y, 0.0f))};
   if (viewportSize.width == 0 || viewportSize.height == 0) return;
   const ImVec2 size(static_cast<float>(viewportSize.width), static_cast<float>(viewportSize.height));
+  const float aspect = size.x / size.y;
   ImGui::Image(ImTextureRef(kViewportTextureId), size);
   record("viewport");
   const bool hovered = ImGui::IsItemHovered();
-  if (hovered && !ImGui::GetIO().WantTextInput) {
-    if (ImGui::IsKeyPressed(ImGuiKey_W, false)) models.gizmo.setMode(GizmoMode::Translate);
-    if (ImGui::IsKeyPressed(ImGuiKey_E, false)) models.gizmo.setMode(GizmoMode::Rotate);
-    if (ImGui::IsKeyPressed(ImGuiKey_R, false)) models.gizmo.setMode(GizmoMode::Scale);
+  ImGuiIO& io = ImGui::GetIO();
+  // The camera that drew the image the pointer is on, before this frame's
+  // navigation moves it: a pick's ray comes from it.
+  const std::optional<CameraMatrices> shown = models.camera.matrices(aspect);
+
+  if (!io.WantTextInput) {
+    if (hovered && navigation != Navigation::Look) {
+      if (ImGui::IsKeyPressed(ImGuiKey_W, false)) models.gizmo.setMode(GizmoMode::Translate);
+      if (ImGui::IsKeyPressed(ImGuiKey_E, false)) models.gizmo.setMode(GizmoMode::Rotate);
+      if (ImGui::IsKeyPressed(ImGuiKey_R, false)) models.gizmo.setMode(GizmoMode::Scale);
+      if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+        models.gizmo.setSpace(models.gizmo.space() == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World);
+      }
+      if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelection(models);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) models.hierarchy.select(std::nullopt);
   }
-  gizmo(context, models, origin, size, hovered);
+  navigate(context, models, hovered, size.y);
+  models.gizmo.setSnap(io.KeyCtrl);
+
+  const std::optional<CameraMatrices> camera = models.camera.matrices(aspect);
+  ImDrawList& draw = *ImGui::GetWindowDrawList();
+  draw.PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
+  if (camera.has_value()) {
+    drawBounds(models, *camera, origin, size);
+    if (models.showMarkers) drawMarkers(models, *camera, origin, size);
+  }
+  draw.PopClipRect();
+  const bool grabbed = gizmo(models, camera, origin, size, hovered, navigation == Navigation::None && !io.KeyAlt);
+
+  // A left press on the image that is not a handle, a navigation or an Alt
+  // drag may become a click; its release within the slop picks (R4).
+  if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !grabbed && !io.KeyAlt &&
+      navigation == Navigation::None) {
+    clickStart = io.MousePos;
+  }
+  if (clickStart.has_value() && ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+    const ImVec2 at = io.MousePos;
+    const bool still = length(ImVec2(at.x - clickStart->x, at.y - clickStart->y)) < kClickSlopPixels;
+    if (still && shown.has_value()) {
+      models.picking.click(models.hierarchy, *shown, PixelRect{origin.x, origin.y, size.x, size.y}, at.x, at.y,
+                           models.showMarkers);
+    }
+    clickStart.reset();
+  }
+  if (clickStart.has_value() && !io.MouseDown[ImGuiMouseButton_Left]) clickStart.reset();
 }
 
-// R5: world-axis handles on the selected entity, projected with the frame's
-// camera; a drag turns pointer motion into the model's drag amount.
-void EditorView::State::gizmo(const FrameContext& context, ViewModels& models, ImVec2 origin, ImVec2 size,
-                              bool hovered) {
+// Plan 0062 P10 (Spec 0062 R2): a drag that starts on the image holds the
+// pointer until its button is released; motion is frame-rate independent.
+void EditorView::State::navigate(const FrameContext& context, ViewModels& models, bool hovered,
+                                 float viewportHeight) {
+  ImGuiIO& io = ImGui::GetIO();
+  if (navigation == Navigation::None && hovered && !drag.has_value()) {
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+      navigation = io.KeyAlt ? Navigation::Dolly : Navigation::Look;
+    } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+      navigation = Navigation::Pan;
+    } else if (io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+      navigation = Navigation::Orbit;
+    }
+  }
+  switch (navigation) {
+    case Navigation::Look:
+    case Navigation::Dolly:
+      if (!io.MouseDown[ImGuiMouseButton_Right]) navigation = Navigation::None;
+      break;
+    case Navigation::Pan:
+      if (!io.MouseDown[ImGuiMouseButton_Middle]) navigation = Navigation::None;
+      break;
+    case Navigation::Orbit:
+      if (!io.MouseDown[ImGuiMouseButton_Left]) navigation = Navigation::None;
+      break;
+    case Navigation::None: break;
+  }
+
+  ViewportCameraState& camera = models.camera;
+  const ImVec2 delta = io.MouseDelta;
+  const bool moved = delta.x != 0.0f || delta.y != 0.0f;
+  switch (navigation) {
+    case Navigation::Look: {
+      if (moved) {
+        camera.beginNavigation();
+        camera.editor().look(delta.x, delta.y);
+      }
+      if (!io.WantTextInput) {
+        const auto axis = [](ImGuiKey positive, ImGuiKey negative) {
+          return (ImGui::IsKeyDown(positive) ? 1.0f : 0.0f) - (ImGui::IsKeyDown(negative) ? 1.0f : 0.0f);
+        };
+        const Vec3 direction{axis(ImGuiKey_D, ImGuiKey_A), axis(ImGuiKey_E, ImGuiKey_Q), axis(ImGuiKey_W, ImGuiKey_S)};
+        if (direction[0] != 0.0f || direction[1] != 0.0f || direction[2] != 0.0f) {
+          camera.beginNavigation();
+          camera.editor().fly(direction, context.deltaSeconds, io.KeyShift);
+        }
+      }
+      if (io.MouseWheel != 0.0f) camera.editor().scaleFlySpeed(io.MouseWheel);
+      break;
+    }
+    case Navigation::Orbit:
+      if (moved) {
+        camera.beginNavigation();
+        camera.editor().orbit(delta.x, delta.y);
+      }
+      break;
+    case Navigation::Pan:
+      if (moved) {
+        camera.beginNavigation();
+        camera.editor().pan(delta.x, delta.y, viewportHeight);
+      }
+      break;
+    case Navigation::Dolly:
+      if (delta.y != 0.0f) {
+        camera.beginNavigation();
+        camera.editor().dollyDrag(delta.y);
+      }
+      break;
+    case Navigation::None:
+      if (hovered && io.MouseWheel != 0.0f) {
+        camera.beginNavigation();
+        camera.editor().dolly(io.MouseWheel);
+      }
+      break;
+  }
+}
+
+// Plan 0062 P10 (Spec 0062 R6): F -- the pivot to the selection's bounds
+// centre (or its origin) at the distance that fits them.
+void EditorView::State::frameSelection(ViewModels& models) {
+  const std::optional<MatrixColumns>& matrix = models.gizmo.matrix();
+  if (!matrix.has_value()) return;
+  Vec3 center{(*matrix)[3][0], (*matrix)[3][1], (*matrix)[3][2]};
+  float radius = 0.0f;
+  if (const auto& bounds = models.selectionBounds; bounds.has_value() && bounds->entity == models.gizmo.subject()) {
+    const Vec3 localCenter{(bounds->localMin[0] + bounds->localMax[0]) * 0.5f,
+                           (bounds->localMin[1] + bounds->localMax[1]) * 0.5f,
+                           (bounds->localMin[2] + bounds->localMax[2]) * 0.5f};
+    center = transformPoint(*matrix, localCenter);
+    for (int corner = 0; corner < 8; ++corner) {
+      const Vec3 world = transformPoint(*matrix, Vec3{(corner & 1) ? bounds->localMax[0] : bounds->localMin[0],
+                                                      (corner & 2) ? bounds->localMax[1] : bounds->localMin[1],
+                                                      (corner & 4) ? bounds->localMax[2] : bounds->localMin[2]});
+      const float dx = world[0] - center[0];
+      const float dy = world[1] - center[1];
+      const float dz = world[2] - center[2];
+      radius = std::max(radius, std::sqrt(dx * dx + dy * dy + dz * dz));
+    }
+  }
+  models.camera.beginNavigation();
+  models.camera.editor().frame(center, radius);
+}
+
+// Plan 0062 P10 (Spec 0062 R5): a glyph per marker -- a sun for a light, a
+// small frustum for a camera -- the selected one highlighted.
+void EditorView::State::drawMarkers(ViewModels& models, const CameraMatrices& camera, ImVec2 origin, ImVec2 size) {
+  ImDrawList& draw = *ImGui::GetWindowDrawList();
+  for (const Marker& marker : models.picking.markers()) {
+    if (!(viewDepth(camera, marker.position) > 0.0f)) continue;
+    const std::optional<ImVec2> at = project(camera, marker.position, origin, size);
+    if (!at.has_value()) continue;
+    const ImU32 color = models.hierarchy.selection() == marker.entity ? kSelectionColor : kMarkerColor;
+    if (marker.kind == MarkerKind::Light) {
+      draw.AddCircleFilled(*at, 4.0f, color);
+      for (int ray = 0; ray < 8; ++ray) {
+        const float angle = static_cast<float>(ray) * 0.7853982f;
+        const ImVec2 direction(std::cos(angle), std::sin(angle));
+        draw.AddLine(ImVec2(at->x + direction.x * 6.0f, at->y + direction.y * 6.0f),
+                     ImVec2(at->x + direction.x * 9.0f, at->y + direction.y * 9.0f), color, 1.5f);
+      }
+    } else {
+      draw.AddRect(ImVec2(at->x - 6.0f, at->y - 4.0f), ImVec2(at->x + 2.0f, at->y + 4.0f), color);
+      draw.AddTriangleFilled(ImVec2(at->x + 2.0f, at->y), ImVec2(at->x + 8.0f, at->y - 4.0f),
+                             ImVec2(at->x + 8.0f, at->y + 4.0f), color);
+    }
+  }
+}
+
+// Plan 0062 P10 (Spec 0062 R6, ruling Q5 B-a): the selection's mesh bounds
+// through its WorldMatrix, as twelve edges; an edge with an end behind the
+// camera is left out.
+void EditorView::State::drawBounds(ViewModels& models, const CameraMatrices& camera, ImVec2 origin, ImVec2 size) {
+  const auto& bounds = models.selectionBounds;
+  const std::optional<MatrixColumns>& matrix = models.gizmo.matrix();
+  if (!bounds.has_value() || !matrix.has_value() || bounds->entity != models.gizmo.subject()) return;
+  std::array<std::optional<ImVec2>, 8> corners;
+  for (int corner = 0; corner < 8; ++corner) {
+    const Vec3 world = transformPoint(*matrix, Vec3{(corner & 1) ? bounds->localMax[0] : bounds->localMin[0],
+                                                    (corner & 2) ? bounds->localMax[1] : bounds->localMin[1],
+                                                    (corner & 4) ? bounds->localMax[2] : bounds->localMin[2]});
+    if (viewDepth(camera, world) > 0.0f) corners[static_cast<std::size_t>(corner)] = project(camera, world, origin, size);
+  }
+  constexpr std::array<std::pair<int, int>, 12> kEdges{
+      std::pair{0, 1}, std::pair{2, 3}, std::pair{4, 5}, std::pair{6, 7}, std::pair{0, 2}, std::pair{1, 3},
+      std::pair{4, 6}, std::pair{5, 7}, std::pair{0, 4}, std::pair{1, 5}, std::pair{2, 6}, std::pair{3, 7}};
+  ImDrawList& draw = *ImGui::GetWindowDrawList();
+  for (const auto& [a, b] : kEdges) {
+    const auto& p = corners[static_cast<std::size_t>(a)];
+    const auto& q = corners[static_cast<std::size_t>(b)];
+    if (p.has_value() && q.has_value()) draw.AddLine(*p, *q, kSelectionColor, 1.0f);
+  }
+}
+
+// R5: axis handles on the selected entity -- along the world's axes or, in
+// Local space and for Scale, the entity's own (Plan 0062 P9) -- projected with
+// the Viewport camera; a drag turns pointer motion into the model's drag
+// amount.
+bool EditorView::State::gizmo(ViewModels& models, const std::optional<CameraMatrices>& cameraMatrices, ImVec2 origin,
+                              ImVec2 size, bool hovered, bool mayGrab) {
   GizmoModel& model = models.gizmo;
-  if (!context.camera.has_value() || !model.available()) {
+  if (!cameraMatrices.has_value() || !model.available()) {
     if (drag.has_value()) {
       model.endDrag();
       drag.reset();
     }
-    return;
+    return false;
   }
-  const CameraMatrices& camera = *context.camera;
+  const CameraMatrices& camera = *cameraMatrices;
   const MatrixColumns& matrix = *model.matrix();
   const Vec3 position{matrix[3][0], matrix[3][1], matrix[3][2]};
   const std::optional<ImVec2> center = project(camera, position, origin, size);
-  if (!center.has_value()) return;
+  if (!center.has_value()) return false;
 
   std::array<std::optional<AxisHandle>, 3> handles;
+  std::array<Vec3, 3> directions{};
   for (std::size_t axis = 0; axis < 3; ++axis) {
-    Vec3 unit = position;
-    unit[axis] += 1.0f;
+    directions[axis] = model.axisDirection(static_cast<GizmoAxis>(axis));
+    const Vec3 unit{position[0] + directions[axis][0], position[1] + directions[axis][1],
+                    position[2] + directions[axis][2]};
     const std::optional<ImVec2> tip = project(camera, unit, origin, size);
     if (!tip.has_value()) continue;
     const ImVec2 delta(tip->x - center->x, tip->y - center->y);
@@ -446,7 +724,8 @@ void EditorView::State::gizmo(const FrameContext& context, ViewModels& models, I
   draw.PopClipRect();
 
   ImGuiIO& io = ImGui::GetIO();
-  if (!drag.has_value() && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+  bool grabbed = false;
+  if (!drag.has_value() && hovered && mayGrab && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     float best = kPickPixels;
     for (std::size_t axis = 0; axis < 3; ++axis) {
       if (!handles[axis].has_value()) continue;
@@ -457,16 +736,20 @@ void EditorView::State::gizmo(const FrameContext& context, ViewModels& models, I
       if (distance <= best) {
         best = distance;
         drag = Drag{static_cast<GizmoAxis>(axis), pointer, handle,
-                    std::atan2(pointer.y - handle.origin.y, pointer.x - handle.origin.x)};
+                    std::atan2(pointer.y - handle.origin.y, pointer.x - handle.origin.x),
+                    facesCamera(camera, directions[axis])};
       }
     }
-    if (drag.has_value()) model.beginDrag(drag->axis);
+    if (drag.has_value()) {
+      model.beginDrag(drag->axis);
+      grabbed = true;
+    }
   }
-  if (!drag.has_value()) return;
+  if (!drag.has_value()) return grabbed;
   if (!io.MouseDown[ImGuiMouseButton_Left]) {
     model.endDrag();
     drag.reset();
-    return;
+    return grabbed;
   }
   const ImVec2 moved(pointer.x - drag->start.x, pointer.y - drag->start.y);
   const float along = moved.x * drag->handle.direction.x + moved.y * drag->handle.direction.y;
@@ -478,11 +761,12 @@ void EditorView::State::gizmo(const FrameContext& context, ViewModels& models, I
       // axis facing the camera turns counter-clockwise on screen, i.e. by a
       // decreasing screen angle.
       float angle = std::atan2(pointer.y - drag->handle.origin.y, pointer.x - drag->handle.origin.x) - drag->startAngle;
-      if (facesCamera(camera, static_cast<std::size_t>(drag->axis))) angle = -angle;
+      if (drag->towardCamera) angle = -angle;
       model.dragTo(angle);
       break;
     }
   }
+  return grabbed;
 }
 
 // R3: every field of the subject's components, generated from the schema --

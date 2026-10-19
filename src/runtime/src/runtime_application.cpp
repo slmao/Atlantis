@@ -35,6 +35,8 @@
 #include <variant>
 #include <vector>
 
+#include "scene_picking.h"
+
 // Plan 0013 Section D5: this file's own helpers (Vertex schema,
 // loadSpirvFile(), the camera math) are duplicated -- not shared --
 // from examples/minimal_renderer_demo/main.cpp and
@@ -1126,6 +1128,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   meshResourceMap_ = std::move(outcome.meshResourceMap);
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
+  pickGeometry_ = std::move(outcome.pickGeometry);  // Plan 0062 P5
   sceneGuid_ = outcome.sceneGuid;
   environmentData_ = std::move(loadedEnvironment);
 
@@ -1471,8 +1474,9 @@ void RuntimeApplication::runFrame() {
   }
   activeCameraEntity_ = scene_->activeCamera;  // cached for logging only; scene_ is the source of truth
 
-  const Mat4& cameraWorldMatrix = activeCamera->worldMatrix;
-  const atlantis::world::Camera cameraComponent = activeCamera->camera;
+  const ActiveCameraInput frameCamera = overlay_ ? overlayFrameCamera(*activeCamera) : *activeCamera;  // Plan 0062 P4, place 5
+  const Mat4& cameraWorldMatrix = frameCamera.worldMatrix;
+  const atlantis::world::Camera cameraComponent = frameCamera.camera;
 
   const float aspect =
       currentExtent.height != 0 ? static_cast<float>(currentExtent.width) / static_cast<float>(currentExtent.height)
@@ -2138,6 +2142,60 @@ Extent2D RuntimeApplication::overlayViewportExtent() {
 
 // Plan 0056 P7, place 3: the scene's target is the Viewport target.
 atlantis::rhi::RenderTarget& RuntimeApplication::overlayViewportTarget() { return *overlayViewportTarget_; }
+
+// Plan 0062 P4, place 5 (ADR-0123 D1): the overlay's camera in place of the
+// active camera's world matrix and lens -- only if the frame can use it, so
+// editor input never fails the lifecycle; exposure, fog and bloom stay the
+// active camera's.
+ActiveCameraInput RuntimeApplication::overlayFrameCamera(const ActiveCameraInput& active) {
+  const std::optional<ViewportCameraOverride> supplied = overlay_->viewportCamera();
+  if (!supplied.has_value()) return active;
+  bool usable = std::isfinite(supplied->fovYRadians) && std::isfinite(supplied->nearZ) &&
+                std::isfinite(supplied->farZ) && supplied->fovYRadians > 0.0f && supplied->fovYRadians < 3.1415926f &&
+                supplied->nearZ > 0.0f && supplied->farZ > supplied->nearZ;
+  for (const float value : supplied->worldMatrix) usable = usable && std::isfinite(value);
+  usable = usable && extractCameraMatrices(supplied->worldMatrix, supplied->fovYRadians, supplied->nearZ,
+                                           supplied->farZ, 1.0f)
+                         .isOk();
+  if (!usable) {
+    if (!overlayCameraRejectionLogged_) {
+      ATLANTIS_LOG_ERROR("the overlay's Viewport camera is unusable -- drawing the scene's active camera");
+      overlayCameraRejectionLogged_ = true;
+    }
+    return active;
+  }
+  overlayCameraRejectionLogged_ = false;
+  ActiveCameraInput substituted = active;
+  substituted.worldMatrix = supplied->worldMatrix;
+  substituted.camera.fovYRadians = supplied->fovYRadians;
+  substituted.camera.nearZ = supplied->nearZ;
+  substituted.camera.farZ = supplied->farZ;
+  return substituted;
+}
+
+std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {
+  if (!scene_) return std::nullopt;
+  return collectActiveCamera(*scene_);
+}
+
+// Plan 0062 P3/P6 (ADR-0123 D2): through the World's operation boundary, so
+// every addressable entity -- including those created since load -- is
+// pickable at its current WorldMatrix.
+std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) const {
+  if (!scene_ || !worldAccess_.has_value() || pickGeometry_.empty()) return std::nullopt;
+  const std::vector<detail::PickInstance> instances = detail::collectPickInstances(*worldAccess_, *scene_);
+  return detail::pickNearest(instances, pickGeometry_, ray);
+}
+
+std::optional<LocalBounds> RuntimeApplication::renderableLocalBounds(
+    const atlantis::asset_system::EntityGuid& entity) const {
+  if (!worldAccess_.has_value()) return std::nullopt;
+  const std::optional<atlantis::asset_system::AssetId> mesh = detail::renderableMesh(*worldAccess_, entity);
+  if (!mesh.has_value()) return std::nullopt;
+  const auto it = pickGeometry_.find(*mesh);
+  if (it == pickGeometry_.end() || it->second.positions.empty()) return std::nullopt;
+  return LocalBounds{it->second.localMin, it->second.localMax};
+}
 
 // Plan 0056 P7, place 4: the overlay's UI into the swapchain image, sampling
 // the Viewport target the scene was just drawn into (left in ShaderRead), and

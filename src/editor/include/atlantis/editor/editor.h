@@ -6,6 +6,8 @@
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
+#include <atlantis/editor/model/viewport_camera.h>
+#include <atlantis/editor/model/viewport_picking.h>
 #include <atlantis/editor/ui_draw_list.h>
 
 #include <array>
@@ -19,8 +21,10 @@
 // Spec 0056 / ADR-0108 D2 (Plan 0056 P8): Atlantis Editor -- an ordinary
 // client of a running Runtime. It reaches the World only through a
 // RuntimeConnection and the Runtime's lifecycle only through a
-// RuntimeControl; its host gives it plain input values and the frame's camera,
-// and takes back a UI draw list and the Viewport size it wants.
+// RuntimeControl; its host gives it plain input values and the scene camera,
+// and takes back a UI draw list and the Viewport size it wants. Since Spec 0062
+// (ADR-0123 D3) the host also takes the Viewport camera, a pick request and a
+// bounds subject after each frame, and hands the answers to the next frame.
 namespace atlantis::editor {
 
 // The UI's font atlas: width x height RGBA8 pixels, row-major, tightly packed.
@@ -39,20 +43,19 @@ struct ViewportSize {
   friend bool operator==(const ViewportSize&, const ViewportSize&) = default;
 };
 
-// The frame's camera, column-major, exactly as the Runtime's frame data holds
-// it (Spec 0055 C1).
-struct CameraMatrices {
-  std::array<float, 16> view{};
-  std::array<float, 16> projection{};
-};
-
 struct FrameContext {
   std::uint32_t windowWidth = 0;
   std::uint32_t windowHeight = 0;
   float deltaSeconds = 1.0f / 60.0f;
-  // Present when the host has the frame's camera; the Gizmo needs it
-  // (wantsCamera()).
-  std::optional<CameraMatrices> camera;
+  // Plan 0062 P1 (ADR-0123 D1, D3): the scene's active camera, every frame
+  // the host has one -- the Viewport's camera in Scene mode, and where the
+  // editor camera starts.
+  std::optional<CameraPose> sceneCamera;
+  // The host's answer to the pickRequest() of an earlier frame.
+  std::optional<PickAnswer> pickAnswer;
+  // The mesh local bounds of the entity boundsSubject() named, when it has
+  // a Renderable.
+  std::optional<SelectionBounds> selectionBounds;
 };
 
 // Owns one UI-library context of its own (no global UI state outside it) and
@@ -84,21 +87,32 @@ class Editor {
   // The Viewport panel's size after the last frame (zero before the first).
   [[nodiscard]] ViewportSize viewportSize() const;
 
-  // Whether the next frame() draws a Gizmo and so needs FrameContext::camera
-  // (Plan 0056 J7: the host computes the camera only then).
-  [[nodiscard]] bool wantsCamera() const;
+  // Plan 0062 P1 (ADR-0123 D3): the host's work after each frame() --
+  // viewportCamera(): the camera to draw the Viewport from, none for the
+  // scene's (Scene mode); pickRequest(): a geometry pick to answer in the next
+  // FrameContext (none when this frame made none); boundsSubject(): the
+  // entity whose mesh bounds the next FrameContext should carry.
+  [[nodiscard]] std::optional<CameraPose> viewportCamera() const;
+  [[nodiscard]] const std::optional<PickRequest>& pickRequest() const;
+  [[nodiscard]] std::optional<atlantis::asset_system::EntityGuid> boundsSubject() const;
 
   // The models the UI acts through -- the same calls the view makes, for a
   // host or test that drives the editor without pointer input.
   [[nodiscard]] HierarchyModel& hierarchy();
   [[nodiscard]] InspectorModel& inspector();
   [[nodiscard]] GizmoModel& gizmo();
+  // Plan 0062: the Viewport's camera (mode, editor camera) and its picking.
+  [[nodiscard]] ViewportCameraState& camera();
+  [[nodiscard]] ViewportPicking& picking();
 
   // Where the last frame drew a widget, in framebuffer pixels -- for scripted
   // input. Keys: "hierarchy:<guid>", "hierarchy:filter",
   // "inspector:<Type>.<field...>" (an enum's choices, while its list is open:
   // "...#<constant>"), "inspector:<Type>" (a component's header),
-  // "toolbar:Play|Pause|Step|Translate|Rotate|Scale", "viewport". Empty when
+  // "toolbar:Play|Pause|Step|Translate|Rotate|Scale", "viewport"; since Plan
+  // 0062 also "toolbar:SceneCam|EditorCam|Align|World|Local|Markers" and
+  // "hierarchy:filter-hidden" (the note shown when the filter hides the
+  // selection; its button clears the filter). Empty when
   // the widget was not drawn (scrolled away, collapsed).
   [[nodiscard]] std::optional<UiRect> widgetRect(std::string_view key) const;
 
