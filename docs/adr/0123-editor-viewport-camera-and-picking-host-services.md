@@ -1,11 +1,13 @@
 # ADR 0123: Editor Viewport Camera and Picking as Host Services
 
-- **Status:** Proposed
-- **Date:** 2026-10-19
+- **Status:** Accepted
+- **Date:** 2026-10-19 (accepted 2026-10-19)
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-10-19 (owner rulings on Spec 0062 Q1–Q6, each as recommended, recorded once in
+  [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md); the ADR text was reviewed in
+  [PR #270](https://github.com/slmao/Atlantis/pull/270))
 - **Related Spec:** [Spec 0062: Editor Viewport Navigation and Picking (E1)](../specs/0062-editor-viewport-navigation-picking.md)
-  (`Draft`; D1 is its Q1, D2 its Q2 and Q4, D3 its Q3)
+  (`Approved` 2026-10-19; D1 is its Q1, D2 its Q2 and Q4, D3 its Q3)
 - **Related ADR(s):**
   - **Supersedes in part** [ADR-0108](0108-editor-host-and-viewport-composition.md) D4's sentence "The camera is
     the scene's active camera; the editor gets the frame's view and projection for its Gizmo", and **extends**

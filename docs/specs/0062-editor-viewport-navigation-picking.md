@@ -1,14 +1,16 @@
 # Spec: Editor Viewport Navigation and Picking (E1)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-19
-- **Related Plan(s):** [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md) (`Draft`). At the
-  maintainer's direction (2026-10-19) the Plan is drafted together with this Spec, against this Spec's
-  recommended options; a ruling that differs from a recommendation revises the Plan before Joint Review.
-- **Approval:** pending.
+- **Related Plan(s):** [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md) (`Approved`; Joint
+  Human Review 2026-10-19 recorded in its header). Drafted together with this Spec at the maintainer's direction.
+- **Approval:** slmao, 2026-10-19 — owner rulings Q1–Q6, each as its recommendation (Q1 C-a, Q2 K-a, Q3 F-a,
+  Q4 G-a, Q5 B-a, Q6 D-a), recorded once in [Plan 0062](../plans/0062-editor-viewport-navigation-picking.md);
+  review of this Spec's own branch PR, [PR #270](https://github.com/slmao/Atlantis/pull/270). The open-question
+  text below keeps the options as the record of what was weighed.
 - **Related ADR(s):**
-  - [ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md) (`Proposed`): the editor
+  - [ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md) (`Accepted` 2026-10-19): the editor
     camera's ownership and its hand-off to the host, and picking as a host service. It supersedes
     [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md) D4's camera sentence ("The camera is the
     scene's active camera") and extends D2's list of host-interface values; ADR-0108 D1, D3 and D5 are
@@ -249,7 +251,7 @@ Host (atlantis_runtime --editor; EditorAttachment + RuntimeApplication)
 
 Yes. One ADR, drafted alongside:
 
-- **[ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md)** (`Proposed`):
+- **[ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md)** (`Accepted` 2026-10-19):
   - D1: the editor camera is client state; the host renders the Viewport from a pose and lens the editor
     supplies. This supersedes ADR-0108 D4's "the camera is the scene's active camera".
   - D2: picking is a host service over Runtime's own CPU copy of mesh geometry, reached through the editor–host
@@ -333,7 +335,8 @@ Risks:
 - **Editor-hosted memory** (+42 MB on Bistro), only under `--editor`.
 - **A second camera source in `runFrame()`.** Kept to one named place, guarded like Spec 0056's four.
 
-Open questions (each with a recommendation; review rules them):
+Open questions — all six ruled by the owner (slmao, 2026-10-19, review of
+[PR #270](https://github.com/slmao/Atlantis/pull/270)), each as its recommendation; rulings recorded in Plan 0062:
 
 - **Q1 — How does the editor camera reach the frame?** (ADR-0123 D1)
   - **(C-a) Client state, a host render override** — recommended. The editor owns the pose and lens and hands

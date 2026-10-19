@@ -1,17 +1,23 @@
 # Plan: Editor Viewport Navigation and Picking (E1)
 
 - **Spec:** [Spec 0062: Editor Viewport Navigation and Picking (E1)](../specs/0062-editor-viewport-navigation-picking.md)
-  (`Draft`) — [ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md) (`Proposed`; supersedes
-  [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md) D4's camera sentence in part).
-  - Drafted together with the Spec at the maintainer's direction (2026-10-19), against the Spec's recommended
-    options Q1 C-a, Q2 K-a, Q3 F-a, Q4 G-a, Q5 B-a and Q6 D-a. A different ruling revises this Plan before Joint
-    Review.
+  (`Approved` 2026-10-19) — [ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md)
+  (`Accepted` 2026-10-19; supersedes [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md) D4's camera
+  sentence in part).
+  - Drafted together with the Spec at the maintainer's direction (2026-10-19). The owner ruled the Spec's
+    Q1 C-a, Q2 K-a, Q3 F-a, Q4 G-a, Q5 B-a and Q6 D-a, exactly the options this Plan was drafted against.
   - Keeps ADR-0103/0104 (World verbs), ADR-0105 (`RuntimeConnection`), ADR-0106 (`RuntimeControl`, protocol),
     ADR-0107 (Dear ImGui), ADR-0109 (input) and ADR-0004.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation does not start before a human has reviewed this Plan and Spec
-  0062 together and explicitly authorized it, with ADR-0123 `Accepted`.
+- **Joint Human Review:** slmao, 2026-10-19 — reviewed this Plan and
+  [Spec 0062](../specs/0062-editor-viewport-navigation-picking.md) together in
+  [PR #270](https://github.com/slmao/Atlantis/pull/270): Spec Q1–Q6 ruled as recommended, J1–J7 ruled as
+  recommended, ADR-0123 `Accepted`. Implementation explicitly authorized for M1–M7 once PR #270 has merged, on
+  `feature/0062-editor-viewport-navigation-picking`, with no merge by the agent, no push to `main`, no change to
+  `tests/performance/baselines/` or `gate_policy.json`, every golden byte-identical, the `runFrame()` lines
+  enumerated in the implementation PR, and the gate verdict and Bistro pick time reported as measured. J6's
+  interaction run is the owner's.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -59,7 +65,7 @@ Read at `origin/main` `1811835`.
 6. **Gate applicability** (`tests/performance/applicability.txt`): `src/runtime/**` is included and
    `src/editor/**` is excluded, so the gate applies to this change.
 
-## Plan-stage decisions (proposed; ruled at Joint Review)
+## Plan-stage decisions
 
 - **P1 — Editor public API.**
   - New UI-free model headers: `model/viewport_camera.h` (`ViewportCameraModel`, the pose/lens types and the
@@ -295,7 +301,7 @@ Each milestone builds and runs the affected suites (Debug) before the next (AGEN
 - **Gate noise:** the frame change is one branch on an already-attached overlay. A non-`pass` verdict is
   reported as it is, never rebaselined by the agent.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (slmao, 2026-10-19, PR #270): J1–J7 as proposed
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — Bounds/pick answers one frame late** (P8). Proposed: accept; a synchronous path is rejected by ADR-0123
