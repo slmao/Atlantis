@@ -5,6 +5,7 @@
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
+#include <atlantis/editor/model/runtime_world_edit_target.h>
 #include <atlantis/editor/model/viewport_camera.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -1134,4 +1135,123 @@ TEST_CASE("a destroyed entity or removed component drops the entries naming it, 
   target.apply(pending);
   history.update({});
   CHECK(history.undoDepth() == 0);
+}
+
+// --- The Runtime World edit target (Plan 0063 M2; Spec 0063 R3, R6, R8) over the
+// InProcess fixture, with the fake Runtime's frames. ------------------------------
+
+namespace {
+
+using atlantis::editor::RuntimeWorldEditTarget;
+
+// The Spec 0049 address of `path` ("Light.intensity") on `entity`.
+[[nodiscard]] SceneAddress sceneAddress(connection::RuntimeConnection& c, const EntityGuid& entity,
+                                        std::string_view path) {
+  auto resolved = text::parsePath(c.schema(), path);
+  REQUIRE(resolved.isOk());
+  return SceneAddress{entity, resolved.value().component, resolved.value().leaf->id};
+}
+
+// One editor frame of the target: this frame's failures, then its events.
+void settle(RuntimeWorldEditTarget& target, connection::RuntimeConnection& c) {
+  const auto failures = c.drainFailures();
+  target.update(failures);
+}
+
+}  // namespace
+
+TEST_CASE("the Runtime World target settles a transaction applied once all its writes' events arrive in order",
+          "[editor][model][history][target]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  RuntimeWorldEditTarget target(c);
+  const SceneAddress intensity = sceneAddress(c, kSun, "Light.intensity");
+  const SceneAddress color = sceneAddress(c, kSun, "Light.color");
+  CHECK(target.read(intensity) == std::optional<access::PropertyValue>{1.2f});
+
+  const std::vector<AddressedValue> writes{{intensity, 6.0f}, {color, std::array<float, 3>{1.0f, 0.5f, 0.25f}}};
+  const EditHandle handle = target.submit(writes);
+  CHECK(handle.count == 2);
+  settle(target, c);
+  CHECK(target.settlement(handle) == Settlement::Pending);  // not applied before the Runtime's frame
+  fixture.runtime.frame();
+  settle(target, c);
+  CHECK(target.settlement(handle) == Settlement::Applied);
+  CHECK(target.read(intensity) == std::optional<access::PropertyValue>{6.0f});
+  settle(target, c);
+  CHECK(target.settlement(handle) == Settlement::Pending);  // forgotten once reported
+
+  // A one-command edit made elsewhere, tracked as a transaction of one (J2).
+  const auto ticket = c.submit(access::SetProperty{{kSun, intensity.component, intensity.field}, 3.0f});
+  const EditHandle one = RuntimeWorldEditTarget::handleOf(ticket);
+  const std::vector<AddressedValue> oneWrite{{intensity, 3.0f}};
+  target.track(one, oneWrite);
+  fixture.runtime.frame();
+  settle(target, c);
+  CHECK(target.settlement(one) == Settlement::Applied);
+}
+
+TEST_CASE("the Runtime World target reports a refusal, and stays pending while the Runtime is paused",
+          "[editor][model][history][target]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  RuntimeWorldEditTarget target(c);
+  const SceneAddress intensity = sceneAddress(c, kSun, "Light.intensity");
+  const SceneAddress missing{guid("99999999-0000-4099-8099-000000000099"), intensity.component, intensity.field};
+  const std::vector<AddressedValue> bad{{intensity, 2.0f}, {missing, 2.0f}};
+  const EditHandle refused = target.submit(bad);
+  fixture.runtime.frame();
+  settle(target, c);
+  CHECK(target.settlement(refused) == Settlement::Refused);
+  CHECK_FALSE(target.refusalText(refused).empty());
+  CHECK(target.read(intensity) == std::optional<access::PropertyValue>{1.2f});  // all or nothing
+
+  fixture.runtime.pause();
+  const std::vector<AddressedValue> good{{intensity, 2.0f}};
+  const EditHandle held = target.submit(good);
+  for (int i = 0; i < 3; ++i) {
+    fixture.runtime.frame();
+    settle(target, c);
+    CHECK(target.settlement(held) == Settlement::Pending);
+  }
+  fixture.runtime.step(connection::StepRequest{1, std::nullopt}, [](auto) {});
+  fixture.runtime.frame();
+  settle(target, c);
+  CHECK(target.settlement(held) == Settlement::Applied);
+}
+
+TEST_CASE("another writer's matching write does not settle a transaction out of order",
+          "[editor][model][history][target]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  auto other = fixture.endpoint.open();
+  RuntimeWorldEditTarget target(c);
+  const SceneAddress intensity = sceneAddress(c, kSun, "Light.intensity");
+  const SceneAddress range = sceneAddress(c, kPoint, "Light.range");
+  // Expecting intensity = 7 then range = 4: another client's range = 4 alone settles nothing.
+  const EditHandle expected{424242, 2};
+  const std::vector<AddressedValue> writes{{intensity, 7.0f}, {range, 4.0f}};
+  target.track(expected, writes);
+  (void)other->submit(access::SetProperty{{kPoint, range.component, range.field}, 4.0f});
+  fixture.runtime.frame();
+  settle(target, c);
+  CHECK(target.settlement(expected) == Settlement::Pending);
+}
+
+TEST_CASE("the Runtime World target reports destroyed entities and removed components; an unreadable address is empty",
+          "[editor][model][history][target]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  RuntimeWorldEditTarget target(c);
+  const auto light = typeNamed(c, "Light");
+  (void)c.submit(access::RemoveComponent{kPoint, light});
+  (void)c.submit(access::DestroyEntity{kSun});
+  fixture.runtime.frame();
+  settle(target, c);
+  const auto invalidations = target.drainInvalidations();
+  REQUIRE(invalidations.size() == 2);
+  CHECK(invalidations[0] == Invalidation{kPoint, light});
+  CHECK(invalidations[1] == Invalidation{kSun, std::nullopt});
+  CHECK(target.drainInvalidations().empty());
+  CHECK_FALSE(target.read(sceneAddress(c, kPoint, "Light.range")).has_value());
 }

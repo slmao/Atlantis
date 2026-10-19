@@ -17,6 +17,7 @@ add_library(atlantis_editor STATIC
   src/model/viewport_picking.cpp
   # Plan 0063 M1/M2: the Editor Transaction history and its Runtime World target.
   src/model/edit_history.cpp
+  src/model/runtime_world_edit_target.cpp
   # The view layer: the only sources that include the UI library.
   src/view/editor_view.cpp
 )
