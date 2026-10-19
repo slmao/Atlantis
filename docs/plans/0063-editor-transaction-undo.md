@@ -1,15 +1,26 @@
 # Plan: Editor Transaction and Undo/Redo (E2)
 
-- **Spec:** [Spec 0063: Editor Transaction and Undo/Redo (E2)](../specs/0063-editor-transaction-undo.md) (`Draft`) —
-  [ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md) (`Proposed`).
-  - Drafted together with the Spec at the maintainer's direction (2026-10-20), against the Spec's recommended
-    options: Q1 A-a, Q2 S-a, Q3 P-a, Q4 K-a, Q5 H-a, Q6 V-a. A different ruling revises this Plan before Joint
-    Review.
+- **Spec:** [Spec 0063: Editor Transaction and Undo/Redo (E2)](../specs/0063-editor-transaction-undo.md)
+  (`Approved` 2026-10-20) — [ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md) (`Accepted`
+  2026-10-20).
+  - Drafted together with the Spec at the maintainer's direction (2026-10-20). The owner ruled Q1 A-a, Q2 S-a,
+    Q3 P-a, Q4 K-a, Q5 H-a and Q6 V-a, exactly the options this Plan was drafted against.
   - Keeps ADR-0100 (consumed), ADR-0103/0104, ADR-0105, ADR-0106, ADR-0107, ADR-0108, ADR-0123 and ADR-0004.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation does not start until a human has reviewed this Plan and Spec 0063
-  together and explicitly authorized it, with ADR-0124 `Accepted`.
+- **Joint Human Review:** slmao, 2026-10-20 — reviewed this Plan and
+  [Spec 0063](../specs/0063-editor-transaction-undo.md) together. The text was reviewed in
+  [PR #273](https://github.com/slmao/Atlantis/pull/273), merged before the rulings were written to the branch; this
+  record landed with the implementation PR.
+  - **Spec:** Q1–Q6 ruled as recommended.
+  - **Plan:** J1–J7 ruled as recommended. J1 carries one Spec correction: R5's conflict comparison is `PropertyValue`
+    equality, as P4 states, not "bitwise for floats". It is folded into Spec 0063 R5 and the matching ADR-0124 D3
+    sentence.
+  - **ADR:** ADR-0124 `Accepted`.
+  - **Authorization:** implementation of M1–M5 on `feature/0063-editor-transaction-undo`. No merge by the agent, no
+    push to `main`, no change to `tests/performance/baselines/` or `gate_policy.json`, goldens unchanged, changes
+    limited to this Plan's file list (M5's path check), and the performance gate stated N/A with its reason. J6's
+    interaction run is the owner's.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -63,7 +74,7 @@ Read at `origin/main` `714da3a`.
    - key handling gated on `io.WantTextInput`.
 8. **Gate applicability:** `src/editor/**` and `tests/**` are excluded, so the gate is N/A.
 
-## Plan-stage decisions (proposed; ruled at Joint Review)
+## Plan-stage decisions
 
 - **P1 — The record** (`model/edit_transaction.h`, header only):
   - `PropertyWrite{scene::PropertyAddress address; PropertyValue before; PropertyValue after;}`.
@@ -277,7 +288,7 @@ Each milestone builds and runs the editor suites (Debug) before the next (AGENTS
   type.
 - **UI-library shortcut capture:** Ctrl+Z inside a text field must stay the field's. M4 tests it.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (slmao, 2026-10-20): J1–J7 as proposed, J1 with the R5 correction
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — The Inspector keeps submitting one `SetProperty`** (P6). Its ticket becomes the handle `{ticket, 1}`. The

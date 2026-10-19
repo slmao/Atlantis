@@ -1,11 +1,14 @@
 # ADR 0124: Editor Transaction and Client-Side Undo
 
-- **Status:** Proposed
-- **Date:** 2026-10-20
+- **Status:** Accepted
+- **Date:** 2026-10-20 (accepted 2026-10-20)
 - **Deciders:** slmao
-- **Acceptance:** pending
+- **Acceptance:** slmao, 2026-10-20. The owner ruled Spec 0063 Q1–Q6, each as recommended, recorded once in
+  [Plan 0063](../plans/0063-editor-transaction-undo.md). The ADR text was reviewed in
+  [PR #273](https://github.com/slmao/Atlantis/pull/273). Accepted with the Plan J1 correction folded into D3: the
+  conflict comparison is `PropertyValue` equality, not bitwise.
 - **Related Spec:** [Spec 0063: Editor Transaction and Undo/Redo (E2)](../specs/0063-editor-transaction-undo.md)
-  (`Draft`; D1 is its R1/R2, D2 its Q3/Q5, D3 its Q4, D4 its Q1/Q2)
+  (`Approved` 2026-10-20; D1 is its R1/R2, D2 its Q3/Q5, D3 its Q4, D4 its Q1/Q2)
 - **Related ADR(s):**
   - Consumes [ADR-0100](0100-scene-semantic-schema-layering-model-and-versioning.md) D7, the property address that
     Spec 0049 R7 fixed for Editor Transactions. ADR-0100 named Editor Transaction as a future consumer; this is it.
@@ -59,7 +62,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - **Settlement:**
      - A transaction is applied when its writes' `PropertyChanged` events arrive in order with the written values.
      - It is refused when its failure is drained; a refused edit is not kept.
-   - **Conflict refusal:** before an undo or redo is submitted, every address is read. If any value differs (bitwise)
+   - **Conflict refusal:** before an undo or redo is submitted, every address is read. If any value is not equal (`PropertyValue` equality)
      from what this edit left there, nothing is submitted and the entry is dropped ("changed elsewhere").
    - **Invalidation:** an `EntityDestroyed` or `ComponentRemoved` naming an entry's entity or component drops the
      entry, even if the GUID is later re-created.
