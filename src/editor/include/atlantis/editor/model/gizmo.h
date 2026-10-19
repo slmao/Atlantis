@@ -50,6 +50,18 @@ inline constexpr float kTranslateSnap = 0.5f;          // world units
 inline constexpr float kRotateSnapRadians = 0.2617994f;  // 15 degrees
 inline constexpr float kScaleSnap = 0.1f;              // of the factor
 
+// Plan 0063 P5 (Spec 0063 R2): a drag, begin to release, as one edit -- its
+// subject, mode, the WorldMatrix columns' addresses, the matrix at the drag's
+// start and at its release, and the release transaction's ticket.
+struct CompletedDrag {
+  atlantis::asset_system::EntityGuid subject;
+  GizmoMode mode = GizmoMode::Translate;
+  std::array<atlantis::world::access::PropertyAddress, 4> addresses{};
+  MatrixColumns start{};
+  MatrixColumns final{};
+  atlantis::world::access::TransactionTicket ticket;
+};
+
 // Borrows the connection, which must outlive it. Frame thread only, between
 // Runtime frames (ADR-0105); not thread-safe.
 class GizmoModel {
@@ -61,7 +73,8 @@ class GizmoModel {
     return subject_;
   }
 
-  // Between frames, unless dragging: re-reads the subject's WorldMatrix.
+  // Between frames, unless dragging or a released drag is still to be
+  // flushed: re-reads the subject's WorldMatrix.
   void update();
 
   // The matrix the Gizmo shows -- while dragging, the drag's latest state.
@@ -106,6 +119,10 @@ class GizmoModel {
   // drag ended (its final value, always). Returns its ticket, if any.
   std::optional<atlantis::world::access::TransactionTicket> flush();
 
+  // Plan 0063 P5: the drag whose release flush() last submitted, once, if its
+  // final matrix differs from its start; preview flushes never set it.
+  [[nodiscard]] std::optional<CompletedDrag> takeCompletedDrag();
+
  private:
   atlantis::connection::RuntimeConnection& connection_;
   std::optional<schema::TypeId> worldMatrixType_;
@@ -120,6 +137,7 @@ class GizmoModel {
   Trs dragStartTrs_;
   bool dirty_ = false;       // the drag state changed since the last flush()
   bool released_ = false;    // a drag ended since the last flush()
+  std::optional<CompletedDrag> completed_;
 };
 
 }  // namespace atlantis::editor

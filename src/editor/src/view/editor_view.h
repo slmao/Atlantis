@@ -3,6 +3,7 @@
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/editor/editor.h>
 #include <atlantis/editor/input.h>
+#include <atlantis/editor/model/edit_history.h>
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
@@ -35,6 +36,7 @@ struct ViewModels {
   ViewportPicking& picking;
   const std::optional<SelectionBounds>& selectionBounds;
   bool& showMarkers;
+  EditHistory& history;  // Plan 0063 P8
 };
 
 class EditorView {

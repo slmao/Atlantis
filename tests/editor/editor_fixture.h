@@ -19,6 +19,7 @@
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -96,7 +97,7 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
 
   connection::RuntimeStatus status() override {
-    return {paused_, frame_, atlantis::asset_system::parseAssetGuid(kScene).value()};
+    return {paused_, frame_, scene.value_or(atlantis::asset_system::parseAssetGuid(kScene).value())};
   }
   void pause() override {
     calls.emplace_back("pause");
@@ -115,6 +116,8 @@ class FakeRuntime final : public connection::RuntimeControl {
   connection::DiagnosticBatch diagnostics(std::uint64_t, std::size_t) override { return {}; }
 
   std::vector<std::string> calls;
+  // Plan 0063 M3: the scene the status reports, when a test changes it.
+  std::optional<atlantis::asset_system::AssetGuid> scene;
 
  private:
   access::RuntimeWorldAccess& boundary_;

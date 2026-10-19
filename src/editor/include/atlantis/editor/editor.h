@@ -3,6 +3,7 @@
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/editor/input.h>
+#include <atlantis/editor/model/edit_history.h>
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
@@ -104,6 +105,12 @@ class Editor {
   // Plan 0062: the Viewport's camera (mode, editor camera) and its picking.
   [[nodiscard]] ViewportCameraState& camera();
   [[nodiscard]] ViewportPicking& picking();
+  // Plan 0063 P7 (Spec 0063 R4): this session's edit history. Every frame()
+  // records the Inspector's commits and the Gizmo's completed drags as Editor
+  // Transactions (those made through the models between frames too) and
+  // settles the history; the history is cleared when the Runtime's scene
+  // changes.
+  [[nodiscard]] EditHistory& history();
 
   // Where the last frame drew a widget, in framebuffer pixels -- for scripted
   // input. Keys: "hierarchy:<guid>", "hierarchy:filter",

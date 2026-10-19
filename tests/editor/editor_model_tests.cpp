@@ -1255,3 +1255,160 @@ TEST_CASE("the Runtime World target reports destroyed entities and removed compo
   CHECK(target.drainInvalidations().empty());
   CHECK_FALSE(target.read(sceneAddress(c, kPoint, "Light.range")).has_value());
 }
+
+// --- Recording through the Editor (Plan 0063 M3; Spec 0063 R2, R4, R5): the
+// Gizmo's drag and the Inspector's commit as Editor Transactions, undone and redone
+// through the editor's own frames. -----------------------------------------------
+
+namespace {
+
+// One round of the host's loop: the Runtime's frame, then the editor's.
+void round(EditorFixture& fixture, int count = 1) {
+  for (int i = 0; i < count; ++i) {
+    fixture.runtime.frame();
+    fixture.editor->frame({}, FrameContext{1280, 720});
+  }
+}
+
+void selectEntity(EditorFixture& fixture, const EntityGuid& entity) {
+  round(fixture);  // the Hierarchy's first listing
+  fixture.editor->hierarchy().select(entity);
+  round(fixture);
+  REQUIRE(fixture.editor->gizmo().subject() == entity);
+}
+
+}  // namespace
+
+TEST_CASE("a 30-update Gizmo drag is one Editor Transaction of four writes; its previews are not recorded",
+          "[editor][model][history][recording]") {
+  EditorFixture fixture;
+  auto& c = *fixture.connection;
+  selectEntity(fixture, kMesh);
+  auto& gizmo = fixture.editor->gizmo();
+  auto& history = fixture.editor->history();
+  const MatrixColumns start = readMatrix(c, kMesh);
+  Changes changes(c, kMesh);
+  gizmo.beginDrag(GizmoAxis::X);
+  for (int i = 1; i <= 30; ++i) {
+    gizmo.dragTo(0.1f * static_cast<float>(i));
+    round(fixture);  // the editor's frame flushes the preview
+    CHECK_FALSE(history.waiting());
+    CHECK(history.undoDepth() == 0);
+  }
+  gizmo.endDrag();
+  round(fixture, 3);  // the release flush, its application, its settlement
+  const MatrixColumns dropped = readMatrix(c, kMesh);
+  CHECK(dropped[3][0] == start[3][0] + 3.0f);
+  CHECK(changes.drain().size() == 31 * 4);  // 30 previews and the release
+  REQUIRE(history.undoDepth() == 1);
+  CHECK(history.undoLabel() == "Move 52052052");
+
+  // Undo: one transaction back to the drag's start, bit for bit; redo: the drop.
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  round(fixture, 2);
+  CHECK(readMatrix(c, kMesh) == start);
+  CHECK(changes.drain().size() == 4);
+  CHECK(history.redoDepth() == 1);
+  REQUIRE(history.redo() == HistoryResult::Submitted);
+  round(fixture, 2);
+  CHECK(readMatrix(c, kMesh) == dropped);
+}
+
+TEST_CASE("an unchanged drag, or one refused at release, records nothing", "[editor][model][history][recording]") {
+  EditorFixture fixture;
+  selectEntity(fixture, kMesh);
+  auto& gizmo = fixture.editor->gizmo();
+  auto& history = fixture.editor->history();
+  gizmo.beginDrag(GizmoAxis::Y);
+  gizmo.dragTo(0.5f);
+  round(fixture);
+  gizmo.dragTo(0.0f);  // back where it began
+  gizmo.endDrag();
+  round(fixture, 3);
+  CHECK(history.undoDepth() == 0);
+  CHECK_FALSE(history.waiting());
+
+  // The entity is destroyed by another client mid-drag: the release is refused.
+  auto other = fixture.endpoint.open();
+  gizmo.beginDrag(GizmoAxis::Y);
+  gizmo.dragTo(0.5f);
+  round(fixture);
+  (void)other->submit(access::DestroyEntity{kMesh});
+  fixture.runtime.frame();
+  gizmo.endDrag();
+  (void)gizmo.flush();
+  round(fixture, 3);
+  CHECK(history.undoDepth() == 0);
+  CHECK_FALSE(history.waiting());
+}
+
+TEST_CASE("an Inspector commit is one Editor Transaction with the shown value as before; undo shows it again",
+          "[editor][model][history][recording]") {
+  EditorFixture fixture;
+  selectEntity(fixture, kSun);
+  auto& inspector = fixture.editor->inspector();
+  auto& history = fixture.editor->history();
+  const std::size_t intensity = fieldIndex(inspector, "Light.intensity");
+  REQUIRE(inspector.fields()[intensity].value == access::PropertyValue{1.2f});
+  (void)inspector.commit(intensity, 6.0f);
+  round(fixture, 2);
+  REQUIRE(history.undoDepth() == 1);
+  CHECK(history.undoLabel() == "Set Light.intensity");
+  CHECK(inspector.fields()[intensity].value == access::PropertyValue{6.0f});
+
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  round(fixture, 2);
+  CHECK(inspector.fields()[intensity].value == access::PropertyValue{1.2f});
+
+  // A new edit clears redo.
+  REQUIRE(history.redoDepth() == 1);
+  (void)inspector.commit(intensity, 4.0f);
+  round(fixture, 2);
+  CHECK(history.redoDepth() == 0);
+  CHECK(history.undoDepth() == 1);
+}
+
+TEST_CASE("clearing an Optional field records Absent as after; undo restores the value", "[editor][model][history][recording]") {
+  EditorFixture fixture;
+  selectEntity(fixture, kMesh);
+  auto& inspector = fixture.editor->inspector();
+  auto& history = fixture.editor->history();
+  const std::size_t material = fieldIndex(inspector, "Renderable.materialAsset");
+  REQUIRE(inspector.fields()[material].optional);
+  const auto before = inspector.fields()[material].value;
+  REQUIRE(before.has_value());
+  (void)inspector.commit(material, access::Absent{});
+  round(fixture, 2);
+  REQUIRE(history.undoDepth() == 1);
+  CHECK(inspector.fields()[material].value == access::PropertyValue{access::Absent{}});
+  REQUIRE(history.undo() == HistoryResult::Submitted);
+  round(fixture, 2);
+  CHECK(inspector.fields()[material].value == before);
+}
+
+TEST_CASE("another client's later write refuses the undo; a scene change clears the history",
+          "[editor][model][history][recording]") {
+  EditorFixture fixture;
+  selectEntity(fixture, kSun);
+  auto& inspector = fixture.editor->inspector();
+  auto& history = fixture.editor->history();
+  const std::size_t intensity = fieldIndex(inspector, "Light.intensity");
+  (void)inspector.commit(intensity, 6.0f);
+  round(fixture, 2);
+  REQUIRE(history.canUndo());
+
+  auto other = fixture.endpoint.open();
+  (void)other->submit(access::SetProperty{{kSun, inspector.fields()[intensity].component, inspector.fields()[intensity].field}, 5.0f});
+  round(fixture);
+  CHECK(history.undo() == HistoryResult::ChangedElsewhere);
+  round(fixture);
+  CHECK(inspector.fields()[intensity].value == access::PropertyValue{5.0f});
+  CHECK(history.undoDepth() == 0);
+
+  (void)inspector.commit(intensity, 7.0f);
+  round(fixture, 2);
+  REQUIRE(history.undoDepth() == 1);
+  fixture.runtime.scene = atlantis::asset_system::parseAssetGuid("00630063-0063-4063-8063-006300630063").value();
+  round(fixture);
+  CHECK(history.undoDepth() == 0);
+}

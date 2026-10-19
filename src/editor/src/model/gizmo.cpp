@@ -6,6 +6,7 @@
 
 #include <cmath>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -116,7 +117,10 @@ void GizmoModel::setSubject(std::optional<EntityGuid> entity) {
 }
 
 void GizmoModel::update() {
-  if (dragging()) return;
+  // A released drag keeps its final matrix until flush() submits it (Plan
+  // 0063 P5): an endDrag() made between frames must not be overwritten by
+  // the World's last preview.
+  if (dragging() || released_) return;
   matrix_.reset();
   if (!subject_.has_value() || !worldMatrixType_.has_value()) return;
   MatrixColumns columns{};
@@ -218,13 +222,20 @@ std::optional<access::TransactionTicket> GizmoModel::flush() {
     return std::nullopt;
   }
   std::vector<access::Command> commands;
+  std::array<access::PropertyAddress, 4> addresses{};
   for (std::size_t k = 0; k < 4; ++k) {
-    commands.emplace_back(access::SetProperty{access::PropertyAddress{*subject_, *worldMatrixType_, columnFields_[k]},
-                                              access::PropertyValue{(*matrix_)[k]}});
+    addresses[k] = access::PropertyAddress{*subject_, *worldMatrixType_, columnFields_[k]};
+    commands.emplace_back(access::SetProperty{addresses[k], access::PropertyValue{(*matrix_)[k]}});
   }
+  const bool release = released_;
   dirty_ = false;
   released_ = false;
-  return connection_.submitTransaction(std::move(commands));
+  const access::TransactionTicket ticket = connection_.submitTransaction(std::move(commands));
+  // Plan 0063 P5: the release is the drag's one edit; previews are not.
+  if (release && *matrix_ != dragStart_) completed_ = CompletedDrag{*subject_, mode_, addresses, dragStart_, *matrix_, ticket};
+  return ticket;
 }
+
+std::optional<CompletedDrag> GizmoModel::takeCompletedDrag() { return std::exchange(completed_, std::nullopt); }
 
 }  // namespace atlantis::editor

@@ -55,6 +55,17 @@ struct InspectorField {
 
 enum class EditStatus : std::uint8_t { Pending, Applied, Refused };
 
+// Plan 0063 P6 (Spec 0063 R2): a completed field edit, for the edit history --
+// the field's address and path, the value it showed (before) and the value
+// committed (after), and the command's ticket.
+struct CompletedEdit {
+  atlantis::world::access::PropertyAddress address;
+  std::string path;
+  atlantis::world::access::PropertyValue before;
+  atlantis::world::access::PropertyValue after;
+  atlantis::world::access::CommandTicket ticket;
+};
+
 struct EditOutcome {
   EditStatus status = EditStatus::Pending;
   atlantis::world::access::CommandTicket ticket;
@@ -100,6 +111,10 @@ class InspectorModel {
   atlantis::world::access::CommandTicket commit(std::size_t index, atlantis::world::access::PropertyValue value);
   [[nodiscard]] const std::optional<EditOutcome>& outcome(std::size_t index) const;
 
+  // Plan 0063 P6: the commits since the last call, in order; a field whose
+  // value was unreadable when committed yields none.
+  [[nodiscard]] std::vector<CompletedEdit> takeCommits();
+
  private:
   void rebuild();
   void readValues();
@@ -110,6 +125,7 @@ class InspectorModel {
   std::vector<schema::TypeId> components_;
   std::vector<InspectorField> fields_;
   std::vector<std::optional<EditOutcome>> outcomes_;  // parallel to fields_
+  std::vector<CompletedEdit> commits_;
 };
 
 }  // namespace atlantis::editor
