@@ -80,15 +80,20 @@ public static class SceneReader
         new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ);
 }
 
-/// <summary>Per-frame times from back-to-back control.status calls (one is answered per Runtime frame).</summary>
-public sealed record FrameTimes(int Frames, double MedianMs, double P95Ms, double MeanMs, double MaxMs, int MultiFrameGaps)
+/// <summary>
+/// Per-frame times from back-to-back control.status calls (one is answered per Runtime frame), and the frame's
+/// size in pixels (from one captured frame after the samples; 0 when not captured).
+/// </summary>
+public sealed record FrameTimes(int Frames, double MedianMs, double P95Ms, double MeanMs, double MaxMs, int MultiFrameGaps,
+                                uint Width = 0, uint Height = 0)
 {
     public string ToJson() => string.Format(CultureInfo.InvariantCulture,
-        "{{\"frames\":{0},\"medianMs\":{1:F2},\"p95Ms\":{2:F2},\"meanMs\":{3:F2},\"maxMs\":{4:F2},\"multiFrameGaps\":{5}}}",
-        Frames, MedianMs, P95Ms, MeanMs, MaxMs, MultiFrameGaps);
+        "{{\"frames\":{0},\"medianMs\":{1:F2},\"p95Ms\":{2:F2},\"meanMs\":{3:F2},\"maxMs\":{4:F2},\"multiFrameGaps\":{5},\"width\":{6},\"height\":{7}}}",
+        Frames, MedianMs, P95Ms, MeanMs, MaxMs, MultiFrameGaps, Width, Height);
 
     public override string ToString() => string.Format(CultureInfo.InvariantCulture,
-        "{0} frames: median {1:F2} ms, p95 {2:F2} ms, mean {3:F2} ms, max {4:F2} ms", Frames, MedianMs, P95Ms, MeanMs, MaxMs);
+        "{0} frames at {5}x{6}: median {1:F2} ms, p95 {2:F2} ms, mean {3:F2} ms, max {4:F2} ms", Frames, MedianMs, P95Ms,
+        MeanMs, MaxMs, Width, Height);
 }
 
 public static class FrameSampler
@@ -97,7 +102,7 @@ public static class FrameSampler
     /// Samples <paramref name="frames"/> frame intervals: the time between consecutive status answers whose frame
     /// number advanced, divided by how far it advanced.
     /// </summary>
-    public static FrameTimes Measure(RemoteControl control, int frames)
+    public static FrameTimes Measure(RemoteControl control, int frames, string? capturePath = null)
     {
         var samples = new List<double>(frames);
         int gaps = 0;
@@ -119,7 +124,11 @@ public static class FrameSampler
             lastFrame = frame;
             lastTicks = now;
         }
-        return Summarize(samples, gaps);
+        FrameTimes times = Summarize(samples, gaps);
+        if (capturePath is null) return times;
+        // The size the frames were drawn at: one more frame, captured.
+        StepResult captured = control.Step(new StepRequest(1, capturePath));
+        return captured.Report?.Image is CapturedImage image ? times with { Width = image.Width, Height = image.Height } : times;
     }
 
     public static FrameTimes Summarize(List<double> samples, int gaps)
@@ -185,6 +194,7 @@ public sealed class EditorWorker : IDisposable
     private readonly Action<Action> _post;
     private readonly EditorLog _log;
     private readonly Thread _thread;
+    private readonly string _capturePath;
     private readonly object _lock = new();
     private readonly Queue<Action<RemoteSession>> _work = new();
     private (ViewportCamera? Camera, long InputTicks, int Count)? _pendingCamera;
@@ -196,6 +206,7 @@ public sealed class EditorWorker : IDisposable
         _info = info;
         _post = post;
         _log = log;
+        _capturePath = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(log.Path)!, "measure.png");
         _thread = new Thread(Run) { IsBackground = true, Name = "Atlantis.Editor session" };
     }
 
@@ -237,7 +248,7 @@ public sealed class EditorWorker : IDisposable
 
     public void Measure(int frames) => Enqueue(session =>
     {
-        FrameTimes times = FrameSampler.Measure(session.Control, frames);
+        FrameTimes times = FrameSampler.Measure(session.Control, frames, _capturePath);
         _log.Write("frametimes " + times.ToJson());
         _post(() => Measured?.Invoke(times));
     });

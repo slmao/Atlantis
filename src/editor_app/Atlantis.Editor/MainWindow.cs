@@ -37,6 +37,10 @@ public sealed class MainWindow : Window
     private readonly CheckBox _measureLatency = new() { Content = "Measure input latency (one more frame per update)" };
     private readonly Button _measureFrames = new() { Content = "Measure 600 frames" };
     private readonly Button _resetCamera = new() { Content = "Scene camera" };
+    private readonly TextBox _sizeBox = new() { PlaceholderText = "WxH, e.g. 1280x720", Width = 150 };
+    private readonly Button _applySize = new() { Content = "Set viewport size" };
+    private (int Width, int Height)? _targetSize;
+    private int _sizeCorrections;
     private readonly OrbitCamera _camera = new();
     private readonly DispatcherTimer _uiTicker = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly List<double> _uiGaps = new();
@@ -80,6 +84,10 @@ public sealed class MainWindow : Window
         tools.Children.Add(_notes);
         tools.Children.Add(_measureLatency);
         tools.Children.Add(buttons);
+        var sizing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        sizing.Children.Add(_sizeBox);
+        sizing.Children.Add(_applySize);
+        tools.Children.Add(sizing);
         var left = new DockPanel { Margin = new Thickness(6) };
         var heading = new TextBlock { Text = "Entities", Margin = new Thickness(0, 0, 0, 4) };
         DockPanel.SetDock(heading, Dock.Top);
@@ -114,6 +122,7 @@ public sealed class MainWindow : Window
             _worker?.Measure(600);
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
+        _applySize.Click += (_, _) => ApplyViewportSize();
         _measureLatency.IsCheckedChanged += (_, _) =>
         {
             if (_worker is not null) _worker.MeasureLatency = _measureLatency.IsChecked == true;
@@ -127,7 +136,12 @@ public sealed class MainWindow : Window
     private void OnViewportWindow(ViewportWindow window)
     {
         _log.Write("viewport host window 0x" + window.Handle.ToString("x") + " " + window.Width + "x" + window.Height);
-        window.Resized += (w, h) => _log.Write("viewport resized " + w + "x" + h);
+        window.Resized += (w, h) =>
+        {
+            _log.Write("viewport resized " + w + "x" + h);
+            CorrectViewportSize();
+            UpdateStatus();
+        };
         window.Pointer += OnPointer;
         window.Wheel += OnWheel;
         window.Key += (key, down, _) =>
@@ -210,6 +224,42 @@ public sealed class MainWindow : Window
         else _camera.Reset(new CameraPose(new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 10, 1 }, CameraLens.Default));
         _cameraInitialized = true;
         UpdateStatus();
+    }
+
+    // P5 U1: frame times are compared at equal pixel sizes. Resizes the window so the Viewport pane is the
+    // requested size in pixels (a couple of corrections absorb rounding at fractional DPI scales).
+    private void ApplyViewportSize()
+    {
+        string[] parts = (_sizeBox.Text ?? "").Trim().ToLowerInvariant().Split('x');
+        if (parts.Length != 2 || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int w) ||
+            !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int h) || w < 64 || h < 64)
+        {
+            _measureLine = "viewport size: expected WxH";
+            UpdateStatus();
+            return;
+        }
+        WindowState = WindowState.Normal;
+        _targetSize = (w, h);
+        _sizeCorrections = 0;
+        CorrectViewportSize();
+    }
+
+    private void CorrectViewportSize()
+    {
+        ViewportWindow? window = _viewport.Window;
+        if (_targetSize is not { } target || window is null) return;
+        int dw = target.Width - window.Width;
+        int dh = target.Height - window.Height;
+        if ((dw == 0 && dh == 0) || ++_sizeCorrections > 4)
+        {
+            _measureLine = "viewport " + window.Width + "x" + window.Height + (dw == 0 && dh == 0 ? " (as requested)" : " (closest reached)");
+            _targetSize = null;
+            UpdateStatus();
+            return;
+        }
+        double scale = RenderScaling;
+        Width += dw / scale;
+        Height += dh / scale;
     }
 
     private void ResetToSceneCamera()
@@ -300,13 +350,14 @@ public sealed class MainWindow : Window
         FrameTimes gaps = FrameSampler.Summarize(_uiGaps, 0);
         _uiGaps.Clear();
         _uiLine = string.Format(CultureInfo.InvariantCulture, "UI tick gaps (2 s): p95 {0:F1} ms, max {1:F1} ms", gaps.P95Ms, gaps.MaxMs);
-        _log.Write("ui " + gaps.ToJson());
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "ui ticks {0} p95 {1:F1} ms max {2:F1} ms", gaps.Frames, gaps.P95Ms, gaps.MaxMs));
         UpdateStatus();
     }
 
     private void UpdateStatus()
     {
-        _status.Text = string.Join("\n", new[] { _runtimeLine, _pickLine + "   " + _cameraLine, _inputLine + "   " + _uiLine, _measureLine }
+        string size = _viewport.Window is { } w ? "viewport " + w.Width + "x" + w.Height + " px   " : "";
+        _status.Text = string.Join("\n", new[] { _runtimeLine, _pickLine + "   " + _cameraLine, size + _inputLine + "   " + _uiLine, _measureLine }
                                          .Where(line => !string.IsNullOrWhiteSpace(line)));
     }
 

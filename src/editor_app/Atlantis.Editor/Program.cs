@@ -52,7 +52,8 @@ public static class Program
         {
             if (sessionPath is null) return Usage("--measure-frames needs --session <session file>");
             using RemoteSession session = RemoteSession.Connect(SessionFile.Read(sessionPath));
-            FrameTimes times = FrameSampler.Measure(session.Control, measureFrames);
+            FrameTimes times = FrameSampler.Measure(session.Control, measureFrames,
+                                                    Path.Combine(Path.GetTempPath(), "atlantis_editor_measure.png"));
             return Write(outPath, times.ToJson()) ? 0 : 1;
         }
         if (runtime is null) return Usage("pass --runtime <atlantis_runtime.exe> or set ATLANTIS_RUNTIME");
