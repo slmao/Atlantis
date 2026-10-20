@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Numerics;
 using System.Text;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
@@ -217,6 +218,21 @@ public static class LiveConnectionSuite
         t.Check(diagnostics.Entries.Count == 0 && diagnostics.Latest == 0, "diagnostics: none");
         session.Submit(new SetProperty(Intensity(Sun), 1.2f));
         Settle(session);
+
+        // Spec 0064 / ADR-0128 (Plan 0064 M4): the Viewport camera and the
+        // ray-cast; the fixture's ray-cast is scripted (fixture_server/main.cpp).
+        var matrix = new float[16];
+        matrix[0] = matrix[5] = matrix[10] = matrix[15] = 1.0f;
+        matrix[14] = 10.0f;
+        control.SetViewportCamera(new ViewportCamera(matrix, 1.0472f, 0.1f, 100.0f));
+        control.SetViewportCamera(null);
+        t.Check(session.Failure is null, "setViewportCamera: a camera, then null, both accepted");
+        RaycastResult hit = control.Raycast(new Ray(new Vector3(0.0f, 1.0f, 5.0f), new Vector3(0.0f, 0.0f, -1.0f)));
+        t.Check(hit.IsOk && hit.Hit == new RayHit(Mesh, 5.0f), "raycast: a hit, its entity and distance");
+        RaycastResult miss = control.Raycast(new Ray(new Vector3(0.0f, 1.0f, 5.0f), new Vector3(0.0f, 0.0f, 1.0f)));
+        t.Check(miss.IsOk && miss.Hit is null, "raycast: a miss");
+        RaycastResult refused = control.Raycast(new Ray(Vector3.Zero, new Vector3(1.0f, 0.0f, 0.0f)));
+        t.Equal(ControlError.NoGeometry, refused.Error, "raycast: NoGeometry");
     }
 
     private static void Pipelining(TestContext t, RemoteSession session)

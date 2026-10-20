@@ -26,6 +26,15 @@ public static class SessionSuite
         t.Check(SessionFile.TryParse(File(pid: "4294967295"), out _, out _), "pid UINT32_MAX");
         t.Check(SessionFile.TryParse("  " + File().TrimEnd('\n') + "\r\n", out _, out _), "surrounding whitespace");
 
+        // Spec 0064 / ADR-0126 D3: the child-window mode's window field.
+        string withWindow = File().TrimEnd('\n').TrimEnd('}') + ",\"window\":1311234}\n";
+        t.Require(SessionFile.TryParse(withWindow, out SessionInfo? windowed, out _), "a session file with a window parses");
+        t.Equal((ulong?)1311234, windowed!.Window, "its window handle");
+        t.Equal(withWindow, SessionFile.Format(windowed), "... written back byte for byte");
+        t.Equal((ulong?)null, session!.Window, "no window field: no window");
+        Malformed(t, File().TrimEnd('\n').TrimEnd('}') + ",\"window\":\"12\"}\n", "a string window");
+        Malformed(t, File().TrimEnd('\n').TrimEnd('}') + ",\"window\":-1}\n", "a negative window");
+
         Malformed(t, "{\"protocol\":\"atlantis.remote/1\"}", "missing fields");
         Malformed(t, File(port: "0"), "port 0");
         Malformed(t, File(port: "65536"), "port 65536");

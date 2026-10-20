@@ -7,8 +7,11 @@ using System.IO;
 
 namespace Atlantis.Gameplay.Remote;
 
-/// <summary>What a Runtime's session file records.</summary>
-public sealed record SessionInfo(ushort Port, string Token, uint Pid, AssetGuid Scene);
+/// <summary>
+/// What a Runtime's session file records. <c>Window</c> is the Runtime's child window handle, present only
+/// when it was started with <c>--parent-window</c> (Spec 0064 / ADR-0126 D3).
+/// </summary>
+public sealed record SessionInfo(ushort Port, string Token, uint Pid, AssetGuid Scene, ulong? Window = null);
 
 public enum SessionFileError
 {
@@ -116,16 +119,26 @@ public static class SessionFile
             return false;
         }
         if (!AssetGuid.TryParse(scene.AsString, out AssetGuid sceneGuid) || sceneGuid.IsNil) return false;
-        session = new SessionInfo((ushort)portNumber, token.AsString, (uint)pidNumber, sceneGuid);
+        ulong? window = null;
+        if (parsed.Find("window") is JsonValue windowValue)
+        {
+            if (!windowValue.TryGetUInt64(out ulong handle)) return false;
+            window = handle;
+        }
+        session = new SessionInfo((ushort)portNumber, token.AsString, (uint)pidNumber, sceneGuid, window);
         return true;
     }
 
     /// <summary>The file's text, as a Runtime writes it (one object and a newline).</summary>
-    public static string Format(SessionInfo session) =>
-        Json.Write(JsonValue.NewObject()
+    public static string Format(SessionInfo session)
+    {
+        JsonValue output = JsonValue.NewObject()
             .Set("protocol", JsonValue.String(Protocol))
             .Set("port", JsonValue.Number((ulong)session.Port))
             .Set("token", JsonValue.String(session.Token))
             .Set("pid", JsonValue.Number((ulong)session.Pid))
-            .Set("scene", JsonValue.String(session.Scene.ToString()))) + "\n";
+            .Set("scene", JsonValue.String(session.Scene.ToString()));
+        if (session.Window is ulong window) output.Set("window", JsonValue.Number(window));
+        return Json.Write(output) + "\n";
+    }
 }

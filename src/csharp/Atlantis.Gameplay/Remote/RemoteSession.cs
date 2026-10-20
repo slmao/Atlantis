@@ -447,4 +447,31 @@ public sealed class RemoteControl
         Codec.DecodeDiagnosticBatch(_session.Call("control.diagnostics",
             JsonValue.NewObject().Set("after", JsonValue.Number(afterSequence)).Set("max", JsonValue.Number(max))))
         ?? throw _session.Malformed("control.diagnostics");
+
+    /// <summary>
+    /// Spec 0064 / ADR-0128 D1: the camera the Runtime draws from, from its next frame; null restores the scene's.
+    /// The Runtime clears it when this session closes.
+    /// </summary>
+    public void SetViewportCamera(ViewportCamera? camera) =>
+        _session.Call("control.setViewportCamera",
+            JsonValue.NewObject().Set("camera", camera is null ? JsonValue.Null() : Codec.Encode(camera)));
+
+    /// <summary>
+    /// Spec 0064 / ADR-0128 D2: the nearest Renderable <paramref name="ray"/> hits (Hit null for a miss), or
+    /// NoGeometry when the Runtime keeps no pick geometry.
+    /// </summary>
+    public RaycastResult Raycast(Ray ray)
+    {
+        JsonValue result = _session.Call("control.raycast", JsonValue.NewObject().Set("ray", Codec.Encode(ray)));
+        if (result.Find("ok") is JsonValue ok)
+        {
+            if (ok.IsNull) return new RaycastResult(null, null);
+            return Codec.DecodeRayHit(ok) is RayHit hit ? new RaycastResult(hit, null) : throw _session.Malformed("control.raycast");
+        }
+        if (result.Find("err") is JsonValue err && Codec.DecodeControlError(err) is ControlError error)
+        {
+            return new RaycastResult(null, error);
+        }
+        throw _session.Malformed("control.raycast");
+    }
 }

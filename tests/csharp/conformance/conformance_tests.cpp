@@ -239,6 +239,18 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   batch.latest = 3;
   batch.dropped = 9;
   out.push_back({"diagnostics", "DiagnosticBatch", codec::encode(batch)});
+  // Spec 0064 / ADR-0128 (Plan 0064 M3): the control camera and the ray-cast.
+  connection::ViewportCamera camera;
+  for (std::size_t i = 0; i < 16; ++i) camera.worldMatrix[i] = i % 5 == 0 ? 1.0f : 0.0f;
+  camera.worldMatrix[12] = 1.5f;
+  camera.worldMatrix[13] = -2.25f;
+  camera.worldMatrix[14] = 10.0f;
+  camera.fovYRadians = 1.0472f;
+  camera.nearZ = 0.1f;
+  camera.farZ = 500.0f;
+  out.push_back({"viewport_camera", "ViewportCamera", codec::encode(camera)});
+  out.push_back({"ray", "Ray", codec::encode(connection::Ray{{0.5f, 2.0f, 9.0f}, {0.0f, -0.6f, -0.8f}})});
+  out.push_back({"ray_hit", "RayHit", codec::encode(connection::RayHit{kEntity, 7.25f})});
   out.push_back({"schema.world", "Schema", codec::encodeSchema(atlantis::world::worldSchema())});
 
   // The session file (session_file.h): its one JSON object.
@@ -251,6 +263,11 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   auto parsed = json::parse(text);
   REQUIRE(parsed.isOk());
   out.push_back({"session_file", "SessionFile", parsed.value()});
+  // Spec 0064 / ADR-0126 D3: the child-window mode's window field.
+  session.window = 1311234;
+  auto withWindow = json::parse(atlantis::remote::formatSession(session));
+  REQUIRE(withWindow.isOk());
+  out.push_back({"session_file.window", "SessionFile", withWindow.value()});
   return out;
 }
 
