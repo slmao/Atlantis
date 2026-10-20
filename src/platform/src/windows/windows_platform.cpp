@@ -495,6 +495,15 @@ atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& 
   // ends up first in the batch, ahead of any such synchronous resize/
   // focus event -- see docs/plans/0002-platform-foundation.md Section 6.
   s.pendingBuffer.push_back(PlatformEvent{SurfaceCreated{currentHandle()}});
+  // Spec 0064 / ADR-0126 D1: a child is created at its final size, so the
+  // creation-time WM_SIZE (discarded above) is its only one and ShowWindow()
+  // below sends none -- unlike a top-level window's first show. Without this
+  // event the consumer would learn no extent until its host happened to
+  // resize the child (found in Plan 0064 M6).
+  if (s.parent != nullptr) {
+    const WindowExtent extent = clientExtent(s.hwnd);
+    s.pendingBuffer.push_back(PlatformEvent{WindowResize{extent, extent}});
+  }
 
   ShowWindow(s.hwnd, s.parent != nullptr ? SW_SHOW : SW_SHOWDEFAULT);
   UpdateWindow(s.hwnd);

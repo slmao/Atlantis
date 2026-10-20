@@ -488,6 +488,13 @@ TEST_CASE("Windows Platform child-window mode: a child filling the host, no acti
   GetClientRect(child, &childClient);
   CHECK(childClient.right == hostClient.right);
   CHECK(childClient.bottom == hostClient.bottom);
+  // Its extent follows SurfaceCreated at once, as a top-level window's first
+  // show does: a consumer needs no resize from the host to start presenting
+  // (found in Plan 0064 M6).
+  REQUIRE(batch.size() >= 2);
+  REQUIRE(std::holds_alternative<WindowResize>(batch[1]));
+  CHECK(std::get<WindowResize>(batch[1]).framebuffer.width == static_cast<std::uint32_t>(hostClient.right));
+  CHECK(std::get<WindowResize>(batch[1]).framebuffer.height == static_cast<std::uint32_t>(hostClient.bottom));
 
   // The host resizes it: a WindowResize at the new size.
   SetWindowPos(child, nullptr, 0, 0, 320, 200, SWP_NOZORDER | SWP_NOACTIVATE);

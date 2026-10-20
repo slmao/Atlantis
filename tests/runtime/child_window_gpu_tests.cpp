@@ -4,6 +4,7 @@
 // pumps its own messages throughout (the two threads' input queues are
 // attached). Nothing here asserts a measured time.
 
+#include <atlantis/remote/remote_client.h>
 #include <atlantis/remote/session_file.h>
 
 #if defined(_WIN32)
@@ -74,6 +75,8 @@ struct TempDir {
 
 TEST_CASE("atlantis_runtime --parent-window renders as a child of another process's window and exits with it",
           "[runtime][gpu][child_window]") {
+  // Sizes in physical pixels, as the Runtime (per-monitor aware v2) sees them.
+  SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
   TempDir dir;
   WNDCLASSEXW windowClass{};
   windowClass.cbSize = sizeof(windowClass);
@@ -116,13 +119,43 @@ TEST_CASE("atlantis_runtime --parent-window renders as a child of another proces
   CHECK(childProcess == process.dwProcessId);
   CHECK(info->pid == process.dwProcessId);
 
-  // The host sizes the child, as Atlantis Editor App will; the Runtime goes on rendering.
+  // It renders before anyone resizes it (Plan 0064 M6: a child whose host
+  // never resized it drew nothing), and after the host sizes it, as Atlantis
+  // Editor App will -- each step captures a frame at the child's size.
+  atlantis::remote::RemoteOptions options;
+  options.whileWaiting = [] {
+    MSG msg;
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&msg);
+  };
+  auto connected = atlantis::remote::connectRemote(*info, options);
+  REQUIRE(connected.isOk());
+  const auto stepImage = [&](const char* name) {
+    std::optional<atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>> result;
+    connected.value()->control().step(atlantis::connection::StepRequest{1, (dir.path / name).string()},
+                                      [&](auto r) { result = std::move(r); });
+    REQUIRE(result.has_value());
+    return *result;
+  };
+  RECT hostClient{};
+  GetClientRect(host, &hostClient);
+  const auto first = stepImage("first.png");
+  REQUIRE(first.isOk());  // not NotRendering
+  REQUIRE(first.value().image.has_value());
+  CHECK(first.value().image->width == static_cast<std::uint32_t>(hostClient.right));
+  CHECK(first.value().image->height == static_cast<std::uint32_t>(hostClient.bottom));
+
   SetWindowPos(child, nullptr, 20, 40, 640, 360, SWP_NOZORDER | SWP_NOACTIVATE);
   CHECK_FALSE(pumpUntil(2.0, [&] { return WaitForSingleObject(process.hProcess, 0) == WAIT_OBJECT_0; }));
   RECT client{};
   GetClientRect(child, &client);
   CHECK(client.right == 640);
   CHECK(client.bottom == 360);
+  const auto resized = stepImage("resized.png");
+  REQUIRE(resized.isOk());
+  REQUIRE(resized.value().image.has_value());
+  CHECK(resized.value().image->width == 640);
+  CHECK(resized.value().image->height == 360);
+  connected.value().reset();
 
   // The host goes away: the Runtime's child goes with it, and the Runtime exits cleanly.
   DestroyWindow(host);
