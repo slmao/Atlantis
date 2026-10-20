@@ -43,6 +43,16 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   target.setCommandsHeld = [&application](bool held) { application.setCommandsHeld(held); };
   target.frameData = [&application] { return application.captureFrameData(); };
   target.captureImage = [&application](const std::string& path) { return application.captureImage(path); };
+  target.setViewportCamera = [&application](const std::optional<connection::ViewportCamera>& camera) {
+    application.setControlViewportCamera(camera);
+  };
+  target.raycast = [&application](const connection::Ray& ray) {
+    using ResultT = atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>;
+    if (!application.retainsPickGeometry()) return ResultT::Err(connection::ControlError::NoGeometry);
+    const std::optional<PickHit> hit = application.pickRenderable(PickRay{ray.origin, ray.direction});
+    if (!hit.has_value()) return ResultT::Ok(std::nullopt);
+    return ResultT::Ok(connection::RayHit{hit->entity, hit->distance});
+  };
   target.scene = application.sceneGuid();
   return target;
 }
@@ -128,6 +138,19 @@ void RuntimeControlHost::step(
 connection::DiagnosticBatch RuntimeControlHost::diagnostics(std::uint64_t afterSequence, std::size_t max) {
   if (!ring_) return {};
   return ring_->read(afterSequence, max);
+}
+
+void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCamera> camera) {
+  if (target_.setViewportCamera) target_.setViewportCamera(camera);
+}
+
+atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> RuntimeControlHost::raycast(
+    const connection::Ray& ray) {
+  if (!target_.raycast) {
+    return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Err(
+        connection::ControlError::NoGeometry);
+  }
+  return target_.raycast(ray);
 }
 
 }  // namespace atlantis::runtime

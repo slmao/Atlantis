@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -408,4 +409,59 @@ TEST_CASE("atlantis: global flags anywhere on the command line", "[cli][tree]") 
   CHECK(parse({"--session"}).isErr());
   CHECK(parse({"--diagnostics=xml"}).isErr());
   CHECK(parse({"--help"}).value().help);
+}
+
+// Spec 0064 / ADR-0128 D1-D3 (Plan 0064 M3): the Viewport camera and the
+// ray-cast, the calls Atlantis Editor App makes, against the fake Runtime.
+TEST_CASE("atlantis: runtime camera set and clear, and runtime raycast", "[cli][tree][runtime][camera]") {
+  Cli human;
+  CHECK(human.run("runtime camera set --matrix 1 0 0 0 0 1 0 0 0 0 1 0 0 2 10 1 --fov 1.5 --near 0.1 --far 100") == 0);
+  CHECK(human.out.str() == "camera set\n");
+  REQUIRE(human.runtime.viewportCamera.has_value());
+  CHECK(human.runtime.viewportCamera->worldMatrix[13] == 2.0f);
+  CHECK(human.runtime.viewportCamera->worldMatrix[14] == 10.0f);
+  CHECK(human.runtime.viewportCamera->fovYRadians == 1.5f);
+  CHECK(human.runtime.viewportCamera->farZ == 100.0f);
+  CHECK(human.run("runtime camera clear") == 0);
+  CHECK(human.out.str() == "camera cleared\n");
+  CHECK_FALSE(human.runtime.viewportCamera.has_value());
+  CHECK(human.run("runtime camera set --matrix 1 0 0 --fov 1.5 --near 0.1 --far 100") == 2);
+  CHECK(human.run("runtime camera set --fov 1.5 --near 0.1 --far 100") == 2);
+  CHECK(human.run("runtime camera spin") == 2);
+  CHECK(human.runtime.viewportCameraCalls == 2);
+
+  // The fake keeps no geometry until told: NoGeometry, a Runtime error.
+  CHECK(human.run("runtime raycast --origin 0 1 5 --direction 0 0 -2") == 4);
+  REQUIRE(human.runtime.lastRay.has_value());
+  CHECK(human.runtime.lastRay->direction == std::array<float, 3>{0.0f, 0.0f, -1.0f});  // normalized
+  human.runtime.rayAnswer = std::optional<atlantis::connection::RayHit>{};
+  CHECK(human.run("runtime raycast --origin 0 1 5 --direction 0 0 -1") == 0);
+  CHECK(human.out.str() == "no hit\n");
+  human.runtime.rayAnswer = std::optional<atlantis::connection::RayHit>{
+      atlantis::connection::RayHit{atlantis::asset_system::parseEntityGuid(kPoint).value(), 4.5f}};
+  CHECK(human.run("runtime raycast --origin 0 1 5 --direction 0 0 -1") == 0);
+  CHECK(human.out.str() == std::string(kPoint) + " 4.5\n");
+  CHECK(human.run("runtime raycast --origin 0 1 5 --direction 0 0 0") == 2);
+  CHECK(human.run("runtime raycast --origin 0 1 5") == 2);
+
+  Cli json(true, true);
+  CHECK(json.run("runtime camera set --matrix 1 0 0 0 0 1 0 0 0 0 1 0 0 2 10 1 --fov 1.5 --near 0.5 --far 100") == 0);
+  CHECK(json.out.str() == envelope("runtime camera set",
+                                   R"({"camera":{"worldMatrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,2,10,1],)"
+                                   R"("fovYRadians":1.5,"nearZ":0.5,"farZ":100}})"));
+  CHECK(json.run("runtime camera clear") == 0);
+  CHECK(json.out.str() == envelope("runtime camera clear", R"({"camera":null})"));
+  CHECK(json.run("runtime raycast --origin 0 1 5 --direction 0 0 -1") == 4);
+  CHECK(json.err.str() ==
+        R"({"code":"NoGeometry","category":"runtime","message":"the Runtime could not ray-cast: NoGeometry",)"
+        R"("subject":{}})"
+        "\n");
+  json.runtime.rayAnswer = std::optional<atlantis::connection::RayHit>{};
+  CHECK(json.run("runtime raycast --origin 0 1 5 --direction 0 0 -1") == 0);
+  CHECK(json.out.str() == envelope("runtime raycast", R"({"hit":null})"));
+  json.runtime.rayAnswer = std::optional<atlantis::connection::RayHit>{
+      atlantis::connection::RayHit{atlantis::asset_system::parseEntityGuid(kPoint).value(), 4.5f}};
+  CHECK(json.run("runtime raycast --origin 0 1 5 --direction 0 0 -1") == 0);
+  CHECK(json.out.str() ==
+        envelope("runtime raycast", R"({"hit":{"guid":")" + std::string(kPoint) + R"(","distance":4.5}})"));
 }

@@ -30,6 +30,8 @@ constexpr std::string_view kUsage =
     "  component add <guid> <Type> | component remove <guid> <Type>\n"
     "  property get <guid> <Type>.<field> | property set <guid> <Type>.<field> <value...>\n"
     "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>]]\n"
+    "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
+    "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
     "  tx <file|->       write commands, one per line, submitted as one transaction\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"

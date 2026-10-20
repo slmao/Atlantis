@@ -44,6 +44,26 @@ class FakeControl final : public connection::RuntimeControl {
     return batch;
   }
 
+  // Spec 0064 / ADR-0128 (Plan 0064 M2): the camera last set, and the answer
+  // raycast() gives (NoGeometry unless a test scripts a hit or a miss).
+  void setViewportCamera(std::optional<connection::ViewportCamera> camera) override {
+    viewportCamera = std::move(camera);
+    ++viewportCameraCalls;
+  }
+  atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
+      const connection::Ray& ray) override {
+    lastRay = ray;
+    if (!rayAnswer.has_value()) {
+      return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Err(
+          connection::ControlError::NoGeometry);
+    }
+    return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Ok(*rayAnswer);
+  }
+  std::optional<connection::ViewportCamera> viewportCamera;
+  int viewportCameraCalls = 0;
+  std::optional<connection::Ray> lastRay;
+  std::optional<std::optional<connection::RayHit>> rayAnswer;
+
   void runFrame() {
     ++frame_;
     if (steps_.empty()) return;
@@ -135,4 +155,53 @@ TEST_CASE("remote control: without a control, control.* is refused", "[remote][c
   const auto session = world.attach();
   (void)session->control().status();
   CHECK(session->failure() == atlantis::remote::RemoteError::ProtocolError);
+}
+
+// Spec 0064 / ADR-0128 D1-D3 (Plan 0064 M3; J2): the camera and the ray-cast
+// cross the wire; the camera is cleared when the client that set it goes.
+TEST_CASE("remote control: the viewport camera and the ray-cast cross the wire", "[remote][control][camera]") {
+  const auto scene = cookAndDecodeScene(kSceneSource);
+  FakeControl control;
+  ServedWorld world(scene, {}, &control);
+  auto session = world.attach();
+  connection::RuntimeControl& remote = session->control();
+
+  connection::ViewportCamera camera;
+  for (std::size_t i = 0; i < 16; ++i) camera.worldMatrix[i] = i % 5 == 0 ? 1.0f : 0.0f;
+  camera.worldMatrix[14] = 10.0f;
+  camera.fovYRadians = 1.0472f;
+  camera.nearZ = 0.1f;
+  camera.farZ = 100.0f;
+  remote.setViewportCamera(camera);
+  (void)remote.status();  // a round trip: the server has handled the set
+  REQUIRE(control.viewportCamera.has_value());
+  CHECK(*control.viewportCamera == camera);
+  remote.setViewportCamera(std::nullopt);
+  (void)remote.status();
+  CHECK_FALSE(control.viewportCamera.has_value());
+
+  const connection::Ray ray{{0.0f, 1.0f, 5.0f}, {0.0f, 0.0f, -1.0f}};
+  auto refused = remote.raycast(ray);  // the fake keeps no geometry until told
+  REQUIRE(refused.isErr());
+  CHECK(refused.error() == connection::ControlError::NoGeometry);
+  CHECK(control.lastRay == ray);
+  const auto entity = atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value();
+  control.rayAnswer = std::optional<connection::RayHit>{connection::RayHit{entity, 4.5f}};
+  auto hit = remote.raycast(ray);
+  REQUIRE(hit.isOk());
+  REQUIRE(hit.value().has_value());
+  CHECK(*hit.value() == connection::RayHit{entity, 4.5f});
+  control.rayAnswer = std::optional<connection::RayHit>{};
+  auto miss = remote.raycast(ray);
+  REQUIRE(miss.isOk());
+  CHECK_FALSE(miss.value().has_value());
+
+  // The setter goes away: its camera goes with it.
+  remote.setViewportCamera(camera);
+  (void)remote.status();
+  REQUIRE(control.viewportCamera.has_value());
+  session.reset();
+  for (int i = 0; i < 20 && control.viewportCamera.has_value(); ++i) world.server->poll();
+  CHECK_FALSE(control.viewportCamera.has_value());
+  CHECK(world.server->clientCount() == 0);
 }

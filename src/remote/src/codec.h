@@ -107,5 +107,13 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::FrameReport> decodeFrameReport(const Value& value);
 [[nodiscard]] Value encode(const connection::DiagnosticBatch& batch);
 [[nodiscard]] std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& value);
+// Spec 0064 / ADR-0128: {"worldMatrix":[16 f32],"fovYRadians":f32,"nearZ":f32,"farZ":f32};
+// {"origin":[3],"direction":[3]}; {"entity":"<E>","distance":f32}.
+[[nodiscard]] Value encode(const connection::ViewportCamera& camera);
+[[nodiscard]] std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& value);
+[[nodiscard]] Value encode(const connection::Ray& ray);
+[[nodiscard]] std::optional<connection::Ray> decodeRay(const Value& value);
+[[nodiscard]] Value encode(const connection::RayHit& hit);
+[[nodiscard]] std::optional<connection::RayHit> decodeRayHit(const Value& value);
 
 }  // namespace atlantis::remote::codec

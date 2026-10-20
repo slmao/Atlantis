@@ -115,6 +115,26 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
   connection::DiagnosticBatch diagnostics(std::uint64_t, std::size_t) override { return {}; }
 
+  // Spec 0064 / ADR-0128 (Plan 0064 M2): the camera last set, and the answer
+  // raycast() gives (NoGeometry unless a test scripts a hit or a miss).
+  void setViewportCamera(std::optional<connection::ViewportCamera> camera) override {
+    viewportCamera = std::move(camera);
+    ++viewportCameraCalls;
+  }
+  atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
+      const connection::Ray& ray) override {
+    lastRay = ray;
+    if (!rayAnswer.has_value()) {
+      return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Err(
+          connection::ControlError::NoGeometry);
+    }
+    return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Ok(*rayAnswer);
+  }
+  std::optional<connection::ViewportCamera> viewportCamera;
+  int viewportCameraCalls = 0;
+  std::optional<connection::Ray> lastRay;
+  std::optional<std::optional<connection::RayHit>> rayAnswer;
+
   std::vector<std::string> calls;
   // Plan 0063 M3: the scene the status reports, when a test changes it.
   std::optional<atlantis::asset_system::AssetGuid> scene;

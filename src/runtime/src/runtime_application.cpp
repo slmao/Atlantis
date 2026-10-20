@@ -1129,6 +1129,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
   pickGeometry_ = std::move(outcome.pickGeometry);  // Plan 0062 P5
+  pickGeometryRetained_ = config.retainPickGeometry;  // Spec 0064 / ADR-0128 D2
   sceneGuid_ = outcome.sceneGuid;
   environmentData_ = std::move(loadedEnvironment);
 
@@ -1481,7 +1482,7 @@ void RuntimeApplication::runFrame() {
   }
   activeCameraEntity_ = scene_->activeCamera;  // cached for logging only; scene_ is the source of truth
 
-  const ActiveCameraInput frameCamera = overlay_ ? overlayFrameCamera(*activeCamera) : *activeCamera;  // Plan 0062 P4, place 5
+  const ActiveCameraInput frameCamera = (overlay_ || controlCamera_) ? viewportFrameCamera(*activeCamera) : *activeCamera;  // Plan 0062 P4, place 5
   const Mat4& cameraWorldMatrix = frameCamera.worldMatrix;
   const atlantis::world::Camera cameraComponent = frameCamera.camera;
 
@@ -2150,12 +2151,14 @@ Extent2D RuntimeApplication::overlayViewportExtent() {
 // Plan 0056 P7, place 3: the scene's target is the Viewport target.
 atlantis::rhi::RenderTarget& RuntimeApplication::overlayViewportTarget() { return *overlayViewportTarget_; }
 
-// Plan 0062 P4, place 5 (ADR-0123 D1): the overlay's camera in place of the
-// active camera's world matrix and lens -- only if the frame can use it, so
-// editor input never fails the lifecycle; exposure, fog and bloom stay the
-// active camera's.
-ActiveCameraInput RuntimeApplication::overlayFrameCamera(const ActiveCameraInput& active) {
-  const std::optional<ViewportCameraOverride> supplied = overlay_->viewportCamera();
+// Plan 0062 P4, place 5 (ADR-0123 D1): the overlay's camera -- or, since Spec
+// 0064 (ADR-0128 D1), the RuntimeControl's when no overlay supplies one -- in
+// place of the active camera's world matrix and lens, only if the frame can
+// use it, so client input never fails the lifecycle; exposure, fog and bloom
+// stay the active camera's.
+ActiveCameraInput RuntimeApplication::viewportFrameCamera(const ActiveCameraInput& active) {
+  std::optional<ViewportCameraOverride> supplied = overlay_ != nullptr ? overlay_->viewportCamera() : std::nullopt;
+  if (!supplied.has_value()) supplied = controlCamera_;
   if (!supplied.has_value()) return active;
   bool usable = std::isfinite(supplied->fovYRadians) && std::isfinite(supplied->nearZ) &&
                 std::isfinite(supplied->farZ) && supplied->fovYRadians > 0.0f && supplied->fovYRadians < 3.1415926f &&
@@ -2178,6 +2181,14 @@ ActiveCameraInput RuntimeApplication::overlayFrameCamera(const ActiveCameraInput
   substituted.camera.nearZ = supplied->nearZ;
   substituted.camera.farZ = supplied->farZ;
   return substituted;
+}
+
+void RuntimeApplication::setControlViewportCamera(const std::optional<atlantis::connection::ViewportCamera>& camera) {
+  if (!camera.has_value()) {
+    controlCamera_.reset();
+    return;
+  }
+  controlCamera_ = ViewportCameraOverride{camera->worldMatrix, camera->fovYRadians, camera->nearZ, camera->farZ};
 }
 
 std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {

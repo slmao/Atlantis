@@ -387,6 +387,29 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     }
     return *batch;
   }
+  // Spec 0064 / ADR-0128 D1, D2.
+  void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override {
+    Value params = Value::object();
+    params.set("camera", camera.has_value() ? codec::encode(*camera) : Value());
+    (void)state_->call("control.setViewportCamera", std::move(params));
+  }
+  atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(
+      const atlantis::connection::Ray& ray) override {
+    using ResultT = atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError>;
+    Value params = Value::object();
+    params.set("ray", codec::encode(ray));
+    const auto result = state_->call("control.raycast", std::move(params));
+    if (result) {
+      if (const Value* ok = result->find("ok"); ok != nullptr) {
+        if (ok->isNull()) return ResultT::Ok(std::nullopt);
+        if (const auto hit = codec::decodeRayHit(*ok)) return ResultT::Ok(*hit);
+      } else if (const Value* err = result->find("err"); err != nullptr) {
+        if (const auto error = codec::decodeControlError(*err)) return ResultT::Err(*error);
+      }
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return ResultT::Err(atlantis::connection::ControlError::Stopped);
+  }
 
  private:
   RemoteSession::State* state_;
