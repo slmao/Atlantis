@@ -1,0 +1,337 @@
+// Spec 0064 Phase 1 (Plan 0064 P4, P5): what the editor reads from the World
+// and asks of the Runtime, over the Atlantis C# SDK only (ADR-0125 D1/D2):
+// the entity list, the scene camera, SetViewportCamera, Raycast, and the
+// frame-time and latency measurements of the Phase 1 investigation. One
+// worker thread owns the RemoteSession (the SDK is not thread-safe), so the
+// UI thread never waits on the Runtime's frame. UI-free.
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Numerics;
+using System.Text;
+using System.Threading;
+using Atlantis.Gameplay;
+using Atlantis.Gameplay.Remote;
+using W = Atlantis.Gameplay.World;
+
+namespace Atlantis.Editor;
+
+public sealed record EntityRow(EntityGuid Guid, string Label)
+{
+    public override string ToString() => Label;
+}
+
+/// <summary>The entities (sorted by GUID), the scene camera's pose, and the first Renderable's position.</summary>
+public sealed record SceneSnapshot(IReadOnlyList<EntityRow> Entities, CameraPose? ScenePose, EntityGuid? FirstRenderable,
+                                   Vector3? FirstRenderablePosition);
+
+public static class SceneReader
+{
+    public static SceneSnapshot Read(GameplayWorld world)
+    {
+        IReadOnlyList<EntityGuid> entities = world.Entities();
+        IReadOnlyList<Outcome<IReadOnlyList<TypeId>, AccessError>> components = world.Session.ListComponents(entities);
+        var names = world.Schema.ToDictionary(type => type.Id, type => type.ShortName);
+        var rows = new List<EntityRow>(entities.Count);
+        EntityGuid? camera = null;
+        EntityGuid? renderable = null;
+        for (int i = 0; i < entities.Count; ++i)
+        {
+            var kinds = new List<string>();
+            if (components[i].IsOk)
+            {
+                foreach (TypeId type in components[i].Value)
+                {
+                    string name = names.TryGetValue(type, out string? n) ? n : type.ToString();
+                    if (name is "Transform" or "WorldMatrix") continue;
+                    kinds.Add(name);
+                    if (name == "Camera") camera ??= entities[i];
+                    if (name == "Renderable") renderable ??= entities[i];
+                }
+            }
+            string guid = entities[i].ToString();
+            rows.Add(new EntityRow(entities[i], guid[..8] + "  " + (kinds.Count == 0 ? "(node)" : string.Join(", ", kinds))));
+        }
+        CameraPose? pose = null;
+        if (camera is EntityGuid c)
+        {
+            W.Camera lens = world.Get<W.Camera>(c);
+            pose = new CameraPose(Columns(world.Get<W.WorldMatrix>(c)), new CameraLens(lens.FovYRadians, lens.NearZ, lens.FarZ));
+        }
+        Vector3? position = null;
+        if (renderable is EntityGuid r)
+        {
+            Vector4 column3 = world.Get<W.WorldMatrix>(r).Column3;
+            position = new Vector3(column3.X, column3.Y, column3.Z);
+        }
+        return new SceneSnapshot(rows, pose, renderable, position);
+    }
+
+    private static float[] Columns(W.WorldMatrix m) => new[]
+    {
+        m.Column0.X, m.Column0.Y, m.Column0.Z, m.Column0.W, m.Column1.X, m.Column1.Y, m.Column1.Z, m.Column1.W,
+        m.Column2.X, m.Column2.Y, m.Column2.Z, m.Column2.W, m.Column3.X, m.Column3.Y, m.Column3.Z, m.Column3.W,
+    };
+
+    public static ViewportCamera ToViewportCamera(CameraPose pose) =>
+        new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ);
+}
+
+/// <summary>Per-frame times from back-to-back control.status calls (one is answered per Runtime frame).</summary>
+public sealed record FrameTimes(int Frames, double MedianMs, double P95Ms, double MeanMs, double MaxMs, int MultiFrameGaps)
+{
+    public string ToJson() => string.Format(CultureInfo.InvariantCulture,
+        "{{\"frames\":{0},\"medianMs\":{1:F2},\"p95Ms\":{2:F2},\"meanMs\":{3:F2},\"maxMs\":{4:F2},\"multiFrameGaps\":{5}}}",
+        Frames, MedianMs, P95Ms, MeanMs, MaxMs, MultiFrameGaps);
+
+    public override string ToString() => string.Format(CultureInfo.InvariantCulture,
+        "{0} frames: median {1:F2} ms, p95 {2:F2} ms, mean {3:F2} ms, max {4:F2} ms", Frames, MedianMs, P95Ms, MeanMs, MaxMs);
+}
+
+public static class FrameSampler
+{
+    /// <summary>
+    /// Samples <paramref name="frames"/> frame intervals: the time between consecutive status answers whose frame
+    /// number advanced, divided by how far it advanced.
+    /// </summary>
+    public static FrameTimes Measure(RemoteControl control, int frames)
+    {
+        var samples = new List<double>(frames);
+        int gaps = 0;
+        ulong lastFrame = control.Status().Frame;
+        long lastTicks = Stopwatch.GetTimestamp();
+        // Align to a frame boundary first.
+        while (control.Status().Frame == lastFrame) { }
+        lastFrame = control.Status().Frame;
+        lastTicks = Stopwatch.GetTimestamp();
+        while (samples.Count < frames)
+        {
+            ulong frame = control.Status().Frame;
+            long now = Stopwatch.GetTimestamp();
+            if (frame == lastFrame) continue;
+            ulong advanced = frame - lastFrame;
+            double ms = Stopwatch.GetElapsedTime(lastTicks, now).TotalMilliseconds / advanced;
+            if (advanced > 1) ++gaps;
+            for (ulong i = 0; i < advanced && samples.Count < frames; ++i) samples.Add(ms);
+            lastFrame = frame;
+            lastTicks = now;
+        }
+        return Summarize(samples, gaps);
+    }
+
+    public static FrameTimes Summarize(List<double> samples, int gaps)
+    {
+        var sorted = samples.OrderBy(x => x).ToList();
+        double Percentile(double p) => sorted[Math.Min(sorted.Count - 1, (int)Math.Ceiling(p * sorted.Count) - 1)];
+        return new FrameTimes(sorted.Count, Percentile(0.5), Percentile(0.95), sorted.Average(), sorted[^1], gaps);
+    }
+}
+
+/// <summary>A pick's answer, with when its input arrived and when the answer did.</summary>
+public sealed record PickResult(RaycastResult Result, PickRay Ray, double InputToAnswerMs);
+
+/// <summary>
+/// A camera update's timing: input arrival to the Runtime's acknowledgement, and (when latency is measured) to the
+/// end of the first frame drawn from it.
+/// </summary>
+public sealed record CameraAck(double InputToAckMs, double? InputToFrameMs, int Coalesced);
+
+/// <summary>One line per event, with milliseconds since the editor started, to editor.log.</summary>
+public sealed class EditorLog : IDisposable
+{
+    private readonly StreamWriter _writer;
+    private readonly object _lock = new();
+    private readonly long _start = Stopwatch.GetTimestamp();
+
+    public EditorLog(string path)
+    {
+        Path = path;
+        _writer = new StreamWriter(path, append: false, new UTF8Encoding(false)) { AutoFlush = true };
+    }
+
+    public string Path { get; }
+
+    public void Write(string line)
+    {
+        string stamp = Stopwatch.GetElapsedTime(_start).TotalMilliseconds.ToString("F1", CultureInfo.InvariantCulture);
+        lock (_lock)
+        {
+            try
+            {
+                _writer.WriteLine(stamp + " " + line);
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock) _writer.Dispose();
+    }
+}
+
+/// <summary>
+/// Owns the RemoteSession on its own thread. Camera updates are coalesced (only the newest is sent); ray-casts and
+/// measurements are queued. Results are posted back through <c>post</c> (the UI thread's dispatcher).
+/// </summary>
+public sealed class EditorWorker : IDisposable
+{
+    private readonly SessionInfo _info;
+    private readonly Action<Action> _post;
+    private readonly EditorLog _log;
+    private readonly Thread _thread;
+    private readonly object _lock = new();
+    private readonly Queue<Action<RemoteSession>> _work = new();
+    private (ViewportCamera? Camera, long InputTicks, int Count)? _pendingCamera;
+    private bool _stopping;
+    private volatile bool _measureLatency;
+
+    public EditorWorker(SessionInfo info, Action<Action> post, EditorLog log)
+    {
+        _info = info;
+        _post = post;
+        _log = log;
+        _thread = new Thread(Run) { IsBackground = true, Name = "Atlantis.Editor session" };
+    }
+
+    public event Action<SceneSnapshot>? Connected;
+    public event Action<string>? Failed;
+    public event Action<PickResult>? Picked;
+    public event Action<CameraAck>? CameraAcked;
+    public event Action<FrameTimes>? Measured;
+
+    /// <summary>When on, each camera update also waits for the first frame drawn from it (one more frame of round trips).</summary>
+    public bool MeasureLatency
+    {
+        get => _measureLatency;
+        set => _measureLatency = value;
+    }
+
+    public void Start() => _thread.Start();
+
+    public void SetCamera(ViewportCamera? camera, long inputTicks)
+    {
+        lock (_lock)
+        {
+            int count = _pendingCamera is { } pending ? pending.Count + 1 : 1;
+            long first = _pendingCamera is { } p ? p.InputTicks : inputTicks;  // latency from the oldest coalesced input
+            _pendingCamera = (camera, first, count);
+            Monitor.Pulse(_lock);
+        }
+    }
+
+    public void Raycast(PickRay ray, long inputTicks) => Enqueue(session =>
+    {
+        RaycastResult result = session.Control.Raycast(new Ray(ray.Origin, ray.Direction));
+        double ms = Stopwatch.GetElapsedTime(inputTicks).TotalMilliseconds;
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "pick {0} input->answer {1:F1} ms",
+                                 result.Error?.ToString() ?? result.Hit?.Entity.ToString() ?? "miss", ms));
+        var answer = new PickResult(result, ray, ms);
+        _post(() => Picked?.Invoke(answer));
+    });
+
+    public void Measure(int frames) => Enqueue(session =>
+    {
+        FrameTimes times = FrameSampler.Measure(session.Control, frames);
+        _log.Write("frametimes " + times.ToJson());
+        _post(() => Measured?.Invoke(times));
+    });
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _stopping = true;
+            Monitor.Pulse(_lock);
+        }
+        _thread.Join(TimeSpan.FromSeconds(5));
+    }
+
+    private void Enqueue(Action<RemoteSession> work)
+    {
+        lock (_lock)
+        {
+            _work.Enqueue(work);
+            Monitor.Pulse(_lock);
+        }
+    }
+
+    private void Run()
+    {
+        RemoteSession session;
+        try
+        {
+            session = RemoteSession.Connect(_info);
+            var world = new GameplayWorld(session);
+            SceneSnapshot snapshot = SceneReader.Read(world);
+            _log.Write("connected: port " + _info.Port + ", " + snapshot.Entities.Count + " entities");
+            _post(() => Connected?.Invoke(snapshot));
+        }
+        catch (Exception e)
+        {
+            _log.Write("connect failed: " + e.Message);
+            _post(() => Failed?.Invoke(e.Message));
+            return;
+        }
+        using (session)
+        {
+            try
+            {
+                Loop(session);
+            }
+            catch (Exception e)
+            {
+                _log.Write("session failed: " + e.Message);
+                _post(() => Failed?.Invoke(e.Message));
+            }
+        }
+    }
+
+    private void Loop(RemoteSession session)
+    {
+        while (true)
+        {
+            Action<RemoteSession>? work = null;
+            (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
+            lock (_lock)
+            {
+                while (!_stopping && _work.Count == 0 && _pendingCamera is null) Monitor.Wait(_lock);
+                if (_stopping) return;
+                if (_pendingCamera is not null)
+                {
+                    camera = _pendingCamera;
+                    _pendingCamera = null;
+                }
+                else
+                {
+                    work = _work.Dequeue();
+                }
+            }
+            if (camera is { } update)
+            {
+                session.Control.SetViewportCamera(update.Camera);
+                double ack = Stopwatch.GetElapsedTime(update.InputTicks).TotalMilliseconds;
+                double? frame = null;
+                if (_measureLatency)
+                {
+                    // The Runtime answers between frames (main.cpp: runFrame, then poll): the set was
+                    // answered after frame N, so the next status is answered after frame N+1 -- the first
+                    // frame drawn from the camera (submitted for presentation).
+                    _ = session.Control.Status();
+                    frame = Stopwatch.GetElapsedTime(update.InputTicks).TotalMilliseconds;
+                }
+                _log.Write(string.Format(CultureInfo.InvariantCulture, "camera {0} coalesced {1} input->ack {2:F1} ms{3}",
+                                         update.Camera is null ? "cleared" : "set", update.Count, ack,
+                                         frame is double f ? string.Format(CultureInfo.InvariantCulture, " input->frame {0:F1} ms", f) : ""));
+                var acked = new CameraAck(ack, frame, update.Count);
+                _post(() => CameraAcked?.Invoke(acked));
+            }
+            work?.Invoke(session);
+        }
+    }
+}

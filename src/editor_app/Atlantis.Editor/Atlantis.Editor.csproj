@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Atlantis Editor App (Spec 0064 Phase 1; ADR-0125 D1, ADR-0127): the
+    out-of-process editor shell, a .NET 10 Avalonia application. Its only
+    engine access is the Atlantis C# SDK (a project reference, no NuGet) over
+    atlantis.remote/1; it starts atlantis_runtime as any user would. Its own
+    OS calls (user32, on its own windows and the Runtime's hosted child) are
+    editor-side UI work, never engine code (Plan 0064 J5). Packages: exact
+    pins in ../Directory.Packages.props, the allow-list in
+    ../allowed_packages.txt, locked restore (packages.lock.json). Shared
+    settings come from the repository's Directory.Build.props.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Atlantis.Editor</RootNamespace>
+    <AssemblyName>Atlantis.Editor</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+  </ItemGroup>
+
+</Project>
