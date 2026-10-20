@@ -4,13 +4,17 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <random>
+#include <span>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <variant>
@@ -467,6 +471,28 @@ namespace {
     captureValue.set("image", std::move(image));
   }
   out.set("capture", std::move(captureValue));
+  return out;
+}
+
+// Spec 0064 / ADR-0128 (Plan 0064 P3): `count` finite decimal numbers from
+// t[at, at + count).
+template <std::size_t N>
+[[nodiscard]] std::optional<std::array<float, N>> parseFloats(std::span<const std::string_view> t, std::size_t at) {
+  if (at + N > t.size()) return std::nullopt;
+  std::array<float, N> out{};
+  for (std::size_t k = 0; k < N; ++k) {
+    const std::string_view text = t[at + k];
+    float value = 0.0f;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    if (error != std::errc{} || end != text.data() + text.size() || !std::isfinite(value)) return std::nullopt;
+    out[k] = value;
+  }
+  return out;
+}
+
+[[nodiscard]] Value floatsJson(std::span<const float> values) {
+  Value out = Value::array();
+  for (const float v : values) out.push(Value::number(v));
   return out;
 }
 
@@ -927,6 +953,93 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     reply.command = command;
     reply.outcome = Outcome::Submitted;
     return reply;
+  }
+
+  // Spec 0064 / ADR-0128 D1-D3 (Plan 0064 P3): the Viewport camera and the
+  // ray-cast -- the same RuntimeControl calls Atlantis Editor App makes.
+  //   runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f>
+  //   runtime camera clear
+  //   runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>
+  if (t.size() >= 2 && t[0] == "runtime" && (t[1] == "camera" || t[1] == "raycast")) {
+    const std::string command = t[1] == "camera" && t.size() >= 3 ? "runtime camera " + std::string(t[2])
+                                                                   : "runtime " + std::string(t[1]);
+    if (control_ == nullptr) {
+      return failed(command, plainError("NoRuntimeControl", ErrorCategory::Runtime,
+                                        "this connection carries no Runtime control"));
+    }
+    if (t[1] == "camera") {
+      constexpr std::string_view kUsage =
+          "runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear";
+      if (t.size() == 3 && t[2] == "clear") {
+        control_->setViewportCamera(std::nullopt);
+        Value result = Value::object();
+        result.set("camera", Value());
+        return done(command, "camera cleared\n", std::move(result));
+      }
+      if (t.size() < 3 || t[2] != "set") return failed(command, usageError(std::string(kUsage)));
+      std::optional<std::array<float, 16>> matrix;
+      std::optional<float> fov, nearZ, farZ;
+      for (std::size_t i = 3; i < t.size();) {
+        if (t[i] == "--matrix") {
+          matrix = parseFloats<16>(t, i + 1);
+          if (!matrix) return failed(command, usageError(std::string(kUsage)));
+          i += 17;
+        } else if (t[i] == "--fov" || t[i] == "--near" || t[i] == "--far") {
+          const auto one = parseFloats<1>(t, i + 1);
+          if (!one) return failed(command, usageError(std::string(kUsage)));
+          (t[i] == "--fov" ? fov : t[i] == "--near" ? nearZ : farZ) = (*one)[0];
+          i += 2;
+        } else {
+          return failed(command, usageError(std::string(kUsage)));
+        }
+      }
+      if (!matrix || !fov || !nearZ || !farZ) return failed(command, usageError(std::string(kUsage)));
+      const connection::ViewportCamera camera{*matrix, *fov, *nearZ, *farZ};
+      control_->setViewportCamera(camera);
+      Value cameraJson = Value::object();
+      cameraJson.set("worldMatrix", floatsJson(camera.worldMatrix));
+      cameraJson.set("fovYRadians", Value::number(camera.fovYRadians));
+      cameraJson.set("nearZ", Value::number(camera.nearZ));
+      cameraJson.set("farZ", Value::number(camera.farZ));
+      Value result = Value::object();
+      result.set("camera", std::move(cameraJson));
+      return done(command, "camera set\n", std::move(result));
+    }
+    constexpr std::string_view kUsage = "runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>";
+    std::optional<std::array<float, 3>> origin, direction;
+    for (std::size_t i = 2; i < t.size();) {
+      if (t[i] == "--origin" || t[i] == "--direction") {
+        const auto three = parseFloats<3>(t, i + 1);
+        if (!three) return failed(command, usageError(std::string(kUsage)));
+        (t[i] == "--origin" ? origin : direction) = *three;
+        i += 4;
+      } else {
+        return failed(command, usageError(std::string(kUsage)));
+      }
+    }
+    if (!origin || !direction) return failed(command, usageError(std::string(kUsage)));
+    // The direction is normalized here; the call takes a unit direction.
+    const float length =
+        std::sqrt((*direction)[0] * (*direction)[0] + (*direction)[1] * (*direction)[1] + (*direction)[2] * (*direction)[2]);
+    if (!(length > 0.0f)) return failed(command, usageError(std::string(kUsage)));
+    const connection::Ray ray{*origin, {(*direction)[0] / length, (*direction)[1] / length, (*direction)[2] / length}};
+    const auto hit = control_->raycast(ray);
+    if (hit.isErr()) {
+      return failed(command, plainError(std::string(connection::toString(hit.error())), ErrorCategory::Runtime,
+                                        "the Runtime could not ray-cast: " + std::string(connection::toString(hit.error()))));
+    }
+    Value result = Value::object();
+    if (!hit.value().has_value()) {
+      result.set("hit", Value());
+      return done(command, "no hit\n", std::move(result));
+    }
+    Value hitJson = Value::object();
+    hitJson.set("guid", Value::string(text::formatEntity(hit.value()->entity)));
+    hitJson.set("distance", Value::number(hit.value()->distance));
+    result.set("hit", std::move(hitJson));
+    char distance[32];
+    std::snprintf(distance, sizeof(distance), "%g", static_cast<double>(hit.value()->distance));
+    return done(command, text::formatEntity(hit.value()->entity) + " " + distance + "\n", std::move(result));
   }
 
   return failed("", plainError("UnknownCommand", ErrorCategory::Usage, "unknown command '" + std::string(line) + "'"));

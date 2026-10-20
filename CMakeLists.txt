@@ -330,3 +330,17 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/csharp)
   add_subdirectory(tests/runtime)
 endif()
+
+# Spec 0064 Phase 1 (Plan 0064 P4; ADR-0125 D1, ADR-0127 D6): Atlantis Editor
+# App, the out-of-process Avalonia editor -- a managed application, not in the
+# native module graph. Off by default: a default configure declares nothing
+# and fetches no package. Host-only, and only with C#. Last, so its tests
+# follow enable_testing() and its build follows every other C# target.
+if(NOT ANDROID)
+  option(ATLANTIS_BUILD_EDITOR_APP "Build Atlantis Editor App (Spec 0064 Phase 1; restores Avalonia from NuGet)" OFF)
+  if(ATLANTIS_BUILD_EDITOR_APP AND ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(src/editor_app)
+  elseif(ATLANTIS_BUILD_EDITOR_APP)
+    message(STATUS "Atlantis Editor App is not declared: no .NET 10.0.1xx SDK")
+  endif()
+endif()

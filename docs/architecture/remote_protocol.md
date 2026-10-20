@@ -34,6 +34,11 @@ object and a `\n` to its session file:
 {"protocol":"atlantis.remote/1","port":51234,"token":"<32 lowercase hex>","pid":4242,"scene":"<asset GUID>"}
 ```
 
+- **`window`** (optional; Spec 0064 / ADR-0126 D3): present only when the
+  Runtime was started with `--parent-window <HWND>`. It is the Runtime's
+  own child window's `HWND`, as a decimal integer, so the hosting process
+  can size and place it. In that mode the file is written once the child
+  window exists (after the first frame), not as soon as the port is bound.
 - **Location:** `--session-file <path>`, else
   `./.atlantis/runtime.session.json` relative to the Runtime's working
   directory.
@@ -50,7 +55,8 @@ object and a `\n` to its session file:
   - `port` is not an integer in 1–65535;
   - `token` is not a string;
   - `pid` is not an integer up to 2³²−1;
-  - `scene` is not a GUID.
+  - `scene` is not a GUID;
+  - `window` is present but is not an integer up to 2⁶⁴−1.
 
 ## 2. Connection
 
@@ -131,6 +137,8 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 | `control.pause` / `control.resume` | — | `null` |
 | `control.step` (parked) | `request: {"frames":<n>,"image":null\|"<path>"}` | `{"ok":<FrameReport>}` or `{"err":"<ControlError>"}` |
 | `control.diagnostics` | `after: <n>, max: <n>` | `{"entries":[…],"latest":<n>,"dropped":<n>}` |
+| `control.setViewportCamera` | `camera: <ViewportCamera>\|null` | `null` |
+| `control.raycast` | `ray: <Ray>` | `{"ok":<RayHit>\|null}` or `{"err":"<ControlError>"}` |
 
 **Semantics** are `RuntimeConnection`'s and `RuntimeControl`'s (Specs
 0052–0055):
@@ -138,6 +146,19 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   while paused;
 - a transaction is all or nothing;
 - a refused command is reported by `drainFailures` under its ticket.
+
+**The Viewport camera and the ray-cast** (Spec 0064, ADR-0128):
+- `control.setViewportCamera` replaces the camera the Runtime draws from,
+  from its next frame; `null` restores the scene's active camera. The
+  World's own camera entity is not touched. An in-process editor overlay's
+  camera, when it supplies one, takes precedence. A camera the Runtime
+  cannot use (for example `nearZ` of zero) is ignored for that frame.
+- The camera is owned by the client that set it: when that client
+  disconnects, the server clears it (ADR-0128, ruling J2).
+- `control.raycast` answers the nearest Renderable the ray hits, in world
+  units along a unit `direction`, or `null` for a miss. It answers
+  `NoGeometry` when the Runtime keeps no pick geometry: `--listen` keeps it
+  unless `--no-pick-geometry` is given.
 
 ## 6. Values
 
@@ -206,7 +227,7 @@ Filter   {"kinds":["EntityCreated",…],"entity":<E>|null,"component":<T>|null}
   `NonFiniteValue`, `LightLimitExceeded`, `ActiveCameraProtected`.
 - **`ConnectionError`:** `UnknownSubscription`.
 - **`ControlError`:** `InvalidRequest`, `NotRendering`, `CaptureFailed`,
-  `Stopped`.
+  `Stopped`, `NoGeometry`.
 
 ### 6.6 Control values
 
@@ -216,6 +237,9 @@ FrameData    {"directionalLights":[{"direction":[3],"color":[3],"intensity":<flo
               "pointLights":[{"position":[3],"color":[3],"intensity":<float>,"range":<float>}…],
               "view":[16],"projection":[16],"drawItemCount":<n>}
 Diagnostics  entries [{"sequence":<n>,"severity":"warning"|"error"|"fatal","message":"…"}]
+ViewportCamera {"worldMatrix":[16],"fovYRadians":<float>,"nearZ":<float>,"farZ":<float>}   (column-major)
+Ray          {"origin":[3],"direction":[3]}                                        (world space, unit direction)
+RayHit       {"entity":"<E>","distance":<float>}
 ```
 
 ### 6.7 The schema

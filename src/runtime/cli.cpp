@@ -14,6 +14,7 @@ namespace {
 constexpr std::string_view kUsageText =
     "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]] "
     "[--editor]\n"
+    "                        [--parent-window <handle>] [--no-pick-geometry]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
@@ -110,6 +111,9 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   int listenCount = 0;
   int sessionFileCount = 0;
   int editorCount = 0;
+  int parentWindowCount = 0;   // Spec 0064 / ADR-0126 D2
+  int noPickGeometryCount = 0; // Spec 0064 / ADR-0128 D2
+  std::string_view parentWindowText;
   std::string_view requestedSceneName;
   std::string_view execScript;
   std::string_view listenPort;
@@ -148,6 +152,12 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       sessionFile = argv[++i];
     } else if (arg == "--editor") {
       if (++editorCount > 1) return makeError("--editor supplied more than once");
+    } else if (arg == "--parent-window") {
+      if (++parentWindowCount > 1) return makeError("--parent-window supplied more than once");
+      if (i + 1 >= argc) return makeError("--parent-window requires a value");
+      parentWindowText = argv[++i];
+    } else if (arg == "--no-pick-geometry") {
+      if (++noPickGeometryCount > 1) return makeError("--no-pick-geometry supplied more than once");
     } else if (arg == "--benchmark") {
       if (++benchmarkCount > 1) return makeError("--benchmark supplied more than once");
       if (i + 1 >= argc) return makeError("--benchmark requires a scene name");
@@ -285,6 +295,14 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
     return makeError("--editor runs a scene; it may not be combined with --help or --list-scenes");
   }
   if (editorCount > 0 && execCount > 0) return makeError("--editor and --exec may not be combined");
+  // Spec 0064 / ADR-0126 D2: the child window is a host's Viewport; the
+  // in-process editor has its own window and layout.
+  if (parentWindowCount > 0 && editorCount > 0) return makeError("--parent-window and --editor may not be combined");
+  if ((parentWindowCount > 0 || noPickGeometryCount > 0) &&
+      (benchmarkCount > 0 || gateCount > 0 || canaryCount > 0 || helpCount > 0 || listScenesCount > 0)) {
+    return makeError("--parent-window and --no-pick-geometry run a scene; they may not be combined with --benchmark, "
+                     "--gate, --canary, --help or --list-scenes");
+  }
   // Spec 0059 / ADR-0117 D1: the benchmark measures a scene; nothing else may drive it.
   const int benchmarkOptions = warmupCount + framesCount + resolutionCount + variantCount + jsonCount + outputCount +
                                baselineCount + seriesCount + gpuTimingCount + warmupSecondsCount + pinCount;
@@ -559,6 +577,18 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   result.listenPort = port;
   if (sessionFileCount > 0) result.sessionFile = std::string(sessionFile);
   result.editor = editorCount > 0;
+  if (parentWindowCount > 0) {
+    // A decimal handle value, non-zero.
+    std::uint64_t value = 0;
+    bool valid = !parentWindowText.empty() && parentWindowText.size() <= 20;
+    for (const char c : parentWindowText) {
+      if (c < '0' || c > '9') valid = false;
+      if (valid) value = value * 10 + static_cast<std::uint64_t>(c - '0');
+    }
+    if (!valid || value == 0) return makeError(std::string("invalid --parent-window handle: ").append(parentWindowText));
+    result.parentWindow = value;
+  }
+  result.noPickGeometry = noPickGeometryCount > 0;
   return result;
 }
 

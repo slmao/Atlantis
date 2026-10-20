@@ -74,11 +74,38 @@ struct FrameReport {
   std::optional<CapturedImage> image;  // when the request named a path (C2)
 };
 
+// Spec 0064 / ADR-0128 D1: a camera to draw the Viewport from instead of the
+// scene's active camera -- the eye is column 3 of `worldMatrix` (column-major)
+// and the forward direction -column 2, as the Runtime reads a camera; the lens
+// is the vertical field of view and the depth range. Exposure, fog and bloom
+// stay the active camera's (ADR-0123 D1).
+struct ViewportCamera {
+  std::array<float, 16> worldMatrix{};
+  float fovYRadians = 0.0f;
+  float nearZ = 0.0f;
+  float farZ = 0.0f;
+  friend bool operator==(const ViewportCamera&, const ViewportCamera&) = default;
+};
+
+// Spec 0064 / ADR-0128 D2: a world-space ray (the direction unit length) and
+// the entity it hits first, with the distance along the ray.
+struct Ray {
+  std::array<float, 3> origin{};
+  std::array<float, 3> direction{0.0f, 0.0f, -1.0f};
+  friend bool operator==(const Ray&, const Ray&) = default;
+};
+struct RayHit {
+  atlantis::asset_system::EntityGuid entity;
+  float distance = 0.0f;
+  friend bool operator==(const RayHit&, const RayHit&) = default;
+};
+
 enum class ControlError {
   InvalidRequest,  // zero frames
   NotRendering,    // the Runtime has no drawable frame to capture (no window surface yet, or minimized)
   CaptureFailed,   // the offscreen render, readback or PNG write failed
   Stopped,         // the Runtime stopped before the step completed
+  NoGeometry,      // Spec 0064 / ADR-0128 D2: the Runtime keeps no pick geometry (--no-pick-geometry)
 };
 
 [[nodiscard]] constexpr std::string_view toString(ControlError error) noexcept {
@@ -87,6 +114,7 @@ enum class ControlError {
     case ControlError::NotRendering: return "NotRendering";
     case ControlError::CaptureFailed: return "CaptureFailed";
     case ControlError::Stopped: return "Stopped";
+    case ControlError::NoGeometry: return "NoGeometry";
   }
   return "(unrecognized ControlError)";
 }
@@ -135,6 +163,17 @@ class RuntimeControl {
   virtual void step(StepRequest request, std::function<void(atlantis::Result<FrameReport, ControlError>)> done) = 0;
   // Records with a sequence after `afterSequence`, at most `max` of them.
   [[nodiscard]] virtual DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) = 0;
+
+  // Spec 0064 / ADR-0128 D1: the camera the Runtime draws the Viewport from
+  // from the next frame on, or none for the scene's active camera. One per
+  // Runtime, last writer wins; an in-process overlay's camera takes
+  // precedence; a camera the frame cannot use is ignored (ADR-0123 D1). Not
+  // World state: no event reports it.
+  virtual void setViewportCamera(std::optional<ViewportCamera> camera) = 0;
+  // Spec 0064 / ADR-0128 D2: the nearest Renderable the ray hits at its
+  // current WorldMatrix (both triangle faces, alpha masks ignored; ADR-0123
+  // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.
+  [[nodiscard]] virtual atlantis::Result<std::optional<RayHit>, ControlError> raycast(const Ray& ray) = 0;
 };
 
 }  // namespace atlantis::connection

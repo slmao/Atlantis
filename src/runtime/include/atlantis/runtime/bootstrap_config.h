@@ -4,6 +4,8 @@
 #include <atlantis/result.h>
 #include <atlantis/runtime/init_error.h>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -179,6 +181,11 @@ struct BootstrapConfig {
   // pick services (RuntimeApplication::pickRenderable()). Off by default, at
   // zero cost; only atlantis_runtime's `--editor` sets it.
   bool retainPickGeometry = false;
+  // Spec 0064 / ADR-0126 D1, D2: a foreign window (Windows: an HWND's value)
+  // to create the Runtime's window inside, as a Platform-owned child; empty
+  // (the default) means a top-level window, as ever. Only atlantis_runtime's
+  // `--parent-window` sets it.
+  std::optional<std::uint64_t> parentWindow;
 };
 
 // GPU/window-independent validation for the optional environment portion.

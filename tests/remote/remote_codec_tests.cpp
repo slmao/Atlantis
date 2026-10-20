@@ -234,3 +234,25 @@ TEST_CASE("codec: the World schema's descriptors survive, field by field", "[rem
   CHECK(decoded.types()[0].name.data() != schema[0].name.data());
   CHECK_FALSE(decoded.decode(json::parse(R"([{"id":"0x1"}])").value()));
 }
+
+// Spec 0064 / ADR-0128 (Plan 0064 M3): the control camera, rays and hits.
+TEST_CASE("codec: viewport cameras, rays and ray hits round-trip; NoGeometry is a control error",
+          "[remote][codec][camera]") {
+  namespace connection = atlantis::connection;
+  connection::ViewportCamera camera;
+  for (std::size_t i = 0; i < 16; ++i) camera.worldMatrix[i] = 0.25f * static_cast<float>(i) - 1.0f;
+  camera.fovYRadians = 0.9f;
+  camera.nearZ = 0.05f;
+  camera.farZ = 2000.0f;
+  CHECK(codec::decodeViewportCamera(codec::encode(camera)) == std::optional<connection::ViewportCamera>{camera});
+  const connection::Ray ray{{1.0f, -2.0f, 3.0f}, {0.6f, 0.0f, -0.8f}};
+  CHECK(codec::decodeRay(codec::encode(ray)) == std::optional<connection::Ray>{ray});
+  const connection::RayHit hit{atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value(),
+                               12.5f};
+  CHECK(codec::decodeRayHit(codec::encode(hit)) == std::optional<connection::RayHit>{hit});
+  CHECK(codec::decodeControlError(codec::encodeControlError(connection::ControlError::NoGeometry)) ==
+        std::optional<connection::ControlError>{connection::ControlError::NoGeometry});
+  CHECK_FALSE(codec::decodeViewportCamera(json::Value::object()).has_value());
+  CHECK_FALSE(codec::decodeRay(json::Value::object()).has_value());
+  CHECK_FALSE(codec::decodeRayHit(json::Value::object()).has_value());
+}

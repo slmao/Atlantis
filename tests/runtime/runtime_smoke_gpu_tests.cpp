@@ -1346,6 +1346,184 @@ TEST_CASE("Runtime under retainPickGeometry picks a Renderable and answers its b
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
+// --- Plan 0064 M2 (Spec 0064; ADR-0128 D1-D3): the Viewport camera and the
+// ray-cast through RuntimeControl -- what Atlantis Editor App drives over the
+// wire. Each in its own TEST_CASE: one application per process. ---------------
+
+TEST_CASE("Runtime under a control camera: the frame is drawn from it; clearing it restores the scene's frame",
+          "[runtime][gpu][control][camera]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  const auto frame = [&] {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    REQUIRE(app.shouldContinue());
+  };
+  frame();
+  frame();
+  const auto scenePose = app.activeCameraPose();
+  REQUIRE(scenePose.has_value());
+  const auto sceneData = app.captureFrameData();
+  REQUIRE(sceneData.isOk());
+  const auto extent = app.presentationExtent();
+  REQUIRE(extent.has_value());
+  const float aspect = static_cast<float>(extent->width) / static_cast<float>(extent->height);
+
+  // The scene camera's own pose and lens, supplied: the same frame.
+  atlantis::connection::ViewportCamera same{scenePose->worldMatrix, scenePose->camera.fovYRadians,
+                                            scenePose->camera.nearZ, scenePose->camera.farZ};
+  control.setViewportCamera(same);
+  frame();
+  CHECK(app.captureFrameData().value() == sceneData.value());
+
+  // Another camera: the frame's view and projection are its own.
+  atlantis::connection::ViewportCamera other = same;
+  other.worldMatrix[12] += 1.5f;
+  other.worldMatrix[13] += 1.0f;
+  other.worldMatrix[14] += 3.0f;
+  other.fovYRadians = 0.8f;
+  other.nearZ = 0.2f;
+  other.farZ = 60.0f;
+  control.setViewportCamera(other);
+  frame();
+  const auto expected = atlantis::runtime::extractCameraMatrices(other.worldMatrix, other.fovYRadians, other.nearZ,
+                                                                 other.farZ, aspect);
+  REQUIRE(expected.isOk());
+  const std::array<float, 32> written = RuntimeSmokeTestAccess::cameraMatrixFloats(app);  // the frame's camera block
+  CHECK(std::equal(written.begin(), written.begin() + 16, expected.value().view.begin()));
+  CHECK(std::equal(written.begin() + 16, written.end(), expected.value().projection.begin()));
+  const auto otherData = app.captureFrameData();
+  REQUIRE(otherData.isOk());
+  CHECK(otherData.value().view == expected.value().view);
+  CHECK(otherData.value().projection == expected.value().projection);
+  CHECK(otherData.value().directionalLights == sceneData.value().directionalLights);
+  CHECK(app.activeCameraPose()->worldMatrix == scenePose->worldMatrix);  // the World's camera is untouched
+
+  // An unusable camera (a near plane of zero) is ignored: the scene's camera.
+  atlantis::connection::ViewportCamera zeroNear = other;
+  zeroNear.nearZ = 0.0f;
+  control.setViewportCamera(zeroNear);
+  frame();
+  CHECK(app.captureFrameData().value() == sceneData.value());
+
+  // Cleared: the scene's camera again, byte for byte.
+  control.setViewportCamera(other);
+  frame();
+  control.setViewportCamera(std::nullopt);
+  frame();
+  CHECK(app.captureFrameData().value() == sceneData.value());
+  const std::array<float, 32> restored = RuntimeSmokeTestAccess::cameraMatrixFloats(app);
+  CHECK(std::equal(restored.begin(), restored.begin() + 16, sceneData.value().view.begin()));
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime with an overlay camera and a control camera: the overlay's wins",
+          "[runtime][gpu][control][camera][editor]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  FakeOverlay overlay;
+  REQUIRE(app.attachOverlay(overlay, overlayShaders()).isOk());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto scenePose = app.activeCameraPose();
+  REQUIRE(scenePose.has_value());
+  const float aspect = 320.0f / 200.0f;
+  atlantis::runtime::ViewportCameraOverride overlayCamera{scenePose->worldMatrix, 0.9f, 0.1f, 80.0f};
+  overlayCamera.worldMatrix[14] += 2.0f;
+  atlantis::connection::ViewportCamera controlCamera{scenePose->worldMatrix, 0.6f, 0.3f, 40.0f};
+  controlCamera.worldMatrix[12] -= 2.0f;
+  overlay.camera = overlayCamera;
+  control.setViewportCamera(controlCamera);
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto expected = atlantis::runtime::extractCameraMatrices(overlayCamera.worldMatrix, overlayCamera.fovYRadians,
+                                                                 overlayCamera.nearZ, overlayCamera.farZ, aspect);
+  REQUIRE(expected.isOk());
+  const auto data = app.captureFrameData();
+  REQUIRE(data.isOk());
+  CHECK(data.value().view == expected.value().view);
+  CHECK(data.value().projection == expected.value().projection);
+  // The overlay lets go: the control camera is drawn.
+  overlay.camera.reset();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto fromControl = atlantis::runtime::extractCameraMatrices(
+      controlCamera.worldMatrix, controlCamera.fovYRadians, controlCamera.nearZ, controlCamera.farZ, aspect);
+  REQUIRE(fromControl.isOk());
+  CHECK(app.captureFrameData().value().view == fromControl.value().view);
+  CHECK(app.captureFrameData().value().projection == fromControl.value().projection);
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime: RuntimeControl::raycast() and the CLI's `runtime raycast` are pickRenderable()",
+          "[runtime][gpu][control][picking]") {
+  BootstrapConfig config = buildSmokeConfig();
+  config.retainPickGeometry = true;  // as `--listen` sets it
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  Attached attached(app);
+  atlantis::asset_system::EntityGuid target;
+  const auto ray = rayAtFirstRenderable(app, target);
+  const auto picked = app.pickRenderable(ray);
+  REQUIRE(picked.has_value());
+  // In process, through the control host.
+  const auto cast = attached.control.raycast(atlantis::connection::Ray{ray.origin, ray.direction});
+  REQUIRE(cast.isOk());
+  REQUIRE(cast.value().has_value());
+  CHECK(cast.value()->entity == picked->entity);
+  CHECK(cast.value()->distance == picked->distance);
+  const auto miss = attached.control.raycast(atlantis::connection::Ray{{0.0f, 1.0e4f, 0.0f}, {0.0f, 1.0f, 0.0f}});
+  REQUIRE(miss.isOk());
+  CHECK_FALSE(miss.value().has_value());
+  // Over the wire, through the CLI (which renormalizes the direction, so the
+  // distance agrees to rounding).
+  const auto number = [](float v) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.9g", static_cast<double>(v));
+    return std::string(text);
+  };
+  const json::Value result = attached.run({"runtime", "raycast", "--origin", number(ray.origin[0]), number(ray.origin[1]),
+                                           number(ray.origin[2]), "--direction", number(ray.direction[0]),
+                                           number(ray.direction[1]), number(ray.direction[2])});
+  const json::Value* hit = result.find("hit");
+  REQUIRE(hit != nullptr);
+  REQUIRE(hit->find("guid") != nullptr);
+  CHECK(hit->find("guid")->asString() == atlantis::asset_system::toString(picked->entity));
+  CHECK(std::abs(asFloat(*hit->find("distance")) - picked->distance) <= 1.0e-4f * std::max(1.0f, picked->distance));
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime without pick geometry answers RuntimeControl::raycast() with NoGeometry",
+          "[runtime][gpu][control][picking]") {
+  BootstrapConfig config = buildSmokeConfig();  // as `--listen --no-pick-geometry` leaves it
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  app.runFrame();
+  CHECK_FALSE(app.retainsPickGeometry());
+  const auto cast = control.raycast(atlantis::connection::Ray{{0.0f, 1.0f, 5.0f}, {0.0f, 0.0f, -1.0f}});
+  REQUIRE(cast.isErr());
+  CHECK(cast.error() == atlantis::connection::ControlError::NoGeometry);
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
 // --- Plan 0056 M7 (Spec 0056 north star, ruling Q8): the editor drives the
 // World through its own model actions -- the calls its view makes on a click
 // (M5 covers the clicks) -- with the editor attached to the frame, under fatal

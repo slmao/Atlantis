@@ -124,6 +124,26 @@ class FakeRuntime final : public connection::RuntimeControl {
     }
     return batch;
   }
+
+  // Spec 0064 / ADR-0128 (Plan 0064 M2): the camera last set, and the answer
+  // raycast() gives (NoGeometry unless a test scripts a hit or a miss).
+  void setViewportCamera(std::optional<connection::ViewportCamera> camera) override {
+    viewportCamera = std::move(camera);
+    ++viewportCameraCalls;
+  }
+  atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
+      const connection::Ray& ray) override {
+    lastRay = ray;
+    if (!rayAnswer.has_value()) {
+      return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Err(
+          connection::ControlError::NoGeometry);
+    }
+    return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Ok(*rayAnswer);
+  }
+  std::optional<connection::ViewportCamera> viewportCamera;
+  int viewportCameraCalls = 0;
+  std::optional<connection::Ray> lastRay;
+  std::optional<std::optional<connection::RayHit>> rayAnswer;
   void warn(std::string message) {
     diagnostics_.push_back({diagnostics_.size() + 1, connection::DiagnosticSeverity::Warning, std::move(message)});
   }

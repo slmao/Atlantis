@@ -284,6 +284,24 @@ class FixtureControl final : public connection::RuntimeControl {
   }
   connection::DiagnosticBatch diagnostics(std::uint64_t, std::size_t) override { return {}; }
 
+  // Spec 0064 / ADR-0128 (Plan 0064 M4): the camera is kept and not drawn.
+  // The ray-cast is scripted for the C# tests: a ray down -Z hits the mesh
+  // entity at the origin's z, a ray up +Z misses, any other ray answers
+  // NoGeometry.
+  void setViewportCamera(std::optional<connection::ViewportCamera> camera) override {
+    viewportCamera_ = std::move(camera);
+  }
+  atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
+      const connection::Ray& ray) override {
+    using ResultT = atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>;
+    if (ray.direction[2] < 0.0f) {
+      return ResultT::Ok(connection::RayHit{
+          atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value(), ray.origin[2]});
+    }
+    if (ray.direction[2] > 0.0f) return ResultT::Ok(std::nullopt);
+    return ResultT::Err(connection::ControlError::NoGeometry);
+  }
+
  private:
   struct Pending {
     connection::StepRequest request;
@@ -297,6 +315,7 @@ class FixtureControl final : public connection::RuntimeControl {
   std::uint64_t frame_ = 0;
   std::deque<Pending> steps_;
   bool stepStarted_ = false;
+  std::optional<connection::ViewportCamera> viewportCamera_;
 };
 
 }  // namespace

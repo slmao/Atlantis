@@ -338,6 +338,12 @@ int main(int argc, char** argv) {
   // Plan 0062 P5 (Spec 0062 ruling Q4, G-a): the editor's pick geometry, kept
   // only when an editor is hosted.
   config.retainPickGeometry = cliResult.editor;
+  // Spec 0064 / ADR-0128 D2: a listening Runtime keeps it too, so remote
+  // clients can ray-cast; --no-pick-geometry opts out.
+  if (cliResult.listenPort.has_value()) config.retainPickGeometry = true;
+  if (cliResult.noPickGeometry) config.retainPickGeometry = false;
+  // Spec 0064 / ADR-0126 D1, D2: the Runtime's window as a child of a host's.
+  config.parentWindow = cliResult.parentWindow;
 
   // Spec 0059 / ADR-0117 D1: the benchmark owns its whole run, including the
   // application's creation, so it can set the window size before the window exists.
@@ -394,14 +400,20 @@ int main(int argc, char** argv) {
     server = std::move(listening.value());
     sessionPath = cliResult.sessionFile.has_value() ? std::filesystem::path(*cliResult.sessionFile)
                                                     : atlantis::remote::defaultSessionPath();
-    const atlantis::remote::SessionInfo session = server->session();
-    if (atlantis::remote::writeSessionFile(sessionPath, session).isErr()) {
-      ATLANTIS_LOG_ERROR("cannot write the session file {}", sessionPath.string());
-      (void)app.shutdown();
-      return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+    // Spec 0064 / ADR-0126 D3: in child-window mode the session file names
+    // the child window, which exists once the first frame has seen it -- so
+    // the file is written after that frame (below) instead of here.
+    if (!cliResult.parentWindow.has_value()) {
+      const atlantis::remote::SessionInfo session = server->session();
+      if (atlantis::remote::writeSessionFile(sessionPath, session).isErr()) {
+        ATLANTIS_LOG_ERROR("cannot write the session file {}", sessionPath.string());
+        (void)app.shutdown();
+        return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+      }
+      ATLANTIS_LOG_INFO("Listening on 127.0.0.1:{} (session file {})", session.port, sessionPath.string());
     }
-    ATLANTIS_LOG_INFO("Listening on 127.0.0.1:{} (session file {})", session.port, sessionPath.string());
   }
+  bool sessionPending = server != nullptr && cliResult.parentWindow.has_value();
 
   // Spec 0056 R1/R4 (Plan 0056 P6, P10; ADR-0108 D1): with --editor, Atlantis
   // Editor is an ordinary client on its own connection, attached to the frame
@@ -427,6 +439,17 @@ int main(int argc, char** argv) {
     if (control) control->beforeFrame();
     app.runFrame();
     if (control) control->afterFrame();
+    if (sessionPending && app.windowHandle().has_value()) {
+      atlantis::remote::SessionInfo session = server->session();
+      session.window = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(app.windowHandle()->value0));
+      if (atlantis::remote::writeSessionFile(sessionPath, session).isErr()) {
+        ATLANTIS_LOG_ERROR("cannot write the session file {}", sessionPath.string());
+        break;
+      }
+      ATLANTIS_LOG_INFO("Listening on 127.0.0.1:{} (session file {}, window {})", session.port, sessionPath.string(),
+                        *session.window);
+      sessionPending = false;
+    }
     if (server) server->poll();
     if (runner) runner->step();
     if (editor) editor->update();

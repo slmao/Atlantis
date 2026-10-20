@@ -229,6 +229,14 @@ template <typename T, typename E, typename Encode, typename EncodeError>
     if (!after || !max) return bad("after/max");
     return Outcome::Ok(codec::encode(control.diagnostics(*after, static_cast<std::size_t>(*max))));
   }
+  // Spec 0064 / ADR-0128 D2: {"ok":<RayHit>|null} or {"err":"NoGeometry"}.
+  if (method == "control.raycast") {
+    const auto ray = decodeParam(p, "ray", &codec::decodeRay);
+    if (!ray) return bad("ray");
+    const auto hit = control.raycast(*ray);
+    if (hit.isErr()) return Outcome::Ok(codec::err(codec::encodeControlError(hit.error())));
+    return Outcome::Ok(codec::ok(hit.value().has_value() ? codec::encode(*hit.value()) : Value()));
+  }
   return Outcome::Err("unknown method " + std::string(method));
 }
 
@@ -253,6 +261,16 @@ struct RemoteServer::State {
   std::deque<Parked> parked;
   std::uint64_t nextParked = 1;
   std::weak_ptr<State> self;  // what a parked step's completion holds
+  // Spec 0064 / ADR-0128 D1 (Plan 0064 J2): the client whose camera the
+  // control draws from; cleared, with the camera, when that client goes.
+  std::optional<std::uint64_t> cameraOwner;
+
+  void forget(std::uint64_t key) {
+    if (cameraOwner == key && control != nullptr) {
+      control->setViewportCamera(std::nullopt);
+      cameraOwner.reset();
+    }
+  }
 
   void resolve(std::uint64_t key, const atlantis::Result<atlantis::connection::FrameReport,
                                                          atlantis::connection::ControlError>& result) {
@@ -327,6 +345,21 @@ struct RemoteServer::State {
     const std::string_view name = method->asString();
     if (name.starts_with("control.")) {
       if (control == nullptr) return errorResponse(requestId, "NoControl", "this server carries no RuntimeControl");
+      // Spec 0064 / ADR-0128 D1: {"camera":<ViewportCamera>|null} -> null.
+      if (name == "control.setViewportCamera") {
+        const Value* camera = p.find("camera");
+        if (camera == nullptr) return errorResponse(requestId, "BadRequest", "missing camera");
+        if (camera->isNull()) {
+          control->setViewportCamera(std::nullopt);
+          cameraOwner.reset();
+        } else {
+          const auto decoded = codec::decodeViewportCamera(*camera);
+          if (!decoded) return errorResponse(requestId, "BadRequest", "malformed camera");
+          control->setViewportCamera(*decoded);
+          cameraOwner = clientKey;
+        }
+        return response(requestId, Value());
+      }
       if (name == "control.step") {
         const auto step = decodeParam(p, "request", &codec::decodeStepRequest);
         if (!step) return errorResponse(requestId, "BadRequest", "malformed or missing request");
@@ -402,12 +435,16 @@ void RemoteServer::poll() {
   for (auto& [key, client] : state.clients) {
     if (!client.closing && !state.serve(key, client)) dropped.push_back(key);
   }
-  for (const std::uint64_t key : dropped) state.clients.erase(key);
+  for (const std::uint64_t key : dropped) {
+    state.forget(key);
+    state.clients.erase(key);
+  }
   state.releaseParked();
   for (auto it = state.clients.begin(); it != state.clients.end();) {
     Client& client = it->second;
     bool keep = !client.overran && client.channel.flush();
     if (client.closing && !client.channel.hasPendingWrite()) keep = false;
+    if (!keep) state.forget(it->first);
     it = keep ? std::next(it) : state.clients.erase(it);
   }
 }

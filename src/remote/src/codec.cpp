@@ -640,6 +640,7 @@ constexpr std::array kControlErrors = {
     connection::ControlError::NotRendering,
     connection::ControlError::CaptureFailed,
     connection::ControlError::Stopped,
+    connection::ControlError::NoGeometry,
 };
 
 constexpr std::array kSeverities = {
@@ -869,6 +870,55 @@ std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& va
   batch.latest = *l;
   batch.dropped = *d;
   return batch;
+}
+
+// Spec 0064 / ADR-0128 D1, D2: the control camera and the ray-cast.
+Value encode(const connection::ViewportCamera& camera) {
+  Value out = Value::object();
+  out.set("worldMatrix", encodeFloats(camera.worldMatrix));
+  out.set("fovYRadians", encodeFloat(camera.fovYRadians));
+  out.set("nearZ", encodeFloat(camera.nearZ));
+  out.set("farZ", encodeFloat(camera.farZ));
+  return out;
+}
+
+std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& value) {
+  const auto matrix = floatsMember<16>(value, "worldMatrix");
+  const auto fov = floatMember(value, "fovYRadians");
+  const auto nearZ = floatMember(value, "nearZ");
+  const auto farZ = floatMember(value, "farZ");
+  if (!matrix || !fov || !nearZ || !farZ) return std::nullopt;
+  return connection::ViewportCamera{*matrix, *fov, *nearZ, *farZ};
+}
+
+Value encode(const connection::Ray& ray) {
+  Value out = Value::object();
+  out.set("origin", encodeFloats(ray.origin));
+  out.set("direction", encodeFloats(ray.direction));
+  return out;
+}
+
+std::optional<connection::Ray> decodeRay(const Value& value) {
+  const auto origin = floatsMember<3>(value, "origin");
+  const auto direction = floatsMember<3>(value, "direction");
+  if (!origin || !direction) return std::nullopt;
+  return connection::Ray{*origin, *direction};
+}
+
+Value encode(const connection::RayHit& hit) {
+  Value out = Value::object();
+  out.set("entity", encodeEntity(hit.entity));
+  out.set("distance", encodeFloat(hit.distance));
+  return out;
+}
+
+std::optional<connection::RayHit> decodeRayHit(const Value& value) {
+  const Value* entity = member(value, "entity");
+  const auto distance = floatMember(value, "distance");
+  if (entity == nullptr || !distance) return std::nullopt;
+  const auto e = decodeEntity(*entity);
+  if (!e) return std::nullopt;
+  return connection::RayHit{*e, *distance};
 }
 
 }  // namespace atlantis::remote::codec

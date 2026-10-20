@@ -66,6 +66,11 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
     std::function<atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>(
         const std::string& path)>
         captureImage;
+    // Spec 0064 / ADR-0128 D1, D2: the control camera and the ray-cast.
+    std::function<void(const std::optional<atlantis::connection::ViewportCamera>&)> setViewportCamera;
+    std::function<atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError>(
+        const atlantis::connection::Ray&)>
+        raycast;
     atlantis::asset_system::AssetGuid scene;
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
@@ -95,6 +100,9 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
             std::function<void(atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>)>
                 done) override;
   atlantis::connection::DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) override;
+  void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
+  [[nodiscard]] atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(
+      const atlantis::connection::Ray& ray) override;
 
  private:
   struct PendingStep {

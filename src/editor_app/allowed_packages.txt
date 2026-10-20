@@ -1,0 +1,9 @@
+# Atlantis Editor App (Spec 0064; ADR-0127 D4): the direct NuGet packages a
+# project under src/editor_app/ may reference. One package id per line;
+# '#' starts a comment. Adding a package is a reviewed change naming its
+# licence. Checked by cmake/check_editor_app_packages.cmake.
+#
+# Phase 1: Avalonia's own packages only (MIT, https://github.com/AvaloniaUI/Avalonia).
+Avalonia
+Avalonia.Desktop
+Avalonia.Themes.Fluent

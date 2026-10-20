@@ -89,6 +89,14 @@ class RuntimeApplication {
   // by a frame that reached drawing; empty before the first such frame. Read-only.
   [[nodiscard]] std::optional<atlantis::rhi::Extent2D> presentationExtent() const noexcept { return lastSeenExtent_; }
 
+  // Spec 0064 / ADR-0126 D3: the window a frame's Presentation was created on
+  // -- borrowed, Platform's (ADR-0011) -- once a frame has seen it; empty
+  // before. atlantis_runtime publishes it in the session file in child-window
+  // mode. Read-only.
+  [[nodiscard]] const std::optional<atlantis::platform::NativeWindowHandle>& windowHandle() const noexcept {
+    return windowHandle_;
+  }
+
   // Idempotent: waitIdle() (only if hasEverRun()), then destroys every
   // GPU resource this object owns, in the fixed order (D8). Does NOT
   // touch platformSession_ -- that member's own destructor, guaranteed
@@ -147,6 +155,16 @@ class RuntimeApplication {
   // ignored. renderableLocalBounds(): the local bounds of the entity's
   // Renderable mesh. Between frames, frame thread only.
   [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
+  // Spec 0064 / ADR-0128 D2: whether the configuration kept pick geometry
+  // (BootstrapConfig::retainPickGeometry) -- false means pickRenderable() can
+  // answer nothing.
+  [[nodiscard]] bool retainsPickGeometry() const noexcept { return pickGeometryRetained_; }
+
+  // Spec 0064 / ADR-0128 D1: the RuntimeControl's camera -- drawn from the
+  // next frame on when no attached overlay supplies one, with ADR-0123 D1's
+  // rules (and captures follow it); none restores the active camera. Between
+  // frames, frame thread only.
+  void setControlViewportCamera(const std::optional<atlantis::connection::ViewportCamera>& camera);
   [[nodiscard]] std::optional<LocalBounds> renderableLocalBounds(const atlantis::asset_system::EntityGuid& entity) const;
 
   // The loaded scene's catalog GUID (Plan 0047 P17).
@@ -178,10 +196,12 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::rhi::RenderTarget& overlayViewportTarget();
   void drawOverlayInto(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target);
   void releaseOverlayResources();
-  // Plan 0062 P4, place 5: `active` with the overlay's camera, when it
-  // supplies one the frame can use, in place of its world matrix and lens.
-  // Called only while overlay_ is set, by runFrame() and the capture path.
-  [[nodiscard]] ActiveCameraInput overlayFrameCamera(const ActiveCameraInput& active);
+  // Plan 0062 P4, place 5 (Spec 0064 / ADR-0128 D1): `active` with the
+  // overlay's camera -- or, when no overlay supplies one, the control's --
+  // in place of its world matrix and lens, when the frame can use it. Called
+  // only while overlay_ or controlCamera_ is set, by runFrame() and the
+  // capture path.
+  [[nodiscard]] ActiveCameraInput viewportFrameCamera(const ActiveCameraInput& active);
 
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).
@@ -361,6 +381,8 @@ class RuntimeApplication {
   FrameOverlay* overlay_ = nullptr;
   // Plan 0062 P4: an unusable overlay camera is logged once per run of them.
   bool overlayCameraRejectionLogged_ = false;
+  // Spec 0064 / ADR-0128 D1: the RuntimeControl's camera, when one is set.
+  std::optional<ViewportCameraOverride> controlCamera_;
   std::vector<std::uint32_t> overlayVertexSpirv_;
   std::vector<std::uint32_t> overlayFragmentSpirv_;
   std::unique_ptr<atlantis::rhi::SampledTexture> overlayFontAtlas_;
@@ -384,6 +406,7 @@ class RuntimeApplication {
   // Plan 0062 P5 (ADR-0123 D2): CPU pick geometry per mesh AssetId, published
   // with meshResourceMap_; empty unless BootstrapConfig::retainPickGeometry.
   std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry_;
+  bool pickGeometryRetained_ = false;  // Spec 0064 / ADR-0128 D2
   // CPU payload exists only until first-frame realization has submitted and
   // waitIdle() has succeeded. Empty also represents no configured environment.
   std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;
@@ -435,6 +458,7 @@ class RuntimeApplication {
   bool closeRequested_ = false;
   std::optional<atlantis::rhi::Format> lastSeenFormat_;
   std::optional<atlantis::rhi::Extent2D> lastSeenExtent_;
+  std::optional<atlantis::platform::NativeWindowHandle> windowHandle_;  // Spec 0064 / ADR-0126 D3
   atlantis::rhi::VertexInputLayout vertexInputLayout_;  // resolved once at init, reused for every Material rebuild
   std::vector<std::uint32_t> vertexSpirv_;               // retained for every Material rebuild
   std::vector<std::uint32_t> fragmentSpirv_;

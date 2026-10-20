@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/platform/native_window_handle.h>
 #include <atlantis/platform/platform_event.h>
 #include <atlantis/platform/platform_kind.h>
 #include <atlantis/result.h>
@@ -43,6 +44,17 @@ struct WindowOptions {
   // arrives as the first WindowResize event, as ever; a caller that needs the
   // exact size checks it there.
   std::optional<ClientSize> requestedClientSize;
+  // Spec 0064 / ADR-0126 D1: a foreign window to create this window inside, as
+  // a child filling its client area (Windows only; Android ignores it). The
+  // parent is borrowed: Platform never destroys it. The child is Platform's,
+  // as ever (ADR-0013): created here, destroyed by shutdown(). It does not
+  // take activation on click and re-posts its pointer, wheel and key messages
+  // to the parent (coordinates in the parent's client space) after emitting
+  // its own input events, so the host's toolkit sees them too (ADR-0126 D4,
+  // route R-a). When the parent goes away, WindowCloseRequested is emitted. A
+  // parent that is not a live window fails initialize() with
+  // WindowCreationFailed. requestedClientSize is ignored with a parent.
+  std::optional<NativeWindowHandle> parent;
 };
 
 // initialize() above is initialize(WindowOptions{}).

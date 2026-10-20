@@ -74,6 +74,14 @@ struct State {
   // processEvents()/shutdown() call.
   std::vector<PlatformEvent> outputBuffer;
 
+  // Spec 0064 / ADR-0126 D1, D4: child-window mode -- the borrowed parent,
+  // whether the parent's disappearance was reported, and whether the child
+  // is being destroyed by shutdown() (else a WM_DESTROY came from the
+  // parent's destruction).
+  HWND parent = nullptr;
+  bool parentGoneReported = false;
+  bool destroying = false;
+
   // Spec 0056 / ADR-0109 (Plan 0056 P2): WM_CHAR delivers UTF-16 code units;
   // a high surrogate waits here for its low surrogate, so TextEntered always
   // carries one whole code point.
@@ -176,6 +184,32 @@ void pushPointerButton(State& s, PointerButton button, bool down, LPARAM lParam)
   }
 }
 
+// Spec 0064 / ADR-0126 D4 (route R-a): in child-window mode, the message is
+// re-posted to the parent after Platform has emitted its own event, so the
+// host's toolkit handles it as input to its own window. Client-coordinate
+// pointer messages are mapped into the parent's client space; the wheel's
+// coordinates are already screen coordinates.
+void forwardToParent(const State& s, HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+  if (s.parent == nullptr) return;
+  switch (message) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP: {
+      POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+      MapWindowPoints(hwnd, s.parent, &point, 1);
+      PostMessageW(s.parent, message, wParam, MAKELPARAM(point.x, point.y));
+      return;
+    }
+    default:
+      PostMessageW(s.parent, message, wParam, lParam);
+      return;
+  }
+}
+
 NativeWindowHandle currentHandle() {
   const State& s = state();
   return NativeWindowHandle{PlatformKind::Windows, reinterpret_cast<void*>(s.hwnd),
@@ -194,7 +228,34 @@ WindowExtent clientExtent(HWND hwnd) {
 
 LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
   State& s = state();
+  // Spec 0064 / ADR-0126 D4: in child-window mode input reaches the parent
+  // too. Posting does not re-enter this procedure, so the order relative to
+  // this window's own handling below does not matter.
   switch (message) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_MOUSEWHEEL:
+    case WM_MOUSEHWHEEL:
+    case WM_KEYDOWN:
+    case WM_KEYUP:
+    case WM_SYSKEYDOWN:
+    case WM_SYSKEYUP:
+    case WM_CHAR:
+      forwardToParent(s, hwnd, message, wParam, lParam);
+      break;
+    default:
+      break;
+  }
+  switch (message) {
+    case WM_MOUSEACTIVATE:
+      // Spec 0064 / ADR-0126 D4: a child never takes activation from its host.
+      if (s.parent != nullptr) return MA_NOACTIVATE;
+      return DefWindowProcW(hwnd, message, wParam, lParam);
     case WM_GETMINMAXINFO: {
       if (s.requestedOuterWidth > 0 && s.requestedOuterHeight > 0) {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
@@ -285,8 +346,20 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
       return 0;
     }
     case WM_DESTROY:
-      // Only ever reached synchronously from shutdown()'s DestroyWindow
-      // call below -- nothing else in this file destroys the window.
+      // Spec 0064 / ADR-0126 D1: a child is also destroyed with its parent.
+      // That is a close request, not shutdown(): the surface is gone, so it is
+      // reported destroyed too, and shutdown() later has no window left to
+      // destroy.
+      if (s.parent != nullptr && !s.destroying) {
+        s.pendingBuffer.push_back(PlatformEvent{WindowCloseRequested{}});
+        s.pendingBuffer.push_back(PlatformEvent{SurfaceDestroyed{}});
+        s.parentGoneReported = true;
+        s.hwnd = nullptr;
+        return 0;
+      }
+      // Otherwise only ever reached synchronously from shutdown()'s
+      // DestroyWindow call below -- nothing else in this file destroys the
+      // window.
       s.pendingBuffer.push_back(PlatformEvent{SurfaceDestroyed{}});
       s.pendingBuffer.push_back(PlatformEvent{Quit{}});
       s.quit = true;
@@ -326,7 +399,20 @@ atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& 
   int windowHeight = CW_USEDEFAULT;
   s.requestedOuterWidth = 0;
   s.requestedOuterHeight = 0;
-  if (options.requestedClientSize.has_value() && options.requestedClientSize->width > 0 &&
+  // Spec 0064 / ADR-0126 D1: child-window mode under a live foreign parent.
+  s.parent = nullptr;
+  s.parentGoneReported = false;
+  s.destroying = false;
+  if (options.parent.has_value()) {
+    const HWND parent = options.parent->kind == PlatformKind::Windows ? reinterpret_cast<HWND>(options.parent->value0)
+                                                                      : nullptr;
+    if (parent == nullptr || !IsWindow(parent)) {
+      return atlantis::Result<std::monostate, PlatformError>::Err(
+          PlatformError{PlatformErrorCode::WindowCreationFailed, ERROR_INVALID_WINDOW_HANDLE});
+    }
+    s.parent = parent;
+  }
+  if (s.parent == nullptr && options.requestedClientSize.has_value() && options.requestedClientSize->width > 0 &&
       options.requestedClientSize->height > 0) {
     RECT rect{0, 0, static_cast<LONG>(options.requestedClientSize->width),
               static_cast<LONG>(options.requestedClientSize->height)};
@@ -352,8 +438,17 @@ atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& 
         PlatformError{PlatformErrorCode::WindowClassRegistrationFailed, GetLastError()});
   }
 
-  s.hwnd = CreateWindowExW(0, kWindowClassName, L"Atlantis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                            windowWidth, windowHeight, nullptr, nullptr, s.hInstance, nullptr);
+  if (s.parent != nullptr) {
+    // The child fills the parent's client area; its host resizes it later.
+    RECT parentClient{};
+    GetClientRect(s.parent, &parentClient);
+    s.hwnd = CreateWindowExW(0, kWindowClassName, L"Atlantis", WS_CHILD | WS_CLIPSIBLINGS, 0, 0,
+                              parentClient.right - parentClient.left, parentClient.bottom - parentClient.top, s.parent,
+                              nullptr, s.hInstance, nullptr);
+  } else {
+    s.hwnd = CreateWindowExW(0, kWindowClassName, L"Atlantis", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+                              windowWidth, windowHeight, nullptr, nullptr, s.hInstance, nullptr);
+  }
   if (s.hwnd == nullptr) {
     const DWORD lastError = GetLastError();
     UnregisterClassW(kWindowClassName, s.hInstance);
@@ -400,8 +495,17 @@ atlantis::Result<std::monostate, PlatformError> initialize(const WindowOptions& 
   // ends up first in the batch, ahead of any such synchronous resize/
   // focus event -- see docs/plans/0002-platform-foundation.md Section 6.
   s.pendingBuffer.push_back(PlatformEvent{SurfaceCreated{currentHandle()}});
+  // Spec 0064 / ADR-0126 D1: a child is created at its final size, so the
+  // creation-time WM_SIZE (discarded above) is its only one and ShowWindow()
+  // below sends none -- unlike a top-level window's first show. Without this
+  // event the consumer would learn no extent until its host happened to
+  // resize the child (found in Plan 0064 M6).
+  if (s.parent != nullptr) {
+    const WindowExtent extent = clientExtent(s.hwnd);
+    s.pendingBuffer.push_back(PlatformEvent{WindowResize{extent, extent}});
+  }
 
-  ShowWindow(s.hwnd, SW_SHOWDEFAULT);
+  ShowWindow(s.hwnd, s.parent != nullptr ? SW_SHOW : SW_SHOWDEFAULT);
   UpdateWindow(s.hwnd);
 
   return atlantis::Result<std::monostate, PlatformError>::Ok(std::monostate{});
@@ -424,6 +528,13 @@ std::span<const PlatformEvent> processEvents() {
   while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
     TranslateMessage(&msg);
     DispatchMessageW(&msg);
+  }
+
+  // Spec 0064 / ADR-0126 D1: a child whose parent has gone without taking
+  // the child with it yet asks to close, once.
+  if (s.parent != nullptr && !s.parentGoneReported && !IsWindow(s.parent)) {
+    s.pendingBuffer.push_back(PlatformEvent{WindowCloseRequested{}});
+    s.parentGoneReported = true;
   }
 
   // windowProc only ever appends to pendingBuffer (see its definition
@@ -449,7 +560,13 @@ void shutdown() {
   // to processEvents() or shutdown()").
   s.outputBuffer.clear();
 
-  if (s.hwnd != nullptr) {
+  s.destroying = true;
+  if (s.hwnd == nullptr) {
+    // Spec 0064 / ADR-0126 D1: a child destroyed with its parent -- nothing
+    // left to destroy; the quit its destruction would have reported.
+    s.pendingBuffer.push_back(PlatformEvent{Quit{}});
+    s.quit = true;
+  } else {
     DestroyWindow(s.hwnd);  // Synchronously dispatches WM_DESTROY to windowProc above,
                              // which appends {SurfaceDestroyed, Quit} to pendingBuffer --
                              // observed by the next processEvents() call's initial

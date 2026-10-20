@@ -8,6 +8,12 @@
 //     Gameplay SDK submits for it (recorded on an InProcess connection,
 //     encoded by the same codec). The C# SDK runs the same scenarios
 //     against the fixture server and must submit the same commands (R3).
+//   - camera_vectors.jsonl (Plan 0064 P4): the E1 editor camera's
+//     convention -- view and projection from a pose, the pick ray through a
+//     point, and the orbit/dolly navigation -- from the C++ model
+//     (atlantis/editor/model/viewport_camera.h, itself pinned to the host's
+//     extraction by tests/runtime/editor_camera_convention_tests.cpp).
+//     Atlantis Editor App's C# port is held to it.
 // A committed file that differs from what the C++ code produces now fails
 // here, with the expected text written to the build tree (the Plan 0057 J4
 // pattern); nothing rewrites a committed file.
@@ -21,6 +27,7 @@
 #include <atlantis/gameplay/world.h>
 
 #include <atlantis/connection/json.h>
+#include <atlantis/editor/model/viewport_camera.h>
 #include <atlantis/remote/session_file.h>
 #include <atlantis/world/world_schema.h>
 
@@ -29,12 +36,14 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -239,6 +248,18 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   batch.latest = 3;
   batch.dropped = 9;
   out.push_back({"diagnostics", "DiagnosticBatch", codec::encode(batch)});
+  // Spec 0064 / ADR-0128 (Plan 0064 M3): the control camera and the ray-cast.
+  connection::ViewportCamera camera;
+  for (std::size_t i = 0; i < 16; ++i) camera.worldMatrix[i] = i % 5 == 0 ? 1.0f : 0.0f;
+  camera.worldMatrix[12] = 1.5f;
+  camera.worldMatrix[13] = -2.25f;
+  camera.worldMatrix[14] = 10.0f;
+  camera.fovYRadians = 1.0472f;
+  camera.nearZ = 0.1f;
+  camera.farZ = 500.0f;
+  out.push_back({"viewport_camera", "ViewportCamera", codec::encode(camera)});
+  out.push_back({"ray", "Ray", codec::encode(connection::Ray{{0.5f, 2.0f, 9.0f}, {0.0f, -0.6f, -0.8f}})});
+  out.push_back({"ray_hit", "RayHit", codec::encode(connection::RayHit{kEntity, 7.25f})});
   out.push_back({"schema.world", "Schema", codec::encodeSchema(atlantis::world::worldSchema())});
 
   // The session file (session_file.h): its one JSON object.
@@ -251,6 +272,11 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   auto parsed = json::parse(text);
   REQUIRE(parsed.isOk());
   out.push_back({"session_file", "SessionFile", parsed.value()});
+  // Spec 0064 / ADR-0126 D3: the child-window mode's window field.
+  session.window = 1311234;
+  auto withWindow = json::parse(atlantis::remote::formatSession(session));
+  REQUIRE(withWindow.isOk());
+  out.push_back({"session_file.window", "SessionFile", withWindow.value()});
   return out;
 }
 
@@ -342,7 +368,134 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   return text;
 }
 
+namespace ed = atlantis::editor;
+
+[[nodiscard]] json::Value floatArray(std::span<const float> values) {
+  json::Value out = json::Value::array();
+  for (const float v : values) out.push(json::Value::number(v));
+  return out;
+}
+
+[[nodiscard]] json::Value poseJson(const ed::CameraPose& pose) {
+  json::Value out = json::Value::object();
+  out.set("worldMatrix", floatArray(pose.worldMatrix));
+  out.set("lens", floatArray(std::array<float, 3>{pose.lens.fovYRadians, pose.lens.nearZ, pose.lens.farZ}));
+  return out;
+}
+
+[[nodiscard]] ed::CameraPose lookingFrom(ed::Vec3 eye, float yaw, float pitch, ed::CameraLens lens) {
+  ed::ViewportCameraModel model;
+  ed::CameraPose start;
+  start.worldMatrix[12] = eye[0];
+  start.worldMatrix[13] = eye[1];
+  start.worldMatrix[14] = eye[2];
+  start.lens = lens;
+  model.reset(start);
+  // Turn by whole look steps: yaw and pitch as the model reaches them.
+  model.look(-yaw / ed::ViewportCameraModel::kLookRadiansPerPixel, -pitch / ed::ViewportCameraModel::kLookRadiansPerPixel);
+  return model.pose();
+}
+
+// Plan 0064 P4: the editor camera's convention, one case per line.
+[[nodiscard]] std::string cameraVectorsText() {
+  std::string text;
+  const auto line = [&text](std::string_view name, std::string_view kind, json::Value body) {
+    json::Value out = json::Value::object();
+    out.set("case", json::Value::string(std::string(name)));
+    out.set("kind", json::Value::string(std::string(kind)));
+    out.set("data", std::move(body));
+    text += json::write(out) + "\n";
+  };
+  // A scene-like camera (Bistro's start pose, roughly), a rotated one with
+  // off-axis columns, and one looking straight up (degenerate: no matrices).
+  ed::CameraPose bistroLike = lookingFrom({-22.0f, 1.7f, 22.0f}, -0.86f, -0.05f, {1.0472f, 0.1f, 500.0f});
+  ed::CameraPose tilted = lookingFrom({3.5f, 8.0f, -4.25f}, 2.4f, -0.7f, {0.6f, 0.25f, 80.0f});
+  ed::CameraPose up;
+  up.worldMatrix = {1, 0, 0, 0, 0, 0, -1, 0, 0, -1, 0, 0, 0, 1, 0, 1};
+  const std::array<std::pair<std::string_view, const ed::CameraPose*>, 3> poses{
+      {{"bistro_like", &bistroLike}, {"tilted", &tilted}, {"straight_up", &up}}};
+  for (const auto& [name, pose] : poses) {
+    for (const float aspect : {16.0f / 9.0f, 1.0f, 0.75f}) {
+      json::Value body = json::Value::object();
+      body.set("pose", poseJson(*pose));
+      body.set("aspect", json::Value::number(aspect));
+      const auto matrices = ed::cameraMatrices(*pose, aspect);
+      body.set("view", matrices ? floatArray(matrices->view) : json::Value());
+      body.set("projection", matrices ? floatArray(matrices->projection) : json::Value());
+      char caseName[64];
+      std::snprintf(caseName, sizeof caseName, "matrices.%s.%.3f", std::string(name).c_str(), static_cast<double>(aspect));
+      line(caseName, "matrices", std::move(body));
+    }
+  }
+  // Pick rays through points of the view.
+  for (const auto& [name, pose] : {std::pair<std::string_view, const ed::CameraPose*>{"bistro_like", &bistroLike},
+                                   std::pair<std::string_view, const ed::CameraPose*>{"tilted", &tilted}}) {
+    const float aspect = 16.0f / 9.0f;
+    const auto matrices = ed::cameraMatrices(*pose, aspect);
+    REQUIRE(matrices.has_value());
+    for (const auto& ndc : {std::array<float, 2>{0.0f, 0.0f}, std::array<float, 2>{-1.0f, -1.0f},
+                            std::array<float, 2>{0.75f, 0.5f}, std::array<float, 2>{-0.3f, 0.9f}}) {
+      const ed::Ray ray = ed::rayThroughNdc(*matrices, ndc[0], ndc[1]);
+      json::Value body = json::Value::object();
+      body.set("view", floatArray(matrices->view));
+      body.set("projection", floatArray(matrices->projection));
+      body.set("ndc", floatArray(ndc));
+      body.set("origin", floatArray(ray.origin));
+      body.set("direction", floatArray(ray.direction));
+      char caseName[64];
+      std::snprintf(caseName, sizeof caseName, "ray.%s.%.2f.%.2f", std::string(name).c_str(), static_cast<double>(ndc[0]),
+                    static_cast<double>(ndc[1]));
+      line(caseName, "ray", std::move(body));
+    }
+  }
+  // Navigation: reset to a pose, then orbit and dolly steps; the pose and the
+  // pivot after each step. The first pose is the reset pose, bit for bit.
+  struct Step {
+    std::string_view op;
+    float a;
+    float b;
+  };
+  const std::array<Step, 6> steps{{{"orbit", 40.0f, 0.0f},
+                                   {"orbit", -15.0f, 22.0f},
+                                   {"dolly", 2.0f, 0.0f},
+                                   {"orbit", 0.0f, -600.0f},
+                                   {"dolly", -3.5f, 0.0f},
+                                   {"dolly", 60.0f, 0.0f}}};
+  for (const auto& [name, pose] : poses) {
+    ed::ViewportCameraModel model;
+    model.reset(*pose);
+    json::Value body = json::Value::object();
+    body.set("reset", poseJson(*pose));
+    json::Value after = json::Value::array();
+    {
+      json::Value first = json::Value::object();
+      first.set("op", json::Value::string("reset"));
+      first.set("pose", poseJson(model.pose()));
+      first.set("pivot", floatArray(model.pivot()));
+      after.push(std::move(first));
+    }
+    for (const Step& step : steps) {
+      if (step.op == "orbit") model.orbit(step.a, step.b);
+      if (step.op == "dolly") model.dolly(step.a);
+      json::Value entry = json::Value::object();
+      entry.set("op", json::Value::string(std::string(step.op)));
+      entry.set("args", floatArray(std::array<float, 2>{step.a, step.b}));
+      entry.set("pose", poseJson(model.pose()));
+      entry.set("pivot", floatArray(model.pivot()));
+      after.push(std::move(entry));
+    }
+    body.set("steps", std::move(after));
+    line("navigation." + std::string(name), "navigation", std::move(body));
+  }
+  return text;
+}
+
 }  // namespace
+
+TEST_CASE("camera_vectors.jsonl is what the C++ editor camera computes now", "[csharp][conformance]") {
+  checkCurrent(cameraVectorsText(), "camera_vectors.jsonl");
+  CHECK(cameraVectorsText() == cameraVectorsText());
+}
 
 TEST_CASE("codec_vectors.jsonl is what the C++ codec writes now", "[csharp][conformance]") {
   checkCurrent(codecVectorsText(), "codec_vectors.jsonl");

@@ -172,6 +172,12 @@ struct CommandLineResult {
   // --exec, --help and --list-scenes. Meaningful only when outcome ==
   // RunScene.
   bool editor = false;
+  // Spec 0064 / ADR-0126 D2: --parent-window <decimal handle> -- render inside
+  // that foreign window as a Platform-owned child (not with --editor).
+  std::optional<std::uint64_t> parentWindow;
+  // Spec 0064 / ADR-0128 D2: --no-pick-geometry -- keep no pick geometry even
+  // when listening (raycast then answers NoGeometry).
+  bool noPickGeometry = false;
   // Spec 0059 / ADR-0117 D1: populated only when outcome == RunScene and
   // --benchmark was given; then selectedScene is empty and execScript, listenPort,
   // sessionFile and editor are unset.

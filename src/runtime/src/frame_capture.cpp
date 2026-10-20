@@ -132,7 +132,7 @@ atlantis::Result<connection::FrameData, connection::ControlError> RuntimeApplica
   std::optional<ActiveCameraInput> activeCamera = collectActiveCamera(*scene_);
   if (!activeCamera.has_value()) return ResultT::Err(connection::ControlError::NotRendering);
   // Plan 0062 P4 (Spec 0062 ruling Q3, F-a): the camera the frame drew.
-  if (overlay_) activeCamera = overlayFrameCamera(*activeCamera);
+  if (overlay_ || controlCamera_) activeCamera = viewportFrameCamera(*activeCamera);
   const atlantis::rhi::Extent2D extent = *lastSeenExtent_;
   const float aspect =
       extent.height != 0 ? static_cast<float>(extent.width) / static_cast<float>(extent.height) : 1.0f;
@@ -172,7 +172,7 @@ atlantis::Result<connection::CapturedImage, connection::ControlError> RuntimeApp
   std::optional<ActiveCameraInput> activeCamera = collectActiveCamera(*scene_);
   if (!activeCamera.has_value()) return ResultT::Err(connection::ControlError::NotRendering);
   // Plan 0062 P4 (Spec 0062 ruling Q3, F-a): the camera the frame drew.
-  if (overlay_) activeCamera = overlayFrameCamera(*activeCamera);
+  if (overlay_ || controlCamera_) activeCamera = viewportFrameCamera(*activeCamera);
   const float aspect =
       extent.height != 0 ? static_cast<float>(extent.width) / static_cast<float>(extent.height) : 1.0f;
   const auto camera = extractCameraMatrices(activeCamera->worldMatrix, activeCamera->camera.fovYRadians,

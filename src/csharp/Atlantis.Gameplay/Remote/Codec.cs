@@ -674,6 +674,51 @@ public static class Codec
         return new DiagnosticBatch(records, lt, d);
     }
 
+    // --- The Viewport camera and the ray-cast (Spec 0064 / ADR-0128).
+
+    public static JsonValue Encode(ViewportCamera camera) =>
+        JsonValue.NewObject().Set("worldMatrix", EncodeFloats(camera.WorldMatrix))
+            .Set("fovYRadians", EncodeFloat(camera.FovYRadians)).Set("nearZ", EncodeFloat(camera.NearZ))
+            .Set("farZ", EncodeFloat(camera.FarZ));
+
+    public static ViewportCamera? DecodeViewportCamera(JsonValue value)
+    {
+        if (!value.IsObject || value.Find("worldMatrix") is not JsonValue matrixValue ||
+            DecodeFloats(matrixValue, 16) is not float[] matrix || value.Find("fovYRadians") is not JsonValue fov ||
+            value.Find("nearZ") is not JsonValue nearZ || value.Find("farZ") is not JsonValue farZ ||
+            DecodeFloat(fov) is not float f || DecodeFloat(nearZ) is not float n || DecodeFloat(farZ) is not float r)
+        {
+            return null;
+        }
+        return new ViewportCamera(matrix, f, n, r);
+    }
+
+    public static JsonValue Encode(Ray ray) =>
+        JsonValue.NewObject().Set("origin", EncodeFloats(ray.Origin)).Set("direction", EncodeFloats(ray.Direction));
+
+    public static Ray? DecodeRay(JsonValue value)
+    {
+        if (!value.IsObject || DecodeVector3(value.Find("origin")) is not Vector3 origin ||
+            DecodeVector3(value.Find("direction")) is not Vector3 direction)
+        {
+            return null;
+        }
+        return new Ray(origin, direction);
+    }
+
+    public static JsonValue Encode(RayHit hit) =>
+        JsonValue.NewObject().Set("entity", Encode(hit.Entity)).Set("distance", EncodeFloat(hit.Distance));
+
+    public static RayHit? DecodeRayHit(JsonValue value)
+    {
+        if (!value.IsObject || value.Find("entity") is not JsonValue entity || DecodeEntity(entity) is not EntityGuid e ||
+            value.Find("distance") is not JsonValue distance || DecodeFloat(distance) is not float d)
+        {
+            return null;
+        }
+        return new RayHit(e, d);
+    }
+
     // --- In-band results: {"ok":<value>} / {"err":"<name>"}.
 
     public static JsonValue Ok(JsonValue value) => JsonValue.NewObject().Set("ok", value);
