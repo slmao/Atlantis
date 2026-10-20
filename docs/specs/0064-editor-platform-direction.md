@@ -3,9 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-20
+- **Implementation:** Phase 1 merged — M1–M7 in [PR #276](https://github.com/slmao/Atlantis/pull/276); the J7 checkpoint (2026-10-21,
+  on the M6 run) adopted V-a + R-a, with the latency and sporadic-stall caveats recorded in Plan 0064 and the PR's
+  M6 report. Phases 2–4 await their own Specs.
 - **Related Plan(s):** [Plan 0064](../plans/0064-editor-platform-direction.md) (`Approved`; Phase 1 only; Joint
-  Human Review 2026-10-20 recorded in its header). As with Specs 0062 and 0063, the Plan was drafted together with
-  this Spec at the maintainer's direction.
+  Human Review 2026-10-20 recorded in its header; implemented in PR #276). As with Specs 0062 and 0063, the Plan
+  was drafted together with this Spec at the maintainer's direction.
 - **Approval:** slmao, 2026-10-20 — owner rulings Q1–Q6, each as its recommendation (Q1 P-a; Q2 V-a + R-a, with
   V-a2 as the fallback inside ADR-0126; Q3 W-a; Q4 D-a; Q5 T-a; Q6 G-a), recorded once in
   [Plan 0064](../plans/0064-editor-platform-direction.md); review of this Spec's own branch PR, [PR #275](https://github.com/slmao/Atlantis/pull/275).
