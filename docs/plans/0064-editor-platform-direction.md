@@ -29,6 +29,8 @@
     `runFrame()` line enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
     `CMakeLists.txt`, `cmake/**`) and its verdict is reported as measured; the C# SDK's zero-NuGet check unchanged
     and passing; a default configure unchanged (`ATLANTIS_BUILD_EDITOR_APP` defaults OFF).
+- **Implementation:** M1–M7 merged in [PR #276](https://github.com/slmao/Atlantis/pull/276) (M6 run and J7 checkpoint 2026-10-21, recorded
+  under Joint Review decisions below).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source

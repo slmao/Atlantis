@@ -59,8 +59,14 @@ status of every module.
 - A minimal editor (`--editor`: hierarchy, schema-generated inspector,
   viewport with a free editor camera and click picking, transform gizmo with
   world/local space and snapping) built on Dear ImGui, as an ordinary client
+  — frozen as the in-process debug tool
 - Gameplay SDKs in C++ and C# (.NET 10, zero NuGet dependencies) with
   typed bindings generated from the schema
+- The first cut of the product editor, Atlantis Editor App: a separate
+  C#/Avalonia process (`src/editor_app/`, built only with
+  `-DATLANTIS_BUILD_EDITOR_APP=ON`) that embeds the Runtime's Viewport as a
+  child window, orbits its camera and picks entities over the same
+  `atlantis.remote/1` interface as every other client
 
 **Performance**
 - `ATL_PROFILE_*` instrumentation that compiles to nothing by default, GPU
@@ -157,7 +163,11 @@ external-system-dependency category). The remaining third-party libraries
 are fetched by CMake `FetchContent` on first configure, each pinned by
 version and hash: Catch2 v3 (tests), stb, Dear ImGui (the editor), cgltf
 (the host-only glTF importer) and, in a profiling build only, Tracy. The
-C# SDK builds only when a .NET 10 SDK is found.
+C# SDK builds only when a .NET 10 SDK is found. Atlantis Editor App
+(`-DATLANTIS_BUILD_EDITOR_APP=ON`, off by default) is the one place NuGet
+packages are allowed: Avalonia, pinned exactly with committed lock files and
+restored in locked mode from nuget.org or an offline feed
+([ADR-0127](docs/adr/0127-editor-application-managed-dependency-policy.md)).
 
 The Bistro scene's content is large and never committed. Fetch it once
 (pinned and SHA-256 verified), then re-configure:
@@ -192,7 +202,9 @@ build/src/runtime/Debug/atlantis_runtime.exe --scene bistro
 ```
 (path varies by generator/configuration). Beyond `--scene` and
 `--list-scenes`, it accepts `--listen <port>` (attachable by the
-`atlantis` CLI), `--editor`, and, in a profiling build
+`atlantis` CLI), `--editor`, `--parent-window <HWND>` (the Viewport as a
+child of another process's window, as Atlantis Editor App starts it), and,
+in a profiling build
 (`-DATLANTIS_PROFILING=ON`), `--benchmark <scene>` and `--gate`; see
 [docs/process/profiling.md](docs/process/profiling.md) and
 [docs/process/performance-contract.md](docs/process/performance-contract.md).

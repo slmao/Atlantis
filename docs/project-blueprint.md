@@ -890,7 +890,22 @@ milestone being listed does not authorize starting it — see Section 1.
     closed verb surface. The editor camera is the editor's own state, handed to the host as a pose and lens;
     geometry picking and mesh bounds are host services over CPU mesh geometry kept only under `--editor`;
     lights and cameras are picked client-side
-    ([ADR-0123](adr/0123-editor-viewport-camera-and-picking-host-services.md)).
+    ([ADR-0123](adr/0123-editor-viewport-camera-and-picking-host-services.md));
+  - since [Spec 0064](specs/0064-editor-platform-direction.md) (Phase 1 merged
+    [PR #276](https://github.com/slmao/Atlantis/pull/276)), the editor platform direction: the product
+    editor is a separate C#/Avalonia process, Atlantis Editor App, one more ordinary client of the
+    shared `RuntimeConnection`/`RuntimeControl` surface with no Runtime privilege, and the ImGui editor
+    is frozen at E2 as the in-process debug tool
+    ([ADR-0125](adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md)). Phase 1,
+    the investigative prototype, settled the two unknowns on Bistro: the Viewport is embedded as a
+    Platform-owned child window inside the editor (`--parent-window`), which forwards its input to the
+    editor (ADR-0126, V-a + R-a adopted at the J7 checkpoint; sporadic editor-UI stalls at drag
+    transitions recorded for Phase 2); a client may set the camera the Runtime draws from and ray-cast
+    over the wire (`setViewportCamera`, `raycast` — control calls, not World verbs;
+    [ADR-0128](adr/0128-remote-viewport-camera-and-raycast.md)); and the editor application alone may
+    take managed packages, pinned and offline-reproducible
+    ([ADR-0127](adr/0127-editor-application-managed-dependency-policy.md)). Phases 2–4 (E3's data
+    layer first) get their own Specs.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -905,8 +920,9 @@ milestone being listed does not authorize starting it — see Section 1.
   - a Package Spec (not yet numbered; Spec 0058 pencilled it as 0059, which
     is the profiling foundation) and the rest of Spec 0058's named-only list
     (managed hosting inside the Runtime, the hot-path work — binary protocol
-    v2, generated marshaling — NuGet dependencies, Android C#, C# editor
-    extensions) — named only, not designed or scaffolded;
+    v2, generated marshaling — Android C#, C# editor extensions; NuGet
+    dependencies stay out of the C# SDK, Spec 0064 allowing them in the
+    editor application only) — named only, not designed or scaffolded;
   - further optimization beyond Spec 0061's point-light work, culling, a second frame
     in flight, a CI performance gate, an in-engine profiler UI, Android
     measurement (Spec 0059 Non-Goals) and an `atlantis benchmark` launcher
@@ -915,9 +931,12 @@ milestone being listed does not authorize starting it — see Section 1.
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);
   - the editor's tree Hierarchy, Custom Inspectors, undo/redo, saving and
-    Android hosting (Spec 0056 Non-Goals / Out of Scope); picking for remote
-    clients and agents, pixel-exact or alpha-accurate picking and a rendered
-    selection outline (Spec 0062 Out of Scope);
+    Android hosting (Spec 0056 Non-Goals / Out of Scope); pixel-exact or
+    alpha-accurate picking and a rendered selection outline (Spec 0062 Out of
+    Scope; remote picking itself landed with Spec 0064); the editor
+    application's Phases 2–4 — E3's data layer, the port of E1/E2's models,
+    the editor games are made in — and frame streaming across processes
+    (Spec 0064 Out of Scope / later phases);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 
@@ -1729,8 +1748,11 @@ anything architectural, its own ADR before any of the below moves past
   directional-only item; this remaining item is scoped to *durable*
   (save/load, cross-session, cross-artifact) identity, which both
   Milestone 11's and Milestone 12's own Non-Goals explicitly excluded
-- Tool/Editor connection protocol — **no process model (in-process vs.
-  IPC) is chosen**
+- Tool/Editor connection protocol — the process model is now chosen:
+  the product editor is a separate process over `atlantis.remote/1`
+  ([Spec 0064](specs/0064-editor-platform-direction.md),
+  [ADR-0125](adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md));
+  the editor itself beyond its Phase 1 shell remains future work
 - Gameplay SDK — **no gameplay language is chosen**
 - Research/simulation API (Python or otherwise)
 - AI inference integration — **no inference backend is chosen**
@@ -1797,7 +1819,10 @@ already-approved:
 - **Gameplay language.** `D:\blueprint.md` §7 proposes a C++/C#/Luau/
   Python layering; none of this is Atlantis-approved.
 - **Editor process model** (in-process vs. two-process IPC/RPC, per
-  `D:\blueprint.md` §4). Not decided.
+  `D:\blueprint.md` §4). Decided by [Spec 0064](specs/0064-editor-platform-direction.md) /
+  [ADR-0125](adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md):
+  two processes, the editor an ordinary `atlantis.remote/1` client; the
+  ImGui editor stays in-process as a debug tool.
 - **AI inference backend.** `D:\blueprint.md` §9 proposes an
   `IInferenceService` abstraction over ONNX/TensorRT/DirectML/etc.; not
   Atlantis-approved.
