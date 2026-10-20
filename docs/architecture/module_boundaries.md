@@ -116,6 +116,19 @@ exactly that client size (DPI-adjusted, and not clamped to the monitor); Android
 Platform ignores it. The original `initialize()` is unchanged. Under profiling,
 Windows Platform publishes the display refresh rate into the Core recorder.
 
+Since Spec 0064 ([ADR-0126](../adr/0126-viewport-embedding-and-input-routing.md)
+D1) `WindowOptions` also takes `parent`, a borrowed `NativeWindowHandle`:
+Windows Platform then creates its window `WS_CHILD | WS_CLIPSIBLINGS` under
+that handle at the parent's client size, reports that extent right after
+`SurfaceCreated`, never takes activation from its host (`MA_NOACTIVATE`),
+re-posts pointer, wheel and key messages to the parent in the parent's client
+coordinates (route R-a), reports `WindowResize` when the host resizes it and
+`WindowCloseRequested` when the parent is destroyed, and refuses a handle that
+is not a window (`WindowCreationFailed`). Ownership is unchanged: Platform
+creates, owns and destroys the child and never the parent; Vulkan WSI consumes
+the child as any window. Android Platform ignores the field. Only the Windows
+translation unit names Win32 types.
+
 **Extension points:** iOS Platform (future, not designed). Exact shape of
 the opaque native-surface-handle type, and exact shape of lifecycle event
 delivery (callback vs. polled-at-frame-boundary vs. queue) are **not
@@ -836,7 +849,15 @@ JSON-lines RPC (`atlantis.remote/1`) whose payload is exactly
 `RuntimeConnection` and `RuntimeControl` calls; the session file. Client half
 `atlantis_remote_client` (`RemoteSession`: a `RemoteConnection` and a
 `RemoteControl`); server half `atlantis_remote_server` (`RemoteServer`, polled
-once per frame, never waiting, one InProcess connection per client).
+once per frame, never waiting, one InProcess connection per client). Since
+Spec 0064 ([ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md),
+superseding ADR-0106 D3's method list in part) `RuntimeControl` carries two more
+calls: `control.setViewportCamera` (a camera the Runtime draws from instead of
+the scene's active camera, `null` restoring it; the server clears it when the
+client that set it disconnects) and `control.raycast` (the nearest Renderable a
+world ray hits, or `NoGeometry` when the Runtime keeps no pick geometry). The
+session file gains an optional `window` field (ADR-0126 D3), the Runtime's
+child-window handle in child-window mode; the protocol version is unchanged.
 
 **Depends on:** Atlantis Connection only — no Runtime, ECS, Platform, RHI or
 Renderer include. Its OS socket code (Winsock / BSD sockets) is private to the
@@ -910,6 +931,12 @@ subject back — plain values, one frame deferred, no callback.
 the executable-private `src/runtime/editor_attachment.*`; never
 `atlantis_runtime_host`. Android builds the library but hosts no editor.
 
+Since Spec 0064 ([ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md)
+D4) this module is frozen at E2 as the in-process debug tool: it takes bug
+fixes and changes forced by shared-surface Specs only; E3 and later editor
+iterations target Atlantis Editor App, and E1/E2's models and ADR-0123/0124
+are the reference contracts a C# port keeps.
+
 ---
 
 ## Atlantis Gameplay SDK
@@ -962,9 +989,11 @@ editor do not link it. Android builds the library.
 
 **Responsibilities:** the Gameplay SDK's model for .NET — a managed client
 library (`src/csharp/Atlantis.Gameplay/`, namespace `Atlantis.Gameplay`):
-- `Remote/`: the session file, the JSON and codec of `atlantis.remote/1`
-  (byte-identical with the C++ codec on the conformance vectors), and
-  `RemoteSession` / `RemoteControl` (hello, line framing, pipelining);
+- `Remote/`: the session file (since Spec 0064 with its optional `window`),
+  the JSON and codec of `atlantis.remote/1` (byte-identical with the C++ codec
+  on the conformance vectors), and `RemoteSession` / `RemoteControl` (hello,
+  line framing, pipelining; since Spec 0064 `SetViewportCamera` and `Raycast`,
+  ADR-0128);
 - the reflective layer (`GameplayWorld`, `Transaction`, `Subscription`,
   `FailureLog`) and the typed layer (`Generated/World.g.cs`: record structs,
   `long` enums, `Field` / `ReadOnlyField` handles, `IComponent<T>` /
@@ -987,7 +1016,58 @@ with zero NuGet and `eol=lf`, by `tests/csharp/check_csharp_rules.cmake`).
 (`examples/csharp/`) and the C# tests. Nothing native links it. CMake builds
 it with `dotnet build` only when a .NET 10.0.1xx SDK is found
 (`cmake/AtlantisDotnet.cmake`, `ATLANTIS_REQUIRE_CSHARP`); Android never
-declares a C# target.
+declares a C# target. Since Spec 0064, Atlantis Editor App references it as a
+project (not a package); the SDK's zero-NuGet rule is unchanged.
+
+---
+
+## Atlantis Editor App
+
+**Status: Approved** (Spec 0064, Phase 1 — the investigative prototype;
+[ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md),
+[ADR-0126](../adr/0126-viewport-embedding-and-input-routing.md),
+[ADR-0127](../adr/0127-editor-application-managed-dependency-policy.md),
+[ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md)).
+
+**Responsibilities:** the product editor — a separate .NET 10 Avalonia
+application (`src/editor_app/`, namespace `Atlantis.Editor`) that is one more
+ordinary client of a running Runtime. Phase 1 ships the shell: it starts
+`atlantis_runtime --listen 0 --session-file <tmp> --parent-window <h>` where
+`h` is an editor-owned Win32 window inside an Avalonia `NativeControlHost`,
+reads the session file (port, token, child window), sizes the Runtime's child
+(`SetWindowPos`, asynchronous), lists the entities, drives a C# port of the E1
+editor camera (orbit and dolly; held to the C++ model by
+`tests/csharp/conformance/camera_vectors.jsonl`) through `SetViewportCamera`
+from the Runtime's forwarded input, and ray-casts a click through `Raycast`.
+It also carries the Phase 1 measurements (frame times, input latency, UI
+responsiveness) in its status line and `editor.log`. The checkpoint adopted
+V-a (child-window embedding) with route R-a (forwarded input).
+
+**Depends on:** Atlantis C# SDK as a project reference, and its NuGet packages
+under ADR-0127: only packages on `src/editor_app/allowed_packages.txt` (Phase
+1: Avalonia, Avalonia.Desktop, Avalonia.Themes.Fluent, 12.1.4, MIT), each
+pinned exactly in `src/editor_app/Directory.Packages.props`, committed
+`packages.lock.json` per project, locked-mode restore, its own `NuGet.config`
+(sources cleared, nuget.org alone — or the directory in
+`ATLANTIS_NUGET_OFFLINE_FEED`, populated from the lock files by
+`src/editor_app/populate_offline_feed.cmake`); all checked by
+`cmake/check_editor_app_packages.cmake`, whose refusals are themselves tested.
+Its only engine access is the C# SDK over `atlantis.remote/1`: it links no
+native engine code, loads nothing into the Runtime, has no host interface of
+its own, and P/Invokes `user32` only on its own windows and the Runtime's
+hosted child (editor-side OS UI work, not engine code — Plan 0064 J5).
+**Not a C++ module and not in the native dependency graph.**
+
+**Depended on by:** nothing. CMake declares it (`atlantis_editor_app`, its
+tests `atlantis_editor_app_tests`, and the ctest label `editor_app`) only with
+`ATLANTIS_BUILD_EDITOR_APP=ON` (default `OFF`) and a .NET 10.0.1xx SDK, as the
+last subdirectory of the root `CMakeLists.txt`; a default configure declares
+nothing and fetches no package. Android never declares it.
+
+**Extension points:** Phase 2 and later (E3's data layer, E5, E4, E6 in the
+maintainer's order) are specified after the Phase 1 checkpoint; each
+capability they need is added to the shared client surface for the wire, the
+CLI and both SDKs in the same Spec (ADR-0125 D2).
 
 ---
 
@@ -1090,7 +1170,15 @@ half (`--listen`), and — since Spec 0056 — Atlantis Editor (`--editor`),
 attached as the frame's overlay (`FrameOverlay`, ADR-0108 D4; since Spec 0062
 the overlay may also supply the Viewport's camera, ADR-0123 D1, and
 `RuntimeApplication` answers its picks and bounds over CPU mesh geometry kept
-only under `BootstrapConfig::retainPickGeometry`, ADR-0123 D2). Since Spec 0055
+only under `BootstrapConfig::retainPickGeometry`, ADR-0123 D2 — set by
+`--editor` and, since Spec 0064, by `--listen` unless `--no-pick-geometry`,
+ADR-0128 D2). Since Spec 0064 (ADR-0128 D1) `RuntimeControlHost` also carries
+`setViewportCamera` and `raycast`: the control camera is drawn at the same
+place 5 when no overlay supplies one, and `raycast` is `pickRenderable()`;
+and `atlantis_runtime --parent-window <HWND>` (command line only, not with
+`--editor`) runs the Runtime in Platform's child-window mode, writing the
+session file — with the child's handle in its `window` field — once the first
+frame has created the surface (ADR-0126 D2/D3). Since Spec 0055
 `atlantis_runtime_host` also links the existing `Stb::Stb` (PRIVATE; frame
 captures written as PNG). **Not** RenderGraph as a link dependency — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally; the few one-pass graphs

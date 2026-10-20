@@ -256,6 +256,13 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 - **J7 — The checkpoint:** the M6 report is reviewed by the owner before the PR leaves draft; Phase 2's Spec
   starts only after.
 
+**J7 checkpoint — ruled (slmao, 2026-10-21, on the M6 run):** V-a + R-a adopted, with two caveats recorded in the
+M6 findings: camera latency is 1.5–2 Runtime frames by construction (frame-boundary answers), and sporadic
+100–600 ms editor-UI stalls appear at drag transitions (the input-queue attachment Spec 0064 named). Phase 2's
+Spec may address the stalls; V-a2 was not needed. M6 also found and fixed one M1 defect (a child window drew
+nothing until its host first resized it: Platform now reports the child's extent right after `SurfaceCreated`).
+The owner's keyboard-focus observation (U2-3) was not recorded; the measured items are in the PR's M6 report.
+
 ## Rollback Plan
 
 Revert the implementation PR. The editor application is behind `ATLANTIS_BUILD_EDITOR_APP` (default OFF); the
