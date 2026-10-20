@@ -1,14 +1,16 @@
 # Spec: Editor Platform Direction — an Out-of-Process C#/Avalonia Editor
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-20
-- **Related Plan(s):** [Plan 0064](../plans/0064-editor-platform-direction.md) (`Draft`; Phase 1 only). As with
-  Specs 0062 and 0063, the Plan is drafted together with this Spec at the maintainer's direction (2026-10-20),
-  against this Spec's recommended options. A ruling that differs from a recommendation revises the Plan before
-  Joint Review.
-- **Approval:** pending.
-- **Related ADR(s)** (all `Proposed`, drafted alongside):
+- **Related Plan(s):** [Plan 0064](../plans/0064-editor-platform-direction.md) (`Approved`; Phase 1 only; Joint
+  Human Review 2026-10-20 recorded in its header). As with Specs 0062 and 0063, the Plan was drafted together with
+  this Spec at the maintainer's direction.
+- **Approval:** slmao, 2026-10-20 — owner rulings Q1–Q6, each as its recommendation (Q1 P-a; Q2 V-a + R-a, with
+  V-a2 as the fallback inside ADR-0126; Q3 W-a; Q4 D-a; Q5 T-a; Q6 G-a), recorded once in
+  [Plan 0064](../plans/0064-editor-platform-direction.md); review of this Spec's own branch PR, [PR #275](https://github.com/slmao/Atlantis/pull/275).
+  The open-question text below keeps the options as the record of what was weighed.
+- **Related ADR(s)** (all `Accepted` 2026-10-20, alongside this Spec's own Approval):
   - [ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md): the platform
     direction — an out-of-process C#/Avalonia editor as one more ordinary client, the one structured interface
     shared by GUI, scripts, CI and agents, and the ImGui editor's place (Q1, Q5).
@@ -217,7 +219,7 @@ atlantis_runtime
 
 ## Architectural Impact
 
-Yes, in four decisions, each its own ADR (all `Proposed`):
+Yes, in four decisions, each its own ADR (all `Accepted` 2026-10-20):
 
 - **[ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md)** — the platform
   direction: a new managed module **Atlantis Editor App** (`src/editor_app/`), an ordinary client with no
@@ -284,7 +286,8 @@ Risks:
 - **A C# re-implementation of the editor models** (Phase 2): E1/E2's C++ models are the reference, and their
   ADRs (0123, 0124) are contracts the C# side must keep. Not Phase 1 work.
 
-Open questions (each with a recommendation; review rules them):
+Open questions — all six ruled by the owner (slmao, 2026-10-20, review of [PR #275](https://github.com/slmao/Atlantis/pull/275)), each as its
+recommendation; rulings recorded in Plan 0064:
 
 - **Q1 — The platform shape** (ADR-0125).
   - **(P-a) A separate managed process, Avalonia UI, the C# SDK as its only engine access** — recommended. The

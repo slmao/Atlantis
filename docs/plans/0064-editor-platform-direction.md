@@ -1,19 +1,34 @@
 # Plan: Editor Platform Direction — Phase 1, the Investigative Prototype
 
-- **Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Draft`) —
+- **Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Approved`) —
   [ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md),
   [ADR-0126](../adr/0126-viewport-embedding-and-input-routing.md),
   [ADR-0127](../adr/0127-editor-application-managed-dependency-policy.md),
-  [ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md) (all `Proposed`).
-  - Drafted together with the Spec at the maintainer's direction (2026-10-20), against the Spec's recommended
-    options Q1 P-a, Q2 V-a + R-a, Q3 W-a, Q4 D-a, Q5 T-a, Q6 G-a. A different ruling revises this Plan before Joint
-    Review.
+  [ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md) (all `Accepted` 2026-10-20); the Spec is
+  `Approved` 2026-10-20.
+  - Drafted together with the Spec at the maintainer's direction (2026-10-20). The owner ruled Q1 P-a, Q2 V-a + R-a
+    (V-a2 the fallback inside ADR-0126), Q3 W-a, Q4 D-a, Q5 T-a and Q6 G-a, exactly the options this Plan was
+    drafted against.
   - Scope: **Phase 1 only.** Phases 2–4 are the Spec's background and get their own Specs.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation does not start before a human has reviewed this Plan and Spec
-  0064 together and explicitly authorized it, with ADR-0125..0128 `Accepted`. **No Avalonia dependency enters the
-  repository before then.**
+- **Joint Human Review:** slmao, 2026-10-20 — reviewed this Plan and
+  [Spec 0064](../specs/0064-editor-platform-direction.md) together in [PR #275](https://github.com/slmao/Atlantis/pull/275).
+  - **Spec:** Q1–Q6 ruled as recommended (Q2: V-a + R-a, with V-a2 the fallback inside ADR-0126).
+  - **Plan:** J1–J7 ruled as recommended; no Spec Correction.
+  - **ADRs:** ADR-0125, ADR-0126, ADR-0127 and ADR-0128 `Accepted`.
+  - **Ruling note (recorded here, the Spec text unchanged):** under Q5 T-a, if Phase 1 is delayed, splitting E3's
+    data layer — the authoring document, its access and the bake, without UI — off the editor side and letting it
+    go first may be considered. It would need its own Spec.
+  - **Authorization:** implementation on `feature/0064-editor-platform-phase1` once PR #275 has merged, M1–M5 first.
+    The Avalonia dependency is authorized from M5 on: the newest stable release at that time, its version, lock
+    files and MIT licence recorded in the PR. After M5 the agent stops and hands over the M6 investigation
+    protocol; the owner runs M6 and holds the J7 checkpoint before the report is folded in and M7 completes.
+  - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
+    `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
+    `runFrame()` line enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
+    `CMakeLists.txt`, `cmake/**`) and its verdict is reported as measured; the C# SDK's zero-NuGet check unchanged
+    and passing; a default configure unchanged (`ATLANTIS_BUILD_EDITOR_APP` defaults OFF).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -53,7 +68,7 @@ Read at `origin/main` `77197fb`.
    `src/csharp/**` are excluded; `src/platform/**` and the new `src/editor_app/**` are not listed (M7 confirms with
    `--gate --applies`).
 
-## Plan-stage decisions (proposed; ruled at Joint Review)
+## Plan-stage decisions
 
 - **P1 — Child-window mode** (ADR-0126 D1–D3).
   - `platform::WindowOptions` gains `std::optional<NativeWindowHandle> parent` (Windows only).
@@ -226,7 +241,7 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 - **A pure-virtual addition to `RuntimeControl`** breaks every implementer at compile time — intended; all are in
   the file list.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (slmao, 2026-10-20, PR #275): J1–J7 as proposed
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — The control camera's lifetime** (P2): cleared when the connection that set it closes. Proposed: accept;

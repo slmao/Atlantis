@@ -1,10 +1,11 @@
 # ADR 0126: Viewport Embedding in a Foreign Window, and Input Routing
 
-- **Status:** Proposed
-- **Date:** 2026-10-20
+- **Status:** Accepted
+- **Date:** 2026-10-20 (accepted 2026-10-20)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Draft`; its Q2)
+- **Acceptance:** slmao, 2026-10-20 (owner rulings on Spec 0064 Q1–Q6, each as recommended, recorded once in
+  [Plan 0064](../plans/0064-editor-platform-direction.md); the ADR text was reviewed in [PR #275](https://github.com/slmao/Atlantis/pull/275))
+- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Approved` 2026-10-20; its Q2)
 - **Related ADR(s):**
   - Extends [ADR-0005](0005-platform-module-multi-os-windowing.md) (as amended) with a child-window mode; keeps
     [ADR-0011](0011-native-window-handle-representation.md) and

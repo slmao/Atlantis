@@ -1,10 +1,11 @@
 # ADR 0128: The Viewport Camera and Ray-Cast on the Control Surface and the Wire
 
-- **Status:** Proposed
-- **Date:** 2026-10-20
+- **Status:** Accepted
+- **Date:** 2026-10-20 (accepted 2026-10-20)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Draft`; its Q3)
+- **Acceptance:** slmao, 2026-10-20 (owner rulings on Spec 0064 Q1–Q6, each as recommended, recorded once in
+  [Plan 0064](../plans/0064-editor-platform-direction.md); the ADR text was reviewed in [PR #275](https://github.com/slmao/Atlantis/pull/275))
+- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Approved` 2026-10-20; its Q3)
 - **Related ADR(s):**
   - **Supersedes in part** [ADR-0106](0106-attachable-runtime-transport-and-control.md) D3: `RuntimeControl` gains
     two calls beyond status, pause, resume, step and diagnostics. ADR-0106's transport, payload rule, pause, capture

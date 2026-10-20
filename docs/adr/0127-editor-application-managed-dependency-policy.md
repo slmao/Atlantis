@@ -1,10 +1,11 @@
 # ADR 0127: The Editor Application's Managed Dependency Policy
 
-- **Status:** Proposed
-- **Date:** 2026-10-20
+- **Status:** Accepted
+- **Date:** 2026-10-20 (accepted 2026-10-20)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Draft`; its Q4)
+- **Acceptance:** slmao, 2026-10-20 (owner rulings on Spec 0064 Q1–Q6, each as recommended, recorded once in
+  [Plan 0064](../plans/0064-editor-platform-direction.md); the ADR text was reviewed in [PR #275](https://github.com/slmao/Atlantis/pull/275))
+- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Approved` 2026-10-20; its Q4)
 - **Related ADR(s):**
   - Follows the pinning precedent of [ADR-0006](0006-dependency-management.md),
     [ADR-0107](0107-editor-ui-library-selection.md) (Dear ImGui, URL + SHA-256) and

@@ -1,10 +1,11 @@
 # ADR 0125: Out-of-Process Editor Platform and One Client Interface
 
-- **Status:** Proposed
-- **Date:** 2026-10-20
+- **Status:** Accepted
+- **Date:** 2026-10-20 (accepted 2026-10-20)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Draft`; D1–D3
+- **Acceptance:** slmao, 2026-10-20 (owner rulings on Spec 0064 Q1–Q6, each as recommended, recorded once in
+  [Plan 0064](../plans/0064-editor-platform-direction.md); the ADR text was reviewed in [PR #275](https://github.com/slmao/Atlantis/pull/275))
+- **Related Spec:** [Spec 0064: Editor Platform Direction](../specs/0064-editor-platform-direction.md) (`Approved` 2026-10-20; D1–D3
   are its Q1, D4 its Q5, D5 its Q6)
 - **Related ADR(s):**
   - Decides what the blueprint's Candidate 2 left open ("Editor process model … Not decided").
