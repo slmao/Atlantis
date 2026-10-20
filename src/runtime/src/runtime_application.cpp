@@ -1169,6 +1169,12 @@ atlantis::Result<RuntimeApplication, RuntimeInitError> createRuntimeApplication(
     windowOptions.requestedClientSize =
         atlantis::platform::ClientSize{config.requestedClientWidth, config.requestedClientHeight};
   }
+  // Spec 0064 / ADR-0126 D1: child-window mode under the given parent.
+  if (config.parentWindow.has_value()) {
+    windowOptions.parent = atlantis::platform::NativeWindowHandle{
+        atlantis::platform::PlatformKind::Windows, reinterpret_cast<void*>(static_cast<std::uintptr_t>(*config.parentWindow)),
+        nullptr};
+  }
   auto sessionResult = createPlatformSession(windowOptions);
   if (sessionResult.isErr()) {
     ATLANTIS_LOG_ERROR("createPlatformSession() failed");
@@ -1228,6 +1234,7 @@ void RuntimeApplication::runFrame() {
         continue;
       }
       presentation_ = std::move(presentationResult.value());
+      windowHandle_ = created->handle;  // Spec 0064 / ADR-0126 D3: for the session file
       ATLANTIS_LOG_INFO("Presentation created");
     } else if (const auto* resize = std::get_if<platform::WindowResize>(&event)) {
       if (presentation_) {

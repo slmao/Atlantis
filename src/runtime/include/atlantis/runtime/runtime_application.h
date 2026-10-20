@@ -89,6 +89,14 @@ class RuntimeApplication {
   // by a frame that reached drawing; empty before the first such frame. Read-only.
   [[nodiscard]] std::optional<atlantis::rhi::Extent2D> presentationExtent() const noexcept { return lastSeenExtent_; }
 
+  // Spec 0064 / ADR-0126 D3: the window a frame's Presentation was created on
+  // -- borrowed, Platform's (ADR-0011) -- once a frame has seen it; empty
+  // before. atlantis_runtime publishes it in the session file in child-window
+  // mode. Read-only.
+  [[nodiscard]] const std::optional<atlantis::platform::NativeWindowHandle>& windowHandle() const noexcept {
+    return windowHandle_;
+  }
+
   // Idempotent: waitIdle() (only if hasEverRun()), then destroys every
   // GPU resource this object owns, in the fixed order (D8). Does NOT
   // touch platformSession_ -- that member's own destructor, guaranteed
@@ -435,6 +443,7 @@ class RuntimeApplication {
   bool closeRequested_ = false;
   std::optional<atlantis::rhi::Format> lastSeenFormat_;
   std::optional<atlantis::rhi::Extent2D> lastSeenExtent_;
+  std::optional<atlantis::platform::NativeWindowHandle> windowHandle_;  // Spec 0064 / ADR-0126 D3
   atlantis::rhi::VertexInputLayout vertexInputLayout_;  // resolved once at init, reused for every Material rebuild
   std::vector<std::uint32_t> vertexSpirv_;               // retained for every Material rebuild
   std::vector<std::uint32_t> fragmentSpirv_;

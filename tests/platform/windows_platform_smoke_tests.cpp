@@ -22,8 +22,10 @@
 #define UNICODE
 #define _UNICODE
 #include <windows.h>
+#include <windowsx.h>
 
 #include <cstddef>
+#include <memory>
 #include <optional>
 #include <string_view>
 #include <variant>
@@ -399,6 +401,183 @@ TEST_CASE("Windows Platform: a requested client size is the window's client size
 
   atlantis::platform::shutdown();
   lifecycleGuard.markShutDown();
+}
+
+// Spec 0064 / ADR-0126 D1, D4 (Plan 0064 M1): child-window mode. A host
+// window made here stands in for the editor's; Platform creates its window as
+// a child filling the host's client area, does not take activation, forwards
+// its input to the host with host-client coordinates, and follows the host's
+// lifetime. Each case is its own TEST_CASE: Platform is initialized once per
+// process.
+namespace {
+
+// The host: a top-level window that records the input messages posted to it.
+struct HostWindow {
+  static constexpr const wchar_t* kClass = L"AtlantisTestHostWindow";
+  struct Received {
+    UINT message;
+    WPARAM wParam;
+    LPARAM lParam;
+  };
+  static std::vector<Received>& received() {
+    static std::vector<Received> messages;
+    return messages;
+  }
+  static LRESULT CALLBACK proc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+      case WM_MOUSEMOVE:
+      case WM_LBUTTONDOWN:
+      case WM_LBUTTONUP:
+      case WM_RBUTTONDOWN:
+      case WM_MOUSEWHEEL:
+      case WM_KEYDOWN:
+      case WM_CHAR:
+        received().push_back(Received{message, wParam, lParam});
+        return 0;
+      default:
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+  }
+  HostWindow() {
+    WNDCLASSEXW windowClass{};
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.lpfnWndProc = &proc;
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = kClass;
+    RegisterClassExW(&windowClass);
+    hwnd = CreateWindowExW(0, kClass, L"host", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN, 100, 100, 800, 600, nullptr,
+                           nullptr, GetModuleHandleW(nullptr), nullptr);
+    ShowWindow(hwnd, SW_SHOW);
+  }
+  ~HostWindow() {
+    if (IsWindow(hwnd)) DestroyWindow(hwnd);
+    UnregisterClassW(kClass, GetModuleHandleW(nullptr));
+  }
+  HostWindow(const HostWindow&) = delete;
+  HostWindow& operator=(const HostWindow&) = delete;
+  HWND hwnd = nullptr;
+};
+
+[[nodiscard]] atlantis::platform::WindowOptions childOf(HWND parent) {
+  atlantis::platform::WindowOptions options;
+  options.parent = atlantis::platform::NativeWindowHandle{atlantis::platform::PlatformKind::Windows, parent,
+                                                          GetModuleHandleW(nullptr)};
+  return options;
+}
+
+}  // namespace
+
+TEST_CASE("Windows Platform child-window mode: a child filling the host, no activation, input forwarded to the host",
+          "[platform][integration][child_window]") {
+  using namespace atlantis::platform;
+  HostWindow host;
+  REQUIRE(IsWindow(host.hwnd));
+  REQUIRE(initialize(childOf(host.hwnd)).isOk());
+  PlatformLifecycleGuard lifecycleGuard;
+
+  const auto batch = processEvents();
+  REQUIRE(!batch.empty());
+  REQUIRE(std::holds_alternative<SurfaceCreated>(batch[0]));
+  const HWND child = reinterpret_cast<HWND>(std::get<SurfaceCreated>(batch[0]).handle.value0);
+  REQUIRE(IsWindow(child));
+  CHECK(GetParent(child) == host.hwnd);
+  CHECK((GetWindowLongPtrW(child, GWL_STYLE) & WS_CHILD) != 0);
+  RECT hostClient{};
+  RECT childClient{};
+  GetClientRect(host.hwnd, &hostClient);
+  GetClientRect(child, &childClient);
+  CHECK(childClient.right == hostClient.right);
+  CHECK(childClient.bottom == hostClient.bottom);
+
+  // The host resizes it: a WindowResize at the new size.
+  SetWindowPos(child, nullptr, 0, 0, 320, 200, SWP_NOZORDER | SWP_NOACTIVATE);
+  std::optional<WindowResize> resized;
+  for (const auto& event : processEvents()) {
+    if (const auto* resize = std::get_if<WindowResize>(&event)) resized = *resize;
+  }
+  REQUIRE(resized.has_value());
+  CHECK(resized->framebuffer.width == 320);
+  CHECK(resized->framebuffer.height == 200);
+
+  // A click does not activate the child.
+  CHECK(SendMessageW(child, WM_MOUSEACTIVATE, reinterpret_cast<WPARAM>(host.hwnd), MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN)) ==
+        MA_NOACTIVATE);
+
+  // Input: Platform emits its own events and the host receives the same
+  // messages, pointer coordinates mapped into the host's client space.
+  SetWindowPos(child, nullptr, 40, 30, 320, 200, SWP_NOZORDER | SWP_NOACTIVATE);
+  (void)processEvents();
+  HostWindow::received().clear();
+  PostMessageW(child, WM_MOUSEMOVE, 0, MAKELPARAM(10, 20));
+  PostMessageW(child, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(11, 21));
+  PostMessageW(child, WM_LBUTTONUP, 0, MAKELPARAM(11, 21));
+  PostMessageW(child, WM_KEYDOWN, 'W', 0x00110001);
+  std::vector<PlatformEvent> events;
+  for (int pump = 0; pump < 3; ++pump) {
+    for (const auto& event : processEvents()) events.push_back(event);
+  }
+  bool moved = false;
+  bool pressed = false;
+  bool keyed = false;
+  for (const auto& event : events) {
+    if (const auto* move = std::get_if<PointerMoved>(&event)) moved = moved || (move->x == 10.0f && move->y == 20.0f);
+    if (const auto* button = std::get_if<PointerButtonChanged>(&event)) pressed = pressed || button->down;
+    if (const auto* key = std::get_if<KeyChanged>(&event)) keyed = keyed || (key->key == Key::W && key->down);
+  }
+  CHECK(moved);
+  CHECK(pressed);
+  CHECK(keyed);
+  const auto& received = HostWindow::received();
+  REQUIRE(received.size() >= 4);
+  CHECK(received[0].message == WM_MOUSEMOVE);
+  CHECK(GET_X_LPARAM(received[0].lParam) == 50);  // 10 + the child's x of 40
+  CHECK(GET_Y_LPARAM(received[0].lParam) == 50);  // 20 + the child's y of 30
+  CHECK(received[1].message == WM_LBUTTONDOWN);
+  CHECK(received[2].message == WM_LBUTTONUP);
+  CHECK(received[3].message == WM_KEYDOWN);
+  CHECK(received[3].wParam == 'W');
+
+  // shutdown() destroys the child and never the host.
+  shutdown();
+  lifecycleGuard.markShutDown();
+  CHECK_FALSE(IsWindow(child));
+  CHECK(IsWindow(host.hwnd));
+}
+
+TEST_CASE("Windows Platform child-window mode: the host's destruction is a close request; shutdown() still completes",
+          "[platform][integration][child_window]") {
+  using namespace atlantis::platform;
+  auto host = std::make_unique<HostWindow>();
+  REQUIRE(initialize(childOf(host->hwnd)).isOk());
+  PlatformLifecycleGuard lifecycleGuard;
+  (void)processEvents();
+  host.reset();  // destroys the host, and with it the child
+  bool closeRequested = false;
+  bool surfaceDestroyed = false;
+  for (const auto& event : processEvents()) {
+    closeRequested = closeRequested || std::holds_alternative<WindowCloseRequested>(event);
+    surfaceDestroyed = surfaceDestroyed || std::holds_alternative<SurfaceDestroyed>(event);
+  }
+  CHECK(closeRequested);
+  CHECK(surfaceDestroyed);
+  CHECK_FALSE(shouldQuit());
+  shutdown();
+  lifecycleGuard.markShutDown();
+  bool quit = false;
+  for (const auto& event : processEvents()) quit = quit || std::holds_alternative<Quit>(event);
+  CHECK(quit);
+  CHECK(shouldQuit());
+}
+
+TEST_CASE("Windows Platform child-window mode: a parent that is not a window fails initialize()",
+          "[platform][integration][child_window]") {
+  using namespace atlantis::platform;
+  HostWindow host;
+  const HWND gone = host.hwnd;
+  DestroyWindow(host.hwnd);
+  const auto result = initialize(childOf(gone));
+  REQUIRE(result.isErr());
+  CHECK(result.error().code == PlatformErrorCode::WindowCreationFailed);
 }
 
 #endif  // defined(_WIN32)

@@ -943,3 +943,35 @@ TEST_CASE("parseCommandLine(): --canary is the gate's GPU canary child", "[runti
   requireError(parse({"--canary", "--canary"}), "--canary supplied more than once");
   requireError(parse({"--canary", "--pin-process", "maybe"}), "invalid --pin-process");
 }
+
+// Spec 0064 / ADR-0126 D2, ADR-0128 D2 (Plan 0064 M1): --parent-window takes a
+// non-zero decimal handle, combines with --scene and --listen, and is refused
+// with --editor; --no-pick-geometry opts a listening Runtime out of picking.
+TEST_CASE("parseCommandLine(): --parent-window and --no-pick-geometry", "[runtime][cli][child_window]") {
+  auto whitelist = makeFixtureWhitelist();
+  FakeArgv none{};
+  const CommandLineResult plain = parseCommandLine(none.argc(), none.argv(), whitelist);
+  CHECK_FALSE(plain.parentWindow.has_value());
+  CHECK_FALSE(plain.noPickGeometry);
+
+  FakeArgv child{"--scene", "pbr_normal_map_demo", "--listen", "0", "--parent-window", "1311234", "--no-pick-geometry"};
+  const CommandLineResult combined = parseCommandLine(child.argc(), child.argv(), whitelist);
+  requireRunScene(combined, whitelist, "pbr_normal_map_demo");
+  CHECK(combined.parentWindow == std::optional<std::uint64_t>{1311234});
+  CHECK(combined.noPickGeometry);
+
+  FakeArgv withEditor{"--editor", "--parent-window", "42"};
+  requireError(parseCommandLine(withEditor.argc(), withEditor.argv(), whitelist),
+               "--parent-window and --editor may not be combined");
+  FakeArgv zero{"--parent-window", "0"};
+  requireError(parseCommandLine(zero.argc(), zero.argv(), whitelist), "invalid --parent-window handle: 0");
+  FakeArgv text{"--parent-window", "0x1f"};
+  requireError(parseCommandLine(text.argc(), text.argv(), whitelist), "invalid --parent-window handle: 0x1f");
+  FakeArgv missing{"--parent-window"};
+  requireError(parseCommandLine(missing.argc(), missing.argv(), whitelist), "--parent-window requires a value");
+  FakeArgv twice{"--parent-window", "1", "--parent-window", "2"};
+  requireError(parseCommandLine(twice.argc(), twice.argv(), whitelist), "--parent-window supplied more than once");
+  FakeArgv benchmark{"--benchmark", "bistro", "--parent-window", "1"};
+  requireError(parseCommandLine(benchmark.argc(), benchmark.argv(), whitelist),
+               "--parent-window and --no-pick-geometry run a scene");
+}

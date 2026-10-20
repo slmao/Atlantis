@@ -26,6 +26,7 @@ std::string formatSession(const SessionInfo& session) {
   out.set("token", json::Value::string(session.token));
   out.set("pid", json::Value::number(static_cast<std::uint64_t>(session.pid)));
   out.set("scene", json::Value::string(atlantis::asset_system::toString(session.scene)));
+  if (session.window.has_value()) out.set("window", json::Value::number(*session.window));
   return json::write(out) + "\n";
 }
 
@@ -55,6 +56,11 @@ atlantis::Result<SessionInfo, SessionFileError> parseSession(std::string_view te
   session.token = token->asString();
   session.pid = static_cast<std::uint32_t>(pidNumber);
   session.scene = sceneGuid.value();
+  if (const json::Value* window = object.find("window"); window != nullptr) {
+    std::uint64_t value = 0;
+    if (!window->toUInt64(value)) return ResultT::Err(SessionFileError::Malformed);
+    session.window = value;
+  }
   return ResultT::Ok(std::move(session));
 }
 

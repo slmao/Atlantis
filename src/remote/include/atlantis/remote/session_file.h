@@ -12,6 +12,9 @@
 // Plan 0055 P4 (ADR-0106 D1): how a client finds a listening Runtime. The
 // Runtime writes one JSON object to its session file once it listens:
 //   {"protocol":"atlantis.remote/1","port":<n>,"token":"<32 hex>","pid":<n>,"scene":"<guid>"}
+// Spec 0064 / ADR-0126 D3: in child-window mode it also carries
+// "window":<n>, the Runtime's child window handle as a decimal integer, so the
+// host can size it. A client that does not know the field ignores it.
 // The token is the per-run secret a client presents in its hello. Pure value
 // functions here; the file operations are each half's (remote_server.h writes,
 // remote_client.h reads).
@@ -25,6 +28,7 @@ struct SessionInfo {
   std::string token;  // 32 lowercase hex digits (128 bits)
   std::uint32_t pid = 0;
   atlantis::asset_system::AssetGuid scene;
+  std::optional<std::uint64_t> window;  // Spec 0064 / ADR-0126 D3: child-window mode only
   friend bool operator==(const SessionInfo&, const SessionInfo&) = default;
 };
 

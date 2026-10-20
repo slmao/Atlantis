@@ -96,3 +96,19 @@ TEST_CASE("session file: the client resolves --session, then ATLANTIS_SESSION, t
   CHECK(resolveSessionPath(std::nullopt, nullptr) == atlantis::remote::defaultSessionPath());
   CHECK(atlantis::remote::defaultSessionPath() == fs::path(".atlantis") / "runtime.session.json");
 }
+
+// Spec 0064 / ADR-0126 D3 (Plan 0064 M1): the child window's handle, in
+// child-window mode only; a file without it still parses.
+TEST_CASE("session file: the optional window field round-trips and is validated", "[remote][session][child_window]") {
+  SessionInfo session = sample();
+  session.window = 1311234;
+  const std::string text = atlantis::remote::formatSession(session);
+  CHECK(text.find("\"window\":1311234") != std::string::npos);
+  const auto parsed = atlantis::remote::parseSession(text);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value() == session);
+  CHECK_FALSE(atlantis::remote::parseSession(atlantis::remote::formatSession(sample())).value().window.has_value());
+  CHECK(atlantis::remote::parseSession(R"({"protocol":"atlantis.remote/1","port":1,"token":"t","pid":1,)"
+                                       R"("scene":"00550055-0055-4055-8055-005500550055","window":"x"})")
+            .error() == SessionFileError::Malformed);
+}

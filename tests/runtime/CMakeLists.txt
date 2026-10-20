@@ -162,6 +162,8 @@ add_executable(atlantis_runtime_gpu_tests
   ../../src/runtime/gate_set.cpp
   ../../src/runtime/gate_store.cpp
   gate_process_gpu_tests.cpp
+  # Plan 0064 M1 (ADR-0126 D1-D3): the real executable as a child of another process's window.
+  child_window_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
