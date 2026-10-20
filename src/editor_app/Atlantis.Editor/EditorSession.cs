@@ -216,6 +216,9 @@ public sealed class EditorWorker : IDisposable
     public event Action<CameraAck>? CameraAcked;
     public event Action<FrameTimes>? Measured;
 
+    /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
+    public string? SessionPath { get; init; }
+
     /// <summary>When on, each camera update also waits for the first frame drawn from it (one more frame of round trips).</summary>
     public bool MeasureLatency
     {
@@ -242,6 +245,11 @@ public sealed class EditorWorker : IDisposable
         double ms = Stopwatch.GetElapsedTime(inputTicks).TotalMilliseconds;
         _log.Write(string.Format(CultureInfo.InvariantCulture, "pick {0} input->answer {1:F1} ms",
                                  result.Error?.ToString() ?? result.Hit?.Entity.ToString() ?? "miss", ms));
+        // Spec 0064's north star: the CLI's `runtime raycast` for the same ray names the same entity.
+        _log.Write(string.Format(CultureInfo.InvariantCulture,
+                                 "  same ray: atlantis --session \"{0}\" runtime raycast --origin {1:G9} {2:G9} {3:G9} --direction {4:G9} {5:G9} {6:G9}",
+                                 SessionPath ?? "<session file>", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X,
+                                 ray.Direction.Y, ray.Direction.Z));
         var answer = new PickResult(result, ray, ms);
         _post(() => Picked?.Invoke(answer));
     });

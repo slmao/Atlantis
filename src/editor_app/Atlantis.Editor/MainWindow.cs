@@ -190,6 +190,7 @@ public sealed class MainWindow : Window
         var worker = new EditorWorker(session, action => Dispatcher.UIThread.Post(action), _log)
         {
             MeasureLatency = _measureLatency.IsChecked == true,
+            SessionPath = runtime.SessionPath,
         };
         worker.Connected += OnConnected;
         worker.Failed += message =>
