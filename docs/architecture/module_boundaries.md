@@ -875,7 +875,8 @@ Renderer header (both checked by `tests/cli/cli_boundary_tests.cpp`).
 [ADR-0107](../adr/0107-editor-ui-library-selection.md),
 [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md),
 [ADR-0109](../adr/0109-platform-input-events.md); Spec 0062,
-[ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md)).
+[ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md); Spec 0063,
+[ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md)).
 
 **Responsibilities:** the minimal editor (`atlantis::editor`) — a flat
 Hierarchy kept current by events, an Inspector generated from the schema's
@@ -887,11 +888,17 @@ view layer (`src/view/`, one ImGui context per `Editor`). Since Spec 0062 (E1):
 an editor camera with orbit, pan, dolly and fly navigation (client state, never
 written to the World), Viewport picking (markers for lights and cameras
 client-side, geometry through the host), selection sync and the Gizmo's
-world/local space and snapping.
+world/local space and snapping. Since Spec 0063 (E2): Editor Transactions — a
+whole Gizmo drag, or one Inspector edit, as one logical edit addressed by Spec
+0049 R7's property address — and a client-side, per-session undo/redo history
+that writes forward, refuses a step whose values changed elsewhere and drops
+entries whose entity or component is gone; it reaches the World only through an
+edit-target interface (E2's one implementation is over `RuntimeConnection`).
 
 **Depends on:** Atlantis Connection and the UI library (`ImGui::ImGui`, Dear
 ImGui's four core sources, pinned; no stock backend) only — no Runtime, ECS,
-Platform, RHI, Renderer, Vulkan or OS include; UI-library headers only under
+Platform, RHI, Renderer, Vulkan or OS include; of the Asset System only
+`asset_guid.h` and, since Spec 0063, `scene_property_address.h`; UI-library headers only under
 `src/view/` (checked by `tests/editor/editor_boundary_tests.cpp`). Input is
 the editor's own plain values; output an engine-neutral UI draw list and the
 Viewport size it wants. Since Spec 0062 (ADR-0123 D3) the host also passes in

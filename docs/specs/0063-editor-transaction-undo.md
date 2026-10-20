@@ -1,14 +1,20 @@
 # Spec: Editor Transaction and Undo/Redo (E2)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-20
-- **Related Plan(s):** [Plan 0063](../plans/0063-editor-transaction-undo.md) (`Draft`). As with Spec 0062, the Plan
-  is drafted together with this Spec at the maintainer's direction (2026-10-20), against this Spec's recommended
-  options. A ruling that differs from a recommendation revises the Plan before Joint Review.
-- **Approval:** pending.
+- **Related Plan(s):** [Plan 0063](../plans/0063-editor-transaction-undo.md) (`Approved`; Joint Human Review
+  2026-10-20 recorded in its header). As with Spec 0062, the Plan was drafted together with this Spec at the
+  maintainer's direction.
+- **Approval:** slmao, 2026-10-20. The owner ruled Q1–Q6, each as its recommendation (Q1 A-a, Q2 S-a, Q3 P-a,
+  Q4 K-a, Q5 H-a, Q6 V-a), with one Spec correction (Plan J1: R5's comparison is `PropertyValue` equality, as Plan
+  P4 states, not "bitwise for floats"). The rulings are recorded once in
+  [Plan 0063](../plans/0063-editor-transaction-undo.md). The text was reviewed in
+  [PR #273](https://github.com/slmao/Atlantis/pull/273), merged before the rulings were written to the branch; the
+  status lines landed with the implementation PR. The open-question text below keeps the options as the record of
+  what was weighed.
 - **Related ADR(s):**
-  - [ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md) (`Proposed`): what an Editor Transaction
+  - [ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md) (`Accepted` 2026-10-20): what an Editor Transaction
     is, the client-side undo/redo model and its safety rules, and the seam to the authoring scene.
   - Builds on [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md) D7: the property
     address that Spec 0049 R7 fixed for future Editor Transactions. ADR-0100 named Editor Transaction as a future
@@ -175,8 +181,8 @@ Goals of this Spec within those boundaries:
   - **Depth:** at most 128 edits; the oldest is dropped.
   - **Scene change:** the history is cleared when the Runtime's scene GUID (`RuntimeStatus`) changes.
 - **R5 — Conflicts with other writers** (Q4). Before an undo or redo is submitted, every write's address is read.
-  - If any current value differs (bitwise for floats) from what this edit left there (`after` for undo, `before` for
-    redo), nothing is submitted. The UI reports "changed elsewhere", and the entry is dropped from the history
+  - If any current value is not equal (`PropertyValue` equality) to what this edit left there (`after` for undo,
+    `before` for redo), nothing is submitted. The UI reports "changed elsewhere", and the entry is dropped from the history
     (Q4, K-a).
   - This check is best-effort: another client's write that lands in the same frame, ahead of the undo, is not
     detected.
@@ -252,7 +258,7 @@ Editor (client library)
 Yes. The record format, the history semantics and the edit-target seam are a public API shape of Atlantis Editor and
 the first realization of a consumer Spec 0049 named. One ADR, drafted alongside:
 
-- **[ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md)** (`Proposed`):
+- **[ADR-0124](../adr/0124-editor-transaction-and-client-side-undo.md)** (`Accepted` 2026-10-20):
   - D1: the Editor Transaction (R1, R2), including drag merging.
   - D2: a client-side, per-session, linear history that undoes by writing forward (R4).
   - D3: settlement, best-effort conflict refusal and invalidation (R3, R5, R6), with no new verb.
@@ -338,7 +344,8 @@ Risks:
   transport that drops events would leave an edit pending. Pending edits never block new edits, only undo. A stuck
   pending edit clears when the history does: on a scene change, or when the editor restarts.
 
-Open questions (each with a recommendation; review rules them):
+Open questions — all six ruled by the owner (slmao, 2026-10-20), each as its recommendation; rulings recorded in
+Plan 0063:
 
 - **Q1 — The record's address type** (ADR-0124 D4).
   - **(A-a) Spec 0049 R7's `asset_system::scene::PropertyAddress`** — recommended. It is the type Spec 0049 named

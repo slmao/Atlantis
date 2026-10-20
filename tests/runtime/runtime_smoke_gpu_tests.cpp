@@ -1758,6 +1758,120 @@ TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity
 #endif
 }
 
+// --- Plan 0063 M5 (Spec 0063 north star; R1-R6, R9): a 30-frame Gizmo drag
+// undone and redone by Ctrl+Z / Ctrl+Y with the editor attached, under fatal
+// Validation Layers; then a light's edit, undo and a new edit; then another
+// client's write refusing an undo. --------------------------------------------------
+
+namespace {
+
+// Ctrl+<key> (Shift too when asked) as Platform key events, one per frame.
+void chordWith(EditorHost& host, platform::Key key, bool shift = false) {
+  const platform::KeyModifiers held{true, shift, false};
+  frameWith(host, {platform::KeyChanged{platform::Key::LeftCtrl, true, held}});
+  frameWith(host, {platform::KeyChanged{key, true, held}});
+  frameWith(host, {platform::KeyChanged{key, false, held}});
+  frameWith(host, {platform::KeyChanged{platform::Key::LeftCtrl, false, {}}});
+}
+
+[[nodiscard]] atlantis::editor::MatrixColumns worldMatrixOf(RuntimeApplication& app, const atlantis::asset_system::EntityGuid& entity) {
+  auto connection = app.openConnection();
+  const auto* worldMatrix = atlantis::connection::text::findType(connection->schema(), "WorldMatrix");
+  REQUIRE(worldMatrix != nullptr);
+  atlantis::editor::MatrixColumns m{};
+  for (std::size_t k = 0; k < 4; ++k) {
+    m[k] = std::get<std::array<float, 4>>(connection->getProperty({entity, worldMatrix->id, worldMatrix->fields[k].id}).value());
+  }
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("Editor E2 north star: a 30-frame drag undone and redone exactly; edit, undo, new edit; a refused undo",
+          "[runtime][gpu][editor][north_star][history]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    EditorHost host(app);
+    atlantis::editor::Editor& editor = host.editor.editor();
+    for (int i = 0; i < 3; ++i) host.frame();
+
+    // The first Renderable the editor lists.
+    std::optional<atlantis::asset_system::EntityGuid> mesh;
+    for (const auto& row : editor.hierarchy().rows()) {
+      if (editor.hierarchy().componentNames(row).find("Renderable") != std::string::npos) {
+        mesh = row.entity;
+        break;
+      }
+    }
+    REQUIRE(mesh.has_value());
+    editor.hierarchy().select(*mesh);
+    host.frame();
+    REQUIRE(editor.gizmo().available());
+    const auto start = worldMatrixOf(app, *mesh);
+    const auto imageBefore = RuntimeSmokeTestAccess::readViewport(app);
+
+    // A 30-frame drag: 30 preview transactions, then the release.
+    auto& gizmo = editor.gizmo();
+    gizmo.beginDrag(atlantis::editor::GizmoAxis::X);
+    for (int i = 1; i <= 30; ++i) {
+      gizmo.dragTo(0.02f * static_cast<float>(i));
+      host.frame();
+    }
+    gizmo.endDrag();
+    for (int i = 0; i < 3; ++i) host.frame();
+    const auto dropped = worldMatrixOf(app, *mesh);
+    REQUIRE_FALSE(dropped == start);
+    REQUIRE(editor.history().undoDepth() == 1);
+    const auto imageDropped = RuntimeSmokeTestAccess::readViewport(app);
+    CHECK_FALSE((imageDropped.pixels == imageBefore.pixels));
+
+    // Ctrl+Z: one transaction back -- bit-exact, and the image as before the drag.
+    chordWith(host, platform::Key::Z);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(worldMatrixOf(app, *mesh) == start);
+    CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == imageBefore.pixels));
+    // Ctrl+Y: the drop again.
+    chordWith(host, platform::Key::Y);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(worldMatrixOf(app, *mesh) == dropped);
+    CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == imageDropped.pixels));
+
+    // The directional light: 3 -> 6, undo -> 3, a new edit -> 4 (redo cleared).
+    const auto sun = atlantis::asset_system::parseEntityGuid("0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea").value();
+    editor.hierarchy().select(sun);
+    host.frame();
+    const std::size_t intensity = inspectorField(editor, "Light.intensity");
+    REQUIRE(frameIntensity(app, std::nullopt) == 3.0f);
+    (void)editor.inspector().commit(intensity, 6.0f);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(frameIntensity(app, std::nullopt) == 6.0f);
+    chordWith(host, platform::Key::Z);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(frameIntensity(app, std::nullopt) == 3.0f);
+    CHECK(editor.history().canRedo());
+    (void)editor.inspector().commit(intensity, 4.0f);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(frameIntensity(app, std::nullopt) == 4.0f);
+    CHECK(editor.history().redoDepth() == 0);
+
+    // Another client writes 5: the next undo is refused and writes nothing.
+    auto other = app.openConnection();
+    const auto* light = atlantis::connection::text::findType(other->schema(), "Light");
+    REQUIRE(light != nullptr);
+    const auto field = atlantis::connection::text::parsePath(other->schema(), "Light.intensity").value().leaf->id;
+    (void)other->submit(atlantis::world::access::SetProperty{{sun, light->id, field}, 5.0f});
+    host.frame();
+    chordWith(host, platform::Key::Z);
+    for (int i = 0; i < 2; ++i) host.frame();
+    CHECK(frameIntensity(app, std::nullopt) == 5.0f);
+    CHECK(editor.history().notice().find("changed elsewhere") != std::string::npos);
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
 // Plan 0059 M5 (Spec 0059 R5, ADR-0115 D5): the Runtime names the GPU objects
 // it creates and the frame's command list, so a capture shows them by name.
 // Vulkan has no call to read a name back; the backend's debug-utils wrapper

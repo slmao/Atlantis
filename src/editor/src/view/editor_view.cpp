@@ -302,6 +302,16 @@ void EditorView::State::record(const std::string& key) {
 // The fixed layout (ruling Q6 keeps the Content quadrant): Hierarchy | Viewport
 // over Content | Inspector, filling the window. No docking, nothing movable.
 void EditorView::State::layout(const FrameContext& context, ViewModels& models) {
+  // Plan 0063 P8 (Spec 0063 R9): undo and redo anywhere in the window, but
+  // never inside a text field (its own undo) or during a Gizmo drag.
+  const ImGuiIO& io = ImGui::GetIO();
+  if (!io.WantTextInput && !models.gizmo.dragging() && io.KeyCtrl) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) {
+      (void)(io.KeyShift ? models.history.redo() : models.history.undo());
+    } else if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) {
+      (void)models.history.redo();
+    }
+  }
   const ImVec2 display = ImGui::GetIO().DisplaySize;
   const float leftWidth = std::floor(display.x * 0.3f);
   const float topHeight = std::floor(display.y * 0.6f);
@@ -396,6 +406,25 @@ void EditorView::State::hierarchyPanel(ViewModels& models) {
 // bounds box.
 void EditorView::State::viewportPanel(const FrameContext& context, ViewModels& models) {
   ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + 6.0f, ImGui::GetCursorPosY() + 4.0f));
+  // Plan 0063 P8: Undo and Redo, disabled with their reason, labelled with
+  // the edit they would act on.
+  const auto historyButton = [&](const char* name, bool enabled, std::string_view label, bool redo) {
+    if (!enabled) ImGui::BeginDisabled();
+    if (ImGui::Button(name)) (void)(redo ? models.history.redo() : models.history.undo());
+    if (!enabled) ImGui::EndDisabled();
+    record(std::string("toolbar:") + name);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      const std::string tip = enabled                    ? std::string(name) + " " + std::string(label)
+                              : models.history.waiting() ? std::string("waiting for the Runtime")
+                                                         : std::string(redo ? "nothing to redo" : "nothing to undo");
+      ImGui::SetTooltip("%s", tip.c_str());
+    }
+    ImGui::SameLine();
+  };
+  historyButton("Undo", models.history.canUndo(), models.history.undoLabel(), false);
+  historyButton("Redo", models.history.canRedo(), models.history.redoLabel(), true);
+  ImGui::TextUnformatted("|");
+  ImGui::SameLine();
   if (ImGui::Button("Play")) models.control.resume();
   record("toolbar:Play");
   ImGui::SameLine();
@@ -445,6 +474,9 @@ void EditorView::State::viewportPanel(const FrameContext& context, ViewModels& m
   ImGui::SameLine();
   ImGui::Checkbox("Markers", &models.showMarkers);
   record("toolbar:Markers");
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", models.history.notice().c_str());  // Plan 0063 P8
+  record("status:history");
 
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   const ImVec2 available = ImGui::GetContentRegionAvail();

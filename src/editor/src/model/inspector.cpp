@@ -157,10 +157,18 @@ access::CommandTicket InspectorModel::commit(std::size_t index, access::Property
   ATLANTIS_CHECK_MSG(subject_.has_value() && index < fields_.size() && fields_[index].editable,
                      "InspectorModel::commit(): no such editable field");
   const InspectorField& field = fields_[index];
-  const access::CommandTicket ticket = connection_.submit(
-      access::SetProperty{access::PropertyAddress{*subject_, field.component, field.field}, std::move(value)});
+  const access::PropertyAddress address{*subject_, field.component, field.field};
+  const access::PropertyValue after = value;
+  const access::CommandTicket ticket = connection_.submit(access::SetProperty{address, std::move(value)});
   outcomes_[index] = EditOutcome{EditStatus::Pending, ticket, {}};
+  if (field.value.has_value()) commits_.push_back(CompletedEdit{address, field.path, *field.value, after, ticket});
   return ticket;
+}
+
+std::vector<CompletedEdit> InspectorModel::takeCommits() {
+  std::vector<CompletedEdit> out;
+  out.swap(commits_);
+  return out;
 }
 
 const std::optional<EditOutcome>& InspectorModel::outcome(std::size_t index) const {

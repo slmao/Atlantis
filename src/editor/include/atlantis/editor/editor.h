@@ -3,6 +3,7 @@
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/editor/input.h>
+#include <atlantis/editor/model/edit_history.h>
 #include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/hierarchy.h>
 #include <atlantis/editor/model/inspector.h>
@@ -104,6 +105,12 @@ class Editor {
   // Plan 0062: the Viewport's camera (mode, editor camera) and its picking.
   [[nodiscard]] ViewportCameraState& camera();
   [[nodiscard]] ViewportPicking& picking();
+  // Plan 0063 P7 (Spec 0063 R4): this session's edit history. Every frame()
+  // records the Inspector's commits and the Gizmo's completed drags as Editor
+  // Transactions (those made through the models between frames too) and
+  // settles the history; the history is cleared when the Runtime's scene
+  // changes.
+  [[nodiscard]] EditHistory& history();
 
   // Where the last frame drew a widget, in framebuffer pixels -- for scripted
   // input. Keys: "hierarchy:<guid>", "hierarchy:filter",
@@ -112,7 +119,8 @@ class Editor {
   // "toolbar:Play|Pause|Step|Translate|Rotate|Scale", "viewport"; since Plan
   // 0062 also "toolbar:SceneCam|EditorCam|Align|World|Local|Markers" and
   // "hierarchy:filter-hidden" (the note shown when the filter hides the
-  // selection; its button clears the filter). Empty when
+  // selection; its button clears the filter); since Plan 0063 also
+  // "toolbar:Undo|Redo" and "status:history". Empty when
   // the widget was not drawn (scrolled away, collapsed).
   [[nodiscard]] std::optional<UiRect> widgetRect(std::string_view key) const;
 

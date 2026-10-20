@@ -254,9 +254,16 @@ request and bounds subject, and takes back the Viewport camera, a pick request
 deferred. Picking and bounds are `RuntimeApplication` services
 (`pickRenderable()`, `renderableLocalBounds()`) over CPU mesh geometry kept only
 under `BootstrapConfig::retainPickGeometry` (set by `--editor` alone); they are
-not World verbs and nothing reaches them over Atlantis Remote. See
-[ADR-0107](docs/adr/0107-editor-ui-library-selection.md)–[ADR-0109](docs/adr/0109-platform-input-events.md)
-and [ADR-0123](docs/adr/0123-editor-viewport-camera-and-picking-host-services.md).
+not World verbs and nothing reaches them over Atlantis Remote. Since Spec 0063
+(E2, ADR-0124) its edits are Editor Transactions (a whole Gizmo drag or one
+Inspector edit, addressed by Spec 0049 R7's `scene::PropertyAddress` — the one
+Asset System header its include allow-list adds beside `asset_guid.h`), kept in a
+client-side, per-session undo/redo history that writes forward through an
+edit-target interface (one implementation, over `RuntimeConnection`) — no World
+verb, no Runtime change. See
+[ADR-0107](docs/adr/0107-editor-ui-library-selection.md)–[ADR-0109](docs/adr/0109-platform-input-events.md),
+[ADR-0123](docs/adr/0123-editor-viewport-camera-and-picking-host-services.md)
+and [ADR-0124](docs/adr/0124-editor-transaction-and-client-side-undo.md).
 
 Atlantis Gameplay SDK (Spec 0057, `Approved`) is a client library over
 `RuntimeConnection`: a reflective layer (types and fields by name or id,
