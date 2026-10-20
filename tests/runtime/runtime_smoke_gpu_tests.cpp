@@ -1467,29 +1467,43 @@ TEST_CASE("Runtime with an overlay camera and a control camera: the overlay's wi
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
-TEST_CASE("Runtime: RuntimeControl::raycast() is pickRenderable() under retained pick geometry",
+TEST_CASE("Runtime: RuntimeControl::raycast() and the CLI's `runtime raycast` are pickRenderable()",
           "[runtime][gpu][control][picking]") {
   BootstrapConfig config = buildSmokeConfig();
   config.retainPickGeometry = true;  // as `--listen` sets it
   auto appResult = createRuntimeApplication(config);
   REQUIRE(appResult.isOk());
   RuntimeApplication app = std::move(appResult.value());
-  atlantis::runtime::RuntimeControlHost::Options options;
-  options.recordDiagnostics = false;
-  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
   app.runFrame();
+  Attached attached(app);
   atlantis::asset_system::EntityGuid target;
   const auto ray = rayAtFirstRenderable(app, target);
   const auto picked = app.pickRenderable(ray);
   REQUIRE(picked.has_value());
-  const auto cast = control.raycast(atlantis::connection::Ray{ray.origin, ray.direction});
+  // In process, through the control host.
+  const auto cast = attached.control.raycast(atlantis::connection::Ray{ray.origin, ray.direction});
   REQUIRE(cast.isOk());
   REQUIRE(cast.value().has_value());
   CHECK(cast.value()->entity == picked->entity);
   CHECK(cast.value()->distance == picked->distance);
-  const auto miss = control.raycast(atlantis::connection::Ray{{0.0f, 1.0e4f, 0.0f}, {0.0f, 1.0f, 0.0f}});
+  const auto miss = attached.control.raycast(atlantis::connection::Ray{{0.0f, 1.0e4f, 0.0f}, {0.0f, 1.0f, 0.0f}});
   REQUIRE(miss.isOk());
   CHECK_FALSE(miss.value().has_value());
+  // Over the wire, through the CLI (which renormalizes the direction, so the
+  // distance agrees to rounding).
+  const auto number = [](float v) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.9g", static_cast<double>(v));
+    return std::string(text);
+  };
+  const json::Value result = attached.run({"runtime", "raycast", "--origin", number(ray.origin[0]), number(ray.origin[1]),
+                                           number(ray.origin[2]), "--direction", number(ray.direction[0]),
+                                           number(ray.direction[1]), number(ray.direction[2])});
+  const json::Value* hit = result.find("hit");
+  REQUIRE(hit != nullptr);
+  REQUIRE(hit->find("guid") != nullptr);
+  CHECK(hit->find("guid")->asString() == atlantis::asset_system::toString(picked->entity));
+  CHECK(std::abs(asFloat(*hit->find("distance")) - picked->distance) <= 1.0e-4f * std::max(1.0f, picked->distance));
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
