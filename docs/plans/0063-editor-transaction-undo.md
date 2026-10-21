@@ -21,7 +21,7 @@
     push to `main`, no change to `tests/performance/baselines/` or `gate_policy.json`, goldens unchanged, changes
     limited to this Plan's file list (M5's path check), and the performance gate stated N/A with its reason. J6's
     interaction run is the owner's.
-- **Implementation:** M1–M5 merged in [PR #274](https://github.com/slmao/Atlantis/pull/274). J6's interaction run is not yet recorded.
+- **Implementation:** M1–M5 merged in [PR #274](https://github.com/slmao/Atlantis/pull/274). J6's interaction run passed on 2026-10-22 ([recorded on PR #274](https://github.com/slmao/Atlantis/pull/274#issuecomment-6320983181)).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
