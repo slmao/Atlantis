@@ -3,9 +3,11 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-20
+- **Implementation:** merged — M1–M5 in [PR #274](https://github.com/slmao/Atlantis/pull/274). J6, the owner's interaction run, is not
+  recorded.
 - **Related Plan(s):** [Plan 0063](../plans/0063-editor-transaction-undo.md) (`Approved`; Joint Human Review
-  2026-10-20 recorded in its header). As with Spec 0062, the Plan was drafted together with this Spec at the
-  maintainer's direction.
+  2026-10-20 recorded in its header; implemented in PR #274). As with Spec 0062, the Plan was drafted together
+  with this Spec at the maintainer's direction.
 - **Approval:** slmao, 2026-10-20. The owner ruled Q1–Q6, each as its recommendation (Q1 A-a, Q2 S-a, Q3 P-a,
   Q4 K-a, Q5 H-a, Q6 V-a), with one Spec correction (Plan J1: R5's comparison is `PropertyValue` equality, as Plan
   P4 states, not "bitwise for floats"). The rulings are recorded once in
