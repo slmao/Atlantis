@@ -17,10 +17,11 @@
   - **ADRs:** ADR-0129, ADR-0130 and ADR-0131 `Accepted`.
   - **Authorization:** implementation on `feature/0065-authoring-data-layer` once PR #280 has merged, M1–M7 in this
     Plan's order.
-  - **Correction (2026-10-22, found at the start of M1; pending the owner's review of its own docs PR):** Spec
-    0065's Correction fixes Plan 0049's defect F5 in `serializeSceneSource()` and routes the in-memory cook through
-    the text path. P1, M1, the file list and J2 change accordingly, and J10 (the number format) is proposed for
-    ruling with it. J1 ("no Spec Correction") is superseded by this one Correction.
+  - **Correction (2026-10-22, found at the start of M1; accepted by slmao, 2026-10-22, in the review of its own
+    docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281)):** Spec 0065's Correction fixes Plan 0049's defect F5 in `serializeSceneSource()` and
+    routes the in-memory cook through the text path. P1, M1, the file list and J2 change accordingly, and J10 (the
+    number format) was ruled with it, as recommended. J1 ("no Spec Correction") is superseded by this one
+    Correction. ADR-0129 and ADR-0131 carry Accepted Amendments (2026-10-22) and stay `Accepted`.
   - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
     `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
     `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
@@ -301,8 +302,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   minting code, used by the cooker and by `CreateNode`. Proposed: accept; the alternative, requiring every
   `CreateNode` to carry a client-minted GUID, would put minting in every client (the C# SDK included), against
   ADR-0097 D1's one place.
-- **J10 — The corrected serializer's number format** (P1; Spec 0065 Correction 2026-10-22, to be ruled with its
-  docs PR): `std::to_chars(value)` with no format argument — the shortest text that parses back to the same float,
+- **J10 — The corrected serializer's number format** (P1; Spec 0065 Correction 2026-10-22). **Ruled (slmao,
+  2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281)): as proposed** — `std::to_chars` with no format argument, the shortest round-trip
+  text, `-0` kept. The option text follows: `std::to_chars(value)` with no format argument — the shortest text that parses back to the same float,
   fixed or scientific, whichever is shorter (`0`, `1.0472`, `1e-07`) — and `-0` kept as `-0`. Proposed: accept; it
   is the standard's own round-trip guarantee, it needs no precision constant, and the parser already reads every
   such form. The alternative, a fixed `%.9g`, is lossless too but writes `1.04719996` for `1.0472`.

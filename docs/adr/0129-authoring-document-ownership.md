@@ -92,3 +92,26 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   clients could never edit one document.
 - **A separate authoring process now** (Q2 (D-b)): a second endpoint and discovery step for every client, and a
   cross-process reload, for an isolation E3 does not need yet; kept possible by D2.
+
+## Accepted Amendment — 2026-10-22
+
+**Status of this section:** accepted by Human Review on 2026-10-22, together with the Spec 0065 Correction
+(slmao, review of its docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281)). **This section does not itself change this ADR's top-level Status**
+(`Accepted` above is unchanged). The Decision, Context, Consequences and Alternatives Considered above are preserved
+verbatim and are not superseded except where this section says so explicitly.
+
+1. **D4's serializer is lossless.** The `serializeSceneSource()` that D4 names is made lossless by the Spec 0065
+   Correction: it writes every float in its shortest round-trip form (Plan 0065 J10), and writes a camera's fog and
+   bloom groups whenever any of their values is non-zero. Before it, the serializer was lossy (Plan 0049's defect F5).
+2. **D4's byte identity holds from a document's first save on.** "An unchanged document saves byte-identically"
+   applies once this session has saved the document. A hand-authored file's first save may rewrite its number
+   formatting (`0.0` as `0`), never a value.
+3. **Consequences:** the Positive line "Save is byte-stable with the existing serializer" reads "with the corrected
+   serializer".
+
+### Human Review — Amendment Acceptance (2026-10-22)
+
+**Deciders:** slmao — accepted the [Spec 0065](../specs/0065-authoring-data-layer.md) Correction (2026-10-22) and
+ruled [Plan 0065](../plans/0065-authoring-data-layer.md) J10 as recommended (`std::to_chars` with no format argument,
+the shortest round-trip text, `-0` kept), in the review of [PR #281](https://github.com/slmao/Atlantis/pull/281). This amendment records what that
+Correction means for this ADR; no decision above is reopened.

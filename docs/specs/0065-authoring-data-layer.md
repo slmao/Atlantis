@@ -9,8 +9,8 @@
 - **Approval:** slmao, 2026-10-22 — owner rulings Q1–Q8, each as its recommendation (Q1 (c); Q2 D-a; Q3 I-a + V-1; Q4 B-a + L-a; Q5 S-a; Q6 P-a; Q7 T-a; Q8 G-b),
   recorded once in [Plan 0065](../plans/0065-authoring-data-layer.md); review of this Spec's own branch PR,
   [PR #280](https://github.com/slmao/Atlantis/pull/280). The open-question text below keeps the options as the record of what was weighed.
-- **Correction (2026-10-22, post-Approval, found at the start of Plan 0065 M1; pending the owner's review of its own
-  docs PR):** R7's in-memory cook, R8's "identical to a fresh start on the saved document", R9's save and Plan J2's
+- **Correction (2026-10-22, post-Approval, found at the start of Plan 0065 M1; accepted by slmao, 2026-10-22, in the
+  review of its own docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281), with Plan 0065 J10 ruled as recommended):** R7's in-memory cook, R8's "identical to a fresh start on the saved document", R9's save and Plan J2's
   cook dry run all assumed that `serializeSceneSource()` writes the document losslessly. It does not: it prints
   floats with `std::to_string` (six fixed decimals) and drops the fog and bloom values while their group is off —
   Plan 0049's known defect F5, which Spec 0049's Correction (2026-10-05, ruling J3) left to "the next serializer's
@@ -28,7 +28,8 @@
   - "Saving an unchanged document rewrites the same bytes" (R9, ADR-0129 D4) holds from a document's first save on:
     the first save of a hand-authored file may rewrite its number formatting (`0.0` as `0`), never a value.
   - No ADR decision changes: ADR-0131 D2's in-memory cook already runs "every `cookScene()` check", the parse
-    included, and ADR-0100 D6's "source ⇄ semantic is lossless" now also holds at the text layer.
+    included, and ADR-0100 D6's "source ⇄ semantic is lossless" now also holds at the text layer. ADR-0129 and
+    ADR-0131 each record what this Correction means for them in an Accepted Amendment (2026-10-22).
 - **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through
