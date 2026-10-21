@@ -1,17 +1,27 @@
 # Plan: The Authoring Data Layer (E3, no UI)
 
-- **Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`) —
+- **Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Approved`) —
   [ADR-0129](../adr/0129-authoring-document-ownership.md),
   [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md),
-  [ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md) (all `Proposed`).
-  - Drafted together with the Spec at the maintainer's direction (2026-10-22), against the Spec's recommended
-    options Q1 (c), Q2 D-a, Q3 I-a + V-1, Q4 B-a + L-a, Q5 S-a, Q6 P-a, Q7 T-a, Q8 G-b. A different ruling revises this Plan
-    before Joint Review.
+  [ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md) (all `Accepted` 2026-10-22); the Spec is
+  `Approved` 2026-10-22.
+  - Drafted together with the Spec at the maintainer's direction (2026-10-22). The owner ruled Q1 (c), Q2 D-a,
+    Q3 I-a + V-1, Q4 B-a + L-a, Q5 S-a, Q6 P-a, Q7 T-a and Q8 G-b, exactly the options this Plan was drafted against.
   - Keeps ADR-0097, ADR-0100, ADR-0103, ADR-0104, ADR-0112, ADR-0125 and ADR-0004.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Implementation does not start before a human has reviewed this Plan and Spec
-  0065 together and explicitly authorized it, with ADR-0129..0131 `Accepted`.
+- **Joint Human Review:** slmao, 2026-10-22 — reviewed this Plan and
+  [Spec 0065](../specs/0065-authoring-data-layer.md) together in [PR #280](https://github.com/slmao/Atlantis/pull/280).
+  - **Spec:** Q1–Q8 ruled as recommended.
+  - **Plan:** J1–J9 ruled as recommended; no Spec Correction.
+  - **ADRs:** ADR-0129, ADR-0130 and ADR-0131 `Accepted`.
+  - **Authorization:** implementation on `feature/0065-authoring-data-layer` once PR #280 has merged, M1–M7 in this
+    Plan's order.
+  - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
+    `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
+    `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
+    `CMakeLists.txt`) and its verdict is reported as measured; the C# SDK's zero-NuGet check unchanged and passing;
+    J3 (apply) and J9 (validation) reported as measured, not as test verdicts; J7's acceptance run is the owner's.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -54,7 +64,7 @@ Read at `origin/main` `45fce69`.
    are included, so the implementing PR runs the gate; `src/asset_system/**` and the new `src/authoring/**` are not
    listed; `src/connection/**`, `src/remote/**`, `src/cli/**`, `src/csharp/**` and `tests/**` are excluded.
 
-## Plan-stage decisions (proposed; ruled at Joint Review)
+## Plan-stage decisions
 
 - **P1 — In-memory cook and decode** (ADR-0131 D2).
   - `cookScene()` is split: `cookSceneToMemory(const scene::AuthoringScene&, AssetGuid) → Result<CookedScene,
@@ -235,7 +245,7 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 - **The decode boundary's friend declaration** grows by one overload; any other constructor of `ValidatedSceneData`
   stays impossible.
 
-## Joint Review decisions (to be ruled)
+## Joint Review decisions — ruled (slmao, 2026-10-22, PR #280): J1–J9 as proposed
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — Validation through a cook dry run** (P2): each transaction is validated by running P1's in-memory cook on

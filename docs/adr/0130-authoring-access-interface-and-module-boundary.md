@@ -1,10 +1,11 @@
 # ADR 0130: The Authoring Access Interface, Atlantis Authoring, and Their Reach
 
-- **Status:** Proposed
-- **Date:** 2026-10-22
+- **Status:** Accepted
+- **Date:** 2026-10-22 (accepted 2026-10-22)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`; its Q3, Q5,
+- **Acceptance:** slmao, 2026-10-22 (owner rulings on Spec 0065 Q1–Q8, each as recommended, recorded once in
+  [Plan 0065](../plans/0065-authoring-data-layer.md); the ADR text was reviewed in [PR #280](https://github.com/slmao/Atlantis/pull/280))
+- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Approved` 2026-10-22; its Q3, Q5,
   Q7 and Q8)
 - **Related ADR(s):**
   - **Supersedes in part** [ADR-0105](0105-runtime-connection-and-cli-client.md) D1 and D3: Atlantis Connection now

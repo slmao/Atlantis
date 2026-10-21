@@ -1,13 +1,15 @@
 # Spec: The Authoring Data Layer (E3, no UI)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-22
-- **Related Plan(s):** [Plan 0065](../plans/0065-authoring-data-layer.md) (`Draft`). As with Specs 0062–0064, the Plan
-  is drafted together with this Spec at the maintainer's direction (2026-10-22), against this Spec's recommended
-  options. A ruling that differs from a recommendation revises the Plan before Joint Review.
-- **Approval:** pending.
-- **Related ADR(s)** (all `Proposed`, drafted alongside):
+- **Related Plan(s):** [Plan 0065](../plans/0065-authoring-data-layer.md) (`Approved`; Joint Human Review 2026-10-22
+  recorded in its header). As with Specs 0062–0064, the Plan was drafted together with this Spec at the
+  maintainer's direction.
+- **Approval:** slmao, 2026-10-22 — owner rulings Q1–Q8, each as its recommendation (Q1 (c); Q2 D-a; Q3 I-a + V-1; Q4 B-a + L-a; Q5 S-a; Q6 P-a; Q7 T-a; Q8 G-b),
+  recorded once in [Plan 0065](../plans/0065-authoring-data-layer.md); review of this Spec's own branch PR,
+  [PR #280](https://github.com/slmao/Atlantis/pull/280). The open-question text below keeps the options as the record of what was weighed.
+- **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through
     (Q1, Q2, Q6).
@@ -241,7 +243,7 @@ keeps the decision about data.
 
 ## Architectural Impact
 
-Yes — three decisions, each its own ADR (all `Proposed`):
+Yes — three decisions, each its own ADR (all `Accepted` 2026-10-22):
 
 - **ADR-0129 — ownership** (Q1, Q2, Q6): a C++ authoring session is the one owner of the document being edited,
   hosted by the `atlantis_runtime` executable; clients never hold a copy and no second grammar or cooker is
@@ -321,7 +323,8 @@ Risks:
 - **The wire grows by a third interface.** Every SDK and the conformance vectors grow with it (R11); this is the
   cost ADR-0125 D2 accepted.
 
-Open questions — each with options and a recommendation; to be ruled by the owner:
+Open questions — all eight ruled by the owner (slmao, 2026-10-22, review of [PR #280](https://github.com/slmao/Atlantis/pull/280)), each as its
+recommendation; rulings recorded in Plan 0065:
 
 - **Q1 — Where does the authoring document live during editing?** (ADR-0129)
   - **(a) Inside the Runtime: `RuntimeApplication` hosts the document and authoring verbs join the shared surface,

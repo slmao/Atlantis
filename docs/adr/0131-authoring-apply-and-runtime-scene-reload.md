@@ -1,10 +1,11 @@
 # ADR 0131: Apply and Reload — From the Authoring Document to the Runtime World
 
-- **Status:** Proposed
-- **Date:** 2026-10-22
+- **Status:** Accepted
+- **Date:** 2026-10-22 (accepted 2026-10-22)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`; its Q4)
+- **Acceptance:** slmao, 2026-10-22 (owner rulings on Spec 0065 Q1–Q8, each as recommended, recorded once in
+  [Plan 0065](../plans/0065-authoring-data-layer.md); the ADR text was reviewed in [PR #280](https://github.com/slmao/Atlantis/pull/280))
+- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Approved` 2026-10-22; its Q4)
 - **Related ADR(s):**
   - **Supersedes in part** [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md) as it records Spec
     0051's Non-Goal "no re-bake or hot reload": the Runtime may now replace its scene by a new bake. The bake

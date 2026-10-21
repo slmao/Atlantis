@@ -1,10 +1,11 @@
 # ADR 0129: The Authoring Document's Owner — One C++ Authoring Session, Hosted by the Runtime Executable
 
-- **Status:** Proposed
-- **Date:** 2026-10-22
+- **Status:** Accepted
+- **Date:** 2026-10-22 (accepted 2026-10-22)
 - **Deciders:** slmao
-- **Acceptance:** pending
-- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`; its Q1, Q2
+- **Acceptance:** slmao, 2026-10-22 (owner rulings on Spec 0065 Q1–Q8, each as recommended, recorded once in
+  [Plan 0065](../plans/0065-authoring-data-layer.md); the ADR text was reviewed in [PR #280](https://github.com/slmao/Atlantis/pull/280))
+- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Approved` 2026-10-22; its Q1, Q2
   and Q6)
 - **Related ADR(s):**
   - **Extends** [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md): the authoring stage gets a
