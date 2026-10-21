@@ -3,8 +3,8 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-20
-- **Implementation:** merged — M1–M5 in [PR #274](https://github.com/slmao/Atlantis/pull/274). J6, the owner's interaction run, is not
-  recorded.
+- **Implementation:** merged — M1–M5 in [PR #274](https://github.com/slmao/Atlantis/pull/274). J6, the owner's interaction run,
+  passed on 2026-10-22 ([recorded on PR #274](https://github.com/slmao/Atlantis/pull/274#issuecomment-6320983181)).
 - **Related Plan(s):** [Plan 0063](../plans/0063-editor-transaction-undo.md) (`Approved`; Joint Human Review
   2026-10-20 recorded in its header; implemented in PR #274). As with Spec 0062, the Plan was drafted together
   with this Spec at the maintainer's direction.
