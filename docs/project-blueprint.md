@@ -891,6 +891,14 @@ milestone being listed does not authorize starting it — see Section 1.
     geometry picking and mesh bounds are host services over CPU mesh geometry kept only under `--editor`;
     lights and cameras are picked client-side
     ([ADR-0123](adr/0123-editor-viewport-camera-and-picking-host-services.md));
+  - since [Spec 0063](specs/0063-editor-transaction-undo.md) (merged
+    [PR #274](https://github.com/slmao/Atlantis/pull/274)), the editor's second iteration (E2): undo and redo. A whole
+    Gizmo drag or one Inspector edit is one Editor Transaction, addressed by Spec 0049 R7's property
+    address, kept in a client-side, per-session history that undoes and redoes by writing forward as new
+    transactions — refusing a step whose value changed elsewhere, dropping an entry whose entity or
+    component is gone — through an edit-target seam whose one implementation is over
+    `RuntimeConnection`. No World verb is added
+    ([ADR-0124](adr/0124-editor-transaction-and-client-side-undo.md));
   - since [Spec 0064](specs/0064-editor-platform-direction.md) (Phase 1 merged
     [PR #276](https://github.com/slmao/Atlantis/pull/276)), the editor platform direction: the product
     editor is a separate C#/Avalonia process, Atlantis Editor App, one more ordinary client of the
@@ -915,8 +923,9 @@ milestone being listed does not authorize starting it — see Section 1.
   - chunk streaming;
   - prefab and networking;
   - a runtime hierarchy over ECS components (Spec 0051 ruling Q2);
-  - Undo/Redo, nested transactions and transactions spanning frames
-    (named only in Spec 0053);
+  - World-level Undo/Redo, nested transactions and transactions spanning
+    frames (named only in Spec 0053; the editor's undo/redo since Spec 0063
+    is client-side and adds no World verb);
   - a Package Spec (not yet numbered; Spec 0058 pencilled it as 0059, which
     is the profiling foundation) and the rest of Spec 0058's named-only list
     (managed hosting inside the Runtime, the hot-path work — binary protocol
@@ -930,8 +939,11 @@ milestone being listed does not authorize starting it — see Section 1.
   - custom components, a time model or scheduler, Runtime-hosted game
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);
-  - the editor's tree Hierarchy, Custom Inspectors, undo/redo, saving and
-    Android hosting (Spec 0056 Non-Goals / Out of Scope); pixel-exact or
+  - the editor's tree Hierarchy, Custom Inspectors, saving and Android
+    hosting (Spec 0056 Non-Goals / Out of Scope); undo of structural edits,
+    a shared or persisted history, an edit-history panel, grouping across
+    gestures and a conditional write verb for atomic conflict detection
+    (Spec 0063 Non-Goals / Out of Scope); pixel-exact or
     alpha-accurate picking and a rendered selection outline (Spec 0062 Out of
     Scope; remote picking itself landed with Spec 0064); the editor
     application's Phases 2–4 — E3's data layer, the port of E1/E2's models,

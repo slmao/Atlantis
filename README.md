@@ -58,8 +58,9 @@ status of every module.
   with `--listen` is attachable over loopback (`atlantis.remote/1`)
 - A minimal editor (`--editor`: hierarchy, schema-generated inspector,
   viewport with a free editor camera and click picking, transform gizmo with
-  world/local space and snapping) built on Dear ImGui, as an ordinary client
-  — frozen as the in-process debug tool
+  world/local space and snapping, undo/redo of gizmo drags and inspector
+  edits) built on Dear ImGui, as an ordinary client — frozen as the
+  in-process debug tool
 - Gameplay SDKs in C++ and C# (.NET 10, zero NuGet dependencies) with
   typed bindings generated from the schema
 - The first cut of the product editor, Atlantis Editor App: a separate
