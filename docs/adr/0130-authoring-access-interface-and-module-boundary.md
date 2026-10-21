@@ -4,8 +4,8 @@
 - **Date:** 2026-10-22
 - **Deciders:** slmao
 - **Acceptance:** pending
-- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`; its Q3, Q5
-  and Q7)
+- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Draft`; its Q3, Q5,
+  Q7 and Q8)
 - **Related ADR(s):**
   - **Supersedes in part** [ADR-0105](0105-runtime-connection-and-cli-client.md) D1 and D3: Atlantis Connection now
     holds a second client interface, `AuthoringConnection`, beside `RuntimeConnection`. `RuntimeConnection` itself
@@ -34,7 +34,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **Clients already speak one model:** Query / Command / Event / Transaction, with tickets, subscriptions and
   drained failures (ADR-0103–0105). The CLI, both SDKs and E2's edit target are built on it.
 - **The authoring document is not the Runtime World.** Its GUIDs are the same, its state differs (hierarchy,
-  unbaked values, uncommitted edits), and its operations differ (reparenting, node order, the active camera).
+  unbaked values, uncommitted edits), and its operations differ (reparenting, a node's place in the node order
+  at creation, the active camera).
 - **ADR-0125 D2:** every capability on every surface, in the same Spec.
 - **E2's edit target** (ADR-0124 D4) asks for: read an address; submit ordered writes as one transaction with a
   handle; the handle's settlement; invalidations.
@@ -47,7 +48,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      `scene::PropertyAddress`; the active camera; the authoring schema (the descriptors of `assetSystemSchema()`'s
      scene components).
    - **Commands, a closed set:** `SetProperty`, `CreateNode` (EntityGuid given or minted; position in the node
-     order; initial components), `DestroyNode`, `AddComponent`, `RemoveComponent`, `SetParent`, `SetActiveCamera`.
+     order, immutable afterwards; initial components), `DestroyNode`, `AddComponent`, `RemoveComponent`,
+     `SetParent` (the parent only; the node keeps its place in the order), `SetActiveCamera`. Reordering is not a
+     command (Spec 0065 Non-Goals).
      Values are `world::access::PropertyValue`, addressed by `TypeId` / `FieldId` as on the Runtime World; not
      hoisted to a new home by this ADR.
    - **Transactions:** submitted singly or as one transaction, all or nothing, with tickets. **The document is
@@ -55,7 +58,10 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      would break validity is refused whole, with a reason from a closed set (the Spec 0049 constraint names plus
      the addressing errors).
    - **Events, a closed set,** per subscription with filters: `PropertyChanged`, `NodeCreated`, `NodeDestroyed`,
-     `ComponentAdded`, `ComponentRemoved`, `ParentChanged`, `ActiveCameraChanged`, `DocumentReopened`.
+     `ComponentAdded`, `ComponentRemoved`, `ParentChanged`, `ActiveCameraChanged`, `DocumentReopened`, and
+     `Applied{generation}` — emitted when the Runtime has swapped in an applied document, carrying its new
+     `RuntimeStatus.sceneGeneration` (ADR-0131 D5). They are authoring events: the Runtime World's closed event set
+     (ADR-0103) is unchanged.
    - **Session calls:** `open`, `apply` (ADR-0131), `save` (ADR-0129 D4), each with a closed error set.
    - It names no Runtime, ECS or GPU type. Connection's dependency statement (Core, and World's access and schema
      headers) gains one Asset System header, `scene_property_address.h`, which World already depends on.
@@ -73,9 +79,13 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      documented in `remote_protocol.md`; Remote's client half implements `AuthoringConnection` as
      `RemoteAuthoring`, its server half serves the session the host gives it.
    - **CLI:** a `scene` command group in the existing `cli/1` envelope (open, nodes, get, set, create, destroy,
-     add, remove, parent, camera, apply, save, tx).
-   - **C# SDK:** an `AuthoringSession` on `RemoteSession`, with typed values from the generated bindings of the
-     authoring components; a wire client only.
+     add, remove, parent, camera, apply, save, tx); its event output includes `Applied`.
+   - **C# SDK:** a reflective `AuthoringSession` on `RemoteSession` (Spec 0065 Q8, G-b) — types and fields by
+     name or id from `authoring.schema`, values as `PropertyValue`, records for every command and event (`Applied`
+     included), the pattern of the Gameplay SDK's reflective layer
+     ([ADR-0110](0110-gameplay-sdk-client-library-and-execution-model.md) D2); a wire client only. Typed bindings
+     of the authoring components are deferred to Phase 2: `atlantis_sdk_codegen` keeps reading `worldSchema()` only
+     and [ADR-0111](0111-schema-generated-typed-bindings.md) is unchanged.
    - **Conformance vectors** for every new value and the C# codec held to them.
 4. **The second edit target is proven, not shipped** (Q7, T-a): a test-only edit target over `AuthoringConnection`
    runs E2's `EditHistory` unchanged. The production target belongs to the C# port of E2's models (Spec 0064 Phase
@@ -96,7 +106,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   accepted.
 - **Two interfaces with the same GUIDs:** a client must know which one it addresses; the CLI keeps them in
   separate command groups.
-- **Validation per transaction** costs time proportional to the document (measured by Plan 0065).
+- **Validation per transaction** costs time proportional to the document, paid on the frame thread by every
+  single-property edit (measured against Plan 0065 J9; incremental validation is the follow-up).
+- **Reflective-only C# access** in E3: no compile-time field names for the authoring components until Phase 2.
 
 ## Alternatives Considered
 
@@ -107,3 +119,6 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   already allow multi-step edits.
 - **The C# SDK later** (Q5 (S-b)): against ADR-0125 D2.
 - **A production edit target in the ImGui editor** (Q7 (T-b)): against its freeze.
+- **Typed C# bindings now** (Q8 (G-a)): a second generator input, a second generated file and ADR-0111 extended,
+  for a data layer that needs none of them.
+- **A node move command:** not needed by the data layer; reordering is future work.

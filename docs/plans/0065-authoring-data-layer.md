@@ -5,7 +5,7 @@
   [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md),
   [ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md) (all `Proposed`).
   - Drafted together with the Spec at the maintainer's direction (2026-10-22), against the Spec's recommended
-    options Q1 (c), Q2 D-a, Q3 I-a + V-1, Q4 B-a + L-a, Q5 S-a, Q6 P-a, Q7 T-a. A different ruling revises this Plan
+    options Q1 (c), Q2 D-a, Q3 I-a + V-1, Q4 B-a + L-a, Q5 S-a, Q6 P-a, Q7 T-a, Q8 G-b. A different ruling revises this Plan
     before Joint Review.
   - Keeps ADR-0097, ADR-0100, ADR-0103, ADR-0104, ADR-0112, ADR-0125 and ADR-0004.
 - **Status:** Draft
@@ -68,14 +68,15 @@ Read at `origin/main` `45fce69`.
     `Imported{generatedSourcePath}`), the scene AssetGuid; `open()` from the catalog entry of the Runtime's scene.
   - Commands apply to a copy of the document; the copy is validated (the mapping's reference checks, every
     `sceneSchema()` constraint, the cooker's checks via P1's `cookSceneToMemory()` dry run) and swapped in only if
-    valid; events are queued per subscription in application order.
+    valid; events are queued per subscription in application order. The dry run's cost is measured on Bistro
+    against J9.
   - Minting a node's EntityGuid when the client gives none uses the asset cooker's mint (`guid_mint`, today in
     `src/tools/asset_cooker/`, ADR-0097 D1's only minting code), moved into Asset System so both share it (J8).
   - `save()`: hand-authored only; `toParsedSceneSource()` → `serializeSceneSource()` → temporary file → rename.
 - **P3 — `AuthoringConnection`** (ADR-0130 D1).
-  - `atlantis/connection/authoring_connection.h`: the interface, its value types (commands, events, refusals, node
-    summaries), tickets and subscription ids mirroring `RuntimeConnection`'s; the InProcess endpoint in
-    `src/authoring/`.
+  - `atlantis/connection/authoring_connection.h`: the interface, its value types (commands, events — `Applied`
+    included — refusals, node summaries), tickets and subscription ids mirroring `RuntimeConnection`'s; the
+    InProcess endpoint in `src/authoring/`.
   - Connection's dependency statement gains one Asset System header, `atlantis/asset_system/scene_property_address.h`
     (AGENTS.md, M7).
   - `PropertyValue` stays `world::access::PropertyValue`.
@@ -85,8 +86,10 @@ Read at `origin/main` `45fce69`.
   - At the start of `runFrame()`, after `applyPending()`, a named place performs it: dependency resolution reusing
     the loaded maps (`loadAndBakeScene()`'s steps factored so the resolution and upload take existing maps),
     `bakeScene()`, new `RuntimeWorldAccess`, swap of `scene_` / `worldAccess_` and the resource maps, re-binding of
-    the InProcess endpoint, pick geometry rebuilt when retained; on failure nothing swaps and a diagnostic is
-    recorded.
+    the InProcess endpoint, pick geometry rebuilt when retained, then a `waitIdle()` and the release of every mesh,
+    material and texture the new scene does not reference (ADR-0131 D4); on failure nothing swaps and a diagnostic
+    is recorded.
+  - The sink reports a successful swap back to the host, which tells the session to emit `Applied{generation}`.
   - `RuntimeStatus` gains `sceneGeneration` (`std::uint64_t`); `RuntimeControlHost` reports it.
   - E2: `editor.cpp`'s scene-change clear also compares the generation (one line; a change forced by a
     shared-surface Spec, allowed by ADR-0125 D4).
@@ -99,10 +102,12 @@ Read at `origin/main` `45fce69`.
   - Remote: `authoring.open`, `authoring.document`, `authoring.listNodes`, `authoring.listComponents`,
     `authoring.getProperty`, `authoring.schema`, `authoring.submit`, `authoring.submitTransaction`,
     `authoring.subscribe`, `authoring.unsubscribe`, `authoring.drainEvents`, `authoring.drainFailures`,
-    `authoring.apply`, `authoring.save`; codec values; `remote_protocol.md` §5/§6.
+    `authoring.apply`, `authoring.save`; codec values, the `Applied` event included; `remote_protocol.md` §5/§6.
   - CLI: the `scene` group (Spec 0065 Q5) with `cli/1` envelopes and `--json`.
-  - C# SDK: `AuthoringSession` on `RemoteSession`, records for every value, typed accessors from the generated
-    bindings of the scene components; conformance vectors extended.
+  - C# SDK: a reflective `AuthoringSession` on `RemoteSession` (Spec 0065 Q8, G-b): types and fields by name or
+    id from `authoring.schema`, values as `PropertyValue`, records for every command and event (`Applied`
+    included); conformance vectors extended. No generated bindings of the scene components: `atlantis_sdk_codegen`
+    is not changed.
 - **P7 — The second edit target** (ADR-0130 D4; Spec R12): `tests/authoring/authoring_edit_target_tests.cpp`
   implements `EditTarget` over `AuthoringConnection` and runs E2's `EditHistory` unchanged.
 
@@ -124,6 +129,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   constraint (the Spec 0049 conformance cases reused); a document after any sequence equals re-parsing its saved
   text; save byte-identical for an unchanged document; imported save refused; the boundary scan (no Runtime, ECS,
   Platform, RHI, Renderer or OS include).
+- Measurement (reported, not a verdict): one single-property transaction on Bistro's generated document, Release,
+  median and maximum over 100 transactions, against J9.
 
 ### M3 — The second edit target (P7; R12)
 
@@ -138,8 +145,13 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   (one line).
 - Tests (GPU, fatal VVL): after a reload of an edited document, frame data and a capture equal a fresh Runtime on
   the saved document; a failing reload leaves the old World and its frame data; connections survive, a
-  subscription keeps its filter, `sceneGeneration` increments; a CLI `property set` lasts until the next reload;
-  E2's history clears on the generation change; Bistro's apply time measured (J3).
+  subscription keeps its filter, `sceneGeneration` increments and an authoring subscriber receives
+  `Applied{generation}` with the same value; a CLI `property set` lasts until the next reload; E2's history clears
+  on the generation change; Bistro's apply time measured (J3).
+- Scene-sized state: an edited default scene that adds materials, textures and point lights beyond the original's
+  (within the scene limits) reloads to frame data and a capture equal to a fresh start on that document —
+  descriptor pool capacity (Spec 0021), the light clustering and shadows exercised on the reload path; applying back
+  to the original leaves the mesh, material and texture maps equal to a fresh start's (release, ADR-0131 D4).
 
 ### M5 — Host, wire and CLI (P5, P6; R11)
 
@@ -149,9 +161,10 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 ### M6 — The C# SDK (P6; R11)
 
-- `src/csharp/Atlantis.Gameplay/` (`AuthoringSession`, values, codec), the fixture server, the C# suites.
-- Tests: the new vectors decoded and re-encoded byte for byte; the session against the fixture server. Zero NuGet
-  unchanged.
+- `src/csharp/Atlantis.Gameplay/` (the reflective `AuthoringSession`, values, codec), the fixture server, the C#
+  suites.
+- Tests: the new vectors (the `Applied` event included) decoded and re-encoded byte for byte; the session against
+  the fixture server, by type and field name. Zero NuGet unchanged.
 
 ### M7 — Normative docs and acceptance
 
@@ -186,8 +199,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 - **Docs:** `docs/architecture/remote_protocol.md` (M5); AGENTS.md, `docs/architecture/module_boundaries.md` (M7);
   registry, README, blueprint and status lines after merge (J6).
 - **Not touched:** `src/world/` (`bakeScene()` unchanged), the scene source grammar and artifact format, the
-  catalog format, Renderer, RenderGraph, RHI, Vulkan Backend, shaders, `src/editor_app/`, goldens,
-  `tests/performance/baselines/`, `gate_policy.json`.
+  catalog format, Renderer, RenderGraph, RHI, Vulkan Backend, shaders, `src/editor_app/`, `src/tools/sdk_codegen/`
+  and the committed generated bindings (Spec 0065 Q8, G-b), goldens, `tests/performance/baselines/`,
+  `gate_policy.json`.
 
 ## Sequencing & Dependencies
 
@@ -199,10 +213,12 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 - [ ] Unit / headless: in-memory cook = file cook (every scene, Bistro); the session's commands, events,
   transactions and refusals; save byte identity and the imported refusal; the second edit target over E2's
-  history; codec round trips and vectors; CLI envelopes; the C# session; boundary scans.
+  history; codec round trips and vectors; CLI envelopes; the reflective C# session; boundary scans; the validation
+  cost on Bistro (J9).
 - [ ] GPU (fatal VVL): reload = fresh start (frame data, capture); failed reload keeps the old World; connections
-  and subscriptions across a reload; `sceneGeneration`; runtime-side edits gone after a reload; E2's history cleared;
-  Bistro's apply time.
+  and subscriptions across a reload; `sceneGeneration` and `Applied{generation}`; scene-sized state (more materials,
+  textures and lights) on the reload path; unreferenced resources released; runtime-side edits gone after a reload;
+  E2's history cleared; Bistro's apply time.
 - [ ] Image regression: all goldens byte-identical.
 - [ ] Vulkan Validation Layers clean.
 - [ ] Other: Debug + Release full suites; `assembleDebug`; the C# SDK's zero-NuGet check unchanged; the
@@ -214,7 +230,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   and specifying live projection (Spec 0065 Q4 (B-c)) next.
 - **Re-binding connections** touches the Remote server's per-client connections and every subscription; M4's tests
   cover open connections from both the InProcess endpoint and Remote.
-- **Validation per transaction on large documents:** measured in M2 on Bistro's generated source.
+- **Validation per transaction on large documents:** measured in M2 on Bistro's generated source against J9;
+  above it, incremental validation is specified next (Spec 0065 Out of Scope).
 - **The decode boundary's friend declaration** grows by one overload; any other constructor of `ValidatedSceneData`
   stays impossible.
 
@@ -226,6 +243,11 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   separate validator would be a second statement of the same constraints.
 - **J3 — Apply's budget on Bistro** (P4): reported as measured; proposed target under 1 s for cook, decode, bake and
   swap with no new GPU uploads, on the reference machine. Proposed: accept as a reported target, not a test verdict.
+- **J9 — Validation's budget on Bistro** (P2, J2): one single-property transaction on Bistro's generated document
+  (about 6,000 nodes), validated by the in-memory cook dry run on the frame thread; proposed target under 10 ms
+  median in Release on the reference machine (a sixth of Bistro's frame of about 60 ms), reported as measured like
+  J3, not a test verdict. Proposed: accept; if it is missed, incremental validation — checking only what the
+  transaction's commands can affect, plus the document-wide limits — is the follow-up.
 - **J4 — Session creation** (P5): lazily on the first `authoring.open` under `--listen`, no new command-line option.
   Proposed: accept; a Runtime that is never edited pays nothing.
 - **J5 — One pending reload** (P4): a newer apply replaces a pending one in the same frame. Proposed: accept; only

@@ -48,8 +48,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    byte.
 3. **The scene sink.** Apply hands the decoded scene to a sink the host provides; in `atlantis_runtime` it is
    `RuntimeApplication::requestSceneReload(ValidatedSceneData)`. Apply's result says whether the request was
-   accepted; the reload's own outcome is visible through `RuntimeStatus` (D5) and, on failure, as a Runtime
-   diagnostic.
+   accepted. The sink reports back when the reload has swapped, and the session then emits `Applied{generation}`
+   to its subscribers (ADR-0130 D1); a failed reload emits nothing and is a Runtime diagnostic.
 4. **Reload is all or nothing, at a frame boundary** (L-a). At the start of the next frame, after pending World
    commands are applied to the old World:
    - the Runtime resolves the new scene's mesh and material references through the catalog, reusing every resource
@@ -60,10 +60,16 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      World. Subscriptions keep their filters; queued Runtime World events of the old World are dropped; no event
      is emitted for the reload;
    - pick geometry, if retained, is rebuilt;
+   - **what the new scene no longer references is released at the swap:** meshes, materials, textures and their GPU
+     objects, and their pick geometry, once the GPU has finished the last frame that used them (a `waitIdle()` at
+     the swap, the pattern of the existing `SurfaceDestroyed` teardown). The resource maps then hold exactly what a
+     fresh start on the new document would load, so repeated applies do not accumulate resources;
    - on any failure (an unresolvable asset, an upload failure) nothing is swapped and the old World continues.
    The swap point is a named place in `runFrame()`, enumerated in the implementing PR.
-5. **`RuntimeStatus.sceneGeneration`,** incremented by every successful reload, is how clients learn the World was
-   replaced. E2's history clears on a change of it, as on a change of scene GUID.
+5. **`RuntimeStatus.sceneGeneration`,** incremented by every successful reload, names the World's generation.
+   Authoring subscribers are told by the event `Applied{generation}` (D3); a client with no authoring subscription
+   (E2's editor, a Gameplay SDK client) compares generations. E2's history clears on a change of it, as on a change
+   of scene GUID.
 6. **The result equals a fresh start.** After a reload, the frame's data and a capture equal those of a Runtime
    started on the same document saved and cooked by the build.
 7. **Runtime-side edits are not written back.** They last until the next reload, which replaces them with the
@@ -80,8 +86,12 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 ### Negative / Trade-offs
 
 - **Every apply is a full re-bake;** on Bistro its cost is measured and may call for incremental projection later.
-- **Runtime-side tweaks are lost at apply,** by rule; the editor's UI must make that visible.
-- **A client can miss a reload** between two status reads unless it compares generations.
+- **Runtime-side tweaks are lost at apply,** by rule, silently as far as the Runtime World's clients are
+  concerned. The frozen ImGui editor will not show it (it only clears its history, ADR-0125 D4); Atlantis Editor
+  App's UI must.
+- **A client with no authoring subscription** learns of a reload only by comparing generations; authoring
+  subscribers get `Applied{generation}`.
+- **A `waitIdle()` at the swap** costs one GPU drain per apply, on a path that already re-bakes.
 - **`runFrame()` gains a swap point,** so the performance gate applies to the implementing PR.
 
 ## Alternatives Considered
@@ -91,5 +101,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   re-baked — a second mapping beside the bake. Named as a follow-up.
 - **Connections closed at reload** (L-b): every client, the editor's included, would treat a reload as a
   disconnect.
-- **A reload event on `RuntimeConnection`** (L-c): a sixth event on the closed surface.
+- **A reload event on `RuntimeConnection`** (L-c): a sixth event on the closed surface. The `Applied{generation}`
+  event chosen instead is an *authoring* event (ADR-0130 D1), on the authoring interface's own closed set; ADR-0103's
+  closed World surface is untouched and the rejection of L-c stands.
+- **Keeping unreferenced resources until exit:** simpler, but repeated applies would grow GPU memory without bound
+  and the resource maps would no longer equal a fresh start's.
 - **Reloading from a source path in the Runtime:** the Runtime's load path would parse text, against ADR-0102 D2.

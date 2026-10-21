@@ -13,7 +13,7 @@
     (Q1, Q2, Q6).
   - [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md): the authoring access interface — a
     sibling of `RuntimeConnection` with the same four concepts over the document — its module boundary, and its
-    reach over the wire, the CLI and the C# SDK (Q3, Q5, Q7).
+    reach over the wire, the CLI and the C# SDK (Q3, Q5, Q7, Q8).
   - [ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md): how a document change reaches the Runtime
     World — an explicit apply, an in-memory cook byte-identical with the build's, and an all-or-nothing scene
     reload at a frame boundary (Q4).
@@ -131,6 +131,9 @@ keeps the decision about data.
   Scope; Q4 records why).
 - **Saving imported scenes,** "save as" to a new catalog entry, multi-document sessions, and editing without a
   running Runtime.
+- **Reordering nodes after creation.** A node's position in the node order is chosen when it is created and is
+  immutable afterwards; `SetParent` changes the parent only. A move command is future work.
+- **Typed C# bindings of the authoring components** (Q8): E3's C# session is reflective only.
 
 ## Requirements
 
@@ -146,15 +149,17 @@ keeps the decision about data.
   `scene::PropertyAddress`, read the document's active camera, and read the schema of the authoring components
   (`assetSystemSchema()`'s descriptors, as `connection.schema` serves the World's).
 - **R4 — Commands.** A closed set over the document: set a property; create a node (with a client-chosen or minted
-  EntityGuid, at a position in the node order); destroy a node; add and remove a component; set a node's parent;
-  set the active camera. Values are schema-primitive `PropertyValue`s addressed by `TypeId` / `FieldId`, as on the
+  EntityGuid, at a position in the node order, immutable afterwards); destroy a node; add and remove a component;
+  set a node's parent (the node keeps its position in the order); set the active camera. Values are schema-primitive `PropertyValue`s addressed by `TypeId` / `FieldId`, as on the
   Runtime World.
 - **R5 — Transactions and validity.** Commands are submitted singly or as one transaction, all or nothing. The
   document is valid — by `sceneSchema()` and the cooker's own checks — after every applied transaction; a
   transaction that would leave it invalid is refused whole, with a reason, and nothing changes.
 - **R6 — Events.** Applied changes are reported as events (property changed, node created, node destroyed,
-  component added, component removed, parent changed, active camera changed, document reloaded from disk),
-  delivered per subscription with filters, as on the Runtime World. Every client sees every client's changes.
+  component added, component removed, parent changed, active camera changed, document reloaded from disk), and a
+  successful reload of an applied document as `Applied{generation}` carrying the Runtime's new scene generation
+  (R8). They are delivered per subscription with filters, as on the Runtime World. Every client sees every client's
+  changes and every apply. These are authoring events; the Runtime World's closed event set is unchanged.
 - **R7 — Apply.** An explicit apply cooks the current document in memory with the build's cook path, decodes it to
   `ValidatedSceneData`, and hands it to the Runtime for reload (R8). Apply reports success or the reason it failed;
   the document is unchanged either way.
@@ -166,7 +171,11 @@ keeps the decision about data.
   - Open `RuntimeConnection`s stay open and are re-bound to the new World; their subscriptions keep their filters;
     no Runtime World event is emitted for the reload itself; commands applied before the boundary are applied to
     the old World and are not carried over.
-  - `RuntimeStatus` gains a scene generation, incremented by every reload, so clients can tell (ADR-0131).
+  - `RuntimeStatus` gains a scene generation, incremented by every reload; authoring subscribers also receive
+    `Applied{generation}` (R6), so no client has to poll for a reload (ADR-0131).
+  - **Resources the new scene no longer references** (meshes, materials, textures, their GPU objects and their
+    pick geometry) are released at the swap, once the GPU has finished the last frame that used them; the
+    Runtime's resource maps then hold exactly what a fresh start on the new document would load.
 - **R9 — Save.** Save writes the document to its source path atomically, through `toParsedSceneSource()` and
   `serializeSceneSource()`. Saving a document that has not changed rewrites the same bytes. An imported scene's
   save is refused.
@@ -184,8 +193,13 @@ keeps the decision about data.
 
 - **Latency:** authoring calls are answered between frames like every wire call (ADR-0106 D1). Apply's reload
   happens at the next frame boundary.
-- **Cost:** a transaction's validation is bounded by the document's size; apply on Bistro (cook, decode, bake,
-  swap, no new GPU uploads) is measured and reported. The Plan proposes a budget (Plan J3).
+- **Cost:**
+  - **Validation:** every transaction is validated by an in-memory cook of the whole candidate document, on the
+    frame thread (Plan J2), so its cost grows with the document, not with the edit: on Bistro (about 6,000 nodes)
+    it is paid by every single `SetProperty`. Measured and reported against a proposed budget (Plan J9);
+    incremental validation is the follow-up if the budget is missed.
+  - **Apply:** apply on Bistro (cook, decode, bake, swap, no new GPU uploads) is measured and reported against a
+    proposed budget (Plan J3).
 - **Threading:** frame thread only (ADR-0004). No thread is added.
 - **Dependencies:** none new.
 - **Determinism:** the in-memory cook is byte-identical to `cookScene()`'s artifact for the same document; save
@@ -235,7 +249,7 @@ Yes — three decisions, each its own ADR (all `Proposed`):
   (parsing source) beside the Runtime, while `RuntimeApplication`'s load path and the bake still consume cooked,
   decoded data only — Spec 0051's B1 holds for the Runtime, not for the executable's other hosted modules. Keeps
   ADR-0100 and ADR-0125.
-- **ADR-0130 — the access interface and module boundary** (Q3, Q5, Q7): `AuthoringConnection` with the four
+- **ADR-0130 — the access interface and module boundary** (Q3, Q5, Q7, Q8): `AuthoringConnection` with the four
   concepts over the document; the new module Atlantis Authoring; `authoring.*` on the wire, a CLI command group,
   a C# SDK session. **Supersedes in part** ADR-0106 D2 (the wire's payload gains the authoring interface) and
   ADR-0105 D1's "exactly the four concepts over the Runtime World" (by adding a sibling interface — the Runtime
@@ -276,11 +290,17 @@ The alternatives are recorded with each open question below; the principal ones:
 - **Reload (GPU, fatal VVL):** after an apply of an edited document, frame data and a capture equal those of a
   fresh Runtime started on the saved document (R8); a failing reload (an unresolvable asset) leaves the old World,
   frame data unchanged; connections survive a reload, a subscription keeps its filter, `sceneGeneration`
-  increments; Bistro's apply time measured.
+  increments and authoring subscribers receive `Applied{generation}`; Bistro's apply time measured.
+  - **Scene-sized state on the reload path:** an edited document that adds materials, textures and more lights
+    than the original (within the scene limits) reloads to frame data and a capture equal to a fresh start, so the
+    Renderer state sized by the scene — descriptor pool capacity (Spec 0021), the light clustering, shadows — is
+    exercised by a reload, not only by a start.
+  - **Release:** applying back to the original document leaves the resource maps equal to a fresh start's.
+- **Validation cost:** one single-property transaction on Bistro's generated document, measured (Plan J9).
 - **Runtime-side edits:** a CLI `property set` survives until the next apply and is gone after it; E2's history
   clears on the generation change (R10).
 - **Wire, CLI, C# SDK:** codec round trips and conformance vectors for every new value; the CLI's `scene` commands'
-  `cli/1` envelopes; the C# SDK against the fixture server (R11).
+  `cli/1` envelopes; the reflective C# session against the fixture server (R11, Q8).
 - **The second target:** E2's `EditHistory`, unchanged, over a test-only target on `AuthoringConnection`: a
   recorded edit undoes and redoes; a concurrent client's change refuses an undo ("changed elsewhere") (R12).
 - **North star:** on the default scene and Bistro, through `atlantis.remote/1` only (the CLI): open, set a light's
@@ -362,7 +382,7 @@ Open questions — each with options and a recommendation; to be ruled by the ow
   - **(I-c) Whole-document get / put** (snapshot in, snapshot out): simple, but no fine-grained events, no
     concurrent editing, no undo target, and every edit by an agent sends the whole document.
   - **Validity, (V-1) after every transaction** — **recommended** — or (V-2) only at apply: V-1 lets every reader
-    rely on a valid document, at the cost of a validation per transaction (Plan J3 measures it); V-2 lets a
+    rely on a valid document, at the cost of a validation per transaction (Plan J9 measures it); V-2 lets a
     multi-step edit pass through invalid states, which a transaction already allows without it.
   - **PropertyValue's home:** reused from World access as is; ADR-0124's hoisting is not needed by this Spec.
   - **Why I-a + V-1:** it is the Runtime World's model, which every client and the E2 seam already speak.
@@ -378,10 +398,11 @@ Open questions — each with options and a recommendation; to be ruled by the ow
     runtime mapping beside the bake, which Spec 0051 made the only one. Named as the follow-up if apply's
     measured cost demands it.
   - **Reload, (L-a) an all-or-nothing replace at a frame boundary, connections re-bound** — **recommended**. The
-    Runtime resolves and uploads the new scene's assets (reusing those already loaded), bakes, and swaps the World
-    and its access between frames; on failure nothing changes. Open connections stay and are re-bound;
-    subscriptions keep filters; no World event is emitted for the reload; `RuntimeStatus.sceneGeneration` tells
-    clients. Needs `runFrame()`'s swap point (enumerated in the PR).
+    Runtime resolves and uploads the new scene's assets (reusing those already loaded), bakes, swaps the World and
+    its access between frames, and releases what the new scene no longer references; on failure nothing changes.
+    Open connections stay and are re-bound; subscriptions keep filters; no Runtime World event is emitted for the
+    reload. Clients learn of it from the authoring event `Applied{generation}` and from
+    `RuntimeStatus.sceneGeneration`. Needs `runFrame()`'s swap point (enumerated in the PR).
   - **Reload, (L-b) connections closed at reload:** clients reconnect; simpler in the Runtime, but every client,
     the editor's embedded Viewport session included, must handle a disconnect as a normal event.
   - **Reload, (L-c) a reload event on `RuntimeConnection`:** a sixth event on the closed surface. Rejected.
@@ -391,8 +412,8 @@ Open questions — each with options and a recommendation; to be ruled by the ow
   - **(S-a) Everything in R3–R9 on all three** — **recommended**: `authoring.*` methods on `atlantis.remote/1`
     (open, the queries, submit, submitTransaction, subscribe, drainEvents, drainFailures, apply, save), a CLI
     `scene` group (`scene open | nodes | get | set | create | destroy | add | remove | parent | camera | apply |
-    save | tx`) in the existing `cli/1` envelope, and a C# `AuthoringSession` with typed values from the generated
-    bindings of the authoring components. Conformance vectors for every new value.
+    save | tx`, with `Applied` among the events `scene` subscriptions print) in the existing `cli/1` envelope, and
+    a C# `AuthoringSession` whose shape Q8 decides. Conformance vectors for every new value.
   - **(S-b) The wire and the CLI now, the C# SDK with E3's UI Spec:** less now, but ADR-0125 D2 asks for every
     surface in the same Spec.
   - **Why S-a:** ADR-0125 D2.
@@ -415,11 +436,26 @@ Open questions — each with options and a recommendation; to be ruled by the ow
   - **(T-c) No target until Phase 2:** leaves R12 unverified.
   - **Why T-a:** R12 is verified now, and no frozen code grows.
 
+- **Q8 — Typed or reflective C# access to the document.** (ADR-0130) `atlantis_sdk_codegen` generates bindings
+  from `world::worldSchema()` only (`src/tools/sdk_codegen/main.cpp`); the authoring components are described in
+  `assetSystemSchema()` and constrained by `sceneSchema()`, neither of which it reads.
+  - **(G-a) Extend the generator to a second schema:** typed C# (and C++) bindings of the scene components, a new
+    milestone, `src/tools/sdk_codegen/` on the file list, a second committed generated file with its staleness
+    test, and ADR-0111 extended to more than one source table.
+  - **(G-b) A reflective-only `AuthoringSession` in E3** — **recommended**: types and fields by name or id from
+    `authoring.schema`, values as `PropertyValue`, exactly the Gameplay SDK's reflective layer (ADR-0110 D2) over
+    the authoring interface. Typed bindings of the authoring components are deferred to Phase 2, when E3's UI
+    shows what it needs typed.
+  - **Why G-b:** the data layer needs no typed access to be complete, the reflective pattern already exists in both
+    SDKs, and the generator and ADR-0111 stay untouched until a consumer asks for more.
+
 ## Out of Scope / Future Work
 
 - E3's editor UI in Atlantis Editor App: a scene Hierarchy, an authoring Inspector, saving and apply in the UI,
   structural-edit undo — the next Spec, built on this one and on the C# port of E1/E2's models.
 - Live projection of edits into the Runtime World (Q4 (B-c)), if apply's measured cost needs it.
+- Incremental validation (checking only what a transaction's commands can affect), if Plan J9's budget is missed.
+- Typed C# (and C++) bindings of the authoring components (Q8 (G-a)); a node move / reorder command.
 - Saving imported scenes through an overlay model; "save as"; multi-document sessions; a separate authoring
   process (Q2 (D-b)); editing with no running Runtime.
 - Prefab, C# components, plugins, MCP (named only).

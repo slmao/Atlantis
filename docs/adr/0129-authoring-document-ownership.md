@@ -79,6 +79,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **Unsaved edits die with the process.**
 - **No editing without a running Runtime** in this decision's deployment.
 - **Imported scenes cannot be saved** until an overlay model exists.
+- **`open` works in a development tree only.** The host finds a scene's source through paths the build compiles
+  in, as it does for the shader directories (Plan 0065 P5); an installed build, without the source tree, cannot
+  open a document.
 
 ## Alternatives Considered
 
