@@ -1,0 +1,110 @@
+# ADR 0131: Apply and Reload — From the Authoring Document to the Runtime World
+
+- **Status:** Accepted
+- **Date:** 2026-10-22 (accepted 2026-10-22)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-10-22 (owner rulings on Spec 0065 Q1–Q8, each as recommended, recorded once in
+  [Plan 0065](../plans/0065-authoring-data-layer.md); the ADR text was reviewed in [PR #280](https://github.com/slmao/Atlantis/pull/280))
+- **Related Spec:** [Spec 0065: The Authoring Data Layer](../specs/0065-authoring-data-layer.md) (`Approved` 2026-10-22; its Q4)
+- **Related ADR(s):**
+  - **Supersedes in part** [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md) as it records Spec
+    0051's Non-Goal "no re-bake or hot reload": the Runtime may now replace its scene by a new bake. The bake
+    itself (D2–D5), its input and its order guarantee are unchanged, and the bake stays the only authoring →
+    runtime mapping.
+  - **Supersedes in part** [ADR-0105](0105-runtime-connection-and-cli-client.md) D2: the InProcess endpoint is no
+    longer bound to one World for the process's life; it is re-bound at a reload.
+  - **Supersedes in part** [ADR-0106](0106-attachable-runtime-transport-and-control.md) D3: `RuntimeStatus` gains
+    `sceneGeneration`. The wire stays `atlantis.remote/1` (an additive field).
+  - **Supersedes in part** [ADR-0124](0124-editor-transaction-and-client-side-undo.md) D2: E2's history is cleared
+    when the scene generation changes, not only when the scene GUID does.
+  - Keeps [ADR-0103](0103-runtime-world-operation-boundary.md) / [ADR-0104](0104-runtime-world-transaction-atomicity.md):
+    no Runtime World event or error is added for a reload.
+  - Ownership is [ADR-0129](0129-authoring-document-ownership.md); the interface is
+    [ADR-0130](0130-authoring-access-interface-and-module-boundary.md).
+
+Record one decision and its rationale. Follow the
+[ADR lifecycle](README.md); keep approval discussion and execution evidence in
+PRs. After acceptance, a changed decision requires a new superseding ADR.
+
+## Context
+
+- **The Runtime loads one scene, once** (ADR-0102; Spec 0065 fact 3): `loadAndBakeScene()` in
+  `initializeSteps()`, then `scene_` and `worldAccess_` for the process's life, with every connection built over
+  them.
+- **Cook and decode are file-based,** and `decodeScene()` is the only constructor of `ValidatedSceneData`
+  (Plan 0015 D2). The byte-level encoder and decoder already exist.
+- **The Runtime World's surface is closed** (ADR-0103): no event can announce a reload.
+- **Runtime-side edits exist** (E2's editor, the CLI, the Gameplay SDKs) and are not authoring edits.
+- **Bistro is large** (about 6,000 nodes); a full re-bake is the cost of every apply.
+
+## Decision
+
+1. **Apply is explicit** (Spec 0065 Q4, B-a): `AuthoringConnection::apply()` (ADR-0130 D1) is the one way a
+   document change reaches the Runtime World. Edits accumulate in the document until then; a client wanting
+   immediate effect applies after each transaction.
+2. **Apply cooks in memory, exactly as the build does.** Asset System's scene cook is split into an in-memory
+   encode (every `cookScene()` check, then `encodeSceneArtifact()`) and the existing atomic file write, which
+   writes those bytes. Decode gains an entry reading bytes and the sidecar's fields, and remains the only
+   constructor of `ValidatedSceneData`. For any document, the in-memory artifact equals the build's file byte for
+   byte.
+3. **The scene sink.** Apply hands the decoded scene to a sink the host provides; in `atlantis_runtime` it is
+   `RuntimeApplication::requestSceneReload(ValidatedSceneData)`. Apply's result says whether the request was
+   accepted. The sink reports back when the reload has swapped, and the session then emits `Applied{generation}`
+   to its subscribers (ADR-0130 D1); a failed reload emits nothing and is a Runtime diagnostic.
+4. **Reload is all or nothing, at a frame boundary** (L-a). At the start of the next frame, after pending World
+   commands are applied to the old World:
+   - the Runtime resolves the new scene's mesh and material references through the catalog, reusing every resource
+     already loaded and uploading the rest;
+   - it bakes (`bakeScene()`, unchanged) and builds the new World access;
+   - it swaps `scene_` and `worldAccess_` together and re-binds the InProcess endpoint, so every open
+     `RuntimeConnection` — the Remote server's per-client connections included — now reads and writes the new
+     World. Subscriptions keep their filters; queued Runtime World events of the old World are dropped; no event
+     is emitted for the reload;
+   - pick geometry, if retained, is rebuilt;
+   - **what the new scene no longer references is released at the swap:** meshes, materials, textures and their GPU
+     objects, and their pick geometry, once the GPU has finished the last frame that used them (a `waitIdle()` at
+     the swap, the pattern of the existing `SurfaceDestroyed` teardown). The resource maps then hold exactly what a
+     fresh start on the new document would load, so repeated applies do not accumulate resources;
+   - on any failure (an unresolvable asset, an upload failure) nothing is swapped and the old World continues.
+   The swap point is a named place in `runFrame()`, enumerated in the implementing PR.
+5. **`RuntimeStatus.sceneGeneration`,** incremented by every successful reload, names the World's generation.
+   Authoring subscribers are told by the event `Applied{generation}` (D3); a client with no authoring subscription
+   (E2's editor, a Gameplay SDK client) compares generations. E2's history clears on a change of it, as on a change
+   of scene GUID.
+6. **The result equals a fresh start.** After a reload, the frame's data and a capture equal those of a Runtime
+   started on the same document saved and cooked by the build.
+7. **Runtime-side edits are not written back.** They last until the next reload, which replaces them with the
+   document's state. The document is the source of truth; the Runtime World is its projection.
+
+## Consequences
+
+### Positive
+
+- **The bake stays the only mapping** from authoring to runtime state, and the build's cook the only cook.
+- **Clients keep their sessions** across a reload; nothing in the closed World surface changes.
+- **A reload is testable against a fresh start,** byte for byte.
+
+### Negative / Trade-offs
+
+- **Every apply is a full re-bake;** on Bistro its cost is measured and may call for incremental projection later.
+- **Runtime-side tweaks are lost at apply,** by rule, silently as far as the Runtime World's clients are
+  concerned. The frozen ImGui editor will not show it (it only clears its history, ADR-0125 D4); Atlantis Editor
+  App's UI must.
+- **A client with no authoring subscription** learns of a reload only by comparing generations; authoring
+  subscribers get `Applied{generation}`.
+- **A `waitIdle()` at the swap** costs one GPU drain per apply, on a path that already re-bakes.
+- **`runFrame()` gains a swap point,** so the performance gate applies to the implementing PR.
+
+## Alternatives Considered
+
+- **Automatic apply after every transaction** (Spec 0065 Q4 (B-b)): a full re-bake per small edit.
+- **Live projection** (B-c): property edits mirrored to the Runtime World as World commands, structural edits
+  re-baked — a second mapping beside the bake. Named as a follow-up.
+- **Connections closed at reload** (L-b): every client, the editor's included, would treat a reload as a
+  disconnect.
+- **A reload event on `RuntimeConnection`** (L-c): a sixth event on the closed surface. The `Applied{generation}`
+  event chosen instead is an *authoring* event (ADR-0130 D1), on the authoring interface's own closed set; ADR-0103's
+  closed World surface is untouched and the rejection of L-c stands.
+- **Keeping unreferenced resources until exit:** simpler, but repeated applies would grow GPU memory without bound
+  and the resource maps would no longer equal a fresh start's.
+- **Reloading from a source path in the Runtime:** the Runtime's load path would parse text, against ADR-0102 D2.
