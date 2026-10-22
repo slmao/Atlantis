@@ -116,10 +116,11 @@ ruled [Plan 0065](../plans/0065-authoring-data-layer.md) J10 as recommended (`st
 the shortest round-trip text, `-0` kept), in the review of [PR #281](https://github.com/slmao/Atlantis/pull/281). This amendment records what that
 Correction means for this ADR; no decision above is reopened.
 
-## Amendment — 2026-10-22 (second; pending review)
+## Accepted Amendment — 2026-10-22 (second)
 
-**Status of this section:** pending the owner's review, with Spec 0065's second Correction, in that Correction's own
-docs PR. **This section does not change this ADR's top-level Status** (`Accepted`). It corrects one sentence of the
+**Status of this section:** accepted by Human Review on 2026-10-22, together with Spec 0065's second Correction
+(slmao, review of its docs PR [PR #282](https://github.com/slmao/Atlantis/pull/282)). **This section does not itself change this ADR's top-level Status**
+(`Accepted` above is unchanged). It corrects one sentence of the
 Accepted Amendment above and nothing else; that amendment's other items, and the Decision, Context, Consequences and
 Alternatives Considered, are unchanged.
 
@@ -130,3 +131,9 @@ Alternatives Considered, are unchanged.
    group whose values were all zero. With the corrected rule an absent group reads back as exactly the default, so
    item 1's "lossless" holds without exception, and item 2's "a first save may rewrite number formatting, never a
    value" holds as written: a camera at the defaults writes no group.
+
+### Human Review — Amendment Acceptance (2026-10-22, second)
+
+**Deciders:** slmao — accepted [Spec 0065](../specs/0065-authoring-data-layer.md)'s second Correction (2026-10-22),
+with the comparison with the no-group default ruled bit for bit (a `-0` differs from `0`, so it is written), in the
+review of [PR #282](https://github.com/slmao/Atlantis/pull/282). This amendment corrects the one rule sentence of the first; no decision above is reopened.

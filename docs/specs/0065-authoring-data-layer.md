@@ -31,8 +31,9 @@
   - No ADR decision changes: ADR-0131 D2's in-memory cook already runs "every `cookScene()` check", the parse
     included, and ADR-0100 D6's "source ⇄ semantic is lossless" now also holds at the text layer. ADR-0129 and
     ADR-0131 each record what this Correction means for them in an Accepted Amendment (2026-10-22).
-- **Second Correction (2026-10-22, post-Approval, found while implementing Plan 0065 M1; pending the owner's review
-  of its own docs PR):** the first Correction's group rule ("written whenever any of their values is non-zero")
+- **Second Correction (2026-10-22, post-Approval, found while implementing Plan 0065 M1; accepted by slmao,
+  2026-10-22, in the review of its own docs PR [PR #282](https://github.com/slmao/Atlantis/pull/282), with the comparison with the no-group default ruled
+  bit for bit):** the first Correction's group rule ("written whenever any of their values is non-zero")
   assumed that the no-group defaults are all zero. They are not: a camera with no fog group carries fog colour
   `(1, 1, 1)` and maximum opacity `1`, and one with no bloom group carries threshold `1` (`DecodedCameraFog`,
   `DecodedCameraBloom`, and the semantic `CameraFog`, `CameraBloom`). So that rule writes both groups, at their
@@ -48,7 +49,8 @@
     committed artifact is cooked from its unchanged source file, and the Bistro overlay's only camera has both groups
     on, so its generated source is unchanged by this rule.
   - ADR-0129's Accepted Amendment states the superseded rule; a second dated amendment there corrects that one
-    sentence (pending this review). ADR-0131's amendment does not state the rule and is unchanged.
+    sentence (Accepted Amendment — 2026-10-22, second). ADR-0131's amendment does not state the rule and is
+    unchanged.
 - **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through

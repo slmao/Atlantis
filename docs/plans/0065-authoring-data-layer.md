@@ -22,13 +22,21 @@
     routes the in-memory cook through the text path. P1, M1, the file list and J2 change accordingly, and J10 (the
     number format) was ruled with it, as recommended. J1 ("no Spec Correction") is superseded by this one
     Correction. ADR-0129 and ADR-0131 carry Accepted Amendments (2026-10-22) and stay `Accepted`.
-  - **Second Correction (2026-10-22, found while implementing M1; pending the owner's review of its own docs
-    PR):** Spec 0065's second Correction replaces the group rule: a camera's fog group is written unless it equals the no-group default, value for value, and likewise its bloom group, compared bit for bit. The
+  - **Second Correction (2026-10-22, found while implementing M1; accepted by slmao, 2026-10-22, in the review
+    of its own docs PR [PR #282](https://github.com/slmao/Atlantis/pull/282), the comparison with the no-group default ruled bit for bit):** Spec 0065's
+    second Correction replaces the group rule: a camera's fog group is written unless it equals the no-group default, value for value, and likewise its bloom group, compared bit for bit. The
     no-group defaults are not all zero, so the first rule wrote default groups on every camera and lost an all-zero
     group. P1 and M1 change accordingly. M1 was committed under the first rule (`344da6a`); once this Correction is
     accepted, one follow-up M1 commit on `feature/0065-authoring-data-layer` changes the serializer's two group
     conditions and the tests that pinned the first rule, before M2 starts. ADR-0129 gains a second dated amendment
-    correcting the rule's one sentence in its first.
+    correcting the rule's one sentence in its first (Accepted Amendment — 2026-10-22, second).
+  - **J9 note (slmao, 2026-10-22, ruled in the review of [PR #282](https://github.com/slmao/Atlantis/pull/282)):** M1 measured `cookSceneToMemory()` on
+    Bistro's generated document (5,969 nodes, Release, the reference machine) at a median of 19.65 ms over 30 runs
+    (serialize 4.4 ms, parse 7.6 ms, `cookSceneSource()` 11.3 ms) — about twice J9's 10 ms target before M2 adds the
+    document copy and the round-trip mapping. Ruling: M2 proceeds on J2's cook dry run as planned and measures the
+    full single-property transaction cost (copy, serialize, parse, cook, round-trip check); the decision on
+    incremental validation as a follow-up Spec is taken on M2's number, right after M2, not at M7. J9 stays a
+    reported target, not a test verdict.
   - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
     `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
     `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
@@ -300,7 +308,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   (about 6,000 nodes), validated by the in-memory cook dry run on the frame thread; proposed target under 10 ms
   median in Release on the reference machine (a sixth of Bistro's frame of about 60 ms), reported as measured like
   J3, not a test verdict. Proposed: accept; if it is missed, incremental validation — checking only what the
-  transaction's commands can affect, plus the document-wide limits — is the follow-up.
+  transaction's commands can affect, plus the document-wide limits — is the follow-up. (See the J9 note of
+  2026-10-22 in this Plan's Joint Human Review record: M1's measurement, and the decision taken right after M2.)
 - **J4 — Session creation** (P5): lazily on the first `authoring.open` under `--listen`, no new command-line option.
   Proposed: accept; a Runtime that is never edited pays nothing.
 - **J5 — One pending reload** (P4): a newer apply replaces a pending one in the same frame. Proposed: accept; only
