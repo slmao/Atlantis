@@ -351,15 +351,39 @@ TEST_CASE("in-memory cook: a document its text cannot represent is NotRepresenta
     REQUIRE(result.isErr());
     CHECK(result.error() == as::SceneCookError::NotRepresentableInSource);
   }
-  SECTION("a fog group whose seven values are all zero (it is not written, and reads back as the defaults)") {
-    // Spec 0065's Correction writes the fog group when any of its values is
-    // non-zero. An all-zero group is therefore omitted, and the parser fills
-    // the no-group defaults (colour 1, max opacity 1) -- refused here.
+}
+
+TEST_CASE("in-memory cook: all-zero groups and groups differing from the default only by -0 cook and decode back",
+          "[asset_system][scene][in_memory_cook]") {
+  // Spec 0065 second Correction (2026-10-22): a group is written unless it
+  // equals the no-group default, bit for bit -- so the document M1 first found
+  // refused (an all-zero fog group) now round-trips.
+  SECTION("an all-zero fog and bloom group") {
     scene::AuthoringScene document = oneCameraScene();
     document.nodes[0].camera->fog = scene::CameraFog{{0.0f, 0.0f, 0.0f}, 0.0f, 0.0f, 0.0f, 0.0f};
-    const auto result = as::cookSceneToMemory(document, sceneGuid());
-    REQUIRE(result.isErr());
-    CHECK(result.error() == as::SceneCookError::NotRepresentableInSource);
+    document.nodes[0].camera->bloom = scene::CameraBloom{0.0f, 0.0f};
+    const auto cooked = as::cookSceneToMemory(document, sceneGuid());
+    REQUIRE(cooked.isOk());
+    const auto decoded = as::decodeScene(cooked.value());
+    REQUIRE(decoded.isOk());
+    const as::DecodedCamera& camera = *decoded.value().node(0).camera;
+    CHECK(camera.fog.colorR == 0.0f);
+    CHECK(camera.fog.colorG == 0.0f);
+    CHECK(camera.fog.colorB == 0.0f);
+    CHECK(camera.fog.maxOpacity == 0.0f);
+    CHECK(camera.bloom.threshold == 0.0f);
+  }
+  SECTION("a -0 density and a -0 strength") {
+    scene::AuthoringScene document = oneCameraScene();
+    document.nodes[0].camera->fog.density = -0.0f;
+    document.nodes[0].camera->bloom.strength = -0.0f;
+    const auto cooked = as::cookSceneToMemory(document, sceneGuid());
+    REQUIRE(cooked.isOk());
+    const auto decoded = as::decodeScene(cooked.value());
+    REQUIRE(decoded.isOk());
+    const as::DecodedCamera& camera = *decoded.value().node(0).camera;
+    CHECK(std::signbit(camera.fog.density));
+    CHECK(std::signbit(camera.bloom.strength));
   }
 }
 

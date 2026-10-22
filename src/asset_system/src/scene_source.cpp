@@ -3,9 +3,11 @@
 #include <atlantis/assert.h>
 
 #include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <system_error>
 
 namespace atlantis::asset_system {
@@ -144,6 +146,26 @@ constexpr std::string_view kPointToken = "point";
   const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
   ATLANTIS_CHECK_MSG(result.ec == std::errc{}, "formatFloat(): std::to_chars failed");
   return std::string(buffer.data(), result.ptr);
+}
+
+// Plan 0065 P1 (Spec 0065 second Correction 2026-10-22): a camera's fog or bloom
+// group is written unless it equals the no-group default -- the value an absent
+// group parses as -- every value compared bit for bit, so a -0 where the default
+// is 0 is written and kept.
+[[nodiscard]] bool sameBits(float a, float b) {
+  return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+[[nodiscard]] bool isNoGroupDefault(const DecodedCameraFog& fog) {
+  const DecodedCameraFog none{};
+  return sameBits(fog.colorR, none.colorR) && sameBits(fog.colorG, none.colorG) && sameBits(fog.colorB, none.colorB) &&
+         sameBits(fog.density, none.density) && sameBits(fog.height, none.height) &&
+         sameBits(fog.heightFalloff, none.heightFalloff) && sameBits(fog.maxOpacity, none.maxOpacity);
+}
+
+[[nodiscard]] bool isNoGroupDefault(const DecodedCameraBloom& bloom) {
+  const DecodedCameraBloom none{};
+  return sameBits(bloom.strength, none.strength) && sameBits(bloom.threshold, none.threshold);
 }
 
 }  // namespace
@@ -528,21 +550,21 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
              std::string(kCameraNearZPrefix) + formatFloat(node.camera->nearZ) + ' ' +
              std::string(kCameraFarZPrefix) + formatFloat(node.camera->farZ) + ' ' +
              std::string(kCameraExposureEvPrefix) + formatFloat(node.camera->exposureCompensationEv);
-      // Plan 0065 P1 (Spec 0065 Correction 2026-10-22; fixes Plan 0049 F5): the
-      // fog group is written whenever any of its seven values is non-zero, so a
-      // group that is off (density 0) keeps its other values.
+      // Plan 0065 P1 (Spec 0065 Corrections 2026-10-22; fixes Plan 0049 F5): the
+      // fog group is written unless it equals the no-group default, so a group
+      // that is off (density 0) keeps its other values, and an absent group
+      // reads back as exactly what was there.
       const DecodedCameraFog& fog = node.camera->fog;
-      if (fog.density != 0.0f || fog.height != 0.0f || fog.heightFalloff != 0.0f || fog.maxOpacity != 0.0f ||
-          fog.colorR != 0.0f || fog.colorG != 0.0f || fog.colorB != 0.0f) {
+      if (!isNoGroupDefault(fog)) {
         out += ' ';
         out += std::string(kFogPrefix) + formatFloat(fog.density) + ' ' + formatFloat(fog.height) + ' ' +
                formatFloat(fog.heightFalloff) + ' ' + formatFloat(fog.maxOpacity) + ' ' +
                std::string(kFogColorPrefix) + formatFloat(fog.colorR) + ' ' + formatFloat(fog.colorG) + ' ' +
                formatFloat(fog.colorB);
       }
-      // Likewise the bloom group, whenever either value is non-zero.
+      // Likewise the bloom group.
       const DecodedCameraBloom& bloom = node.camera->bloom;
-      if (bloom.strength != 0.0f || bloom.threshold != 0.0f) {
+      if (!isNoGroupDefault(bloom)) {
         out += ' ';
         out += std::string(kBloomPrefix) + formatFloat(bloom.strength) + ' ' + formatFloat(bloom.threshold);
       }

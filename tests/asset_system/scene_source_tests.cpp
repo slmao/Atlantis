@@ -799,11 +799,12 @@ TEST_CASE("serializeSceneSource then parseSceneSource round-trips a camera fog g
 TEST_CASE("serializeSceneSource keeps a fog group that is off but valued", "[asset_system][scene][fog]") {
   // Plan 0065 P1 (fixes Plan 0049 F5): density 0 is fog off, but the other
   // values are ordinary values (Plan 0049 ruling J4) -- the group is written
-  // whenever any of its seven values is non-zero, so none is lost.
+  // unless it equals the no-group default, so none is lost (Spec 0065 second
+  // Correction). The camera's bloom group is at its default and is not written.
   const auto parsed = parseSceneSource(oneCameraNodeSource(" fog=0 1.5 0.25 0.9 fog_color=0.5 0.75 2.0"));
   REQUIRE(parsed.isOk());
   const std::string text = serializeSceneSource(parsed.value());
-  CHECK(text.find(" fog=0 1.5 0.25 0.9 fog_color=0.5 0.75 2 bloom=0 1\n") != std::string::npos);
+  CHECK(text.find(" fog=0 1.5 0.25 0.9 fog_color=0.5 0.75 2\n") != std::string::npos);
   const auto reparsed = parseSceneSource(text);
   REQUIRE(reparsed.isOk());
   const DecodedCameraFog& fog = reparsed.value().nodes[0].camera->fog;
@@ -931,7 +932,8 @@ TEST_CASE("serializeSceneSource round-trips a bloom group, with and without fog,
     }
   }
   // Plan 0065 P1 (fixes Plan 0049 F5): strength 0 is bloom off, and the
-  // threshold is still written whenever either value is non-zero.
+  // threshold is still written, since the group differs from the no-group
+  // default (threshold 1).
   const auto off = parseSceneSource(oneCameraNodeSource(" bloom=0 3.0"));
   REQUIRE(off.isOk());
   const std::string offText = serializeSceneSource(off.value());
@@ -945,7 +947,8 @@ TEST_CASE("serializeSceneSource round-trips a bloom group, with and without fog,
 // ---------------------------------------------------------------------
 // Plan 0065 M1 (P1; Spec 0065 Correction 2026-10-22, ruling J10): the
 // serializer is lossless -- shortest round-trip floats, and fog and bloom
-// groups written whenever any of their values is non-zero.
+// groups written unless they equal the no-group default, compared bit for bit
+// (second Correction 2026-10-22).
 // ---------------------------------------------------------------------
 
 namespace {
@@ -1080,12 +1083,6 @@ TEST_CASE("serializeSceneSource keeps the floats six decimals could not hold, bi
     c.exposureCompensationEv = value;
     c.fog = DecodedCameraFog{value, value, value, value, value, value, value};
     c.bloom = DecodedCameraBloom{value, value};
-    if (value == 0.0f) {
-      // An all-zero group is not written (the last test below); keep one
-      // value non-zero so -0 is carried in the others.
-      c.fog.colorR = 1.0f;
-      c.bloom.threshold = 1.0f;
-    }
     camera.camera = c;
     source.nodes = {camera};
     // A point light carries the value where the grammar's light domain allows
@@ -1117,21 +1114,56 @@ TEST_CASE("serializeSceneSource writes the shortest round-trip text (ruling J10)
   CHECK(text.find(" position=0 -0 1.0472 rotation=1e-07 0.1 -2.5 scale=1 100 1e+30\n") != std::string::npos);
 }
 
-TEST_CASE("serializeSceneSource writes no fog or bloom group whose values are all zero",
+TEST_CASE("serializeSceneSource round-trips an all-zero fog and bloom group (second Correction)",
           "[asset_system][scene][serializer]") {
-  // The rule as Spec 0065's Correction states it: a group is written when any
-  // of its values is non-zero. An all-zero group is omitted, and reads back as
-  // the no-group defaults; cookSceneToMemory() refuses such a document
-  // (NotRepresentableInSource) rather than narrowing it.
+  // The no-group defaults are not all zero (fog colour 1, maximum opacity 1,
+  // bloom threshold 1), so an all-zero group differs from them and is written.
   const auto parsed = parseSceneSource(oneCameraNodeSource(" fog=0 0 0 0 fog_color=0 0 0 bloom=0 0"));
   REQUIRE(parsed.isOk());
   const std::string text = serializeSceneSource(parsed.value());
-  CHECK(text.find("fog") == std::string::npos);
-  CHECK(text.find("bloom") == std::string::npos);
+  CHECK(text.find(" fog=0 0 0 0 fog_color=0 0 0 bloom=0 0\n") != std::string::npos);
+  const auto reparsed = parseSceneSource(text);
+  REQUIRE(reparsed.isOk());
+  checkSameBits(parsed.value(), reparsed.value());
+}
 
-  // A camera with the no-group defaults (colour 1, max opacity 1, threshold 1)
-  // writes both groups, at those defaults.
+TEST_CASE("serializeSceneSource writes no group for a camera at the no-group defaults (second Correction)",
+          "[asset_system][scene][serializer]") {
   const auto defaults = parseSceneSource(oneCameraNodeSource(""));
   REQUIRE(defaults.isOk());
-  CHECK(serializeSceneSource(defaults.value()).find(" fog=0 0 0 1 fog_color=1 1 1 bloom=0 1\n") != std::string::npos);
+  const std::string text = serializeSceneSource(defaults.value());
+  CHECK(text.find("fog") == std::string::npos);
+  CHECK(text.find("bloom") == std::string::npos);
+  CHECK(text.find(" camera_exposure_ev=0\n") != std::string::npos);
+
+  // The same defaults spelled out in the text are the same value: not written.
+  const auto spelled = parseSceneSource(oneCameraNodeSource(" fog=0 0 0 1 fog_color=1 1 1 bloom=0 1"));
+  REQUIRE(spelled.isOk());
+  CHECK(serializeSceneSource(spelled.value()) == text);
+}
+
+TEST_CASE("serializeSceneSource writes a group that differs from the default only by a -0, and keeps the -0",
+          "[asset_system][scene][serializer]") {
+  // The comparison with the no-group default is bit for bit (ruled 2026-10-22).
+  for (const char* suffix : {" fog=-0 0 0 1 fog_color=1 1 1", " fog=0 0 -0 1 fog_color=1 1 1", " bloom=-0 1"}) {
+    DYNAMIC_SECTION(suffix) {
+      const auto parsed = parseSceneSource(oneCameraNodeSource(suffix));
+      REQUIRE(parsed.isOk());
+      const std::string text = serializeSceneSource(parsed.value());
+      CHECK(text.find(std::string(suffix) + "\n") != std::string::npos);
+      const auto reparsed = parseSceneSource(text);
+      REQUIRE(reparsed.isOk());
+      checkSameBits(parsed.value(), reparsed.value());
+    }
+  }
+  const auto fog = parseSceneSource(oneCameraNodeSource(" fog=-0 0 0 1 fog_color=1 1 1"));
+  REQUIRE(fog.isOk());
+  const auto fogBack = parseSceneSource(serializeSceneSource(fog.value()));
+  REQUIRE(fogBack.isOk());
+  CHECK(std::signbit(fogBack.value().nodes[0].camera->fog.density));
+  const auto bloom = parseSceneSource(oneCameraNodeSource(" bloom=-0 1"));
+  REQUIRE(bloom.isOk());
+  const auto bloomBack = parseSceneSource(serializeSceneSource(bloom.value()));
+  REQUIRE(bloomBack.isOk());
+  CHECK(std::signbit(bloomBack.value().nodes[0].camera->bloom.strength));
 }

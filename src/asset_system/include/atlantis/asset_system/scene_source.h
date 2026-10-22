@@ -96,8 +96,9 @@ inline constexpr std::uint32_t kSceneSourceSemanticVersion = 1;
 // Serializes back to the exact grammar parseSceneSource() accepts. Lossless
 // since Plan 0065 P1 (Spec 0065 Correction 2026-10-22; fixes Plan 0049 F5):
 // every float is written in its shortest round-trip form (std::to_chars), and
-// a camera's fog and bloom groups whenever any of their values is non-zero, so
-// parsing the text gives back every value bit for bit. It writes at most one
+// a camera's fog and bloom groups each unless it equals the no-group default,
+// compared bit for bit (Spec 0065 second Correction), so parsing the text gives
+// back every value bit for bit. It writes at most one
 // of a node's mesh, camera and light -- the grammar's exclusivity; a source
 // holding two is narrowed, which cookSceneToMemory() refuses
 // (NotRepresentableInSource). Used by the glTF importer's overlay lines, the
