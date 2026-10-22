@@ -132,7 +132,7 @@ Findings, each left unfixed:
 - **F5 — `serializeSceneSource()` is lossy** (reading items 2–3): fixed six
   decimals, and fog/bloom fields dropped while the group is off. It is a
   production path (the Bistro overlay), so it cannot change under the
-  byte-identity requirement. → J3, J4.
+  byte-identity requirement. → J3, J4. (Fixed by Spec 0065's Correction, 2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281).)
 - **F6 — One rule, different error kinds.** Light rules report
   `InvalidComponentGroup` (P) but `NonFiniteValue` (D, including an invalid
   kind). The cooker re-checks light finiteness only, relying on the parser.
@@ -513,7 +513,8 @@ corrects Spec 0049 (R5 and the Testing plan's R5 bullet).
   - Text round trips through `serializeSceneSource()` are tested only within
     the values it represents exactly.
   - Its lossiness is known defect F5. Fixing it belongs to the next
-    serializer's spec, because it is the Bistro overlay's writer.
+    serializer's spec, because it is the Bistro overlay's writer. (Fixed by
+    Spec 0065's Correction, 2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281).)
   - Spec 0049 carries the matching Correction.
 - **J4 — Off-group fog/bloom values.** **Ruled (2026-10-05):** ordinary fields
   in v1, with no "don't-care while off" equivalence. An inert-field rule is a

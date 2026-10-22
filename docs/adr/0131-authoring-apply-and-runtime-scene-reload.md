@@ -108,3 +108,27 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **Keeping unreferenced resources until exit:** simpler, but repeated applies would grow GPU memory without bound
   and the resource maps would no longer equal a fresh start's.
 - **Reloading from a source path in the Runtime:** the Runtime's load path would parse text, against ADR-0102 D2.
+
+## Accepted Amendment — 2026-10-22
+
+**Status of this section:** accepted by Human Review on 2026-10-22, together with the Spec 0065 Correction
+(slmao, review of its docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281)). **This section does not itself change this ADR's top-level Status**
+(`Accepted` above is unchanged). The Decision, Context, Consequences and Alternatives Considered above are preserved
+verbatim and are not superseded except where this section says so explicitly.
+
+1. **D2's in-memory cook runs the build's text path.** It maps the document to its parsed source, serializes it with
+   the corrected `serializeSceneSource()`, and cooks that text through `cookSceneSource()`: the parse, every
+   `cookScene()` check, then `encodeSceneArtifact()`. A transaction is therefore refused for anything the parser
+   refuses (light limits, component groups) as well as anything the cooker refuses.
+2. **A document its text cannot represent is refused.** The cook also checks that the document comes back unchanged
+   from its own text, and refuses one that does not (`SceneCookError::NotRepresentableInSource`; for example a
+   camera and a light on one node) instead of narrowing it silently.
+3. **The byte-identity guarantee is unchanged:** for any document, the in-memory artifact equals the build's cook of
+   the saved text, byte for byte, now by construction.
+
+### Human Review — Amendment Acceptance (2026-10-22)
+
+**Deciders:** slmao — accepted the [Spec 0065](../specs/0065-authoring-data-layer.md) Correction (2026-10-22) and
+ruled [Plan 0065](../plans/0065-authoring-data-layer.md) J10 as recommended (`std::to_chars` with no format argument,
+the shortest round-trip text, `-0` kept), in the review of [PR #281](https://github.com/slmao/Atlantis/pull/281). This amendment records what that
+Correction means for this ADR; no decision above is reopened.

@@ -9,6 +9,27 @@
 - **Approval:** slmao, 2026-10-22 — owner rulings Q1–Q8, each as its recommendation (Q1 (c); Q2 D-a; Q3 I-a + V-1; Q4 B-a + L-a; Q5 S-a; Q6 P-a; Q7 T-a; Q8 G-b),
   recorded once in [Plan 0065](../plans/0065-authoring-data-layer.md); review of this Spec's own branch PR,
   [PR #280](https://github.com/slmao/Atlantis/pull/280). The open-question text below keeps the options as the record of what was weighed.
+- **Correction (2026-10-22, post-Approval, found at the start of Plan 0065 M1; accepted by slmao, 2026-10-22, in the
+  review of its own docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281), with Plan 0065 J10 ruled as recommended):** R7's in-memory cook, R8's "identical to a fresh start on the saved document", R9's save and Plan J2's
+  cook dry run all assumed that `serializeSceneSource()` writes the document losslessly. It does not: it prints
+  floats with `std::to_string` (six fixed decimals) and drops the fog and bloom values while their group is off —
+  Plan 0049's known defect F5, which Spec 0049's Correction (2026-10-05, ruling J3) left to "the next serializer's
+  spec". This Spec is the first to write source text back, so it fixes F5 (fact 6, R9, Plan P1):
+  - `serializeSceneSource()` writes every float as its shortest round-trip form (`std::to_chars`), and writes the fog
+    and bloom groups whenever any of their values is non-zero. The grammar, already parsed with
+    `std::chars_format::general` and accepting both groups at zero strength, does not change; nor do the source
+    format version, the artifact, the catalog or the semantic version.
+  - The in-memory cook runs the build's own text path — serialize, parse, every cook check, encode — so a
+    transaction can be refused for anything the parser refuses (light limits, component groups) as well as anything
+    the cooker refuses, and the in-memory artifact equals the build's cook of the saved text by construction. The
+    serializer writes at most one of a node's mesh, camera and light, so a document must also come back unchanged
+    from its own text round trip; one that does not (two of them on one node, ComponentExclusivity) is refused, never
+    silently narrowed.
+  - "Saving an unchanged document rewrites the same bytes" (R9, ADR-0129 D4) holds from a document's first save on:
+    the first save of a hand-authored file may rewrite its number formatting (`0.0` as `0`), never a value.
+  - No ADR decision changes: ADR-0131 D2's in-memory cook already runs "every `cookScene()` check", the parse
+    included, and ADR-0100 D6's "source ⇄ semantic is lossless" now also holds at the text layer. ADR-0129 and
+    ADR-0131 each record what this Correction means for them in an Accepted Amendment (2026-10-22).
 - **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through
@@ -102,6 +123,11 @@ Nothing here adds a World verb.
    the fetched content plus a hand-authored overlay (`assets/bistro/bistro_overlay.scene.txt`, 61 nodes: the camera
    and lights). An edit to an imported node cannot be written back to glTF; only hand-authored sources can be saved
    as they are.
+6. **The scene source serializer is lossy** (Plan 0049 defect F5; recorded by the Correction above, found after
+   Approval): `serializeSceneSource()` prints floats with six fixed decimals and drops fog and bloom values while
+   their group is off, so a save would change values and an in-memory cook from text would not equal one from the
+   document. The light limits and the component-group rules are checked by `parseSceneSource()`, not by the cooker,
+   and the serializer writes at most one of a node's mesh, camera and light, dropping the others silently.
 
 ### Why now
 
@@ -128,7 +154,8 @@ keeps the decision about data.
   asset browser, no structural-edit undo UI. (The ImGui editor stays frozen at E2, ADR-0125 D4.)
 - **Prefab, C# components, plugins, MCP.** Named only, as in Spec 0051.
 - **Any new Runtime World verb, event, query, component or error** (ADR-0103, ADR-0104 unchanged).
-- **A change to the scene source grammar, the artifact format, the catalog or the semantic version.**
+- **A change to the scene source grammar, the artifact format, the catalog or the semantic version.** The
+  serializer's output changes (R9, the F5 fix); the grammar it writes does not.
 - **Incremental or live projection** of document edits into the Runtime World without a reload (named in Out of
   Scope; Q4 records why).
 - **Saving imported scenes,** "save as" to a new catalog entry, multi-document sessions, and editing without a
@@ -162,7 +189,8 @@ keeps the decision about data.
   successful reload of an applied document as `Applied{generation}` carrying the Runtime's new scene generation
   (R8). They are delivered per subscription with filters, as on the Runtime World. Every client sees every client's
   changes and every apply. These are authoring events; the Runtime World's closed event set is unchanged.
-- **R7 — Apply.** An explicit apply cooks the current document in memory with the build's cook path, decodes it to
+- **R7 — Apply.** An explicit apply cooks the current document in memory with the build's cook path — the
+  document's text from R9's serializer, parsed and checked by the same code as the build — decodes it to
   `ValidatedSceneData`, and hands it to the Runtime for reload (R8). Apply reports success or the reason it failed;
   the document is unchanged either way.
 - **R8 — Reload.** The Runtime replaces its scene at a frame boundary, all or nothing: it resolves and uploads any
@@ -179,8 +207,11 @@ keeps the decision about data.
     pick geometry) are released at the swap, once the GPU has finished the last frame that used them; the
     Runtime's resource maps then hold exactly what a fresh start on the new document would load.
 - **R9 — Save.** Save writes the document to its source path atomically, through `toParsedSceneSource()` and
-  `serializeSceneSource()`. Saving a document that has not changed rewrites the same bytes. An imported scene's
-  save is refused.
+  `serializeSceneSource()`, which is lossless (Correction 2026-10-22): every float in its shortest round-trip form,
+  the fog and bloom groups written whenever any of their values is non-zero. Parsing the saved text gives back the
+  document, every value bit for bit. Saving a document that has not changed since its last save rewrites the same
+  bytes; the first save of a hand-authored file may rewrite its number formatting, never a value. An imported
+  scene's save is refused.
 - **R10 — Runtime-side edits.** Edits made on the Runtime World (E2's editor, the CLI's `property set`, the
   Gameplay SDKs) are not written back to the document. They last until the next reload. E2's history is cleared
   on a generation change, as it is today on a scene change.
@@ -204,8 +235,9 @@ keeps the decision about data.
     proposed budget (Plan J3).
 - **Threading:** frame thread only (ADR-0004). No thread is added.
 - **Dependencies:** none new.
-- **Determinism:** the in-memory cook is byte-identical to `cookScene()`'s artifact for the same document; save
-  is byte-identical to `serializeSceneSource()`.
+- **Determinism:** the in-memory cook is byte-identical to `cookScene()`'s artifact for the document's saved text;
+  save is byte-identical to `serializeSceneSource()`, and the serializer is lossless and idempotent (serializing
+  the parse of its own output gives the same text).
 - **Performance contract:** the reload touches `runFrame()` (the swap point) and `src/runtime/**`, which are on the
   gate's applicability list. The implementing PR runs the gate, reports its verdict and enumerates the changed
   `runFrame()` lines. Without an apply, the frame path is unchanged.
@@ -235,8 +267,8 @@ keeps the decision about data.
   its InProcess endpoint lives in Atlantis Authoring; Remote carries it as `authoring.*`.
 - **The host** (`atlantis_runtime`) creates the session on request, wires its sink to
   `RuntimeApplication::requestSceneReload()`, and serves it over `--listen`.
-- **Asset System** gains an in-memory cook (`encodeSceneArtifact()` behind the same checks as `cookScene()`, which
-  then writes those bytes) and an in-memory decode entry (`decodeScene()` reading bytes), keeping decode the only
+- **Asset System** gains a lossless `serializeSceneSource()` (the F5 fix), an in-memory cook (the document
+  serialized, then `cookScene()`'s own parse, checks and `encodeSceneArtifact()`, which `cookScene()` then writes) and an in-memory decode entry (`decodeScene()` reading bytes), keeping decode the only
   constructor of `ValidatedSceneData`.
 - **Runtime** gains `requestSceneReload(ValidatedSceneData)` and the frame-boundary swap, re-binding its InProcess
   endpoint; `RuntimeStatus` gains `sceneGeneration`.
@@ -264,7 +296,8 @@ Yes — three decisions, each its own ADR (all `Accepted` 2026-10-22):
 
 Module boundaries change: Atlantis Authoring is a new module; Atlantis Connection's dependency statement (Core,
 and World's access and schema headers) gains one Asset System header, `scene_property_address.h`; Asset System's
-decode boundary gains an in-memory entry; the GUID mint, today private to the asset cooker tool (ADR-0097 D1's
+decode boundary gains an in-memory entry and its scene source serializer becomes lossless (Correction
+2026-10-22); the GUID mint, today private to the asset cooker tool (ADR-0097 D1's
 "only place a GUID is minted"), moves to a home the authoring session can share (Plan J8). These are listed in Plan 0065
 and land as normative lines in AGENTS.md and `module_boundaries.md` with the implementation.
 
@@ -287,8 +320,16 @@ The alternatives are recorded with each open question below; the principal ones:
 - **Authoring core (GPU-free):** each command and its events; transactions all or nothing; every `sceneSchema()`
   constraint refusing a transaction (one negative case each, reusing the Spec 0049 conformance cases); the
   document after any sequence equal to re-parsing its saved text (R1–R6, R9).
+- **Serializer (F5):** for every committed scene and Bistro when present, parsing the serialized document gives
+  back every value bit for bit; serializing that parse gives the same text (idempotence); floats that six decimals
+  cannot hold (subnormals, large magnitudes, `-0`, values such as `0.1234567`) and fog and bloom groups that are off
+  but hold values round-trip; every committed scene's artifact, cooked from its unchanged source file, stays
+  byte-identical (the cook does not serialize), and Bistro's generated source cooks to the same artifact as before.
 - **Cook in memory:** for every committed scene and Bistro when present, the in-memory artifact equals
-  `cookScene()`'s file byte for byte, and the in-memory decode equals `decodeScene()`'s `ValidatedSceneData` (R7).
+  `cookScene()`'s file byte for byte — of the scene's own source file and of its saved text — and the in-memory
+  decode equals `decodeScene()`'s `ValidatedSceneData` (R7); a document breaking a parse-level rule (a point light
+  beyond the limit) is refused by the in-memory cook as the build would refuse its text, and a document the text
+  cannot represent (a camera and a light on one node) is refused by the round-trip check rather than narrowed.
 - **Reload (GPU, fatal VVL):** after an apply of an edited document, frame data and a capture equal those of a
   fresh Runtime started on the saved document (R8); a failing reload (an unresolvable asset) leaves the old World,
   frame data unchanged; connections survive a reload, a subscription keeps its filter, `sceneGeneration`

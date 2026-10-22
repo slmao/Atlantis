@@ -17,6 +17,11 @@
   - **ADRs:** ADR-0129, ADR-0130 and ADR-0131 `Accepted`.
   - **Authorization:** implementation on `feature/0065-authoring-data-layer` once PR #280 has merged, M1–M7 in this
     Plan's order.
+  - **Correction (2026-10-22, found at the start of M1; accepted by slmao, 2026-10-22, in the review of its own
+    docs PR [PR #281](https://github.com/slmao/Atlantis/pull/281)):** Spec 0065's Correction fixes Plan 0049's defect F5 in `serializeSceneSource()` and
+    routes the in-memory cook through the text path. P1, M1, the file list and J2 change accordingly, and J10 (the
+    number format) was ruled with it, as recommended. J1 ("no Spec Correction") is superseded by this one
+    Correction. ADR-0129 and ADR-0131 carry Accepted Amendments (2026-10-22) and stay `Accepted`.
   - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
     `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
     `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
@@ -66,10 +71,24 @@ Read at `origin/main` `45fce69`.
 
 ## Plan-stage decisions
 
-- **P1 — In-memory cook and decode** (ADR-0131 D2).
-  - `cookScene()` is split: `cookSceneToMemory(const scene::AuthoringScene&, AssetGuid) → Result<CookedScene,
-    SceneCookError>` runs every existing check and returns the artifact bytes and the sidecar text; `cookScene()`
-    parses its source, calls it, and writes both atomically as today.
+- **P1 — A lossless serializer, in-memory cook and decode** (ADR-0131 D2; Spec 0065 Correction 2026-10-22).
+  - **The F5 fix:** `serializeSceneSource()` writes every float with `std::to_chars` in its shortest round-trip form
+    (J10), and writes a camera's fog group when any of its seven values is non-zero and its bloom group when either
+    value is non-zero. `parseSceneSource()` is unchanged (it already reads `std::chars_format::general` and accepts
+    both groups at zero strength). Tests that asserted the six-decimal text are updated to the new text; none
+    changes a value.
+  - `cookScene()` is split: `cookSceneSource(std::string_view text, AssetGuid) → Result<CookedScene, SceneCookError>`
+    holds everything `cookScene()` does between reading the file and writing the files — the parse and every check,
+    `encodeSceneArtifact()` and the sidecar text; `cookScene()` reads the file, calls it, and writes both atomically
+    as today.
+  - `cookSceneToMemory(const scene::AuthoringScene&, AssetGuid)`: `toParsedSceneSource()`, `serializeSceneSource()`,
+    then `cookSceneSource()` — the build's own text path. The mapping's errors fold into `SceneCookError`
+    (`DanglingParentReference` → `UndeclaredParentReference`, `DanglingActiveCameraReference` →
+    `UndeclaredActiveCameraReference`, `AmbiguousEntityGuid` → `DuplicateEntityGuid`).
+  - **The round-trip check:** `cookSceneToMemory()` also maps the parsed text back (`toAuthoringScene()`) and
+    refuses with a new `SceneCookError::NotRepresentableInSource` unless it equals the document — the serializer
+    writes at most one of a node's mesh, camera and light, so a document holding two would otherwise be narrowed
+    silently (Spec 0049's ComponentExclusivity).
   - `decodeScene()` gains an overload over `CookedScene` (bytes and sidecar text) and stays the only constructor of
     `ValidatedSceneData` (its friend declaration names both overloads).
   - Byte identity with the build is a test over every committed scene and Bistro.
@@ -125,11 +144,22 @@ Read at `origin/main` `45fce69`.
 
 Each milestone builds and runs the affected suites (Debug) before the next.
 
-### M1 — In-memory cook and decode (P1; R7's determinism)
+### M1 — A lossless serializer, in-memory cook and decode (P1; R7, R9's determinism)
 
-- `src/asset_system/` (`cook_scene.{h,cpp}`, `decode_scene.{h,cpp}`, `validated_scene_data.h`'s friend line).
-- Tests: in-memory artifact = `cookScene()` file, byte for byte, for every committed scene and Bistro when present;
-  in-memory decode = file decode; every existing cook and decode test unchanged.
+- `src/asset_system/` (`scene_source.cpp`, `cook_scene.{h,cpp}`, `decode_scene.{h,cpp}`, `validated_scene_data.h`'s
+  friend line).
+- Tests:
+  - **Serializer:** for every committed scene and Bistro when present, parse → serialize → parse gives every value
+    bit for bit and serialize is idempotent; floats six decimals cannot hold (subnormals, `1e30`, `-0`,
+    `0.1234567`) and off-but-valued fog and bloom groups round-trip; the existing `scene_source_tests` text
+    expectations updated to the new format, no value changed.
+  - **No artifact moves:** every committed scene's artifact is byte-identical before and after (its cook reads the
+    unchanged source file); Bistro's generated source (the overlay's lines are written by `serializeSceneSource()`)
+    cooks to a byte-identical artifact.
+  - **Cook in memory:** in-memory artifact = `cookScene()` file, byte for byte, for every committed scene and Bistro
+    when present, both from the source file and from the saved text; in-memory decode = file decode; a parse-level
+    violation (a point light beyond the limit) refused by the in-memory cook; a camera and a light on one node
+    refused with `NotRepresentableInSource`; every existing cook and decode test otherwise unchanged.
 
 ### M2 — The authoring session and `AuthoringConnection` (P2, P3; R1–R6, R9)
 
@@ -189,7 +219,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 ## Files / Modules Touched (expected)
 
 - **Asset System:** `src/asset_system/include/atlantis/asset_system/cook_scene.h`, `decode_scene.h`,
-  `validated_scene_data.h`; `src/asset_system/src/cook_scene.cpp`, `decode_scene.cpp`.
+  `validated_scene_data.h`, `scene_source.h` (the serializer's comment), `errors.h` (`NotRepresentableInSource`); `src/asset_system/src/scene_source.cpp`
+  (the F5 fix), `cook_scene.cpp`, `decode_scene.cpp`; `tests/asset_system/scene_source_tests.cpp` and any test
+  asserting the old six-decimal text.
 - **Connection:** `src/connection/include/atlantis/connection/authoring_connection.h` (new),
   `runtime_control.h` (`sceneGeneration`), `src/connection/CMakeLists.txt`.
 - **GUID mint:** `src/tools/asset_cooker/guid_mint.{h,cpp}` moved to `src/asset_system/` (J8), with the cooker's
@@ -249,8 +281,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — Validation through a cook dry run** (P2): each transaction is validated by running P1's in-memory cook on
-  the candidate document, so the authoring session cannot accept what the cooker would refuse. Proposed: accept; a
-  separate validator would be a second statement of the same constraints.
+  the candidate document — serialize, parse, every cook check, encode (Correction 2026-10-22) — so the authoring
+  session cannot accept what the parser or the cooker would refuse. Proposed: accept; a separate validator would be
+  a second statement of the same constraints. J9's budget covers the serialize and parse steps too.
 - **J3 — Apply's budget on Bistro** (P4): reported as measured; proposed target under 1 s for cook, decode, bake and
   swap with no new GPU uploads, on the reference machine. Proposed: accept as a reported target, not a test verdict.
 - **J9 — Validation's budget on Bistro** (P2, J2): one single-property transaction on Bistro's generated document
@@ -269,6 +302,12 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   minting code, used by the cooker and by `CreateNode`. Proposed: accept; the alternative, requiring every
   `CreateNode` to carry a client-minted GUID, would put minting in every client (the C# SDK included), against
   ADR-0097 D1's one place.
+- **J10 — The corrected serializer's number format** (P1; Spec 0065 Correction 2026-10-22). **Ruled (slmao,
+  2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281)): as proposed** — `std::to_chars` with no format argument, the shortest round-trip
+  text, `-0` kept. The option text follows: `std::to_chars(value)` with no format argument — the shortest text that parses back to the same float,
+  fixed or scientific, whichever is shorter (`0`, `1.0472`, `1e-07`) — and `-0` kept as `-0`. Proposed: accept; it
+  is the standard's own round-trip guarantee, it needs no precision constant, and the parser already reads every
+  such form. The alternative, a fixed `%.9g`, is lossless too but writes `1.04719996` for `1.0472`.
 
 Standing rules, as for Plans 0062–0064: no merge by the agent and no push to `main`; goldens byte-identical, none
 re-captured; `tests/performance/baselines/` and `gate_policy.json` untouched; changes limited to this Plan's file

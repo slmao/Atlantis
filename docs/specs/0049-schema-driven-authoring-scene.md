@@ -23,6 +23,7 @@
   decimals; fog/bloom values dropped while the group is off) is the known
   defect F5 of Plan 0049. Fixing it belongs to the next serializer's spec,
   since it is also the Bistro overlay's writer and a fix would change bytes.
+  (F5 is fixed by Spec 0065's Correction, 2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281).)
   The Testing plan's R5 round trip is narrowed accordingly. No other
   requirement changes.
 - **Related ADR(s):**
@@ -252,7 +253,7 @@ Also out of scope:
     is syntax. Text emission through `serializeSceneSource()` is lossy
     outside the values it represents exactly (known defect F5, Plan 0049),
     and is tested only within them (Correction 2026-10-05, Plan 0049
-    ruling J3).
+    ruling J3). F5 is fixed by Spec 0065's Correction, 2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281).
   - **Semantic → artifact** is a declared **projection**: asset GUIDs become
     keys (`assetKey()`), node references become indices, and `node_id` is not
     carried. The projection is checked against `cookScene()` →
@@ -436,7 +437,7 @@ the byte-behaviour guard. Mapping to requirements:
     equal, over every committed scene source, the Bistro overlay and the test
     fixtures; text round trips through `serializeSceneSource()` only within
     its exactly-representable values (Correction 2026-10-05, Plan 0049
-    ruling J3);
+    ruling J3; F5 fixed by Spec 0065's Correction, 2026-10-22, [PR #281](https://github.com/slmao/Atlantis/pull/281));
   - authoring → cook → decode equals the declared projection;
   - each codec's declared semantic version equals the scene schema's.
 - **R6:** fingerprint pin and version. A demonstration (not committed) shows
