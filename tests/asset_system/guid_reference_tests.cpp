@@ -34,7 +34,7 @@ constexpr const char* kNil = "00000000-0000-0000-0000-000000000000";
          " parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 1.0 1.0" + tail + "\n";
 }
 
-[[nodiscard]] std::string scene(const std::vector<std::string>& nodeLines) {
+[[nodiscard]] std::string sceneSource(const std::vector<std::string>& nodeLines) {
   std::string text = "atlantis_scene_source_version: 7\nnode_count: " + std::to_string(nodeLines.size()) +
                      "\nactive_camera: none\n";
   for (const std::string& line : nodeLines) text += line;
@@ -76,7 +76,7 @@ struct Scratch {
 
 TEST_CASE("Scene source v7 reads guid= and GUID mesh= references", "[asset_system][scene][guid]") {
   const auto parsed =
-      parseSceneSource(scene({nodeLine("1", std::string("guid=") + kNodeGuidA, std::string(" mesh=") + kMeshGuid)}));
+      parseSceneSource(sceneSource({nodeLine("1", std::string("guid=") + kNodeGuidA, std::string(" mesh=") + kMeshGuid)}));
   REQUIRE(parsed.isOk());
   CHECK(toString(parsed.value().nodes[0].entityGuid) == kNodeGuidA);
   REQUIRE(parsed.value().nodes[0].meshAsset.has_value());
@@ -91,23 +91,23 @@ TEST_CASE("Scene source v7 reads guid= and GUID mesh= references", "[asset_syste
 
 TEST_CASE("Scene source v7 rejects a missing or malformed guid= and malformed references",
           "[asset_system][scene][guid]") {
-  CHECK(parseSceneSource(scene({nodeLine("1", "parent_marker=1")})).error() ==
+  CHECK(parseSceneSource(sceneSource({nodeLine("1", "parent_marker=1")})).error() ==
         SceneSourceParseError::FieldOrderMismatch);
-  CHECK(parseSceneSource(scene({"node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 "
+  CHECK(parseSceneSource(sceneSource({"node: node_id=1 parent=none position=0.0 0.0 0.0 rotation=0.0 0.0 0.0 scale=1.0 "
                                 "1.0 1.0\n"}))
             .error() == SceneSourceParseError::FieldOrderMismatch);
-  CHECK(parseSceneSource(scene({nodeLine("1", "guid=not-a-guid")})).error() == SceneSourceParseError::MalformedGuid);
-  CHECK(parseSceneSource(scene({nodeLine("1", std::string("guid=") + kNodeGuidA, " mesh=meshes/cube.mesh.txt")}))
+  CHECK(parseSceneSource(sceneSource({nodeLine("1", "guid=not-a-guid")})).error() == SceneSourceParseError::MalformedGuid);
+  CHECK(parseSceneSource(sceneSource({nodeLine("1", std::string("guid=") + kNodeGuidA, " mesh=meshes/cube.mesh.txt")}))
             .error() == SceneSourceParseError::MalformedGuid);
-  CHECK(parseSceneSource(scene({nodeLine("1", std::string("guid=") + kNodeGuidA, std::string(" mesh=") + kNil)}))
+  CHECK(parseSceneSource(sceneSource({nodeLine("1", std::string("guid=") + kNodeGuidA, std::string(" mesh=") + kNil)}))
             .error() == SceneSourceParseError::MalformedGuid);
-  CHECK(parseSceneSource(scene({nodeLine("1", std::string("guid=") + kNodeGuidA,
+  CHECK(parseSceneSource(sceneSource({nodeLine("1", std::string("guid=") + kNodeGuidA,
                                          std::string(" mesh=") + kMeshGuid + " material=materials/a.material.txt")}))
             .error() == SceneSourceParseError::MalformedGuid);
 }
 
 TEST_CASE("A nil guid= parses, and cookScene rejects it as NilEntityGuid", "[asset_system][scene][guid]") {
-  const std::string text = scene({nodeLine("1", std::string("guid=") + kNil)});
+  const std::string text = sceneSource({nodeLine("1", std::string("guid=") + kNil)});
   const auto parsed = parseSceneSource(text);
   REQUIRE(parsed.isOk());
   CHECK(parsed.value().nodes[0].entityGuid == EntityGuid{});
@@ -120,14 +120,14 @@ TEST_CASE("A nil guid= parses, and cookScene rejects it as NilEntityGuid", "[ass
 TEST_CASE("cookScene rejects two nodes sharing one guid= as DuplicateEntityGuid", "[asset_system][scene][guid]") {
   const Scratch scratch;
   const std::string guidToken = std::string("guid=") + kNodeGuidA;
-  CHECK(cookText(scratch, scene({nodeLine("1", guidToken), nodeLine("2", guidToken)})).error() ==
+  CHECK(cookText(scratch, sceneSource({nodeLine("1", guidToken), nodeLine("2", guidToken)})).error() ==
         SceneCookError::DuplicateEntityGuid);
   CHECK_FALSE(fs::exists(scratch.path / "s.ascene"));
 }
 
 TEST_CASE("The scene artifact carries each node's EntityGuid through cook and decode", "[asset_system][scene][guid]") {
   const Scratch scratch;
-  REQUIRE(cookText(scratch, scene({nodeLine("1", std::string("guid=") + kNodeGuidA),
+  REQUIRE(cookText(scratch, sceneSource({nodeLine("1", std::string("guid=") + kNodeGuidA),
                                    nodeLine("2", std::string("guid=") + kNodeGuidB)}))
               .isOk());
   std::ifstream in(scratch.path / "s.ascene", std::ios::binary);

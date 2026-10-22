@@ -1,9 +1,16 @@
 #include <atlantis/asset_system/scene_source.h>
 #include <atlantis/asset_system/scene_types.h>
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -789,16 +796,24 @@ TEST_CASE("serializeSceneSource then parseSceneSource round-trips a camera fog g
   checkParsedFog(reparsed.value().nodes[0].camera->fog);
 }
 
-TEST_CASE("serializeSceneSource writes no fog group when density is 0", "[asset_system][scene][fog]") {
-  // Density 0 is fog off, the same value as no group -- whatever the
-  // other four fields hold.
+TEST_CASE("serializeSceneSource keeps a fog group that is off but valued", "[asset_system][scene][fog]") {
+  // Plan 0065 P1 (fixes Plan 0049 F5): density 0 is fog off, but the other
+  // values are ordinary values (Plan 0049 ruling J4) -- the group is written
+  // whenever any of its seven values is non-zero, so none is lost.
   const auto parsed = parseSceneSource(oneCameraNodeSource(" fog=0 1.5 0.25 0.9 fog_color=0.5 0.75 2.0"));
   REQUIRE(parsed.isOk());
   const std::string text = serializeSceneSource(parsed.value());
-  CHECK(text.find("fog") == std::string::npos);
+  CHECK(text.find(" fog=0 1.5 0.25 0.9 fog_color=0.5 0.75 2 bloom=0 1\n") != std::string::npos);
   const auto reparsed = parseSceneSource(text);
   REQUIRE(reparsed.isOk());
-  CHECK(reparsed.value().nodes[0].camera->fog.density == 0.0f);
+  const DecodedCameraFog& fog = reparsed.value().nodes[0].camera->fog;
+  CHECK(fog.density == 0.0f);
+  CHECK(fog.height == 1.5f);
+  CHECK(fog.heightFalloff == 0.25f);
+  CHECK(fog.maxOpacity == 0.9f);
+  CHECK(fog.colorR == 0.5f);
+  CHECK(fog.colorG == 0.75f);
+  CHECK(fog.colorB == 2.0f);
 }
 
 // ---------------------------------------------------------------------
@@ -901,7 +916,7 @@ TEST_CASE("parseSceneSource: the bloom grammar rejects only non-numbers -- the v
   CHECK(result.value().nodes[0].camera->bloom.threshold == -1.0f);
 }
 
-TEST_CASE("serializeSceneSource round-trips a bloom group, with and without fog, and writes none at strength 0",
+TEST_CASE("serializeSceneSource round-trips a bloom group, with and without fog, and keeps an off group's threshold",
           "[asset_system][scene][bloom]") {
   for (const char* suffix : {" bloom=0.25 1.5", " fog=0.05 1.5 0.25 0.9 fog_color=0.5 0.75 2.0 bloom=0.25 1.5"}) {
     DYNAMIC_SECTION(suffix) {
@@ -915,7 +930,208 @@ TEST_CASE("serializeSceneSource round-trips a bloom group, with and without fog,
       CHECK(reparsed.value().nodes[0].camera->bloom.threshold == 1.5f);
     }
   }
+  // Plan 0065 P1 (fixes Plan 0049 F5): strength 0 is bloom off, and the
+  // threshold is still written whenever either value is non-zero.
   const auto off = parseSceneSource(oneCameraNodeSource(" bloom=0 3.0"));
   REQUIRE(off.isOk());
-  CHECK(serializeSceneSource(off.value()).find("bloom") == std::string::npos);
+  const std::string offText = serializeSceneSource(off.value());
+  CHECK(offText.find(" bloom=0 3\n") != std::string::npos);
+  const auto offReparsed = parseSceneSource(offText);
+  REQUIRE(offReparsed.isOk());
+  CHECK(offReparsed.value().nodes[0].camera->bloom.strength == 0.0f);
+  CHECK(offReparsed.value().nodes[0].camera->bloom.threshold == 3.0f);
+}
+
+// ---------------------------------------------------------------------
+// Plan 0065 M1 (P1; Spec 0065 Correction 2026-10-22, ruling J10): the
+// serializer is lossless -- shortest round-trip floats, and fog and bloom
+// groups written whenever any of their values is non-zero.
+// ---------------------------------------------------------------------
+
+namespace {
+
+namespace fs = std::filesystem;
+
+[[nodiscard]] std::string readSourceText(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
+}
+
+[[nodiscard]] bool sameBits(float a, float b) {
+  return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+[[nodiscard]] std::vector<float> floatsOf(const ParsedSceneNode& n) {
+  const DecodedTransform& t = n.transform;
+  std::vector<float> out = {t.positionX,     t.positionY,     t.positionZ, t.eulerXRadians, t.eulerYRadians,
+                            t.eulerZRadians, t.scaleX,        t.scaleY,    t.scaleZ};
+  if (n.camera.has_value()) {
+    const DecodedCamera& c = *n.camera;
+    out.insert(out.end(), {c.fovYRadians, c.nearZ, c.farZ, c.exposureCompensationEv, c.fog.density, c.fog.height,
+                           c.fog.heightFalloff, c.fog.maxOpacity, c.fog.colorR, c.fog.colorG, c.fog.colorB,
+                           c.bloom.strength, c.bloom.threshold});
+  }
+  if (n.light.has_value()) {
+    const DecodedLight& l = *n.light;
+    out.insert(out.end(), {l.colorR, l.colorG, l.colorB, l.intensity, l.range});
+  }
+  return out;
+}
+
+// Every value of two parsed sources, floats compared bit for bit.
+void checkSameBits(const ParsedSceneSource& a, const ParsedSceneSource& b) {
+  CHECK(a.activeCameraNodeId == b.activeCameraNodeId);
+  REQUIRE(a.nodes.size() == b.nodes.size());
+  for (std::size_t i = 0; i < a.nodes.size(); ++i) {
+    INFO("node " << i);
+    const ParsedSceneNode& x = a.nodes[i];
+    const ParsedSceneNode& y = b.nodes[i];
+    CHECK(x.nodeId == y.nodeId);
+    CHECK(x.entityGuid == y.entityGuid);
+    CHECK(x.parentNodeId == y.parentNodeId);
+    CHECK(x.meshAsset == y.meshAsset);
+    CHECK(x.materialAsset == y.materialAsset);
+    CHECK(x.camera.has_value() == y.camera.has_value());
+    CHECK(x.light.has_value() == y.light.has_value());
+    if (x.light.has_value() && y.light.has_value()) CHECK(x.light->kind == y.light->kind);
+    const std::vector<float> fx = floatsOf(x);
+    const std::vector<float> fy = floatsOf(y);
+    REQUIRE(fx.size() == fy.size());
+    for (std::size_t f = 0; f < fx.size(); ++f) {
+      INFO("float " << f);
+      CHECK(sameBits(fx[f], fy[f]));
+    }
+  }
+}
+
+// parse -> serialize -> parse gives every value bit for bit, and serialize is
+// idempotent.
+void checkLosslessAndIdempotent(const std::string& sourceText) {
+  const auto parsed = parseSceneSource(sourceText);
+  REQUIRE(parsed.isOk());
+  const std::string text = serializeSceneSource(parsed.value());
+  const auto reparsed = parseSceneSource(text);
+  REQUIRE(reparsed.isOk());
+  checkSameBits(parsed.value(), reparsed.value());
+  CHECK(serializeSceneSource(reparsed.value()) == text);
+}
+
+// The committed scene sources: every scene, the test fixtures, and the Bistro
+// overlay.
+[[nodiscard]] std::vector<fs::path> committedSceneSources() {
+  std::vector<fs::path> out;
+  const fs::path assets{ATLANTIS_ASSETS_DIR};
+  for (const fs::path& dir : {assets / "scenes", assets / "_test_fixtures"}) {
+    for (const auto& entry : fs::directory_iterator(dir)) {
+      if (entry.path().filename().string().ends_with(".scene.txt")) out.push_back(entry.path());
+    }
+  }
+  out.push_back(assets / "bistro" / "bistro_overlay.scene.txt");
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("serializeSceneSource is lossless and idempotent over every committed scene source",
+          "[asset_system][scene][serializer]") {
+  const std::vector<fs::path> sources = committedSceneSources();
+  REQUIRE(sources.size() == 28);  // 26 scenes, the CMake-declaration fixture, the Bistro overlay
+  for (const fs::path& source : sources) {
+    INFO(source.string());
+    checkLosslessAndIdempotent(readSourceText(source));
+  }
+}
+
+#if defined(ATLANTIS_BISTRO_SCENE_IMPORT_DIR)
+TEST_CASE("serializeSceneSource is lossless and idempotent over Bistro's generated source",
+          "[asset_system][scene][serializer][content]") {
+  const fs::path source = fs::path{ATLANTIS_BISTRO_SCENE_IMPORT_DIR} / "bistro" / "bistro.scene.txt";
+  if (!fs::exists(source)) SKIP("Bistro content not imported");
+  checkLosslessAndIdempotent(readSourceText(source));
+}
+#endif
+
+TEST_CASE("serializeSceneSource keeps the floats six decimals could not hold, bit for bit",
+          "[asset_system][scene][serializer]") {
+  const float hard[] = {std::numeric_limits<float>::denorm_min(),
+                        1.0e-40f,  // a subnormal
+                        -std::numeric_limits<float>::denorm_min(),
+                        1e30f,
+                        -0.0f,
+                        0.1234567f,
+                        -0.6435011f,
+                        1e-7f,
+                        std::numeric_limits<float>::max(),
+                        std::numeric_limits<float>::lowest(),
+                        std::numeric_limits<float>::min(),
+                        16777217.0f};
+  for (const float value : hard) {
+    INFO(value);
+    ParsedSceneSource source;
+    ParsedSceneNode camera;
+    camera.nodeId = 1;
+    camera.transform = DecodedTransform{value, value, value, value, value, value, value, value, value};
+    DecodedCamera c;
+    c.fovYRadians = value;
+    c.nearZ = value;
+    c.farZ = value;
+    c.exposureCompensationEv = value;
+    c.fog = DecodedCameraFog{value, value, value, value, value, value, value};
+    c.bloom = DecodedCameraBloom{value, value};
+    if (value == 0.0f) {
+      // An all-zero group is not written (the last test below); keep one
+      // value non-zero so -0 is carried in the others.
+      c.fog.colorR = 1.0f;
+      c.bloom.threshold = 1.0f;
+    }
+    camera.camera = c;
+    source.nodes = {camera};
+    // A point light carries the value where the grammar's light domain allows
+    // it: colour in [0, 1], intensity >= 0, range > 0.
+    const float magnitude = std::fabs(value);
+    if (magnitude > 0.0f) {
+      ParsedSceneNode light;
+      light.nodeId = 2;
+      light.light = DecodedLight{DecodedLightKind::Point, magnitude <= 1.0f ? magnitude : 1.0f, 0.0f, 1.0f, magnitude,
+                                 magnitude};
+      source.nodes.push_back(light);
+    }
+
+    const std::string text = serializeSceneSource(source);
+    const auto reparsed = parseSceneSource(text);
+    REQUIRE(reparsed.isOk());
+    checkSameBits(source, reparsed.value());
+    CHECK(serializeSceneSource(reparsed.value()) == text);
+  }
+}
+
+TEST_CASE("serializeSceneSource writes the shortest round-trip text (ruling J10)", "[asset_system][scene][serializer]") {
+  ParsedSceneSource source;
+  ParsedSceneNode node;
+  node.nodeId = 1;
+  node.transform = DecodedTransform{0.0f, -0.0f, 1.0472f, 1e-7f, 0.1f, -2.5f, 1.0f, 100.0f, 1e30f};
+  source.nodes = {node};
+  const std::string text = serializeSceneSource(source);
+  CHECK(text.find(" position=0 -0 1.0472 rotation=1e-07 0.1 -2.5 scale=1 100 1e+30\n") != std::string::npos);
+}
+
+TEST_CASE("serializeSceneSource writes no fog or bloom group whose values are all zero",
+          "[asset_system][scene][serializer]") {
+  // The rule as Spec 0065's Correction states it: a group is written when any
+  // of its values is non-zero. An all-zero group is omitted, and reads back as
+  // the no-group defaults; cookSceneToMemory() refuses such a document
+  // (NotRepresentableInSource) rather than narrowing it.
+  const auto parsed = parseSceneSource(oneCameraNodeSource(" fog=0 0 0 0 fog_color=0 0 0 bloom=0 0"));
+  REQUIRE(parsed.isOk());
+  const std::string text = serializeSceneSource(parsed.value());
+  CHECK(text.find("fog") == std::string::npos);
+  CHECK(text.find("bloom") == std::string::npos);
+
+  // A camera with the no-group defaults (colour 1, max opacity 1, threshold 1)
+  // writes both groups, at those defaults.
+  const auto defaults = parseSceneSource(oneCameraNodeSource(""));
+  REQUIRE(defaults.isOk());
+  CHECK(serializeSceneSource(defaults.value()).find(" fog=0 0 0 1 fog_color=1 1 1 bloom=0 1\n") != std::string::npos);
 }

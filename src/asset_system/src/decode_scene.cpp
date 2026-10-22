@@ -45,24 +45,31 @@ atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const
                                                                             const std::string& metadataPath) {
   using ResultT = atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError>;
 
-  // Step 1: read both files.
-  std::vector<std::byte> artifactBytes;
-  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(SceneArtifactDecodeError::ArtifactUnreadable);
+  // Step 1: read both files; steps 2-9 are the in-memory overload's.
+  CookedScene cooked;
+  if (!readFileBytes(artifactPath, cooked.artifactBytes)) {
+    return ResultT::Err(SceneArtifactDecodeError::ArtifactUnreadable);
+  }
+  if (!readFileText(metadataPath, cooked.metadataText)) {
+    return ResultT::Err(SceneArtifactDecodeError::MetadataUnreadable);
+  }
+  return decodeScene(cooked);
+}
 
-  std::string metadataText;
-  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(SceneArtifactDecodeError::MetadataUnreadable);
+atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const CookedScene& cooked) {
+  using ResultT = atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError>;
 
   // Steps 2-7: header decode, EmptyScene/NodeCountOutOfRange guards,
   // per-node structural/finite-value decode, cycle re-check,
   // active-camera range/Camera-presence check -- delegated to the
   // shared codec (Step 3's own decodeSceneArtifact()).
-  auto decodedArtifactResult = decodeSceneArtifact(artifactBytes);
+  auto decodedArtifactResult = decodeSceneArtifact(cooked.artifactBytes);
   if (decodedArtifactResult.isErr()) return ResultT::Err(decodedArtifactResult.error());
   DecodedSceneArtifact& decodedArtifact = decodedArtifactResult.value();
 
   // Step 8: metadata parse + cross-check against the artifact's own
   // already-validated header fields.
-  const auto metadataResult = parseSceneMetadata(metadataText);
+  const auto metadataResult = parseSceneMetadata(cooked.metadataText);
   if (metadataResult.isErr()) return ResultT::Err(SceneArtifactDecodeError::MetadataParseFailed);
   const SceneMetadata& metadata = metadataResult.value();
 
@@ -73,7 +80,8 @@ atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const
 
   // Step 9: construct ValidatedSceneData via its own private
   // constructor -- the only call site in the entire codebase permitted
-  // to do so, reachable only now that every check above has passed.
+  // to do so (the file overload reaches it through this one), reachable
+  // only now that every check above has passed.
   return ResultT::Ok(ValidatedSceneData(std::move(decodedArtifact.nodes), std::move(decodedArtifact.parents),
                                          decodedArtifact.activeCameraIndex, std::move(decodedArtifact.entityGuids)));
 }

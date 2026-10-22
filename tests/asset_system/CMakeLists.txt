@@ -23,6 +23,7 @@ add_executable(atlantis_asset_system_tests
   validated_scene_data_tests.cpp
   scene_source_tests.cpp
   cook_scene_tests.cpp
+  scene_in_memory_cook_tests.cpp
   decode_scene_tests.cpp
   scene_asset_cmake_declaration_tests.cpp
   texture_metadata_tests.cpp

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/asset_system/validated_scene_data.h>
 #include <atlantis/result.h>
@@ -25,5 +26,11 @@ namespace atlantis::asset_system {
 // coupling, only forward-declares what its own friend clause needs.
 [[nodiscard]] atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(
     const std::string& artifactPath, const std::string& metadataPath);
+
+// Plan 0065 P1 (ADR-0131 D2): the same decode over a scene cooked in memory --
+// steps 2-9 above on the artifact bytes and sidecar text cookSceneToMemory()
+// returns. The file overload reads both files and decodes them here, so the
+// two are one decoder; still the only constructor of ValidatedSceneData.
+[[nodiscard]] atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const CookedScene& cooked);
 
 }  // namespace atlantis::asset_system

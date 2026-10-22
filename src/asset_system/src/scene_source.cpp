@@ -1,5 +1,8 @@
 #include <atlantis/asset_system/scene_source.h>
 
+#include <atlantis/assert.h>
+
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
@@ -130,6 +133,17 @@ constexpr std::string_view kPointToken = "point";
 [[nodiscard]] bool consumePrefixedFloat(std::string_view token, std::string_view prefix, float& out) {
   if (token.substr(0, prefix.size()) != prefix) return false;
   return parseFloatToken(token.substr(prefix.size()), out);
+}
+
+// Plan 0065 P1 (Spec 0065 Correction 2026-10-22, ruling J10): the shortest text
+// that parses back to the same float -- std::to_chars with no format argument,
+// fixed or scientific, whichever is shorter (0, 1.0472, 1e-07); -0 stays -0.
+// parseFloatToken() reads every such form (std::chars_format::general).
+[[nodiscard]] std::string formatFloat(float value) {
+  std::array<char, 32> buffer{};
+  const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+  ATLANTIS_CHECK_MSG(result.ec == std::errc{}, "formatFloat(): std::to_chars failed");
+  return std::string(buffer.data(), result.ptr);
 }
 
 }  // namespace
@@ -492,14 +506,14 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += std::string(kParentPrefix) +
            (node.parentNodeId.has_value() ? std::to_string(*node.parentNodeId) : std::string(kNoneToken));
     out += ' ';
-    out += std::string(kPositionPrefix) + std::to_string(node.transform.positionX) + ' ' +
-           std::to_string(node.transform.positionY) + ' ' + std::to_string(node.transform.positionZ);
+    out += std::string(kPositionPrefix) + formatFloat(node.transform.positionX) + ' ' +
+           formatFloat(node.transform.positionY) + ' ' + formatFloat(node.transform.positionZ);
     out += ' ';
-    out += std::string(kRotationPrefix) + std::to_string(node.transform.eulerXRadians) + ' ' +
-           std::to_string(node.transform.eulerYRadians) + ' ' + std::to_string(node.transform.eulerZRadians);
+    out += std::string(kRotationPrefix) + formatFloat(node.transform.eulerXRadians) + ' ' +
+           formatFloat(node.transform.eulerYRadians) + ' ' + formatFloat(node.transform.eulerZRadians);
     out += ' ';
-    out += std::string(kScalePrefix) + std::to_string(node.transform.scaleX) + ' ' +
-           std::to_string(node.transform.scaleY) + ' ' + std::to_string(node.transform.scaleZ);
+    out += std::string(kScalePrefix) + formatFloat(node.transform.scaleX) + ' ' + formatFloat(node.transform.scaleY) +
+           ' ' + formatFloat(node.transform.scaleZ);
 
     if (node.meshAsset.has_value()) {
       out += ' ';
@@ -510,25 +524,27 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
       }
     } else if (node.camera.has_value()) {
       out += ' ';
-      out += std::string(kCameraFovYPrefix) + std::to_string(node.camera->fovYRadians) + ' ' +
-             std::string(kCameraNearZPrefix) + std::to_string(node.camera->nearZ) + ' ' +
-             std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ) + ' ' +
-             std::string(kCameraExposureEvPrefix) + std::to_string(node.camera->exposureCompensationEv);
-      // Plan 0043 P1: written only when fog is on -- density 0 is the
-      // same value as no group.
+      out += std::string(kCameraFovYPrefix) + formatFloat(node.camera->fovYRadians) + ' ' +
+             std::string(kCameraNearZPrefix) + formatFloat(node.camera->nearZ) + ' ' +
+             std::string(kCameraFarZPrefix) + formatFloat(node.camera->farZ) + ' ' +
+             std::string(kCameraExposureEvPrefix) + formatFloat(node.camera->exposureCompensationEv);
+      // Plan 0065 P1 (Spec 0065 Correction 2026-10-22; fixes Plan 0049 F5): the
+      // fog group is written whenever any of its seven values is non-zero, so a
+      // group that is off (density 0) keeps its other values.
       const DecodedCameraFog& fog = node.camera->fog;
-      if (fog.density != 0.0f) {
+      if (fog.density != 0.0f || fog.height != 0.0f || fog.heightFalloff != 0.0f || fog.maxOpacity != 0.0f ||
+          fog.colorR != 0.0f || fog.colorG != 0.0f || fog.colorB != 0.0f) {
         out += ' ';
-        out += std::string(kFogPrefix) + std::to_string(fog.density) + ' ' + std::to_string(fog.height) + ' ' +
-               std::to_string(fog.heightFalloff) + ' ' + std::to_string(fog.maxOpacity) + ' ' +
-               std::string(kFogColorPrefix) + std::to_string(fog.colorR) + ' ' + std::to_string(fog.colorG) + ' ' +
-               std::to_string(fog.colorB);
+        out += std::string(kFogPrefix) + formatFloat(fog.density) + ' ' + formatFloat(fog.height) + ' ' +
+               formatFloat(fog.heightFalloff) + ' ' + formatFloat(fog.maxOpacity) + ' ' +
+               std::string(kFogColorPrefix) + formatFloat(fog.colorR) + ' ' + formatFloat(fog.colorG) + ' ' +
+               formatFloat(fog.colorB);
       }
-      // Plan 0044 P1: likewise, written only when bloom is on.
+      // Likewise the bloom group, whenever either value is non-zero.
       const DecodedCameraBloom& bloom = node.camera->bloom;
-      if (bloom.strength != 0.0f) {
+      if (bloom.strength != 0.0f || bloom.threshold != 0.0f) {
         out += ' ';
-        out += std::string(kBloomPrefix) + std::to_string(bloom.strength) + ' ' + std::to_string(bloom.threshold);
+        out += std::string(kBloomPrefix) + formatFloat(bloom.strength) + ' ' + formatFloat(bloom.threshold);
       }
     } else if (node.light.has_value()) {
       out += ' ';
@@ -536,13 +552,13 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
              (node.light->kind == DecodedLightKind::Directional ? std::string(kDirectionalToken)
                                                                   : std::string(kPointToken));
       out += ' ';
-      out += std::string(kColorPrefix) + std::to_string(node.light->colorR) + ' ' +
-             std::to_string(node.light->colorG) + ' ' + std::to_string(node.light->colorB);
+      out += std::string(kColorPrefix) + formatFloat(node.light->colorR) + ' ' + formatFloat(node.light->colorG) + ' ' +
+             formatFloat(node.light->colorB);
       out += ' ';
-      out += std::string(kIntensityPrefix) + std::to_string(node.light->intensity);
+      out += std::string(kIntensityPrefix) + formatFloat(node.light->intensity);
       if (node.light->kind == DecodedLightKind::Point) {
         out += ' ';
-        out += std::string(kRangePrefix) + std::to_string(node.light->range);
+        out += std::string(kRangePrefix) + formatFloat(node.light->range);
       }
     }
 
