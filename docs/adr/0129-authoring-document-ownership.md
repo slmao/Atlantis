@@ -115,3 +115,25 @@ verbatim and are not superseded except where this section says so explicitly.
 ruled [Plan 0065](../plans/0065-authoring-data-layer.md) J10 as recommended (`std::to_chars` with no format argument,
 the shortest round-trip text, `-0` kept), in the review of [PR #281](https://github.com/slmao/Atlantis/pull/281). This amendment records what that
 Correction means for this ADR; no decision above is reopened.
+
+## Accepted Amendment — 2026-10-22 (second)
+
+**Status of this section:** accepted by Human Review on 2026-10-22, together with Spec 0065's second Correction
+(slmao, review of its docs PR [PR #282](https://github.com/slmao/Atlantis/pull/282)). **This section does not itself change this ADR's top-level Status**
+(`Accepted` above is unchanged). It corrects one sentence of the
+Accepted Amendment above and nothing else; that amendment's other items, and the Decision, Context, Consequences and
+Alternatives Considered, are unchanged.
+
+1. **The group rule in item 1 above.** "Writes a camera's fog and bloom groups whenever any of their values is
+   non-zero" reads: writes a camera's fog group unless it equals the no-group default, value for value, and likewise
+   its bloom group, the values compared bit for bit. The no-group defaults are not all zero (fog colour `(1, 1, 1)`,
+   maximum opacity `1`, bloom threshold `1`), so the superseded rule wrote default groups on every camera and lost a
+   group whose values were all zero. With the corrected rule an absent group reads back as exactly the default, so
+   item 1's "lossless" holds without exception, and item 2's "a first save may rewrite number formatting, never a
+   value" holds as written: a camera at the defaults writes no group.
+
+### Human Review — Amendment Acceptance (2026-10-22, second)
+
+**Deciders:** slmao — accepted [Spec 0065](../specs/0065-authoring-data-layer.md)'s second Correction (2026-10-22),
+with the comparison with the no-group default ruled bit for bit (a `-0` differs from `0`, so it is written), in the
+review of [PR #282](https://github.com/slmao/Atlantis/pull/282). This amendment corrects the one rule sentence of the first; no decision above is reopened.

@@ -16,7 +16,8 @@
   Plan 0049's known defect F5, which Spec 0049's Correction (2026-10-05, ruling J3) left to "the next serializer's
   spec". This Spec is the first to write source text back, so it fixes F5 (fact 6, R9, Plan P1):
   - `serializeSceneSource()` writes every float as its shortest round-trip form (`std::to_chars`), and writes the fog
-    and bloom groups whenever any of their values is non-zero. The grammar, already parsed with
+    and bloom groups whenever any of their values is non-zero (this group rule is superseded by the second
+    Correction below). The grammar, already parsed with
     `std::chars_format::general` and accepting both groups at zero strength, does not change; nor do the source
     format version, the artifact, the catalog or the semantic version.
   - The in-memory cook runs the build's own text path — serialize, parse, every cook check, encode — so a
@@ -30,6 +31,26 @@
   - No ADR decision changes: ADR-0131 D2's in-memory cook already runs "every `cookScene()` check", the parse
     included, and ADR-0100 D6's "source ⇄ semantic is lossless" now also holds at the text layer. ADR-0129 and
     ADR-0131 each record what this Correction means for them in an Accepted Amendment (2026-10-22).
+- **Second Correction (2026-10-22, post-Approval, found while implementing Plan 0065 M1; accepted by slmao,
+  2026-10-22, in the review of its own docs PR [PR #282](https://github.com/slmao/Atlantis/pull/282), with the comparison with the no-group default ruled
+  bit for bit):** the first Correction's group rule ("written whenever any of their values is non-zero")
+  assumed that the no-group defaults are all zero. They are not: a camera with no fog group carries fog colour
+  `(1, 1, 1)` and maximum opacity `1`, and one with no bloom group carries threshold `1` (`DecodedCameraFog`,
+  `DecodedCameraBloom`, and the semantic `CameraFog`, `CameraBloom`). So that rule writes both groups, at their
+  defaults, on every camera, and it drops a group whose values are all zero, which then reads back as the defaults:
+  lossy. M1 (commit `344da6a`, on the feature branch) implements the rule as ruled, and its round-trip check refuses
+  such a document (`NotRepresentableInSource`) rather than narrowing it. Corrected:
+  - **The group rule:** a camera's fog group is written unless it equals the no-group default, value for value, and likewise its bloom group. The values are compared bit for bit, so a group holding a `-0` where the
+    default is `0` is written and keeps its `-0` (J10). A group absent from the text parses as the default, so the
+    rule is lossless by construction, an all-zero group included.
+  - A camera at the defaults writes no group, as before F5's fix, so the first save of a hand-authored file changes
+    number formatting only, as ADR-0129's amendment says.
+  - Nothing else changes: the grammar, the artifact, the round-trip check and the byte-identity results. Every
+    committed artifact is cooked from its unchanged source file, and the Bistro overlay's only camera has both groups
+    on, so its generated source is unchanged by this rule.
+  - ADR-0129's Accepted Amendment states the superseded rule; a second dated amendment there corrects that one
+    sentence (Accepted Amendment — 2026-10-22, second). ADR-0131's amendment does not state the rule and is
+    unchanged.
 - **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through
@@ -208,7 +229,8 @@ keeps the decision about data.
     Runtime's resource maps then hold exactly what a fresh start on the new document would load.
 - **R9 — Save.** Save writes the document to its source path atomically, through `toParsedSceneSource()` and
   `serializeSceneSource()`, which is lossless (Correction 2026-10-22): every float in its shortest round-trip form,
-  the fog and bloom groups written whenever any of their values is non-zero. Parsing the saved text gives back the
+  and a camera's fog and bloom groups each written unless it equals the no-group default, compared bit for bit
+  (second Correction 2026-10-22). Parsing the saved text gives back the
   document, every value bit for bit. Saving a document that has not changed since its last save rewrites the same
   bytes; the first save of a hand-authored file may rewrite its number formatting, never a value. An imported
   scene's save is refused.
@@ -323,7 +345,8 @@ The alternatives are recorded with each open question below; the principal ones:
 - **Serializer (F5):** for every committed scene and Bistro when present, parsing the serialized document gives
   back every value bit for bit; serializing that parse gives the same text (idempotence); floats that six decimals
   cannot hold (subnormals, large magnitudes, `-0`, values such as `0.1234567`) and fog and bloom groups that are off
-  but hold values round-trip; every committed scene's artifact, cooked from its unchanged source file, stays
+  but hold values round-trip, an all-zero group included, and a camera at the no-group defaults writes no group
+  (second Correction); every committed scene's artifact, cooked from its unchanged source file, stays
   byte-identical (the cook does not serialize), and Bistro's generated source cooks to the same artifact as before.
 - **Cook in memory:** for every committed scene and Bistro when present, the in-memory artifact equals
   `cookScene()`'s file byte for byte — of the scene's own source file and of its saved text — and the in-memory
