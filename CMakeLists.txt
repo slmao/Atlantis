@@ -113,6 +113,10 @@ add_subdirectory(src/world)
 # Plan 0054 P1 (ADR-0105 D3): Atlantis Connection, after World (whose access
 # headers it names) and before Runtime (which owns its InProcess endpoint).
 add_subdirectory(src/connection)
+# Plan 0065 P2 (ADR-0130 D2): Atlantis Authoring, after Asset System and
+# Connection (its only dependencies) and before Runtime (whose executable hosts
+# it, Plan 0065 M5).
+add_subdirectory(src/authoring)
 # Plan 0055 P1 (ADR-0106 D7): Atlantis Remote, after Connection (its payload)
 # and before CLI (whose `atlantis` executable links its client half) and
 # Runtime (whose executable links its server half).
@@ -310,6 +314,7 @@ if(ATLANTIS_BUILD_TESTS)
   add_subdirectory(tests/asset_system)
   add_subdirectory(tests/world)
   add_subdirectory(tests/connection)
+  add_subdirectory(tests/authoring)
   add_subdirectory(tests/cli)
   add_subdirectory(tests/editor)
   add_subdirectory(tests/gameplay_sdk)
