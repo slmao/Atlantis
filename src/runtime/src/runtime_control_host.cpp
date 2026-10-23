@@ -54,6 +54,7 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
     return ResultT::Ok(connection::RayHit{hit->entity, hit->distance});
   };
   target.scene = application.sceneGuid();
+  target.sceneGeneration = [&application] { return application.sceneGeneration(); };
   return target;
 }
 
@@ -117,7 +118,8 @@ void RuntimeControlHost::stop() {
 }
 
 connection::RuntimeStatus RuntimeControlHost::status() {
-  return connection::RuntimeStatus{paused_, frame_, target_.scene};
+  return connection::RuntimeStatus{paused_, frame_, target_.scene,
+                                   target_.sceneGeneration ? target_.sceneGeneration() : 0};
 }
 
 void RuntimeControlHost::pause() { paused_ = true; }

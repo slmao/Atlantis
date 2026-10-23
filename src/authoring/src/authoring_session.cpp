@@ -4,6 +4,8 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/authoring_scene_mapping.h>
+#include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/asset_system/scene_source.h>
 #include <atlantis/authoring/document_validation.h>
@@ -129,6 +131,7 @@ struct AuthoringSession::State {
 
   DocumentSource source;
   std::optional<scene::AuthoringScene> document;
+  SceneSink sink;
   std::uint64_t nextTicket = 1;
   std::uint64_t nextSubscription = 1;
   std::vector<ConnectionState*> connections;  // the live ones
@@ -257,6 +260,20 @@ struct AuthoringSession::State {
     return ResultT::Ok({});
   }
 
+  // ADR-0131 D2, D3: the document cooked in memory exactly as the build cooks
+  // its saved text, decoded, and handed to the host's sink.
+  [[nodiscard]] atlantis::Result<std::monostate, ac::ApplyError> apply() {
+    using ResultT = atlantis::Result<std::monostate, ac::ApplyError>;
+    if (!document.has_value()) return ResultT::Err(ac::ApplyError::NoDocument);
+    if (!sink) return ResultT::Err(ac::ApplyError::NoSceneSink);
+    const auto cooked = asset_system::cookSceneToMemory(*document, source.scene);
+    if (cooked.isErr()) return ResultT::Err(ac::ApplyError::CookFailed);
+    auto decoded = asset_system::decodeScene(cooked.value());
+    if (decoded.isErr()) return ResultT::Err(ac::ApplyError::DecodeFailed);
+    if (!sink(std::move(decoded.value()))) return ResultT::Err(ac::ApplyError::ReloadRefused);
+    return ResultT::Ok({});
+  }
+
   [[nodiscard]] atlantis::Result<std::monostate, ac::SaveError> save() const {
     using ResultT = atlantis::Result<std::monostate, ac::SaveError>;
     if (!document.has_value()) return ResultT::Err(ac::SaveError::NoDocument);
@@ -369,12 +386,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
 
   atlantis::Result<std::monostate, ac::OpenError> open() override { return state_.open(); }
 
-  atlantis::Result<std::monostate, ac::ApplyError> apply() override {
-    using ResultT = atlantis::Result<std::monostate, ac::ApplyError>;
-    if (!state_.document.has_value()) return ResultT::Err(ac::ApplyError::NoDocument);
-    // Plan 0065 M4/M5: the cook, decode and hand-off to the host's scene sink.
-    return ResultT::Err(ac::ApplyError::NoSceneSink);
-  }
+  atlantis::Result<std::monostate, ac::ApplyError> apply() override { return state_.apply(); }
 
   atlantis::Result<std::monostate, ac::SaveError> save() override { return state_.save(); }
 
@@ -404,6 +416,8 @@ const DocumentSource& AuthoringSession::source() const noexcept { return state_-
 const scene::AuthoringScene* AuthoringSession::document() const noexcept {
   return state_->document.has_value() ? &*state_->document : nullptr;
 }
+
+void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
 

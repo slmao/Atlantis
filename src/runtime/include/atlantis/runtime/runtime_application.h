@@ -170,6 +170,21 @@ class RuntimeApplication {
   // The loaded scene's catalog GUID (Plan 0047 P17).
   [[nodiscard]] const atlantis::asset_system::AssetGuid& sceneGuid() const noexcept { return sceneGuid_; }
 
+  // Plan 0065 P4 (Spec 0065 R8; ADR-0131 D3-D5): the scene sink. Stores
+  // `scene` as the one pending reload -- a newer request replaces an older
+  // one (Plan 0065 J5) -- which the next runFrame() performs at its swap
+  // point, all or nothing: the new scene's assets resolved through the
+  // catalog (reusing every one already loaded), baked, swapped in with a new
+  // World access that every open connection is re-bound to, and everything
+  // the new scene no longer references released. On any failure nothing is
+  // swapped, the current World continues and a diagnostic is logged. False
+  // (the request refused) only when no scene is loaded. Frame thread only,
+  // between frames.
+  bool requestSceneReload(atlantis::asset_system::ValidatedSceneData scene);
+  // Incremented by every reload that swapped (ADR-0131 D5); 0 for the World
+  // this application started with.
+  [[nodiscard]] std::uint64_t sceneGeneration() const noexcept { return sceneGeneration_; }
+
   // Spec 0056 R4 / ADR-0108 D3, D4 (Plan 0056 P6, P7): attaches a frame
   // overlay -- borrowed; detachOverlay() must run before it is destroyed.
   // Uploads its font atlas once and loads the overlay pass's shaders. While
@@ -217,6 +232,7 @@ class RuntimeApplication {
   // its own, matching the same class of test-only accessor Plan 0014's
   // own V4 (World's generation-retirement test) already establishes.
   friend struct RuntimeSmokeTestAccess;
+  friend struct SceneReloadTestAccess;  // Plan 0065 M4
 
   // Move-constructs platformSession_ directly from an already-active
   // session (createRuntimeApplication()'s own Step 1). Deliberately not
@@ -452,6 +468,13 @@ class RuntimeApplication {
   bool commandsHeld_ = false;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;
+  // Plan 0065 P4 (ADR-0131 D4, D5): the reload requested between frames,
+  // performed by runFrame()'s swap point; the catalog a reload resolves
+  // through (the configured one); and the World's generation.
+  void performPendingSceneReload();
+  std::optional<atlantis::asset_system::ValidatedSceneData> pendingSceneReload_;
+  std::string assetCatalogPath_;
+  std::uint64_t sceneGeneration_ = 0;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth
   RuntimeLifecycleTracker lifecycle_;
   RuntimeExitReason lastExitReason_ = RuntimeExitReason::Success;

@@ -3,11 +3,13 @@
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/authoring_scene.h>
+#include <atlantis/asset_system/validated_scene_data.h>
 #include <atlantis/connection/authoring_connection.h>
 #include <atlantis/result.h>
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string_view>
 #include <variant>
@@ -73,6 +75,13 @@ enum class LocateError : std::uint8_t {
 
 // ---------------------------------------------------------------- session
 
+// ADR-0131 D3: where apply() hands the applied document, cooked in memory and
+// decoded -- in atlantis_runtime, RuntimeApplication::requestSceneReload().
+// Returns whether the request was accepted; the reload itself happens at the
+// host's next frame boundary, and the host reports a swap with
+// reportApplied(). It names no Runtime type, so the module does not either.
+using SceneSink = std::function<bool(asset_system::ValidatedSceneData scene)>;
+
 // At most one open document (ADR-0129 D1): the scene `source` names, read by
 // open(). Every client reaches it through a connection(); commands apply to a
 // copy of the document, which is validated (validateDocument()) and swapped in
@@ -101,6 +110,9 @@ class AuthoringSession {
   [[nodiscard]] const DocumentSource& source() const noexcept;
   // The open document, read-only, for the host; nullptr until open().
   [[nodiscard]] const asset_system::scene::AuthoringScene* document() const noexcept;
+
+  // The host's scene sink (ADR-0131 D3); without one, apply() is NoSceneSink.
+  void setSceneSink(SceneSink sink);
 
   // The host reports that the Runtime swapped in an applied document (Plan
   // 0065 P4, ADR-0131 D5): every subscription receives Applied{generation}.

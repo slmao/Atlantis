@@ -72,6 +72,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
         const atlantis::connection::Ray&)>
         raycast;
     atlantis::asset_system::AssetGuid scene;
+    // Plan 0065 P4 (ADR-0131 D5): the World's generation; unset reads 0.
+    std::function<std::uint64_t()> sceneGeneration;
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 

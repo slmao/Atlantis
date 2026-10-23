@@ -97,7 +97,7 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
 
   connection::RuntimeStatus status() override {
-    return {paused_, frame_, scene.value_or(atlantis::asset_system::parseAssetGuid(kScene).value())};
+    return {paused_, frame_, scene.value_or(atlantis::asset_system::parseAssetGuid(kScene).value()), sceneGeneration};
   }
   void pause() override {
     calls.emplace_back("pause");
@@ -138,6 +138,8 @@ class FakeRuntime final : public connection::RuntimeControl {
   std::vector<std::string> calls;
   // Plan 0063 M3: the scene the status reports, when a test changes it.
   std::optional<atlantis::asset_system::AssetGuid> scene;
+  // Plan 0065 M4: the World's generation the status reports (ADR-0131 D5).
+  std::uint64_t sceneGeneration = 0;
 
  private:
   access::RuntimeWorldAccess& boundary_;

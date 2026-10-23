@@ -1,6 +1,8 @@
 #include "authoring_fixture.h"
 
 #include <atlantis/asset_system/asset_catalog_source.h>
+#include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/authoring/document_validation.h>
 
 #include <algorithm>
@@ -332,9 +334,36 @@ TEST_CASE("authoring: the host's reportApplied() reaches every subscription as A
 
 // ============================================================= session calls
 
-TEST_CASE("authoring: apply() needs the host's scene sink (Plan 0065 M4/M5)", "[authoring][session]") {
+TEST_CASE("authoring: apply() cooks the document in memory and hands the decoded scene to the host's sink",
+          "[authoring][session][apply]") {
   Fixture f;
   CHECK(f.connection->apply().error() == ac::ApplyError::NoSceneSink);
+
+  std::vector<as::ValidatedSceneData> received;
+  bool accept = true;
+  f.session.setSceneSink([&](as::ValidatedSceneData scene) {
+    received.push_back(std::move(scene));
+    return accept;
+  });
+  f.connection->submit(ac::SetProperty{address(kLightNode, kLight, field("Light", "intensity")), 7.0f});
+  REQUIRE(f.connection->apply().isOk());
+  REQUIRE(received.size() == 1);
+  // The decoded scene is the build's cook of the document's saved text (ADR-0131 D2).
+  const auto cooked = as::cookSceneSource(textOf(f.document()), sceneGuid());
+  REQUIRE(cooked.isOk());
+  const auto expected = as::decodeScene(cooked.value());
+  REQUIRE(expected.isOk());
+  REQUIRE(received.front().nodeCount() == expected.value().nodeCount());
+  REQUIRE(received.front().node(kLightNode).light.has_value());
+  CHECK(received.front().node(kLightNode).light->intensity == 7.0f);
+  for (std::size_t i = 0; i < expected.value().nodeCount(); ++i) {
+    CHECK(received.front().entityGuid(i) == expected.value().entityGuid(i));
+    CHECK(received.front().parentOf(i) == expected.value().parentOf(i));
+  }
+
+  accept = false;
+  CHECK(f.connection->apply().error() == ac::ApplyError::ReloadRefused);
+  CHECK(received.size() == 2);
 }
 
 TEST_CASE("authoring: save() writes the document atomically; an unchanged document saves the same bytes",

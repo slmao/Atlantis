@@ -31,6 +31,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1131,6 +1132,7 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   pickGeometry_ = std::move(outcome.pickGeometry);  // Plan 0062 P5
   pickGeometryRetained_ = config.retainPickGeometry;  // Spec 0064 / ADR-0128 D2
   sceneGuid_ = outcome.sceneGuid;
+  assetCatalogPath_ = config.assetCatalogPath;  // Plan 0065 P4: a reload resolves through it
   environmentData_ = std::move(loadedEnvironment);
 
   // Plan 0044 P9 (ruling O2): a scene whose active camera turns bloom on
@@ -1206,6 +1208,99 @@ std::unique_ptr<atlantis::connection::RuntimeConnection> RuntimeApplication::ope
   return endpoint_.endpoint->open();
 }
 
+bool RuntimeApplication::requestSceneReload(atlantis::asset_system::ValidatedSceneData scene) {
+  if (!worldAccess_.has_value()) return false;
+  pendingSceneReload_.emplace(std::move(scene));  // Plan 0065 J5: the newest request wins
+  return true;
+}
+
+void RuntimeApplication::performPendingSceneReload() {
+  ATL_PROFILE_SCOPE("SceneReload");
+  const atlantis::asset_system::ValidatedSceneData scene = std::move(*pendingSceneReload_);
+  pendingSceneReload_.reset();
+
+  // Resolve, load what is missing and bake -- nothing of this application is
+  // touched yet, so any failure leaves the current World as it was.
+  const LoadedSceneResources loaded{meshResourceMap_, materialDataMap_, textureDataMap_};
+  auto loadResult = loadSceneForReload(assetCatalogPath_, scene, loaded, device_.get(), vertexInputLayout_,
+                                       pickGeometryRetained_);
+  if (loadResult.isErr()) {
+    ATLANTIS_LOG_ERROR("scene reload refused ({}); the current scene continues", toString(loadResult.error()));
+    return;
+  }
+  SceneReloadOutcome& outcome = loadResult.value();
+
+  // Plan 0044 P9: a scene whose active camera turns bloom on needs the bloom
+  // Pipelines, and its targets at the current extent, as a fresh start
+  // builds them.
+  bool wantsBloom = false;
+  if (const auto activeCamera = collectActiveCamera(outcome.scene); activeCamera.has_value()) {
+    wantsBloom = activeCamera->camera.bloom.strength > 0.0f;
+  }
+  if (wantsBloom && !bloomPipelines_[0]) {
+    ATLANTIS_LOG_ERROR("scene reload refused: its camera turns bloom on, but no bloom shader paths are configured");
+    return;
+  }
+  std::optional<atlantis::renderer::BloomTargets> newBloomTargets;
+  if (wantsBloom && !bloomTargets_.has_value() && lastSeenExtent_.has_value()) {
+    auto created = atlantis::renderer::createBloomTargets(*device_, *lastSeenExtent_);
+    if (created.isErr()) {
+      ATLANTIS_LOG_ERROR("scene reload refused: createBloomTargets() failed; the current scene continues");
+      return;
+    }
+    newBloomTargets.emplace(std::move(created.value()));
+  }
+
+  auto bakedScene = std::make_unique<atlantis::world::BakedScene>(std::move(outcome.scene));
+  atlantis::world::access::RuntimeWorldAccess access(*bakedScene);
+
+  // The GPU finishes every frame that used what is about to be released (the
+  // SurfaceDestroyed teardown's pattern).
+  if (device_->waitIdle().isErr()) {
+    ATLANTIS_LOG_ERROR("waitIdle() failed at the scene reload swap -- treated as fatal");
+    lifecycle_.markFailed();
+    return;
+  }
+
+  // The swap: the World and its access together, every open connection
+  // re-bound to the new access (ADR-0131 D4).
+  if (endpoint_.endpoint) endpoint_.endpoint->detach();
+  worldAccess_ = std::move(access);
+  scene_ = std::move(bakedScene);
+  if (endpoint_.endpoint) endpoint_.endpoint->attach(*worldAccess_);
+
+  // Release what the new scene no longer references, then adopt what it
+  // newly loaded: the maps then hold exactly what a fresh start would load.
+  const std::unordered_set<atlantis::asset_system::AssetId> meshes(outcome.meshes.begin(), outcome.meshes.end());
+  const std::unordered_set<atlantis::asset_system::AssetId> materials(outcome.materials.begin(),
+                                                                      outcome.materials.end());
+  const std::unordered_set<atlantis::asset_system::AssetId> textures(outcome.textures.begin(), outcome.textures.end());
+  const auto unreferenced = [](const auto& kept) {
+    return [&kept](const auto& entry) { return !kept.contains(entry.first); };
+  };
+  std::erase_if(meshResourceMap_, unreferenced(meshes));
+  std::erase_if(pickGeometry_, unreferenced(meshes));
+  std::erase_if(materialDataMap_, unreferenced(materials));
+  std::erase_if(materialResourceMap_, unreferenced(materials));
+  std::erase_if(samplerResourceMap_, unreferenced(materials));
+  std::erase_if(textureDataMap_, unreferenced(textures));
+  std::erase_if(sampledTextureResourceMap_, unreferenced(textures));
+  for (auto& [id, mesh] : outcome.newMeshes) meshResourceMap_.emplace(id, std::move(mesh));
+  for (auto& [id, geometry] : outcome.newPickGeometry) pickGeometry_.emplace(id, std::move(geometry));
+  for (auto& [id, material] : outcome.newMaterials) materialDataMap_.emplace(id, std::move(material));
+  for (auto& [id, texture] : outcome.newTextures) textureDataMap_.emplace(id, std::move(texture));
+
+  sceneWantsBloom_ = wantsBloom;
+  if (newBloomTargets.has_value()) {
+    bloomTargets_.reset();
+    bloomTargets_.emplace(std::move(*newBloomTargets));
+  } else if (!wantsBloom) {
+    bloomTargets_.reset();  // a fresh start on a scene without bloom builds none
+  }
+  ++sceneGeneration_;
+  ATLANTIS_LOG_INFO("scene reload swapped in: generation {}", sceneGeneration_);
+}
+
 void RuntimeApplication::runFrame() {
   ATLANTIS_CHECK_MSG(shouldContinue(), "runFrame() called while !shouldContinue()");
   ATL_PROFILE_FRAME();
@@ -1218,6 +1313,9 @@ void RuntimeApplication::runFrame() {
   ATL_PROFILE_SCOPE_NAMED(worldZone, "World");
   if (worldAccess_.has_value() && !commandsHeld_) (void)worldAccess_->applyPending();
   ATL_PROFILE_SCOPE_END(worldZone);
+  // Plan 0065 P4 (ADR-0131 D4): the scene reload swap point -- after the old
+  // World's pending commands, before anything this frame reads the World.
+  if (pendingSceneReload_.has_value()) performPendingSceneReload();
   ATL_PROFILE_SCOPE_NAMED(runtimeZone1, "Runtime");
 
   for (const auto& event : platform::processEvents()) {

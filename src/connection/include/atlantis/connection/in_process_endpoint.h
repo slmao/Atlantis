@@ -37,6 +37,18 @@ class InProcessEndpoint {
   // A new connection; closed when the returned object is destroyed.
   [[nodiscard]] std::unique_ptr<RuntimeConnection> open();
 
+  // Plan 0065 P4 (ADR-0131 D4): re-binding every open connection across a
+  // scene reload, in two steps around the owner's swap. detach() hands the
+  // outgoing boundary's pending failures to their connections and drops its
+  // queued events; until attach() names the replacement boundary, no
+  // connection may be called. Connections and their subscriptions (filters
+  // and undrained events) survive. Tickets keep increasing across the swap: a
+  // command submitted after it never shares a ticket with one before it.
+  // Commands still pending in the outgoing boundary (held by a pause) go with
+  // it, unreported.
+  void detach();
+  void attach(atlantis::world::access::RuntimeWorldAccess& boundary);
+
   struct State;  // private to in_process_endpoint.cpp
 
  private:

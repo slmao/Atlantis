@@ -84,38 +84,29 @@ struct LoadedScene {
   std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;  // Plan 0062 P5
 };
 
-[[nodiscard]] atlantis::Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
-    const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
-  using ResultT = atlantis::Result<LoadedScene, RuntimeInitError>;
+// Plan 0065 P4: steps (c)-(e) over a decoded scene -- what it references,
+// and everything of that `loaded` lacks, loaded. With no `loaded` (the
+// startup path) every reference is loaded, exactly as before the split.
+struct LoadedDependencies {
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;
+  std::vector<atlantis::asset_system::AssetId> meshIds;      // every mesh the scene references
+  std::vector<atlantis::asset_system::AssetId> materialIds;  // every material it references
+  std::vector<atlantis::asset_system::AssetId> textureIds;   // every texture those materials reference
+};
+
+[[nodiscard]] atlantis::Result<LoadedDependencies, RuntimeInitError> loadDependencies(
+    const AssetCatalog& catalog, const atlantis::asset_system::ValidatedSceneData& scene,
+    const LoadedSceneResources* loaded, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout, bool retainPickGeometry) {
+  using ResultT = atlantis::Result<LoadedDependencies, RuntimeInitError>;
   using atlantis::renderer::createMesh;
-
-  // (a) Load and validate the asset catalog -- local, immutable resolver
-  // (Plan 0047 P14, ADR-0098 D3).
-  auto catalogResult = atlantis::asset_system::loadAssetCatalog(config.assetCatalogPath);
-  if (catalogResult.isErr()) {
-    ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(catalogResult.error()));
-    return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
-  }
-  const AssetCatalog catalog = std::move(catalogResult.value());
-
-  // (b) Resolve the configured scene, then decode its artifact -- fully
-  // validated ValidatedSceneData.
-  const AssetCatalogRecord* sceneRecord = catalog.find(config.sceneAsset);
-  if (sceneRecord == nullptr || sceneRecord->type != CatalogAssetType::Scene) {
-    ATLANTIS_LOG_ERROR("the configured scene GUID is not a scene record in the catalog");
-    return ResultT::Err(RuntimeInitError::SceneNotInCatalog);
-  }
-  if (!isSupportedArtifactSchema(sceneRecord->type, sceneRecord->artifactSchema)) {
-    ATLANTIS_LOG_ERROR("the scene record's artifact schema is not supported by this Runtime");
-    return ResultT::Err(RuntimeInitError::UnsupportedArtifactSchema);
-  }
-  auto sceneResult = atlantis::asset_system::decodeScene(sceneRecord->artifact, sceneRecord->metadata);
-  if (sceneResult.isErr()) {
-    ATLANTIS_LOG_ERROR("decodeScene() failed");
-    return ResultT::Err(RuntimeInitError::SceneArtifactLoadFailed);
-  }
-  atlantis::asset_system::ValidatedSceneData scene = std::move(sceneResult.value());
+  const auto meshLoaded = [&](atlantis::asset_system::AssetId id) { return loaded && loaded->meshes.contains(id); };
+  const auto materialLoaded = [&](atlantis::asset_system::AssetId id) {
+    return loaded && loaded->materials.contains(id);
+  };
 
   // (c) Collect distinct mesh AND material AssetIds, each in its own
   // ascending FIRST-REFERENCE order -- the sole source of this Plan's
@@ -150,14 +141,23 @@ struct LoadedScene {
   // yet, same order as (c). An unresolved material id fails the whole
   // scene load exactly like an unresolved mesh id already does (Spec
   // 0018 D4 case 2 -- never a silent fallback to the built-in Material).
-  std::vector<const AssetCatalogRecord*> resolvedMeshEntries;
+  // Plan 0065 P4: an id `loaded` already holds was resolved when it loaded.
+  std::vector<const AssetCatalogRecord*> resolvedMeshEntries;  // parallel to distinctMeshIds; null when loaded
   for (atlantis::asset_system::AssetId id : distinctMeshIds) {
+    if (meshLoaded(id)) {
+      resolvedMeshEntries.push_back(nullptr);
+      continue;
+    }
     auto resolved = resolveDependency(catalog, id, CatalogAssetType::Mesh);
     if (resolved.isErr()) return ResultT::Err(resolved.error());
     resolvedMeshEntries.push_back(resolved.value());
   }
-  std::vector<const AssetCatalogRecord*> resolvedMaterialEntries;
+  std::vector<const AssetCatalogRecord*> resolvedMaterialEntries;  // parallel to distinctMaterialIds
   for (atlantis::asset_system::AssetId id : distinctMaterialIds) {
+    if (materialLoaded(id)) {
+      resolvedMaterialEntries.push_back(nullptr);
+      continue;
+    }
     auto resolved = resolveDependency(catalog, id, CatalogAssetType::Material);
     if (resolved.isErr()) return ResultT::Err(resolved.error());
     resolvedMaterialEntries.push_back(resolved.value());
@@ -169,9 +169,11 @@ struct LoadedScene {
   // order-sensitive way. device is only ever dereferenced here, and
   // only when distinctMeshIds is non-empty -- see this function's own
   // header comment on why a test may pass nullptr otherwise.
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> meshResourceMap;
-  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> pickGeometry;
+  LoadedDependencies out;
+  out.meshIds = distinctMeshIds;
+  out.materialIds = distinctMaterialIds;
   for (std::size_t i = 0; i < distinctMeshIds.size(); ++i) {
+    if (resolvedMeshEntries[i] == nullptr) continue;  // Plan 0065 P4: reused
     auto meshAssetResult = atlantis::asset_system::loadStaticMeshAsset(resolvedMeshEntries[i]->artifact,
                                                                         resolvedMeshEntries[i]->metadata);
     if (meshAssetResult.isErr()) {
@@ -201,15 +203,15 @@ struct LoadedScene {
       ATLANTIS_LOG_ERROR("createMesh() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
     }
-    meshResourceMap.emplace(distinctMeshIds[i], std::move(createResult.value()));
+    out.meshResourceMap.emplace(distinctMeshIds[i], std::move(createResult.value()));
     // Plan 0062 P5 (ADR-0123 D2): the same asset data, before it is dropped.
-    if (config.retainPickGeometry) {
-      pickGeometry.emplace(distinctMeshIds[i],
-                           meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
-                               ? detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
-                                                           meshAssetData.indices32())
-                               : detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
-                                                           meshAssetData.indices()));
+    if (retainPickGeometry) {
+      out.pickGeometry.emplace(distinctMeshIds[i],
+                               meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
+                                   ? detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
+                                                               meshAssetData.indices32())
+                                   : detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
+                                                               meshAssetData.indices()));
     }
   }
 
@@ -222,9 +224,31 @@ struct LoadedScene {
   // Material exists anywhere in this function, matching Spec 0018 D8
   // Phase 1's own hard constraint (no RenderTarget exists yet at this
   // point in initializeSteps()).
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> materialDataMap;
-  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> textureDataMap;
+  // Plan 0065 P4: a texture `loaded` holds is reused, never loaded again.
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>& materialDataMap =
+      out.materialDataMap;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>& textureDataMap =
+      out.textureDataMap;
+  const auto haveTexture = [&](atlantis::asset_system::AssetId id) {
+    return textureDataMap.contains(id) || (loaded && loaded->textures.contains(id));
+  };
+  const auto textureOf = [&](atlantis::asset_system::AssetId id) -> const atlantis::asset_system::TextureAssetData& {
+    const auto found = textureDataMap.find(id);
+    return found != textureDataMap.end() ? found->second : loaded->textures.at(id);
+  };
+  const auto referenceTexture = [&](atlantis::asset_system::AssetId id) {
+    if (id != 0 && std::find(out.textureIds.begin(), out.textureIds.end(), id) == out.textureIds.end()) {
+      out.textureIds.push_back(id);
+    }
+  };
   for (std::size_t i = 0; i < distinctMaterialIds.size(); ++i) {
+    if (resolvedMaterialEntries[i] == nullptr) {  // Plan 0065 P4: reused, its textures with it
+      const atlantis::asset_system::MaterialAssetData& reused = loaded->materials.at(distinctMaterialIds[i]);
+      referenceTexture(reused.textureAsset);
+      referenceTexture(reused.normalMapTexture);
+      referenceTexture(reused.emissiveTexture);
+      continue;
+    }
     auto materialAssetResult = atlantis::asset_system::loadMaterialAsset(resolvedMaterialEntries[i]->artifact,
                                                                           resolvedMaterialEntries[i]->metadata);
     if (materialAssetResult.isErr()) {
@@ -233,7 +257,7 @@ struct LoadedScene {
     }
     const atlantis::asset_system::MaterialAssetData& materialAssetData = materialAssetResult.value();
 
-    if (!textureDataMap.contains(materialAssetData.textureAsset)) {
+    if (!haveTexture(materialAssetData.textureAsset)) {
       auto textureResolved = resolveDependency(catalog, materialAssetData.textureAsset, CatalogAssetType::Texture);
       if (textureResolved.isErr()) return ResultT::Err(textureResolved.error());
       const AssetCatalogRecord* textureEntry = textureResolved.value();
@@ -257,7 +281,7 @@ struct LoadedScene {
     // textureDataMap from an earlier material's own dedup (D10). Every
     // existing UnlitTextured/LitTextured Material is unaffected.
     if (materialAssetData.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
-      const atlantis::asset_system::TextureAssetData& textureData = textureDataMap.at(materialAssetData.textureAsset);
+      const atlantis::asset_system::TextureAssetData& textureData = textureOf(materialAssetData.textureAsset);
       if (textureData.colorSpace != atlantis::asset_system::TextureColorSpace::Srgb) {
         ATLANTIS_LOG_ERROR("PbrDirectLit material's own base-color texture is not Rgba8Srgb");
         return ResultT::Err(RuntimeInitError::PbrBaseColorTextureNotSrgb);
@@ -271,7 +295,7 @@ struct LoadedScene {
     // the base-color texture's own Srgb requirement above. A material
     // with no normal map (normalMapTexture == 0) is completely
     // unaffected.
-    if (materialAssetData.normalMapTexture != 0 && !textureDataMap.contains(materialAssetData.normalMapTexture)) {
+    if (materialAssetData.normalMapTexture != 0 && !haveTexture(materialAssetData.normalMapTexture)) {
       auto normalMapResolved =
           resolveDependency(catalog, materialAssetData.normalMapTexture, CatalogAssetType::Texture);
       if (normalMapResolved.isErr()) return ResultT::Err(normalMapResolved.error());
@@ -285,7 +309,7 @@ struct LoadedScene {
       textureDataMap.emplace(materialAssetData.normalMapTexture, std::move(normalMapResult.value()));
     }
     if (materialAssetData.normalMapTexture != 0) {
-      const auto& normalMapData = textureDataMap.at(materialAssetData.normalMapTexture);
+      const auto& normalMapData = textureOf(materialAssetData.normalMapTexture);
       if (normalMapData.colorSpace != atlantis::asset_system::TextureColorSpace::Unorm) {
         ATLANTIS_LOG_ERROR("PbrDirectLit material's own normal-map texture is not Unorm");
         return ResultT::Err(RuntimeInitError::PbrNormalMapTextureNotUnorm);
@@ -296,7 +320,7 @@ struct LoadedScene {
     // resolved/loaded/deduplicated through the same textureDataMap. No
     // colour-space requirement: glTF's emissive is sRGB colour, and a
     // Unorm mask samples just as well.
-    if (materialAssetData.emissiveTexture != 0 && !textureDataMap.contains(materialAssetData.emissiveTexture)) {
+    if (materialAssetData.emissiveTexture != 0 && !haveTexture(materialAssetData.emissiveTexture)) {
       auto emissiveResolved =
           resolveDependency(catalog, materialAssetData.emissiveTexture, CatalogAssetType::Texture);
       if (emissiveResolved.isErr()) return ResultT::Err(emissiveResolved.error());
@@ -310,11 +334,53 @@ struct LoadedScene {
       textureDataMap.emplace(materialAssetData.emissiveTexture, std::move(emissiveResult.value()));
     }
 
+    referenceTexture(materialAssetData.textureAsset);
+    referenceTexture(materialAssetData.normalMapTexture);
+    referenceTexture(materialAssetData.emissiveTexture);
     materialDataMap.emplace(distinctMaterialIds[i], materialAssetData);
   }
 
-  return ResultT::Ok(LoadedScene{std::move(scene), std::move(meshResourceMap), std::move(materialDataMap),
-                                  std::move(textureDataMap), std::move(pickGeometry)});
+  return ResultT::Ok(std::move(out));
+}
+
+[[nodiscard]] atlantis::Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
+    const BootstrapConfig& config, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
+  using ResultT = atlantis::Result<LoadedScene, RuntimeInitError>;
+
+  // (a) Load and validate the asset catalog -- local, immutable resolver
+  // (Plan 0047 P14, ADR-0098 D3).
+  auto catalogResult = atlantis::asset_system::loadAssetCatalog(config.assetCatalogPath);
+  if (catalogResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(catalogResult.error()));
+    return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
+  }
+  const AssetCatalog catalog = std::move(catalogResult.value());
+
+  // (b) Resolve the configured scene, then decode its artifact -- fully
+  // validated ValidatedSceneData.
+  const AssetCatalogRecord* sceneRecord = catalog.find(config.sceneAsset);
+  if (sceneRecord == nullptr || sceneRecord->type != CatalogAssetType::Scene) {
+    ATLANTIS_LOG_ERROR("the configured scene GUID is not a scene record in the catalog");
+    return ResultT::Err(RuntimeInitError::SceneNotInCatalog);
+  }
+  if (!isSupportedArtifactSchema(sceneRecord->type, sceneRecord->artifactSchema)) {
+    ATLANTIS_LOG_ERROR("the scene record's artifact schema is not supported by this Runtime");
+    return ResultT::Err(RuntimeInitError::UnsupportedArtifactSchema);
+  }
+  auto sceneResult = atlantis::asset_system::decodeScene(sceneRecord->artifact, sceneRecord->metadata);
+  if (sceneResult.isErr()) {
+    ATLANTIS_LOG_ERROR("decodeScene() failed");
+    return ResultT::Err(RuntimeInitError::SceneArtifactLoadFailed);
+  }
+  atlantis::asset_system::ValidatedSceneData scene = std::move(sceneResult.value());
+
+  // (c)-(e), with nothing loaded yet.
+  auto dependencies = loadDependencies(catalog, scene, nullptr, device, vertexInputLayout, config.retainPickGeometry);
+  if (dependencies.isErr()) return ResultT::Err(dependencies.error());
+  LoadedDependencies& parts = dependencies.value();
+  return ResultT::Ok(LoadedScene{std::move(scene), std::move(parts.meshResourceMap), std::move(parts.materialDataMap),
+                                  std::move(parts.textureDataMap), std::move(parts.pickGeometry)});
 }
 
 }  // namespace
@@ -338,6 +404,30 @@ atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
   return ResultT::Ok(SceneLoadOutcome{std::move(baked), std::move(parts.meshResourceMap),
                                        std::move(parts.materialDataMap), std::move(parts.textureDataMap),
                                        config.sceneAsset, std::move(parts.pickGeometry)});
+}
+
+atlantis::Result<SceneReloadOutcome, RuntimeInitError> loadSceneForReload(
+    const std::string& assetCatalogPath, const atlantis::asset_system::ValidatedSceneData& scene,
+    const LoadedSceneResources& loaded, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout, bool retainPickGeometry) {
+  using ResultT = atlantis::Result<SceneReloadOutcome, RuntimeInitError>;
+  ATL_PROFILE_SCOPE("SceneReloadLoad");
+  // (a) The catalog, read again: it is the build's, and a reload resolves
+  // exactly as a fresh start would.
+  auto catalogResult = atlantis::asset_system::loadAssetCatalog(assetCatalogPath);
+  if (catalogResult.isErr()) {
+    ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(catalogResult.error()));
+    return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
+  }
+  // (c)-(e) against what is loaded, then (f).
+  auto dependencies =
+      loadDependencies(catalogResult.value(), scene, &loaded, device, vertexInputLayout, retainPickGeometry);
+  if (dependencies.isErr()) return ResultT::Err(dependencies.error());
+  LoadedDependencies& parts = dependencies.value();
+  return ResultT::Ok(SceneReloadOutcome{atlantis::world::bakeScene(scene), std::move(parts.meshResourceMap),
+                                         std::move(parts.pickGeometry), std::move(parts.materialDataMap),
+                                         std::move(parts.textureDataMap), std::move(parts.meshIds),
+                                         std::move(parts.materialIds), std::move(parts.textureIds)});
 }
 
 }  // namespace atlantis::runtime

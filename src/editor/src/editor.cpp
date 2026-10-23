@@ -40,6 +40,7 @@ struct Editor::Impl {
   RuntimeWorldEditTarget editTarget;
   EditHistory history;
   std::optional<atlantis::asset_system::AssetGuid> scene;
+  std::uint64_t generation = 0;  // Plan 0065 P4: with `scene`, the World the history belongs to
   detail::EditorView view;
 };
 
@@ -93,8 +94,12 @@ void Editor::frame(std::span<const InputEvent> input, const FrameContext& contex
   // before the history settles, so none of their events is missed.
   impl.recordCompleted();
   const atlantis::connection::RuntimeStatus status = impl.control.status();
-  if (impl.scene.has_value() && *impl.scene != status.scene) impl.history.clear();
+  // Plan 0065 P4 (ADR-0131 D5): a reload of the same scene changes its generation.
+  if (impl.scene.has_value() && (*impl.scene != status.scene || impl.generation != status.sceneGeneration)) {
+    impl.history.clear();
+  }
   impl.scene = status.scene;
+  impl.generation = status.sceneGeneration;
   impl.history.update(failures);
   // Plan 0062 P8: the host's answers to the last frame's requests, before the
   // models take up the selection.
