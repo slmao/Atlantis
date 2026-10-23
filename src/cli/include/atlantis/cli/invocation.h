@@ -70,6 +70,8 @@ class Invocation {
 
   // Runs one command (`tx <file|->` included) and returns its exit code.
   int run(std::span<const std::string> command);
+  // Plan 0065 P6: the `scene` group's connection (CommandLayer::setAuthoring()).
+  void setAuthoring(CommandLayer::AuthoringProvider provider) { layer_.setAuthoring(std::move(provider)); }
   // `atlantis repl`: one command per line from `in` (the prompt `atlantis> `
   // goes to stderr, so stdout carries only output) until `exit`, `quit` or
   // end of input; a command's error does not end the session. Returns 0.
@@ -84,6 +86,7 @@ class Invocation {
  private:
   int runTokens(std::span<const std::string_view> tokens, std::string_view line);
   int runTransaction(std::span<const std::string_view> tokens);
+  int runSceneTransaction(std::span<const std::string_view> tokens);
   int finish(Reply reply);
   Reply awaitOutcome(Reply reply);
 

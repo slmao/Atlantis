@@ -32,6 +32,8 @@ class Commands {
 
   // One command line (tokens separated by whitespace).
   Outcome run(std::string_view line);
+  // Plan 0065 P6: the `scene` group's connection (CommandLayer::setAuthoring()).
+  void setAuthoring(CommandLayer::AuthoringProvider provider) { layer_.setAuthoring(std::move(provider)); }
 
   // Whether a write (`entity set`, ...) or a step awaits its outcome.
   [[nodiscard]] bool hasPending() const noexcept { return layer_.hasPending(); }

@@ -31,6 +31,8 @@ class ScriptRunner {
   ScriptRunner(atlantis::connection::RuntimeConnection& connection, std::vector<std::string> lines, std::ostream& out);
 
   void step();
+  // Plan 0065 P6: the `scene` group's connection (CommandLayer::setAuthoring()).
+  void setAuthoring(CommandLayer::AuthoringProvider provider) { commands_.setAuthoring(std::move(provider)); }
   [[nodiscard]] bool finished() const noexcept { return finished_; }
 
  private:

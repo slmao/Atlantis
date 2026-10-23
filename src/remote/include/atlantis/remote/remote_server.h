@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/remote/session_file.h>
@@ -82,6 +83,14 @@ class RemoteServer {
 
   // What the session file records for this server (P4).
   [[nodiscard]] SessionInfo session() const;
+
+  // Plan 0065 P5/P6 (ADR-0130 D3): serve AuthoringConnection as authoring.*.
+  // A client's authoring connection is opened by `open` on its first
+  // authoring.* request (the host may create its session then, ADR-0129 D2);
+  // an empty function, or one returning null, answers NoAuthoring. Without
+  // this call authoring.* is NoAuthoring.
+  using OpenAuthoring = std::function<std::unique_ptr<atlantis::connection::AuthoringConnection>()>;
+  void serveAuthoring(OpenAuthoring open);
 
   void poll();
 

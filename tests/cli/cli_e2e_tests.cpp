@@ -304,3 +304,52 @@ TEST_CASE("atlantis drives atlantis_runtime --listen through the completion loop
   std::error_code ec;
   fs::remove_all(dir, ec);
 }
+
+// Plan 0065 M5 (P5, P6; Spec 0065 R2, R4, R7, R11): the authoring document over
+// two processes. Each `atlantis scene ...` is its own client: the Runtime
+// creates the session at the first one, every later one edits the same
+// document, and an apply reaches the Runtime World at its next frame. Nothing
+// is saved -- the default scene's source is a committed file.
+TEST_CASE("atlantis edits atlantis_runtime's scene document and applies it", "[cli][e2e][gpu][scene]") {
+  const fs::path dir = fs::temp_directory_path() / "atlantis_cli_e2e" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const fs::path session = dir / "runtime.session.json";
+  Child runtime(ATLANTIS_RUNTIME_EXE,
+                {"--scene", "integrated_showcase_demo", "--listen", "0", "--session-file", session.string()});
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  while (!fs::exists(session) && std::chrono::steady_clock::now() < deadline) {
+    REQUIRE_FALSE(runtime.wait(std::chrono::milliseconds(100)).has_value());
+  }
+  REQUIRE(fs::exists(session));
+  const std::string light = "0b2c1db2-43ab-4eb1-af89-1a9ae5ef89ea";
+
+  const json::Value opened = okResult(runAtlantis(session, {"scene", "open", "--json"}));
+  CHECK(opened.find("provenance")->asString() == "hand-authored");
+  CHECK(opened.find("source")->asString().ends_with("assets/scenes/integrated_showcase_demo.scene.txt"));
+  const json::Value set = okResult(runAtlantis(session, {"scene", "set", light, "Light.intensity", "9", "--json"}));
+  CHECK(set.find("outcome")->find("events")->asArray().at(0).find("kind")->asString() == "PropertyChanged");
+  // Another client sees the same document; the World is unchanged until the apply.
+  CHECK(asFloat(*okResult(runAtlantis(session, {"scene", "get", light, "Light.intensity", "--json"})).find("value")) ==
+        9.0f);
+  CHECK(asFloat(*okResult(runAtlantis(session, {"property", "get", light, "Light.intensity", "--json"})).find("value")) ==
+        3.0f);
+  std::uint64_t generation = 0;
+  REQUIRE(okResult(runAtlantis(session, {"scene", "apply", "--json"})).find("generation")->toUInt64(generation));
+  CHECK(generation == 1);
+  CHECK(asFloat(*okResult(runAtlantis(session, {"property", "get", light, "Light.intensity", "--json"})).find("value")) ==
+        9.0f);
+  // A refusal exits 1 with the constraint's name.
+  const Run refused = runAtlantis(session, {"scene", "camera", light, "--json"});
+  CHECK(refused.exitCode == 1);
+  CHECK(json::parse(refused.out).value().find("error")->find("code")->asString() == "ActiveCameraHasCamera");
+
+  const std::vector<HWND> windows = windowsOf(runtime.processId());
+  REQUIRE_FALSE(windows.empty());
+  for (const HWND window : windows) PostMessageW(window, WM_CLOSE, 0, 0);
+  const auto exited = runtime.wait(std::chrono::seconds(30));
+  INFO("runtime stderr tail: " << runtime.err().substr(runtime.err().size() > 2000 ? runtime.err().size() - 2000 : 0));
+  REQUIRE(exited.has_value());
+  CHECK(*exited == 0);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}

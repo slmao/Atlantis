@@ -390,7 +390,7 @@ class SequentialQueries final : public QueryBatch {
 // --- The pending write or step --------------------------------------------------
 
 struct CommandLayer::Pending {
-  enum class Kind { Write, Transaction, Step };
+  enum class Kind { Write, Transaction, Step, Apply };  // Plan 0065: Apply awaits Applied{generation}
   Kind kind = Kind::Write;
   std::string command;  // tree path
   // Writes
@@ -518,7 +518,9 @@ CommandLayer::~CommandLayer() { abandon(); }
 bool CommandLayer::hasPending() const noexcept { return pending_ != nullptr; }
 
 void CommandLayer::abandon() {
-  if (pending_ && pending_->kind != Pending::Kind::Step) (void)connection_.unsubscribe(pending_->subscription);
+  if (pending_ && (pending_->kind == Pending::Kind::Write || pending_->kind == Pending::Kind::Transaction)) {
+    (void)connection_.unsubscribe(pending_->subscription);
+  }
   pending_.reset();
 }
 
@@ -600,6 +602,10 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return failed("", plainError("WritePending", ErrorCategory::Usage, "the previous `entity set` has no outcome yet"));
   }
   const auto is = [&](std::string_view a, std::string_view b) { return t.size() >= 2 && t[0] == a && t[1] == b; };
+
+  // Plan 0065 P6: scene open | nodes | get | set | create | destroy | add |
+  // remove | parent | camera | apply | save (scene tx is the invocation's).
+  if (t[0] == "scene") return runScene(t);
 
   // schema list | schema inspect <Type>
   if (t.size() == 2 && is("schema", "list")) {
@@ -1069,6 +1075,27 @@ Reply CommandLayer::poll() {
   Pending& pending = *pending_;
   const std::span<const TypeDescriptor> schema = connection_.schema();
 
+  // Plan 0065 P6 (ADR-0131 D3, D5): an apply's outcome is the Runtime's swap,
+  // reported as Applied{generation}.
+  if (pending.kind == Pending::Kind::Apply) {
+    auto events = authoring_->drainEvents(*authoringEvents_);
+    if (events.isOk()) {
+      for (const auto& event : events.value()) {
+        const auto* applied = std::get_if<connection::authoring::Applied>(&event);
+        if (applied == nullptr) continue;
+        pending_.reset();
+        Value result = Value::object();
+        result.set("generation", Value::number(applied->generation));
+        return done("scene apply", "applied generation " + std::to_string(applied->generation) + "\n",
+                    std::move(result));
+      }
+    }
+    Reply reply;
+    reply.command = pending.command;
+    reply.outcome = Outcome::Submitted;
+    return reply;
+  }
+
   if (pending.kind == Pending::Kind::Step) {
     if (!pending.step->has_value()) {
       Reply reply;
@@ -1172,6 +1199,418 @@ Reply CommandLayer::poll() {
   reply.command = pending.command;
   reply.outcome = Outcome::Submitted;
   return reply;
+}
+
+// --- Plan 0065 P6: the `scene` group (Spec 0065 Q5, S-a; ADR-0130 D3) -------------
+
+namespace {
+
+namespace ac = atlantis::connection::authoring;
+
+[[nodiscard]] CliError refusedAuthoring(ac::Error why, Value facts) {
+  return CliError{std::string(ac::toString(why)), ErrorCategory::Refused,
+                  "the authoring document refused it: " + std::string(ac::toString(why)), std::move(facts),
+                  "refused " + std::string(ac::toString(why))};
+}
+
+[[nodiscard]] std::string optionalEntityText(const std::optional<EntityGuid>& entity) {
+  return entity ? text::formatEntity(*entity) : std::string("none");
+}
+[[nodiscard]] Value optionalEntityJson(const std::optional<EntityGuid>& entity) {
+  return entity ? Value::string(text::formatEntity(*entity)) : Value();
+}
+
+[[nodiscard]] std::string sceneEventText(std::span<const TypeDescriptor> schema, const ac::Event& event) {
+  return std::visit(
+      [&](const auto& e) -> std::string {
+        using E = std::decay_t<decltype(e)>;
+        if constexpr (std::is_same_v<E, ac::PropertyChanged>) {
+          const auto leaf = leafOf(schema, e.address.component, e.address.field);
+          if (!leaf) return text::formatEntity(e.address.node) + " ? = ?";
+          return text::formatEntity(e.address.node) + " " + leaf->path + " = " +
+                 text::formatValue(schema, *leaf->field, e.value);
+        } else if constexpr (std::is_same_v<E, ac::NodeCreated>) {
+          return "created " + text::formatEntity(e.node) + " at " + std::to_string(e.position);
+        } else if constexpr (std::is_same_v<E, ac::NodeDestroyed>) {
+          return "destroyed " + text::formatEntity(e.node);
+        } else if constexpr (std::is_same_v<E, ac::ComponentAdded>) {
+          return "added " + text::formatEntity(e.node) + " " + typeName(schema, e.component);
+        } else if constexpr (std::is_same_v<E, ac::ComponentRemoved>) {
+          return "removed " + text::formatEntity(e.node) + " " + typeName(schema, e.component);
+        } else if constexpr (std::is_same_v<E, ac::ParentChanged>) {
+          return "parent " + text::formatEntity(e.node) + " " + optionalEntityText(e.parent);
+        } else if constexpr (std::is_same_v<E, ac::ActiveCameraChanged>) {
+          return "camera " + optionalEntityText(e.camera);
+        } else if constexpr (std::is_same_v<E, ac::DocumentReopened>) {
+          return "reopened " + atlantis::asset_system::toString(e.scene);
+        } else {
+          static_assert(std::is_same_v<E, ac::Applied>);
+          return "applied generation " + std::to_string(e.generation);
+        }
+      },
+      event);
+}
+
+[[nodiscard]] Value sceneEventJson(std::span<const TypeDescriptor> schema, const ac::Event& event) {
+  Value out = Value::object();
+  std::visit(
+      [&](const auto& e) {
+        using E = std::decay_t<decltype(e)>;
+        if constexpr (std::is_same_v<E, ac::PropertyChanged>) {
+          out.set("kind", Value::string("PropertyChanged"));
+          out.set("guid", Value::string(text::formatEntity(e.address.node)));
+          const auto leaf = leafOf(schema, e.address.component, e.address.field);
+          out.set("path", leaf ? Value::string(leaf->path) : Value());
+          out.set("value", leaf ? jsonValue(schema, *leaf->field, e.value) : Value());
+        } else if constexpr (std::is_same_v<E, ac::NodeCreated>) {
+          out.set("kind", Value::string("NodeCreated"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+          out.set("position", Value::number(e.position));
+        } else if constexpr (std::is_same_v<E, ac::NodeDestroyed>) {
+          out.set("kind", Value::string("NodeDestroyed"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+        } else if constexpr (std::is_same_v<E, ac::ComponentAdded> || std::is_same_v<E, ac::ComponentRemoved>) {
+          out.set("kind", Value::string(std::is_same_v<E, ac::ComponentAdded> ? "ComponentAdded" : "ComponentRemoved"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+          const TypeDescriptor* type = text::findType(schema, e.component);
+          out.set("component", type ? typeIdentity(*type) : Value::string(formatId(e.component.value)));
+        } else if constexpr (std::is_same_v<E, ac::ParentChanged>) {
+          out.set("kind", Value::string("ParentChanged"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+          out.set("parent", optionalEntityJson(e.parent));
+        } else if constexpr (std::is_same_v<E, ac::ActiveCameraChanged>) {
+          out.set("kind", Value::string("ActiveCameraChanged"));
+          out.set("camera", optionalEntityJson(e.camera));
+        } else if constexpr (std::is_same_v<E, ac::DocumentReopened>) {
+          out.set("kind", Value::string("DocumentReopened"));
+          out.set("scene", Value::string(atlantis::asset_system::toString(e.scene)));
+        } else {
+          static_assert(std::is_same_v<E, ac::Applied>);
+          out.set("kind", Value::string("Applied"));
+          out.set("generation", Value::number(e.generation));
+        }
+      },
+      event);
+  return out;
+}
+
+[[nodiscard]] Value documentJson(const ac::DocumentInfo& document) {
+  Value out = Value::object();
+  out.set("scene", Value::string(atlantis::asset_system::toString(document.scene)));
+  out.set("provenance",
+          Value::string(document.provenance == ac::Provenance::Imported ? "imported" : "hand-authored"));
+  out.set("source", Value::string(document.sourcePath));
+  out.set("nodeCount", Value::number(document.nodeCount));
+  return out;
+}
+
+}  // namespace
+
+void CommandLayer::setAuthoring(AuthoringProvider provider) {
+  authoringProvider_ = std::move(provider);
+  authoring_ = nullptr;
+  authoringEvents_.reset();
+}
+
+connection::AuthoringConnection* CommandLayer::authoring() {
+  if (authoring_ == nullptr && authoringProvider_) {
+    authoring_ = authoringProvider_();
+    if (authoring_ != nullptr) authoringEvents_ = authoring_->subscribe(ac::EventFilter{});
+  }
+  return authoring_;
+}
+
+std::uint64_t CommandLayer::sceneNodeCount() {
+  connection::AuthoringConnection* a = authoring();
+  if (a == nullptr) return 0;
+  const auto document = a->document();
+  return document ? document->nodeCount : 0;
+}
+
+atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWrite(std::span<const std::string_view> t,
+                                                                                   std::uint64_t& end) {
+  using ResultT = atlantis::Result<std::vector<ac::Command>, CliError>;
+  if (!t.empty() && t[0] == "scene") t = t.subspan(1);
+  connection::AuthoringConnection* a = authoring();
+  if (a == nullptr) {
+    return ResultT::Err(plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
+  }
+  const std::span<const TypeDescriptor> schema = a->schema();
+  const auto entityAt = [&](std::size_t i) { return text::parseEntity(t[i]); };
+  const auto optionalEntityAt = [&](std::size_t i) -> atlantis::Result<std::optional<EntityGuid>, CliError> {
+    using R = atlantis::Result<std::optional<EntityGuid>, CliError>;
+    if (t[i] == "none") return R::Ok(std::nullopt);
+    const auto entity = entityAt(i);
+    if (entity.isErr()) return R::Err(textError(entity.error(), t[i]));
+    return R::Ok(entity.value());
+  };
+  const auto componentAt = [&](std::size_t i) -> atlantis::Result<TypeId, CliError> {
+    const TypeDescriptor* type = text::findType(schema, t[i]);
+    if (type == nullptr || type->kind != TypeKind::Struct) {
+      return atlantis::Result<TypeId, CliError>::Err(textError(text::TextError::UnknownType, t[i]));
+    }
+    return atlantis::Result<TypeId, CliError>::Ok(type->id);
+  };
+  const std::string_view verb = t.empty() ? std::string_view() : t[0];
+  if (verb == "set") {
+    if (t.size() < 4) return ResultT::Err(usageError("scene set <guid> <Type>.<field> <value...>"));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    const auto path = text::parsePath(schema, t[2]);
+    if (path.isErr()) return ResultT::Err(textError(path.error(), t[2]));
+    const auto value = text::parseValue(schema, *path.value().leaf, t.subspan(3));
+    if (value.isErr()) return ResultT::Err(textError(value.error(), t[3]));
+    return ResultT::Ok(std::vector<ac::Command>{
+        ac::SetProperty{{node.value(), path.value().component, path.value().leaf->id}, value.value()}});
+  }
+  if (verb == "create") {
+    const std::string_view usage = "scene create [<guid>] [--at <position>] [--component <Type>]...";
+    ac::CreateNode create;
+    std::optional<std::uint64_t> at;
+    for (std::size_t i = 1; i < t.size(); ++i) {
+      if (t[i] == "--component") {
+        if (i + 1 >= t.size()) return ResultT::Err(usageError(usage));
+        auto component = componentAt(++i);
+        if (component.isErr()) return ResultT::Err(component.error());
+        create.components.push_back(component.value());
+      } else if (t[i] == "--at") {
+        std::uint64_t position = 0;
+        if (i + 1 >= t.size()) return ResultT::Err(usageError(usage));
+        const std::string_view token = t[++i];
+        const auto parsed = std::from_chars(token.data(), token.data() + token.size(), position);
+        if (parsed.ec != std::errc{} || parsed.ptr != token.data() + token.size()) {
+          return ResultT::Err(textError(text::TextError::MalformedNumber, token));
+        }
+        at = position;
+      } else if (!create.node && !t[i].starts_with("--")) {
+        const auto parsed = entityAt(i);
+        if (parsed.isErr()) return ResultT::Err(textError(parsed.error(), t[i]));
+        create.node = parsed.value();
+      } else {
+        return ResultT::Err(usageError(usage));
+      }
+    }
+    create.position = at.value_or(end);
+    ++end;
+    return ResultT::Ok(std::vector<ac::Command>{std::move(create)});
+  }
+  if (verb == "destroy") {
+    if (t.size() != 2) return ResultT::Err(usageError("scene destroy <guid>"));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    return ResultT::Ok(std::vector<ac::Command>{ac::DestroyNode{node.value()}});
+  }
+  if (verb == "add" || verb == "remove") {
+    if (t.size() != 3) return ResultT::Err(usageError("scene " + std::string(verb) + " <guid> <Type>"));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    auto component = componentAt(2);
+    if (component.isErr()) return ResultT::Err(component.error());
+    if (verb == "add") return ResultT::Ok(std::vector<ac::Command>{ac::AddComponent{node.value(), component.value()}});
+    return ResultT::Ok(std::vector<ac::Command>{ac::RemoveComponent{node.value(), component.value()}});
+  }
+  if (verb == "parent") {
+    if (t.size() != 3) return ResultT::Err(usageError("scene parent <guid> <parent-guid>|none"));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    auto parent = optionalEntityAt(2);
+    if (parent.isErr()) return ResultT::Err(parent.error());
+    return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
+  }
+  if (verb == "camera" && t.size() == 2) {
+    auto camera = optionalEntityAt(1);
+    if (camera.isErr()) return ResultT::Err(camera.error());
+    return ResultT::Ok(std::vector<ac::Command>{ac::SetActiveCamera{camera.value()}});
+  }
+  return ResultT::Err(plainError("NotAWrite", ErrorCategory::Usage,
+                                 "not a scene write: set, create, destroy, add, remove, parent, camera <guid>|none"));
+}
+
+Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, std::string command) {
+  connection::AuthoringConnection* a = authoring();
+  if (a == nullptr) {
+    return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
+  }
+  const std::span<const TypeDescriptor> schema = a->schema();
+  const bool isTransaction = command == "scene tx";
+  (void)a->drainEvents(*authoringEvents_);  // only this submission's events below
+  (void)a->drainFailures();
+  const std::size_t n = commands.size();
+  access::TransactionTicket tickets;
+  if (!isTransaction && n == 1) {
+    tickets = access::TransactionTicket{a->submit(std::move(commands.front())), 1};
+  } else {
+    tickets = a->submitTransaction(std::move(commands));
+  }
+  const auto ticketValue = [&] {
+    if (isTransaction) {
+      Value ticket = Value::object();
+      ticket.set("first", Value::number(tickets.first.value));
+      ticket.set("count", Value::number(tickets.count));
+      return ticket;
+    }
+    return Value::number(tickets.first.value);
+  };
+  for (const ac::CommandFailure& failure : a->drainFailures()) {
+    if (!tickets.contains(failure.ticket)) continue;
+    const std::uint64_t at = failure.ticket.value - tickets.first.value;
+    Value facts = Value::object();
+    facts.set("ticket", Value::number(failure.ticket.value));
+    if (n > 1) facts.set("at", Value::number(at));
+    CliError error = refusedAuthoring(failure.error, std::move(facts));
+    Value result = Value::object();
+    result.set("ticket", ticketValue());
+    if (isTransaction) {
+      result.set("committed", Value::boolean(false));
+      result.set("at", Value::number(at));
+      result.set("error", Value::string(std::string(ac::toString(failure.error))));
+      error.text += " at " + std::to_string(at);
+    } else {
+      Value refused = Value::object();
+      refused.set("code", Value::string(std::string(ac::toString(failure.error))));
+      if (n > 1) refused.set("at", Value::number(at));
+      Value outcome = Value::object();
+      outcome.set("refused", std::move(refused));
+      result.set("outcome", std::move(outcome));
+    }
+    Reply reply = failed(command, std::move(error));
+    reply.result = std::move(result);
+    return reply;
+  }
+  std::string human;
+  Value eventValues = Value::array();
+  if (const auto events = a->drainEvents(*authoringEvents_); events.isOk()) {
+    for (const ac::Event& event : events.value()) {
+      human += "ok " + sceneEventText(schema, event) + "\n";
+      eventValues.push(sceneEventJson(schema, event));
+    }
+  }
+  Value result = Value::object();
+  result.set("ticket", ticketValue());
+  if (isTransaction) {
+    result.set("committed", Value::boolean(true));
+    result.set("events", std::move(eventValues));
+    human += "committed " + std::to_string(n) + "\n";
+  } else {
+    Value outcome = Value::object();
+    outcome.set("events", std::move(eventValues));
+    result.set("outcome", std::move(outcome));
+  }
+  return done(command, std::move(human), std::move(result));
+}
+
+Reply CommandLayer::runScene(std::span<const std::string_view> t) {
+  const std::string command = t.size() >= 2 ? "scene " + std::string(t[1]) : std::string("scene");
+  connection::AuthoringConnection* a = authoring();
+  if (a == nullptr) {
+    return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
+  }
+  if (t.size() < 2) {
+    return failed(command, usageError("scene open|nodes|get|set|create|destroy|add|remove|parent|camera|apply|save|tx"));
+  }
+  const std::span<const TypeDescriptor> schema = a->schema();
+  const std::string_view verb = t[1];
+
+  if (verb == "open") {
+    if (t.size() != 2) return failed(command, usageError("scene open"));
+    const auto opened = a->open();
+    if (opened.isErr()) {
+      const std::string code(ac::toString(opened.error()));
+      return failed(command, plainError(code, ErrorCategory::Runtime, "the scene's source cannot be opened: " + code));
+    }
+    (void)a->drainEvents(*authoringEvents_);
+    const auto document = a->document();
+    if (!document) return failed(command, plainError("NoDocument", ErrorCategory::Runtime, "no document after open"));
+    return done(command,
+                "opened " + atlantis::asset_system::toString(document->scene) + " " +
+                    (document->provenance == ac::Provenance::Imported ? "imported " : "hand-authored ") +
+                    document->sourcePath + " (" + std::to_string(document->nodeCount) + " nodes)\n",
+                documentJson(*document));
+  }
+  if (verb == "nodes") {
+    if (t.size() != 2) return failed(command, usageError("scene nodes"));
+    const auto nodes = a->listNodes();
+    if (nodes.isErr()) return failed(command, refusedAuthoring(nodes.error(), Value::object()));
+    std::string human;
+    Value list = Value::array();
+    for (const ac::NodeSummary& node : nodes.value()) {
+      human += text::formatEntity(node.node) + " parent=" + optionalEntityText(node.parent) + "\n";
+      Value item = Value::object();
+      item.set("guid", Value::string(text::formatEntity(node.node)));
+      item.set("parent", optionalEntityJson(node.parent));
+      list.push(std::move(item));
+    }
+    Value result = Value::object();
+    result.set("nodes", std::move(list));
+    return done(command, std::move(human), std::move(result));
+  }
+  if (verb == "get") {
+    if (t.size() != 4) return failed(command, usageError("scene get <guid> <Type>.<field>"));
+    const auto node = text::parseEntity(t[2]);
+    if (node.isErr()) return failed(command, textError(node.error(), t[2]));
+    const auto path = text::parsePath(schema, t[3]);
+    if (path.isErr()) return failed(command, textError(path.error(), t[3]));
+    const auto value = a->getProperty({node.value(), path.value().component, path.value().leaf->id});
+    const auto leaf = leafOf(schema, path.value().component, path.value().leaf->id);
+    const std::string canonical = leaf ? leaf->path : std::string(t[3]);
+    if (value.isErr()) {
+      return failed(command, refusedAuthoring(value.error(), subject({{"guid", Value::string(std::string(t[2]))},
+                                                                      {"path", Value::string(canonical)}})));
+    }
+    Value result = Value::object();
+    result.set("guid", Value::string(text::formatEntity(node.value())));
+    result.set("path", Value::string(canonical));
+    result.set("value", jsonValue(schema, *path.value().leaf, value.value()));
+    return done(command, text::formatValue(schema, *path.value().leaf, value.value()) + "\n", std::move(result));
+  }
+  if (verb == "camera" && t.size() == 2) {  // the active camera; `scene camera <guid>|none` sets it
+    const auto camera = a->activeCamera();
+    if (camera.isErr()) return failed(command, refusedAuthoring(camera.error(), Value::object()));
+    Value result = Value::object();
+    result.set("camera", optionalEntityJson(camera.value()));
+    return done(command, optionalEntityText(camera.value()) + "\n", std::move(result));
+  }
+  if (verb == "apply") {
+    if (t.size() != 2) return failed(command, usageError("scene apply"));
+    (void)a->drainEvents(*authoringEvents_);
+    const auto applied = a->apply();
+    if (applied.isErr()) {
+      const std::string code(ac::toString(applied.error()));
+      const ErrorCategory category =
+          applied.error() == ac::ApplyError::NoDocument ? ErrorCategory::Refused : ErrorCategory::Runtime;
+      return failed(command, plainError(code, category, "the document cannot be applied: " + code));
+    }
+    auto pending = std::make_unique<Pending>();
+    pending->kind = Pending::Kind::Apply;
+    pending->command = command;
+    pending_ = std::move(pending);
+    Reply reply;
+    reply.command = command;
+    reply.outcome = Outcome::Submitted;
+    reply.result = Value::object();
+    return reply;
+  }
+  if (verb == "save") {
+    if (t.size() != 2) return failed(command, usageError("scene save"));
+    const auto saved = a->save();
+    if (saved.isErr()) {
+      const std::string code(ac::toString(saved.error()));
+      const ErrorCategory category =
+          saved.error() == ac::SaveError::WriteFailed ? ErrorCategory::Runtime : ErrorCategory::Refused;
+      return failed(command, plainError(code, category, "the document cannot be saved: " + code));
+    }
+    const auto document = a->document();
+    Value result = Value::object();
+    result.set("source", document ? Value::string(document->sourcePath) : Value());
+    return done(command, "saved " + (document ? document->sourcePath : std::string()) + "\n", std::move(result));
+  }
+  if (verb == "tx") {
+    return failed(command, usageError("scene tx <file|-> (a command of its own, as tx is)"));
+  }
+  std::uint64_t end = sceneNodeCount();
+  auto commands = parseSceneWrite(t, end);
+  if (commands.isErr()) return failed(command, commands.error());
+  return submitSceneTransaction(std::move(commands.value()), command);
 }
 
 }  // namespace atlantis::cli

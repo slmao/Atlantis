@@ -97,7 +97,10 @@ if(WIN32)
 # editor.
 # Plan 0059 M9 (ADR-0117 D1): the benchmark is executable-private like cli.cpp and
 # editor_attachment.cpp -- never added to atlantis_runtime_host.
-add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp
+# Plan 0065 P5 (ADR-0129 D2, ADR-0130 D2): authoring_host.cpp hosts the
+# authoring session, executable-private like editor_attachment.cpp --
+# Atlantis::RuntimeHost does not link Atlantis Authoring.
+add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp authoring_host.cpp
   benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
   # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
   gate_canary.cpp canary_run.cpp gate_set.cpp gate_policy.cpp gate_evaluate.cpp gate_orchestrate.cpp gate_process_windows.cpp gate_store.cpp gate_applies.cpp gate_run.cpp)
@@ -145,6 +148,8 @@ target_link_libraries(atlantis_runtime
     # Plan 0056 P1 (ADR-0108 D1, D2): the executable hosts Atlantis Editor
     # (`--editor`); Atlantis::RuntimeHost does not depend on it.
     Atlantis::Editor
+    # Plan 0065 P5 (ADR-0130 D2): the executable hosts Atlantis Authoring.
+    Atlantis::Authoring
     atlantis_compiler_warnings
 )
 
@@ -168,6 +173,10 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # integrated_showcase_demo.
   ATLANTIS_RUNTIME_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PATH}"
   ATLANTIS_RUNTIME_SCENE_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
+  # Plan 0065 P5 (ADR-0129 D3): where the authoring session finds the scene's
+  # source -- the committed catalog source and the assets tree.
+  ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
+  ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair's own output directory -- reuses the already-
   # exported ATLANTIS_textured_quad_SHADER_OUTPUT_DIR
@@ -313,6 +322,8 @@ add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit
 if(DEFINED ATLANTIS_bistro_scene_TARGET)
   target_compile_definitions(atlantis_runtime PRIVATE
     ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
+    # Plan 0065 P5: the imported scene's generated source, the authoring document.
+    ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE="${ATLANTIS_bistro_scene_IMPORT_DIR}/bistro/bistro.scene.txt"
   )
   add_dependencies(atlantis_runtime ${ATLANTIS_bistro_scene_TARGET})
 endif()

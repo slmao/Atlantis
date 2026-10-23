@@ -51,7 +51,7 @@
 {"case":"filter.none","type":"Filter","wire":{"kinds":[],"entity":null,"component":null}}
 {"case":"filter.property","type":"Filter","wire":{"kinds":["PropertyChanged"],"entity":"52052052-0002-4052-8052-000000000002","component":"0x8325934757106b8d"}}
 {"case":"filter.entity","type":"Filter","wire":{"kinds":["EntityCreated","EntityDestroyed","ComponentAdded","ComponentRemoved","PropertyChanged"],"entity":"58005800-0000-4000-8000-0000000000b1","component":null}}
-{"case":"status","type":"RuntimeStatus","wire":{"paused":true,"frame":42,"scene":"52052052-00aa-4052-8052-0000000000aa"}}
+{"case":"status","type":"RuntimeStatus","wire":{"paused":true,"frame":42,"scene":"52052052-00aa-4052-8052-0000000000aa","sceneGeneration":3}}
 {"case":"step.plain","type":"StepRequest","wire":{"frames":1,"image":null}}
 {"case":"step.image","type":"StepRequest","wire":{"frames":3,"image":"C:\\captures\\beacon \"k\" é.png"}}
 {"case":"report.no_image","type":"FrameReport","wire":{"frame":1234,"applied":true,"data":{"directionalLights":[{"direction":[0.5,-0.75,0.25],"color":[1,1,1],"intensity":3}],"pointLights":[{"position":[1.5,2,1.5],"color":[1,0.6,0.2],"intensity":4,"range":4}],"view":[0,0.5,1,1.5,2,2.5,3,3.5,4,4.5,5,5.5,6,6.5,7,7.5],"projection":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"drawItemCount":7},"image":null}}

@@ -224,7 +224,7 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   out.push_back({"filter.entity", "Filter",
                  codec::encode(connection::EventFilter{connection::EventKindSet::all(), kEntity, std::nullopt})});
 
-  out.push_back({"status", "RuntimeStatus", codec::encode(connection::RuntimeStatus{true, 42, kAsset})});
+  out.push_back({"status", "RuntimeStatus", codec::encode(connection::RuntimeStatus{true, 42, kAsset, 3})});
   out.push_back({"step.plain", "StepRequest", codec::encode(connection::StepRequest{1, std::nullopt})});
   out.push_back({"step.image", "StepRequest",
                  codec::encode(connection::StepRequest{3, std::string("C:\\captures\\beacon \"k\" \xc3\xa9.png")})});

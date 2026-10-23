@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/remote/session_file.h>
@@ -74,6 +75,11 @@ class RemoteSession {
 
   [[nodiscard]] atlantis::connection::RuntimeConnection& connection() noexcept;
   [[nodiscard]] atlantis::connection::RuntimeControl& control() noexcept;
+  // Plan 0065 P6 (ADR-0130 D3): AuthoringConnection over authoring.*
+  // (RemoteAuthoring). Nothing is asked of the Runtime until the first call;
+  // against a Runtime that serves no authoring session that call fails the
+  // session (NoAuthoring is a refused request).
+  [[nodiscard]] atlantis::connection::AuthoringConnection& authoring() noexcept;
   [[nodiscard]] const atlantis::asset_system::AssetGuid& scene() const noexcept;
   [[nodiscard]] std::optional<RemoteError> failure() const noexcept;
 

@@ -10,6 +10,8 @@ add_executable(atlantis_remote_tests
   remote_connection_tests.cpp
   remote_protocol_tests.cpp
   remote_control_tests.cpp
+  # Plan 0065 M5: authoring.* over the wire.
+  remote_authoring_tests.cpp
 )
 
 target_include_directories(atlantis_remote_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/remote/src)
@@ -19,6 +21,7 @@ target_link_libraries(atlantis_remote_tests
     Atlantis::RemoteClient
     Atlantis::RemoteServer
     atlantis_remote_wire
+    Atlantis::Authoring  # Plan 0065 M5: the session the server carries in its tests
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

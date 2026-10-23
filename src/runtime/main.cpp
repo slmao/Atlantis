@@ -10,6 +10,7 @@
 #include "benchmark_run.h"
 #include "canary_run.h"
 #include "gate_run.h"
+#include "authoring_host.h"
 #include "cli.h"
 #include "editor_attachment.h"
 
@@ -359,6 +360,27 @@ int main(int argc, char** argv) {
   RuntimeApplication app = std::move(appResult.value());
   ATLANTIS_LOG_INFO("Runtime initialized");
 
+  // Plan 0065 P5 (ADR-0129 D2, D3): the authoring session's host. Nothing
+  // is created until a client asks for it (an --exec `scene` command, a
+  // --listen client's first authoring.* request). The scene's source is found
+  // through the committed catalog source and, for an imported scene, the
+  // generated source the build made -- paths compiled in, as the shader
+  // directories are (ADR-0129: a development tree only). Declared after `app`
+  // and before every client, so every authoring connection closes first.
+  atlantis::runtime::AuthoringSources authoringSources;
+  authoringSources.catalogSource = ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH;
+  authoringSources.roots.assetsRoot = ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR;
+#if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID) && defined(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)
+  if (const auto bistroImport = atlantis::asset_system::parseAssetGuid(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID);
+      bistroImport.isOk()) {
+    authoringSources.roots.imports.push_back(
+        {bistroImport.value(), atlantis::asset_system::deriveAssetGuid(bistroImport.value(), "scene"),
+         std::filesystem::path(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)});
+  }
+#endif
+  atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
+  std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks
+
   // Spec 0054 R9 (ruling Q3, H-a; Plan 0054 P7): with --exec, a CLI client on
   // a connection to this application runs one script line after each frame,
   // on this thread -- runFrame() itself is unchanged. Declared after `app`
@@ -368,6 +390,10 @@ int main(int argc, char** argv) {
   if (execScript.has_value()) {
     connection = app.openConnection();
     runner.emplace(*connection, atlantis::cli::splitLines(*execScript), std::cout);
+    runner->setAuthoring([&authoring, &execAuthoring]() -> atlantis::connection::AuthoringConnection* {
+      if (!execAuthoring) execAuthoring = authoring.connect();
+      return execAuthoring.get();
+    });
   }
 
   // Spec 0055 R1/R2 (Plan 0055 P3, P4, P11; ADR-0106 D1): with --listen, a
@@ -398,6 +424,7 @@ int main(int argc, char** argv) {
       return toProcessExitCode(RuntimeExitReason::InitializationFailed);
     }
     server = std::move(listening.value());
+    server->serveAuthoring([&authoring] { return authoring.connect(); });  // Plan 0065 P5
     sessionPath = cliResult.sessionFile.has_value() ? std::filesystem::path(*cliResult.sessionFile)
                                                     : atlantis::remote::defaultSessionPath();
     // Spec 0064 / ADR-0126 D3: in child-window mode the session file names
@@ -439,6 +466,7 @@ int main(int argc, char** argv) {
     if (control) control->beforeFrame();
     app.runFrame();
     if (control) control->afterFrame();
+    authoring.afterFrame();  // Plan 0065 P5: a swapped reload reaches its subscribers before the clients run
     if (sessionPending && app.windowHandle().has_value()) {
       atlantis::remote::SessionInfo session = server->session();
       session.window = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(app.windowHandle()->value0));

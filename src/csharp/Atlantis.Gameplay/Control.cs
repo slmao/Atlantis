@@ -5,7 +5,8 @@ using System.Numerics;
 
 namespace Atlantis.Gameplay;
 
-public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene);
+// Plan 0065 P4 (ADR-0131 D5): SceneGeneration counts the Runtime's scene reloads (0: none).
+public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0);
 
 /// <summary>Run <paramref name="Frames"/> frames (at least one); optionally capture the last to a PNG.</summary>
 public sealed record StepRequest(uint Frames, string? ImagePath = null);

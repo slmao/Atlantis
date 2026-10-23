@@ -686,6 +686,7 @@ Value encode(const connection::RuntimeStatus& status) {
   out.set("paused", Value::boolean(status.paused));
   out.set("frame", Value::number(status.frame));
   out.set("scene", encodeAsset(status.scene));
+  out.set("sceneGeneration", Value::number(status.sceneGeneration));  // Plan 0065 P4 (ADR-0131 D5)
   return out;
 }
 
@@ -697,7 +698,14 @@ std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
   const auto f = decodeUInt64(*frame);
   const auto s = decodeAsset(*scene);
   if (!f || !s) return std::nullopt;
-  return connection::RuntimeStatus{paused->asBool(), *f, *s};
+  // Plan 0065 P4: absent from a Runtime older than the reload; its World never changes.
+  std::uint64_t generation = 0;
+  if (const Value* g = member(value, "sceneGeneration")) {
+    const auto decoded = decodeUInt64(*g);
+    if (!decoded) return std::nullopt;
+    generation = *decoded;
+  }
+  return connection::RuntimeStatus{paused->asBool(), *f, *s, generation};
 }
 
 Value encode(const connection::StepRequest& request) {
@@ -919,6 +927,406 @@ std::optional<connection::RayHit> decodeRayHit(const Value& value) {
   const auto e = decodeEntity(*entity);
   if (!e) return std::nullopt;
   return connection::RayHit{*e, *distance};
+}
+
+// --- Plan 0065 P6: AuthoringConnection's values ---------------------------------
+
+namespace {
+
+constexpr std::array kAuthoringErrors = {
+    authoring::Error::NoDocument,           authoring::Error::UnknownNode,
+    authoring::Error::UnknownComponentType, authoring::Error::ComponentMissing,
+    authoring::Error::ComponentAlreadyPresent, authoring::Error::ComponentRequired,
+    authoring::Error::UnknownField,         authoring::Error::KindMismatch,
+    authoring::Error::EnumValueOutOfRange,  authoring::Error::NodePositionOutOfRange,
+    authoring::Error::FieldOutOfDomain,     authoring::Error::NonEmptyDocument,
+    authoring::Error::NodeGuidNonNil,       authoring::Error::NodeGuidUnique,
+    authoring::Error::ParentExists,         authoring::Error::ParentAcyclic,
+    authoring::Error::ActiveCameraExists,   authoring::Error::ActiveCameraHasCamera,
+    authoring::Error::ComponentExclusivity, authoring::Error::LightRangeMatchesKind,
+    authoring::Error::MaxDirectionalLights, authoring::Error::MaxPointLights,
+    authoring::Error::CookRefused,          authoring::Error::NotRepresentableInSource,
+};
+constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
+                                    authoring::OpenError::SourceInvalid};
+constexpr std::array kSaveErrors = {authoring::SaveError::NoDocument, authoring::SaveError::ImportedSceneNotSavable,
+                                    authoring::SaveError::WriteFailed};
+constexpr std::array kApplyErrors = {authoring::ApplyError::NoDocument, authoring::ApplyError::NoSceneSink,
+                                     authoring::ApplyError::CookFailed, authoring::ApplyError::DecodeFailed,
+                                     authoring::ApplyError::ReloadRefused};
+
+constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 9> kAuthoringEventKinds = {{
+    {authoring::EventKind::PropertyChanged, "PropertyChanged"},
+    {authoring::EventKind::NodeCreated, "NodeCreated"},
+    {authoring::EventKind::NodeDestroyed, "NodeDestroyed"},
+    {authoring::EventKind::ComponentAdded, "ComponentAdded"},
+    {authoring::EventKind::ComponentRemoved, "ComponentRemoved"},
+    {authoring::EventKind::ParentChanged, "ParentChanged"},
+    {authoring::EventKind::ActiveCameraChanged, "ActiveCameraChanged"},
+    {authoring::EventKind::DocumentReopened, "DocumentReopened"},
+    {authoring::EventKind::Applied, "Applied"},
+}};
+
+template <typename E, std::size_t N>
+[[nodiscard]] std::optional<E> enumeratorNamed(const Value& value, const std::array<E, N>& all) {
+  if (!value.isString()) return std::nullopt;
+  for (const E e : all) {
+    if (value.asString() == authoring::toString(e)) return e;
+  }
+  return std::nullopt;
+}
+
+// An EntityGuid or null.
+[[nodiscard]] Value encodeOptionalEntity(const std::optional<EntityGuid>& entity) {
+  return entity ? encodeEntity(*entity) : Value();
+}
+// Present and either null or a GUID; nullopt (outer) if malformed.
+[[nodiscard]] std::optional<std::optional<EntityGuid>> optionalEntityMember(const Value& value, std::string_view key) {
+  const Value* member = value.find(key);
+  if (member == nullptr) return std::nullopt;
+  if (member->isNull()) return std::optional<EntityGuid>{};
+  const auto entity = decodeEntity(*member);
+  if (!entity) return std::nullopt;
+  return std::optional<EntityGuid>{*entity};
+}
+[[nodiscard]] std::optional<EntityGuid> nodeMember(const Value& value) {
+  const Value* node = value.find("node");
+  if (node == nullptr) return std::nullopt;
+  return decodeEntity(*node);
+}
+[[nodiscard]] std::optional<schema::TypeId> componentMember(const Value& value) {
+  const Value* component = value.find("component");
+  if (component == nullptr) return std::nullopt;
+  return decodeTypeId(*component);
+}
+[[nodiscard]] std::optional<std::pair<authoring::PropertyAddress, access::PropertyValue>> sceneAddressValueOf(
+    const Value& value) {
+  const Value* address = value.find("address");
+  const Value* v = value.find("value");
+  if (address == nullptr || v == nullptr) return std::nullopt;
+  const auto a = decodeSceneAddress(*address);
+  const auto pv = decodePropertyValue(*v);
+  if (!a || !pv) return std::nullopt;
+  return std::make_pair(*a, *pv);
+}
+
+}  // namespace
+
+Value encode(const authoring::PropertyAddress& address) {
+  Value out = Value::object();
+  out.set("node", encodeEntity(address.node));
+  out.set("component", encodeTypeId(address.component));
+  out.set("field", encodeId(address.field.value));
+  return out;
+}
+
+std::optional<authoring::PropertyAddress> decodeSceneAddress(const Value& value) {
+  const auto node = nodeMember(value);
+  const auto component = componentMember(value);
+  const Value* field = value.find("field");
+  if (!node || !component || field == nullptr) return std::nullopt;
+  const auto f = decodeId(*field);
+  if (!f) return std::nullopt;
+  return authoring::PropertyAddress{*node, *component, schema::FieldId{*f}};
+}
+
+Value encode(const authoring::Command& command) {
+  return std::visit(
+      [](const auto& c) {
+        using C = std::decay_t<decltype(c)>;
+        Value out = Value::object();
+        if constexpr (std::is_same_v<C, authoring::SetProperty>) {
+          out.set("kind", Value::string("SetProperty"));
+          out.set("address", encode(c.address));
+          out.set("value", encode(c.value));
+        } else if constexpr (std::is_same_v<C, authoring::CreateNode>) {
+          out.set("kind", Value::string("CreateNode"));
+          out.set("node", encodeOptionalEntity(c.node));
+          out.set("position", Value::number(c.position));
+          Value components = Value::array();
+          for (const schema::TypeId component : c.components) components.push(encodeTypeId(component));
+          out.set("components", std::move(components));
+        } else if constexpr (std::is_same_v<C, authoring::DestroyNode>) {
+          out.set("kind", Value::string("DestroyNode"));
+          out.set("node", encodeEntity(c.node));
+        } else if constexpr (std::is_same_v<C, authoring::AddComponent> ||
+                             std::is_same_v<C, authoring::RemoveComponent>) {
+          out.set("kind", Value::string(std::is_same_v<C, authoring::AddComponent> ? "AddComponent" : "RemoveComponent"));
+          out.set("node", encodeEntity(c.node));
+          out.set("component", encodeTypeId(c.component));
+        } else if constexpr (std::is_same_v<C, authoring::SetParent>) {
+          out.set("kind", Value::string("SetParent"));
+          out.set("node", encodeEntity(c.node));
+          out.set("parent", encodeOptionalEntity(c.parent));
+        } else {
+          static_assert(std::is_same_v<C, authoring::SetActiveCamera>);
+          out.set("kind", Value::string("SetActiveCamera"));
+          out.set("camera", encodeOptionalEntity(c.camera));
+        }
+        return out;
+      },
+      command);
+}
+
+std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
+  const auto kind = kindOf(value);
+  if (!kind) return std::nullopt;
+  if (*kind == "SetProperty") {
+    const auto av = sceneAddressValueOf(value);
+    if (!av) return std::nullopt;
+    return authoring::Command(authoring::SetProperty{av->first, av->second});
+  }
+  if (*kind == "CreateNode") {
+    const auto node = optionalEntityMember(value, "node");
+    const Value* position = value.find("position");
+    const Value* components = value.find("components");
+    if (!node || position == nullptr || components == nullptr || !components->isArray()) return std::nullopt;
+    const auto p = decodeUInt64(*position);
+    if (!p) return std::nullopt;
+    authoring::CreateNode create{*node, *p, {}};
+    for (const Value& item : components->asArray()) {
+      const auto component = decodeTypeId(item);
+      if (!component) return std::nullopt;
+      create.components.push_back(*component);
+    }
+    return authoring::Command(std::move(create));
+  }
+  if (*kind == "DestroyNode") {
+    const auto node = nodeMember(value);
+    if (!node) return std::nullopt;
+    return authoring::Command(authoring::DestroyNode{*node});
+  }
+  if (*kind == "AddComponent" || *kind == "RemoveComponent") {
+    const auto node = nodeMember(value);
+    const auto component = componentMember(value);
+    if (!node || !component) return std::nullopt;
+    if (*kind == "AddComponent") return authoring::Command(authoring::AddComponent{*node, *component});
+    return authoring::Command(authoring::RemoveComponent{*node, *component});
+  }
+  if (*kind == "SetParent") {
+    const auto node = nodeMember(value);
+    const auto parent = optionalEntityMember(value, "parent");
+    if (!node || !parent) return std::nullopt;
+    return authoring::Command(authoring::SetParent{*node, *parent});
+  }
+  if (*kind == "SetActiveCamera") {
+    const auto camera = optionalEntityMember(value, "camera");
+    if (!camera) return std::nullopt;
+    return authoring::Command(authoring::SetActiveCamera{*camera});
+  }
+  return std::nullopt;
+}
+
+Value encode(const authoring::Event& event) {
+  return std::visit(
+      [](const auto& e) {
+        using E = std::decay_t<decltype(e)>;
+        Value out = Value::object();
+        if constexpr (std::is_same_v<E, authoring::PropertyChanged>) {
+          out.set("kind", Value::string("PropertyChanged"));
+          out.set("address", encode(e.address));
+          out.set("value", encode(e.value));
+        } else if constexpr (std::is_same_v<E, authoring::NodeCreated>) {
+          out.set("kind", Value::string("NodeCreated"));
+          out.set("node", encodeEntity(e.node));
+          out.set("position", Value::number(e.position));
+        } else if constexpr (std::is_same_v<E, authoring::NodeDestroyed>) {
+          out.set("kind", Value::string("NodeDestroyed"));
+          out.set("node", encodeEntity(e.node));
+        } else if constexpr (std::is_same_v<E, authoring::ComponentAdded> ||
+                             std::is_same_v<E, authoring::ComponentRemoved>) {
+          out.set("kind",
+                  Value::string(std::is_same_v<E, authoring::ComponentAdded> ? "ComponentAdded" : "ComponentRemoved"));
+          out.set("node", encodeEntity(e.node));
+          out.set("component", encodeTypeId(e.component));
+        } else if constexpr (std::is_same_v<E, authoring::ParentChanged>) {
+          out.set("kind", Value::string("ParentChanged"));
+          out.set("node", encodeEntity(e.node));
+          out.set("parent", encodeOptionalEntity(e.parent));
+        } else if constexpr (std::is_same_v<E, authoring::ActiveCameraChanged>) {
+          out.set("kind", Value::string("ActiveCameraChanged"));
+          out.set("camera", encodeOptionalEntity(e.camera));
+        } else if constexpr (std::is_same_v<E, authoring::DocumentReopened>) {
+          out.set("kind", Value::string("DocumentReopened"));
+          out.set("scene", encodeAsset(e.scene));
+        } else {
+          static_assert(std::is_same_v<E, authoring::Applied>);
+          out.set("kind", Value::string("Applied"));
+          out.set("generation", Value::number(e.generation));
+        }
+        return out;
+      },
+      event);
+}
+
+std::optional<authoring::Event> decodeAuthoringEvent(const Value& value) {
+  const auto kind = kindOf(value);
+  if (!kind) return std::nullopt;
+  if (*kind == "PropertyChanged") {
+    const auto av = sceneAddressValueOf(value);
+    if (!av) return std::nullopt;
+    return authoring::Event(authoring::PropertyChanged{av->first, av->second});
+  }
+  if (*kind == "NodeCreated") {
+    const auto node = nodeMember(value);
+    const Value* position = value.find("position");
+    if (!node || position == nullptr) return std::nullopt;
+    const auto p = decodeUInt64(*position);
+    if (!p) return std::nullopt;
+    return authoring::Event(authoring::NodeCreated{*node, *p});
+  }
+  if (*kind == "NodeDestroyed") {
+    const auto node = nodeMember(value);
+    if (!node) return std::nullopt;
+    return authoring::Event(authoring::NodeDestroyed{*node});
+  }
+  if (*kind == "ComponentAdded" || *kind == "ComponentRemoved") {
+    const auto node = nodeMember(value);
+    const auto component = componentMember(value);
+    if (!node || !component) return std::nullopt;
+    if (*kind == "ComponentAdded") return authoring::Event(authoring::ComponentAdded{*node, *component});
+    return authoring::Event(authoring::ComponentRemoved{*node, *component});
+  }
+  if (*kind == "ParentChanged") {
+    const auto node = nodeMember(value);
+    const auto parent = optionalEntityMember(value, "parent");
+    if (!node || !parent) return std::nullopt;
+    return authoring::Event(authoring::ParentChanged{*node, *parent});
+  }
+  if (*kind == "ActiveCameraChanged") {
+    const auto camera = optionalEntityMember(value, "camera");
+    if (!camera) return std::nullopt;
+    return authoring::Event(authoring::ActiveCameraChanged{*camera});
+  }
+  if (*kind == "DocumentReopened") {
+    const Value* scene = value.find("scene");
+    if (scene == nullptr) return std::nullopt;
+    const auto s = decodeAsset(*scene);
+    if (!s) return std::nullopt;
+    return authoring::Event(authoring::DocumentReopened{*s});
+  }
+  if (*kind == "Applied") {
+    const Value* generation = value.find("generation");
+    if (generation == nullptr) return std::nullopt;
+    const auto g = decodeUInt64(*generation);
+    if (!g) return std::nullopt;
+    return authoring::Event(authoring::Applied{*g});
+  }
+  return std::nullopt;
+}
+
+Value encode(const authoring::EventFilter& filter) {
+  Value kinds = Value::array();
+  for (const auto& [kind, name] : kAuthoringEventKinds) {
+    if (filter.kinds.contains(kind)) kinds.push(Value::string(std::string(name)));
+  }
+  Value out = Value::object();
+  out.set("kinds", std::move(kinds));
+  out.set("node", encodeOptionalEntity(filter.node));
+  out.set("component", filter.component ? encodeTypeId(*filter.component) : Value());
+  return out;
+}
+
+std::optional<authoring::EventFilter> decodeAuthoringFilter(const Value& value) {
+  const Value* kinds = value.find("kinds");
+  const auto node = optionalEntityMember(value, "node");
+  const Value* component = value.find("component");
+  if (kinds == nullptr || !kinds->isArray() || !node || component == nullptr) return std::nullopt;
+  authoring::EventFilter filter;
+  filter.kinds = authoring::EventKindSet();
+  for (const Value& name : kinds->asArray()) {
+    if (!name.isString()) return std::nullopt;
+    bool known = false;
+    for (const auto& [kind, kindText] : kAuthoringEventKinds) {
+      if (name.asString() == kindText) {
+        filter.kinds = filter.kinds.with(kind);
+        known = true;
+      }
+    }
+    if (!known) return std::nullopt;
+  }
+  filter.node = *node;
+  if (!component->isNull()) {
+    const auto c = decodeTypeId(*component);
+    if (!c) return std::nullopt;
+    filter.component = *c;
+  }
+  return filter;
+}
+
+Value encode(const authoring::CommandFailure& failure) {
+  Value out = Value::object();
+  out.set("ticket", Value::number(failure.ticket.value));
+  out.set("error", encodeAuthoringError(failure.error));
+  return out;
+}
+
+std::optional<authoring::CommandFailure> decodeAuthoringFailure(const Value& value) {
+  const Value* ticket = value.find("ticket");
+  const Value* error = value.find("error");
+  if (ticket == nullptr || error == nullptr) return std::nullopt;
+  const auto t = decodeUInt64(*ticket);
+  const auto e = decodeAuthoringError(*error);
+  if (!t || !e) return std::nullopt;
+  return authoring::CommandFailure{access::CommandTicket{*t}, *e};
+}
+
+Value encode(const authoring::DocumentInfo& document) {
+  Value out = Value::object();
+  out.set("scene", encodeAsset(document.scene));
+  out.set("provenance",
+          Value::string(document.provenance == authoring::Provenance::Imported ? "Imported" : "HandAuthored"));
+  out.set("source", Value::string(document.sourcePath));
+  out.set("nodeCount", Value::number(document.nodeCount));
+  return out;
+}
+
+std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
+  const Value* scene = value.find("scene");
+  const Value* provenance = value.find("provenance");
+  const Value* source = value.find("source");
+  const Value* nodeCount = value.find("nodeCount");
+  if (scene == nullptr || provenance == nullptr || !provenance->isString() || source == nullptr ||
+      !source->isString() || nodeCount == nullptr) {
+    return std::nullopt;
+  }
+  const auto s = decodeAsset(*scene);
+  const auto n = decodeUInt64(*nodeCount);
+  if (!s || !n) return std::nullopt;
+  authoring::DocumentInfo out{*s, authoring::Provenance::HandAuthored, source->asString(), *n};
+  if (provenance->asString() == "Imported") {
+    out.provenance = authoring::Provenance::Imported;
+  } else if (provenance->asString() != "HandAuthored") {
+    return std::nullopt;
+  }
+  return out;
+}
+
+Value encode(const authoring::NodeSummary& node) {
+  Value out = Value::object();
+  out.set("node", encodeEntity(node.node));
+  out.set("parent", encodeOptionalEntity(node.parent));
+  return out;
+}
+
+std::optional<authoring::NodeSummary> decodeNodeSummary(const Value& value) {
+  const auto node = nodeMember(value);
+  const auto parent = optionalEntityMember(value, "parent");
+  if (!node || !parent) return std::nullopt;
+  return authoring::NodeSummary{*node, *parent};
+}
+
+Value encodeAuthoringError(authoring::Error error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::Error> decodeAuthoringError(const Value& value) {
+  return enumeratorNamed(value, kAuthoringErrors);
+}
+Value encodeOpenError(authoring::OpenError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::OpenError> decodeOpenError(const Value& value) { return enumeratorNamed(value, kOpenErrors); }
+Value encodeSaveError(authoring::SaveError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::SaveError> decodeSaveError(const Value& value) { return enumeratorNamed(value, kSaveErrors); }
+Value encodeApplyError(authoring::ApplyError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::ApplyError> decodeApplyError(const Value& value) {
+  return enumeratorNamed(value, kApplyErrors);
 }
 
 }  // namespace atlantis::remote::codec

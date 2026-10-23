@@ -508,7 +508,7 @@ public static class Codec
 
     public static JsonValue Encode(RuntimeStatus status) =>
         JsonValue.NewObject().Set("paused", JsonValue.Bool(status.Paused)).Set("frame", JsonValue.Number(status.Frame))
-            .Set("scene", Encode(status.Scene));
+            .Set("scene", Encode(status.Scene)).Set("sceneGeneration", JsonValue.Number(status.SceneGeneration));
 
     public static RuntimeStatus? DecodeStatus(JsonValue value)
     {
@@ -517,7 +517,14 @@ public static class Codec
         JsonValue? scene = value.Find("scene");
         if (paused is null || !paused.IsBool || frame is null || scene is null) return null;
         if (DecodeUInt64(frame) is not ulong f || DecodeAsset(scene) is not AssetGuid s) return null;
-        return new RuntimeStatus(paused.AsBool, f, s);
+        // Plan 0065 P4: absent from a Runtime older than the reload.
+        ulong generation = 0;
+        if (value.Find("sceneGeneration") is JsonValue g)
+        {
+            if (DecodeUInt64(g) is not ulong decoded) return null;
+            generation = decoded;
+        }
+        return new RuntimeStatus(paused.AsBool, f, s, generation);
     }
 
     public static JsonValue Encode(StepRequest request) =>
