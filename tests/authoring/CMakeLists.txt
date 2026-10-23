@@ -31,3 +31,21 @@ if(DEFINED ATLANTIS_bistro_scene_TARGET)
 endif()
 
 catch_discover_tests(atlantis_authoring_tests DISCOVERY_MODE PRE_TEST)
+
+# Plan 0065 M3 (P7; Spec 0065 R12, Q7 T-a; ADR-0130 D4): the second edit target,
+# test-only -- an EditTarget over AuthoringConnection running E2's EditHistory
+# unchanged. Its own executable, since it also links Atlantis Editor's model;
+# Atlantis Authoring itself does not.
+add_executable(atlantis_authoring_edit_target_tests
+  authoring_edit_target_tests.cpp
+)
+
+target_link_libraries(atlantis_authoring_edit_target_tests
+  PRIVATE
+    Atlantis::Authoring
+    Atlantis::Editor
+    Catch2::Catch2WithMain
+    atlantis_compiler_warnings
+)
+
+catch_discover_tests(atlantis_authoring_edit_target_tests DISCOVERY_MODE PRE_TEST)
