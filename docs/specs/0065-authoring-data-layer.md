@@ -51,6 +51,28 @@
   - ADR-0129's Accepted Amendment states the superseded rule; a second dated amendment there corrects that one
     sentence (Accepted Amendment — 2026-10-22, second). ADR-0131's amendment does not state the rule and is
     unchanged.
+- **Third Correction (2026-10-23, post-Approval, found in review of Plan 0065 M4 and M5; ruled by slmao,
+  2026-10-23, before its docs PR):** R8 never said what a reload does while the Runtime is paused, and M4 (commit
+  `8d06e14`, on the feature branch) decided it without disclosing it: `runFrame()` applies pending World commands
+  only when a pause does not hold them, but performed a pending reload regardless, so a reload under pause swapped
+  the World while commands were still held, and the InProcess endpoint let those commands "go with it,
+  unreported". M5's CLI then made `scene apply` wait for `Applied{generation}` even while paused. That breaks three
+  things this Spec keeps: ADR-0103's settlement (every submitted command ends as an event or a drained failure, D6,
+  D9) — an E2 undo, a Gameplay SDK write or a CLI write held by a pause would vanish; ADR-0131 D4's own order
+  ("after pending World commands are applied to the old World", which under pause never happens); and ADR-0106 D4
+  ("pause holds command application") with E2's accepted behaviour (Plan 0063 J6: an undo under pause waits and
+  applies on Step). Corrected:
+  - **A reload waits while commands are held.** The swap happens at the next command application — on Step or on
+    resume — immediately after the held commands are applied to the old World. No command is ever dropped
+    unreported.
+  - **Under pause an apply is accepted and stays pending;** a newer apply still replaces it (Plan J5).
+  - **The CLI's `scene apply` under pause does not block:** it returns the pending outcome, as a write under pause
+    does, and reports `Applied{generation}` when it arrives.
+  - **The old World's queued events are delivered** (ruled by slmao, 2026-10-24, while implementing it): a command
+    applied in the swap frame settles as its event, which reaches its subscriptions; ADR-0131 D4's "queued events
+    of the old World are dropped" is withdrawn.
+  - ADR-0131 records what this means for D4 in an Accepted Amendment (2026-10-23); ADR-0103 and ADR-0106 are
+    kept unchanged.
 - **Related ADR(s)** (all `Accepted` 2026-10-22, alongside this Spec's own Approval):
   - [ADR-0129](../adr/0129-authoring-document-ownership.md): who owns the authoring document while it is being
     edited — a C++ authoring session, hosted by the `atlantis_runtime` executable, that every client edits through
@@ -222,6 +244,10 @@ keeps the decision about data.
   - Open `RuntimeConnection`s stay open and are re-bound to the new World; their subscriptions keep their filters;
     no Runtime World event is emitted for the reload itself; commands applied before the boundary are applied to
     the old World and are not carried over.
+  - **A reload waits while commands are held** (third Correction 2026-10-23): while a pause holds command
+    application, a requested reload stays pending; it happens at the next frame that applies commands (a Step,
+    or running again), right after the held commands are applied to the old World, so no command is lost; the
+    events of commands applied to the old World in that frame still reach their subscriptions (ruled 2026-10-24).
   - `RuntimeStatus` gains a scene generation, incremented by every reload; authoring subscribers also receive
     `Applied{generation}` (R6), so no client has to poll for a reload (ADR-0131).
   - **Resources the new scene no longer references** (meshes, materials, textures, their GPU objects and their
@@ -357,6 +383,10 @@ The alternatives are recorded with each open question below; the principal ones:
   fresh Runtime started on the saved document (R8); a failing reload (an unresolvable asset) leaves the old World,
   frame data unchanged; connections survive a reload, a subscription keeps its filter, `sceneGeneration`
   increments and authoring subscribers receive `Applied{generation}`; Bistro's apply time measured.
+  - **Under pause** (third Correction): with the Runtime paused, a World command submitted and then an apply
+    leave the World unswapped and the command pending; a Step applies the command to the old World, then swaps,
+    increments the generation and delivers both `Applied{generation}` and the command's event (an old World's
+    queued event is delivered at the re-bind, not dropped).
   - **Scene-sized state on the reload path:** an edited document that adds materials, textures and more lights
     than the original (within the scene limits) reloads to frame data and a capture equal to a fresh start, so the
     Renderer state sized by the scene — descriptor pool capacity (Spec 0021), the light clustering, shadows — is
@@ -366,7 +396,8 @@ The alternatives are recorded with each open question below; the principal ones:
 - **Runtime-side edits:** a CLI `property set` survives until the next apply and is gone after it; E2's history
   clears on the generation change (R10).
 - **Wire, CLI, C# SDK:** codec round trips and conformance vectors for every new value; the CLI's `scene` commands'
-  `cli/1` envelopes; the reflective C# session against the fixture server (R11, Q8).
+  `cli/1` envelopes, and `scene apply` under pause returning its pending outcome at once and reporting `Applied`
+  after the Step; the reflective C# session against the fixture server (R11, Q8).
 - **The second target:** E2's `EditHistory`, unchanged, over a test-only target on `AuthoringConnection`: a
   recorded edit undoes and redoes; a concurrent client's change refuses an undo ("changed elsewhere") (R12).
 - **North star:** on the default scene and Bistro, through `atlantis.remote/1` only (the CLI): open, set a light's
