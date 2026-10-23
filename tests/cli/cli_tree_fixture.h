@@ -82,6 +82,10 @@ class FakeRuntime final : public connection::RuntimeControl {
  public:
   explicit FakeRuntime(access::RuntimeWorldAccess& boundary) : boundary_(boundary) {}
 
+  // Whether the next frame() applies commands (and so performs a pending
+  // scene reload, Spec 0065 third Correction): running, or a step waiting.
+  [[nodiscard]] bool appliesNextFrame() const noexcept { return !paused_ || !steps_.empty(); }
+
   void frame() {
     const bool stepping = !steps_.empty();
     if (!paused_ || stepping) (void)boundary_.applyPending();

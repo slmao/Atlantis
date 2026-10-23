@@ -164,10 +164,12 @@ InProcessEndpoint::~InProcessEndpoint() {
 
 void InProcessEndpoint::detach() {
   ATLANTIS_CHECK_MSG(state_->boundary != nullptr, "InProcessEndpoint::detach(): already detached");
-  // The outgoing World's refusals still reach their submitters; its queued
-  // events describe a World that is going away and are dropped (ADR-0131 D4).
-  (void)state_->boundary->drainEvents();
-  state_->routeFailures();
+  ATLANTIS_CHECK_MSG(!state_->boundary->hasPending(),
+                     "InProcessEndpoint::detach(): commands are still pending in the outgoing boundary");
+  // The outgoing World's events and refusals still reach their subscribers
+  // and submitters: every command it applied settles (ADR-0103 D6, D9;
+  // ADR-0131 Accepted Amendment 2026-10-23).
+  state_->pump();
   state_->tickets.clear();
   state_->ticketBase = state_->lastIssued;
   state_->boundary = nullptr;

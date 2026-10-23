@@ -39,8 +39,10 @@ constexpr std::string_view kNode4 = "52052052-0004-4052-8052-000000000004";
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-// The CLI with the `scene` group served by an authoring session; a frame
-// reports Applied after an accepted apply, as atlantis_runtime's host does.
+// The CLI with the `scene` group served by an authoring session; a frame that
+// applies commands reports Applied after an accepted apply, as
+// atlantis_runtime's host does (a paused frame holds the reload: Spec 0065
+// third Correction).
 struct SceneCli {
   explicit SceneCli(bool json = false, bool serve = true)
       : source(writtenSource()),
@@ -57,8 +59,9 @@ struct SceneCli {
     options.json = json;
     options.outcomeTimeout = std::chrono::milliseconds(2000);
     options.awaitFrame = [this] {
+      const bool applies = cli.runtime.appliesNextFrame();
       cli.runtime.frame();
-      if (reloadRequested) {
+      if (reloadRequested && applies) {
         reloadRequested = false;
         session.reportApplied(++generation);
       }
@@ -188,4 +191,44 @@ TEST_CASE("cli scene: usage, no document and no authoring session", "[cli][scene
   SceneCli unserved(/*json=*/true, /*serve=*/false);
   CHECK(unserved.run("scene open") == 4);
   CHECK(member(*unserved.envelope().find("error"), "code") == "\"NoAuthoring\"");
+}
+
+// Plan 0065 M5 (Spec 0065 third Correction): while the Runtime is paused,
+// `scene apply` does not wait -- it returns its pending outcome at once, as a
+// write under pause does -- and its Applied{generation} is reported, once,
+// after the command that lets the reload happen (the step).
+TEST_CASE("cli scene: apply while paused is pending at once; Applied follows the step", "[cli][scene][pause]") {
+  SceneCli scene;
+  REQUIRE(scene.run("scene open") == 0);
+  REQUIRE(scene.run("scene set " + std::string(kNode3) + " Light.intensity 9") == 0);
+  REQUIRE(scene.run("runtime pause") == 0);
+  CHECK(scene.run("scene apply") == 0);
+  CHECK(scene.cli.out.str() == "pending apply (the Runtime is paused; it reloads at the next step)\n");
+  CHECK(scene.reloadRequested);  // accepted by the sink, waiting
+  CHECK(scene.generation == 0);
+
+  CHECK(scene.run("scene get " + std::string(kNode3) + " Light.intensity") == 0);
+  CHECK(scene.cli.out.str() == "9\n");  // other commands run; nothing applied yet
+
+  CHECK(scene.run("runtime step") == 0);
+  CHECK(scene.generation == 1);
+  CHECK(scene.cli.out.str().ends_with("applied generation 1\n"));
+  CHECK(scene.run("scene camera") == 0);
+  CHECK(scene.cli.out.str().find("applied") == std::string::npos);  // reported once
+
+  SceneCli machine(/*json=*/true);
+  REQUIRE(machine.run("scene open") == 0);
+  REQUIRE(machine.run("runtime pause") == 0);
+  REQUIRE(machine.run("scene apply") == 0);
+  const json::Value pending = machine.envelope();
+  CHECK(member(pending, "command") == "\"scene apply\"");
+  CHECK(member(*pending.find("result"), "outcome") == R"({"pending":true})");
+  REQUIRE(machine.run("runtime step") == 0);
+  const std::string lines = machine.cli.out.str();
+  const auto second = lines.find('\n') + 1;
+  REQUIRE(second < lines.size());
+  const auto applied = json::parse(lines.substr(second));
+  REQUIRE(applied.isOk());
+  CHECK(member(applied.value(), "command") == "\"scene apply\"");
+  CHECK(member(*applied.value().find("result"), "generation") == "1");
 }

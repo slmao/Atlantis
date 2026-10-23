@@ -524,6 +524,21 @@ void CommandLayer::abandon() {
   pending_.reset();
 }
 
+void CommandLayer::deferApply() {
+  if (!pending_ || pending_->kind != Pending::Kind::Apply) return;
+  pending_.reset();
+  applyDeferred_ = true;
+}
+
+std::optional<Reply> CommandLayer::deferredApplyOutcome() {
+  if (applyDeferred_ && authoring_ != nullptr && authoringEvents_) (void)drainSceneEvents();
+  if (!deferredApplied_) return std::nullopt;
+  const std::uint64_t generation = *std::exchange(deferredApplied_, std::nullopt);
+  Value result = Value::object();
+  result.set("generation", Value::number(generation));
+  return done("scene apply", "applied generation " + std::to_string(generation) + "\n", std::move(result));
+}
+
 void CommandLayer::setGuidSource(std::function<EntityGuid()> source) { guidSource_ = std::move(source); }
 
 atlantis::Result<std::vector<access::Command>, CliError> CommandLayer::parseWrite(
@@ -1312,6 +1327,20 @@ void CommandLayer::setAuthoring(AuthoringProvider provider) {
   authoringEvents_.reset();
 }
 
+std::vector<ac::Event> CommandLayer::drainSceneEvents() {
+  auto events = authoring_->drainEvents(*authoringEvents_);
+  if (events.isErr()) return {};
+  if (applyDeferred_) {
+    for (const ac::Event& event : events.value()) {
+      if (const auto* applied = std::get_if<ac::Applied>(&event)) {
+        applyDeferred_ = false;
+        deferredApplied_ = applied->generation;
+      }
+    }
+  }
+  return std::move(events.value());
+}
+
 connection::AuthoringConnection* CommandLayer::authoring() {
   if (authoring_ == nullptr && authoringProvider_) {
     authoring_ = authoringProvider_();
@@ -1433,7 +1462,7 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   }
   const std::span<const TypeDescriptor> schema = a->schema();
   const bool isTransaction = command == "scene tx";
-  (void)a->drainEvents(*authoringEvents_);  // only this submission's events below
+  (void)drainSceneEvents();  // only this submission's events below
   (void)a->drainFailures();
   const std::size_t n = commands.size();
   access::TransactionTicket tickets;
@@ -1518,7 +1547,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t) {
       const std::string code(ac::toString(opened.error()));
       return failed(command, plainError(code, ErrorCategory::Runtime, "the scene's source cannot be opened: " + code));
     }
-    (void)a->drainEvents(*authoringEvents_);
+    (void)drainSceneEvents();
     const auto document = a->document();
     if (!document) return failed(command, plainError("NoDocument", ErrorCategory::Runtime, "no document after open"));
     return done(command,
@@ -1572,7 +1601,8 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t) {
   }
   if (verb == "apply") {
     if (t.size() != 2) return failed(command, usageError("scene apply"));
-    (void)a->drainEvents(*authoringEvents_);
+    (void)drainSceneEvents();
+    applyDeferred_ = false;  // Plan 0065 J5: this apply replaces a deferred one
     const auto applied = a->apply();
     if (applied.isErr()) {
       const std::string code(ac::toString(applied.error()));

@@ -207,6 +207,10 @@ class RuntimeWorldAccess {
   // nothing (Spec 0053); queues one event per applied command and one
   // failure per refused command or aborted transaction.
   ApplyReport applyPending();
+  // Owner only (Plan 0065 P4, third Correction): whether anything submitted
+  // is still waiting for applyPending() -- a scene reload's re-bind checks
+  // that nothing is (ADR-0131 Accepted Amendment 2026-10-23).
+  [[nodiscard]] bool hasPending() const noexcept;
 
   // Event (R5) and command outcomes (J4): taken by value; each call empties
   // its queue.

@@ -1,6 +1,12 @@
 #include <atlantis/runtime/runtime_control_host.h>
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/decode_scene.h>
+#include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/log.h>
+#include <atlantis/world/access/runtime_world_access.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/scene_instantiation.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -267,4 +273,91 @@ TEST_CASE("control: commandsHeld_ has one writer, reached only through RuntimeCo
   callers.erase(std::unique(callers.begin(), callers.end()), callers.end());
   // The declaration (runtime_application.h) and the host (its Target hook).
   CHECK(callers == std::vector<std::string>{"runtime_application.h", "runtime_control_host.cpp"});
+}
+
+// Plan 0065 M4 (Spec 0065 third Correction; ADR-0131 Accepted Amendment
+// 2026-10-23): RuntimeControlHost's hold decision over a real World access and
+// the InProcess endpoint, each frame starting as runFrame() does -- pending
+// commands applied unless held, then the reload swap point under the same
+// condition. A command held by a pause survives a requested reload, and the
+// Step that releases it applies it to the old World, settles it (its event
+// reaches its subscription) and only then swaps.
+TEST_CASE("control: a held command survives a requested reload and settles on the Step that performs it",
+          "[runtime][control][hold][reload]") {
+  namespace access = atlantis::world::access;
+  auto catalog = atlantis::asset_system::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(catalog.isOk());
+  const auto guid = atlantis::asset_system::parseAssetGuid(ATLANTIS_WHITELIST_INTEGRATED_SHOWCASE_SCENE_GUID);
+  REQUIRE(guid.isOk());
+  const auto* record = catalog.value().find(guid.value());
+  REQUIRE(record != nullptr);
+  const auto scene = atlantis::asset_system::decodeScene(record->artifact, record->metadata);
+  REQUIRE(scene.isOk());
+
+  std::optional<atlantis::world::BakedScene> baked;
+  baked.emplace(atlantis::world::bakeScene(scene.value()));
+  std::optional<access::RuntimeWorldAccess> boundary;
+  boundary.emplace(*baked);
+  atlantis::connection::InProcessEndpoint endpoint(*boundary);
+  const auto client = endpoint.open();
+  const auto events = client->subscribe(connection::EventFilter{});
+
+  std::optional<atlantis::asset_system::EntityGuid> sun;
+  for (const auto& [entityGuid, entity] : baked->entities.entries()) {
+    if (baked->world.has<atlantis::world::Light>(entity).value()) sun = entityGuid;
+  }
+  REQUIRE(sun.has_value());
+  const access::PropertyAddress intensity{*sun, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
+                                          atlantis::schema::fieldId("world::Light", "intensity")};
+
+  bool held = false;
+  Fake fake;
+  RuntimeControlHost::Target target = fake.target();
+  target.setCommandsHeld = [&held](bool h) { held = h; };
+  RuntimeControlHost host(std::move(target), noDiagnostics());
+  std::optional<atlantis::world::BakedScene> reloadRequested;
+  int swaps = 0;
+  std::optional<access::PropertyValue> seenBySwap;  // the old World's value when the swap happens
+  const auto runFrame = [&] {
+    host.beforeFrame();
+    if (!held) (void)boundary->applyPending();
+    if (reloadRequested.has_value() && !held) {
+      seenBySwap = client->getProperty(intensity).value();
+      endpoint.detach();
+      boundary.reset();
+      baked.reset();
+      baked.emplace(std::move(*reloadRequested));
+      reloadRequested.reset();
+      boundary.emplace(*baked);
+      endpoint.attach(*boundary);
+      ++swaps;
+    }
+    host.afterFrame();
+  };
+
+  runFrame();
+  host.pause();
+  const access::CommandTicket edit = client->submit(access::SetProperty{intensity, 6.5f});
+  reloadRequested.emplace(atlantis::world::bakeScene(scene.value()));
+  runFrame();
+  runFrame();  // paused: the command held, the reload waiting with it
+  CHECK(swaps == 0);
+  CHECK(client->getProperty(intensity).value() != access::PropertyValue{6.5f});
+  CHECK(client->drainEvents(events).value().empty());
+  CHECK(client->drainFailures().empty());
+
+  int completed = 0;
+  host.step(connection::StepRequest{1, std::nullopt}, [&](StepResult result) {
+    CHECK(result.isOk());
+    ++completed;
+  });
+  runFrame();
+  CHECK(completed == 1);
+  CHECK(swaps == 1);
+  CHECK(seenBySwap == access::PropertyValue{6.5f});  // applied to the old World, before the swap
+  CHECK(client->drainEvents(events).value() ==
+        std::vector<access::Event>{access::PropertyChanged{intensity, 6.5f}});
+  CHECK(client->drainFailures().empty());
+  CHECK(client->getProperty(intensity).value() != access::PropertyValue{6.5f});  // the new World's own value
+  CHECK(edit.value > 0);
 }

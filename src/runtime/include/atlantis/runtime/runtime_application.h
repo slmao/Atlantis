@@ -172,8 +172,10 @@ class RuntimeApplication {
 
   // Plan 0065 P4 (Spec 0065 R8; ADR-0131 D3-D5): the scene sink. Stores
   // `scene` as the one pending reload -- a newer request replaces an older
-  // one (Plan 0065 J5) -- which the next runFrame() performs at its swap
-  // point, all or nothing: the new scene's assets resolved through the
+  // one (Plan 0065 J5) -- which the next runFrame() that applies commands
+  // performs at its swap point, right after them (while a pause holds
+  // commands, the reload waits with them: Spec 0065 third Correction), all
+  // or nothing: the new scene's assets resolved through the
   // catalog (reusing every one already loaded), baked, swapped in with a new
   // World access that every open connection is re-bound to, and everything
   // the new scene no longer references released. On any failure nothing is
@@ -464,7 +466,8 @@ class RuntimeApplication {
   };
   EndpointSlot endpoint_;
   // Plan 0055 P7: runFrame()'s first statement skips applyPending() while
-  // set. Written by setCommandsHeld() only.
+  // set, and its scene reload swap point waits with it (Plan 0065 P4).
+  // Written by setCommandsHeld() only.
   bool commandsHeld_ = false;
   // Plan 0047 P17: the loaded scene's GUID, published with scene_.
   atlantis::asset_system::AssetGuid sceneGuid_;

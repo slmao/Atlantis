@@ -1313,9 +1313,10 @@ void RuntimeApplication::runFrame() {
   ATL_PROFILE_SCOPE_NAMED(worldZone, "World");
   if (worldAccess_.has_value() && !commandsHeld_) (void)worldAccess_->applyPending();
   ATL_PROFILE_SCOPE_END(worldZone);
-  // Plan 0065 P4 (ADR-0131 D4): the scene reload swap point -- after the old
-  // World's pending commands, before anything this frame reads the World.
-  if (pendingSceneReload_.has_value()) performPendingSceneReload();
+  // Plan 0065 P4 (ADR-0131 D4, Accepted Amendment 2026-10-23): the scene
+  // reload swap point -- after the old World's pending commands, before
+  // anything this frame reads the World, and held with them by a pause.
+  if (pendingSceneReload_.has_value() && !commandsHeld_) performPendingSceneReload();
   ATL_PROFILE_SCOPE_NAMED(runtimeZone1, "Runtime");
 
   for (const auto& event : platform::processEvents()) {

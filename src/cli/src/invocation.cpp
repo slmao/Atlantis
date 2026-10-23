@@ -36,7 +36,8 @@ constexpr std::string_view kUsage =
     "  scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
-    "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065)\n"
+    "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
     "The session comes from --session, else ATLANTIS_SESSION, else ./.atlantis/runtime.session.json.\n"
@@ -249,8 +250,21 @@ int Invocation::runSceneTransaction(std::span<const std::string_view> tokens) {
 
 Reply Invocation::awaitOutcome(Reply reply) {
   if (reply.outcome != Outcome::Submitted) return reply;
-  // Plan 0065 P6: an apply's reload happens at the next frame even when paused.
-  const bool isStep = reply.command == "runtime step" || reply.command == "scene apply";
+  const bool isStep = reply.command == "runtime step";
+  // Plan 0065 P6 (Spec 0065 third Correction): an apply while the Runtime is
+  // paused reloads only at a step or on resume, like a write: it is not
+  // awaited, and its Applied{generation} is reported after the command that
+  // lets it arrive (finish()).
+  if (reply.command == "scene apply" && control_ != nullptr && control_->status().paused) {
+    layer_.deferApply();
+    Reply pending = std::move(reply);
+    pending.outcome = Outcome::Done;
+    pending.text = "pending apply (the Runtime is paused; it reloads at the next step)\n";
+    Value outcome = Value::object();
+    outcome.set("pending", Value::boolean(true));
+    pending.result.set("outcome", std::move(outcome));
+    return pending;
+  }
   // A write submitted while the Runtime is paused applies only at a step:
   // its outcome is not awaited (it stays pending in the Runtime).
   if (!isStep && control_ != nullptr && control_->status().paused) {
@@ -299,6 +313,8 @@ int Invocation::finish(Reply reply) {
     diagnosticCursor_ = std::max(diagnosticCursor_, batch.latest);
   }
   print(reply, diagnostics, options_, out_, err_);
+  // Plan 0065 P6: a deferred apply's outcome, once its reload has swapped.
+  if (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) print(*applied, {}, options_, out_, err_);
   return reply.error ? exitCode(reply.error->category) : 0;
 }
 

@@ -9,6 +9,7 @@
 #include <atlantis/schema.h>
 #include <atlantis/world/access/runtime_world_access.h>
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -98,6 +99,12 @@ class CommandLayer {
   Reply poll();
   // Forgets the pending write (its outcome is no longer awaited).
   void abandon();
+  // Plan 0065 P6 (Spec 0065 third Correction): a pending `scene apply` the
+  // Runtime holds (it is paused) stops being the pending command, so other
+  // commands -- the step that releases it -- can run; its Applied{generation}
+  // is then reported by deferredApplyOutcome(), once, whenever it has arrived.
+  void deferApply();
+  [[nodiscard]] std::optional<Reply> deferredApplyOutcome();
 
   // Where `entity create` without a GUID gets one (RFC 9562 v4 from
   // std::random_device unless replaced -- tests make it deterministic).
@@ -139,9 +146,13 @@ class CommandLayer {
   // Plan 0065 P6: the `scene` group.
   [[nodiscard]] atlantis::connection::AuthoringConnection* authoring();
   Reply runScene(std::span<const std::string_view> tokens);
+  // Drains the `scene` subscription, keeping a deferred apply's Applied.
+  [[nodiscard]] std::vector<atlantis::connection::authoring::Event> drainSceneEvents();
   AuthoringProvider authoringProvider_;
   atlantis::connection::AuthoringConnection* authoring_ = nullptr;
   std::optional<atlantis::connection::SubscriptionId> authoringEvents_;
+  bool applyDeferred_ = false;
+  std::optional<std::uint64_t> deferredApplied_;  // the generation, until reported
 };
 
 }  // namespace atlantis::cli

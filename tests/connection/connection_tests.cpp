@@ -381,10 +381,11 @@ TEST_CASE("connection: a closed connection's later failures are dropped, the oth
   CHECK(stays->drainFailures() == std::vector<access::CommandFailure>{{kept, access::AccessError::UnknownEntity}});
 }
 
-// Plan 0065 P4 (ADR-0131 D4): across a scene reload the owner swaps the World
-// access and re-binds the endpoint around it. Connections and their
-// subscriptions survive; the outgoing World's refusals still reach their
-// submitters and its queued events are dropped; tickets keep increasing, and
+// Plan 0065 P4 (ADR-0131 D4, Accepted Amendment 2026-10-23): across a scene
+// reload the owner swaps the World access and re-binds the endpoint around
+// it. Connections and their subscriptions survive; the outgoing World's
+// refusals and queued events still reach their submitters and subscribers
+// (every command settles); tickets keep increasing, and
 // the new World's refusals are routed by them.
 TEST_CASE("connection: detach() and attach() re-bind every connection across a scene reload", "[connection][reload]") {
   using atlantis::world::Light;
@@ -414,7 +415,9 @@ TEST_CASE("connection: detach() and attach() re-bind every connection across a s
 
   CHECK(client->drainFailures() ==
         std::vector<access::CommandFailure>{{refused, access::AccessError::UnknownEntity}});
-  CHECK(drained(*client, lights).empty());  // the outgoing World's queued event was dropped
+  // The outgoing World's queued event still reaches its subscription.
+  CHECK(drained(*client, lights) ==
+        std::vector<access::Event>{access::PropertyChanged{{point, typeOf<Light>(), intensity}, 5.0f}});
   CHECK(client->getProperty({point, typeOf<Light>(), intensity}).value() == access::PropertyValue{3.0f});
 
   // After the swap: tickets keep increasing; the filter still applies; a

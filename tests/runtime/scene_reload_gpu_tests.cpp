@@ -644,6 +644,78 @@ TEST_CASE("scene reload: connections survive with their filters, the generation 
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
+// Plan 0065 M4 (Spec 0065 third Correction; ADR-0131 Accepted Amendment
+// 2026-10-23): under pause a reload waits with the held commands. Paused, a
+// World command and an apply leave the World unswapped and the command
+// pending; the Step applies the command to the old World, then swaps,
+// incrementing the generation, and delivers both Applied{generation} and the
+// command's event -- every submitted command settles.
+TEST_CASE("scene reload: under pause the reload waits with the held commands and follows them on Step",
+          "[runtime][gpu][reload][hold]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  {
+    AuthoringHost host(app, committedScene("integrated_showcase_demo"), defaultScene());
+    atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app),
+                                                  {.recordDiagnostics = false});
+    const auto runtime = app.openConnection();
+    const auto sunEvents = runtime->subscribe(atlantis::connection::EventFilter{
+        atlantis::connection::EventKindSet::only(atlantis::connection::EventKind::PropertyChanged), kSun,
+        std::nullopt});
+    const auto applied = host.connection->subscribe(
+        ac::EventFilter{ac::EventKindSet::only(ac::EventKind::Applied), std::nullopt, std::nullopt});
+    // atlantis_runtime's loop: the control's hold decision around each frame,
+    // then Applied{generation} after a swap.
+    const auto frame = [&] {
+      REQUIRE(app.shouldContinue());
+      control.beforeFrame();
+      app.runFrame();
+      control.afterFrame();
+      if (app.sceneGeneration() != host.generation) {
+        host.generation = app.sceneGeneration();
+        host.session.reportApplied(host.generation);
+      }
+    };
+    frame();
+    frame();
+
+    control.pause();
+    const access::CommandTicket edit = runtime->submit(access::SetProperty{sunIntensity(), 6.0f});
+    REQUIRE(host.connection->apply().isOk());
+    frame();
+    frame();
+    CHECK(app.sceneGeneration() == 0);
+    CHECK(control.status().sceneGeneration == 0);
+    CHECK(runtime->getProperty(sunIntensity()).value() == access::PropertyValue{3.0f});  // still pending
+    CHECK(runtime->drainEvents(sunEvents).value().empty());
+    CHECK(runtime->drainFailures().empty());
+    CHECK(drain(*host.connection, applied).empty());
+
+    std::optional<atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>> stepped;
+    control.step(atlantis::connection::StepRequest{1, std::nullopt},
+                 [&stepped](atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError> r) {
+                   stepped.emplace(std::move(r));
+                 });
+    frame();
+    REQUIRE(stepped.has_value());
+    CHECK(stepped->isOk());
+    CHECK(app.sceneGeneration() == 1);
+    CHECK(control.status().sceneGeneration == 1);
+    CHECK(drain(*host.connection, applied) == std::vector<ac::Event>{ac::Applied{1}});
+    // The held command applied to the old World before the swap, and settled.
+    CHECK(runtime->drainEvents(sunEvents).value() ==
+          std::vector<access::Event>{access::PropertyChanged{sunIntensity(), 6.0f}});
+    CHECK(runtime->drainFailures().empty());
+    // The new World is the document's.
+    CHECK(runtime->getProperty(sunIntensity()).value() == access::PropertyValue{3.0f});
+    CHECK(app.captureFrameData().value().directionalLights.at(0).intensity == 3.0f);
+    CHECK(edit.value > 0);
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
 // ====================================================== J3 (by hand, Release)
 
 TEST_CASE("J3: apply on Bistro's generated document", "[.j3][runtime][gpu][reload][bistro]") {
