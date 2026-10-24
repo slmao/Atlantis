@@ -10,6 +10,19 @@
   [Plan 0066](../plans/0066-editor-overlay-and-input.md). The text was reviewed in this Spec's own branch PR, [PR #286](https://github.com/slmao/Atlantis/pull/286)
   (revised after review, merged at `2e22e1a`); the rulings were given after that merge and are recorded by their own
   docs PR. The open-question text below keeps the options as the record of what was weighed.
+- **Correction (2026-10-24, post-Approval, found at the start of Plan 0066 M3; accepted by slmao, 2026-10-24, in the
+  review of its own docs PR [PR #288](https://github.com/slmao/Atlantis/pull/288), with Plan 0066 J12 accepted as
+  proposed):** this Spec says the overlay is drawn by RenderGraph passes after the scene (R3, R4). It did not say
+  that the RHI could not yet do that: every pass begins by clearing its attachments, so no pass after `drawFrame()`
+  could draw over the frame or test against its depth.
+  - **R3 and R4 are unchanged,** as are every other requirement and every ruling.
+  - **Architectural Impact gains [ADR-0133](../adr/0133-attachment-load-after-the-scene.md)** (`Accepted`): the
+    RHI's `AttachmentLoad`, the RenderGraph binding's `load` and honoured depth `incomingState` (with the end states
+    `execute()` and `drawFrame()` now report), and the Vulkan Backend's `LOAD_OP_LOAD` and two same-state
+    transitions. It is a module-boundary change to RHI, RenderGraph and the Vulkan Backend. Its normative lines land
+    in AGENTS.md and `module_boundaries.md` at Plan 0066 M7.
+  - **Testing gains M3a's load tests** and the one-off run of M3's GPU tests with synchronization validation,
+    recorded with its layer settings.
 - **Related ADR(s):**
   - [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Accepted` 2026-10-24): how a client draws into the Viewport — a
     per-client Viewport overlay (a closed set of world-space primitives and a selection set) carried by a new
@@ -21,6 +34,8 @@
     for every client), [ADR-0126](../adr/0126-viewport-embedding-and-input-routing.md) (V-a + R-a, adopted; D4/D5
     are where Q3's outcome would land), [ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md) (D7:
     runtime-side edits are overwritten by an apply).
+  - [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) (`Accepted` 2026-10-24; this Spec's Correction): a
+    RenderGraph binding may load its attachment's contents, so the overlay's passes draw over the finished frame.
   - Extended or superseded in part, each named in ADR-0132:
     [ADR-0108](../adr/0108-editor-host-and-viewport-composition.md) D3 (the Renderer's overlay input),
     [ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md) and
@@ -224,6 +239,12 @@ Yes:
   RenderGraph passes** (AGENTS.md: the Render Graph is the mandatory path for GPU work), recorded by the Renderer
   after the scene's passes; no command is recorded outside the graph.
 - **`runFrame()` gains one named place** (the performance gate applies).
+- **RHI, RenderGraph and the Vulkan Backend can load an attachment** (Correction 2026-10-24,
+  [ADR-0133](../adr/0133-attachment-load-after-the-scene.md)): the RHI's `AttachmentLoad` and a `beginRendering()`
+  overload; the RenderGraph binding's `load`, `incomingState` honoured for depth, and the end states `execute()`
+  reports (which `drawFrame()` returns); the Vulkan Backend's `LOAD_OP_LOAD` and two same-state transitions. A
+  module-boundary change to the three modules, opt-in (every existing binding keeps clearing); normative lines in
+  AGENTS.md and `module_boundaries.md` at Plan 0066 M7.
 - **Conditionally, input:** if M1's verdict calls for keeping the Runtime's queue serviced inside a long frame, that
   is a frame-loop change needing an ADR (amending ADR-0126 or a new one) ruled at M1's checkpoint. That ADR and the
   Plan amendment are reviewed in their own docs PR (as Spec 0065's Corrections were, PRs #281–#283), never folded
@@ -257,6 +278,10 @@ The options are weighed in Q1–Q6 below; the main rejected ones are:
   capture with `withOverlay` shows the requester's overlay under the control camera and under `--editor`, and one
   without shows none.
   Assertions on captured pixels, not new goldens (Plan 0066 J7).
+- **Attachment load** (Correction 2026-10-24; ADR-0133; Plan 0066 M3a): RenderGraph tests of the `load` field, the
+  depth `incomingState`, the same-state barrier, the `Undefined` guard and the reported end states; GPU tests that a
+  loaded target keeps its pixels and a loaded depth still hides what is behind it. M3's GPU tests run once with
+  synchronization validation, recorded with the exact layer settings in the implementing PR.
 - **Performance gate:** run on the implementing branch with no overlay; verdict reported as measured.
 - **Editor App** (R7): its smoke test picks, outlines and shows the Gizmo on the default scene; the owner's run on
   Bistro (Plan 0066 M6).
