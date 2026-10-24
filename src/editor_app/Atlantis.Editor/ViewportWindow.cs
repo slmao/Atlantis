@@ -75,6 +75,14 @@ public sealed class ViewportWindow : IDisposable
                      SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
     }
 
+    /// <summary>Plan 0066 M1: this window's client area in screen pixels (the input driver's target).</summary>
+    public (int Left, int Top, int Width, int Height) ScreenRect()
+    {
+        var origin = new POINT();
+        ClientToScreen(Handle, ref origin);
+        return (origin.X, origin.Y, Width, Height);
+    }
+
     /// <summary>Whether the Runtime's child is a child of this window (WS_CHILD, parented here).</summary>
     public bool RuntimeChildIsHosted() =>
         RuntimeChild != IntPtr.Zero && IsWindow(RuntimeChild) && GetParent(RuntimeChild) == Handle &&
@@ -174,6 +182,13 @@ public sealed class ViewportWindow : IDisposable
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    private struct POINT
+    {
+        public int X;
+        public int Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     private struct RECT
     {
         public int Left;
@@ -236,6 +251,9 @@ public sealed class ViewportWindow : IDisposable
 
     [DllImport("user32.dll")]
     private static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hwnd, ref POINT point);
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
