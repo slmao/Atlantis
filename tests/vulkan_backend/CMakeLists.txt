@@ -84,6 +84,8 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   gpu_timing_gpu_tests.cpp
   # Plan 0066 M3a (ADR-0133 D2, D3): a later graph loads what an earlier one stored.
   attachment_load_gpu_tests.cpp
+  # Plan 0066 M3b (ADR-0132 D3): the Viewport overlay's pixels.
+  viewport_overlay_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests
@@ -138,7 +140,8 @@ catch_discover_tests(atlantis_vulkan_backend_gpu_tests
 # (the read half, already-established elsewhere in this repo, reused
 # unchanged here) -- both copied into this same flat shaders/ folder.
 add_dependencies(atlantis_vulkan_backend_gpu_tests minimal_mesh_shaders output_transform_unorm_shaders
-  output_transform_srgb_shaders shadow_cast_shaders textured_quad_shaders editor_ui_shaders)
+  output_transform_srgb_shaders shadow_cast_shaders textured_quad_shaders editor_ui_shaders
+  viewport_overlay_shaders selection_mask_shaders selection_outline_shaders)
 add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders"
@@ -176,5 +179,14 @@ add_custom_command(TARGET atlantis_vulkan_backend_gpu_tests POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_if_different
       "${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}/editor_ui.vert.spv"
       "${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}/editor_ui.frag.spv"
+      "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
+  # Plan 0066 M3b: the Viewport overlay's three pairs (viewport_overlay_gpu_tests.cpp).
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${ATLANTIS_viewport_overlay_SHADER_OUTPUT_DIR}/viewport_overlay.vert.spv"
+      "${ATLANTIS_viewport_overlay_SHADER_OUTPUT_DIR}/viewport_overlay.frag.spv"
+      "${ATLANTIS_selection_mask_SHADER_OUTPUT_DIR}/selection_mask.vert.spv"
+      "${ATLANTIS_selection_mask_SHADER_OUTPUT_DIR}/selection_mask.frag.spv"
+      "${ATLANTIS_selection_outline_SHADER_OUTPUT_DIR}/selection_outline.vert.spv"
+      "${ATLANTIS_selection_outline_SHADER_OUTPUT_DIR}/selection_outline.frag.spv"
       "$<TARGET_FILE_DIR:atlantis_vulkan_backend_gpu_tests>/shaders/"
 )

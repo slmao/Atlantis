@@ -45,7 +45,10 @@ using atlantis::shader_system::pbrSheenIblExpectedDescriptorContract;
 using atlantis::shader_system::pbrSheenIblNormalMapExpectedDescriptorContract;
 using atlantis::shader_system::pbrAnisotropicIblExpectedDescriptorContract;
 using atlantis::shader_system::pbrAnisotropicIblNormalMapExpectedDescriptorContract;
+using atlantis::shader_system::selectionMaskExpectedDescriptorContract;
+using atlantis::shader_system::selectionOutlineExpectedDescriptorContract;
 using atlantis::shader_system::shadowCastExpectedDescriptorContract;
+using atlantis::shader_system::viewportOverlayExpectedDescriptorContract;
 using atlantis::shader_system::skyExpectedDescriptorContract;
 using atlantis::shader_system::PushConstantRange;
 using atlantis::shader_system::texturedMaterialExpectedDescriptorContract;
@@ -194,6 +197,13 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = skyExpectedDescriptorContract();
   } else if (expectedContract == "shadow-cast") {
     fullContract = shadowCastExpectedDescriptorContract();
+  } else if (expectedContract == "viewport-overlay") {
+    // Plan 0066 P3 (ADR-0132 D3).
+    fullContract = viewportOverlayExpectedDescriptorContract();
+  } else if (expectedContract == "selection-mask") {
+    fullContract = selectionMaskExpectedDescriptorContract();
+  } else if (expectedContract == "selection-outline") {
+    fullContract = selectionOutlineExpectedDescriptorContract();
   } else {
     std::cerr << "atlantis_shader_compiler: unknown --expected-contract value '" << expectedContract << "'\n";
     return false;
@@ -253,6 +263,12 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
   } else if (expectedContract == "editor-ui") {
     // Plan 0056 P5: renderer::UiOverlayPushConstants (ui_overlay.cpp), 16 bytes.
     expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 16, .stage = ShaderStage::Vertex}};
+  } else if (expectedContract == "viewport-overlay") {
+    // Plan 0066 P3: renderer's ViewportOverlayPushConstants (viewport_overlay.cpp), 16 bytes.
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 16, .stage = ShaderStage::Vertex}};
+  } else if (expectedContract == "selection-outline") {
+    // Plan 0066 P3: renderer's SelectionOutlinePushConstants (viewport_overlay.cpp), 32 bytes.
+    expected = {PushConstantRange{.offsetBytes = 0, .sizeBytes = 32, .stage = ShaderStage::Vertex}};
   } else {
     // Plan 0035 Milestone 2 (ADR-0081): pbr-clearcoat-ibl/pbr-clearcoat-
     // ibl-normal-map share this same 96-byte expectation -- a real
@@ -490,6 +506,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
   } else if (validationOk && request.expectedContract == "editor-ui") {
     // Plan 0056 P5: the fragment stage reads the texture slot from the same block.
     validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 16);
+  } else if (validationOk && request.expectedContract == "selection-outline") {
+    // Plan 0066 P3: the fragment stage reads the colour and the extent from the same block.
+    validationOk = validatePushConstantsForFragmentStage(fragmentResult->metadata, 32);
   }
   if (!validationOk) {
     std::filesystem::remove_all(tempDir);

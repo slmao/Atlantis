@@ -9,6 +9,7 @@
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/environment_lighting.h>
 #include <atlantis/renderer/ui_overlay.h>
+#include <atlantis/renderer/viewport_overlay.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/rhi/hdr_color_target.h>
@@ -174,6 +175,21 @@ class Renderer {
   void drawOverlay(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
                    atlantis::rhi::ResourceState finalState, const UiDrawList& list,
                    const UiOverlayResources& resources);
+
+  // Plan 0066 P3 (ADR-0132 D3, ADR-0133 D5; defined in viewport_overlay.cpp):
+  // records the Viewport overlay's RenderGraph passes after drawFrame()'s --
+  // the selection outline, then the depth-tested primitives against `depth`
+  // (read only), then the on-top ones -- into `target`, loading it and the
+  // depth from `incoming` (the end states drawFrame() reported, never literal
+  // ones), and leaves `target` in `finalColorState`. An empty list records
+  // nothing and returns `incoming`, so a caller that will draw none must not
+  // have asked drawFrame() to stop short of its final state. Writes the
+  // list and the camera into resources' buffers; retains nothing; never
+  // submits or presents. Returns the end states it left target and depth in.
+  FrameEndStates drawViewportOverlay(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
+                                     atlantis::rhi::Texture& depth, FrameEndStates incoming,
+                                     atlantis::rhi::ResourceState finalColorState, const ViewportOverlayCamera& camera,
+                                     const ViewportOverlayDrawList& list, const ViewportOverlayResources& resources);
 };
 
 }  // namespace atlantis::renderer
