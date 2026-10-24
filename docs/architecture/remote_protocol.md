@@ -137,10 +137,11 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 | `connection.drainFailures` | — | `[<Failure>…]` |
 | `control.status` | — | `{"paused":bool,"frame":<n>,"scene":"<asset GUID>","sceneGeneration":<n>}` |
 | `control.pause` / `control.resume` | — | `null` |
-| `control.step` (parked) | `request: {"frames":<n>,"image":null\|"<path>"}` | `{"ok":<FrameReport>}` or `{"err":"<ControlError>"}` |
+| `control.step` (parked) | `request: {"frames":<n>,"image":null\|"<path>","withOverlay":bool}` | `{"ok":<FrameReport>}` or `{"err":"<ControlError>"}` |
 | `control.diagnostics` | `after: <n>, max: <n>` | `{"entries":[…],"latest":<n>,"dropped":<n>}` |
 | `control.setViewportCamera` | `camera: <ViewportCamera>\|null` | `null` |
 | `control.raycast` | `ray: <Ray>` | `{"ok":<RayHit>\|null}` or `{"err":"<ControlError>"}` |
+| `control.setViewportOverlay` | `overlay: <ViewportOverlay>\|null` | `{"ok":null}` or `{"err":"InvalidRequest"}` |
 
 **Semantics** are `RuntimeConnection`'s and `RuntimeControl`'s (Specs
 0052–0055):
@@ -161,6 +162,25 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   units along a unit `direction`, or `null` for a miss. It answers
   `NoGeometry` when the Runtime keeps no pick geometry: `--listen` keeps it
   unless `--no-pick-geometry` is given.
+
+**The Viewport overlay** (Spec 0066, ADR-0132 D2):
+- `control.setViewportOverlay` replaces this client's overlay (§6.6); `null`
+  clears it. The Runtime draws, from its next frame, the union of every
+  client's overlay: their selections and groups, in the order the clients
+  connected.
+- `InvalidRequest` when the overlay is not well formed (a non-finite
+  float, a colour channel outside [0, 1], a width, size or `pixelsPerUnit`
+  not above zero, a nil GUID) or over one client's limits: 256 groups,
+  65,536 segments, 65,536 triangles, 16,384 points and 256 selected
+  entities, the totals across its groups. Nothing changes then. An
+  overlay that is not one in its JSON form fails the request
+  (`BadRequest`).
+- The overlay is owned by the client that set it: when that client
+  disconnects, the server removes it from the union.
+- `control.step`'s `withOverlay` (absent is `false`): the captured image
+  shows no overlay unless it is `true`, and then only the requesting
+  client's own -- never another client's. The overlay the Runtime draws
+  to its window is unaffected.
 
 ### 5.1 The authoring document (Spec 0065, ADR-0130 D3)
 
@@ -290,6 +310,28 @@ ViewportCamera {"worldMatrix":[16],"fovYRadians":<float>,"nearZ":<float>,"farZ":
 Ray          {"origin":[3],"direction":[3]}                                        (world space, unit direction)
 RayHit       {"entity":"<E>","distance":<float>}
 ```
+
+**The Viewport overlay** (Spec 0066, ADR-0132 D1). Its floats are JSON
+numbers only (no `"nan"`/`"inf"` text: an overlay's floats are finite).
+Every member is required.
+
+```
+ViewportOverlay {"selection":["<E>"…],"groups":[<Group>…]}
+Group     {"anchor":null|{"position":[3],"pixelsPerUnit":<float>},
+           "segments":[{"a":[3],"b":[3],"color":[4],"depth":<Depth>,"width":<float>}…],
+           "triangles":[{"a":[3],"b":[3],"c":[3],"color":[4],"depth":<Depth>}…],
+           "points":[{"p":[3],"color":[4],"depth":<Depth>,"size":<float>}…]}
+Depth     "Tested" | "OnTop"
+```
+
+- **`selection`:** the entities the Runtime outlines, from their meshes.
+- **A group** is world (`anchor` `null`: its positions are world
+  positions) or screen-constant: its positions are offsets from the
+  anchor's `position`, one unit drawn as `pixelsPerUnit` pixels at the
+  anchor's view depth, from the frame's own camera.
+- **`color`:** straight alpha, authored in sRGB, each channel in [0, 1].
+- **`width`** (a segment's) and **`size`** (a point's) are in pixels.
+- **`depth`:** `Tested` against the scene's depth, or drawn `OnTop` of it.
 
 ### 6.7 The schema
 

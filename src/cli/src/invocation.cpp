@@ -29,9 +29,10 @@ constexpr std::string_view kUsage =
     "  entity inspect <guid> | entity create [<guid>] [--component <Type>]... | entity destroy <guid>\n"
     "  component add <guid> <Type> | component remove <guid> <Type>\n"
     "  property get <guid> <Type>.<field> | property set <guid> <Type>.<field> <value...>\n"
-    "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>]]\n"
+    "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]\n"
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
+    "  runtime overlay set <file|-> | runtime overlay select <guid>... | runtime overlay clear\n"
     "  tx <file|->       write commands, one per line, submitted as one transaction\n"
     "  scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
@@ -168,6 +169,9 @@ int Invocation::run(std::span<const std::string> command) {
 int Invocation::runTokens(std::span<const std::string_view> tokens, std::string_view line) {
   if (!tokens.empty() && tokens[0] == "tx") return runTransaction(tokens);
   if (tokens.size() >= 2 && tokens[0] == "scene" && tokens[1] == "tx") return runSceneTransaction(tokens);
+  if (tokens.size() >= 3 && tokens[0] == "runtime" && tokens[1] == "overlay" && tokens[2] == "set") {
+    return runOverlaySet(tokens);
+  }
   if (!tokens.empty() && tokens[0] == "repl") {
     return finish(errorReply("repl", usage("repl is a session of its own, not a command within one")));
   }
@@ -212,6 +216,25 @@ int Invocation::runTransaction(std::span<const std::string_view> tokens) {
 
 // Plan 0065 P6: scene write commands, one per line (with or without `scene`),
 // parsed whole, then submitted as one authoring transaction.
+// Plan 0066 P2: `runtime overlay set <file|->` -- the overlay's JSON text, from a file or standard input.
+int Invocation::runOverlaySet(std::span<const std::string_view> tokens) {
+  if (tokens.size() != 4) return finish(errorReply("runtime overlay set", usage("usage: runtime overlay set <file|->")));
+  std::string source;
+  if (tokens[3] == "-") {
+    source.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
+  } else {
+    std::ifstream in{std::string(tokens[3]), std::ios::binary};
+    if (!in) {
+      CliError error = usage("cannot read " + std::string(tokens[3]));
+      error.code = "Unreadable";
+      error.subject.set("file", Value::string(std::string(tokens[3])));
+      return finish(errorReply("runtime overlay set", std::move(error)));
+    }
+    source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  return finish(layer_.setViewportOverlay(source));
+}
+
 int Invocation::runSceneTransaction(std::span<const std::string_view> tokens) {
   if (tokens.size() != 3) return finish(errorReply("scene tx", usage("usage: scene tx <file|->")));
   std::string source;

@@ -87,6 +87,7 @@ class Invocation {
   int runTokens(std::span<const std::string_view> tokens, std::string_view line);
   int runTransaction(std::span<const std::string_view> tokens);
   int runSceneTransaction(std::span<const std::string_view> tokens);
+  int runOverlaySet(std::span<const std::string_view> tokens);  // Plan 0066 P2
   int finish(Reply reply);
   Reply awaitOutcome(Reply reply);
 

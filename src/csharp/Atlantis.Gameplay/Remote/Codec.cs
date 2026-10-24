@@ -529,7 +529,8 @@ public static partial class Codec
 
     public static JsonValue Encode(StepRequest request) =>
         JsonValue.NewObject().Set("frames", JsonValue.Number((ulong)request.Frames))
-            .Set("image", request.ImagePath is string path ? JsonValue.String(path) : JsonValue.Null());
+            .Set("image", request.ImagePath is string path ? JsonValue.String(path) : JsonValue.Null())
+            .Set("withOverlay", JsonValue.Bool(request.WithOverlay));
 
     public static StepRequest? DecodeStepRequest(JsonValue value)
     {
@@ -537,7 +538,10 @@ public static partial class Codec
         JsonValue? image = value.Find("image");
         if (frames is null || image is null || !(image.IsNull || image.IsString)) return null;
         if (DecodeUInt64(frames) is not ulong n || n > uint.MaxValue) return null;
-        return new StepRequest((uint)n, image.IsString ? image.AsString : null);
+        // Plan 0066 P2: absent from a client older than the overlay.
+        JsonValue? withOverlay = value.Find("withOverlay");
+        if (withOverlay is not null && !withOverlay.IsBool) return null;
+        return new StepRequest((uint)n, image.IsString ? image.AsString : null, withOverlay?.AsBool ?? false);
     }
 
     public static JsonValue Encode(FrameData data)

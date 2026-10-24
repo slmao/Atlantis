@@ -361,3 +361,34 @@ TEST_CASE("control: a held command survives a requested reload and settles on th
   CHECK(client->getProperty(intensity).value() != access::PropertyValue{6.5f});  // the new World's own value
   CHECK(edit.value > 0);
 }
+
+// Plan 0066 P1 (Spec 0066 R2; ADR-0132 D2): the host keeps the overlay it is handed (the transport's union, which
+// may exceed one client's limits) and passes it to its target; one not well formed is refused, nothing changed.
+TEST_CASE("control: the Viewport overlay is kept and passed on; one not well formed is refused",
+          "[runtime][control][overlay]") {
+  Fake fake;
+  std::vector<std::optional<connection::ViewportOverlay>> handed;
+  RuntimeControlHost::Target target = fake.target();
+  target.setViewportOverlay = [&handed](const std::optional<connection::ViewportOverlay>& o) { handed.push_back(o); };
+  RuntimeControlHost host(std::move(target), noDiagnostics());
+  CHECK_FALSE(host.viewportOverlay().has_value());
+
+  connection::ViewportOverlay overlay;
+  overlay.selection = {atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value()};
+  overlay.groups.resize(connection::kMaxOverlayGroups + 1);  // a union: over one client's limit, still accepted
+  REQUIRE(host.setViewportOverlay(overlay).isOk());
+  CHECK(host.viewportOverlay() == std::optional<connection::ViewportOverlay>{overlay});
+
+  connection::ViewportOverlay bad = overlay;
+  bad.groups[0].points.push_back({{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.5f}, connection::OverlayDepth::Tested, 4.0f});
+  const auto refused = host.setViewportOverlay(bad);
+  REQUIRE(refused.isErr());
+  CHECK(refused.error() == connection::ControlError::InvalidRequest);
+  CHECK(host.viewportOverlay() == std::optional<connection::ViewportOverlay>{overlay});
+
+  REQUIRE(host.setViewportOverlay(std::nullopt).isOk());
+  CHECK_FALSE(host.viewportOverlay().has_value());
+  REQUIRE(handed.size() == 2);
+  CHECK(handed[0] == std::optional<connection::ViewportOverlay>{overlay});
+  CHECK_FALSE(handed[1].has_value());
+}

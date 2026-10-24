@@ -34,8 +34,10 @@ class FakeControl final : public connection::RuntimeControl {
       done(StepResult::Err(connection::ControlError::InvalidRequest));
       return;
     }
+    stepRequests.push_back(request);
     steps_.push_back({std::move(request), std::move(done), 0});
   }
+  std::vector<connection::StepRequest> stepRequests;  // Plan 0066: as the server handed them over
   connection::DiagnosticBatch diagnostics(std::uint64_t after, std::size_t max) override {
     connection::DiagnosticBatch batch{{}, 3, 7};
     for (std::uint64_t s = after + 1; s <= 3 && batch.entries.size() < max; ++s) {
@@ -50,6 +52,13 @@ class FakeControl final : public connection::RuntimeControl {
     viewportCamera = std::move(camera);
     ++viewportCameraCalls;
   }
+  // Plan 0066 (Spec 0066 R2): the Viewport overlay last set (for a transport's fake, the union), and how often.
+  atlantis::Result<std::monostate, connection::ControlError> setViewportOverlay(
+      std::optional<connection::ViewportOverlay> overlay) override {
+    viewportOverlay = std::move(overlay);
+    ++viewportOverlayCalls;
+    return atlantis::Result<std::monostate, connection::ControlError>::Ok(std::monostate{});
+  }
   atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
       const connection::Ray& ray) override {
     lastRay = ray;
@@ -61,6 +70,8 @@ class FakeControl final : public connection::RuntimeControl {
   }
   std::optional<connection::ViewportCamera> viewportCamera;
   int viewportCameraCalls = 0;
+  std::optional<connection::ViewportOverlay> viewportOverlay;
+  int viewportOverlayCalls = 0;
   std::optional<connection::Ray> lastRay;
   std::optional<std::optional<connection::RayHit>> rayAnswer;
 
@@ -204,4 +215,94 @@ TEST_CASE("remote control: the viewport camera and the ray-cast cross the wire",
   for (int i = 0; i < 20 && control.viewportCamera.has_value(); ++i) world.server->poll();
   CHECK_FALSE(control.viewportCamera.has_value());
   CHECK(world.server->clientCount() == 0);
+}
+
+// Plan 0066 P2 (Spec 0066 R2, R5; ADR-0132 D2; J2, J3): one overlay per client, replaced by its next; the host is
+// handed their union on every change and on a client's disconnect; null clears; a refused overlay changes nothing;
+// a capture is handed no overlay unless withOverlay, and then only the requester's own.
+TEST_CASE("remote control: per-client Viewport overlays, their union, and a capture's own overlay",
+          "[remote][control][overlay]") {
+  const auto scene = cookAndDecodeScene(kSceneSource);
+  FakeControl control;
+  ServedWorld world(scene, {}, &control);
+  atlantis::remote::RemoteOptions options;
+  options.whileWaiting = [&] {
+    control.runFrame();
+    world.server->poll();
+  };
+  auto a = atlantis::remote::connectRemote(world.server->session(), options);
+  auto b = atlantis::remote::connectRemote(world.server->session(), options);
+  REQUIRE(a.isOk());
+  REQUIRE(b.isOk());
+  connection::RuntimeControl& ca = a.value()->control();
+  connection::RuntimeControl& cb = b.value()->control();
+  const auto guid = [](std::string_view text) { return atlantis::asset_system::parseEntityGuid(text).value(); };
+  const auto e1 = guid("52052052-0001-4052-8052-000000000001");
+  const auto e2 = guid("52052052-0002-4052-8052-000000000002");
+  const auto e3 = guid("52052052-0003-4052-8052-000000000003");
+
+  connection::ViewportOverlay own;
+  own.selection = {e1};
+  connection::OverlayGroup group;
+  group.segments.push_back({{0, 0, 0}, {1, 0, 0}, {1, 0.5f, 0, 1}, connection::OverlayDepth::OnTop, 2.0f});
+  own.groups.push_back(group);
+  REQUIRE(ca.setViewportOverlay(own).isOk());
+  REQUIRE(control.viewportOverlay.has_value());
+  CHECK(*control.viewportOverlay == own);
+
+  connection::ViewportOverlay theirs;
+  theirs.selection = {e2};
+  REQUIRE(cb.setViewportOverlay(theirs).isOk());
+  CHECK(control.viewportOverlay->selection == std::vector{e1, e2});
+  CHECK(control.viewportOverlay->groups == own.groups);
+  theirs.selection = {e3};
+  REQUIRE(cb.setViewportOverlay(theirs).isOk());  // replaced, not added to
+  CHECK(control.viewportOverlay->selection == std::vector{e1, e3});
+  const int calls = control.viewportOverlayCalls;
+
+  // Refused: over a limit, or not well formed -- nothing changes.
+  connection::ViewportOverlay tooMany;
+  tooMany.groups.resize(connection::kMaxOverlayGroups + 1);
+  auto refused = cb.setViewportOverlay(tooMany);
+  REQUIRE(refused.isErr());
+  CHECK(refused.error() == connection::ControlError::InvalidRequest);
+  connection::ViewportOverlay zeroWidth = own;
+  zeroWidth.groups[0].segments[0].widthPixels = 0.0f;
+  CHECK(cb.setViewportOverlay(zeroWidth).isErr());
+  CHECK(control.viewportOverlayCalls == calls);
+  CHECK(control.viewportOverlay->selection == std::vector{e1, e3});
+  CHECK_FALSE(b.value()->failure().has_value());
+
+  // Captures: none without withOverlay (even one the client fills in: it never crosses the wire), else its own.
+  const auto step = [&](connection::RuntimeControl& c, connection::StepRequest request) {
+    std::optional<StepResult> result;
+    c.step(std::move(request), [&](StepResult r) { result = std::move(r); });
+    REQUIRE(result.has_value());
+    CHECK(result->isOk());
+    REQUIRE_FALSE(control.stepRequests.empty());
+    return control.stepRequests.back();
+  };
+  connection::StepRequest plain{1, std::string("b.png")};
+  plain.captureOverlay = own;
+  CHECK_FALSE(step(cb, plain).captureOverlay.has_value());
+  connection::StepRequest withOverlay{1, std::string("b.png")};
+  withOverlay.withOverlay = true;
+  const connection::StepRequest handed = step(cb, withOverlay);
+  CHECK(handed.withOverlay);
+  CHECK(handed.captureOverlay == std::optional<connection::ViewportOverlay>{theirs});
+  CHECK(step(ca, withOverlay).captureOverlay == std::optional<connection::ViewportOverlay>{own});
+
+  // null clears this client's; the union is the other's alone. A client with none gets none for its capture.
+  REQUIRE(ca.setViewportOverlay(std::nullopt).isOk());
+  CHECK(control.viewportOverlay == std::optional<connection::ViewportOverlay>{theirs});
+  CHECK_FALSE(step(ca, withOverlay).captureOverlay.has_value());
+  const int afterClear = control.viewportOverlayCalls;
+  REQUIRE(ca.setViewportOverlay(std::nullopt).isOk());  // nothing to clear: the host is not called
+  CHECK(control.viewportOverlayCalls == afterClear);
+
+  // The other client goes: its overlay goes with it.
+  b.value().reset();
+  for (int i = 0; i < 20 && control.viewportOverlay.has_value(); ++i) world.server->poll();
+  CHECK_FALSE(control.viewportOverlay.has_value());
+  CHECK(world.server->clientCount() == 1);
 }

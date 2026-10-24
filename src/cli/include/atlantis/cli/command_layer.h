@@ -134,6 +134,11 @@ class CommandLayer {
   // pending write; poll() reports {committed, events} or the abort.
   Reply submitTransaction(std::vector<atlantis::world::access::Command> commands);
 
+  // Plan 0066 P2 (Spec 0066 R6): `runtime overlay set` -- `jsonText` is a
+  // Viewport overlay in its JSON form (remote_protocol.md section 6.6), set as
+  // this client's overlay. `runtime overlay select|clear` go through run().
+  Reply setViewportOverlay(std::string_view jsonText);
+
   struct Pending;  // private to command_layer.cpp
 
  private:

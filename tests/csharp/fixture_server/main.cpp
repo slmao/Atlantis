@@ -299,6 +299,10 @@ class FixtureControl final : public connection::RuntimeControl {
   void pause() override { paused_ = true; }
   void resume() override { paused_ = false; }
   void step(connection::StepRequest request, Done done) override {
+    // Only once overlays are in play, so the other suites' diagnostics stay empty.
+    if (request.imagePath.has_value() && (request.withOverlay || overlay_.has_value())) {
+      note("capture overlay: " + describe(request.captureOverlay));
+    }
     if (request.frames == 0) {
       done(atlantis::Result<connection::FrameReport, connection::ControlError>::Err(
           connection::ControlError::InvalidRequest));
@@ -306,7 +310,14 @@ class FixtureControl final : public connection::RuntimeControl {
     }
     steps_.push_back(Pending{std::move(request), std::move(done), 0});
   }
-  connection::DiagnosticBatch diagnostics(std::uint64_t, std::size_t) override { return {}; }
+  connection::DiagnosticBatch diagnostics(std::uint64_t after, std::size_t max) override {
+    connection::DiagnosticBatch batch;
+    batch.latest = diagnostics_.empty() ? 0 : diagnostics_.back().sequence;
+    for (const connection::Diagnostic& d : diagnostics_) {
+      if (d.sequence > after && batch.entries.size() < max) batch.entries.push_back(d);
+    }
+    return batch;
+  }
 
   // Spec 0064 / ADR-0128 (Plan 0064 M4): the camera is kept and not drawn.
   // The ray-cast is scripted for the C# tests: a ray down -Z hits the mesh
@@ -314,6 +325,14 @@ class FixtureControl final : public connection::RuntimeControl {
   // NoGeometry.
   void setViewportCamera(std::optional<connection::ViewportCamera> camera) override {
     viewportCamera_ = std::move(camera);
+  }
+  // Plan 0066 P2: the union of the clients' overlays, reported as a diagnostic; a step reports the capture overlay
+  // the server resolved for it ("capture overlay: none" or its group and selection counts).
+  atlantis::Result<std::monostate, connection::ControlError> setViewportOverlay(
+      std::optional<connection::ViewportOverlay> overlay) override {
+    note("overlay union: " + describe(overlay));
+    overlay_ = std::move(overlay);
+    return atlantis::Result<std::monostate, connection::ControlError>::Ok(std::monostate{});
   }
   atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
       const connection::Ray& ray) override {
@@ -343,6 +362,16 @@ class FixtureControl final : public connection::RuntimeControl {
   bool reloadPending_ = false;
   std::uint64_t generation_ = 0;
   std::function<void(std::uint64_t)> reloaded_;
+  std::optional<connection::ViewportOverlay> overlay_;
+  std::vector<connection::Diagnostic> diagnostics_;
+
+  void note(std::string message) {
+    diagnostics_.push_back({diagnostics_.size() + 1, connection::DiagnosticSeverity::Warning, std::move(message)});
+  }
+  [[nodiscard]] static std::string describe(const std::optional<connection::ViewportOverlay>& overlay) {
+    if (!overlay) return "none";
+    return std::to_string(overlay->groups.size()) + " groups, " + std::to_string(overlay->selection.size()) + " selected";
+  }
 };
 
 }  // namespace

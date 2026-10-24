@@ -371,12 +371,28 @@ struct RemoteServer::State {
   // Spec 0064 / ADR-0128 D1 (Plan 0064 J2): the client whose camera the
   // control draws from; cleared, with the camera, when that client goes.
   std::optional<std::uint64_t> cameraOwner;
+  // Spec 0066 R2 / ADR-0132 D2 (Plan 0066 J2): each client's Viewport overlay;
+  // the control draws their union, and a client's goes when it does.
+  std::map<std::uint64_t, atlantis::connection::ViewportOverlay> overlays;
 
   void forget(std::uint64_t key) {
     if (cameraOwner == key && control != nullptr) {
       control->setViewportCamera(std::nullopt);
       cameraOwner.reset();
     }
+    if (overlays.erase(key) > 0) setOverlayUnion();
+  }
+
+  // Hands the control every client's overlay as one, in client order; none when no client has one.
+  void setOverlayUnion() {
+    if (control == nullptr) return;
+    std::optional<atlantis::connection::ViewportOverlay> merged;
+    for (const auto& [key, overlay] : overlays) {
+      if (!merged) merged.emplace();
+      merged->selection.insert(merged->selection.end(), overlay.selection.begin(), overlay.selection.end());
+      merged->groups.insert(merged->groups.end(), overlay.groups.begin(), overlay.groups.end());
+    }
+    (void)control->setViewportOverlay(std::move(merged));
   }
 
   void resolve(std::uint64_t key, const atlantis::Result<atlantis::connection::FrameReport,
@@ -467,9 +483,32 @@ struct RemoteServer::State {
         }
         return response(requestId, Value());
       }
+      // Spec 0066 / ADR-0132 D2: {"overlay":<ViewportOverlay>|null} -> {"ok":null} or {"err":"InvalidRequest"}.
+      if (name == "control.setViewportOverlay") {
+        const Value* overlay = p.find("overlay");
+        if (overlay == nullptr) return errorResponse(requestId, "BadRequest", "missing overlay");
+        if (overlay->isNull()) {
+          if (overlays.erase(clientKey) > 0) setOverlayUnion();
+          return response(requestId, codec::ok(Value()));
+        }
+        auto decoded = codec::decodeViewportOverlay(*overlay);
+        if (!decoded) return errorResponse(requestId, "BadRequest", "malformed overlay");
+        if (!atlantis::connection::overlayWellFormed(*decoded) || !atlantis::connection::overlayWithinLimits(*decoded)) {
+          return response(requestId,
+                          codec::err(codec::encodeControlError(atlantis::connection::ControlError::InvalidRequest)));
+        }
+        overlays[clientKey] = std::move(*decoded);
+        setOverlayUnion();
+        return response(requestId, codec::ok(Value()));
+      }
       if (name == "control.step") {
-        const auto step = decodeParam(p, "request", &codec::decodeStepRequest);
+        auto step = decodeParam(p, "request", &codec::decodeStepRequest);
         if (!step) return errorResponse(requestId, "BadRequest", "malformed or missing request");
+        // Spec 0066 R5: a capture shows only the requester's own overlay, and only when asked.
+        step->captureOverlay.reset();
+        if (step->withOverlay) {
+          if (const auto own = overlays.find(clientKey); own != overlays.end()) step->captureOverlay = own->second;
+        }
         const std::uint64_t key = nextParked++;
         parked.push_back(Parked{key, clientKey, requestId, std::nullopt});
         control->step(*step, [weak = self, key](const auto& result) {
