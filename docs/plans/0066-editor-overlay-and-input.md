@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0066: Viewport Overlay and Editor Input over the Wire](../specs/0066-editor-overlay-and-input.md)
   (`Draft`) — [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Proposed`).
   - Drafted together with the Spec at the maintainer's direction (2026-10-24), against the Spec's recommended
-    options: Q1 (a), Q2 P-a + L-a + G-a + O-a, Q3 I-1, Q4 H-a, Q5 as confirmed, Q6's budgets.
+    options: Q1 (a), Q2 P-a + L-a + G-a + S-a + O-a, Q3 I-1, Q4 H-a, Q5 as confirmed, Q6's budgets.
   - Keeps ADR-0103, ADR-0123, ADR-0124, ADR-0125, ADR-0126 and ADR-0131 unchanged.
 - **Status:** Draft
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
@@ -57,27 +57,37 @@ Read at `origin/main` `277f3f9`.
 - **P1 — The value and the call** (ADR-0132 D1, D2; Spec R1, R2).
   - `atlantis/connection/runtime_control.h` (or a sibling `viewport_overlay.h` in Connection): `OverlayColor`,
     `OverlayDepth {Tested, OnTop}`, `OverlaySegment {a, b, color, depth, widthPixels}`, `OverlayTriangle {a, b, c,
-    color, depth}`, `OverlayPoint {p, color, depth, sizePixels}`, `ViewportOverlay {selection, segments, triangles,
-    points}`; the limits (J6); `RuntimeControl::setViewportOverlay(std::optional<ViewportOverlay>)` returning
+    color, depth}`, `OverlayPoint {p, color, depth, sizePixels}`, `OverlayGroup {optional anchor + pixelScale,
+    segments, triangles, points}` (world when no anchor, screen-constant with one), `ViewportOverlay {selection,
+    groups}`; the limits (J6); `RuntimeControl::setViewportOverlay(std::optional<ViewportOverlay>)` returning
     `Result<std::monostate, ControlError>` (`InvalidRequest` over the limits).
+  - `StepRequest` gains `withOverlay` (what a client asks; default `false`) and a transport-filled `captureOverlay`
+    (the requester's own overlay, set by the transport holding per-client overlays and never carried on the wire;
+    J3).
   - Every `RuntimeControl` implementation gains it: `RuntimeControlHost` (stores the union it is given), Remote's
     `RemoteControl`, and the test fakes.
 - **P2 — Wire, CLI, C# SDK** (ADR-0132 D2; Spec R6).
   - Remote: the codec's overlay values; `control.setViewportOverlay` `{"overlay":<ViewportOverlay>|null}` →
     `{"ok":null}` or `{"err":"InvalidRequest"}`; the server keeps one overlay per client and hands the host their
-    union on every change and on a client's disconnect (J2); `remote_protocol.md` §5 and §6.
+    union on every change and on a client's disconnect (J2); `control.step`'s request gains `"withOverlay":bool`
+    (absent read as `false`), which the server resolves to the requester's own overlay (J3); `remote_protocol.md` §5
+    and §6.
   - CLI: `runtime overlay set <file|->` (an overlay as JSON, the wire's form), `runtime overlay select <guid>...`
-    (a selection-only overlay), `runtime overlay clear`; `cli/1` envelopes; help text.
-  - C# SDK: the overlay records, codec, `RemoteControl.SetViewportOverlay(ViewportOverlay?)`; conformance vectors
-    appended; the fixture server's control stores and reports the union for the C# tests.
+    (a selection-only overlay), `runtime overlay clear`; `runtime step --capture [<path>] --with-overlay`
+    (`--with-overlay` without `--capture` is a usage error); `cli/1` envelopes; help text.
+  - C# SDK: the overlay records, codec, `RemoteControl.SetViewportOverlay(ViewportOverlay?)`, `StepRequest`'s
+    `WithOverlay`; conformance vectors appended (the step-request vectors regenerated with the new member); the
+    fixture server's control stores the union and reports which overlay a capture was given, for the C# tests.
 - **P3 — Renderer** (ADR-0132 D3; Spec R3, R4).
-  - `atlantis/renderer/viewport_overlay.h`: `ViewportOverlayDrawList` (world-space vertices of segments, triangles
-    and points with colour and depth mode; the selected `DrawItem`s), and `Renderer::drawViewportOverlay(commandList,
-    target, depth, camera, list, resources)` recording, through the RenderGraph:
+  - `atlantis/renderer/viewport_overlay.h`: `ViewportOverlayDrawList` (vertices of segments, triangles and points
+    with colour, depth mode and, for a screen-constant group, its anchor and pixel scale; the selected `DrawItem`s),
+    and `Renderer::drawViewportOverlay(commandList, target, depth, camera, list, resources)` recording RenderGraph
+    passes after the scene's (no command outside the graph):
     - **outline:** the selected draw items into an R8 mask at the target's extent, then an edge pass compositing the
       outline colour over the target (J4);
-    - **primitives:** segments expanded to screen-space quads in the vertex shader (J5), triangles and points
-      (screen-space squares), depth-tested ones with the frame's depth read-only, then on-top ones.
+    - **primitives:** a screen-constant group's offsets scaled in the vertex shader from the frame's camera at the
+      anchor's view depth; segments expanded to screen-space quads (J5), triangles and points (screen-space
+      squares); depth-tested ones with the frame's depth read-only, then on-top ones.
   - Shaders: `shaders/viewport_overlay` (primitives), `shaders/selection_mask` and `shaders/selection_outline`,
     built by the Shader System for Windows and Android.
   - `drawFrame()` is unchanged; the RenderGraph carries the target from it to the overlay call, which ends in the
@@ -89,16 +99,16 @@ Read at `origin/main` `277f3f9`.
     `EntityGuidMap` to `DrawItem`s (mesh, material-free, current `WorldMatrix`; an entity without a `Renderable`,
     unknown or destroyed skipped); the draw list built; **one named place in `runFrame()`** right after `drawFrame()`
     and before `drawOverlayInto()` / the present records `drawViewportOverlay()` when the union is non-empty; the
-    capture path's re-render records it too (J3). The place's lines are enumerated in the PR and in AGENTS.md's guard
-    paragraph (M7).
+    capture path's re-render draws no overlay, or the step request's `captureOverlay` when it has one (J3). The
+    place's lines are enumerated in the PR and in AGENTS.md's guard paragraph (M7).
 - **P5 — Atlantis Editor App** (Spec R7).
-  - After a pick and on every camera change: the picked entity's `WorldMatrix` read through `RuntimeConnection`
-    (the worker thread), a translate Gizmo built as primitives (three axis segments with cone tips as triangles, on
-    top, sized to a constant pixel length at the entity's depth), sent with the selection via
-    `SetViewportOverlay`; nothing picked → `SetViewportOverlay(null)`. No hit-testing, no editing.
+  - After a pick: the picked entity's `WorldMatrix` read through `RuntimeConnection` (the worker thread), a
+    translate Gizmo built as one screen-constant group anchored at its translation (three axis segments with cone
+    tips as triangles, on top), sent with the selection via `SetViewportOverlay`; a camera change alone sends
+    nothing; nothing picked → `SetViewportOverlay(null)`. No hit-testing, no editing.
   - Its headless smoke test (which today picks by `Raycast` and sets the camera) also sends the overlay and asserts
-    through the CLI-equivalent capture (`control.step` with an image) that the picked entity's pixels differ with the
-    overlay and without it.
+    through a capture (`control.step` with an image and `withOverlay`) that the picked entity's pixels differ from
+    a capture without `withOverlay`.
 
 ## Milestones / Task Breakdown
 
@@ -128,8 +138,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   | Verdict | When | Next |
   |---|---|---|
   | **R-a kept** | Q6's drag latency and stall ceiling met on both scenes | M2 onward as planned |
-  | **Pump inside the frame (I-3)** | the stall ceiling missed embedded, met in the control | an ADR (amending ADR-0126 or new) and a Plan amendment before M4; the pump's `runFrame()` places enumerated |
-  | **V-a2 (I-4)** | as above, and I-3 rejected or insufficient | inside ADR-0126 D5: a Plan amendment for the editor's owned-window path |
+  | **Pump inside the frame (I-3)** | the stall ceiling missed embedded, met in the control | an ADR (amending ADR-0126 or new) and a Plan amendment in their own docs PR, merged before M4 (J8); the pump's `runFrame()` places enumerated |
+  | **V-a2 (I-4)** | as above, and I-3 rejected or insufficient | inside ADR-0126 D5: a Plan amendment for the editor's owned-window path, in its own docs PR (J8) |
   | **Latency only** | stalls met, drag latency missed | reported; the owner decides whether the next Spec needs a faster path |
   | **Both fail in the control too** | the Runtime's frame time itself dominates | reported; not an input-route problem |
 
@@ -139,7 +149,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   `remote_protocol.md`), `src/cli/`, `src/runtime/` (`RuntimeControlHost` stores the union; nothing drawn yet),
   `src/csharp/Atlantis.Gameplay/`, `tests/csharp/` (vectors, fixture server, suites), the test fakes.
 - Tests: codec round trips and vectors; per-client replacement, the union, removal on disconnect, `null` clearing,
-  over-limit refusal with nothing changed (loopback, two clients); the CLI's envelopes and exit codes; the C# session
+  over-limit refusal with nothing changed (loopback, two clients); a step with an image and no `withOverlay` while
+  another client's overlay is set hands the host no capture overlay, and with `withOverlay` hands it only the
+  requester's (two clients); `--with-overlay`'s usage error; the CLI's envelopes and exit codes; the C# session
   against the fixture server.
 
 ### M3 — The Renderer's overlay (P3; R3, R4)
@@ -148,17 +160,20 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   `shaders/selection_outline/`, their CMake.
 - Tests (GPU, fatal VVL), on a small test scene rendered offscreen: a segment, a triangle and a point land at the
   pixels their world positions project to; a depth-tested primitive behind a mesh is hidden and an on-top one is not;
-  a selected mesh's outline appears just outside its silhouette and nowhere else; an empty list records no pass.
+  a selected mesh's outline appears just outside its silhouette and nowhere else; a screen-constant group's segment
+  has the same pixel length at two camera distances; an empty list records no pass.
   Pixel assertions, no new golden (J7).
 
 ### M4 — The Runtime's place (P4; R3–R5)
 
 - `src/runtime/` (`runtime_application.{h,cpp}`, `runtime_control_host.cpp`).
 - Tests (GPU, fatal VVL): with no overlay, frame data and every existing golden unchanged and the gate's counters
-  exact; through `RuntimeControlHost`, an overlay and a selection appear in a captured frame under the control camera
-  and under `--editor` (in the Viewport target, below the UI pass); a selection of an unknown GUID, an entity without
-  a `Renderable`, and one destroyed while selected draws nothing and logs nothing per frame; two clients' overlays
-  both appear, and one disconnecting removes only its own (loopback, `atlantis_runtime --listen`).
+  exact; through `RuntimeControlHost`, an overlay and a selection drawn in the window's frame, and in a capture
+  only when the step request carries it, under the control camera and under `--editor` (in the Viewport target,
+  below the UI pass); a selection of an unknown GUID, an entity without a `Renderable`, and one destroyed while
+  selected draws nothing and logs nothing per frame; over loopback (`atlantis_runtime --listen`), two clients'
+  overlays both drawn, one disconnecting removes only its own, a capture without `withOverlay` shows neither and one
+  with it shows only the requester's.
 - The performance gate run with no overlay; the `runFrame()` lines enumerated.
 
 ### M5 — The editor's minimal use (P5; R7) — after J8's checkpoint
@@ -230,21 +245,27 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   camera's owner) and calls `setViewportOverlay(union)` on every change; `RuntimeControl` stays one overlay per
   caller, and the in-process `--exec` client is one caller. Proposed: accept. The alternative, owner keys on
   `RuntimeControl`, changes every implementation's shape for one transport's need.
-- **J3 — Captures include the overlay:** what `runtime step --capture` writes matches the window (Spec R5); with no
-  overlay, captures are unchanged. Proposed: accept; agents then see what they highlighted.
+- **J3 — Captures exclude overlays unless asked, and then show only the requester's** (revised after review; Spec
+  R5, ADR-0132 D2): a capture is the evaluation image of agents and CI, so another client's Gizmo or debug lines
+  never reach it. The step request's `withOverlay` asks for the requester's own overlay; Remote's server, which holds
+  per-client overlays (J2), fills `captureOverlay` with it; in process the CLI's `--exec` runner holds no
+  `RuntimeControl`, so the server is the only resolver. Proposed: accept.
 - **J4 — Outline technique:** the selected meshes into an R8 mask at the target's extent, then a 2-pixel edge pass
   (a texel differs from a neighbour) in a fixed colour, drawn over everything (visible through occluders, the common
   editor convention). Proposed: accept; a depth-aware dimmed occluded part is future work.
 - **J5 — Lines:** segments expanded to screen-space quads in the vertex shader from both endpoints' clip positions
   and the pixel width; no `wideLines` device feature (unavailable on many Android GPUs). Proposed: accept.
-- **J6 — Limits:** per client at most 65,536 segments, 65,536 triangles, 16,384 points and 256 selected entities;
+- **J6 — Limits:** per client at most 256 groups, 65,536 segments, 65,536 triangles, 16,384 points (counted
+  across groups) and 256 selected entities;
   over a limit, `InvalidRequest` and nothing changes. Proposed: accept; a Gizmo needs about a hundred, the limits stop
   a runaway debug client.
 - **J7 — Testing without new goldens:** the overlay is tested by pixel assertions on captured frames (positions,
   occlusion, outline presence), not by new golden images; every existing golden stays byte-identical. Proposed:
   accept; the overlay's look is reviewed by the owner in M6, not frozen as a golden.
 - **J8 — The M1 checkpoint:** the owner rules on M1's verdict table before M5 starts; an I-3 verdict adds an ADR and
-  a Plan amendment before M4 changes `runFrame()`. Proposed: accept (as Plan 0064 J7).
+  a Plan amendment before M4 changes `runFrame()`. That ADR and amendment are reviewed in **their own docs PR** (as
+  Spec 0065's Corrections were, PRs #281–#283), never folded into the implementation PR; the implementation PR
+  cites that PR, and M4 does not start before it merges. Proposed: accept (as Plan 0064 J7).
 - **J9 — Docs split:** normative sentences with the implementation PR, narratives after merge (Plans 0062–0065).
   Proposed: accept.
 - **J10 — Budgets as reported targets:** Spec 0066 Q6's targets are reported against, as Plan 0065 J3/J9, never test

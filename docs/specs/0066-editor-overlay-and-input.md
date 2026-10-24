@@ -33,7 +33,8 @@ window, and nothing reaches the Renderer's overlay pass from another process. Th
 overlay**: each client sends a small, closed set of world-space primitives and a selection set by `EntityGuid`
 through one more `RuntimeControl` call; the Renderer draws them after the scene, and draws a **selection outline**
 from the selected entities' meshes. Like `setViewportCamera`, it is on the shared surface — the wire, the CLI and
-the C# SDK — so the CLI and agents can highlight an entity too. For input, it recommends **measuring first**: an
+the C# SDK — so the CLI and agents can highlight an entity too. A frame capture, the agents' and CI's evaluation
+image, shows no overlay unless its request asks, and then only the requesting client's own. For input, it recommends **measuring first**: an
 investigative first milestone measures a drag end to end on Bistro against budgets this Spec states, and names the
 remedies the owner rules between if the budgets fail. Atlantis Editor App uses the overlay minimally (an outline
 and a Gizmo for the picked entity; no editing). No World verb is added.
@@ -129,10 +130,13 @@ deciding them first keeps the next Spec about the editor.
 
 ### Functional
 
-- **R1 — The Viewport overlay value.** A client's overlay is a value: a selection set (`EntityGuid`s) and a closed
-  set of world-space primitives — line segments (a pixel width), filled triangles, and points (a pixel size) — each
-  with a straight-alpha sRGB colour and a depth mode (depth-tested against the scene, or drawn on top). The set is
-  versioned with the wire; it carries no text, texture or screen-space primitive.
+- **R1 — The Viewport overlay value.** A client's overlay is a value: a selection set (`EntityGuid`s) and groups of
+  primitives from a closed set — line segments (a pixel width), filled triangles, and points (a pixel size) — each
+  with a straight-alpha sRGB colour and a depth mode (depth-tested against the scene, or drawn on top). A group is
+  either **world** (its primitives' points are world positions) or **screen-constant** (an anchor point in world
+  space and a pixel scale: its points are offsets from the anchor, one unit drawn as that many pixels at the anchor's
+  depth, from the frame's own camera — Q2 S-a). The set is versioned with the wire; it carries no text, texture or
+  screen-space-positioned primitive.
 - **R2 — The control call.** `RuntimeControl::setViewportOverlay(optional<overlay>)` replaces the calling client's
   overlay whole from the next frame on; `none` clears it. Each client has its own overlay; the frame draws the
   union of all clients'; a client's overlay is removed when its connection closes (ADR-0128's lifetime rule). An
@@ -145,11 +149,17 @@ deciding them first keeps the next Spec about the editor.
 - **R4 — The selection outline.** Each selected entity that has a `Renderable` is outlined from its mesh at its
   current `WorldMatrix`, in one fixed colour, visible through occluders; an entity without a `Renderable`, unknown or
   destroyed, is skipped without error (selections go stale between frames).
-- **R5 — Captures.** A captured frame (`runtime step --capture`) shows the overlay as the window does; frame data
-  (`FrameData`) is unchanged.
+- **R5 — Captures.** A captured frame (`runtime step --capture`) shows **no overlay** unless its request asks for
+  one (`withOverlay`); it then shows **only the requesting client's own overlay** (its selection outline and
+  primitives as they were when the step's last frame ran), never another client's. The window still shows every
+  client's overlay; frame data (`FrameData`) is unchanged either way. A capture is the evaluation image of agents and
+  CI (Spec 0055): an agent capturing while the editor is attached must not get the editor's Gizmo, and an agent's
+  debug lines must not land in a CI comparison.
 - **R6 — Every client.** The call is carried by `atlantis.remote/1` (`control.setViewportOverlay`, with
   `remote_protocol.md`), the CLI (`runtime overlay set <file|-> | select <guid>... | clear`), Remote's C++ client and
-  the C# SDK, with conformance vectors for every new value. The C++ Gameplay SDK exposes no control calls and is
+  the C# SDK, with conformance vectors for every new value. The capture request's `withOverlay` (R5) is carried by
+  `control.step`'s request (`{"frames":…,"image":…,"withOverlay":bool}`, absent read as `false`), the CLI
+  (`runtime step --capture [<path>] --with-overlay`) and the C# `StepRequest`. The C++ Gameplay SDK exposes no control calls and is
   unchanged (as for ADR-0128).
 - **R7 — The editor's minimal use.** Atlantis Editor App outlines the entity a click picked and draws a translate
   Gizmo (three axis segments with cone tips, on top) at its `WorldMatrix`, and clears both when nothing is picked.
@@ -183,15 +193,20 @@ editor / CLI / agent ──control.setViewportOverlay──► RemoteServer (per
 
 - **Value and call** (R1, R2): Atlantis Connection gains the overlay value types beside `ViewportCamera` and
   `setViewportOverlay` on `RuntimeControl`; Remote carries it as `control.setViewportOverlay` and keeps per-client
-  overlays, as it keeps the camera's owner; the CLI and the C# SDK mirror it.
-- **Renderer** (R3, R4): a Renderer-owned `ViewportOverlayDrawList` — world-space vertices of segments, triangles
-  and points with colour and depth mode, and the selected entities' draw items — drawn by a new pass after
+  overlays, as it keeps the camera's owner; the CLI and the C# SDK mirror it. A step request with `withOverlay` is
+  resolved by the transport that holds the per-client overlays (Remote's server) to the requester's own overlay,
+  which the capture alone draws (R5).
+- **Renderer** (R3, R4): a Renderer-owned `ViewportOverlayDrawList` — vertices of segments, triangles and points
+  with colour, depth mode and, for a screen-constant group, its anchor and pixel scale (applied in the vertex shader
+  from the frame's camera), and the selected entities' draw items — drawn by new RenderGraph passes after
   `drawFrame()`. The Renderer knows neither the wire nor an editor: the Runtime translates the control value into
   this list, as the `--editor` host translates ImGui's (ADR-0108 D3).
 - **Runtime** (R3–R5): one named place in `runFrame()` after the scene: with a non-empty union, resolve the selection
-  through the bake's GUID map to draw items, build the list, record the pass; captures re-render with it.
-- **Editor App** (R7): builds the Gizmo's primitives from the picked entity's `WorldMatrix` (read through
-  `RuntimeConnection`) and sends them with the selection after each pick and camera change.
+  through the bake's GUID map to draw items, build the list, record the passes; a capture re-renders with no
+  overlay, or with the requester's own when asked (R5).
+- **Editor App** (R7): builds the Gizmo as one screen-constant group anchored at the picked entity's
+  `WorldMatrix` translation (read through `RuntimeConnection`) and sends it with the selection after each pick; a
+  camera change alone needs no resend (Q2 S-a).
 - **Input** (R8): no engine change in this Spec unless the M1 verdict calls for one; the remedies are named in Q3.
 
 ## Architectural Impact
@@ -201,12 +216,15 @@ Yes:
 - **A new `RuntimeControl` call and wire method** — the shared surface's method list
   ([ADR-0132](../adr/0132-viewport-overlay-surface.md), superseding ADR-0106 D3's list in part, as ADR-0128 did).
 - **The Renderer gains a second overlay input** beside `UiDrawList`: world-space, depth-aware primitives and a
-  selection outline (ADR-0132, extending ADR-0108 D3); new shaders.
+  selection outline (ADR-0132, extending ADR-0108 D3); new shaders. **The outline and primitive passes are
+  RenderGraph passes** (AGENTS.md: the Render Graph is the mandatory path for GPU work), recorded by the Renderer
+  after the scene's passes; no command is recorded outside the graph.
 - **`runFrame()` gains one named place** (the performance gate applies).
 - **Conditionally, input:** if M1's verdict calls for keeping the Runtime's queue serviced inside a long frame, that
-  is a frame-loop change needing an ADR (amending ADR-0126 or a new one) ruled at M1's checkpoint; V-a2 is already
-  inside ADR-0126 D5; R-b would supersede ADR-0126 D4 and needs its own Spec. Nothing about input is decided by
-  ADR-0132.
+  is a frame-loop change needing an ADR (amending ADR-0126 or a new one) ruled at M1's checkpoint. That ADR and the
+  Plan amendment are reviewed in their own docs PR (as Spec 0065's Corrections were, PRs #281–#283), never folded
+  into the implementation PR, which cites it (Plan 0066 J8). V-a2 is already inside ADR-0126 D5; R-b would supersede
+  ADR-0126 D4 and needs its own Spec. Nothing about input is decided by ADR-0132.
 
 No module boundary changes; no new dependency; no World, Asset System or Authoring change.
 
@@ -224,12 +242,16 @@ The options are weighed in Q1–Q6 below; the main rejected ones are:
 ## Testing & Verification Plan
 
 - **Codec and vectors** (R1, R6): every new value round-trips in C++ and C#; conformance vectors appended.
-- **Control and wire** (R2, R6): per-client replacement, the union, removal on disconnect, `none` clearing, the
-  limits refused with nothing changed; the CLI's envelopes; the C# session against the fixture server.
+- **Control and wire** (R2, R5, R6): per-client replacement, the union, removal on disconnect, `none` clearing, the
+  limits refused with nothing changed; a capture requested without `withOverlay` while another client's overlay is
+  set shows no overlay, and with it shows only the requester's; the CLI's envelopes; the C# session against the
+  fixture server.
 - **Rendering (GPU, fatal VVL)** (R3–R5): with no overlay, frame data, counters and every existing golden unchanged;
   a segment, a triangle and a point land at the pixels their world positions project to, depth-tested ones hidden
   behind a mesh and on-top ones not; a selected mesh's outline appears around its silhouette and an unknown or
-  non-`Renderable` GUID draws nothing; the overlay is in captures under the control camera and under `--editor`.
+  non-`Renderable` GUID draws nothing; a screen-constant group keeps its pixel size at two camera distances; a
+  capture with `withOverlay` shows the requester's overlay under the control camera and under `--editor`, and one
+  without shows none.
   Assertions on captured pixels, not new goldens (Plan 0066 J7).
 - **Performance gate:** run on the implementing branch with no overlay; verdict reported as measured.
 - **Editor App** (R7): its smoke test picks, outlines and shows the Gizmo on the default scene; the owner's run on
@@ -245,7 +267,10 @@ Risks:
   already keeps, at the cost of the editor positioning a top-level window.
 - **Outline cost on dense scenes:** a mask pass draws each selected mesh again; selecting many large meshes on Bistro
   costs GPU time (reported in M6).
-- **Overlay data per frame:** a careless client could send large debug geometry every frame; the limits bound it.
+- **Overlay data per frame:** a careless client could send large debug geometry every frame; the limits bound it,
+  and screen-constant groups remove the camera-driven resend (Q2 S-a).
+- **A capture that should show the overlay and does not:** captures exclude overlays unless asked (R5); a client that
+  wants its own overlay in an image passes `withOverlay`.
 - **The ImGui editor and the overlay coexist** under `--editor`: both draw, in different passes (R3's order).
 
 Open questions — each with options, consequences and a recommendation:
@@ -278,6 +303,18 @@ Open questions — each with options, consequences and a recommendation:
     client-side, so the client already knows every handle's geometry and hit-tests it (Q4). **(G-b)** a Runtime-side
     `showGizmo{entity, mode, space}`: a second Gizmo implementation in the Runtime, and its handles' geometry known
     only to the Runtime.
+  - **Screen-constant size:** E1's Gizmo keeps a constant size on screen, so with world-space primitives alone it
+    must be rebuilt whenever the camera moves.
+    - **(S-a) Screen-constant groups** — **recommended**: a group may carry an anchor point and a pixel scale; its
+      points are offsets from the anchor, and the Runtime scales them from the frame's own camera (one unit drawn as
+      that many pixels at the anchor's depth). An orbit or dolly then needs no resend — only a change of the
+      previewed matrix does, which a drag sends anyway — and the Gizmo is sized from the very camera the frame
+      draws, so it never shows one frame at the previous camera's size. The client hit-tests with the same formula
+      from the camera it set (Q4). Cost: one more group kind in the value and a scale in the primitive shader.
+    - **(S-b) World-space only, resent on every camera change:** no new value; a second message per camera change
+      (the editor already sends `setViewportCamera` per pointer move), and the camera and the overlay can land in
+      different frames, so the Gizmo's size pops for a frame during an orbit.
+    - **Why (S-a):** it removes the resend and the size pop with a small, closed addition.
   - **Selection outline:** **(O-a) Runtime-side, by GUID** — **recommended**: the outline needs the mesh, which only
     the Runtime has (fact 3). **(O-b)** a client-built bounds box: needs the bounds on the wire, and is not an
     outline.
@@ -304,7 +341,8 @@ Open questions — each with options, consequences and a recommendation:
 
 - **Q4 — Hit-testing the overlay** (grabbing a Gizmo axis).
   - **(H-a) Client-side, against the primitives it sent,** with E1's pixel/ray math — **recommended**: the client
-    built them, knows the camera it set, and E1's model does exactly this (`viewport_picking.h`, `gizmo.h`).
+    built them, knows the camera it set, and E1's model does exactly this (`viewport_picking.h`, `gizmo.h`). A
+    screen-constant group is hit-tested with the same anchor-depth scale the Runtime applies (S-a).
   - **(H-b) Runtime-side,** a `raycast` against overlay primitives: a round trip per pointer move, and overlay
     geometry interpreted by the Runtime.
   - This Spec decides H-a; the next Spec implements the Gizmo's hit-testing (R7 draws only).

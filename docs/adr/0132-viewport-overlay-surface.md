@@ -12,8 +12,9 @@
     overlay pass, its draw list and the `--editor` path are unchanged.
   - **Extends** [ADR-0128](0128-remote-viewport-camera-and-raycast.md) and **supersedes in part**
     [ADR-0106](0106-attachable-runtime-transport-and-control.md) D3: `RuntimeControl` and `atlantis.remote/1` gain one
-    more call, `setViewportOverlay`, with ADR-0128's per-client lifetime rule. The protocol version is unchanged
-    (additive).
+    more call, `setViewportOverlay`, with ADR-0128's per-client lifetime rule; and **extends** ADR-0106 D5 (capture):
+    a capture's request gains `withOverlay`, and a capture draws no overlay unless asked. The protocol version is
+    unchanged (additive).
   - **Applies** [ADR-0125](0125-out-of-process-editor-platform-and-uniform-client-interface.md) D2 (one interface for
     every client) and answers [ADR-0126](0126-viewport-embedding-and-input-routing.md)'s airspace consequence (an
     overlay must be drawn by the Runtime). ADR-0126's input decisions are unchanged.
@@ -44,31 +45,40 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 ## Decision
 
-1. **The value.** Atlantis Connection gains a Viewport overlay value: a selection set (`EntityGuid`s) and a closed,
-   versioned set of world-space primitives —
+1. **The value.** Atlantis Connection gains a Viewport overlay value: a selection set (`EntityGuid`s) and groups of
+   primitives from a closed, versioned set —
    - segments (two points, a width in pixels),
    - filled triangles (three points),
    - points (one point, a size in pixels),
 
    each with a straight-alpha colour authored in sRGB and a depth mode: tested against the scene's depth, or drawn on
-   top. No text, texture or screen-space primitive. Limits on primitives and selection size are part of the value's
-   contract (the Plan sets them); an overlay over them is refused.
+   top. A group is **world** (its points are world positions) or **screen-constant** (an anchor point in world space
+   and a pixel scale: its points are offsets from the anchor, drawn so that one unit is that many pixels at the
+   anchor's view depth, from the frame's own camera). No text, texture or screen-space-positioned primitive. Limits
+   on groups, primitives and selection size are part of the value's contract (the Plan sets them); an overlay over
+   them is refused.
 2. **The call.** `RuntimeControl::setViewportOverlay(optional<overlay>)`, wire method `control.setViewportOverlay`.
    - It replaces the calling client's overlay whole from the next frame on; `null` clears it.
    - **Per client:** every client has its own overlay; the frame draws the union of all clients'. A client's overlay
      is removed when its connection closes (ADR-0128 D1's lifetime). An over-limit overlay is refused
      (`InvalidRequest`) and changes nothing.
    - It is not World state: no event reports it and no `RuntimeConnection` call sees it.
+   - **Captures:** a frame capture (`control.step` with an image) draws **no overlay** unless the request carries
+     `withOverlay: true`, and then **only the requesting client's own overlay** — never another client's. The
+     transport that holds the per-client overlays (Remote's server) resolves the request to that overlay. Frame data
+     is unchanged.
    - **Every client gets it:** the CLI (`runtime overlay …`), Remote's C++ client, the C# SDK's control surface;
      `remote_protocol.md` documents it; conformance vectors cover it. The C++ Gameplay SDK, which exposes no control
      calls, is unchanged.
-3. **The Renderer draws it** through a Renderer-owned draw list (`ViewportOverlayDrawList`: the primitives as
-   world-space vertices with colour and depth mode, and the selected entities' draw items) and one new call, recorded
-   after `drawFrame()` into the frame's scene target, from the camera the frame drew:
+3. **The Renderer draws it** through a Renderer-owned draw list (`ViewportOverlayDrawList`: the primitives'
+   vertices with colour, depth mode and, for a screen-constant group, its anchor and pixel scale; and the selected
+   entities' draw items) and one new call that records **RenderGraph passes** (the mandatory path for GPU work) after
+   the scene's passes, into the frame's scene target, from the camera the frame drew:
    - **the selection outline first:** the selected meshes at their current `WorldMatrix` into a mask, then an edge
      pass composing a fixed-colour outline over the target, visible through occluders;
-   - **then the primitives:** lines as screen-space-expanded triangles (no wide-lines device feature), depth-tested
-     ones against the frame's depth (read only), on-top ones without depth;
+   - **then the primitives:** a screen-constant group's offsets scaled from the frame's camera at its anchor's
+     depth; lines as screen-space-expanded triangles (no wide-lines device feature); depth-tested ones against the
+     frame's depth (read only), on-top ones without depth;
    - new shaders for both, through the Shader System like every other pass.
 
    The Renderer knows neither the wire nor an editor: the Runtime translates the control value into the draw list, as
@@ -76,8 +86,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 4. **The Runtime** resolves the union's selection through the bake's GUID map to draw items each frame (an entity
    without a `Renderable`, unknown or destroyed, is skipped), and records the overlay at **one named place in
    `runFrame()`** after the scene and before the UI pass or the present. With no overlay from any client the place
-   records nothing: the frame's passes, counters and pixels are unchanged. Captures re-render with the overlay;
-   `FrameData` is unchanged.
+   records nothing: the frame's passes, counters and pixels are unchanged. A capture re-renders with no overlay,
+   or with the requesting client's own overlay when its request asks (D2); `FrameData` is unchanged.
 5. **The Gizmo stays client-side** (Spec 0066 Q2 G-a, Q4 H-a): its geometry is sent as primitives and hit-tested by
    the client against what it sent, with E1's models. There is no Runtime-side Gizmo.
 
@@ -92,13 +102,18 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **The outline uses the Runtime's meshes,** which no client has; the Gizmo uses the client's model, which the
   Runtime need not have.
 - **Zero cost when unused,** and nothing else in the frame changes.
+- **Captures stay clean for agents and CI:** another client's Gizmo or debug lines never reach an evaluation image;
+  a client that wants its own overlay in an image asks for it.
+- **A camera move needs no resend** for a screen-constant Gizmo: the Runtime sizes it from the frame's own camera,
+  so it never shows one frame at the previous camera's size.
 
 ### Negative / Trade-offs
 
 - **New Renderer passes and shaders,** and one more guarded `runFrame()` place; the gate applies to the
   implementation.
-- **A per-frame resend** when the camera or the previewed matrix changes: the client re-sends its overlay (small for
-  a Gizmo; bounded by the limits).
+- **A resend when the previewed matrix changes:** during a drag the client re-sends its overlay with each preview
+  (small for a Gizmo; bounded by the limits). World-space groups that must follow the camera are re-sent as well.
+- **The capture request grows a field** (`withOverlay`) and the transport resolves "own" per client.
 - **Overlay latency is the frame boundary's:** an overlay appears one or two Runtime frames after it is sent, like the
   camera.
 - **A one-shot CLI call's overlay ends with its process,** as `runtime camera set` does; the CLI's call is useful in
@@ -114,6 +129,10 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   seen yet.
 - **An open mesh/texture upload** (Q2 (P-b)): far more surface than a Gizmo, outline and debug shapes need.
 - **Persistent overlays until cleared** (Q2 (L-b)): a crashed editor would leave a stale Gizmo.
+- **Captures showing the window's union:** an agent's or CI's image would carry other clients' Gizmos and debug
+  lines.
+- **World-space primitives only, resent on every camera change** (Q2 (S-b)): a message per camera change, and a
+  one-frame size pop when the camera and the overlay land in different frames.
 - **A Runtime-side Gizmo** (`showGizmo`, Q2 (G-b)) and **Runtime-side overlay hit-testing** (Q4 (H-b)): a second
   Gizmo implementation, and a round trip per pointer move.
 - **A client-drawn bounds box instead of an outline** (Q2 (O-b)): needs bounds on the wire, and is not an outline.
