@@ -1,12 +1,14 @@
 # ADR 0133: Loading an Attachment's Contents — Drawing over a Finished Frame
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24)
 - **Deciders:** slmao
-- **Acceptance:** pending (reviewed in its own docs PR, Plan 0066 J8's pattern; no code before it
-  merges)
+- **Acceptance:** slmao, 2026-10-24 (Plan 0066 J12 accepted as proposed, with two review notes folded in: D5's
+  incoming states come from the previous graph's reported end states, and the synchronization-validation run records
+  its layer settings; recorded once in [Plan 0066](../plans/0066-editor-overlay-and-input.md); reviewed in its own
+  docs PR, [PR #288](https://github.com/slmao/Atlantis/pull/288))
 - **Related Spec:** [Spec 0066: Viewport Overlay and Editor Input over the Wire](../specs/0066-editor-overlay-and-input.md)
-  (`Approved` 2026-10-24; R3, R4)
+  (`Approved` 2026-10-24; R3, R4; its Correction of 2026-10-24 names this ADR)
 - **Related ADR(s):**
   - **Extends** [ADR-0025](0025-rhi-minimal-pipeline-binding-and-draw-command-surface.md): `beginRendering()` on a
     `RenderTarget` may load an attachment's contents instead of clearing them. Clearing stays the default.
@@ -14,7 +16,8 @@
     binding enters `execute()` `Undefined`) — the revisit it names for "a future spec that stops fully re-clearing
     the depth attachment".
   - **Extends** [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md):
-    `incomingState` is honoured for depth bindings too.
+    `incomingState` is honoured for depth bindings too, and `execute()` reports the state it leaves each bound
+    resource in.
   - **Keeps** [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md) (RenderGraph
     records every barrier) and [ADR-0108](0108-editor-host-and-viewport-composition.md) (the UI overlay pass is
     unchanged).
@@ -73,17 +76,31 @@ attachment would not be caught by them.
      of item 2.
    - **A new guard:** a `Load` binding whose `incomingState` is `Undefined` is a programmer error
      (`ATLANTIS_CHECK_MSG`): there is nothing to load.
+   - **End states are reported.** `execute()` returns the state it left each bound resource in, one entry per
+     binding in the bindings' order: for a resource some pass used, its `finalState` when it has one, else its last
+     declared usage's state; for one no pass used, its `incomingState` (no trailing transition is recorded for it).
+     Today it returns nothing, and ADR-0039's `incomingState`/`finalState` are both supplied by the caller, so a later
+     graph has had no way to learn where an earlier one left a resource that had no `finalState`.
+   - **The Renderer passes them on.** `drawFrame()` returns its colour target's and its depth `Texture`'s end states
+     (from its `execute()`), in place of returning nothing. Its parameters and passes are unchanged, and a caller
+     that ignores the result is unaffected.
 4. **Nothing else changes.** Every existing binding is `Clear` with its current `incomingState`. The recorded
    commands, the counters and every golden are unchanged; only a caller that asks for `Load` sees a difference.
 5. **How ADR-0132 D3 uses it** (the Plan's details, stated here to show that no further RHI change is needed):
+   - **Incoming states are reported, never written down.** The overlay's graph binds the frame's target and depth
+     with the end states `drawFrame()` returned (item 3), not with literal states. A later change to the state
+     `drawFrame()` leaves its depth in therefore cannot leave the overlay's barrier silently wrong. The fatal
+     validation layers would not catch such a mismatch, and item 3's guard catches only `Undefined`.
    - **The frame's target.** When an overlay follows, the Runtime asks `drawFrame()` to leave its target in
      `ColorAttachmentOutput` (its `finalColorState`, which the Renderer passes through uninterpreted).
-     The overlay's graph binds that target with `incomingState = ColorAttachmentOutput`, `Load`, and the frame's
-     real final state. The existing table already covers `PresentSource`, `ShaderRead` and `TransferSource`.
-   - **The frame's depth.** The depth `Texture` is bound with `incomingState = DepthAttachmentReadWrite` and `Load`.
-     Depth-tested primitives use a pipeline with `depthWriteEnabled = false`. On-top primitives and the outline
-     composite are separate passes without a depth attachment: a pipeline's depth attachment must match its
-     scope's.
+     The overlay's graph binds that target with the colour end state `drawFrame()` reported (equal to
+     `finalColorState` by construction; the reported value is used all the same, so colour and depth take one path),
+     `Load`, and the frame's real final state. The existing table already covers `PresentSource`, `ShaderRead` and
+     `TransferSource`.
+   - **The frame's depth.** The depth `Texture` is bound with the depth end state `drawFrame()` reported
+     (`DepthAttachmentReadWrite` today) and `Load`. Depth-tested primitives use a pipeline with
+     `depthWriteEnabled = false`. On-top primitives and the outline composite are separate passes without a depth
+     attachment: a pipeline's depth attachment must match its scope's.
    - **The selection mask.** The mask is written in its own graph, which ends in `ShaderRead` (Guard 2 forbids
      reading a `RenderTarget` inside a graph). The outline pass samples it with `bindTexture()`, as the UI pass
      samples the Viewport (ADR-0108).
@@ -93,9 +110,11 @@ attachment would not be caught by them.
 ### Positive
 
 - **ADR-0132 D3 holds as written:** the overlay is drawn after the scene, over its image, against its depth,
-  without touching `drawFrame()`'s passes or its signature.
-- **Small and opt-in:** one enum, one overload, one binding field and two table entries. The default reproduces
-  today's command stream exactly.
+  without touching `drawFrame()`'s passes or parameters (it only gains a return value).
+- **Small and opt-in:** one enum, one overload, one binding field, two table entries and the reported end states.
+  The default reproduces today's command stream exactly.
+- **No state is written down twice:** a graph that continues another's resources starts from what that graph
+  reported, so the two cannot drift apart unnoticed.
 - **The RenderGraph still owns synchronization:** a caller never records a barrier, and the barrier between two
   passes on a loaded attachment is recorded where every other barrier is.
 - **Reusable:** any later pass that composes over a finished frame (a debug view, a measurement overlay) uses the
@@ -107,7 +126,11 @@ attachment would not be caught by them.
   `src/render_graph/**`, `src/vulkan_backend/**`).
 - **A missing barrier would not be caught by the fatal validation layers** (no synchronization validation).
   Mitigation: the RenderGraph tests assert the same-state barrier is recorded before every pass on a `Load`
-  binding, and M3 runs its GPU tests once with synchronization validation enabled, reported in the PR.
+  binding, and M3 runs its GPU tests once with synchronization validation enabled. The implementing PR records that
+  run with the exact layer settings used (the environment variables or the `vk_layer_settings.txt` keys), so later
+  Renderer passes can repeat it.
+- **`execute()` and `drawFrame()` gain return values.** Every existing call ignores them and is unaffected; a
+  caller that continues a graph's resources must use them.
 - **Loading costs bandwidth on tile-based GPUs.** It is paid only when an overlay is drawn; a frame without one
   clears exactly as before.
 - **`AttachmentLoad` sits beside `ClearColorValue`,** so a call can carry a clear value it ignores. The overload
