@@ -100,11 +100,10 @@ struct SceneLine {
 }
 
 // The .scene.txt v4 grammar (scene_source.cpp), written with shortest
-// round-trip floats: serializeSceneSource() prints std::to_string's fixed
-// six decimals, which would lose precision on imported transforms. Plan
-// 0046 Milestone 2 (ADR-0094 Decision 3): the overlay's node lines are
-// appended verbatim after the imported ones (serializeSceneSource()'s own
-// lines -- six decimals is exact enough for hand-authored values) and its
+// round-trip floats (formatFloat above; since Spec 0065's Correction, F5,
+// serializeSceneSource() writes the same form). Plan 0046 Milestone 2
+// (ADR-0094 Decision 3): the overlay's node lines are appended verbatim
+// after the imported ones (serializeSceneSource()'s own lines) and its
 // camera becomes the active one.
 [[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines, const std::vector<std::string>& overlayLines,
                                     std::optional<std::uint32_t> activeCamera) {

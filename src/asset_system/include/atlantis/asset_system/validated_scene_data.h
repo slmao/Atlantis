@@ -20,13 +20,16 @@ struct ValidatedSceneNode {
 };
 
 class ValidatedSceneData;
+struct CookedScene;  // cook_scene.h (Plan 0065 P1)
 
 // Forward-declared here so ValidatedSceneData's own friend declaration
-// below can name it -- the real definition lives in decode_scene.h,
+// below can name them -- the real definitions live in decode_scene.h,
 // which this header is deliberately not included from (nothing here
-// needs the rest of that header's own declarations).
+// needs the rest of that header's own declarations). Plan 0065 P1: the
+// two overloads of the one decoder, from files and from memory.
 [[nodiscard]] atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(
     const std::string& artifactPath, const std::string& metadataPath);
+[[nodiscard]] atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const CookedScene& cooked);
 
 // Plan 0015 Section D2 / ADR-0053 (including its own Human Review
 // Correction, 2026-08-23): encapsulated so "fully validated" is a
@@ -73,6 +76,7 @@ class ValidatedSceneData {
  private:
   friend atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const std::string&,
                                                                                       const std::string&);
+  friend atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const CookedScene&);
 
   ValidatedSceneData(std::vector<ValidatedSceneNode> nodes, std::vector<std::optional<std::size_t>> parents,
                       std::optional<std::size_t> activeCameraIndex, std::vector<EntityGuid> entityGuids)

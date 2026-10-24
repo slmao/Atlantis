@@ -825,8 +825,8 @@ TEST_CASE("conformance: a directional light with a range is rejected on both sid
   s.nodes[kLightNode].light->kind = scene::LightKind::Directional;
   s.nodes[kLightNode].light->range = 0.0f;
   std::string text = textOf(s);
-  const std::string intensity = "intensity=2.000000";
-  replaceOnce(text, intensity, intensity + " range=1.000000");
+  const std::string intensity = "intensity=2";  // the serializer's shortest round-trip text (Plan 0065 J10)
+  replaceOnce(text, intensity, intensity + " range=1");
   expectRejected(text, parseFails(as::SceneSourceParseError::InvalidComponentGroup));
 
   std::vector<std::byte> bytes = cook(textOf(s)).artifact;

@@ -8,11 +8,14 @@ add_executable(atlantis_cli_tests
   cli_boundary_tests.cpp
   # Plan 0055 M6: the command tree, its JSON and the invocation driver.
   cli_tree_tests.cpp
+  # Plan 0065 M5: the scene group.
+  cli_scene_tests.cpp
 )
 
 target_link_libraries(atlantis_cli_tests
   PRIVATE
     Atlantis::Cli
+    Atlantis::Authoring  # Plan 0065 M5: the session the scene group's tests edit
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

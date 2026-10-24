@@ -553,6 +553,8 @@ TransactionTicket RuntimeWorldAccess::submitTransaction(std::vector<Command> com
   return ticket;
 }
 
+bool RuntimeWorldAccess::hasPending() const noexcept { return !impl_->pending.empty(); }
+
 ApplyReport RuntimeWorldAccess::applyPending() {
   ApplyReport report;
   auto pending = std::exchange(impl_->pending, {});

@@ -1412,3 +1412,20 @@ TEST_CASE("another client's later write refuses the undo; a scene change clears 
   round(fixture);
   CHECK(history.undoDepth() == 0);
 }
+
+// Plan 0065 M4 (Spec 0065 R10; ADR-0131 D5): a reload of the same scene
+// changes its generation, and the history clears as on a scene change.
+TEST_CASE("a scene reload (a new generation of the same scene) clears the history", "[editor][model][history]") {
+  EditorFixture fixture;
+  selectEntity(fixture, kSun);
+  auto& inspector = fixture.editor->inspector();
+  auto& history = fixture.editor->history();
+  (void)inspector.commit(fieldIndex(inspector, "Light.intensity"), 6.0f);
+  round(fixture, 2);
+  REQUIRE(history.undoDepth() == 1);
+  round(fixture);
+  CHECK(history.undoDepth() == 1);  // the same generation: kept
+  fixture.runtime.sceneGeneration = 1;
+  round(fixture);
+  CHECK(history.undoDepth() == 0);
+}

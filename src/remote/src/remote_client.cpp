@@ -73,6 +73,9 @@ struct RemoteSession::State {
   codec::OwnedSchema schema;
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;
   std::unique_ptr<atlantis::connection::RuntimeControl> control;
+  std::unique_ptr<atlantis::connection::AuthoringConnection> authoring;  // Plan 0065
+  codec::OwnedSchema authoringSchema;                                     // fetched at its first use
+  bool authoringSchemaFetched = false;
 
   void fail(RemoteError error) {
     if (!failure) failure = error;
@@ -415,6 +418,202 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
   RemoteSession::State* state_;
 };
 
+// Plan 0065 P6 (ADR-0130 D3): AuthoringConnection over the wire (authoring.*).
+// Each call is one request; refusals arrive in band.
+namespace ac = atlantis::connection::authoring;
+
+class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
+ public:
+  explicit RemoteAuthoring(RemoteSession::State& state) : state_(&state) {}
+
+  std::optional<ac::DocumentInfo> document() const override {
+    const auto result = state_->call("authoring.document");
+    if (!result) return failed(std::optional<ac::DocumentInfo>{});
+    if (result->isNull()) return std::nullopt;
+    auto document = codec::decodeDocumentInfo(*result);
+    if (!document) return failed(std::optional<ac::DocumentInfo>{});
+    return document;
+  }
+  atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {
+    using ResultT = atlantis::Result<std::vector<ac::NodeSummary>, ac::Error>;
+    return inBand<std::vector<ac::NodeSummary>>(
+        state_->call("authoring.listNodes"),
+        [](const Value& v) -> std::optional<std::vector<ac::NodeSummary>> {
+          if (!v.isArray()) return std::nullopt;
+          std::vector<ac::NodeSummary> out;
+          for (const Value& item : v.asArray()) {
+            auto node = codec::decodeNodeSummary(item);
+            if (!node) return std::nullopt;
+            out.push_back(*node);
+          }
+          return out;
+        },
+        ResultT::Err(ac::Error::NoDocument));
+  }
+  atlantis::Result<std::vector<schema::TypeId>, ac::Error> listComponents(const EntityGuid& node) const override {
+    using ResultT = atlantis::Result<std::vector<schema::TypeId>, ac::Error>;
+    Value params = Value::object();
+    params.set("node", codec::encodeEntity(node));
+    return inBand<std::vector<schema::TypeId>>(state_->call("authoring.listComponents", std::move(params)),
+                                               &decodeTypeIds, ResultT::Err(ac::Error::UnknownNode));
+  }
+  atlantis::Result<access::PropertyValue, ac::Error> getProperty(const ac::PropertyAddress& address) const override {
+    using ResultT = atlantis::Result<access::PropertyValue, ac::Error>;
+    Value params = Value::object();
+    params.set("address", codec::encode(address));
+    return inBand<access::PropertyValue>(state_->call("authoring.getProperty", std::move(params)),
+                                         &codec::decodePropertyValue, ResultT::Err(ac::Error::UnknownNode));
+  }
+  atlantis::Result<std::optional<EntityGuid>, ac::Error> activeCamera() const override {
+    using ResultT = atlantis::Result<std::optional<EntityGuid>, ac::Error>;
+    return inBand<std::optional<EntityGuid>>(
+        state_->call("authoring.activeCamera"),
+        [](const Value& v) -> std::optional<std::optional<EntityGuid>> {
+          if (v.isNull()) return std::optional<EntityGuid>{};
+          const auto camera = codec::decodeEntity(v);
+          if (!camera) return std::nullopt;
+          return std::optional<EntityGuid>{*camera};
+        },
+        ResultT::Err(ac::Error::NoDocument));
+  }
+  std::span<const schema::TypeDescriptor> schema() const override {
+    if (!state_->authoringSchemaFetched) {
+      state_->authoringSchemaFetched = true;
+      const auto result = state_->call("authoring.schema");
+      if (!result || !state_->authoringSchema.decode(*result)) state_->fail(RemoteError::ProtocolError);
+    }
+    return state_->authoringSchema.types();
+  }
+
+  access::CommandTicket submit(ac::Command command) override {
+    Value params = Value::object();
+    params.set("command", codec::encode(command));
+    const auto result = state_->call("authoring.submit", std::move(params));
+    const auto ticket = result ? codec::decodeUInt64(*result) : std::nullopt;
+    if (!ticket) return failed(access::CommandTicket{});
+    return access::CommandTicket{*ticket};
+  }
+  access::TransactionTicket submitTransaction(std::vector<ac::Command> commands) override {
+    Value list = Value::array();
+    for (const ac::Command& command : commands) list.push(codec::encode(command));
+    Value params = Value::object();
+    params.set("commands", std::move(list));
+    const auto result = state_->call("authoring.submitTransaction", std::move(params));
+    const auto ticket = result ? codec::decodeTransactionTicket(*result) : std::nullopt;
+    if (!ticket) return failed(access::TransactionTicket{});
+    return *ticket;
+  }
+
+  atlantis::connection::SubscriptionId subscribe(ac::EventFilter filter) override {
+    Value params = Value::object();
+    params.set("filter", codec::encode(filter));
+    const auto result = state_->call("authoring.subscribe", std::move(params));
+    const auto id = result ? codec::decodeUInt64(*result) : std::nullopt;
+    if (!id) return failed(atlantis::connection::SubscriptionId{});
+    return atlantis::connection::SubscriptionId{*id};
+  }
+  atlantis::Result<std::monostate, atlantis::connection::ConnectionError> unsubscribe(
+      atlantis::connection::SubscriptionId subscription) override {
+    using ResultT = atlantis::Result<std::monostate, atlantis::connection::ConnectionError>;
+    const auto result = state_->call("authoring.unsubscribe", subscriptionParams(subscription));
+    const auto decoded = result ? decodeInBand<std::monostate, atlantis::connection::ConnectionError>(
+                                      *result,
+                                      [](const Value& v) -> std::optional<std::monostate> {
+                                        if (!v.isNull()) return std::nullopt;
+                                        return std::monostate{};
+                                      },
+                                      &codec::decodeConnectionError)
+                                : std::nullopt;
+    if (!decoded) return failed(ResultT::Err(atlantis::connection::ConnectionError::UnknownSubscription));
+    return *decoded;
+  }
+  atlantis::Result<std::vector<ac::Event>, atlantis::connection::ConnectionError> drainEvents(
+      atlantis::connection::SubscriptionId subscription) override {
+    using ResultT = atlantis::Result<std::vector<ac::Event>, atlantis::connection::ConnectionError>;
+    const auto result = state_->call("authoring.drainEvents", subscriptionParams(subscription));
+    const auto decoded = result ? decodeInBand<std::vector<ac::Event>, atlantis::connection::ConnectionError>(
+                                      *result,
+                                      [](const Value& v) -> std::optional<std::vector<ac::Event>> {
+                                        if (!v.isArray()) return std::nullopt;
+                                        std::vector<ac::Event> events;
+                                        for (const Value& item : v.asArray()) {
+                                          auto event = codec::decodeAuthoringEvent(item);
+                                          if (!event) return std::nullopt;
+                                          events.push_back(std::move(*event));
+                                        }
+                                        return events;
+                                      },
+                                      &codec::decodeConnectionError)
+                                : std::nullopt;
+    if (!decoded) return failed(ResultT::Err(atlantis::connection::ConnectionError::UnknownSubscription));
+    return *decoded;
+  }
+  std::vector<ac::CommandFailure> drainFailures() override {
+    const auto result = state_->call("authoring.drainFailures");
+    std::vector<ac::CommandFailure> out;
+    if (!result || !result->isArray()) return failed(out);
+    for (const Value& item : result->asArray()) {
+      const auto failure = codec::decodeAuthoringFailure(item);
+      if (!failure) return failed(std::vector<ac::CommandFailure>{});
+      out.push_back(*failure);
+    }
+    return out;
+  }
+
+  atlantis::Result<std::monostate, ac::OpenError> open() override {
+    using ResultT = atlantis::Result<std::monostate, ac::OpenError>;
+    return sessionCall<ac::OpenError>("authoring.open", &codec::decodeOpenError,
+                                      ResultT::Err(ac::OpenError::SourceUnreadable));
+  }
+  atlantis::Result<std::monostate, ac::ApplyError> apply() override {
+    using ResultT = atlantis::Result<std::monostate, ac::ApplyError>;
+    return sessionCall<ac::ApplyError>("authoring.apply", &codec::decodeApplyError,
+                                       ResultT::Err(ac::ApplyError::NoDocument));
+  }
+  atlantis::Result<std::monostate, ac::SaveError> save() override {
+    using ResultT = atlantis::Result<std::monostate, ac::SaveError>;
+    return sessionCall<ac::SaveError>("authoring.save", &codec::decodeSaveError,
+                                      ResultT::Err(ac::SaveError::NoDocument));
+  }
+
+ private:
+  template <typename T>
+  T failed(T empty) const {
+    state_->fail(RemoteError::ProtocolError);  // no-op if a failure is already recorded
+    return empty;
+  }
+  template <typename T, typename DecodeOk>
+  atlantis::Result<T, ac::Error> inBand(const std::optional<Value>& result, DecodeOk decodeOk,
+                                        atlantis::Result<T, ac::Error> onFailure) const {
+    const auto decoded =
+        result ? decodeInBand<T, ac::Error>(*result, decodeOk, &codec::decodeAuthoringError) : std::nullopt;
+    if (!decoded) return failed(std::move(onFailure));
+    return *decoded;
+  }
+  template <typename E, typename DecodeErr>
+  atlantis::Result<std::monostate, E> sessionCall(std::string_view method, DecodeErr decodeErr,
+                                                  atlantis::Result<std::monostate, E> onFailure) {
+    const auto result = state_->call(method);
+    const auto decoded = result ? decodeInBand<std::monostate, E>(
+                                      *result,
+                                      [](const Value& v) -> std::optional<std::monostate> {
+                                        if (!v.isNull()) return std::nullopt;
+                                        return std::monostate{};
+                                      },
+                                      decodeErr)
+                                : std::nullopt;
+    if (!decoded) return failed(std::move(onFailure));
+    return *decoded;
+  }
+  static Value subscriptionParams(atlantis::connection::SubscriptionId subscription) {
+    Value params = Value::object();
+    params.set("subscription", Value::number(subscription.value));
+    return params;
+  }
+
+  RemoteSession::State* state_;
+};
+
 }  // namespace
 
 RemoteSession::RemoteSession(std::unique_ptr<State> state) : state_(std::move(state)) {}
@@ -424,6 +623,8 @@ RemoteSession::~RemoteSession() = default;
 atlantis::connection::RuntimeConnection& RemoteSession::connection() noexcept { return *state_->connection; }
 
 atlantis::connection::RuntimeControl& RemoteSession::control() noexcept { return *state_->control; }
+
+atlantis::connection::AuthoringConnection& RemoteSession::authoring() noexcept { return *state_->authoring; }
 
 const atlantis::asset_system::AssetGuid& RemoteSession::scene() const noexcept { return state_->scene; }
 
@@ -486,6 +687,7 @@ atlantis::Result<std::unique_ptr<RemoteSession>, RemoteError> connectRemote(cons
   if (!schema || !state->schema.decode(*schema)) return ResultT::Err(state->failure.value_or(RemoteError::ProtocolError));
   state->connection = std::make_unique<RemoteConnection>(*state);
   state->control = std::make_unique<RemoteControl>(*state);
+  state->authoring = std::make_unique<RemoteAuthoring>(*state);
   return ResultT::Ok(std::make_unique<RemoteSession>(std::move(state)));
 }
 

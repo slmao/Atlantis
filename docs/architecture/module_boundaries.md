@@ -369,8 +369,11 @@ deterministic derivation ADR-0097 defines), `AssetId` as the GUID's 64-bit key
 build-assembled, GUID-keyed cooked catalog (per-cook fragments merged by
 assembly) and its closure catalogs, `AssetCatalog`/`loadAssetCatalog()` — the
 Runtime's read side — and the `EntityRef` value type and codecs. These are pure
-CPU-side types and files; minting a GUID exists only in the cooker (Tools), and
-this module still depends on Core only.
+CPU-side types and files; minting a GUID exists only in the cooker (Tools) —
+since Spec 0065 (Plan 0065 J8) the mint itself, `guid_mint.h`, lives in this
+module, still the one minting code (ADR-0097 D1), called by the cooker and by
+the authoring session's `CreateNode` — and this module still depends on Core
+only.
 
 Since Spec 0049 it also owns the scene's semantic layer
 (`atlantis::asset_system::scene`, [ADR-0100](../adr/0100-scene-semantic-schema-layering-model-and-versioning.md)):
@@ -378,6 +381,22 @@ the semantic component types, the authoring scene document, `sceneSchema()`
 with its semantic version and fingerprint, and the property address. The scene
 source and artifact codecs are serializers below it, mapped to it on their side
 and held to it by conformance tests.
+
+Since Spec 0065 (its first and second Corrections; ADR-0129 and ADR-0131
+Accepted Amendments) the source serializer is lossless and there is an
+in-memory cook:
+- `serializeSceneSource()` writes every float in its shortest round-trip form
+  (`std::to_chars`, `-0` kept) and a camera's fog or bloom group unless it
+  equals the no-group default, compared bit for bit; parsing its text gives back
+  every value, and an unchanged document serializes to the same bytes;
+- `cookSceneSource(text, …)` cooks source text in memory through the build's own
+  parse and every `cookScene()` check, then `encodeSceneArtifact()`;
+  `cookSceneToMemory(document, …)` maps an authoring document to its parsed
+  source, serializes it and cooks that text, and refuses a document that does
+  not come back unchanged from its own text (`NotRepresentableInSource`), so the
+  in-memory artifact equals the build's cook of the saved text by construction;
+- `decodeScene(CookedScene)` reads those bytes; `decodeScene()` (from files or
+  from a `CookedScene`) is still the only constructor of `ValidatedSceneData`.
 
 **Depends on:** Core only. No RHI, Renderer, RenderGraph, Shader System,
 Vulkan Backend, Platform, Tools, or World dependency — verified by an
@@ -826,16 +845,71 @@ Transaction over Atlantis World's access value types; its InProcess endpoint
 (`InProcessEndpoint`, the boundary's only drainer, with per-connection
 pull-only subscriptions and ticket-routed failures); and the client text
 forms (`atlantis::connection::text`). A transport (0055) implements the
-interface; it does not shape it.
+interface; it does not shape it. Since Spec 0065
+([ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md) D1)
+a second interface, `AuthoringConnection`
+(`atlantis/connection/authoring_connection.h`, values in
+`atlantis::connection::authoring`): the same four concepts over the authoring
+document — Query (the document, its nodes in order, a node's components, a
+property by scene address, the active camera, the scene schema), Command (seven,
+closed), Event (nine, closed, `Applied{generation}` among them), Transaction —
+with a closed refusal set (the addressing errors and the Spec 0049 constraint
+names), plus `open`, `apply` and `save`. Atlantis Authoring implements it.
 
 **Depends on:** Atlantis Core and Atlantis World's public access
-(`world/access/*`) and schema (`world/world_schema.h`) headers only — no
-ECS, Runtime, Platform, RHI or Renderer include (checked by
+(`world/access/*`) and schema (`world/world_schema.h`) headers only, and, since
+Spec 0065, one Asset System header, `asset_system/scene_property_address.h` —
+no ECS, Runtime, Platform, RHI or Renderer include (checked by
 `tests/cli/cli_boundary_tests.cpp`).
 
 **Depended on by:** Atlantis Runtime (it owns the InProcess endpoint),
-Atlantis Remote (its payload), and clients (Atlantis CLI; since Spec 0057,
+Atlantis Remote (its payload), Atlantis Authoring (`AuthoringConnection`'s
+implementation, Spec 0065), and clients (Atlantis CLI; since Spec 0057,
 Atlantis Gameplay SDK).
+
+---
+
+## Atlantis Authoring
+
+**Status: Approved** (Spec 0065, with its three Corrections;
+[ADR-0129](../adr/0129-authoring-document-ownership.md),
+[ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md),
+[ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md), all
+`Accepted`, ADR-0129 and ADR-0131 amended).
+
+**Responsibilities:** who owns the authoring document while it is edited
+(`atlantis::authoring`, `src/authoring/`):
+- `AuthoringSession` — at most one open document, the scene a
+  `DocumentSource` names: a hand-authored scene's committed source, or an
+  imported scene's generated source (`locateDocument()` finds either through
+  the catalog source and the build's import roots);
+- every client edits it through an `AuthoringConnection` (`connect()`):
+  commands apply when submitted — a transaction to a copy of the document,
+  validated by `sceneSchema()` (domains, then constraints) and by the build's
+  in-memory cook (`cookSceneToMemory()`), then kept whole or refused whole;
+  every connection's subscriptions see every connection's changes;
+- apply — cooks and decodes the document in memory and hands the
+  `ValidatedSceneData` to the sink its host set (`setSceneSink()`); the host
+  reports the Runtime's swap back (`reportApplied(generation)`) and every
+  subscription receives `Applied{generation}`;
+- save — writes a hand-authored document to its source atomically, through the
+  lossless serializer; an imported scene is editable and applyable, never saved.
+
+**Depends on:** Atlantis Asset System and Atlantis Connection only — no
+Runtime, ECS, Platform, RHI, Renderer, Vulkan or OS include (checked by
+`tests/authoring/authoring_boundary_tests.cpp`).
+
+**Depended on by:** the `atlantis_runtime` executable alone, through the
+executable-private `src/runtime/authoring_host.*` (like `editor_attachment.*`):
+the session is created at the first `authoring.*` request under `--listen` or
+the first `scene` command under `--exec`, and its sink is
+`RuntimeApplication::requestSceneReload()`. Never `atlantis_runtime_host`.
+Android builds the library but hosts no session. Tests also host it (the second
+edit target over `AuthoringConnection`, Spec 0065 R12; the C# fixture server).
+
+**Ownership:** the session owns the document and its connections' state;
+connections must not outlive it. Not thread-safe: the host's frame thread,
+between frames (ADR-0004).
 
 ---
 
@@ -858,6 +932,12 @@ client that set it disconnects) and `control.raycast` (the nearest Renderable a
 world ray hits, or `NoGeometry` when the Runtime keeps no pick geometry). The
 session file gains an optional `window` field (ADR-0126 D3), the Runtime's
 child-window handle in child-window mode; the protocol version is unchanged.
+Since Spec 0065 ([ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md)
+D3) the wire also carries `AuthoringConnection` as `authoring.*`, additively:
+the server opens a client's authoring connection at its first `authoring.*`
+request (`RemoteServer::serveAuthoring()`; `NoAuthoring` when the Runtime serves
+no session), the client half exposes it as `RemoteSession::authoring()`, and
+`control.status` carries `sceneGeneration` (absent reads 0).
 
 **Depends on:** Atlantis Connection only — no Runtime, ECS, Platform, RHI or
 Renderer include. Its OS socket code (Winsock / BSD sockets) is private to the
@@ -878,7 +958,13 @@ executable (server half); never `atlantis_runtime_host`.
 
 **Responsibilities:** the minimal CLI client (`atlantis::cli`, distinct from
 `atlantis::runtime::cli`, Runtime's startup flags) — six commands and a
-one-command-per-frame script runner over a `RuntimeConnection`.
+one-command-per-frame script runner over a `RuntimeConnection`. Since Spec 0065
+the `scene` group (`open`, `nodes`, `get`, `set`, `create`, `destroy`, `add`,
+`remove`, `parent`, `camera`, `apply`, `save`, `tx`) over an
+`AuthoringConnection` the host provides, in the same `cli/1` envelopes; `scene
+apply` waits for `Applied{generation}` while the Runtime runs and, while it is
+paused, returns its pending outcome at once and reports `Applied` after the
+command that lets it arrive.
 
 **Depends on:** Atlantis Connection, and nothing else — it links only
 `Atlantis::Connection` and includes no Runtime, ECS, Platform, RHI or
@@ -998,7 +1084,12 @@ library (`src/csharp/Atlantis.Gameplay/`, namespace `Atlantis.Gameplay`):
   `FailureLog`) and the typed layer (`Generated/World.g.cs`: record structs,
   `long` enums, `Field` / `ReadOnlyField` handles, `IComponent<T>` /
   `IEditableComponent<T>` with static members, so no reflection), with the
-  same per-type, recursive compatibility check.
+  same per-type, recursive compatibility check;
+- since Spec 0065 (Q8, G-b): `RemoteSession.Authoring`, a reflective
+  `AuthoringSession` over `authoring.*` (values in `Atlantis.Gameplay.Authoring`)
+  — scene components and fields by name or id through the authoring schema,
+  values as `PropertyValue`; no typed bindings of the scene components, and
+  `atlantis_sdk_codegen` is unchanged.
 
 Name, binding and query refusals are thrown; a command's refusal comes back
 by ticket. A multi-leaf read is not a snapshot (the C++ SDK's rule). Not
@@ -1178,7 +1269,11 @@ place 5 when no overlay supplies one, and `raycast` is `pickRenderable()`;
 and `atlantis_runtime --parent-window <HWND>` (command line only, not with
 `--editor`) runs the Runtime in Platform's child-window mode, writing the
 session file — with the child's handle in its `window` field — once the first
-frame has created the surface (ADR-0126 D2/D3). Since Spec 0055
+frame has created the surface (ADR-0126 D2/D3). Since Spec 0065 the
+`atlantis_runtime` executable alone also links Atlantis Authoring and hosts its
+session (`authoring_host.*`, executable-private), finding the scene's source
+through the committed catalog source and the build's generated import sources
+(paths compiled in: a development tree only, ADR-0129). Since Spec 0055
 `atlantis_runtime_host` also links the existing `Stb::Stb` (PRIVATE; frame
 captures written as PNG). **Not** RenderGraph as a link dependency — `Renderer::drawFrame()` already owns RenderGraph
 construction/compilation/execution internally; the few one-pass graphs
@@ -1245,6 +1340,24 @@ into `atlantis.benchmark.set/1`, compares that to a committed baseline under
 `atlantis.benchmark.gate/1` verdict. It adds no module, no dependency and no public
 API, and touches nothing in the frame path. See
 [performance-contract.md](../process/performance-contract.md).
+
+Since Spec 0065 ([ADR-0131](../adr/0131-authoring-apply-and-runtime-scene-reload.md)
+and its amendments) Runtime can replace its scene:
+- `requestSceneReload(ValidatedSceneData)` stores one pending reload (a newer
+  request replaces it); only an explicit apply reaches it;
+- `runFrame()` performs it at a named swap point right after the frame's
+  command application and under the same condition, so a pause holds it with
+  the commands; the frame that applies the held commands (a step, or running
+  again) applies them to the old World first;
+- the swap is all or nothing: the new scene's meshes, materials and textures
+  resolved through the catalog reusing everything loaded, a new bake and
+  `RuntimeWorldAccess`, `scene_` and the World access swapped together, and the
+  InProcess endpoint re-bound — the old World's queued events and failures
+  delivered, no command pending, tickets still increasing; then, after
+  `waitIdle()`, every resource the new scene no longer references released; on
+  any failure nothing is swapped;
+- `RuntimeStatus.sceneGeneration` counts the swaps (E2's history clears on its
+  change).
 
 **Extension points:** the headless entry point (offscreen target
 construction instead of Platform/Presentation) remains a future,

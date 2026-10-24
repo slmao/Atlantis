@@ -43,6 +43,7 @@ public sealed class RemoteSession : IDisposable
     private ulong _nextId = 1;
     private RemoteException? _failure;
     private IReadOnlyList<SchemaType> _schema = Array.Empty<SchemaType>();
+    private AuthoringSession? _authoring;
 
     private RemoteSession(Socket socket, RemoteOptions options)
     {
@@ -115,6 +116,9 @@ public sealed class RemoteSession : IDisposable
 
     /// <summary>control.* over this session.</summary>
     public RemoteControl Control { get; }
+
+    /// <summary>Plan 0065 P6: authoring.* over this session -- the Runtime's authoring document.</summary>
+    public AuthoringSession Authoring => _authoring ??= new AuthoringSession(this);
 
     /// <summary>The first failure, once the session has failed.</summary>
     public RemoteError? Failure => _failure?.Error;

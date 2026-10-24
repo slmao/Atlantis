@@ -117,6 +117,8 @@ TEST_CASE("Atlantis Connection includes only World's access value types, the sch
   REQUIRE(includes.size() >= 10);
   std::vector<std::string_view> allowed = kClientValueHeaders;
   allowed.push_back("atlantis/world/world_schema.h");
+  // Plan 0065 P3 (ADR-0130 D1): AuthoringConnection's address.
+  allowed.push_back("atlantis/asset_system/scene_property_address.h");
   const std::vector<std::string> bad = violations(includes, allowed);
   std::string text;
   for (const auto& v : bad) text += v + '\n';

@@ -124,6 +124,11 @@ enum class SceneCookError {
   // of one scene share one.
   NilEntityGuid,
   DuplicateEntityGuid,
+  // Plan 0065 P1 (Spec 0065 Correction 2026-10-22): cookSceneToMemory() only --
+  // the document does not come back unchanged from its own source text (for
+  // example a camera and a light on one node, which the grammar cannot hold),
+  // so it is refused rather than narrowed.
+  NotRepresentableInSource,
 };
 
 // decodeScene()'s own conditions -- never assumes a well-formed cooker

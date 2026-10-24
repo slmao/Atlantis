@@ -2,13 +2,16 @@
 // conformance vector (tests/csharp/conformance/codec_vectors.jsonl, written by
 // the C++ codec) decodes, and re-encodes to the same bytes; a hand-written
 // table pins the edge cases to exact C# values; malformed values are refused
-// as the C++ decoders refuse them.
+// as the C++ decoders refuse them. Plan 0065 P6: the authoring values too --
+// the scene address, commands, events (Applied included), filters, failures,
+// documents, node summaries, every error name, and the authoring.* results.
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Text;
 using Atlantis.Gameplay.Remote;
+using A = Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Gameplay.Tests;
 
@@ -38,6 +41,7 @@ public static class CodecSuite
         }
 
         Edges(t, wires);
+        AuthoringEdges(t, wires);
         Refusals(t);
     }
 
@@ -68,6 +72,29 @@ public static class CodecSuite
                 return SessionFile.TryParse(W(wire), out SessionInfo? session, out _)
                     ? SessionFile.Format(session!).TrimEnd('\n')
                     : null;
+            // Plan 0065 P6: the authoring values (section 6.8).
+            case "SceneAddress": return Codec.DecodeSceneAddress(wire) is A.SceneAddress sa ? W(Codec.Encode(sa)) : null;
+            case "AuthoringCommand":
+                return Codec.DecodeAuthoringCommand(wire) is A.Command ac ? W(Codec.Encode(ac)) : null;
+            case "AuthoringEvent": return Codec.DecodeAuthoringEvent(wire) is A.Event ae ? W(Codec.Encode(ae)) : null;
+            case "AuthoringFilter":
+                return Codec.DecodeAuthoringFilter(wire) is A.EventFilter af ? W(Codec.Encode(af)) : null;
+            case "AuthoringFailure":
+                return Codec.DecodeAuthoringFailure(wire) is A.CommandFailure fail ? W(Codec.Encode(fail)) : null;
+            case "Document": return Codec.DecodeDocumentInfo(wire) is A.DocumentInfo doc ? W(Codec.Encode(doc)) : null;
+            case "NodeSummary": return Codec.DecodeNodeSummary(wire) is A.NodeSummary ns ? W(Codec.Encode(ns)) : null;
+            case "AuthoringError":
+                return Codec.DecodeAuthoringError(wire) is A.AuthoringError aerr ? W(Codec.Encode(aerr)) : null;
+            case "OpenError": return Codec.DecodeOpenError(wire) is A.OpenError oe ? W(Codec.Encode(oe)) : null;
+            case "SaveError": return Codec.DecodeSaveError(wire) is A.SaveError se ? W(Codec.Encode(se)) : null;
+            case "ApplyError": return Codec.DecodeApplyError(wire) is A.ApplyError pe ? W(Codec.Encode(pe)) : null;
+            case "AuthoringResult":
+            {
+                if (wire.Find("method") is not { IsString: true } method || wire.Find("result") is not JsonValue result) return null;
+                return AuthoringResult(method.AsString, result) is JsonValue back
+                    ? W(JsonValue.NewObject().Set("method", JsonValue.String(method.AsString)).Set("result", back))
+                    : null;
+            }
             case "Floats":
             {
                 JsonValue output = JsonValue.NewArray();
@@ -83,6 +110,150 @@ public static class CodecSuite
     }
 
     private static string W(JsonValue value) => Json.Write(value);
+
+    // An authoring.* result (section 5.1), decoded as AuthoringSession decodes it and re-encoded; null if malformed.
+    private static JsonValue? AuthoringResult(string method, JsonValue result)
+    {
+        switch (method)
+        {
+            case "authoring.open": return Unit(result, v => Codec.DecodeOpenError(v) is A.OpenError e ? Codec.Encode(e) : null);
+            case "authoring.apply": return Unit(result, v => Codec.DecodeApplyError(v) is A.ApplyError e ? Codec.Encode(e) : null);
+            case "authoring.save": return Unit(result, v => Codec.DecodeSaveError(v) is A.SaveError e ? Codec.Encode(e) : null);
+            case "authoring.document":
+                return result.IsNull ? JsonValue.Null() : Codec.DecodeDocumentInfo(result) is A.DocumentInfo d ? Codec.Encode(d) : null;
+            case "authoring.listNodes":
+                return InBand(result, ok => Each(ok, v => Codec.DecodeNodeSummary(v) is A.NodeSummary n ? Codec.Encode(n) : null),
+                              AuthoringErrorName);
+            case "authoring.listComponents":
+                return InBand(result, ok => Each(ok, v => Codec.DecodeTypeId(v) is TypeId c ? Codec.Encode(c) : null),
+                              AuthoringErrorName);
+            case "authoring.getProperty":
+                return InBand(result, ok => Codec.DecodePropertyValue(ok) is PropertyValue p ? Codec.Encode(p) : null,
+                              AuthoringErrorName);
+            case "authoring.activeCamera":
+                return InBand(result, ok => ok.IsNull ? JsonValue.Null() : Codec.DecodeEntity(ok) is EntityGuid c ? Codec.Encode(c) : null,
+                              AuthoringErrorName);
+            case "authoring.submit":
+            case "authoring.subscribe":
+                return Codec.DecodeUInt64(result) is ulong n2 ? JsonValue.Number(n2) : null;
+            case "authoring.submitTransaction":
+                return Codec.DecodeTransactionTicket(result) is TransactionTicket tt ? Codec.Encode(tt) : null;
+            case "authoring.unsubscribe": return Unit(result, ConnectionErrorName);
+            case "authoring.drainEvents":
+                return InBand(result, ok => Each(ok, v => Codec.DecodeAuthoringEvent(v) is A.Event e ? Codec.Encode(e) : null),
+                              ConnectionErrorName);
+            case "authoring.drainFailures":
+                return Each(result, v => Codec.DecodeAuthoringFailure(v) is A.CommandFailure f ? Codec.Encode(f) : null);
+            default: return null;
+        }
+    }
+
+    private static JsonValue? AuthoringErrorName(JsonValue v) => Codec.DecodeAuthoringError(v) is A.AuthoringError e ? Codec.Encode(e) : null;
+    private static JsonValue? ConnectionErrorName(JsonValue v) => Codec.DecodeConnectionError(v) is ConnectionError e ? Codec.Encode(e) : null;
+
+    private static JsonValue? InBand(JsonValue result, Func<JsonValue, JsonValue?> ok, Func<JsonValue, JsonValue?> err)
+    {
+        if (result.Find("ok") is JsonValue value) return ok(value) is JsonValue back ? Codec.Ok(back) : null;
+        if (result.Find("err") is JsonValue name) return err(name) is JsonValue back ? Codec.Err(back) : null;
+        return null;
+    }
+
+    private static JsonValue? Unit(JsonValue result, Func<JsonValue, JsonValue?> err) =>
+        InBand(result, ok => ok.IsNull ? JsonValue.Null() : null, err);
+
+    private static JsonValue? Each(JsonValue list, Func<JsonValue, JsonValue?> item)
+    {
+        if (!list.IsArray) return null;
+        JsonValue output = JsonValue.NewArray();
+        foreach (JsonValue element in list.Items)
+        {
+            if (item(element) is not JsonValue back) return null;
+            output.Push(back);
+        }
+        return output;
+    }
+
+    // Plan 0065 P6: the authoring vectors' exact C# values.
+    private static void AuthoringEdges(TestContext t, Dictionary<string, JsonValue> wires)
+    {
+        var node = EntityGuid.Parse("52052052-0003-4052-8052-000000000003");
+        var parent = EntityGuid.Parse("52052052-0001-4052-8052-000000000001");
+        var other = EntityGuid.Parse("52052052-0002-4052-8052-000000000002");
+        List<SchemaType> scene = Codec.DecodeSchema(wires["schema.scene"])!;
+        SchemaType light = SchemaText.FindType(scene, "Light")!;
+        t.Check(light.Name == "asset_system::scene::Light", "the scene schema: Light is asset_system::scene::Light");
+        t.Require(SchemaText.TryParsePath(scene, "Light.intensity", out TypeId lightId, out SchemaField? intensity, out _),
+                  "the scene schema resolves Light.intensity");
+        var address = new A.SceneAddress(node, lightId, intensity!.Id);
+        t.Equal(address, Codec.DecodeSceneAddress(wires["authoring.address"]), "a scene address: node 3, Light, intensity");
+        t.Equal<A.Command?>(new A.SetProperty(address, 4.5f), Codec.DecodeAuthoringCommand(wires["authoring.command.set"]),
+                            "SetProperty");
+        t.Equal<A.Command?>(
+            new A.CreateNode(EntityGuid.Parse("58005800-0000-4000-8000-0000000000b1"), 2,
+                             new[] { lightId, SchemaText.FindType(scene, "Camera")!.Id }),
+            Codec.DecodeAuthoringCommand(wires["authoring.command.create"]), "CreateNode with a GUID, a position and two components");
+        t.Equal<A.Command?>(new A.CreateNode(null, 0, Array.Empty<TypeId>()),
+                            Codec.DecodeAuthoringCommand(wires["authoring.command.create.minted"]), "CreateNode, minted");
+        t.Equal<A.Command?>(new A.SetParent(node, null), Codec.DecodeAuthoringCommand(wires["authoring.command.parent.root"]),
+                            "SetParent to the root");
+        t.Equal<A.Command?>(new A.SetActiveCamera(other), Codec.DecodeAuthoringCommand(wires["authoring.command.camera"]),
+                            "SetActiveCamera");
+        t.Equal<A.Command?>(new A.SetActiveCamera(null), Codec.DecodeAuthoringCommand(wires["authoring.command.camera.none"]),
+                            "SetActiveCamera none");
+        t.Equal<A.Event?>(new A.Applied(3), Codec.DecodeAuthoringEvent(wires["authoring.event.applied"]), "Applied{3}");
+        t.Equal<A.Event?>(new A.PropertyChanged(address, PropertyValue.Absent),
+                          Codec.DecodeAuthoringEvent(wires["authoring.event.changed.absent"]), "PropertyChanged to absent");
+        t.Equal<A.Event?>(new A.ParentChanged(node, parent), Codec.DecodeAuthoringEvent(wires["authoring.event.parent"]),
+                          "ParentChanged");
+        t.Equal<A.Event?>(new A.DocumentReopened(AssetGuid.Parse("52052052-00aa-4052-8052-0000000000aa")),
+                          Codec.DecodeAuthoringEvent(wires["authoring.event.reopened"]), "DocumentReopened");
+        t.Equal(new A.EventFilter(), Codec.DecodeAuthoringFilter(wires["authoring.filter.all"]), "the default filter: all nine kinds");
+        t.Equal(new A.EventFilter(A.EventKind.Applied), Codec.DecodeAuthoringFilter(wires["authoring.filter.applied"]),
+                "an Applied-only filter");
+        t.Equal(new A.EventFilter(A.EventKind.PropertyChanged | A.EventKind.ComponentAdded, node, lightId),
+                Codec.DecodeAuthoringFilter(wires["authoring.filter.property"]), "a node and component filter");
+        t.Equal(new A.CommandFailure(new CommandTicket(9), A.AuthoringError.ParentAcyclic),
+                Codec.DecodeAuthoringFailure(wires["authoring.failure"]), "a refusal");
+        t.Equal(new A.DocumentInfo(AssetGuid.Parse("52052052-00aa-4052-8052-0000000000aa"), A.Provenance.HandAuthored,
+                                   "D:/Atlantis/assets/scenes/a \"b\" é.scene.txt", 5),
+                Codec.DecodeDocumentInfo(wires["authoring.document"]), "a hand-authored document (escapes, non-ASCII)");
+        t.Equal(A.Provenance.Imported, Codec.DecodeDocumentInfo(wires["authoring.document.imported"])?.Provenance, "an imported document");
+        t.Equal(new A.NodeSummary(parent, null), Codec.DecodeNodeSummary(wires["authoring.node.root"]), "a root node");
+
+        // Every name of every error set is a C# enumerator, in the same order.
+        int index = 0;
+        foreach (A.AuthoringError error in Enum.GetValues<A.AuthoringError>())
+        {
+            string name = "authoring.error." + error;
+            t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
+            ++index;
+        }
+        t.Equal(24, index, "the AuthoringError set has the C++ set's 24 names");
+        foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
+        {
+            t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);
+        }
+        foreach (A.SaveError error in Enum.GetValues<A.SaveError>())
+        {
+            t.Check(Codec.DecodeSaveError(wires["authoring.save_error." + error]) == error, "the save error " + error);
+        }
+        foreach (A.ApplyError error in Enum.GetValues<A.ApplyError>())
+        {
+            t.Check(Codec.DecodeApplyError(wires["authoring.apply_error." + error]) == error, "the apply error " + error);
+        }
+
+        // Malformed authoring values are refused as the C++ decoders refuse them.
+        t.Check(Codec.DecodeAuthoringCommand(Json.Parse("{\"kind\":\"Teleport\"}")) is null, "refused an unknown authoring command");
+        t.Check(Codec.DecodeAuthoringCommand(Json.Parse("{\"kind\":\"SetParent\",\"node\":\"" + node + "\"}")) is null,
+                "refused a SetParent without its parent member");
+        t.Check(Codec.DecodeAuthoringCommand(Json.Parse("{\"kind\":\"CreateNode\",\"node\":null,\"position\":-1,\"components\":[]}"))
+                is null, "refused a negative position");
+        t.Check(Codec.DecodeAuthoringFilter(Json.Parse("{\"kinds\":[\"Moved\"],\"node\":null,\"component\":null}")) is null,
+                "refused an unknown authoring event kind");
+        t.Check(Codec.DecodeAuthoringError(JsonValue.String("NotAnError")) is null, "refused an unknown error name");
+        t.Check(Codec.DecodeDocumentInfo(Json.Parse("{\"scene\":\"52052052-00aa-4052-8052-0000000000aa\",\"provenance\":\"Copied\"," +
+                                                    "\"source\":\"x\",\"nodeCount\":1}")) is null, "refused an unknown provenance");
+    }
 
     private static PropertyValue Value(Dictionary<string, JsonValue> wires, string name) =>
         Codec.DecodePropertyValue(wires[name]) ?? throw new AssertionFailed(name + " does not decode");

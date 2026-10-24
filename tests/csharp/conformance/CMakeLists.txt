@@ -18,6 +18,7 @@ target_link_libraries(atlantis_csharp_conformance_tests
     Atlantis::RemoteClient
     Atlantis::GameplaySdk
     Atlantis::Editor  # Plan 0064 P4: the E1 camera model, for camera_vectors.jsonl
+    Atlantis::Authoring  # Plan 0065 P6: the authoring schema, for codec_vectors.jsonl
     Catch2::Catch2WithMain
     atlantis_compiler_warnings
 )

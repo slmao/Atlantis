@@ -19,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <optional>
 #include <random>
 #include <span>
 #include <sstream>
@@ -378,4 +379,57 @@ TEST_CASE("connection: a closed connection's later failures are dropped, the oth
   }  // closed before its command applies
   (void)boundary.applyPending();
   CHECK(stays->drainFailures() == std::vector<access::CommandFailure>{{kept, access::AccessError::UnknownEntity}});
+}
+
+// Plan 0065 P4 (ADR-0131 D4, Accepted Amendment 2026-10-23): across a scene
+// reload the owner swaps the World access and re-binds the endpoint around
+// it. Connections and their subscriptions survive; the outgoing World's
+// refusals and queued events still reach their submitters and subscribers
+// (every command settles); tickets keep increasing, and
+// the new World's refusals are routed by them.
+TEST_CASE("connection: detach() and attach() re-bind every connection across a scene reload", "[connection][reload]") {
+  using atlantis::world::Light;
+  const ValidatedSceneData scene = cookAndDecodeScene(kSceneSource);
+  atlantis::world::BakedScene oldBaked = atlantis::world::bakeScene(scene);
+  std::optional<access::RuntimeWorldAccess> boundary;
+  boundary.emplace(oldBaked);
+  InProcessEndpoint endpoint(*boundary);
+  const auto client = endpoint.open();
+  const auto other = endpoint.open();
+  const EntityGuid point = scene.entityGuid(kPointNode);
+  const auto intensity = field("world::Light", "intensity");
+  const SubscriptionId lights =
+      client->subscribe(EventFilter{EventKindSet::only(EventKind::PropertyChanged), point, std::nullopt});
+
+  // Before the swap: an applied write (its event queued, not yet drained) and
+  // a refusal.
+  const access::CommandTicket applied = client->submit(set(point, typeOf<Light>(), intensity, 5.0f));
+  const access::CommandTicket refused = client->submit(access::DestroyEntity{newGuid(7)});
+  (void)boundary->applyPending();
+
+  // The owner's swap: a new World access over a new bake, at the same place.
+  atlantis::world::BakedScene newBaked = atlantis::world::bakeScene(scene);
+  endpoint.detach();
+  boundary = access::RuntimeWorldAccess(newBaked);
+  endpoint.attach(*boundary);
+
+  CHECK(client->drainFailures() ==
+        std::vector<access::CommandFailure>{{refused, access::AccessError::UnknownEntity}});
+  // The outgoing World's queued event still reaches its subscription.
+  CHECK(drained(*client, lights) ==
+        std::vector<access::Event>{access::PropertyChanged{{point, typeOf<Light>(), intensity}, 5.0f}});
+  CHECK(client->getProperty({point, typeOf<Light>(), intensity}).value() == access::PropertyValue{3.0f});
+
+  // After the swap: tickets keep increasing; the filter still applies; a
+  // refusal reaches its submitter by its new ticket.
+  const access::CommandTicket after = client->submit(set(point, typeOf<Light>(), intensity, 6.0f));
+  CHECK(after.value > refused.value);
+  CHECK(after.value > applied.value);
+  const access::TransactionTicket theirs = other->submitTransaction({access::DestroyEntity{newGuid(8)}});
+  CHECK(theirs.first.value > after.value);
+  (void)boundary->applyPending();
+  CHECK(drained(*client, lights) ==
+        std::vector<access::Event>{access::PropertyChanged{{point, typeOf<Light>(), intensity}, 6.0f}});
+  CHECK(client->drainFailures().empty());
+  CHECK(other->drainFailures() == std::vector<access::CommandFailure>{{theirs.first, access::AccessError::UnknownEntity}});
 }

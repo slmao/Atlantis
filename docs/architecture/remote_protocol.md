@@ -111,7 +111,9 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   - `BadRequest`: not a JSON object, no method, malformed or missing
     params, or an unknown method;
   - `WrongProtocol`, `BadToken`, `HelloRequired`;
-  - `NoControl`: a `control.*` method on a server without a control.
+  - `NoControl`: a `control.*` method on a server without a control;
+  - `NoAuthoring`: an `authoring.*` method on a Runtime that serves no
+    authoring session (Spec 0065), or whose scene's source cannot be found.
 - **In-band results.** A method that can be refused by the World or the
   connection answers `{"ok":<value>}` or `{"err":"<error name>"}` inside
   `result`.
@@ -133,7 +135,7 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 | `connection.unsubscribe` | `subscription: <n>` | `{"ok":null}` or `{"err":"UnknownSubscription"}` |
 | `connection.drainEvents` | `subscription: <n>` | `{"ok":[<Event>…]}` or `{"err":"UnknownSubscription"}` |
 | `connection.drainFailures` | — | `[<Failure>…]` |
-| `control.status` | — | `{"paused":bool,"frame":<n>,"scene":"<asset GUID>"}` |
+| `control.status` | — | `{"paused":bool,"frame":<n>,"scene":"<asset GUID>","sceneGeneration":<n>}` |
 | `control.pause` / `control.resume` | — | `null` |
 | `control.step` (parked) | `request: {"frames":<n>,"image":null\|"<path>"}` | `{"ok":<FrameReport>}` or `{"err":"<ControlError>"}` |
 | `control.diagnostics` | `after: <n>, max: <n>` | `{"entries":[…],"latest":<n>,"dropped":<n>}` |
@@ -159,6 +161,53 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   units along a unit `direction`, or `null` for a miss. It answers
   `NoGeometry` when the Runtime keeps no pick geometry: `--listen` keeps it
   unless `--no-pick-geometry` is given.
+
+### 5.1 The authoring document (Spec 0065, ADR-0130 D3)
+
+`AuthoringConnection` over the wire: the one authoring document the Runtime
+hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
+(§6.8).
+
+| Method | Params | Result |
+|---|---|---|
+| `authoring.open` | — | `{"ok":null}` or `{"err":"<OpenError>"}` |
+| `authoring.document` | — | `<Document>` or `null` before a successful open |
+| `authoring.listNodes` | — | `{"ok":[<NodeSummary>…]}` (the node order) or `{"err":"<AuthoringError>"}` |
+| `authoring.listComponents` | `node: <N>` | `{"ok":[<T>…]}` (sorted) or `{"err":"<AuthoringError>"}` |
+| `authoring.getProperty` | `address: <SA>` | `{"ok":<V>}` or `{"err":"<AuthoringError>"}` |
+| `authoring.activeCamera` | — | `{"ok":<N>\|null}` or `{"err":"<AuthoringError>"}` |
+| `authoring.schema` | — | `[<Type>…]` (§6.7): the scene component types |
+| `authoring.submit` | `command: <AuthoringCommand>` | the ticket, a JSON integer |
+| `authoring.submitTransaction` | `commands: [<AuthoringCommand>…]` | `{"first":<n>,"count":<n>}` |
+| `authoring.subscribe` | `filter: <AuthoringFilter>` | the subscription id, a JSON integer |
+| `authoring.unsubscribe` | `subscription: <n>` | `{"ok":null}` or `{"err":"UnknownSubscription"}` |
+| `authoring.drainEvents` | `subscription: <n>` | `{"ok":[<AuthoringEvent>…]}` or `{"err":"UnknownSubscription"}` |
+| `authoring.drainFailures` | — | `[<AuthoringFailure>…]` |
+| `authoring.apply` | — | `{"ok":null}` or `{"err":"<ApplyError>"}` |
+| `authoring.save` | — | `{"ok":null}` or `{"err":"<SaveError>"}` |
+
+**Semantics** are `AuthoringConnection`'s (Spec 0065 R1–R9):
+- the session is created by the Runtime at the first `authoring.*` request
+  of any client; a client's authoring connection, with its subscriptions and
+  failures, lives with its socket connection;
+- `authoring.open` (re)reads the Runtime's scene from its source and emits
+  `DocumentReopened`; until it has succeeded the queries, `authoring.apply`
+  and `authoring.save` answer `NoDocument` (`authoring.document`: `null`), a
+  submission is refused `NoDocument` under its ticket, and `authoring.schema`
+  and the subscription methods work as usual;
+- commands take effect when the request is answered: a transaction is
+  applied to a copy of the document, validated (the scene schema, then the
+  build's cook of its text) and kept whole or refused whole, its refusal
+  reported by `authoring.drainFailures` under its ticket;
+- every client's subscriptions see every client's changes;
+- `authoring.apply` hands the document to the Runtime, which reloads it at
+  its next frame that applies commands — while the Runtime is paused, at the
+  next step or on resume, after the held commands (Spec 0065 third
+  Correction); subscribers then receive `Applied` with the new
+  `control.status` `sceneGeneration` (a failed reload emits nothing and is a
+  Runtime diagnostic);
+- `authoring.save` writes a hand-authored source atomically; an imported
+  scene's save is refused.
 
 ## 6. Values
 
@@ -262,3 +311,51 @@ RayHit       {"entity":"<E>","distance":<float>}
 - **`offset`:** the field's byte offset in World's C++ struct. It is
   transmitted, but it is **internal layout (ADR-0034)**: clients ignore it,
   and the Gameplay SDKs never use it.
+
+### 6.8 Authoring values (§5.1)
+
+```
+SceneAddress      {"node":<N>,"component":<T>,"field":<FieldId>}
+AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
+                  {"kind":"CreateNode","node":<N>|null,"position":<n>,"components":[<T>…]}
+                  {"kind":"DestroyNode","node":<N>}
+                  {"kind":"AddComponent","node":<N>,"component":<T>}
+                  {"kind":"RemoveComponent","node":<N>,"component":<T>}
+                  {"kind":"SetParent","node":<N>,"parent":<N>|null}
+                  {"kind":"SetActiveCamera","camera":<N>|null}
+AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
+                  {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
+                  {"kind":"ComponentAdded","node":<N>,"component":<T>}
+                  {"kind":"ComponentRemoved","node":<N>,"component":<T>}
+                  {"kind":"ParentChanged","node":<N>,"parent":<N>|null}
+                  {"kind":"ActiveCameraChanged","camera":<N>|null}
+                  {"kind":"DocumentReopened","scene":"<asset GUID>"}   {"kind":"Applied","generation":<n>}
+AuthoringFilter   {"kinds":["PropertyChanged",…],"node":<N>|null,"component":<T>|null}
+AuthoringFailure  {"ticket":<n>,"error":"<AuthoringError>"}
+Document          {"scene":"<asset GUID>","provenance":"HandAuthored"|"Imported","source":"<path>","nodeCount":<n>}
+NodeSummary       {"node":<N>,"parent":<N>|null}
+```
+
+- **`CreateNode`** with a `null` node mints the node's GUID. Its event is
+  followed by one `ComponentAdded` per listed component.
+- **Filter `kinds`** are listed in the order PropertyChanged, NodeCreated,
+  NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
+  ActiveCameraChanged, DocumentReopened, Applied. An event matches when its
+  kind is listed and its node and component equal the filter's when those
+  are not `null`; `ActiveCameraChanged`, `DocumentReopened` and `Applied`
+  carry no node, and only `PropertyChanged`, `ComponentAdded` and
+  `ComponentRemoved` carry a component.
+- **Error names:**
+  - **`AuthoringError`:** `NoDocument`, `UnknownNode`,
+    `UnknownComponentType`, `ComponentMissing`, `ComponentAlreadyPresent`,
+    `ComponentRequired`, `UnknownField`, `KindMismatch`,
+    `EnumValueOutOfRange`, `NodePositionOutOfRange`, `FieldOutOfDomain`,
+    `NonEmptyDocument`, `NodeGuidNonNil`, `NodeGuidUnique`, `ParentExists`,
+    `ParentAcyclic`, `ActiveCameraExists`, `ActiveCameraHasCamera`,
+    `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
+    `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`;
+  - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
+    `SourceInvalid`;
+  - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
+  - **`ApplyError`:** `NoDocument`, `NoSceneSink`, `CookFailed`,
+    `DecodeFailed`, `ReloadRefused`.

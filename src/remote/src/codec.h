@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
@@ -115,5 +116,32 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::Ray> decodeRay(const Value& value);
 [[nodiscard]] Value encode(const connection::RayHit& hit);
 [[nodiscard]] std::optional<connection::RayHit> decodeRayHit(const Value& value);
+
+// Plan 0065 P6 (Spec 0065 R11; ADR-0130 D3): AuthoringConnection's values on
+// atlantis.remote/1 (remote_protocol.md). A scene address names its node as
+// "node"; commands and events are {"kind": ..., ...} as the World's are.
+namespace authoring = atlantis::connection::authoring;
+[[nodiscard]] Value encode(const authoring::PropertyAddress& address);
+[[nodiscard]] std::optional<authoring::PropertyAddress> decodeSceneAddress(const Value& value);
+[[nodiscard]] Value encode(const authoring::Command& command);
+[[nodiscard]] std::optional<authoring::Command> decodeAuthoringCommand(const Value& value);
+[[nodiscard]] Value encode(const authoring::Event& event);
+[[nodiscard]] std::optional<authoring::Event> decodeAuthoringEvent(const Value& value);
+[[nodiscard]] Value encode(const authoring::EventFilter& filter);
+[[nodiscard]] std::optional<authoring::EventFilter> decodeAuthoringFilter(const Value& value);
+[[nodiscard]] Value encode(const authoring::CommandFailure& failure);
+[[nodiscard]] std::optional<authoring::CommandFailure> decodeAuthoringFailure(const Value& value);
+[[nodiscard]] Value encode(const authoring::DocumentInfo& document);
+[[nodiscard]] std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value);
+[[nodiscard]] Value encode(const authoring::NodeSummary& node);
+[[nodiscard]] std::optional<authoring::NodeSummary> decodeNodeSummary(const Value& value);
+[[nodiscard]] Value encodeAuthoringError(authoring::Error error);
+[[nodiscard]] std::optional<authoring::Error> decodeAuthoringError(const Value& value);
+[[nodiscard]] Value encodeOpenError(authoring::OpenError error);
+[[nodiscard]] std::optional<authoring::OpenError> decodeOpenError(const Value& value);
+[[nodiscard]] Value encodeSaveError(authoring::SaveError error);
+[[nodiscard]] std::optional<authoring::SaveError> decodeSaveError(const Value& value);
+[[nodiscard]] Value encodeApplyError(authoring::ApplyError error);
+[[nodiscard]] std::optional<authoring::ApplyError> decodeApplyError(const Value& value);
 
 }  // namespace atlantis::remote::codec

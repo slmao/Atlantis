@@ -13,7 +13,7 @@ public sealed class FixtureServer : IDisposable
     private readonly Process _process;
     private readonly string _dir;
 
-    public FixtureServer(TestContext t, string? mutate = null, bool record = false)
+    public FixtureServer(TestContext t, string? mutate = null, bool record = false, string? authoring = null)
     {
         _dir = Path.Combine(Path.GetTempPath(), "atlantis_csharp_tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
@@ -35,6 +35,11 @@ public sealed class FixtureServer : IDisposable
         {
             start.ArgumentList.Add("--mutate");
             start.ArgumentList.Add(mutate);
+        }
+        if (authoring is not null)  // Plan 0065 P6: hand (the default), imported or none
+        {
+            start.ArgumentList.Add("--authoring");
+            start.ArgumentList.Add(authoring);
         }
         _process = Process.Start(start) ?? throw new AssertionFailed("the fixture server did not start");
         long deadline = Environment.TickCount64 + 60000;

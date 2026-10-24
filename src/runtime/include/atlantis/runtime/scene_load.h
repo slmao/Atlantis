@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/asset_system/validated_scene_data.h>
 #include <atlantis/renderer/mesh.h>
 #include <atlantis/result.h>
 #include <atlantis/rhi/device.h>
@@ -15,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -91,5 +93,36 @@ struct SceneLoadOutcome {
 [[nodiscard]] atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
     const atlantis::rhi::VertexInputLayout& vertexInputLayout);
+
+// Plan 0065 P4 (ADR-0131 D4): what a running Runtime has loaded, which a
+// reload reuses instead of loading again.
+struct LoadedSceneResources {
+  const std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh>& meshes;
+  const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData>& materials;
+  const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>& textures;
+};
+
+// A reload's load and bake: `scene`'s mesh and material references resolved
+// through the catalog at `assetCatalogPath` and everything `loaded` lacks
+// loaded -- meshes uploaded (and their pick geometry built when retained),
+// material and texture data read -- with loadAndBakeScene()'s own checks and
+// errors; then bakeScene(). Nothing in `loaded` is touched: the caller swaps.
+// meshes/materials/textures name everything the new scene references, new or
+// reused, so the swap can release the rest.
+struct SceneReloadOutcome {
+  atlantis::world::BakedScene scene;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::renderer::Mesh> newMeshes;
+  std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry> newPickGeometry;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::MaterialAssetData> newMaterials;
+  std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData> newTextures;
+  std::vector<atlantis::asset_system::AssetId> meshes;
+  std::vector<atlantis::asset_system::AssetId> materials;
+  std::vector<atlantis::asset_system::AssetId> textures;
+};
+
+[[nodiscard]] atlantis::Result<SceneReloadOutcome, RuntimeInitError> loadSceneForReload(
+    const std::string& assetCatalogPath, const atlantis::asset_system::ValidatedSceneData& scene,
+    const LoadedSceneResources& loaded, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout, bool retainPickGeometry);
 
 }  // namespace atlantis::runtime

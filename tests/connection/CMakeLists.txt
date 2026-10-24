@@ -5,6 +5,8 @@
 add_executable(atlantis_connection_tests
   connection_tests.cpp
   connection_text_tests.cpp
+  # Plan 0065 M2: AuthoringConnection's value helpers.
+  authoring_connection_tests.cpp
 )
 
 target_link_libraries(atlantis_connection_tests

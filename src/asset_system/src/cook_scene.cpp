@@ -2,6 +2,7 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/authoring_scene_mapping.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/scene_artifact.h>
 #include <atlantis/asset_system/scene_metadata.h>
@@ -101,26 +102,13 @@ namespace fs = std::filesystem;
   return false;
 }
 
-}  // namespace
-
-atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& sourceFilePath,
-                                                             const AssetGuid& assetGuid,
-                                                             const std::string& artifactOutputPath,
-                                                             const std::string& metadataOutputPath) {
-  using ResultT = atlantis::Result<std::monostate, SceneCookError>;
-  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookScene(): the asset GUID must not be nil");
-
-  // Step 1: read + parse.
-  std::ifstream sourceFile(sourceFilePath, std::ios::binary);
-  if (!sourceFile.is_open()) return ResultT::Err(SceneCookError::SourceFileUnreadable);
-  std::ostringstream sourceStream;
-  sourceStream << sourceFile.rdbuf();
-  if (sourceFile.bad()) return ResultT::Err(SceneCookError::SourceFileUnreadable);
-  const std::string sourceText = sourceStream.str();
-
-  const auto parsedResult = parseSceneSource(sourceText);
-  if (parsedResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
-  const ParsedSceneSource& parsed = parsedResult.value();
+// Plan 0065 P1: steps 2-10 of the cook -- every check after a successful parse,
+// then the artifact encode and the sidecar text. Shared by cookSceneSource()
+// (and so cookScene()) and cookSceneToMemory(), which parses the text itself so
+// that its round-trip check can reuse the parse.
+[[nodiscard]] atlantis::Result<CookedScene, SceneCookError> cookParsedSceneSource(const ParsedSceneSource& parsed,
+                                                                                   const AssetGuid& assetGuid) {
+  using ResultT = atlantis::Result<CookedScene, SceneCookError>;
 
   // Step 2: EmptyScene.
   if (parsed.nodes.empty()) return ResultT::Err(SceneCookError::EmptyScene);
@@ -254,20 +242,101 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
     activeCameraIndex = index;
   }
 
-  // Step 10: encode + atomic write.
-  const std::vector<std::byte> artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex, entityGuids);
+  // Step 10: encode (cookScene() then writes both atomically).
+  CookedScene cooked;
+  cooked.artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex, entityGuids);
 
   SceneMetadata metadata;
   metadata.assetGuid = assetGuid;
   metadata.schemaVersion = kSceneArtifactSchemaVersion;
   metadata.nodeCount = static_cast<std::uint32_t>(nodes.size());
-  const std::string metadataText = serializeSceneMetadata(metadata);
+  cooked.metadataText = serializeSceneMetadata(metadata);
 
+  return ResultT::Ok(std::move(cooked));
+}
+
+// Plan 0065 P1: the mapping's reference errors, as the cooker names the same
+// conditions. toParsedSceneSource() raises only the Dangling* and Ambiguous*
+// ones; the others are mapped for completeness.
+[[nodiscard]] SceneCookError toSceneCookError(scene::SceneMappingError error) {
+  switch (error) {
+    case scene::SceneMappingError::DuplicateNodeId:
+      return SceneCookError::DuplicateNodeId;
+    case scene::SceneMappingError::UndeclaredParentReference:
+    case scene::SceneMappingError::DanglingParentReference:
+      return SceneCookError::UndeclaredParentReference;
+    case scene::SceneMappingError::UndeclaredActiveCameraReference:
+    case scene::SceneMappingError::DanglingActiveCameraReference:
+      return SceneCookError::UndeclaredActiveCameraReference;
+    case scene::SceneMappingError::AmbiguousEntityGuid:
+      return SceneCookError::DuplicateEntityGuid;
+    case scene::SceneMappingError::MaterialWithoutMesh:
+      return SceneCookError::NotRepresentableInSource;
+  }
+  return SceneCookError::NotRepresentableInSource;
+}
+
+}  // namespace
+
+atlantis::Result<CookedScene, SceneCookError> cookSceneSource(std::string_view sourceText, const AssetGuid& assetGuid) {
+  using ResultT = atlantis::Result<CookedScene, SceneCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookSceneSource(): the asset GUID must not be nil");
+
+  // Step 1 (the parse).
+  const auto parsedResult = parseSceneSource(sourceText);
+  if (parsedResult.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
+  return cookParsedSceneSource(parsedResult.value(), assetGuid);
+}
+
+atlantis::Result<CookedScene, SceneCookError> cookSceneToMemory(const scene::AuthoringScene& document,
+                                                               const AssetGuid& assetGuid) {
+  using ResultT = atlantis::Result<CookedScene, SceneCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookSceneToMemory(): the asset GUID must not be nil");
+
+  const auto mapped = scene::toParsedSceneSource(document);
+  if (mapped.isErr()) return ResultT::Err(toSceneCookError(mapped.error()));
+
+  // The build's text path: the saved text, parsed and cooked exactly as
+  // cookSceneSource() does (inlined so the round trip below reuses the parse).
+  const std::string text = serializeSceneSource(mapped.value());
+  const auto parsed = parseSceneSource(text);
+  if (parsed.isErr()) return ResultT::Err(SceneCookError::SourceParseFailed);
+  auto cooked = cookParsedSceneSource(parsed.value(), assetGuid);
+  if (cooked.isErr()) return cooked;
+
+  // The round-trip check: the text must hold the whole document.
+  const auto roundTrip = scene::toAuthoringScene(parsed.value());
+  if (roundTrip.isErr() || !(roundTrip.value() == document)) {
+    return ResultT::Err(SceneCookError::NotRepresentableInSource);
+  }
+  return cooked;
+}
+
+atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& sourceFilePath,
+                                                             const AssetGuid& assetGuid,
+                                                             const std::string& artifactOutputPath,
+                                                             const std::string& metadataOutputPath) {
+  using ResultT = atlantis::Result<std::monostate, SceneCookError>;
+  ATLANTIS_CHECK_MSG(assetGuid != AssetGuid{}, "cookScene(): the asset GUID must not be nil");
+
+  // Step 1: read; the parse and steps 2-10 are cookSceneSource()'s.
+  std::ifstream sourceFile(sourceFilePath, std::ios::binary);
+  if (!sourceFile.is_open()) return ResultT::Err(SceneCookError::SourceFileUnreadable);
+  std::ostringstream sourceStream;
+  sourceStream << sourceFile.rdbuf();
+  if (sourceFile.bad()) return ResultT::Err(SceneCookError::SourceFileUnreadable);
+  const std::string sourceText = sourceStream.str();
+
+  const auto cooked = cookSceneSource(sourceText, assetGuid);
+  if (cooked.isErr()) return ResultT::Err(cooked.error());
+
+  // Atomic writes.
+  const std::vector<std::byte>& artifactBytes = cooked.value().artifactBytes;
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),
                              artifactBytes.size())) {
     return ResultT::Err(SceneCookError::ArtifactWriteFailed);
   }
-  if (!writeTextAtomically(metadataOutputPath, metadataText)) {
+  if (!writeTextAtomically(metadataOutputPath, cooked.value().metadataText)) {
     return ResultT::Err(SceneCookError::MetadataWriteFailed);
   }
 

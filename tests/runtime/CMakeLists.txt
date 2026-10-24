@@ -164,6 +164,8 @@ add_executable(atlantis_runtime_gpu_tests
   gate_process_gpu_tests.cpp
   # Plan 0064 M1 (ADR-0126 D1-D3): the real executable as a child of another process's window.
   child_window_gpu_tests.cpp
+  # Plan 0065 M4: the scene reload (ADR-0131).
+  scene_reload_gpu_tests.cpp
 )
 
 target_link_libraries(atlantis_runtime_gpu_tests
@@ -182,6 +184,7 @@ target_link_libraries(atlantis_runtime_gpu_tests
     Atlantis::Editor
     # Plan 0057 M5: the Gameplay SDK as a client of the running application.
     Atlantis::GameplaySdk
+    Atlantis::Authoring  # Plan 0065 M4: the reload tests' authoring host
     # Plan 0059 M5: the smoke test reads the backend's debug-name observer.
     Vulkan::Vulkan
     Catch2::Catch2WithMain
@@ -266,6 +269,10 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # Plan 0044 Milestone 2: the bloom smoke TEST_CASE's scene.
   ATLANTIS_RUNTIME_BLOOM_SCENE_GUID="${ATLANTIS_bloom_demo_scene_GUID}"
   ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR="${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}"
+  # Plan 0065 M4: the committed scene sources the authoring session opens, and
+  # the build tree the reload fixture's catalog shares with the build's.
+  ATLANTIS_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+  ATLANTIS_BUILD_DIR="${CMAKE_BINARY_DIR}"
 )
 
 add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
@@ -289,6 +296,22 @@ catch_discover_tests(atlantis_runtime_gpu_tests
 if(DEFINED ATLANTIS_bistro_scene_TARGET)
   target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
     ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID="${ATLANTIS_bistro_scene_IMPORT_GUID}"
+    ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE="${ATLANTIS_bistro_scene_IMPORT_DIR}/bistro/bistro.scene.txt"
   )
   add_dependencies(atlantis_runtime_gpu_tests ${ATLANTIS_bistro_scene_TARGET})
 endif()
+
+# Plan 0065 M4 (ADR-0131 D6): a reload equals a fresh start on the same
+# document. A windowed RuntimeApplication is one per process, so the fresh
+# start is its own hidden test, run first as a CTest fixture, and the reload
+# test compares against what it recorded.
+add_test(NAME "scene reload fixture: a fresh start on the edited default scene"
+  COMMAND atlantis_runtime_gpu_tests "[.reload_fresh]"
+  WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_runtime_gpu_tests>")
+set_tests_properties("scene reload fixture: a fresh start on the edited default scene"
+  PROPERTIES FIXTURES_SETUP scene_reload_fresh LABELS "gpu")
+add_test(NAME "scene reload: a reload of an edited document equals a fresh start on it; applying back releases"
+  COMMAND atlantis_runtime_gpu_tests "[.reload_compare]"
+  WORKING_DIRECTORY "$<TARGET_FILE_DIR:atlantis_runtime_gpu_tests>")
+set_tests_properties("scene reload: a reload of an edited document equals a fresh start on it; applying back releases"
+  PROPERTIES FIXTURES_REQUIRED scene_reload_fresh LABELS "gpu")

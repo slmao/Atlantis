@@ -9,6 +9,7 @@
 // is refused (NotRendering).
 //
 //   atlantis_csharp_fixture_server --session-file <path> [--record <path>] [--mutate <name>]
+//                                  [--authoring hand|imported|none]
 //
 // A frame runs every 2 ms, followed by poll(), so answers arrive at frame
 // boundaries as from the Runtime. --record appends one JSON line per
@@ -17,11 +18,21 @@
 // compatibility tests. The session file is written once listening; the
 // process exits 0, removing it, when its standard input closes.
 //
+// Plan 0065 P6 (Spec 0065 R11): authoring.* is served by an authoring session
+// over a copy of the fixture scene's source in a temp directory -- opened as
+// hand-authored (the default, savable) or as imported (--authoring imported:
+// save refused), or not at all (--authoring none: NoAuthoring). An accepted
+// apply is performed at the next frame that applies commands (held by a pause
+// like them, Spec 0065 third Correction): the generation increments and every
+// authoring subscription receives Applied{generation}. The fixture's World is
+// not re-baked: only the generation moves.
+//
 // Test-only; host only.
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/decode_scene.h>
+#include <atlantis/authoring/authoring_session.h>
 #include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/remote/remote_server.h>
@@ -239,13 +250,24 @@ class FixtureControl final : public connection::RuntimeControl {
 
   FixtureControl(access::RuntimeWorldAccess& boundary, AssetGuid scene) : boundary_(boundary), scene_(scene) {}
 
+  // Plan 0065 P6: the authoring session's sink, and who hears of a reload.
+  void requestReload() { reloadPending_ = true; }
+  void onReloaded(std::function<void(std::uint64_t)> reported) { reloaded_ = std::move(reported); }
+
   void frame() {
     if (!steps_.empty() && !stepStarted_) {
       stepStarted_ = true;
       steps_.front().remaining = steps_.front().request.frames;
     }
     const bool stepping = stepStarted_ && steps_.front().remaining > 0;
-    if (!paused_ || stepping) (void)boundary_.applyPending();
+    if (!paused_ || stepping) {
+      (void)boundary_.applyPending();
+      if (reloadPending_) {  // after the frame's commands, as runFrame()'s swap point
+        reloadPending_ = false;
+        ++generation_;
+        if (reloaded_) reloaded_(generation_);
+      }
+    }
     ++frame_;
     if (!stepStarted_) return;
     Pending& current = steps_.front();
@@ -271,7 +293,9 @@ class FixtureControl final : public connection::RuntimeControl {
     for (Pending& pending : waiting) pending.done(ResultT::Err(connection::ControlError::Stopped));
   }
 
-  connection::RuntimeStatus status() override { return connection::RuntimeStatus{paused_, frame_, scene_}; }
+  connection::RuntimeStatus status() override {
+    return connection::RuntimeStatus{paused_, frame_, scene_, generation_};
+  }
   void pause() override { paused_ = true; }
   void resume() override { paused_ = false; }
   void step(connection::StepRequest request, Done done) override {
@@ -316,6 +340,9 @@ class FixtureControl final : public connection::RuntimeControl {
   std::deque<Pending> steps_;
   bool stepStarted_ = false;
   std::optional<connection::ViewportCamera> viewportCamera_;
+  bool reloadPending_ = false;
+  std::uint64_t generation_ = 0;
+  std::function<void(std::uint64_t)> reloaded_;
 };
 
 }  // namespace
@@ -324,20 +351,26 @@ int main(int argc, char** argv) {
   std::optional<fs::path> sessionFile;
   std::optional<fs::path> recordFile;
   std::optional<std::string> mutation;
+  std::string authoringMode = "hand";
+  constexpr const char* kUsage =
+      "usage: --session-file <path> [--record <path>] [--mutate <name>] [--authoring hand|imported|none]";
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
-    if (i + 1 >= argc) die("usage: --session-file <path> [--record <path>] [--mutate <name>]");
+    if (i + 1 >= argc) die(kUsage);
     if (arg == "--session-file") {
       sessionFile = argv[++i];
     } else if (arg == "--record") {
       recordFile = argv[++i];
     } else if (arg == "--mutate") {
       mutation = argv[++i];
+    } else if (arg == "--authoring") {
+      authoringMode = argv[++i];
+      if (authoringMode != "hand" && authoringMode != "imported" && authoringMode != "none") die(kUsage);
     } else {
       die("unknown argument " + std::string(arg));
     }
   }
-  if (!sessionFile) die("usage: --session-file <path> [--record <path>] [--mutate <name>]");
+  if (!sessionFile) die(kUsage);
 
   SchemaCopy served;
   if (mutation) mutate(served, *mutation);
@@ -351,11 +384,30 @@ int main(int argc, char** argv) {
   FixtureControl control(boundary, sceneGuid());
   Recorder recorder(recordFile);
 
+  // Plan 0065 P6: the authoring document, a copy of the fixture scene's source.
+  const fs::path authoringDir = fs::temp_directory_path() / "atlantis_csharp_fixture_server" /
+                                ("authoring_" + std::to_string(std::random_device{}()));
+  fs::create_directories(authoringDir);
+  const fs::path authoringSource = authoringDir / "scene.scene.txt";
+  {
+    std::ofstream out(authoringSource, std::ios::binary | std::ios::trunc);
+    out << kSceneSource;
+  }
+  atlantis::authoring::DocumentSource documentSource{sceneGuid(), atlantis::authoring::HandAuthored{authoringSource}};
+  if (authoringMode == "imported") documentSource.provenance = atlantis::authoring::Imported{authoringSource};
+  atlantis::authoring::AuthoringSession authoring(std::move(documentSource));
+  authoring.setSceneSink([&control](atlantis::asset_system::ValidatedSceneData) {
+    control.requestReload();
+    return true;
+  });
+  control.onReloaded([&authoring](std::uint64_t generation) { authoring.reportApplied(generation); });
+
   auto listening = atlantis::remote::RemoteServer::listen(
       0, atlantis::remote::generateToken(), sceneGuid(),
       [&] { return std::make_unique<FixtureConnection>(endpoint.open(), recorder, schemaSpan); }, &control);
   if (listening.isErr()) die("cannot listen: " + std::string(atlantis::remote::toString(listening.error())));
   std::unique_ptr<atlantis::remote::RemoteServer> server = std::move(listening.value());
+  if (authoringMode != "none") server->serveAuthoring([&authoring] { return authoring.connect(); });
   if (atlantis::remote::writeSessionFile(*sessionFile, server->session()).isErr()) {
     die("cannot write " + sessionFile->string());
   }
@@ -379,5 +431,7 @@ int main(int argc, char** argv) {
   watcher.join();
   server.reset();
   atlantis::remote::removeSessionFile(*sessionFile);
+  std::error_code ec;
+  fs::remove_all(authoringDir, ec);
   return 0;
 }

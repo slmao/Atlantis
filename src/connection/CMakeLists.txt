@@ -4,11 +4,17 @@
 # Atlantis World's public access (and schema) headers only; depended on by
 # Runtime, which owns the endpoint, and by clients (Atlantis CLI). Its sources'
 # includes are checked by tests/cli/cli_boundary_tests.cpp.
+# Plan 0065 P3 (ADR-0130 D1): AuthoringConnection adds one Asset System
+# header, atlantis/asset_system/scene_property_address.h, which World already
+# depends on.
 add_library(atlantis_connection STATIC
   src/runtime_connection.cpp
   src/in_process_endpoint.cpp
   src/text.cpp
   src/json.cpp
+  # Plan 0065 P3 (ADR-0130 D1): AuthoringConnection's value helpers; its InProcess
+  # endpoint is Atlantis Authoring's (src/authoring).
+  src/authoring_connection.cpp
 )
 add_library(Atlantis::Connection ALIAS atlantis_connection)
 

@@ -1,12 +1,9 @@
-#include "guid_mint.h"
+#include <atlantis/asset_system/guid_mint.h>
 
 #include <algorithm>
 #include <random>
 
-namespace atlantis::tools::asset_cooker {
-
-using atlantis::asset_system::AssetGuid;
-using atlantis::asset_system::GuidBytes;
+namespace atlantis::asset_system {
 
 AssetGuid mintAssetGuid(const std::function<std::uint32_t()>& draw) {
   GuidBytes bytes{};
@@ -32,4 +29,6 @@ std::vector<AssetGuid> mintAssetGuids(std::size_t count) {
   return guids;
 }
 
-}  // namespace atlantis::tools::asset_cooker
+EntityGuid mintEntityGuid() { return EntityGuid{mintAssetGuids(1).front().bytes}; }
+
+}  // namespace atlantis::asset_system

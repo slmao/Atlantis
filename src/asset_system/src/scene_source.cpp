@@ -1,8 +1,13 @@
 #include <atlantis/asset_system/scene_source.h>
 
+#include <atlantis/assert.h>
+
+#include <array>
+#include <bit>
 #include <charconv>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <system_error>
 
 namespace atlantis::asset_system {
@@ -130,6 +135,37 @@ constexpr std::string_view kPointToken = "point";
 [[nodiscard]] bool consumePrefixedFloat(std::string_view token, std::string_view prefix, float& out) {
   if (token.substr(0, prefix.size()) != prefix) return false;
   return parseFloatToken(token.substr(prefix.size()), out);
+}
+
+// Plan 0065 P1 (Spec 0065 Correction 2026-10-22, ruling J10): the shortest text
+// that parses back to the same float -- std::to_chars with no format argument,
+// fixed or scientific, whichever is shorter (0, 1.0472, 1e-07); -0 stays -0.
+// parseFloatToken() reads every such form (std::chars_format::general).
+[[nodiscard]] std::string formatFloat(float value) {
+  std::array<char, 32> buffer{};
+  const auto result = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+  ATLANTIS_CHECK_MSG(result.ec == std::errc{}, "formatFloat(): std::to_chars failed");
+  return std::string(buffer.data(), result.ptr);
+}
+
+// Plan 0065 P1 (Spec 0065 second Correction 2026-10-22): a camera's fog or bloom
+// group is written unless it equals the no-group default -- the value an absent
+// group parses as -- every value compared bit for bit, so a -0 where the default
+// is 0 is written and kept.
+[[nodiscard]] bool sameBits(float a, float b) {
+  return std::bit_cast<std::uint32_t>(a) == std::bit_cast<std::uint32_t>(b);
+}
+
+[[nodiscard]] bool isNoGroupDefault(const DecodedCameraFog& fog) {
+  const DecodedCameraFog none{};
+  return sameBits(fog.colorR, none.colorR) && sameBits(fog.colorG, none.colorG) && sameBits(fog.colorB, none.colorB) &&
+         sameBits(fog.density, none.density) && sameBits(fog.height, none.height) &&
+         sameBits(fog.heightFalloff, none.heightFalloff) && sameBits(fog.maxOpacity, none.maxOpacity);
+}
+
+[[nodiscard]] bool isNoGroupDefault(const DecodedCameraBloom& bloom) {
+  const DecodedCameraBloom none{};
+  return sameBits(bloom.strength, none.strength) && sameBits(bloom.threshold, none.threshold);
 }
 
 }  // namespace
@@ -492,14 +528,14 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += std::string(kParentPrefix) +
            (node.parentNodeId.has_value() ? std::to_string(*node.parentNodeId) : std::string(kNoneToken));
     out += ' ';
-    out += std::string(kPositionPrefix) + std::to_string(node.transform.positionX) + ' ' +
-           std::to_string(node.transform.positionY) + ' ' + std::to_string(node.transform.positionZ);
+    out += std::string(kPositionPrefix) + formatFloat(node.transform.positionX) + ' ' +
+           formatFloat(node.transform.positionY) + ' ' + formatFloat(node.transform.positionZ);
     out += ' ';
-    out += std::string(kRotationPrefix) + std::to_string(node.transform.eulerXRadians) + ' ' +
-           std::to_string(node.transform.eulerYRadians) + ' ' + std::to_string(node.transform.eulerZRadians);
+    out += std::string(kRotationPrefix) + formatFloat(node.transform.eulerXRadians) + ' ' +
+           formatFloat(node.transform.eulerYRadians) + ' ' + formatFloat(node.transform.eulerZRadians);
     out += ' ';
-    out += std::string(kScalePrefix) + std::to_string(node.transform.scaleX) + ' ' +
-           std::to_string(node.transform.scaleY) + ' ' + std::to_string(node.transform.scaleZ);
+    out += std::string(kScalePrefix) + formatFloat(node.transform.scaleX) + ' ' + formatFloat(node.transform.scaleY) +
+           ' ' + formatFloat(node.transform.scaleZ);
 
     if (node.meshAsset.has_value()) {
       out += ' ';
@@ -510,25 +546,27 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
       }
     } else if (node.camera.has_value()) {
       out += ' ';
-      out += std::string(kCameraFovYPrefix) + std::to_string(node.camera->fovYRadians) + ' ' +
-             std::string(kCameraNearZPrefix) + std::to_string(node.camera->nearZ) + ' ' +
-             std::string(kCameraFarZPrefix) + std::to_string(node.camera->farZ) + ' ' +
-             std::string(kCameraExposureEvPrefix) + std::to_string(node.camera->exposureCompensationEv);
-      // Plan 0043 P1: written only when fog is on -- density 0 is the
-      // same value as no group.
+      out += std::string(kCameraFovYPrefix) + formatFloat(node.camera->fovYRadians) + ' ' +
+             std::string(kCameraNearZPrefix) + formatFloat(node.camera->nearZ) + ' ' +
+             std::string(kCameraFarZPrefix) + formatFloat(node.camera->farZ) + ' ' +
+             std::string(kCameraExposureEvPrefix) + formatFloat(node.camera->exposureCompensationEv);
+      // Plan 0065 P1 (Spec 0065 Corrections 2026-10-22; fixes Plan 0049 F5): the
+      // fog group is written unless it equals the no-group default, so a group
+      // that is off (density 0) keeps its other values, and an absent group
+      // reads back as exactly what was there.
       const DecodedCameraFog& fog = node.camera->fog;
-      if (fog.density != 0.0f) {
+      if (!isNoGroupDefault(fog)) {
         out += ' ';
-        out += std::string(kFogPrefix) + std::to_string(fog.density) + ' ' + std::to_string(fog.height) + ' ' +
-               std::to_string(fog.heightFalloff) + ' ' + std::to_string(fog.maxOpacity) + ' ' +
-               std::string(kFogColorPrefix) + std::to_string(fog.colorR) + ' ' + std::to_string(fog.colorG) + ' ' +
-               std::to_string(fog.colorB);
+        out += std::string(kFogPrefix) + formatFloat(fog.density) + ' ' + formatFloat(fog.height) + ' ' +
+               formatFloat(fog.heightFalloff) + ' ' + formatFloat(fog.maxOpacity) + ' ' +
+               std::string(kFogColorPrefix) + formatFloat(fog.colorR) + ' ' + formatFloat(fog.colorG) + ' ' +
+               formatFloat(fog.colorB);
       }
-      // Plan 0044 P1: likewise, written only when bloom is on.
+      // Likewise the bloom group.
       const DecodedCameraBloom& bloom = node.camera->bloom;
-      if (bloom.strength != 0.0f) {
+      if (!isNoGroupDefault(bloom)) {
         out += ' ';
-        out += std::string(kBloomPrefix) + std::to_string(bloom.strength) + ' ' + std::to_string(bloom.threshold);
+        out += std::string(kBloomPrefix) + formatFloat(bloom.strength) + ' ' + formatFloat(bloom.threshold);
       }
     } else if (node.light.has_value()) {
       out += ' ';
@@ -536,13 +574,13 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
              (node.light->kind == DecodedLightKind::Directional ? std::string(kDirectionalToken)
                                                                   : std::string(kPointToken));
       out += ' ';
-      out += std::string(kColorPrefix) + std::to_string(node.light->colorR) + ' ' +
-             std::to_string(node.light->colorG) + ' ' + std::to_string(node.light->colorB);
+      out += std::string(kColorPrefix) + formatFloat(node.light->colorR) + ' ' + formatFloat(node.light->colorG) + ' ' +
+             formatFloat(node.light->colorB);
       out += ' ';
-      out += std::string(kIntensityPrefix) + std::to_string(node.light->intensity);
+      out += std::string(kIntensityPrefix) + formatFloat(node.light->intensity);
       if (node.light->kind == DecodedLightKind::Point) {
         out += ' ';
-        out += std::string(kRangePrefix) + std::to_string(node.light->range);
+        out += std::string(kRangePrefix) + formatFloat(node.light->range);
       }
     }
 

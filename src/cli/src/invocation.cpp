@@ -33,6 +33,11 @@ constexpr std::string_view kUsage =
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
     "  tx <file|->       write commands, one per line, submitted as one transaction\n"
+    "  scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
+    "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
+    "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
+    "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
     "The session comes from --session, else ATLANTIS_SESSION, else ./.atlantis/runtime.session.json.\n"
@@ -162,6 +167,7 @@ int Invocation::run(std::span<const std::string> command) {
 
 int Invocation::runTokens(std::span<const std::string_view> tokens, std::string_view line) {
   if (!tokens.empty() && tokens[0] == "tx") return runTransaction(tokens);
+  if (tokens.size() >= 2 && tokens[0] == "scene" && tokens[1] == "tx") return runSceneTransaction(tokens);
   if (!tokens.empty() && tokens[0] == "repl") {
     return finish(errorReply("repl", usage("repl is a session of its own, not a command within one")));
   }
@@ -204,9 +210,61 @@ int Invocation::runTransaction(std::span<const std::string_view> tokens) {
   return finish(awaitOutcome(layer_.submitTransaction(std::move(commands))));
 }
 
+// Plan 0065 P6: scene write commands, one per line (with or without `scene`),
+// parsed whole, then submitted as one authoring transaction.
+int Invocation::runSceneTransaction(std::span<const std::string_view> tokens) {
+  if (tokens.size() != 3) return finish(errorReply("scene tx", usage("usage: scene tx <file|->")));
+  std::string source;
+  if (tokens[2] == "-") {
+    source.assign(std::istreambuf_iterator<char>(std::cin), std::istreambuf_iterator<char>());
+  } else {
+    std::ifstream in{std::string(tokens[2]), std::ios::binary};
+    if (!in) {
+      CliError error = usage("cannot read " + std::string(tokens[2]));
+      error.code = "Unreadable";
+      error.subject.set("file", Value::string(std::string(tokens[2])));
+      return finish(errorReply("scene tx", std::move(error)));
+    }
+    source.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  std::vector<atlantis::connection::authoring::Command> commands;
+  std::uint64_t end = layer_.sceneNodeCount();
+  std::istringstream lines(source);
+  std::string text;
+  std::uint64_t number = 0;
+  while (std::getline(lines, text)) {
+    ++number;
+    const auto lineTokens = tokenize(text);
+    if (lineTokens.empty() || lineTokens.front().starts_with("#")) continue;
+    auto parsed = layer_.parseSceneWrite(lineTokens, end);
+    if (parsed.isErr()) {
+      CliError error = parsed.error();
+      error.subject.set("line", Value::number(number));
+      error.text += " (line " + std::to_string(number) + ")";
+      return finish(errorReply("scene tx", std::move(error)));
+    }
+    for (auto& command : parsed.value()) commands.push_back(std::move(command));
+  }
+  return finish(layer_.submitSceneTransaction(std::move(commands), "scene tx"));
+}
+
 Reply Invocation::awaitOutcome(Reply reply) {
   if (reply.outcome != Outcome::Submitted) return reply;
   const bool isStep = reply.command == "runtime step";
+  // Plan 0065 P6 (Spec 0065 third Correction): an apply while the Runtime is
+  // paused reloads only at a step or on resume, like a write: it is not
+  // awaited, and its Applied{generation} is reported after the command that
+  // lets it arrive (finish()).
+  if (reply.command == "scene apply" && control_ != nullptr && control_->status().paused) {
+    layer_.deferApply();
+    Reply pending = std::move(reply);
+    pending.outcome = Outcome::Done;
+    pending.text = "pending apply (the Runtime is paused; it reloads at the next step)\n";
+    Value outcome = Value::object();
+    outcome.set("pending", Value::boolean(true));
+    pending.result.set("outcome", std::move(outcome));
+    return pending;
+  }
   // A write submitted while the Runtime is paused applies only at a step:
   // its outcome is not awaited (it stays pending in the Runtime).
   if (!isStep && control_ != nullptr && control_->status().paused) {
@@ -255,6 +313,8 @@ int Invocation::finish(Reply reply) {
     diagnosticCursor_ = std::max(diagnosticCursor_, batch.latest);
   }
   print(reply, diagnostics, options_, out_, err_);
+  // Plan 0065 P6: a deferred apply's outcome, once its reload has swapped.
+  if (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) print(*applied, {}, options_, out_, err_);
   return reply.error ? exitCode(reply.error->category) : 0;
 }
 

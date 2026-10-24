@@ -12,7 +12,6 @@
 add_library(atlantis_asset_cooker_lib STATIC
   cook_command.cpp
   dds_parser.cpp
-  guid_mint.cpp
 )
 
 target_include_directories(atlantis_asset_cooker_lib

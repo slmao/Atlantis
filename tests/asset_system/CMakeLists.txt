@@ -10,6 +10,7 @@ add_executable(atlantis_asset_system_tests
   asset_declarations_tests.cpp
   sidecar_asset_guid_tests.cpp
   guid_reference_tests.cpp
+  guid_mint_tests.cpp
   mesh_source_tests.cpp
   mesh_artifact_u32_tests.cpp
   asset_metadata_tests.cpp
@@ -23,6 +24,7 @@ add_executable(atlantis_asset_system_tests
   validated_scene_data_tests.cpp
   scene_source_tests.cpp
   cook_scene_tests.cpp
+  scene_in_memory_cook_tests.cpp
   decode_scene_tests.cpp
   scene_asset_cmake_declaration_tests.cpp
   texture_metadata_tests.cpp

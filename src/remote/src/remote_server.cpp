@@ -86,6 +86,7 @@ struct Client {
   explicit Client(LineChannel&& line) : channel(std::move(line)) {}
   LineChannel channel;
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;  // after a good hello
+  std::unique_ptr<atlantis::connection::AuthoringConnection> authoring;  // Plan 0065: at its first authoring.* request
   bool closing = false;  // write what is queued, then drop
   bool overran = false;  // exceeded the write limit: drop now
 };
@@ -211,6 +212,111 @@ template <typename T, typename E, typename Encode, typename EncodeError>
   return Outcome::Err("unknown method " + std::string(method));
 }
 
+// Plan 0065 P6 (ADR-0130 D3): authoring.* -- AuthoringConnection, one call per
+// request, refusals in band.
+namespace ac = atlantis::connection::authoring;
+
+[[nodiscard]] Value encodeAuthoringError(ac::Error error) { return codec::encodeAuthoringError(error); }
+[[nodiscard]] Value encodeNull(std::monostate) { return Value(); }
+
+[[nodiscard]] Outcome callAuthoring(atlantis::connection::AuthoringConnection& authoring, std::string_view method,
+                                    const Value& p) {
+  if (method == "authoring.open") {
+    return Outcome::Ok(inBand(authoring.open(), &encodeNull, &codec::encodeOpenError));
+  }
+  if (method == "authoring.apply") {
+    return Outcome::Ok(inBand(authoring.apply(), &encodeNull, &codec::encodeApplyError));
+  }
+  if (method == "authoring.save") {
+    return Outcome::Ok(inBand(authoring.save(), &encodeNull, &codec::encodeSaveError));
+  }
+  if (method == "authoring.document") {
+    const auto document = authoring.document();
+    return Outcome::Ok(document ? codec::encode(*document) : Value());
+  }
+  if (method == "authoring.listNodes") {
+    return Outcome::Ok(inBand(
+        authoring.listNodes(),
+        [](const std::vector<ac::NodeSummary>& nodes) {
+          Value out = Value::array();
+          for (const ac::NodeSummary& node : nodes) out.push(codec::encode(node));
+          return out;
+        },
+        &encodeAuthoringError));
+  }
+  if (method == "authoring.listComponents") {
+    const auto node = decodeParam(p, "node", &codec::decodeEntity);
+    if (!node) return bad("node");
+    return Outcome::Ok(inBand(
+        authoring.listComponents(*node),
+        [](const std::vector<schema::TypeId>& types) {
+          Value out = Value::array();
+          for (const schema::TypeId type : types) out.push(codec::encodeTypeId(type));
+          return out;
+        },
+        &encodeAuthoringError));
+  }
+  if (method == "authoring.getProperty") {
+    const auto address = decodeParam(p, "address", &codec::decodeSceneAddress);
+    if (!address) return bad("address");
+    return Outcome::Ok(inBand(
+        authoring.getProperty(*address), [](const access::PropertyValue& v) { return codec::encode(v); },
+        &encodeAuthoringError));
+  }
+  if (method == "authoring.activeCamera") {
+    return Outcome::Ok(inBand(
+        authoring.activeCamera(),
+        [](const std::optional<atlantis::asset_system::EntityGuid>& camera) {
+          return camera ? codec::encodeEntity(*camera) : Value();
+        },
+        &encodeAuthoringError));
+  }
+  if (method == "authoring.schema") return Outcome::Ok(codec::encodeSchema(authoring.schema()));
+  if (method == "authoring.submit") {
+    auto command = decodeParam(p, "command", &codec::decodeAuthoringCommand);
+    if (!command) return bad("command");
+    return Outcome::Ok(Value::number(authoring.submit(std::move(*command)).value));
+  }
+  if (method == "authoring.submitTransaction") {
+    const Value* list = p.find("commands");
+    if (list == nullptr || !list->isArray()) return bad("commands");
+    std::vector<ac::Command> commands;
+    for (const Value& item : list->asArray()) {
+      auto command = codec::decodeAuthoringCommand(item);
+      if (!command) return bad("commands");
+      commands.push_back(std::move(*command));
+    }
+    return Outcome::Ok(codec::encode(authoring.submitTransaction(std::move(commands))));
+  }
+  if (method == "authoring.subscribe") {
+    auto filter = decodeParam(p, "filter", &codec::decodeAuthoringFilter);
+    if (!filter) return bad("filter");
+    return Outcome::Ok(Value::number(authoring.subscribe(std::move(*filter)).value));
+  }
+  if (method == "authoring.drainFailures") {
+    Value out = Value::array();
+    for (const ac::CommandFailure& failure : authoring.drainFailures()) out.push(codec::encode(failure));
+    return Outcome::Ok(std::move(out));
+  }
+  if (method == "authoring.unsubscribe" || method == "authoring.drainEvents") {
+    const auto subscription = decodeParam(p, "subscription", &codec::decodeUInt64);
+    if (!subscription) return bad("subscription");
+    const atlantis::connection::SubscriptionId id{*subscription};
+    if (method == "authoring.unsubscribe") {
+      return Outcome::Ok(inBand(authoring.unsubscribe(id), &encodeNull, &encodeConnectionError));
+    }
+    return Outcome::Ok(inBand(
+        authoring.drainEvents(id),
+        [](const std::vector<ac::Event>& events) {
+          Value out = Value::array();
+          for (const ac::Event& event : events) out.push(codec::encode(event));
+          return out;
+        },
+        &encodeConnectionError));
+  }
+  return Outcome::Err("unknown method " + std::string(method));
+}
+
 // control.* other than step (P5): answered at once.
 [[nodiscard]] Outcome callControl(atlantis::connection::RuntimeControl& control, std::string_view method,
                                   const Value& p) {
@@ -247,6 +353,7 @@ struct RemoteServer::State {
   std::string token;
   atlantis::asset_system::AssetGuid scene;
   OpenConnection openConnection;
+  OpenAuthoring openAuthoring;  // Plan 0065: serveAuthoring()
   atlantis::connection::RuntimeControl* control = nullptr;
   Limits limits;
   std::uint64_t nextClient = 1;
@@ -374,6 +481,15 @@ struct RemoteServer::State {
       if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
       return response(requestId, std::move(outcome.value()));
     }
+    if (name.starts_with("authoring.")) {
+      if (!client.authoring && openAuthoring) client.authoring = openAuthoring();
+      if (!client.authoring) {
+        return errorResponse(requestId, "NoAuthoring", "this Runtime serves no authoring session");
+      }
+      Outcome outcome = callAuthoring(*client.authoring, name, p);
+      if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
+      return response(requestId, std::move(outcome.value()));
+    }
     Outcome outcome = callConnection(*client.connection, name, p);
     if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
     return response(requestId, std::move(outcome.value()));
@@ -450,5 +566,7 @@ void RemoteServer::poll() {
 }
 
 std::size_t RemoteServer::clientCount() const noexcept { return state_->clients.size(); }
+
+void RemoteServer::serveAuthoring(OpenAuthoring open) { state_->openAuthoring = std::move(open); }
 
 }  // namespace atlantis::remote

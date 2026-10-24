@@ -4,6 +4,7 @@
 #include <atlantis/world/access/runtime_world_access.h>
 #include <atlantis/world/world_schema.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <iterator>
 #include <map>
@@ -40,7 +41,13 @@ struct InProcessEndpoint::State {
   std::uint64_t nextConnection = 1;
   std::uint64_t nextSubscription = 1;
   std::map<std::uint64_t, ConnectionState> connections;  // by connection key
-  std::map<std::uint64_t, TicketRange> tickets;          // by first ticket
+  std::map<std::uint64_t, TicketRange> tickets;          // by first ticket, as clients see it
+  // Plan 0065 P4 (ADR-0131 D4): a client's ticket is the boundary's plus
+  // ticketBase. Each boundary numbers from 1; across a scene reload the base
+  // moves past every ticket already handed out, so a client's tickets keep
+  // increasing and an old ticket never names a new command.
+  std::uint64_t ticketBase = 0;
+  std::uint64_t lastIssued = 0;
 
   // Plan 0054 P4 / J3: move the boundary's queues out once and distribute.
   void pump() {
@@ -51,7 +58,12 @@ struct InProcessEndpoint::State {
         }
       }
     }
-    for (const access::CommandFailure& failure : boundary->drainFailures()) {
+    routeFailures();
+  }
+
+  void routeFailures() {
+    for (access::CommandFailure failure : boundary->drainFailures()) {
+      failure.ticket.value += ticketBase;
       auto range = tickets.upper_bound(failure.ticket.value);
       if (range == tickets.begin()) continue;  // J4: no connection submitted it
       --range;
@@ -63,6 +75,7 @@ struct InProcessEndpoint::State {
 
   void record(std::uint64_t first, std::uint64_t last, std::uint64_t connection) {
     tickets.emplace(first, TicketRange{last, connection});
+    lastIssued = std::max(lastIssued, last);
   }
 };
 
@@ -94,13 +107,17 @@ class InProcessConnection final : public RuntimeConnection {
   std::span<const schema::TypeDescriptor> schema() const override { return atlantis::world::worldSchema(); }
 
   access::CommandTicket submit(access::Command command) override {
-    const access::CommandTicket ticket = state_->boundary->submit(std::move(command));
+    access::CommandTicket ticket = state_->boundary->submit(std::move(command));
+    ticket.value += state_->ticketBase;
     state_->record(ticket.value, ticket.value, key_);
     return ticket;
   }
   access::TransactionTicket submitTransaction(std::vector<access::Command> commands) override {
-    const access::TransactionTicket ticket = state_->boundary->submitTransaction(std::move(commands));
-    if (ticket.count != 0) state_->record(ticket.first.value, ticket.first.value + ticket.count - 1, key_);
+    access::TransactionTicket ticket = state_->boundary->submitTransaction(std::move(commands));
+    if (ticket.count != 0) {
+      ticket.first.value += state_->ticketBase;
+      state_->record(ticket.first.value, ticket.first.value + ticket.count - 1, key_);
+    }
     return ticket;
   }
 
@@ -143,6 +160,24 @@ InProcessEndpoint::InProcessEndpoint(access::RuntimeWorldAccess& boundary) : sta
 
 InProcessEndpoint::~InProcessEndpoint() {
   ATLANTIS_CHECK_MSG(state_->connections.empty(), "InProcessEndpoint destroyed while a connection is still open");
+}
+
+void InProcessEndpoint::detach() {
+  ATLANTIS_CHECK_MSG(state_->boundary != nullptr, "InProcessEndpoint::detach(): already detached");
+  ATLANTIS_CHECK_MSG(!state_->boundary->hasPending(),
+                     "InProcessEndpoint::detach(): commands are still pending in the outgoing boundary");
+  // The outgoing World's events and refusals still reach their subscribers
+  // and submitters: every command it applied settles (ADR-0103 D6, D9;
+  // ADR-0131 Accepted Amendment 2026-10-23).
+  state_->pump();
+  state_->tickets.clear();
+  state_->ticketBase = state_->lastIssued;
+  state_->boundary = nullptr;
+}
+
+void InProcessEndpoint::attach(access::RuntimeWorldAccess& boundary) {
+  ATLANTIS_CHECK_MSG(state_->boundary == nullptr, "InProcessEndpoint::attach(): detach() first");
+  state_->boundary = &boundary;
 }
 
 std::unique_ptr<RuntimeConnection> InProcessEndpoint::open() {

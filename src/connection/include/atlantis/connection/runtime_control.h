@@ -22,6 +22,9 @@ struct RuntimeStatus {
   bool paused = false;
   std::uint64_t frame = 0;  // frames run since the control began
   atlantis::asset_system::AssetGuid scene;
+  // Plan 0065 P4 (ADR-0131 D5): the World's generation -- incremented by every
+  // scene reload that swapped; 0 for the World the Runtime started with.
+  std::uint64_t sceneGeneration = 0;
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 
