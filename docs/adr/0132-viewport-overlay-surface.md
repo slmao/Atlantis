@@ -1,11 +1,12 @@
 # ADR 0132: The Viewport Overlay — Drawing into the Viewport from Any Client
 
-- **Status:** Proposed
-- **Date:** 2026-10-24
+- **Status:** Accepted
+- **Date:** 2026-10-24 (accepted 2026-10-24)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0066's branch PR)
+- **Acceptance:** slmao, 2026-10-24 (owner rulings on Spec 0066 Q1–Q6, each as recommended, recorded once in
+  [Plan 0066](../plans/0066-editor-overlay-and-input.md); the ADR text was reviewed in [PR #286](https://github.com/slmao/Atlantis/pull/286))
 - **Related Spec:** [Spec 0066: Viewport Overlay and Editor Input over the Wire](../specs/0066-editor-overlay-and-input.md)
-  (`Draft`; its Q1, Q2, Q4)
+  (`Approved` 2026-10-24; its Q1, Q2, Q4)
 - **Related ADR(s):**
   - **Extends** [ADR-0108](0108-editor-host-and-viewport-composition.md) D3: the Renderer gains a second overlay
     input beside the in-process `UiDrawList` — world-space, depth-aware primitives and a selection outline. The UI
