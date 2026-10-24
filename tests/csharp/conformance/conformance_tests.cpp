@@ -3,7 +3,11 @@
 // and committed for every other implementation to check against:
 //   - codec_vectors.jsonl: one wire value per line, produced by the C++
 //     codec (src/remote/src/codec.h) from a fixed list of values. Another
-//     implementation decodes each and re-encodes it to the same bytes.
+//     implementation decodes each and re-encodes it to the same bytes. The
+//     "AuthoringResult" lines (Plan 0065 P6) are not wire values of their
+//     own: each wraps an authoring.* method name and the result it answers
+//     ({"method":...,"result":...}) for the C# tests to decode as the
+//     session does.
 //   - sdk_transcripts.jsonl: per named scenario, the commands the C++
 //     Gameplay SDK submits for it (recorded on an InProcess connection,
 //     encoded by the same codec). The C# SDK runs the same scenarios

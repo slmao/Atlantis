@@ -191,15 +191,19 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   of any client; a client's authoring connection, with its subscriptions and
   failures, lives with its socket connection;
 - `authoring.open` (re)reads the Runtime's scene from its source and emits
-  `DocumentReopened`; every other method but `authoring.schema` answers
-  `NoDocument` until it has succeeded;
+  `DocumentReopened`; until it has succeeded the queries, `authoring.apply`
+  and `authoring.save` answer `NoDocument` (`authoring.document`: `null`), a
+  submission is refused `NoDocument` under its ticket, and `authoring.schema`
+  and the subscription methods work as usual;
 - commands take effect when the request is answered: a transaction is
   applied to a copy of the document, validated (the scene schema, then the
   build's cook of its text) and kept whole or refused whole, its refusal
   reported by `authoring.drainFailures` under its ticket;
 - every client's subscriptions see every client's changes;
 - `authoring.apply` hands the document to the Runtime, which reloads it at
-  its next frame; subscribers then receive `Applied` with the new
+  its next frame that applies commands — while the Runtime is paused, at the
+  next step or on resume, after the held commands (Spec 0065 third
+  Correction); subscribers then receive `Applied` with the new
   `control.status` `sceneGeneration` (a failed reload emits nothing and is a
   Runtime diagnostic);
 - `authoring.save` writes a hand-authored source atomically; an imported
