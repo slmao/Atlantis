@@ -72,8 +72,9 @@ struct StepRequest {
   bool withOverlay = false;
   // The requester's own overlay, filled by the transport that holds each
   // client's overlay (Remote's server) when withOverlay is set; never carried
-  // on the wire, and ignored from a client.
-  std::optional<ViewportOverlay> captureOverlay;
+  // on the wire, and ignored from a client. (Its initializer keeps
+  // StepRequest{frames, image} free of -Wmissing-field-initializers.)
+  std::optional<ViewportOverlay> captureOverlay{};
 };
 
 // The last stepped frame. `applied`: command application ran in the stepped
