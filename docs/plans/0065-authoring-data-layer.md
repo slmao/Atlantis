@@ -37,6 +37,11 @@
     full single-property transaction cost (copy, serialize, parse, cook, round-trip check); the decision on
     incremental validation as a follow-up Spec is taken on M2's number, right after M2, not at M7. J9 stays a
     reported target, not a test verdict.
+  - **J9 ruling (slmao, 2026-10-23, right after M2):** M2 measured the full single-property transaction on Bistro's
+    generated document at a median of 22.2 ms (Release, three runs; maximum 24–45 ms; copy 0.3, `checkSchema` 1.9,
+    map and serialize 6.1, parse 7.0, cook 3.7–4.0, round trip 1.6 ms) against J9's 10 ms target. Ruling: proceed
+    on J2's cook dry run; incremental validation is a later follow-up Spec, not part of this Plan. (Recorded here
+    after merge; the ruling came with the go-ahead for M3 and is reported in PR #284's body.)
   - **Third Correction (2026-10-23, found in review of M4 and M5; ruled by slmao, 2026-10-23, before its docs
     PR):** Spec 0065's third Correction: a reload waits while commands are held. The swap happens at the next
     command application (a Step, or running again), right after the held commands are applied to the old World;
@@ -56,6 +61,10 @@
     `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
     `CMakeLists.txt`) and its verdict is reported as measured; the C# SDK's zero-NuGet check unchanged and passing;
     J3 (apply) and J9 (validation) reported as measured, not as test verdicts; J7's acceptance run is the owner's.
+- **Implementation:** M1–M7 and the third Correction's fix merged in [PR #284](https://github.com/slmao/Atlantis/pull/284) (`bdffde9`). J7 ran on
+  2026-10-24 (executed by Claude Code at the owner's request; the owner reviewed the captures), [recorded on PR #284](https://github.com/slmao/Atlantis/pull/284#issuecomment-6380129572): on the
+  default scene the restarted Runtime's frame data equal the applied run's and its capture is byte-identical; on
+  Bistro the edit applies and save is refused (`ImportedSceneNotSavable`).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
