@@ -18,6 +18,8 @@
   - **Extends** [ADR-0039](0039-render-graph-execution-caller-specified-resource-state-boundaries.md):
     `incomingState` is honoured for depth bindings too, and `execute()` reports the state it leaves each bound
     resource in.
+  - **Extends** [ADR-0022](0022-minimal-renderer-public-api-and-resource-ownership.md): `drawFrame()` returns the end
+    states of its colour target and depth (D3); its parameters, passes and ownership rules are unchanged.
   - **Keeps** [ADR-0021](0021-render-graph-rhi-execution-integration-and-barrier-responsibility.md) (RenderGraph
     records every barrier) and [ADR-0108](0108-editor-host-and-viewport-composition.md) (the UI overlay pass is
     unchanged).
