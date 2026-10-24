@@ -3,9 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-22
+- **Implementation:** merged — M1–M7 and the third Correction's fix in [PR #284](https://github.com/slmao/Atlantis/pull/284), on `main` at `bdffde9`. J7,
+  the north star through the CLI on the default scene and Bistro, ran on 2026-10-24 and the owner reviewed its
+  captures ([recorded on PR #284](https://github.com/slmao/Atlantis/pull/284#issuecomment-6380129572)).
 - **Related Plan(s):** [Plan 0065](../plans/0065-authoring-data-layer.md) (`Approved`; Joint Human Review 2026-10-22
-  recorded in its header). As with Specs 0062–0064, the Plan was drafted together with this Spec at the
-  maintainer's direction.
+  recorded in its header; implemented in PR #284). As with Specs 0062–0064, the Plan was drafted together with
+  this Spec at the maintainer's direction.
 - **Approval:** slmao, 2026-10-22 — owner rulings Q1–Q8, each as its recommendation (Q1 (c); Q2 D-a; Q3 I-a + V-1; Q4 B-a + L-a; Q5 S-a; Q6 P-a; Q7 T-a; Q8 G-b),
   recorded once in [Plan 0065](../plans/0065-authoring-data-layer.md); review of this Spec's own branch PR,
   [PR #280](https://github.com/slmao/Atlantis/pull/280). The open-question text below keeps the options as the record of what was weighed.

@@ -61,6 +61,12 @@ status of every module.
   world/local space and snapping, undo/redo of gizmo drags and inspector
   edits) built on Dear ImGui, as an ordinary client — frozen as the
   in-process debug tool
+- An authoring data layer: the Runtime hosts the open scene document, which
+  every client edits through one interface (in process, over
+  `atlantis.remote/1`, the CLI's `scene` commands and the C# SDK) with
+  all-or-nothing validated transactions; an explicit apply reloads the
+  Runtime's scene at a frame boundary, and a hand-authored scene saves back
+  losslessly to its source
 - Gameplay SDKs in C++ and C# (.NET 10, zero NuGet dependencies) with
   typed bindings generated from the schema
 - The first cut of the product editor, Atlantis Editor App: a separate

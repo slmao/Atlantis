@@ -913,7 +913,18 @@ milestone being listed does not authorize starting it — see Section 1.
     [ADR-0128](adr/0128-remote-viewport-camera-and-raycast.md)); and the editor application alone may
     take managed packages, pinned and offline-reproducible
     ([ADR-0127](adr/0127-editor-application-managed-dependency-policy.md)). Phases 2–4 (E3's data
-    layer first) get their own Specs.
+    layer first) get their own Specs;
+  - since [Spec 0065](specs/0065-authoring-data-layer.md) (merged
+    [PR #284](https://github.com/slmao/Atlantis/pull/284)), E3's data layer, with no UI: the open authoring document
+    is owned by one C++ `AuthoringSession` (Atlantis Authoring), hosted by `atlantis_runtime`, which every client
+    edits through `AuthoringConnection` — a sibling of `RuntimeConnection` with the same four concepts — in
+    process, over `atlantis.remote/1` (`authoring.*`), through the CLI's `scene` group and the C# SDK's reflective
+    session. Every transaction is validated by the scene schema and the build's own in-memory cook and is kept or
+    refused whole; an explicit apply reloads the Runtime's scene all or nothing at the frame's
+    command-application point (held with the commands by a pause), equal to a fresh start on the saved document;
+    save writes a hand-authored source losslessly (Plan 0049's F5 fixed), an imported scene never
+    ([ADR-0129](adr/0129-authoring-document-ownership.md)–[ADR-0131](adr/0131-authoring-apply-and-runtime-scene-reload.md)).
+    No Runtime World verb is added.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -946,9 +957,14 @@ milestone being listed does not authorize starting it — see Section 1.
     (Spec 0063 Non-Goals / Out of Scope); pixel-exact or
     alpha-accurate picking and a rendered selection outline (Spec 0062 Out of
     Scope; remote picking itself landed with Spec 0064); the editor
-    application's Phases 2–4 — E3's data layer, the port of E1/E2's models,
-    the editor games are made in — and frame streaming across processes
-    (Spec 0064 Out of Scope / later phases);
+    application's Phases 2–4 — E3's UI over the data layer Spec 0065 landed,
+    the port of E1/E2's models, the editor games are made in — and frame
+    streaming across processes (Spec 0064 Out of Scope / later phases);
+  - live projection of document edits into the Runtime World, incremental
+    validation (Plan 0065 J9 measured 22 ms against 10 ms), typed bindings of
+    the authoring components, a node move command, saving imported scenes or
+    "save as", multi-document sessions and a separate authoring process
+    (Spec 0065 Non-Goals / Out of Scope);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 
