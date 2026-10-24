@@ -6,6 +6,8 @@
 // orbit/dolly navigation step by step. The first pose after a reset is the
 // reset pose bit for bit; the rest agree to float rounding (C# and C++ math
 // libraries may differ in the last bit).
+// Plan 0066 M1: also the drag measurement's report -- the UI gaps classified
+// as during a drag, at a transition or idle, and the latency statistics.
 //
 //   Atlantis.Editor.Tests --repo <source dir>
 using System;
@@ -39,6 +41,7 @@ public static class Program
         try
         {
             Run(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
+            DragReportChecks();
         }
         catch (Exception e)
         {
@@ -138,6 +141,33 @@ public static class Program
         actual.Zip(expected).All(p => MathF.Abs(p.First - p.Second) <= Tolerance * MathF.Max(1.0f, MathF.Abs(p.Second)));
 
     private static bool Near(Vector3 actual, float[] expected) => Near(new[] { actual.X, actual.Y, actual.Z }, expected);
+
+    // Plan 0066 M1: one drag from 1000 ms to 2000 ms; gaps ending inside it, near its press or release, and outside.
+    private static void DragReportChecks()
+    {
+        long Ticks(double ms) => (long)(ms * System.Diagnostics.Stopwatch.Frequency / 1000.0);
+        var recorder = new DragRecorder();
+        recorder.Press(Ticks(1000));
+        recorder.Release(Ticks(2000));
+        recorder.UiGap(Ticks(500), 16);   // idle
+        recorder.UiGap(Ticks(1100), 120); // overlaps the press's 250 ms: a transition
+        recorder.UiGap(Ticks(1600), 40);  // inside the drag
+        recorder.UiGap(Ticks(1700), 16);  // inside the drag
+        recorder.UiGap(Ticks(2300), 30);  // after the release's 250 ms: idle
+        recorder.UiGap(Ticks(2100), 300); // spans the release: a transition
+        recorder.Frame(Ticks(1200), 10);
+        recorder.Frame(Ticks(1400), 14);  // 50 ms per frame inside the drag
+        recorder.Write(new DragWrite(Ticks(1100), 60, 110, 14, 1));
+        recorder.Write(new DragWrite(Ticks(1300), 70, 150, 16, 2));
+        DragReport report = recorder.Report("test");
+        Check(report.Drags == 1 && report.Writes == 2, "drag report: one drag, two writes");
+        Check(report.UiGapsAtTransitions.Count == 2 && report.UiGapsAtTransitions.Max == 300, "drag report: gaps at the press and release are transitions");
+        Check(report.UiGapsInDrag.Count == 2 && report.UiGapsInDrag.Max == 40, "drag report: gaps inside the drag");
+        Check(report.UiGapsIdle.Count == 2 && report.UiGapsIdle.Max == 30, "drag report: gaps outside are idle");
+        Check(report.MaxUiGap == 300 && report.UiGapsAtTransitions.Over100 == 2, "drag report: the longest gap and the count over 100 ms");
+        Check(report.RuntimeFrame.Median == 50 && report.InputToFrame.Max == 150 && report.P95Frames == 3,
+              "drag report: Runtime frame time and latency in frames");
+    }
 
     private static void Check(bool ok, string name)
     {
