@@ -1,13 +1,17 @@
 # Spec: Viewport Overlay and Editor Input over the Wire (Spec 0064 Phase 2, step 1)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-24
-- **Related Plan(s):** [Plan 0066](../plans/0066-editor-overlay-and-input.md) (`Draft`). As with Specs 0062–0065, the
-  Plan is drafted together with this Spec at the maintainer's direction.
-- **Approval:** pending (review of this Spec's own branch PR).
+- **Related Plan(s):** [Plan 0066](../plans/0066-editor-overlay-and-input.md) (`Approved`; Joint Human Review
+  2026-10-24 recorded in its header). As with Specs 0062–0065, the Plan was drafted together with this Spec at the
+  maintainer's direction.
+- **Approval:** slmao, 2026-10-24 — owner rulings Q1–Q6, each as its recommendation (Q1 (a); Q2 P-a + L-a + G-a + S-a + O-a; Q3 I-1; Q4 H-a; Q5 as confirmed; Q6's budgets), recorded once in
+  [Plan 0066](../plans/0066-editor-overlay-and-input.md). The text was reviewed in this Spec's own branch PR, [PR #286](https://github.com/slmao/Atlantis/pull/286)
+  (revised after review, merged at `2e22e1a`); the rulings were given after that merge and are recorded by their own
+  docs PR. The open-question text below keeps the options as the record of what was weighed.
 - **Related ADR(s):**
-  - [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Proposed`): how a client draws into the Viewport — a
+  - [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Accepted` 2026-10-24): how a client draws into the Viewport — a
     per-client Viewport overlay (a closed set of world-space primitives and a selection set) carried by a new
     `RuntimeControl` call and drawn by the Renderer after the scene, with a selection outline the Renderer draws
     from the selected entities' meshes (Q1, Q2, Q4).
@@ -273,7 +277,8 @@ Risks:
   wants its own overlay in an image passes `withOverlay`.
 - **The ImGui editor and the overlay coexist** under `--editor`: both draw, in different passes (R3's order).
 
-Open questions — each with options, consequences and a recommendation:
+Open questions — all six ruled by the owner (slmao, 2026-10-24), each as its recommendation; rulings recorded in
+Plan 0066:
 
 - **Q1 — How does an out-of-process client draw into the Viewport?** (ADR-0132)
   - **(a) A Runtime-drawn Viewport overlay fed by a `RuntimeControl` call** carrying a closed set of world-space

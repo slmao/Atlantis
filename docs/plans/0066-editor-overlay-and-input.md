@@ -1,16 +1,23 @@
 # Plan: Viewport Overlay and Editor Input over the Wire
 
 - **Spec:** [Spec 0066: Viewport Overlay and Editor Input over the Wire](../specs/0066-editor-overlay-and-input.md)
-  (`Draft`) — [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Proposed`).
-  - Drafted together with the Spec at the maintainer's direction (2026-10-24), against the Spec's recommended
-    options: Q1 (a), Q2 P-a + L-a + G-a + S-a + O-a, Q3 I-1, Q4 H-a, Q5 as confirmed, Q6's budgets.
+  (`Approved` 2026-10-24) — [ADR-0132](../adr/0132-viewport-overlay-surface.md) (`Accepted` 2026-10-24).
+  - Drafted together with the Spec at the maintainer's direction (2026-10-24). The owner ruled Q1 (a), Q2 P-a + L-a +
+    G-a + S-a + O-a, Q3 I-1, Q4 H-a, Q5 as confirmed and Q6's budgets, exactly the options this Plan was drafted
+    against.
   - Keeps ADR-0103, ADR-0123, ADR-0124, ADR-0125, ADR-0126 and ADR-0131 unchanged.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Once approved: reviewer, date, the PR naming this Plan and its Spec and authorizing
-  implementation on `feature/0066-editor-overlay-input`, M1–M7 in this Plan's order, with M1's checkpoint (J8) before
-  M5.
-  - **Constraints (proposed, as Plans 0064–0065):** no merge by the agent, no push to `main`;
+- **Joint Human Review:** slmao, 2026-10-24 — this Plan and [Spec 0066](../specs/0066-editor-overlay-and-input.md)
+  reviewed together in [PR #286](https://github.com/slmao/Atlantis/pull/286) (revised after review, merged at `2e22e1a`); the rulings were given after
+  that merge and are recorded here by their own docs PR.
+  - **Spec:** Q1–Q6 ruled as recommended.
+  - **Plan:** J1–J11 ruled as proposed (J3 as revised in review); no Spec Correction.
+  - **ADR:** ADR-0132 `Accepted`.
+  - **Authorization:** implementation on `feature/0066-editor-overlay-input` once this rulings PR has merged, M1–M7
+    in this Plan's order, with the owner's J8 checkpoint on M1's verdict before M5 (and before M4 if the verdict
+    adds an input ADR, reviewed in its own docs PR).
+  - **Constraints:** no merge by the agent, no push to `main`;
     `tests/performance/baselines/` and `gate_policy.json` untouched; every existing golden byte-identical, none
     re-captured; changes limited to this Plan's file list, deviations disclosed; the changed `runFrame()` lines
     enumerated; the performance gate applies (`src/runtime/**`, `src/renderer/**`) and its verdict is reported as
@@ -238,7 +245,7 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   paths.
 - **Line quality:** screen-space quads alias at a 1-pixel width; widths are given in pixels and tested at 2 px.
 
-## Joint Review decisions — proposed
+## Joint Review decisions — ruled (slmao, 2026-10-24): J1–J11 as proposed
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — Where the union is formed:** in Remote's server, which already tracks per-client control state (the
