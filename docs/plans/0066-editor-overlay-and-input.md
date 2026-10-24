@@ -23,6 +23,12 @@
     enumerated; the performance gate applies (`src/runtime/**`, `src/renderer/**`) and its verdict is reported as
     measured; the C# SDK's zero-NuGet and the editor-app package checks unchanged and passing; M1's and M6's
     measurements reported against Spec 0066 Q6, not as test verdicts; the J8 checkpoint is the owner's.
+  - **Amendment (2026-10-24, found at the start of M3, before any M3 code; proposed, pending review of its own docs
+    PR — J8's pattern):** the RHI clears every attachment it begins, so no pass after `drawFrame()` can draw over the
+    frame or test against its depth (ADR-0025, ADR-0026). [ADR-0133](../adr/0133-attachment-load-after-the-scene.md)
+    (`Proposed`) lets a RenderGraph binding load an attachment's contents. P3 gains it, M3 splits into M3a (the load)
+    and M3b (the overlay), the file list gains the RHI, the RenderGraph and the Vulkan Backend, and J4's mask becomes
+    `Rgba8Unorm` (J12). No Spec Correction: R3 and R4 are unchanged. M3 starts only after this amendment's PR merges.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
@@ -85,22 +91,35 @@ Read at `origin/main` `277f3f9`.
   - C# SDK: the overlay records, codec, `RemoteControl.SetViewportOverlay(ViewportOverlay?)`, `StepRequest`'s
     `WithOverlay`; conformance vectors appended (the step-request vectors regenerated with the new member); the
     fixture server's control stores the union and reports which overlay a capture was given, for the C# tests.
-- **P3 — Renderer** (ADR-0132 D3; Spec R3, R4).
+- **P3 — Renderer** (ADR-0132 D3; Spec R3, R4; amended 2026-10-24, J12).
+  - **Attachment load (ADR-0133; M3a).** The RHI's `AttachmentLoad { Clear, Load }` and a `beginRendering()`
+    overload choosing it per attachment; the Vulkan Backend's `LOAD_OP_LOAD` and its two same-state transitions
+    (colour and depth); the RenderGraph binding's `load` field, `incomingState` honoured for depth bindings, the
+    same-state barrier before each pass on a `Load` binding, and the guard against loading an `Undefined` binding.
+    Every existing binding keeps `Clear`.
   - `atlantis/renderer/viewport_overlay.h`: `ViewportOverlayDrawList` (vertices of segments, triangles and points
     with colour, depth mode and, for a screen-constant group, its anchor and pixel scale; the selected `DrawItem`s),
     and `Renderer::drawViewportOverlay(commandList, target, depth, camera, list, resources)` recording RenderGraph
     passes after the scene's (no command outside the graph):
-    - **outline:** the selected draw items into an R8 mask at the target's extent, then an edge pass compositing the
-      outline colour over the target (J4);
+    - **outline:** the selected draw items into an `Rgba8Unorm` mask at the target's extent, in its own graph
+      ending in `ShaderRead`, then an edge pass sampling it and compositing the outline colour over the target
+      (J4, J12);
     - **primitives:** a screen-constant group's offsets scaled in the vertex shader from the frame's camera at the
       anchor's view depth; segments expanded to screen-space quads (J5), triangles and points (screen-space
       squares); depth-tested ones with the frame's depth read-only, then on-top ones.
   - Shaders: `shaders/viewport_overlay` (primitives), `shaders/selection_mask` and `shaders/selection_outline`,
     built by the Shader System for Windows and Android.
-  - `drawFrame()` is unchanged; the RenderGraph carries the target from it to the overlay call, which ends in the
-    target's final state (present source, or shader-read under `--editor`).
+  - `drawFrame()` is unchanged. When an overlay follows, its caller passes `ColorAttachmentOutput` as `drawFrame()`'s
+    final colour state; the overlay's graph binds the target with that incoming state, `Load`, and the frame's real
+    final state (present source, transfer source for a capture, or shader-read under `--editor`), and binds the
+    frame's depth with `incomingState = DepthAttachmentReadWrite` and `Load` (ADR-0133 D5).
+  - Depth-tested primitives are one pass with the depth attachment (a pipeline with `depthWriteEnabled = false`);
+    the outline composite and the on-top primitives are passes without one.
 - **P4 — Runtime** (ADR-0132 D4; Spec R3–R5).
   - `RuntimeControlHost::setViewportOverlay` validates the limits and passes the union to `RuntimeApplication`.
+  - With a non-empty union, the frame's `drawFrame()` call is given `ColorAttachmentOutput` as its final colour state,
+    and the overlay's passes end in the state the frame used before (P3; ADR-0133 D5). Without one, the call is
+    unchanged.
   - `RuntimeApplication`: the overlay's shaders loaded and pipelines built at the first non-empty union (J11); each
     frame with a non-empty union, the selection resolved through the bake's
     `EntityGuidMap` to `DrawItem`s (mesh, material-free, current `WorldMatrix`; an entity without a `Renderable`,
@@ -161,7 +180,26 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   requester's (two clients); `--with-overlay`'s usage error; the CLI's envelopes and exit codes; the C# session
   against the fixture server.
 
-### M3 — The Renderer's overlay (P3; R3, R4)
+### M3 — The Renderer's overlay (P3; R3, R4) — after the amendment's PR merges
+
+**M3a — Attachment load (ADR-0133).**
+
+- `src/rhi/include/atlantis/rhi/{types,command_list}.h`; `src/render_graph/include/atlantis/render_graph/execution.h`,
+  `src/render_graph/src/execution.cpp`; `src/vulkan_backend/src/{vulkan_command_list.h,vulkan_command_list.cpp,
+  resource_state_mapping.cpp}`; the RenderGraph tests' fake command list.
+- Tests:
+  - RenderGraph (fake command list): a `Load` binding begins its passes with `Load`, colour and depth; a `Clear`
+    binding is recorded exactly as before; a depth binding's `incomingState` seeds its tracking; the same-state
+    barrier is recorded before each pass on a `Load` binding and only there; a `Load` binding entering `Undefined`
+    fails its guard.
+  - Vulkan Backend (GPU, fatal VVL): a target cleared in one `execute()` keeps its pixels through a second that loads
+    it and draws a small quad (pixels outside the quad unchanged); a depth written in one `execute()` hides a farther
+    quad drawn by a second that loads it, and does not with `Clear`.
+  - With every existing binding unchanged, every existing golden and the gate's counters are byte-identical.
+  - The M3 GPU tests run once with synchronization validation enabled (a manual check, reported in the PR; ADR-0133
+    Consequences).
+
+**M3b — The overlay.**
 
 - `src/renderer/` (`viewport_overlay.{h,cpp}`), `shaders/viewport_overlay/`, `shaders/selection_mask/`,
   `shaders/selection_outline/`, their CMake.
@@ -210,6 +248,10 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   the value is split out).
 - **Remote:** `src/remote/src/{codec,remote_server,remote_client}.{h,cpp}`, `docs/architecture/remote_protocol.md`.
 - **CLI:** `src/cli/` (the `runtime overlay` commands, help text).
+- **RHI, RenderGraph, Vulkan Backend** (M3a; ADR-0133, J12): `src/rhi/include/atlantis/rhi/types.h`,
+  `src/rhi/include/atlantis/rhi/command_list.h`, `src/render_graph/include/atlantis/render_graph/execution.h`,
+  `src/render_graph/src/execution.cpp`, `src/vulkan_backend/src/vulkan_command_list.{h,cpp}`,
+  `src/vulkan_backend/src/resource_state_mapping.cpp`.
 - **Renderer:** `src/renderer/include/atlantis/renderer/viewport_overlay.h` (new), `src/renderer/src/viewport_overlay.cpp`
   (new), `src/renderer/CMakeLists.txt`; `shaders/viewport_overlay/`, `shaders/selection_mask/`,
   `shaders/selection_outline/` (new) and the shader build lists.
@@ -218,11 +260,13 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   `src/runtime/CMakeLists.txt` (shader paths).
 - **C# SDK:** `src/csharp/Atlantis.Gameplay/` (`Control.cs`, `Remote/Codec.cs`, `Remote/RemoteSession.cs`).
 - **Editor App:** `src/editor_app/Atlantis.Editor/` (M1's measurement mode; M5's overlay builder) and its tests.
-- **Tests:** `tests/connection/`, `tests/remote/`, `tests/cli/`, `tests/renderer/`, `tests/runtime/`,
+- **Tests:** `tests/connection/`, `tests/remote/`, `tests/cli/`, `tests/render_graph/` (the fake command list
+  and the load tests), `tests/vulkan_backend/` (the load GPU tests), `tests/renderer/`, `tests/runtime/`,
   `tests/csharp/` (vectors, fixture server, suites), `tests/editor/editor_fixture.h` (the fake's new call).
 - **Android:** none expected. `android/app/build.gradle` lists the shaders it packages explicitly; the overlay's
   pipelines are created at the first non-empty overlay (J11), which an Android Runtime never receives, so its list
-  is unchanged. The Renderer's sources build there as today.
+  is unchanged. The Renderer's sources build there as today, and so do the RHI, RenderGraph and Vulkan Backend
+  changes (the backend is shared).
 - **Docs:** `remote_protocol.md` (M2); AGENTS.md, `module_boundaries.md` (M7); the registry row, README and
   blueprint after merge (J9).
 - **Not touched:** World, Asset System, Authoring, `RuntimeConnection`, `AuthoringConnection`, the ImGui editor's
@@ -232,8 +276,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 ## Sequencing & Dependencies
 
 - M1 first: it changes no engine code and its verdict (J8) may add an input ADR before M4 touches `runFrame()`.
-- M2 needs nothing else; M3 needs nothing else (it can run beside M2); M4 needs M2 and M3; M5 needs M4 and the J8
-  ruling; M6 needs M5; M7 is last.
+- M2 needs nothing else; M3 needs the amendment's docs PR merged (J12), then M3a before M3b; M4 needs M2
+  and M3; M5 needs M4 and the J8 ruling; M6 needs M5; M7 is last.
 - The next Spec (the E3 editor) needs M5's overlay builder and Q4's client-side hit-testing; it does not wait for M6.
 
 ## Risks & Mitigations
@@ -244,6 +288,9 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 - **Depth-tested primitives on the `--editor` path:** the Viewport target's depth is the frame's; M4 tests both
   paths.
 - **Line quality:** screen-space quads alias at a 1-pixel width; widths are given in pixels and tested at 2 px.
+- **A missing barrier on a loaded attachment** would pass the fatal validation layers (no synchronization
+  validation): M3a's RenderGraph tests assert the barrier, and M3's GPU tests run once with synchronization
+  validation (J12).
 
 ## Joint Review decisions — ruled (slmao, 2026-10-24): J1–J11 as proposed
 
@@ -257,7 +304,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   never reach it. The step request's `withOverlay` asks for the requester's own overlay; Remote's server, which holds
   per-client overlays (J2), fills `captureOverlay` with it; in process the CLI's `--exec` runner holds no
   `RuntimeControl`, so the server is the only resolver. Proposed: accept.
-- **J4 — Outline technique:** the selected meshes into an R8 mask at the target's extent, then a 2-pixel edge pass
+- **J4 — Outline technique** (the mask's format amended by J12): the selected meshes into an R8 mask at the
+  target's extent, then a 2-pixel edge pass
   (a texel differs from a neighbour) in a fixed colour, drawn over everything (visible through occluders, the common
   editor convention). Proposed: accept; a depth-aware dimmed occluded part is future work.
 - **J5 — Lines:** segments expanded to screen-space quads in the vertex shader from both endpoints' clip positions
@@ -281,13 +329,24 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   non-empty overlay, not at start, so startup, Android's packaged shader list and every frame without an overlay are
   unchanged. Proposed: accept; the first overlay's frame pays the creation once (reported in M6).
 
+- **J12 — Attachment load (amendment, 2026-10-24; proposed, pending its docs PR):** accept
+  [ADR-0133](../adr/0133-attachment-load-after-the-scene.md): a RenderGraph binding may load its attachment's
+  contents (RHI `AttachmentLoad`, the Vulkan Backend's `LOAD_OP_LOAD` and same-state barriers, depth
+  `incomingState`), with every existing binding unchanged. The mask is `Rgba8Unorm`, not R8: the RHI's `Format` has
+  no single-channel value, and adding one for a transient target would touch every switch over formats. M3 is split
+  into M3a and M3b and starts after this PR merges. No Spec Correction: Spec 0066 R3 and R4 already say the overlay
+  is drawn after the scene by RenderGraph passes. Its Architectural Impact list does not name this RHI change; the
+  ADR records it. Proposed: accept. The alternatives (inside `drawFrame()`, in the HDR pass, offscreen and
+  composite) are in ADR-0133.
+
 ## Verification Checklist
 
 - [ ] Unit tests: codec round trips and vectors (C++ and C#); the union and its lifetime; the CLI's envelopes; the C#
       Gizmo builder (R1, R2, R6, R7).
 - [ ] Headless integration tests: loopback, two clients; the C# fixture-server suite (R2, R6).
 - [ ] Image regression tests: every existing golden byte-identical; overlay pixel assertions (R3–R5; J7).
-- [ ] Vulkan Validation Layers clean: fatal in every GPU test (M3, M4).
+- [ ] Vulkan Validation Layers clean: fatal in every GPU test (M3, M4); M3's GPU tests once with synchronization
+      validation (J12).
 - [ ] Other: `assembleDebug`; the C# rules and editor-app package checks; the performance gate with the `runFrame()`
       lines enumerated; M1's and M6's measurements reported against Q6 (R8).
 
