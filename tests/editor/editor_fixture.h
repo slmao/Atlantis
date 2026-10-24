@@ -121,6 +121,13 @@ class FakeRuntime final : public connection::RuntimeControl {
     viewportCamera = std::move(camera);
     ++viewportCameraCalls;
   }
+  // Plan 0066 (Spec 0066 R2): the Viewport overlay last set (for a transport's fake, the union), and how often.
+  atlantis::Result<std::monostate, connection::ControlError> setViewportOverlay(
+      std::optional<connection::ViewportOverlay> overlay) override {
+    viewportOverlay = std::move(overlay);
+    ++viewportOverlayCalls;
+    return atlantis::Result<std::monostate, connection::ControlError>::Ok(std::monostate{});
+  }
   atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
       const connection::Ray& ray) override {
     lastRay = ray;
@@ -132,6 +139,8 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
   std::optional<connection::ViewportCamera> viewportCamera;
   int viewportCameraCalls = 0;
+  std::optional<connection::ViewportOverlay> viewportOverlay;
+  int viewportOverlayCalls = 0;
   std::optional<connection::Ray> lastRay;
   std::optional<std::optional<connection::RayHit>> rayAnswer;
 

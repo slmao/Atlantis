@@ -38,6 +38,7 @@ public static class LiveConnectionSuite
             Commands(t, session);
             Subscriptions(t, session);
             Control(t, session);
+            Overlay(t, server, session);
             Pipelining(t, session);
         }
         Failure(t);
@@ -233,6 +234,67 @@ public static class LiveConnectionSuite
         t.Check(miss.IsOk && miss.Hit is null, "raycast: a miss");
         RaycastResult refused = control.Raycast(new Ray(Vector3.Zero, new Vector3(1.0f, 0.0f, 0.0f)));
         t.Equal(ControlError.NoGeometry, refused.Error, "raycast: NoGeometry");
+    }
+
+    // Plan 0066 P2 (Spec 0066 R2, R5; ADR-0132 D2): two sessions' overlays. The fixture's control notes, as
+    // diagnostics, the union the server hands it on every change and the capture overlay it resolves for a step with
+    // an image (fixture_server/main.cpp); a step without withOverlay gets none, one with it only the requester's own.
+    private static void Overlay(TestContext t, FixtureServer server, RemoteSession session)
+    {
+        RemoteControl a = session.Control;
+        ulong cursor = a.Diagnostics(0, 64).Latest;
+        var expected = new List<string>();
+        var segment = new OverlaySegment(Vector3.Zero, Vector3.UnitX, new OverlayColor(1.0f, 0.5f, 0.0f), OverlayDepth.OnTop, 2.0f);
+        var own = new ViewportOverlay(new[] { Mesh }, new[] { OverlayGroup.World(segments: new[] { segment }) });
+        t.Equal<ControlError?>(null, a.SetViewportOverlay(own), "setViewportOverlay: accepted");
+        expected.Add("overlay union: 1 groups, 1 selected");
+        using (RemoteSession other = server.Attach())
+        {
+            RemoteControl b = other.Control;
+            t.Equal<ControlError?>(null, b.SetViewportOverlay(ViewportOverlay.Select(Lamp, Sun)), "a second client's overlay: accepted");
+            expected.Add("overlay union: 1 groups, 3 selected");
+            t.Equal<ControlError?>(null, b.SetViewportOverlay(ViewportOverlay.Select(Lamp)), "... replaced by its next");
+            expected.Add("overlay union: 1 groups, 2 selected");
+            b.Step(new StepRequest(1, "frame.png"));
+            expected.Add("capture overlay: none");
+            b.Step(new StepRequest(1, "frame.png", WithOverlay: true));
+            expected.Add("capture overlay: 0 groups, 1 selected");
+            a.Step(new StepRequest(1, "frame.png", WithOverlay: true));
+            expected.Add("capture overlay: 1 groups, 1 selected");
+
+            var tooMany = new OverlayGroup[257];
+            Array.Fill(tooMany, OverlayGroup.World());
+            t.Equal<ControlError?>(ControlError.InvalidRequest, b.SetViewportOverlay(new ViewportOverlay(Array.Empty<EntityGuid>(), tooMany)),
+                                   "257 groups: InvalidRequest");
+            var bright = segment with { Color = new OverlayColor(2.0f, 0.0f, 0.0f) };
+            t.Equal<ControlError?>(ControlError.InvalidRequest,
+                                   b.SetViewportOverlay(new ViewportOverlay(Array.Empty<EntityGuid>(), new[] { OverlayGroup.World(segments: new[] { bright }) })),
+                                   "a colour channel over 1: InvalidRequest");
+            b.Step(new StepRequest(1, "frame.png", WithOverlay: true));
+            expected.Add("capture overlay: 0 groups, 1 selected");  // the refusals changed nothing
+        }
+        expected.Add("overlay union: 1 groups, 1 selected");  // the second client's overlay goes with it
+        t.Check(Await(a, cursor, expected.Count), "the server dropped the closed client's overlay");
+        t.Equal<ControlError?>(null, a.SetViewportOverlay(null), "null clears");
+        expected.Add("overlay union: none");
+        t.Equal<ControlError?>(null, a.SetViewportOverlay(null), "null again: accepted, nothing to clear");
+        a.Step(new StepRequest(1, "frame.png", WithOverlay: true));
+        expected.Add("capture overlay: none");
+        DiagnosticBatch notes = a.Diagnostics(cursor, 64);
+        string actual = string.Join(" | ", notes.Entries.Select(d => d.Message));
+        t.Check(actual == string.Join(" | ", expected), "the unions and capture overlays, in order -- got " + actual);
+    }
+
+    // Waits (up to ten seconds) until the fixture has noted `count` diagnostics after `cursor`.
+    private static bool Await(RemoteControl control, ulong cursor, int count)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            if (control.Diagnostics(cursor, 64).Entries.Count >= count) return true;
+            System.Threading.Thread.Sleep(10);
+        }
+        return false;
     }
 
     private static void Pipelining(TestContext t, RemoteSession session)

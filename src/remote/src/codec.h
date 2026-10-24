@@ -110,6 +110,9 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& value);
 // Spec 0064 / ADR-0128: {"worldMatrix":[16 f32],"fovYRadians":f32,"nearZ":f32,"farZ":f32};
 // {"origin":[3],"direction":[3]}; {"entity":"<E>","distance":f32}.
+// Spec 0066 / ADR-0132 (Plan 0066 P2): the Viewport overlay, in Connection's JSON form.
+[[nodiscard]] Value encode(const connection::ViewportOverlay& overlay);
+[[nodiscard]] std::optional<connection::ViewportOverlay> decodeViewportOverlay(const Value& value);
 [[nodiscard]] Value encode(const connection::ViewportCamera& camera);
 [[nodiscard]] std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& value);
 [[nodiscard]] Value encode(const connection::Ray& ray);

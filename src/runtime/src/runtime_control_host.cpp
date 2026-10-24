@@ -146,6 +146,15 @@ void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCam
   if (target_.setViewportCamera) target_.setViewportCamera(camera);
 }
 
+atlantis::Result<std::monostate, connection::ControlError> RuntimeControlHost::setViewportOverlay(
+    std::optional<connection::ViewportOverlay> overlay) {
+  using ResultT = atlantis::Result<std::monostate, connection::ControlError>;
+  if (overlay && !connection::overlayWellFormed(*overlay)) return ResultT::Err(connection::ControlError::InvalidRequest);
+  overlay_ = std::move(overlay);
+  if (target_.setViewportOverlay) target_.setViewportOverlay(overlay_);
+  return ResultT::Ok(std::monostate{});
+}
+
 atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> RuntimeControlHost::raycast(
     const connection::Ray& ray) {
   if (!target_.raycast) {

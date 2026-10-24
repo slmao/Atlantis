@@ -118,8 +118,10 @@ class FakeRuntime final : public connection::RuntimeControl {
           connection::ControlError::InvalidRequest));
       return;
     }
+    stepRequests.push_back(request);
     steps_.push_back({std::move(request), std::move(done), 0});
   }
+  std::vector<connection::StepRequest> stepRequests;  // Plan 0066: every step the CLI asked for
   connection::DiagnosticBatch diagnostics(std::uint64_t after, std::size_t max) override {
     connection::DiagnosticBatch batch;
     batch.latest = diagnostics_.empty() ? 0 : diagnostics_.back().sequence;
@@ -135,6 +137,17 @@ class FakeRuntime final : public connection::RuntimeControl {
     viewportCamera = std::move(camera);
     ++viewportCameraCalls;
   }
+  // Plan 0066 (Spec 0066 R2): the Viewport overlay last set (for a transport's fake, the union), and how often.
+  // Refused, and nothing changed, as the Runtime refuses it: not well formed or over its limits.
+  atlantis::Result<std::monostate, connection::ControlError> setViewportOverlay(
+      std::optional<connection::ViewportOverlay> overlay) override {
+    if (overlay && (!connection::overlayWellFormed(*overlay) || !connection::overlayWithinLimits(*overlay))) {
+      return atlantis::Result<std::monostate, connection::ControlError>::Err(connection::ControlError::InvalidRequest);
+    }
+    viewportOverlay = std::move(overlay);
+    ++viewportOverlayCalls;
+    return atlantis::Result<std::monostate, connection::ControlError>::Ok(std::monostate{});
+  }
   atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> raycast(
       const connection::Ray& ray) override {
     lastRay = ray;
@@ -146,6 +159,8 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
   std::optional<connection::ViewportCamera> viewportCamera;
   int viewportCameraCalls = 0;
+  std::optional<connection::ViewportOverlay> viewportOverlay;
+  int viewportOverlayCalls = 0;
   std::optional<connection::Ray> lastRay;
   std::optional<std::optional<connection::RayHit>> rayAnswer;
   void warn(std::string message) {

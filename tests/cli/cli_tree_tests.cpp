@@ -465,3 +465,82 @@ TEST_CASE("atlantis: runtime camera set and clear, and runtime raycast", "[cli][
   CHECK(json.out.str() ==
         envelope("runtime raycast", R"({"hit":{"guid":")" + std::string(kPoint) + R"(","distance":4.5}})"));
 }
+
+// Plan 0066 P2 (Spec 0066 R2, R5, R6; ADR-0132 D2): the Viewport overlay commands and a capture's --with-overlay,
+// against the fake Runtime (which refuses an overlay as the Runtime does).
+TEST_CASE("atlantis: runtime overlay set, select and clear, and runtime step --with-overlay",
+          "[cli][tree][runtime][overlay]") {
+  const std::string point(kPoint);
+  const std::filesystem::path file = std::filesystem::absolute("overlay-test.json");
+  const auto write = [&](std::string_view text) {
+    std::ofstream out(file, std::ios::binary | std::ios::trunc);
+    out << text;
+  };
+  const std::string group = R"({"anchor":null,"segments":[{"a":[0,0,0],"b":[1,0,0],"color":[1,0.5,0,1],)"
+                            R"("depth":"OnTop","width":2}],"triangles":[],"points":[]})";
+
+  Cli human;
+  write(R"({"selection":[")" + point + R"("],"groups":[)" + group + "]}");
+  CHECK(human.run("runtime overlay set " + file.string()) == 0);
+  CHECK(human.out.str() == "overlay set: 1 groups, 1 selected\n");
+  REQUIRE(human.runtime.viewportOverlay.has_value());
+  REQUIRE(human.runtime.viewportOverlay->groups.size() == 1);
+  CHECK(human.runtime.viewportOverlay->groups[0].segments[0].widthPixels == 2.0f);
+  CHECK(human.runtime.viewportOverlay->groups[0].segments[0].depth == atlantis::connection::OverlayDepth::OnTop);
+  CHECK(human.run("runtime overlay select " + point + " " + point) == 0);
+  CHECK(human.out.str() == "overlay selects 2\n");
+  CHECK(human.runtime.viewportOverlay->groups.empty());
+  CHECK(human.runtime.viewportOverlay->selection.size() == 2);
+  CHECK(human.run("runtime overlay clear") == 0);
+  CHECK(human.out.str() == "overlay cleared\n");
+  CHECK_FALSE(human.runtime.viewportOverlay.has_value());
+  CHECK(human.runtime.viewportOverlayCalls == 3);
+
+  // Refusals: nothing reaches the Runtime but the ill-formed overlay, which it refuses (nothing changed).
+  CHECK(human.run("runtime overlay") == 2);
+  CHECK(human.run("runtime overlay spin") == 2);
+  CHECK(human.run("runtime overlay select") == 2);
+  CHECK(human.run("runtime overlay select not-a-guid") == 2);
+  CHECK(human.run("runtime overlay clear now") == 2);
+  CHECK(human.run("runtime overlay set") == 2);
+  CHECK(human.run("runtime overlay set nowhere-overlay.json") == 2);
+  write(R"({"selection":[],"groups":[{"anchor":null}]})");
+  CHECK(human.run("runtime overlay set " + file.string()) == 2);
+  write(R"({"selection":[],"groups":[{"anchor":null,"segments":[{"a":[0,0,0],"b":[1,0,0],"color":[1,1,1,1],)"
+        R"("depth":"Tested","width":0}],"triangles":[],"points":[]}]})");
+  CHECK(human.run("runtime overlay set " + file.string()) == 4);
+  CHECK(human.runtime.viewportOverlayCalls == 3);
+  CHECK_FALSE(human.runtime.viewportOverlay.has_value());
+
+  // --with-overlay needs --capture; with it, the request carries the flag.
+  CHECK(human.run("runtime step --with-overlay") == 2);
+  CHECK(human.runtime.stepRequests.empty());
+  CHECK(human.run("runtime step --capture --with-overlay") == 0);
+  REQUIRE(human.runtime.stepRequests.size() == 1);
+  CHECK(human.runtime.stepRequests[0].withOverlay);
+  CHECK(human.run("runtime step --capture") == 0);
+  CHECK_FALSE(human.runtime.stepRequests[1].withOverlay);
+
+  Cli json(true, true);
+  write(R"({"selection":[")" + point + R"("],"groups":[)" + group + "]}");
+  CHECK(json.run("runtime overlay set " + file.string()) == 0);
+  CHECK(json.out.str() ==
+        envelope("runtime overlay set", R"({"groups":1,"selection":1,"segments":1,"triangles":0,"points":0})"));
+  CHECK(json.run("runtime overlay select " + point) == 0);
+  CHECK(json.out.str() == envelope("runtime overlay select", R"({"selection":[")" + point + R"("]})"));
+  CHECK(json.run("runtime overlay clear") == 0);
+  CHECK(json.out.str() == envelope("runtime overlay clear", R"({"overlay":null})"));
+  write("{not json");
+  CHECK(json.run("runtime overlay set " + file.string()) == 2);
+  CHECK(json.err.str() ==
+        R"({"code":"MalformedOverlay","category":"text","message":"not a Viewport overlay in its JSON form )"
+        R"x((remote_protocol.md 6.6)","subject":{}})x"
+        "\n");
+  write(R"({"selection":["00000000-0000-0000-0000-000000000000"],"groups":[]})");
+  CHECK(json.run("runtime overlay set " + file.string()) == 4);
+  CHECK(json.err.str() ==
+        R"({"code":"InvalidRequest","category":"runtime","message":"the Runtime refused the overlay: InvalidRequest",)"
+        R"("subject":{}})"
+        "\n");
+  std::filesystem::remove(file);
+}

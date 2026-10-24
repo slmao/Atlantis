@@ -712,6 +712,8 @@ Value encode(const connection::StepRequest& request) {
   Value out = Value::object();
   out.set("frames", Value::number(static_cast<std::uint64_t>(request.frames)));
   out.set("image", request.imagePath ? Value::string(*request.imagePath) : Value());
+  // Spec 0066 R5 (ADR-0132 D2): captureOverlay is the server's, never carried.
+  out.set("withOverlay", Value::boolean(request.withOverlay));
   return out;
 }
 
@@ -724,7 +726,18 @@ std::optional<connection::StepRequest> decodeStepRequest(const Value& value) {
   connection::StepRequest request;
   request.frames = static_cast<std::uint32_t>(*n);
   if (image->isString()) request.imagePath = image->asString();
+  // Spec 0066 R6: absent from an older client, read as false.
+  if (const Value* withOverlay = member(value, "withOverlay"); withOverlay != nullptr) {
+    if (!withOverlay->isBool()) return std::nullopt;
+    request.withOverlay = withOverlay->asBool();
+  }
   return request;
+}
+
+Value encode(const connection::ViewportOverlay& overlay) { return connection::overlayToJson(overlay); }
+
+std::optional<connection::ViewportOverlay> decodeViewportOverlay(const Value& value) {
+  return connection::overlayFromJson(value);
 }
 
 Value encode(const connection::FrameData& data) {

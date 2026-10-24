@@ -8,8 +8,11 @@ namespace Atlantis.Gameplay;
 // Plan 0065 P4 (ADR-0131 D5): SceneGeneration counts the Runtime's scene reloads (0: none).
 public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0);
 
-/// <summary>Run <paramref name="Frames"/> frames (at least one); optionally capture the last to a PNG.</summary>
-public sealed record StepRequest(uint Frames, string? ImagePath = null);
+/// <summary>
+/// Run <paramref name="Frames"/> frames (at least one); optionally capture the last to a PNG. Plan 0066 P2 (Spec 0066
+/// R5): a capture shows no Viewport overlay unless <paramref name="WithOverlay"/>, and then only this client's own.
+/// </summary>
+public sealed record StepRequest(uint Frames, string? ImagePath = null, bool WithOverlay = false);
 
 public sealed record FrameDirectionalLight(Vector3 Direction, Vector3 Color, float Intensity);
 

@@ -501,6 +501,12 @@ template <std::size_t N>
                     "the Runtime could not complete the step: " + std::string(connection::toString(why)));
 }
 
+// Plan 0066 P2: InvalidRequest -- not well formed or over its limits (Plan 0066 J6).
+[[nodiscard]] CliError overlayError(connection::ControlError why) {
+  return plainError(std::string(connection::toString(why)), ErrorCategory::Runtime,
+                    "the Runtime refused the overlay: " + std::string(connection::toString(why)));
+}
+
 }  // namespace
 
 CommandLayer::CommandLayer(connection::RuntimeConnection& connection, connection::RuntimeControl* control,
@@ -946,6 +952,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         }
         if (!valid || frames == 0) return failed(command, textError(text::TextError::MalformedNumber, n));
         request.frames = static_cast<std::uint32_t>(frames);
+      } else if (t[i] == "--with-overlay") {
+        request.withOverlay = true;  // Plan 0066 P2 (Spec 0066 R5): only this client's own overlay
       } else if (t[i] == "--capture") {
         capture = true;
         if (i + 1 < t.size() && !t[i + 1].starts_with("--")) {
@@ -957,8 +965,11 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
           request.imagePath = path.lexically_normal().string();
         }
       } else {
-        return failed(command, usageError("runtime step [--frames <n>] [--capture [<path>]]"));
+        return failed(command, usageError("runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]"));
       }
+    }
+    if (request.withOverlay && !capture) {
+      return failed(command, usageError("runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]"));
     }
     auto pending = std::make_unique<Pending>();
     pending->kind = Pending::Kind::Step;
@@ -974,6 +985,42 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     reply.command = command;
     reply.outcome = Outcome::Submitted;
     return reply;
+  }
+
+  // Plan 0066 P2 (Spec 0066 R2, R6; ADR-0132 D2): this client's Viewport overlay.
+  //   runtime overlay select <guid>...   (a selection-only overlay, outlined by the Runtime)
+  //   runtime overlay clear
+  //   runtime overlay set <file|->        (the JSON form; read by the invocation, see setViewportOverlay())
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "overlay") {
+    const std::string command = t.size() >= 3 ? "runtime overlay " + std::string(t[2]) : "runtime overlay";
+    constexpr std::string_view kUsage = "runtime overlay set <file|-> | runtime overlay select <guid>... | runtime overlay clear";
+    if (control_ == nullptr) {
+      return failed(command, plainError("NoRuntimeControl", ErrorCategory::Runtime,
+                                        "this connection carries no Runtime control"));
+    }
+    if (t.size() == 3 && t[2] == "clear") {
+      const auto cleared = control_->setViewportOverlay(std::nullopt);
+      if (cleared.isErr()) return failed(command, overlayError(cleared.error()));
+      Value result = Value::object();
+      result.set("overlay", Value());
+      return done(command, "overlay cleared\n", std::move(result));
+    }
+    if (t.size() >= 4 && t[2] == "select") {
+      connection::ViewportOverlay overlay;
+      for (std::size_t i = 3; i < t.size(); ++i) {
+        const auto entity = text::parseEntity(t[i]);
+        if (entity.isErr()) return failed(command, textError(entity.error(), t[i]));
+        overlay.selection.push_back(entity.value());
+      }
+      const auto set = control_->setViewportOverlay(overlay);
+      if (set.isErr()) return failed(command, overlayError(set.error()));
+      Value selection = Value::array();
+      for (const auto& entity : overlay.selection) selection.push(Value::string(text::formatEntity(entity)));
+      Value result = Value::object();
+      result.set("selection", std::move(selection));
+      return done(command, "overlay selects " + std::to_string(overlay.selection.size()) + "\n", std::move(result));
+    }
+    return failed(command, usageError(std::string(kUsage)));
   }
 
   // Spec 0064 / ADR-0128 D1-D3 (Plan 0064 P3): the Viewport camera and the
@@ -1083,6 +1130,39 @@ Reply CommandLayer::submitTransaction(std::vector<access::Command> commands) {
   reply.result = Value::object();
   reply.result.set("ticket", std::move(ticket));
   return reply;
+}
+
+Reply CommandLayer::setViewportOverlay(std::string_view jsonText) {
+  const std::string command = "runtime overlay set";
+  if (control_ == nullptr) {
+    return failed(command, plainError("NoRuntimeControl", ErrorCategory::Runtime, "this connection carries no Runtime control"));
+  }
+  const auto parsed = json::parse(jsonText);
+  const auto overlay = parsed.isOk() ? connection::overlayFromJson(parsed.value()) : std::nullopt;
+  if (!overlay) {
+    return failed(command, plainError("MalformedOverlay", ErrorCategory::Text,
+                                      "not a Viewport overlay in its JSON form (remote_protocol.md 6.6)"));
+  }
+  const auto set = control_->setViewportOverlay(*overlay);
+  if (set.isErr()) return failed(command, overlayError(set.error()));
+  std::size_t segments = 0;
+  std::size_t triangles = 0;
+  std::size_t points = 0;
+  for (const auto& group : overlay->groups) {
+    segments += group.segments.size();
+    triangles += group.triangles.size();
+    points += group.points.size();
+  }
+  Value result = Value::object();
+  result.set("groups", Value::number(static_cast<std::uint64_t>(overlay->groups.size())));
+  result.set("selection", Value::number(static_cast<std::uint64_t>(overlay->selection.size())));
+  result.set("segments", Value::number(static_cast<std::uint64_t>(segments)));
+  result.set("triangles", Value::number(static_cast<std::uint64_t>(triangles)));
+  result.set("points", Value::number(static_cast<std::uint64_t>(points)));
+  return done(command,
+              "overlay set: " + std::to_string(overlay->groups.size()) + " groups, " + std::to_string(overlay->selection.size()) +
+                  " selected\n",
+              std::move(result));
 }
 
 Reply CommandLayer::poll() {
