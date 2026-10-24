@@ -20,6 +20,15 @@
 
 namespace atlantis::renderer {
 
+// Plan 0066 P3 (ADR-0133 D3, extending ADR-0022): the states drawFrame() left
+// its colour target and its depth Texture in, as its execute() reported them.
+// A later graph that continues either (the Viewport overlay) binds it with
+// these as its incoming states, never with literal ones.
+struct FrameEndStates {
+  atlantis::rhi::ResourceState color = atlantis::rhi::ResourceState::Undefined;
+  atlantis::rhi::ResourceState depth = atlantis::rhi::ResourceState::Undefined;
+};
+
 // Stateless orchestrator (ADR-0022): retains no GPU resource, no
 // frame-to-frame state, across calls. Depends only on RHI, RenderGraph,
 // Core -- never Platform, Vulkan Backend, or any Vk* type. Not internally
@@ -137,7 +146,11 @@ class Renderer {
   // frame is exactly what it was without the parameter. Milestone 1 of
   // Plan 0044 records no bloom pass yet: a non-null bloom with
   // strength > 0 fails an ATLANTIS_CHECK_MSG until Milestone 2.
-  void drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
+  //
+  // Plan 0066 P3 (ADR-0133 D3): returns where it left colorTarget (its
+  // finalColorState) and depthTarget; a caller that continues neither may
+  // ignore the result. The parameters and passes are unchanged.
+  FrameEndStates drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                  atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                  std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
                  atlantis::rhi::HdrColorTarget& hdrColorTarget,

@@ -547,6 +547,14 @@ struct ClearColorValue {
 
 [[nodiscard]] bool operator==(const ClearColorValue& lhs, const ClearColorValue& rhs);
 
+// Plan 0066 P3 (ADR-0133 D1): how an attachment scope begins -- cleared to its
+// clear value (every scope before ADR-0133), or keeping what an earlier scope
+// stored there, so a pass can draw over a finished frame.
+enum class AttachmentLoad : std::uint8_t {
+  Clear,
+  Load,
+};
+
 enum class CommandListCreateError {
   CommandBufferAllocationFailed,
 };

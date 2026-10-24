@@ -5,6 +5,7 @@
 #include <span>
 #include <string_view>
 
+#include <atlantis/assert.h>
 #include <atlantis/rhi/buffer.h>
 #include <atlantis/rhi/hdr_color_target.h>
 #include <atlantis/rhi/pipeline.h>
@@ -52,6 +53,17 @@ class CommandList {
   // both attachments must already be in their declared ResourceState
   // (via transitionResource()) before this is called.
   virtual void beginRendering(RenderTarget& color, Texture* depth, ClearColorValue colorClear, float depthClear) = 0;
+
+  // Plan 0066 P3 (ADR-0133 D1): the same scope, with a load choice per
+  // attachment; a clear value is ignored for an attachment that loads (and
+  // depthLoad when depth is nullptr). Loading requires the attachment's
+  // earlier writes to be made visible first -- render_graph::execute()
+  // records that barrier (ADR-0133 D3). Not pure, so an implementation
+  // that cannot load stays valid: by default both-Clear forwards to the
+  // four-parameter call above, and any Load is a programmer error. The
+  // Vulkan Backend overrides it.
+  virtual void beginRendering(RenderTarget& color, Texture* depth, ClearColorValue colorClear, float depthClear,
+                              AttachmentLoad colorLoad, AttachmentLoad depthLoad);
   virtual void endRendering() = 0;
 
   // Binds the pipeline subsequent draw calls use, until the next
@@ -201,5 +213,12 @@ class CommandList {
   // Names this command list for debuggers; diagnostic only.
   virtual void setDebugName(std::string_view name) { static_cast<void>(name); }
 };
+
+inline void CommandList::beginRendering(RenderTarget& color, Texture* depth, ClearColorValue colorClear,
+                                        float depthClear, AttachmentLoad colorLoad, AttachmentLoad depthLoad) {
+  ATLANTIS_CHECK_MSG(colorLoad == AttachmentLoad::Clear && (depth == nullptr || depthLoad == AttachmentLoad::Clear),
+                     "beginRendering(): this CommandList cannot load an attachment (ADR-0133)");
+  beginRendering(color, depth, colorClear, depthClear);
+}
 
 }  // namespace atlantis::rhi

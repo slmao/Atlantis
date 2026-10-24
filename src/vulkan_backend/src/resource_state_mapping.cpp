@@ -188,10 +188,44 @@ using atlantis::rhi::ResourceState;
   };
 }
 
+// Plan 0066 P3 (ADR-0133 D2): the two same-state entries. Neither changes a
+// layout; each makes an earlier scope's attachment writes available to a
+// scope that loads the attachment (the load reads, the draws write again).
+[[nodiscard]] ImageBarrierPlan colorAttachmentOutputToColorAttachmentOutput() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+      .srcStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+      .dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+  };
+}
+
+[[nodiscard]] ImageBarrierPlan depthAttachmentReadWriteToDepthAttachmentReadWrite() {
+  return ImageBarrierPlan{
+      .oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      .newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+      .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+      .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+      .srcStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+      .dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+  };
+}
+
 }  // namespace
 
 ImageBarrierPlan planTransition(ResourceState before, ResourceState after) {
-  ATLANTIS_CHECK_MSG(before != after, "planTransition() called with before == after -- execute() never does this");
+  // Plan 0066 P3 (ADR-0133 D2): before == after only for the two same-state
+  // entries, which execute() records before a pass on a loaded attachment.
+  if (before == ResourceState::ColorAttachmentOutput && after == ResourceState::ColorAttachmentOutput) {
+    return colorAttachmentOutputToColorAttachmentOutput();
+  }
+  if (before == ResourceState::DepthAttachmentReadWrite && after == ResourceState::DepthAttachmentReadWrite) {
+    return depthAttachmentReadWriteToDepthAttachmentReadWrite();
+  }
+  ATLANTIS_CHECK_MSG(before != after,
+                     "planTransition() called with before == after outside the two same-state entries (ADR-0133)");
 
   if (before == ResourceState::Undefined && after == ResourceState::ColorAttachmentWrite) {
     return undefinedToColorAttachmentWrite();

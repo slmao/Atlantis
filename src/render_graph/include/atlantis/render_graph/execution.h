@@ -77,6 +77,19 @@ namespace atlantis::render_graph {
 // pass's own clear-to-max-depth, every frame unconditionally). Guard 2
 // does not apply to it, for the same reason it does not apply to
 // hdrColorTarget -- a ShadowMap is not a RenderTarget.
+//
+// Plan 0066 P3 (ADR-0133 D3), extending the above:
+// - load: Clear (the default, every binding before ADR-0133) or Load,
+//   meaningful only for a target or depthTexture entry -- Load on any
+//   other kind is a programmer error (ATLANTIS_CHECK_MSG). Every draw
+//   pass that uses a Load binding as its colour or depth attachment
+//   begins with that attachment loaded, not cleared (colorClear/
+//   depthClear unused for it). A Load binding's incomingState must not
+//   be Undefined (there is nothing to load; ATLANTIS_CHECK_MSG): it is
+//   the end state an earlier execute() call reported for the resource.
+// - incomingState is honoured for depthTexture entries too, as it has
+//   been in execute() itself; the default Undefined keeps ADR-0026's
+//   behaviour. (The paragraph above, written before, says "ignored".)
 struct ResourceBinding {
   CompiledResourceId resource;
   atlantis::rhi::RenderTarget* target = nullptr;
@@ -88,6 +101,8 @@ struct ResourceBinding {
   atlantis::rhi::ShadowMap* shadowMap = nullptr;
   atlantis::rhi::ResourceState incomingState = atlantis::rhi::ResourceState::Undefined;
   std::optional<atlantis::rhi::ResourceState> finalState;
+  // Last, so every designated initializer written before it still compiles.
+  atlantis::rhi::AttachmentLoad load = atlantis::rhi::AttachmentLoad::Clear;
 };
 
 // Walks graph's compiled pass order once. For each pass, for each
@@ -146,7 +161,22 @@ struct ResourceBinding {
 // ResourceState::Undefined -- this function's own currentState bookkeeping
 // is entirely local to one call, never persisted across calls. Not
 // thread-safe; single Phase 1 frame thread only (ADR-0004).
-void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
-             atlantis::rhi::CommandList& commandList);
+//
+// Plan 0066 P3 (ADR-0133 D3):
+// - Before each draw pass that uses a Load binding as an attachment in the
+//   state it already holds (since its previous pass, or since its
+//   incomingState), execute() records a same-state transitionResource()
+//   -- a memory dependency, no layout change -- so the earlier writes are
+//   visible to the load. A resource counts as used by any pass that
+//   declares it, whether or not a transition was recorded for it.
+// - Returns the state it left each bound resource in, one entry per
+//   binding in bindings' order: for a resource some pass used, its
+//   finalState when it has one (and was reached), else its last declared
+//   usage's state; for one no pass used, its incomingState. A later
+//   execute() that continues a resource passes that state as its
+//   incomingState instead of writing a literal one.
+std::vector<atlantis::rhi::ResourceState> execute(const CompiledGraph& graph,
+                                                  const std::vector<ResourceBinding>& bindings,
+                                                  atlantis::rhi::CommandList& commandList);
 
 }  // namespace atlantis::render_graph

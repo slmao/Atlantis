@@ -233,6 +233,19 @@ void VulkanCommandList::clearColor(atlantis::rhi::RenderTarget& target, atlantis
 
 void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
                                         atlantis::rhi::ClearColorValue colorClear, float depthClear) {
+  beginRendering(color, depth, colorClear, depthClear, atlantis::rhi::AttachmentLoad::Clear,
+                 atlantis::rhi::AttachmentLoad::Clear);
+}
+
+void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                                        atlantis::rhi::ClearColorValue colorClear, float depthClear,
+                                        atlantis::rhi::AttachmentLoad colorLoad,
+                                        atlantis::rhi::AttachmentLoad depthLoad) {
+  // Plan 0066 P3 (ADR-0133 D2): a loaded attachment keeps what an earlier
+  // scope stored; the clear value is then unused.
+  const auto loadOp = [](atlantis::rhi::AttachmentLoad load) {
+    return load == atlantis::rhi::AttachmentLoad::Load ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+  };
   // Pointer-form, exception-free -- same rationale as transitionResource()
   // above.
   auto* access = dynamic_cast<VulkanRenderTargetAccess*>(&color);
@@ -242,7 +255,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
   colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
   colorAttachment.imageView = access->imageView();
   colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-  colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  colorAttachment.loadOp = loadOp(colorLoad);
   colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
   colorAttachment.clearValue.color = VkClearColorValue{.float32 = {colorClear.r, colorClear.g, colorClear.b, colorClear.a}};
 
@@ -257,7 +270,7 @@ void VulkanCommandList::beginRendering(atlantis::rhi::RenderTarget& color, atlan
     // call already brought the image to this exact layout, so
     // beginRendering() must name the same one.
     depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depthAttachment.loadOp = loadOp(depthLoad);
     depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     depthAttachment.clearValue.depthStencil = VkClearDepthStencilValue{depthClear, 0};
   }

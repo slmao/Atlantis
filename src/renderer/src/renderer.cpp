@@ -78,7 +78,7 @@ constexpr atlantis::rhi::ClearColorValue kBackgroundClearColor{0.05f, 0.05f, 0.0
 
 }  // namespace
 
-void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
+FrameEndStates Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& colorTarget,
                           atlantis::rhi::Texture& depthTarget, atlantis::rhi::Buffer& cameraUniformBuffer,
                           std::span<const DrawItem> drawItems, atlantis::rhi::ResourceState finalColorState,
                           atlantis::rhi::HdrColorTarget& hdrColorTarget,
@@ -532,7 +532,11 @@ void Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atlantis::rhi:
                         .hdrColorTarget = &bloom->targets.compositeTarget(),
                         .finalState = std::nullopt});
   }
-  atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
+  // Plan 0066 P3 (ADR-0133 D3): bindings 2 and 1 are the colour target and
+  // the depth Texture.
+  const std::vector<atlantis::rhi::ResourceState> endStates =
+      atlantis::render_graph::execute(compileResult.value(), bindings, commandList);
+  return FrameEndStates{.color = endStates[2], .depth = endStates[1]};
 }
 
 }  // namespace atlantis::renderer
