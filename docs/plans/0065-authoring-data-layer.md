@@ -37,6 +37,20 @@
     full single-property transaction cost (copy, serialize, parse, cook, round-trip check); the decision on
     incremental validation as a follow-up Spec is taken on M2's number, right after M2, not at M7. J9 stays a
     reported target, not a test verdict.
+  - **Third Correction (2026-10-23, found in review of M4 and M5; ruled by slmao, 2026-10-23, before its docs
+    PR):** Spec 0065's third Correction: a reload waits while commands are held. The swap happens at the next
+    command application (a Step, or running again), right after the held commands are applied to the old World;
+    no command is dropped unreported; under pause an apply is accepted and stays pending (J5 still holds); the
+    CLI's `scene apply` under pause returns its pending outcome and reports `Applied{generation}` when it arrives.
+    ADR-0131 carries an Accepted Amendment (2026-10-23) on D4 and stays `Accepted`; ADR-0103 and ADR-0106 are kept.
+    **Ruled 2026-10-24 (slmao, while implementing it):** the old World's queued events are delivered at the
+    re-bind, not dropped, so a command applied in the swap frame settles as its event; ADR-0131's amendment item 4
+    withdraws D4's "dropped" sentence, and M4's connection test expects the event.
+    **An undisclosed M4 deviation:** M4 (`8d06e14`) performed a pending reload whether or not commands were held,
+    and its endpoint let held commands "go with it, unreported" — in neither this Plan nor M4's report. M5
+    (`013b53d`) built on it: `scene apply` waits while paused, stated in its commit message but not disclosed as a
+    deviation. P4, M4, P6 and M5 change accordingly;
+    one fix commit on `feature/0065-authoring-data-layer` lands them before M6.
   - **Constraints:** no merge by the agent, no push to `main`; `tests/performance/baselines/` and
     `gate_policy.json` untouched; goldens byte-identical; changes limited to this Plan's file list; the changed
     `runFrame()` lines enumerated in the PR; the performance gate applies (`src/runtime/**`, the root
@@ -129,12 +143,17 @@ Read at `origin/main` `45fce69`.
 - **P4 — Reload** (ADR-0131 D3–D7; Spec R8, R10).
   - `RuntimeApplication::requestSceneReload(ValidatedSceneData)` stores one pending reload (a newer request
     replaces an older one).
-  - At the start of `runFrame()`, after `applyPending()`, a named place performs it: dependency resolution reusing
+  - At the start of `runFrame()`, immediately after `applyPending()` and under the same condition (commands not
+    held by a pause, third Correction), a named place performs it: dependency resolution reusing
     the loaded maps (`loadAndBakeScene()`'s steps factored so the resolution and upload take existing maps),
     `bakeScene()`, new `RuntimeWorldAccess`, swap of `scene_` / `worldAccess_` and the resource maps, re-binding of
     the InProcess endpoint, pick geometry rebuilt when retained, then a `waitIdle()` and the release of every mesh,
     material and texture the new scene does not reference (ADR-0131 D4); on failure nothing swaps and a diagnostic
     is recorded.
+  - While a pause holds commands the reload stays pending; a Step (or resume) applies the held commands to the old
+    World and then reloads, in the same frame. `RuntimeWorldAccess` gains an owner-only `hasPending()`, and the
+    InProcess endpoint's `detach()` checks with it that nothing is pending instead of dropping it, and hands the
+    outgoing World access's queued events to their subscriptions (ruled 2026-10-24).
   - The sink reports a successful swap back to the host, which tells the session to emit `Applied{generation}`.
   - `RuntimeStatus` gains `sceneGeneration` (`std::uint64_t`); `RuntimeControlHost` reports it.
   - E2: `editor.cpp`'s scene-change clear also compares the generation (one line; a change forced by a
@@ -149,7 +168,10 @@ Read at `origin/main` `45fce69`.
     `authoring.getProperty`, `authoring.schema`, `authoring.submit`, `authoring.submitTransaction`,
     `authoring.subscribe`, `authoring.unsubscribe`, `authoring.drainEvents`, `authoring.drainFailures`,
     `authoring.apply`, `authoring.save`; codec values, the `Applied` event included; `remote_protocol.md` §5/§6.
-  - CLI: the `scene` group (Spec 0065 Q5) with `cli/1` envelopes and `--json`.
+  - CLI: the `scene` group (Spec 0065 Q5) with `cli/1` envelopes and `--json`. `scene apply` waits for
+    `Applied{generation}` while the Runtime runs; while it is paused it returns the pending outcome at once, as a
+    write under pause does, and reports `Applied{generation}` as its own reply once a later command (a Step) has
+    let it arrive (third Correction).
   - C# SDK: a reflective `AuthoringSession` on `RemoteSession` (Spec 0065 Q8, G-b): types and fields by name or
     id from `authoring.schema`, values as `PropertyValue`, records for every command and event (`Applied`
     included); conformance vectors extended. No generated bindings of the scene components: `atlantis_sdk_codegen`
@@ -200,12 +222,19 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 - `src/runtime/` (`runtime_application.{h,cpp}`, `scene_load.{h,cpp}`, `runtime_control_host.cpp`),
   `src/connection/include/atlantis/connection/runtime_control.h` (`sceneGeneration`), `src/editor/src/editor.cpp`
-  (one line).
+  (one line); for the third Correction, `src/connection/` (`in_process_endpoint.{h,cpp}`) and
+  `src/world/` (`runtime_world_access.{h,cpp}`, the owner-only `hasPending()`).
 - Tests (GPU, fatal VVL): after a reload of an edited document, frame data and a capture equal a fresh Runtime on
   the saved document; a failing reload leaves the old World and its frame data; connections survive, a
   subscription keeps its filter, `sceneGeneration` increments and an authoring subscriber receives
   `Applied{generation}` with the same value; a CLI `property set` lasts until the next reload; E2's history clears
   on the generation change; Bistro's apply time measured (J3).
+- Under pause (third Correction; GPU, fatal VVL): pause, submit a World command, apply — nothing swapped, the
+  generation unchanged and the command still pending; Step — the command applied to the old World, then the
+  generation incremented, `Applied{generation}` delivered and the command's event delivered. GPU-free: over
+  `RuntimeControlHost`, a World access and the InProcess endpoint, a held command survives a requested reload and
+  settles on Step. The existing reload tests unchanged except the connection test's queued event across a re-bind:
+  delivered, no longer dropped (ruled 2026-10-24).
 - Scene-sized state: an edited default scene that adds materials, textures and point lights beyond the original's
   (within the scene limits) reloads to frame data and a capture equal to a fresh start on that document —
   descriptor pool capacity (Spec 0021), the light clustering and shadows exercised on the reload path; applying back
@@ -215,7 +244,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 - `src/runtime/main.cpp`, `src/remote/` (codec, server, client, `remote_protocol.md`), `src/cli/`.
 - Tests: codec round trips; server and client end to end over loopback; the CLI's `scene` envelopes; conformance
-  vectors regenerated.
+  vectors regenerated; `scene apply` under pause returning its pending outcome at once, then `Applied{generation}`
+  reported after a Step (third Correction).
 
 ### M6 — The C# SDK (P6; R11)
 

@@ -132,3 +132,38 @@ verbatim and are not superseded except where this section says so explicitly.
 ruled [Plan 0065](../plans/0065-authoring-data-layer.md) J10 as recommended (`std::to_chars` with no format argument,
 the shortest round-trip text, `-0` kept), in the review of [PR #281](https://github.com/slmao/Atlantis/pull/281). This amendment records what that
 Correction means for this ADR; no decision above is reopened.
+
+## Accepted Amendment — 2026-10-23
+
+**Status of this section:** accepted by Human Review on 2026-10-23, with the Spec 0065 third Correction (slmao,
+ruled before its docs PR). **This section does not itself change this ADR's top-level Status** (`Accepted` above is
+unchanged). The Decision, Context, Consequences, Alternatives Considered and the Accepted Amendment of 2026-10-22
+are preserved verbatim and are not superseded except where this section says so explicitly. It amends D4 only.
+
+1. **The swap point is gated on the same condition as command application.** D4's "at the start of the next frame,
+   after pending World commands are applied to the old World" reads: at the start of the next frame *that applies
+   commands*. While a pause holds command application (ADR-0106 D4), a requested reload stays pending and nothing
+   is swapped; a newer apply still replaces it (Plan 0065 J5).
+2. **The held commands apply to the old World first.** On a Step or on resume, that frame applies every held
+   command to the old World — each settling as an event or a drained failure, as ADR-0103 D6 and D9 require — and
+   only then performs the reload.
+3. **The InProcess endpoint's "unreported" behaviour is withdrawn.** With the swap gated, no command can be pending
+   in the outgoing World access when the endpoint is re-bound; the endpoint checks that, and drops nothing.
+4. **The old World's queued events are delivered, not dropped** (ruled 2026-10-24). D4's "queued Runtime World
+   events of the old World are dropped" is withdrawn: at the re-bind the endpoint hands the outgoing World access's
+   queued events to the matching subscriptions, as it already hands its failures to their submitters. A command
+   applied in the swap frame — a held command on Step, or one submitted with an apply while running — therefore
+   settles as its event, like any other. No event is emitted for the reload itself, as before.
+5. **Kept unchanged:** [ADR-0103](0103-runtime-world-operation-boundary.md) (every submitted command settles) and
+   [ADR-0106](0106-attachable-runtime-transport-and-control.md) D4 (pause holds command application; a step
+   releases exactly its frames). Neither is amended.
+
+### Human Review — Amendment Acceptance (2026-10-23)
+
+**Deciders:** slmao — ruled the [Spec 0065](../specs/0065-authoring-data-layer.md) third Correction (2026-10-23): a
+reload waits while commands are held; the swap happens at the next command application, after the held commands
+are applied to the old World; no command is dropped unreported; under pause an apply is accepted and stays pending;
+the CLI's `scene apply` under pause returns its pending outcome and reports `Applied{generation}` when it arrives.
+Recorded in the review of its docs PR. On 2026-10-24, while implementing it, slmao ruled item 4: the old World's
+queued events are delivered at the re-bind rather than dropped, so a command applied in the swap frame settles as
+its event. This amendment records what the Correction means for D4; no other decision above is reopened.
