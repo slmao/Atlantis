@@ -72,8 +72,8 @@ using atlantis::rhi::ResourceState;
 
 }  // namespace
 
-void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
-             atlantis::rhi::CommandList& commandList) {
+std::vector<ResourceState> execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bindings,
+                                   atlantis::rhi::CommandList& commandList) {
   // Guard 0 (Spec 0007; widened to three kinds by Spec 0016, four by
   // Plan 0024 Milestone 2, five by Plan 0027 Milestone 3): every entry
   // binds exactly one of target/depthTexture/sampledTexture/
@@ -112,8 +112,19 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
     ATLANTIS_CHECK_MSG(noReadUsage, "execute(): a bound RenderTarget has a declared read usage");
   }
 
-  // Every bound resource (color and depth) starts each execute() call from
-  // Undefined -- this map is entirely local to this call.
+  // Guard 3 (Plan 0066 P3, ADR-0133 D3): only a target or depthTexture entry
+  // loads, and only from a state an earlier execute() left it in.
+  for (const ResourceBinding& binding : bindings) {
+    if (binding.load != atlantis::rhi::AttachmentLoad::Load) continue;
+    ATLANTIS_CHECK_MSG(binding.target != nullptr || binding.depthTexture != nullptr,
+                       "execute(): only a target or depthTexture binding can load its attachment");
+    ATLANTIS_CHECK_MSG(binding.incomingState != ResourceState::Undefined,
+                       "execute(): a Load binding enters Undefined -- there is nothing to load");
+  }
+
+  // Every bound resource starts each execute() call from its binding's
+  // incomingState (Undefined by default) -- this map is entirely local to
+  // this call, and holds every resource some pass used.
   std::unordered_map<std::size_t, ResourceState> currentState;
 
   for (std::size_t position = 0; position < graph.passCount(); ++position) {
@@ -159,6 +170,19 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
 
       const std::size_t key = usage.resource.index();
       const ResourceState previous = currentState.count(key) ? currentState[key] : binding->incomingState;
+      // Plan 0066 P3 (ADR-0133 D3): a draw pass loading an attachment it
+      // already holds in this state still needs the earlier writes made
+      // visible -- the same-state transition, a memory dependency only.
+      const bool loadsAttachment = drawPass && binding->load == atlantis::rhi::AttachmentLoad::Load &&
+                                   (*usage.state == ResourceState::ColorAttachmentOutput ||
+                                    *usage.state == ResourceState::DepthAttachmentReadWrite);
+      if (previous == *usage.state && loadsAttachment) {
+        if (targetPtr != nullptr) {
+          commandList.transitionResource(*targetPtr, previous, *usage.state);
+        } else if (depthPtr != nullptr) {
+          commandList.transitionResource(*depthPtr, previous, *usage.state);
+        }
+      }
       if (previous != *usage.state) {
         if (targetPtr != nullptr) {
           commandList.transitionResource(*targetPtr, previous, *usage.state);
@@ -175,8 +199,9 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
           // been ruled out.
           commandList.transitionResource(*shadowMapPtr, previous, *usage.state);
         }
-        currentState[key] = *usage.state;
       }
+      // Recorded whether or not a transition was: the resource was used.
+      currentState[key] = *usage.state;
     }
 
     // A declared-but-never-.setExecute()'d pass is legal (Spec 0005 pass
@@ -217,9 +242,20 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
           // set, so exactly one of these two branches ever fires.
           atlantis::rhi::Texture* depthPtr = depthUsagePresent ? depthBinding->depthTexture : nullptr;
           const float depthClearValue = depthUsagePresent ? depthBinding->depthClear : 1.0f;
-          if (colorBinding->target != nullptr) {
+          // Plan 0066 P3 (ADR-0133 D3): a Load binding begins loaded; a
+          // scope with no Load is recorded exactly as before.
+          const atlantis::rhi::AttachmentLoad colorLoad = colorBinding->load;
+          const atlantis::rhi::AttachmentLoad depthLoad =
+              depthUsagePresent ? depthBinding->load : atlantis::rhi::AttachmentLoad::Clear;
+          const bool anyLoad =
+              colorLoad == atlantis::rhi::AttachmentLoad::Load || depthLoad == atlantis::rhi::AttachmentLoad::Load;
+          if (colorBinding->target != nullptr && anyLoad) {
+            commandList.beginRendering(*colorBinding->target, depthPtr, colorBinding->colorClear, depthClearValue,
+                                        colorLoad, depthLoad);
+          } else if (colorBinding->target != nullptr) {
             commandList.beginRendering(*colorBinding->target, depthPtr, colorBinding->colorClear, depthClearValue);
           } else {
+            ATLANTIS_CHECK_MSG(!anyLoad, "execute(): an HdrColorTarget scope cannot load its depth attachment");
             commandList.beginRendering(*colorBinding->hdrColorTarget, depthPtr, colorBinding->colorClear,
                                         depthClearValue);
           }
@@ -274,6 +310,15 @@ void execute(const CompiledGraph& graph, const std::vector<ResourceBinding>& bin
       it->second = *binding.finalState;
     }
   }
+
+  // Plan 0066 P3 (ADR-0133 D3): where each bound resource was left.
+  std::vector<ResourceState> endStates;
+  endStates.reserve(bindings.size());
+  for (const ResourceBinding& binding : bindings) {
+    const auto it = currentState.find(binding.resource.index());
+    endStates.push_back(it != currentState.end() ? it->second : binding.incomingState);
+  }
+  return endStates;
 }
 
 }  // namespace atlantis::render_graph

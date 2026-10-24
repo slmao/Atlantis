@@ -226,3 +226,39 @@ TEST_CASE("planTransition maps ShaderRead -> TransferSource", "[vulkan_backend][
   CHECK(plan.srcStage == VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
   CHECK(plan.dstStage == VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
+
+// Plan 0066 M3a (ADR-0133 D2): the two same-state entries -- no layout change,
+// an attachment's earlier writes made available to a scope that loads it.
+TEST_CASE("planTransition maps ColorAttachmentOutput -> ColorAttachmentOutput to a memory-only barrier",
+          "[vulkan_backend][resource_state]") {
+  const auto plan = atlantis::vulkan_backend::detail::planTransition(atlantis::rhi::ResourceState::ColorAttachmentOutput,
+                                                                     atlantis::rhi::ResourceState::ColorAttachmentOutput);
+  CHECK(plan.oldLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  CHECK(plan.newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  CHECK(plan.srcAccessMask == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+  CHECK(plan.dstAccessMask == (VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT));
+  CHECK(plan.srcStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  CHECK(plan.dstStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+}
+
+TEST_CASE("planTransition maps DepthAttachmentReadWrite -> DepthAttachmentReadWrite to a memory-only barrier",
+          "[vulkan_backend][resource_state]") {
+  const auto plan = atlantis::vulkan_backend::detail::planTransition(
+      atlantis::rhi::ResourceState::DepthAttachmentReadWrite, atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  constexpr VkPipelineStageFlags kTests =
+      VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  CHECK(plan.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  CHECK(plan.newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+  CHECK(plan.srcAccessMask == VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+  CHECK(plan.dstAccessMask ==
+        (VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT));
+  CHECK(plan.srcStage == kTests);
+  CHECK(plan.dstStage == kTests);
+}
+
+TEST_CASE("planTransition still asserts on any other before == after pair", "[vulkan_backend][resource_state]") {
+  std::vector<RecordedFailure> failures;
+  ScopedFailureHandler handler(failures);
+  static_cast<void>(planTransition(ResourceState::ShaderRead, ResourceState::ShaderRead));
+  REQUIRE_FALSE(failures.empty());
+}

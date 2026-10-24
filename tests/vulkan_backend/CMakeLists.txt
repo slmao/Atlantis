@@ -82,6 +82,8 @@ add_executable(atlantis_vulkan_backend_gpu_tests
   debug_utils_gpu_tests.cpp
   # Plan 0059 M6 (ADR-0115 D3, D7): timestamps one frame late, exact backend counters.
   gpu_timing_gpu_tests.cpp
+  # Plan 0066 M3a (ADR-0133 D2, D3): a later graph loads what an earlier one stored.
+  attachment_load_gpu_tests.cpp
 )
 
 target_include_directories(atlantis_vulkan_backend_gpu_tests
