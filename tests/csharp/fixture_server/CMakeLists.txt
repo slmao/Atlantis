@@ -11,6 +11,8 @@ target_include_directories(atlantis_csharp_fixture_server PRIVATE ${CMAKE_SOURCE
 target_link_libraries(atlantis_csharp_fixture_server
   PRIVATE
     Atlantis::RemoteServer
+    # Plan 0065 P6: the authoring session it serves over authoring.*.
+    Atlantis::Authoring
     atlantis_remote_wire
     atlantis_compiler_warnings
 )

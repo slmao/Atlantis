@@ -26,6 +26,8 @@
 #include <atlantis/gameplay/transaction.h>
 #include <atlantis/gameplay/world.h>
 
+#include <atlantis/authoring/authoring_session.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/editor/model/viewport_camera.h>
 #include <atlantis/remote/session_file.h>
@@ -109,6 +111,163 @@ const auto kOther = guid("52052052-0002-4052-8052-000000000002");
 const auto kAsset = atlantis::asset_system::parseAssetGuid("52052052-00aa-4052-8052-0000000000aa").value();
 const auto kLight = atlantis::schema::typeId("world::Light");
 const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
+
+// Plan 0065 P6 (Spec 0065 R11; ADR-0112 D2, ADR-0130 D3): the authoring
+// document's wire values (remote_protocol.md section 6.8) -- the scene
+// address, every command and event (Applied included), filters, failures,
+// the document and node summaries, every name of the four error sets, the
+// authoring schema, and the in-band results the authoring.* methods answer
+// (section 5.1). Appended after the older vectors, so their lines stay put.
+namespace ac = atlantis::connection::authoring;
+
+const auto kNode = guid("52052052-0003-4052-8052-000000000003");
+const auto kParent = guid("52052052-0001-4052-8052-000000000001");
+const auto kSceneLight = atlantis::schema::typeId("asset_system::scene::Light");
+const auto kSceneCamera = atlantis::schema::typeId("asset_system::scene::Camera");
+const auto kSceneIntensity = atlantis::schema::fieldId("asset_system::scene::Light", "intensity");
+
+void authoringVectors(std::vector<Vector>& out) {
+  const ac::PropertyAddress address{kNode, kSceneLight, kSceneIntensity};
+  out.push_back({"authoring.address", "SceneAddress", codec::encode(address)});
+
+  const auto command = [&](std::string name, ac::Command c) {
+    const json::Value wire = codec::encode(c);
+    const auto decoded = codec::decodeAuthoringCommand(wire);
+    REQUIRE(decoded.has_value());
+    REQUIRE(codec::encode(*decoded) == wire);
+    out.push_back({"authoring.command." + std::move(name), "AuthoringCommand", wire});
+  };
+  command("set", ac::SetProperty{address, 4.5f});
+  command("set.vec3",
+          ac::SetProperty{{kNode, kSceneLight, atlantis::schema::fieldId("asset_system::scene::Light", "color")},
+                          std::array<float, 3>{1.0f, 0.6f, 0.3f}});
+  command("create", ac::CreateNode{kEntity, 2, {kSceneLight, kSceneCamera}});
+  command("create.minted", ac::CreateNode{std::nullopt, 0, {}});
+  command("destroy", ac::DestroyNode{kNode});
+  command("add", ac::AddComponent{kNode, kSceneCamera});
+  command("remove", ac::RemoveComponent{kNode, kSceneLight});
+  command("parent", ac::SetParent{kNode, kParent});
+  command("parent.root", ac::SetParent{kNode, std::nullopt});
+  command("camera", ac::SetActiveCamera{kOther});
+  command("camera.none", ac::SetActiveCamera{std::nullopt});
+
+  const auto event = [&](std::string name, ac::Event e) {
+    const json::Value wire = codec::encode(e);
+    const auto decoded = codec::decodeAuthoringEvent(wire);
+    REQUIRE(decoded.has_value());
+    REQUIRE(codec::encode(*decoded) == wire);
+    out.push_back({"authoring.event." + std::move(name), "AuthoringEvent", wire});
+  };
+  event("changed", ac::PropertyChanged{address, 7.0f});
+  event("changed.absent", ac::PropertyChanged{address, access::Absent{}});
+  event("created", ac::NodeCreated{kEntity, 5});
+  event("destroyed", ac::NodeDestroyed{kNode});
+  event("added", ac::ComponentAdded{kNode, kSceneCamera});
+  event("removed", ac::ComponentRemoved{kNode, kSceneLight});
+  event("parent", ac::ParentChanged{kNode, kParent});
+  event("parent.root", ac::ParentChanged{kNode, std::nullopt});
+  event("camera", ac::ActiveCameraChanged{kOther});
+  event("camera.none", ac::ActiveCameraChanged{std::nullopt});
+  event("reopened", ac::DocumentReopened{kAsset});
+  event("applied", ac::Applied{3});
+
+  out.push_back({"authoring.filter.all", "AuthoringFilter", codec::encode(ac::EventFilter{})});
+  out.push_back({"authoring.filter.none", "AuthoringFilter",
+                 codec::encode(ac::EventFilter{ac::EventKindSet(), std::nullopt, std::nullopt})});
+  out.push_back({"authoring.filter.applied", "AuthoringFilter",
+                 codec::encode(ac::EventFilter{ac::EventKindSet::only(ac::EventKind::Applied), std::nullopt, std::nullopt})});
+  out.push_back(
+      {"authoring.filter.property", "AuthoringFilter",
+       codec::encode(ac::EventFilter{
+           ac::EventKindSet::only(ac::EventKind::PropertyChanged).with(ac::EventKind::ComponentAdded), kNode, kSceneLight})});
+
+  out.push_back({"authoring.failure", "AuthoringFailure",
+                 codec::encode(ac::CommandFailure{access::CommandTicket{9}, ac::Error::ParentAcyclic})});
+  out.push_back({"authoring.document", "Document",
+                 codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored,
+                                                "D:/Atlantis/assets/scenes/a \"b\" \xc3\xa9.scene.txt", 5})});
+  out.push_back({"authoring.document.imported", "Document",
+                 codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::Imported, "D:/build/bistro/bistro.scene.txt", 5992})});
+  out.push_back({"authoring.node", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent})});
+  out.push_back({"authoring.node.root", "NodeSummary", codec::encode(ac::NodeSummary{kParent, std::nullopt})});
+
+  // The refusal set: every name of every error set, in declaration order.
+  for (int e = 0; e <= static_cast<int>(ac::Error::NotRepresentableInSource); ++e) {
+    const auto error = static_cast<ac::Error>(e);
+    out.push_back(
+        {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});
+  }
+  for (const ac::OpenError error :
+       {ac::OpenError::SourceUnreadable, ac::OpenError::SourceParseFailed, ac::OpenError::SourceInvalid}) {
+    out.push_back({"authoring.open_error." + std::string(ac::toString(error)), "OpenError", codec::encodeOpenError(error)});
+  }
+  for (const ac::SaveError error :
+       {ac::SaveError::NoDocument, ac::SaveError::ImportedSceneNotSavable, ac::SaveError::WriteFailed}) {
+    out.push_back({"authoring.save_error." + std::string(ac::toString(error)), "SaveError", codec::encodeSaveError(error)});
+  }
+  for (const ac::ApplyError error : {ac::ApplyError::NoDocument, ac::ApplyError::NoSceneSink, ac::ApplyError::CookFailed,
+                                     ac::ApplyError::DecodeFailed, ac::ApplyError::ReloadRefused}) {
+    out.push_back(
+        {"authoring.apply_error." + std::string(ac::toString(error)), "ApplyError", codec::encodeApplyError(error)});
+  }
+
+  // authoring.schema: the scene component types an authoring session serves.
+  atlantis::authoring::AuthoringSession session(
+      atlantis::authoring::DocumentSource{kAsset, atlantis::authoring::HandAuthored{"unread.scene.txt"}});
+  const auto authoring = session.connect();
+  out.push_back({"schema.scene", "Schema", codec::encodeSchema(authoring->schema())});
+
+  // The in-band results the authoring.* methods answer (section 5.1).
+  const auto result = [&](std::string name, std::string_view method, json::Value value) {
+    json::Value wire = json::Value::object();
+    wire.set("method", json::Value::string(std::string(method)));
+    wire.set("result", std::move(value));
+    out.push_back({"authoring.result." + std::move(name), "AuthoringResult", std::move(wire)});
+  };
+  result("open", "authoring.open", codec::ok(json::Value()));
+  result("open.refused", "authoring.open", codec::err(codec::encodeOpenError(ac::OpenError::SourceParseFailed)));
+  result("apply", "authoring.apply", codec::ok(json::Value()));
+  result("apply.refused", "authoring.apply", codec::err(codec::encodeApplyError(ac::ApplyError::NoSceneSink)));
+  result("save.refused", "authoring.save", codec::err(codec::encodeSaveError(ac::SaveError::ImportedSceneNotSavable)));
+  result("document", "authoring.document",
+         codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "scene.scene.txt", 5}));
+  result("document.none", "authoring.document", json::Value());
+  {
+    json::Value nodes = json::Value::array();
+    nodes.push(codec::encode(ac::NodeSummary{kParent, std::nullopt}));
+    nodes.push(codec::encode(ac::NodeSummary{kNode, kParent}));
+    result("list_nodes", "authoring.listNodes", codec::ok(std::move(nodes)));
+  }
+  result("list_nodes.refused", "authoring.listNodes", codec::err(codec::encodeAuthoringError(ac::Error::NoDocument)));
+  {
+    json::Value types = json::Value::array();
+    types.push(codec::encodeTypeId(kSceneLight));
+    result("list_components", "authoring.listComponents", codec::ok(std::move(types)));
+  }
+  result("get_property", "authoring.getProperty", codec::ok(codec::encode(access::PropertyValue{3.0f})));
+  result("get_property.refused", "authoring.getProperty",
+         codec::err(codec::encodeAuthoringError(ac::Error::ComponentMissing)));
+  result("active_camera", "authoring.activeCamera", codec::ok(codec::encodeEntity(kOther)));
+  result("active_camera.none", "authoring.activeCamera", codec::ok(json::Value()));
+  result("submit", "authoring.submit", json::Value::number(std::uint64_t{4}));
+  result("submit_transaction", "authoring.submitTransaction",
+         codec::encode(access::TransactionTicket{access::CommandTicket{5}, 2}));
+  result("subscribe", "authoring.subscribe", json::Value::number(std::uint64_t{2}));
+  result("unsubscribe", "authoring.unsubscribe", codec::ok(json::Value()));
+  result("unsubscribe.refused", "authoring.unsubscribe",
+         codec::err(codec::encodeConnectionError(connection::ConnectionError::UnknownSubscription)));
+  {
+    json::Value events = json::Value::array();
+    events.push(codec::encode(ac::Event{ac::PropertyChanged{address, 7.0f}}));
+    events.push(codec::encode(ac::Event{ac::Applied{1}}));
+    result("drain_events", "authoring.drainEvents", codec::ok(std::move(events)));
+  }
+  {
+    json::Value failures = json::Value::array();
+    failures.push(codec::encode(ac::CommandFailure{access::CommandTicket{5}, ac::Error::MaxPointLights}));
+    result("drain_failures", "authoring.drainFailures", std::move(failures));
+  }
+}
 
 [[nodiscard]] std::vector<Vector> codecVectors() {
   std::vector<Vector> out;
@@ -277,6 +436,7 @@ const auto kIntensity = atlantis::schema::fieldId("world::Light", "intensity");
   auto withWindow = json::parse(atlantis::remote::formatSession(session));
   REQUIRE(withWindow.isOk());
   out.push_back({"session_file.window", "SessionFile", withWindow.value()});
+  authoringVectors(out);
   return out;
 }
 

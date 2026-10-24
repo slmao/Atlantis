@@ -10,7 +10,7 @@ using System.Numerics;
 
 namespace Atlantis.Gameplay.Remote;
 
-public static class Codec
+public static partial class Codec
 {
     private const string NilGuid = "00000000-0000-0000-0000-000000000000";
 

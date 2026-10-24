@@ -19,6 +19,7 @@ public static class Program
         ["live.typed"] = LiveTypedSuite.Run,
         ["live.compat"] = LiveCompatSuite.Run,
         ["live.isolation"] = LiveIsolationSuite.Run,
+        ["live.authoring"] = LiveAuthoringSuite.Run,
     };
 
     public static int Main(string[] args)

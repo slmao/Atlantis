@@ -29,7 +29,8 @@ if(ATLANTIS_CSHARP_ENABLED)
     add_dependencies(atlantis_csharp_tests atlantis_csharp_gameplay_demo)
   endif()
 
-  foreach(suite IN ITEMS codec session generated live.connection live.reflective live.typed live.compat live.isolation)
+  foreach(suite IN ITEMS codec session generated live.connection live.reflective live.typed live.compat live.isolation
+                        live.authoring)
     add_test(NAME "csharp: ${suite}"
       COMMAND "${ATLANTIS_DOTNET}" "${atlantis_csharp_tests_DLL}" ${suite}
               --repo "${CMAKE_SOURCE_DIR}"
