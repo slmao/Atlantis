@@ -24,7 +24,7 @@
     measured; the C# SDK's zero-NuGet and the editor-app package checks unchanged and passing; M1's and M6's
     measurements reported against Spec 0066 Q6, not as test verdicts; the J8 checkpoint is the owner's.
   - **Amendment (2026-10-24, found at the start of M3, before any M3 code; proposed, pending review of its own docs
-    PR — J8's pattern):** the RHI clears every attachment it begins, so no pass after `drawFrame()` can draw over the
+    PR, [PR #288](https://github.com/slmao/Atlantis/pull/288) — J8's pattern):** the RHI clears every attachment it begins, so no pass after `drawFrame()` can draw over the
     frame or test against its depth (ADR-0025, ADR-0026). [ADR-0133](../adr/0133-attachment-load-after-the-scene.md)
     (`Proposed`) lets a RenderGraph binding load an attachment's contents. P3 gains it, M3 splits into M3a (the load)
     and M3b (the overlay), the file list gains the RHI, the RenderGraph and the Vulkan Backend, and J4's mask becomes
