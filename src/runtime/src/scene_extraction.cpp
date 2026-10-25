@@ -396,6 +396,27 @@ atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(c
   return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
 }
 
+atlantis::Result<std::monostate, SceneExtractionError> checkInvertibleNormalTransform(const Mat4& worldMatrix) {
+  using ResultT = atlantis::Result<std::monostate, SceneExtractionError>;
+  // ADR-0134 D2's coplanarity bound (see the header).
+  constexpr float kCoplanarRatio = 1e-4f;
+  const Vec3 col0{worldMatrix[0], worldMatrix[1], worldMatrix[2]};
+  const Vec3 col1{worldMatrix[4], worldMatrix[5], worldMatrix[6]};
+  const Vec3 col2{worldMatrix[8], worldMatrix[9], worldMatrix[10]};
+  const float len0 = length(col0);
+  const float len1 = length(col1);
+  const float len2 = length(col2);
+  if (!std::isfinite(len0 * len1 * len2) || !(len0 >= kDegenerateLengthEpsilon) ||
+      !(len1 >= kDegenerateLengthEpsilon) || !(len2 >= kDegenerateLengthEpsilon)) {
+    return ResultT::Err(SceneExtractionError::DegenerateWorldTransform);  // NaN and infinity too
+  }
+  const float det = dot(col0, cross(col1, col2));
+  if (!(std::abs(det) >= kCoplanarRatio * len0 * len1 * len2)) {
+    return ResultT::Err(SceneExtractionError::DegenerateWorldTransform);
+  }
+  return ResultT::Ok({});
+}
+
 // Plan 0019 Section P14: a direct, line-for-line C++ transcription of
 // lit_textured.slang's own fragmentMain() accumulation loop (P11) --
 // the texture-color multiply and the final clamp are deliberately NOT

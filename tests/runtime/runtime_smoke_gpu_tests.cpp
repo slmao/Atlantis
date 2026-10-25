@@ -151,10 +151,10 @@ struct RuntimeSmokeTestAccess {
     return *app.worldAccess_;
   }
 
-  // ADR-0123 D2's amendment (2026-10-25): whether the frame gates this
-  // material's entities on checkConformalTransform() (LitTextured,
+  // ADR-0134 D2 (ADR-0123 D2's amendments): whether the frame gates this
+  // material's entities on checkInvertibleNormalTransform() (LitTextured,
   // PbrDirectLit), as runFrame()'s extraction reads materialDataMap_.
-  [[nodiscard]] static bool conformalGatedMaterial(const RuntimeApplication& app,
+  [[nodiscard]] static bool normalGatedMaterial(const RuntimeApplication& app,
                                                    atlantis::asset_system::AssetId material) {
     const auto it = app.materialDataMap_.find(material);
     return it != app.materialDataMap_.end() &&
@@ -1357,12 +1357,12 @@ TEST_CASE("Runtime under retainPickGeometry picks a Renderable and answers its b
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
-// ADR-0123 D2's amendment (2026-10-25; found by Spec 0066's M6 visual check
-// on Bistro): the service picks what the frame draws. An entity the frame
-// skips for a non-conformal world matrix (a LitTextured- or
-// PbrDirectLit-bound one failing checkConformalTransform(), Spec 0019 D7) is
-// not pickable; the same entity at a conformal matrix is.
-TEST_CASE("Runtime picks only what the frame draws: an entity skipped for a non-conformal world matrix is not pickable",
+// ADR-0123 D2's amendments (2026-10-25, 2026-10-26) and ADR-0134 D2: the
+// service picks what the frame draws, by the frame's own predicate. A lit
+// entity at a non-uniform scale is now drawn and picked (it was skipped and
+// unpickable before Spec 0067); one at a degenerate world matrix is neither.
+TEST_CASE("Runtime picks only what the frame draws: a non-uniformly scaled lit entity is drawn and picked, a "
+          "degenerate one neither",
           "[runtime][gpu][editor][picking]") {
   namespace access = atlantis::world::access;
   BootstrapConfig config = buildSmokeConfig();
@@ -1383,14 +1383,21 @@ TEST_CASE("Runtime picks only what the frame draws: an entity skipped for a non-
   const auto original = app.pickRenderable(ray);
   REQUIRE(original.has_value());
 
-  // A: another entity whose material the frame gates on the conformal test.
+  const auto drawnNow = [&app]() {
+    const auto frame = app.captureFrameData();
+    REQUIRE(frame.isOk());
+    return frame.value().drawItemCount;
+  };
+  const std::uint64_t allDrawn = drawnNow();
+
+  // A: another entity whose material the frame gates on the degenerate test.
   std::optional<atlantis::asset_system::EntityGuid> mover;
   for (const auto& entity : boundary.listEntities()) {
     if (entity == original->entity) continue;
     const auto material = boundary.getProperty({entity, renderableType, materialField});
     if (material.isErr()) continue;
     const auto* id = std::get_if<std::uint64_t>(&material.value());
-    if (id != nullptr && RuntimeSmokeTestAccess::conformalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
+    if (id != nullptr && RuntimeSmokeTestAccess::normalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
       mover = entity;
       break;
     }
@@ -1423,28 +1430,38 @@ TEST_CASE("Runtime picks only what the frame draws: an entity skipped for a non-
                                      ray.origin[2] + ray.direction[2] * half};
   // Conformal (uniform scale): drawn, so it is what the ray hits first.
   place(between, 0.5f, 0.5f, 0.5f);
+  CHECK(drawnNow() == allDrawn);
   const auto conformalHit = app.pickRenderable(ray);
   REQUIRE(conformalHit.has_value());
   CHECK(conformalHit->entity == *mover);
   CHECK(conformalHit->distance < original->distance);
-  // Non-conformal (non-uniform scale): the frame skips it, so the ray passes
-  // it and hits H behind, as before A moved.
+  // Non-uniform scale: drawn since Spec 0067, so it is still what the ray hits
+  // first (before Spec 0067 the frame skipped it and the ray passed to H).
   place(between, 0.5f, 1.0f, 0.5f);
+  CHECK(drawnNow() == allDrawn);
+  const auto nonUniformHit = app.pickRenderable(ray);
+  REQUIRE(nonUniformHit.has_value());
+  CHECK(nonUniformHit->entity == *mover);
+  CHECK(nonUniformHit->distance < original->distance);
+  // Degenerate (a zero column): the frame skips it, so the ray passes it and
+  // hits H behind, as before A moved.
+  place(between, 0.5f, 0.0f, 0.5f);
+  CHECK(drawnNow() == allDrawn - 1);
   const auto skippedHit = app.pickRenderable(ray);
   REQUIRE(skippedHit.has_value());
   CHECK(skippedHit->entity == original->entity);
   CHECK(std::abs(skippedHit->distance - original->distance) <= 1.0e-4f * original->distance);
 
-  // A ray that meets nothing but A, far above the scene: no hit while A is
-  // non-conformal, A once it is conformal again.
+  // A ray that meets nothing but A, far above the scene: A at a non-uniform
+  // scale is hit, a degenerate A is not.
   const std::array<float, 3> aloft{0.0f, 500.0f, 0.0f};
   const atlantis::runtime::PickRay alone{{0.0f, 500.0f, 50.0f}, {0.0f, 0.0f, -1.0f}};
   place(aloft, 0.5f, 1.0f, 0.5f);
-  CHECK_FALSE(app.pickRenderable(alone).has_value());
-  place(aloft, 0.5f, 0.5f, 0.5f);
   const auto aloneHit = app.pickRenderable(alone);
   REQUIRE(aloneHit.has_value());
   CHECK(aloneHit->entity == *mover);
+  place(aloft, 0.5f, 0.0f, 0.5f);
+  CHECK_FALSE(app.pickRenderable(alone).has_value());
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
@@ -2034,8 +2051,8 @@ TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity
     WARN("Bistro pickRenderable(): worst " << worst << " ms, mean " << total / 144.0 << " ms over 144 rays, " << hits
                                            << " hits");
 
-    // ADR-0123 D2's amendment (2026-10-25): how many Renderables the frame
-    // skips for a non-conformal world matrix, so pickRenderable() skips them
+    // ADR-0134 D2 (ADR-0123 D2's amendments): how many Renderables the frame
+    // skips for a degenerate world matrix, so pickRenderable() skips them
     // too (reported, never a verdict).
     namespace access = atlantis::world::access;
     access::RuntimeWorldAccess& boundary = RuntimeSmokeTestAccess::worldAccess(app);
@@ -2049,7 +2066,7 @@ TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity
       if (material.isErr()) continue;
       ++renderables;
       const auto* id = std::get_if<std::uint64_t>(&material.value());
-      if (id == nullptr || !RuntimeSmokeTestAccess::conformalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
+      if (id == nullptr || !RuntimeSmokeTestAccess::normalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
         continue;
       }
       atlantis::runtime::Mat4 matrix{};
@@ -2064,10 +2081,10 @@ TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity
           std::memcpy(matrix.data() + k * 4, columnValue->data(), sizeof(float) * 4);
         }
       }
-      if (complete && atlantis::runtime::checkConformalTransform(matrix).isErr()) ++skipped;
+      if (complete && atlantis::runtime::checkInvertibleNormalTransform(matrix).isErr()) ++skipped;
     }
     WARN("Bistro: " << skipped << " of " << renderables
-                    << " Renderables are skipped by the frame for a non-conformal world matrix, so not pickable");
+                    << " Renderables are skipped by the frame for a degenerate world matrix, so not pickable");
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif

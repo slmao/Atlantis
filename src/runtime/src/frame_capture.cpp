@@ -107,8 +107,8 @@ std::vector<DrawItem> RuntimeApplication::assembleCaptureDrawItems(
       if (materialDataIt == materialDataMap_.end()) continue;  // runFrame() CHECKs this never happens
       if ((materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
            materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) &&
-          checkConformalTransform(renderable.worldMatrix).isErr()) {
-        continue;
+          checkInvertibleNormalTransform(renderable.worldMatrix).isErr()) {
+        continue;  // runFrame()'s skip (ADR-0134 D2)
       }
       const auto it = materialResourceMap_.find(*materialAsset);
       if (it == materialResourceMap_.end()) continue;
