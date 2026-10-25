@@ -615,7 +615,13 @@ below.** A new `lit_textured` shader
 pair applies exact Lambertian diffuse shading against the real,
 Spec-0020-sourced per-vertex normal, gated by a conformal-transform
 check that affects only `LitTextured`-bound entities, never the unlit
-path. Shadows, PBR, image-based lighting, and post-processing are all
+path. *(Since Spec 0067 /
+[ADR-0134](../adr/0134-lit-normal-transform-by-cofactor.md): the eleven lit
+shaders transform normals by the world 3×3's cofactor, correct for any
+invertible matrix, and the conformal check is gone. Only a degenerate world
+matrix skips a lit entity, through one predicate,
+`checkInvertibleNormalTransform()`, which the frame, the capture path and
+picking all call.)* Shadows, PBR, image-based lighting, and post-processing are all
 explicitly out of this Spec's own scope (its own Non-Goals) — none of
 them exist anywhere in this codebase as a result of this work.
 **Disclosed, real, pre-existing limitation found during this Spec's own
