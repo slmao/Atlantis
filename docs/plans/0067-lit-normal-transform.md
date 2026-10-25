@@ -128,6 +128,19 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   System, is a separate change with its own build-graph implications.
 - **J3 — M1's golden checkpoint:** if M1 finds a golden moving by more than one 8-bit step in any channel, or in more
   than 0.1 % of its pixels, the owner rules before M2 (re-capture, or investigate the arithmetic). Proposed: accept.
+  - **Ruled on M1's numbers (slmao, 2026-10-26): accepted as pre-ruled under Q3.** M1 (`f2885e8`) left the conformal
+    skip in place and compared every golden on the reference machine (Release and Debug identical; every draw-count
+    check unchanged):
+
+    | Golden | M1 result |
+    |---|---|
+    | 27 of the 30 | byte-identical |
+    | `fog_distance_demo` | 1 pixel, RGB ±1 (alpha unchanged) |
+    | `fog_height_demo` | 1 pixel, RGB ±1 (alpha unchanged) |
+    | `bistro_demo` | 8 pixels (0.003 %), RGB ±1 (alpha unchanged) |
+
+    All three are rounding-level rendering changes. `fog_distance_demo` and `fog_height_demo` are re-captured with
+    human review in M3's PR; `bistro_demo` is re-captured there anyway, for the entities M2 draws.
 - **J4 — The degenerate threshold:** fixed numerically by the Q2 ruling (`kDegenerateLengthEpsilon` and k = 1e-4),
   never tuned to a scene. Proposed: accept.
 
