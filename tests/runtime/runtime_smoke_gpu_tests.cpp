@@ -1047,10 +1047,12 @@ TEST_CASE("Runtime: the north star in process -- Bistro's point light 6b63b12c, 
   app.runFrame();
   REQUIRE(app.shouldContinue());
   // Spec 0055 R8's light, exactly: found, read (12), set (24), stepped and
-  // captured, its frame data 24 exactly. It and its 6 m range lie about 82
-  // degrees off the scene camera's axis (camera at (-22, 1.7, 22), yaw -0.86),
-  // outside the view, so no pixel can change (verified: even 2000 leaves the
-  // capture byte-identical) -- reported as a deviation in the implementing PR.
+  // captured, its frame data 24 exactly. It and its 6 m range lie about 106
+  // degrees off the scene camera's axis (camera at (-18.358, 1.7, 15.084), pitch
+  // 0.1424, yaw -1.0472, since Spec 0067's Correction; about 82 degrees from
+  // the earlier pose), outside the view, so no pixel can change (verified from
+  // both poses: even 2000 leaves the capture byte-identical) -- reported as a
+  // deviation in the implementing PR.
   runNorthStar(app, "Point", "6b63b12c-9cde-4ae2-8391-c0b4cefadb7d", 12.0f, 24.0f,
                std::array<float, 3>{-39.615f, 3.255f, -5.032f}, /*imageChanges=*/false);
   // The same chain on a point light in view (the cafe's, overlay node 59)

@@ -1,7 +1,7 @@
 atlantis_scene_source_version: 7
 node_count: 61
 active_camera: 1
-node: node_id=1 guid=2c5aa0de-a6b6-49cb-b5dc-7610fd2a5afb parent=none position=-22 1.7 22 rotation=0 -0.86 0 scale=1 1 1 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=200 camera_exposure_ev=0 fog=0.015 0 0.15 0.7 fog_color=0.25 0.2 0.14 bloom=0.3 1
+node: node_id=1 guid=2c5aa0de-a6b6-49cb-b5dc-7610fd2a5afb parent=none position=-18.358 1.7 15.084 rotation=0.1424 -1.0472 0 scale=1 1 1 camera_fov_y=1.0472 camera_near_z=0.1 camera_far_z=200 camera_exposure_ev=0 fog=0.015 0 0.15 0.7 fog_color=0.25 0.2 0.14 bloom=0.3 1
 node: node_id=2 guid=c50cc53b-8c68-4556-8606-56913c8b706f parent=none position=0 0 0 rotation=-1 2.4 0 scale=1 1 1 light=directional color=0.6 0.7 1 intensity=0.02
 node: node_id=3 guid=6b63b12c-9cde-4ae2-8391-c0b4cefadb7d parent=none position=-39.615 3.255 -5.032 rotation=0 0 0 scale=1 1 1 light=point color=1 0.8 0.55 intensity=12 range=6
 node: node_id=4 guid=c8fd0ab9-c679-4e5b-9c96-bb311569a1f7 parent=none position=-37.825 3.255 -9.272 rotation=0 0 0 scale=1 1 1 light=point color=1 0.8 0.55 intensity=12 range=6
