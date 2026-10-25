@@ -1,15 +1,19 @@
 # Spec: Lit Normals Under Any World Matrix — Retire the Non-Conformal Skip
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-26
-- **Related Plan(s):** [Plan 0067](../plans/0067-lit-normal-transform.md) (`Draft`; drafted together with this Spec,
-  against its recommended options, as with Specs 0062–0066).
-- **Approval:** pending.
-- **Related ADR(s):** [ADR-0134](../adr/0134-lit-normal-transform-by-cofactor.md) (`Proposed`): supersedes
+- **Related Plan(s):** [Plan 0067](../plans/0067-lit-normal-transform.md) (`Approved`; Joint Human Review 2026-10-26
+  recorded in its header). As with Specs 0062–0066, the Plan was drafted together with this Spec.
+- **Approval:** slmao, 2026-10-26 — owner rulings Q1–Q5, each as its recommendation, with Q2's thresholds stated
+  numerically and Q3/Q4 refined as recorded below; recorded once in [Plan 0067](../plans/0067-lit-normal-transform.md).
+  Reviewed in this Spec's own branch PR, [PR #296](https://github.com/slmao/Atlantis/pull/296), where the rulings are
+  recorded before it merges. The open-question text keeps the options as the record of what was weighed.
+- **Related ADR(s):** [ADR-0134](../adr/0134-lit-normal-transform-by-cofactor.md) (`Accepted` 2026-10-26): supersedes
   [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)'s Decision 4, and with
   it the conformal gate that [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)'s tangent
-  path relies on.
+  path relies on. [ADR-0123](../adr/0123-editor-viewport-camera-and-picking-host-services.md) gains a second dated
+  amendment (2026-10-26) so its picking rule names ADR-0134 D2's predicate.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -76,11 +80,11 @@ skipping all but degenerate matrices, the capture path and picking follow it, an
   - Tangents still transform by `M`, which is correct for any `M`.
   - The fragment stage's normalization and Gram-Schmidt are unchanged.
   - For a conformal `M` the direction equals today's.
-- **R2 — One skip predicate.** The extraction skips a lit entity only when its world 3×3 is degenerate, the new
-  check's closure (Q2).
+- **R2 — One skip predicate.** The extraction skips a lit entity only when its world 3×3 is degenerate: a near-zero column (`|ci| < kDegenerateLengthEpsilon`, the existing 1e-6), or near-coplanar columns (`|det M| < k·|c0||c1||c2|` with **k = 1e-4**: that ratio is 1 for any matrix with orthogonal columns whatever its scale, and falls only as the columns approach a plane — a 45° shear still gives 0.71 — while float32 cancellation makes det's sign unreliable around 1e-6, so 1e-4 keeps two orders of margin above it).
   - The frame's extraction (`runFrame()`), the capture path (`frame_capture.cpp`) and `pickRenderable()` all call the
     same predicate; ADR-0123's 2026-10-25 amendment ("the service picks what the frame draws") then holds with it.
-  - `checkConformalTransform()` and `SceneExtractionError::NonConformalNormalTransform` are retired or renamed (Q2).
+  - `checkConformalTransform()` becomes `checkInvertibleNormalTransform()`, and
+    `SceneExtractionError::NonConformalNormalTransform` becomes `DegenerateWorldTransform` (Q2).
 - **R3 — Image-regression fixtures.** The fixtures that mirror the extraction's skip use R2's predicate.
 - **R4 — Editor.** A lit entity scaled non-uniformly by E2's Scale Gizmo or over the wire stays drawn and shaded
   correctly. This follows from R1 and R2.
@@ -134,6 +138,8 @@ The alternatives are listed under Q1 below, with their measured costs.
 
 ## Testing & Verification Plan
 
+- **Drift test (GPU-free):** the eleven copies of the cofactor helper are byte-identical to one reference text, as
+  the generated bindings are checked for staleness, so a copy cannot drift silently.
 - **Unit tests (GPU-free):**
   - the degenerate predicate: accepted are identity, rotation, uniform scale of either sign, non-uniform scale and
     shear; rejected are zero-length and coplanar columns;
@@ -155,7 +161,7 @@ The alternatives are listed under Q1 below, with their measured costs.
 
 ## Risks & Open Questions
 
-Each question lists options and a recommendation; the owner rules.
+All five ruled by the owner (slmao, 2026-10-26), each as its recommendation, with the refinements noted; rulings recorded in Plan 0067.
 
 - **Q1 — The approach.**
   - **N-a: cofactor normal in the vertex shader** (recommended). Exact for any invertible matrix, no CPU math, no new
@@ -167,22 +173,30 @@ Each question lists options and a recommendation; the owner rules.
   - **N-d: widen the conformal tolerance** to about 3 % anisotropy (normal error under about 0.7°). One constant, but
     it only covers near-uniform scale, and the threshold is arbitrary.
 - **Q2 — The degenerate predicate and the names.**
-  - **D-a** (recommended): keep a per-entity skip only when a column's length is near zero or
-    `|det| ≤ ε·|c0||c1||c2|` (near-coplanar). Rename `checkConformalTransform()` to `checkInvertibleNormalTransform()`
-    and `NonConformalNormalTransform` to `DegenerateNormalTransform`.
+  - **D-a** (recommended; **ruled**): keep a per-entity skip only when the world 3×3 is degenerate: a near-zero column (`|ci| < kDegenerateLengthEpsilon`, the existing 1e-6), or near-coplanar columns (`|det M| < k·|c0||c1||c2|` with **k = 1e-4**: that ratio is 1 for any matrix with orthogonal columns whatever its scale, and falls only as the columns approach a plane — a 45° shear still gives 0.71 — while float32 cancellation makes det's sign unreliable around 1e-6, so 1e-4 keeps two orders of margin above it).
+    Rename `checkConformalTransform()` to `checkInvertibleNormalTransform()` and `NonConformalNormalTransform` to
+    `DegenerateWorldTransform`.
   - **D-b:** no skip at all, letting the shader normalize a near-zero vector (NaN risk).
 - **Q3 — Goldens of conformal scenes.** The cofactor path computes the same direction through different arithmetic.
   - Most goldens should stay byte-identical. A few pixels may move by one 8-bit step through float rounding.
   - **G-a** (recommended): measure in Plan 0067 M1 and re-capture any golden that moves, as a rendering change with
     per-golden metrics, alongside Bistro's.
   - **G-b:** a per-golden tolerance instead (rejected: ADR-0042's 0/0 rule).
+  - **Ruled: G-a, decided after M1's numbers (Plan 0067 J3).** A golden whose draw counters are identical and whose
+    pixels differ only at rounding level is re-captured as a rendering change with human review, in the same PR as
+    Bistro's re-capture; anything larger stops for the owner.
 - **Q4 — The performance baseline.** Bistro's counters change (+368 draws, +1.37 M triangles).
   - **B-a** (recommended): the implementation PR reports the gate's counter `fail` with the expected deltas; a
     dedicated baseline PR (category 1, performance change) re-records after merge.
   - **B-b:** bundle the baseline (rejected: AGENTS.md requires a dedicated PR).
+  - **Ruled: B-a.** The implementation PR's gate fails on Bistro's counters by design and says so; Bistro's frame time
+    before and after is reported, not judged; the baseline refresh is its own PR after merge (Spec 0061 Stage 2's
+    precedent).
 - **Q5 — Picking.** #295 made `pickRenderable()` apply the extraction's conformal skip.
   - **P-a** (recommended): it calls R2's shared predicate, so it again picks exactly what the frame draws (now
-    nearly everything), and ADR-0123's amendment needs no further change.
+    nearly everything). **Ruled: P-a.** ADR-0123's 2026-10-25 amendment names the old predicate ("a non-conformal
+    world matrix"), so ADR-0123 gains a second dated amendment (2026-10-26): the rule stays ("the service picks what the
+    frame draws"), and the predicate becomes ADR-0134 D2's.
 - **Risks:**
   - Bistro's look changes noticeably, with objects appearing that were never seen in this engine. The human golden
     review must judge them on their own (for example the street lights' and trees' materials).

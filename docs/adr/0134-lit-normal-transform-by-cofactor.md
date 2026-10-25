@@ -1,10 +1,11 @@
 # ADR 0134: Lit Normals Transform by the World Matrix's Cofactor; Only a Degenerate Matrix Is Skipped
 
-- **Status:** Proposed
-- **Date:** 2026-10-26
+- **Status:** Accepted
+- **Date:** 2026-10-26 (accepted 2026-10-26)
 - **Deciders:** slmao
-- **Acceptance:** pending (reviewed with [Spec 0067](../specs/0067-lit-normal-transform.md) and
-  [Plan 0067](../plans/0067-lit-normal-transform.md)).
+- **Acceptance:** slmao, 2026-10-26 (owner rulings on Spec 0067 Q1–Q5, each as recommended, with Q2's thresholds
+  stated numerically; recorded once in [Plan 0067](../plans/0067-lit-normal-transform.md); the ADR text was reviewed
+  in [PR #296](https://github.com/slmao/Atlantis/pull/296)).
 - **Related Spec:** [Spec 0067: Lit Normals Under Any World Matrix](../specs/0067-lit-normal-transform.md)
 - **Related ADR(s):**
   - **Supersedes** [ADR-0062](0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)
@@ -12,8 +13,9 @@
     skipped. ADR-0062's other decisions are unchanged.
   - **Amends the reliance of** [ADR-0074](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)'s tangent path
     on that gate. Tangents still transform by the world 3×3; the gate it named becomes this ADR's D2.
-  - **Keeps** [ADR-0123](0123-editor-viewport-camera-and-picking-host-services.md)'s amendment of 2026-10-25 ("the
-    service picks what the frame draws"): picking calls D2's predicate.
+  - **Amends in part** [ADR-0123](0123-editor-viewport-camera-and-picking-host-services.md)'s amendment of 2026-10-25:
+    its rule ("the service picks what the frame draws") stays, and its predicate ("a non-conformal world matrix")
+    becomes D2's. ADR-0123 records this as its own second dated amendment (2026-10-26), so the two ADRs agree.
 
 Record one decision and its rationale. Follow the
 [ADR lifecycle](README.md); keep approval discussion and execution evidence in
@@ -52,10 +54,14 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   - Tangents still transform by `M` (a surface direction transforms by `M` for any `M`). The fragment stage's
     normalization and Gram-Schmidt are unchanged.
 - **D2 — One predicate, degenerate only.** A lit (`LitTextured`- or `PbrDirectLit`-bound) entity is skipped only when
-  its world 3×3 is degenerate: a near-zero column, or `|det M|` below a small fraction of `|c0||c1||c2|` (near-coplanar
-  columns).
-  - The frame's extraction, the capture path and `pickRenderable()` call the one predicate, which replaces
-    `checkConformalTransform()`; its error replaces `NonConformalNormalTransform`.
+  its world 3×3 is degenerate:
+  - a near-zero column: `|ci| < kDegenerateLengthEpsilon` (1e-6, the existing constant);
+  - or near-coplanar columns: `|det M| < k·|c0||c1||c2|` with **k = 1e-4**. The ratio is 1 for any matrix with
+    orthogonal columns whatever its scale, and falls only as the columns approach a plane (a 45° shear gives 0.71).
+    float32 cancellation makes det's sign unreliable around 1e-6, so 1e-4 keeps two orders of margin above it.
+  - The frame's extraction, the capture path and `pickRenderable()` call the one predicate,
+    `checkInvertibleNormalTransform()`, which replaces `checkConformalTransform()`; its error,
+    `DegenerateWorldTransform`, replaces `NonConformalNormalTransform`.
   - Unlit and material-less entities are still never checked.
 
 ## Consequences
@@ -74,7 +80,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   refresh.
 - Conformal scenes compute the same direction through different arithmetic, so a golden may move by one 8-bit step in
   a few pixels. Any such golden is re-captured as a reviewed rendering change.
-- The formula is repeated verbatim in each lit shader (no shader include exists today); a CPU mirror test pins it.
+- The formula is repeated verbatim in each lit shader (no shader include exists today). A drift test holds the eleven
+  copies byte-identical to one reference text, and a CPU mirror test pins the formula.
 
 ## Alternatives Considered
 
