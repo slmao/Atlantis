@@ -3,9 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-24
+- **Implementation:** merged — M1–M7 in [PR #290](https://github.com/slmao/Atlantis/pull/290), on `main` at `7cf06a2`. Verified on the
+  reference machine (the AMD RX 7900 XT desktop since 2026-10-25): goldens byte-identical, the performance gate
+  `pass`, the owner's look at the outline and Gizmo on both scenes recorded in PR #290.
 - **Related Plan(s):** [Plan 0066](../plans/0066-editor-overlay-and-input.md) (`Approved`; Joint Human Review
-  2026-10-24 recorded in its header). As with Specs 0062–0065, the Plan was drafted together with this Spec at the
-  maintainer's direction.
+  2026-10-24 recorded in its header; implemented in PR #290). As with Specs 0062–0065, the Plan was drafted together
+  with this Spec at the maintainer's direction.
 - **Approval:** slmao, 2026-10-24 — owner rulings Q1–Q6, each as its recommendation (Q1 (a); Q2 P-a + L-a + G-a + S-a + O-a; Q3 I-1; Q4 H-a; Q5 as confirmed; Q6's budgets), recorded once in
   [Plan 0066](../plans/0066-editor-overlay-and-input.md). The text was reviewed in this Spec's own branch PR, [PR #286](https://github.com/slmao/Atlantis/pull/286)
   (revised after review, merged at `2e22e1a`); the rulings were given after that merge and are recorded by their own

@@ -73,7 +73,9 @@ status of every module.
   C#/Avalonia process (`src/editor_app/`, built only with
   `-DATLANTIS_BUILD_EDITOR_APP=ON`) that embeds the Runtime's Viewport as a
   child window, orbits its camera and picks entities over the same
-  `atlantis.remote/1` interface as every other client
+  `atlantis.remote/1` interface as every other client, outlining the
+  picked entity and drawing a translate Gizmo through a per-client
+  Viewport overlay the Runtime draws after the scene
 
 **Performance**
 - `ATL_PROFILE_*` instrumentation that compiles to nothing by default, GPU
