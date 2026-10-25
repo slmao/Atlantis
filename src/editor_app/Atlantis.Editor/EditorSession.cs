@@ -3,7 +3,8 @@
 // the entity list, the scene camera, SetViewportCamera, Raycast, the
 // frame-time and latency measurements of the Phase 1 investigation, and Plan
 // 0066 M1's measurement drag (WorldMatrix.column3 writes, timed), and Plan
-// 0066 M5's pick overlay (SetViewportOverlay: an outline and a Gizmo). One
+// 0066 M5's pick overlay (SetViewportOverlay: an outline and a Gizmo) and M6's
+// overlay measurement (OverlayMeasurement.cs). One
 // worker thread owns the RemoteSession (the SDK is not thread-safe), so the
 // UI thread never waits on the Runtime's frame. UI-free.
 using System;
@@ -295,6 +296,86 @@ public sealed class EditorWorker : IDisposable
         string what = overlay is null ? "cleared" : (overlay.Groups.Count > 0 ? "outline and Gizmo for " : "outline for ") + entity;
         _log.Write("overlay " + what + (error is ControlError refused ? " refused: " + refused : ""));
     });
+
+    /// <summary>Plan 0066 M6: the overlay measurement (OverlayMeasurement.cs); <paramref name="done"/> runs on the UI thread.</summary>
+    public void MeasureOverlay(OverlayMeasureRequest request, string label, Action<OverlayReport> done) => Enqueue(session =>
+    {
+        OverlayReport report = MeasureOverlay(session, request, label);
+        _log.Write("overlay measurement " + report);
+        _post(() => done(report));
+    });
+
+    private OverlayReport MeasureOverlay(RemoteSession session, OverlayMeasureRequest request, string label)
+    {
+        RemoteControl control = session.Control;
+        var phases = new List<OverlayPhase>();
+        OverlayReport Failed(string why) => new(label, null, 0, 0, Stats.Of(Array.Empty<double>()), phases, why);
+
+        EntityGuid entity;
+        if (request.Entity is EntityGuid given)
+        {
+            entity = given;
+        }
+        else
+        {
+            RaycastResult hit = control.Raycast(new Ray(request.Ray.Origin, request.Ray.Direction));
+            if (hit.Hit is not RayHit picked) return Failed("the pick ray hit nothing (" + (hit.Error?.ToString() ?? "miss") + ")");
+            entity = picked.Entity;
+        }
+        Vector4 column3 = _world!.Get<W.WorldMatrix>(entity).Column3;
+        ViewportOverlay overlay = GizmoOverlay.ForPick(entity, new Vector3(column3.X, column3.Y, column3.Z));
+        ViewportCamera still = SceneReader.ToViewportCamera(request.Pose);
+        control.SetViewportCamera(still);
+        double framePeriod = FrameSampler.Measure(control, 120).MedianMs;
+
+        // A phase: the overlay set (or not), then PhaseSeconds of frames, timed by status answers at both ends.
+        void Phase(string name, ViewportOverlay? shown)
+        {
+            if (control.SetViewportOverlay(shown) is ControlError refused) throw new InvalidOperationException("overlay refused: " + refused);
+            System.Threading.Thread.Sleep(1000);  // the change is drawn and settles before the phase starts
+            RuntimeStatus first = control.Status();
+            DateTime start = DateTime.UtcNow;
+            long startTicks = Stopwatch.GetTimestamp();
+            System.Threading.Thread.Sleep(TimeSpan.FromSeconds(request.PhaseSeconds));
+            RuntimeStatus last = control.Status();
+            double ms = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            double period = last.Frame > first.Frame ? ms / (last.Frame - first.Frame) : 0;
+            phases.Add(new OverlayPhase(name, shown is not null, start, DateTime.UtcNow, period));
+        }
+
+        // Send -> the answer after the first frame drawn with it.
+        double Dated(ViewportOverlay? shown)
+        {
+            long start = Stopwatch.GetTimestamp();
+            if (control.SetViewportOverlay(shown) is ControlError refused) throw new InvalidOperationException("overlay refused: " + refused);
+            _ = control.Status();
+            return Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        }
+
+        Phase("pristine", null);
+        double firstSend = Dated(overlay);
+        var orbit = new OrbitCamera();
+        orbit.Reset(request.Pose);
+        var sends = new List<double>(request.Sends);
+        for (int i = 0; i < request.Sends; ++i)
+        {
+            orbit.Orbit(4.0f, 0.0f);
+            control.SetViewportCamera(SceneReader.ToViewportCamera(orbit.Pose()));
+            control.SetViewportOverlay(null);
+            orbit.Orbit(4.0f, 0.0f);
+            control.SetViewportCamera(SceneReader.ToViewportCamera(orbit.Pose()));
+            sends.Add(Dated(overlay));
+        }
+        control.SetViewportCamera(still);
+        for (int pair = 0; pair < request.PhasePairs; ++pair)
+        {
+            Phase("off " + (pair + 1), null);
+            Phase("on " + (pair + 1), overlay);
+        }
+        control.SetViewportOverlay(null);
+        control.SetViewportCamera(null);
+        return new OverlayReport(label, entity, framePeriod, firstSend, Stats.Of(sends), phases);
+    }
 
     /// <summary>
     /// Plan 0066 M1: starts a measurement drag of <paramref name="entity"/> in the view plane of

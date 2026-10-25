@@ -40,6 +40,14 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public int DriveDrags { get; init; }
     public bool ExitAfterDrive { get; init; }
     public int SettleSeconds { get; init; } = 5;
+    // Plan 0066 M6: the overlay measurement's options (measurement-only).
+    public bool MeasureOverlay { get; init; }
+    public int OverlaySends { get; init; } = 50;
+    public int OverlayPhasePairs { get; init; } = 3;
+    public double OverlayPhaseSeconds { get; init; } = 15.0;
+    public (float X, float Y) PickNdc { get; init; }
+    public EntityGuid? OverlayEntity { get; init; }
+    public (int Width, int Height)? ViewportSize { get; init; }
 }
 
 public sealed class MainWindow : Window
@@ -284,7 +292,48 @@ public sealed class MainWindow : Window
             _entities.SelectedItem = scene.Entities.FirstOrDefault(row => row.Guid == first);  // the drag's default subject
         }
         if (_options.DriveDrags > 0) StartDriver();
+        if (_options.MeasureOverlay) StartOverlayMeasurement();
         UpdateStatus();
+    }
+
+    // Plan 0066 M6: the Viewport sized (--viewport, else maximized), then, once the scene has settled, the overlay
+    // measurement of the entity under PickNdc from the scene camera.
+    private void StartOverlayMeasurement()
+    {
+        if (_options.ViewportSize is { } size)
+        {
+            _sizeBox.Text = size.Width + "x" + size.Height;
+            ApplyViewportSize();
+        }
+        else
+        {
+            WindowState = WindowState.Maximized;
+        }
+        _measureLine = "measuring the overlay in " + _options.SettleSeconds + " s...";
+        UpdateStatus();
+        DispatcherTimer.RunOnce(() =>
+        {
+            ViewportWindow? window = _viewport.Window;
+            if (window is null || _worker is null || _scene?.ScenePose is not CameraPose pose) return;
+            CameraMatrices? matrices = CameraConvention.Matrices(pose, (float)window.Width / window.Height);
+            if (matrices is null) return;
+            PickRay ray = CameraConvention.RayThroughNdc(matrices, _options.PickNdc.X, _options.PickNdc.Y);
+            var request = new OverlayMeasureRequest(pose, ray, _options.OverlayEntity, _options.OverlaySends, _options.OverlayPhasePairs,
+                                                    _options.OverlayPhaseSeconds);
+            string label = string.Format(CultureInfo.InvariantCulture, "{0} viewport {1}x{2} {3}", _options.Scene, window.Width, window.Height,
+                                         _options.OverlayEntity is EntityGuid e
+                                             ? "entity " + e
+                                             : string.Format(CultureInfo.InvariantCulture, "pick ndc {0:F2},{1:F2}", _options.PickNdc.X, _options.PickNdc.Y));
+            _log.Write("overlay measurement: " + label);
+            _worker.MeasureOverlay(request, label, report =>
+            {
+                string path = OverlayReportFile.Write(_workDirectory, report);
+                _log.Write("overlay report written to " + path);
+                _measureLine = report.ToString();
+                UpdateStatus();
+                if (_options.ExitAfterDrive) Close();
+            });
+        }, TimeSpan.FromSeconds(_options.SettleSeconds));
     }
 
     // Plan 0066 M1: the protocol's drags, replayed with real OS input once the scene has settled.
