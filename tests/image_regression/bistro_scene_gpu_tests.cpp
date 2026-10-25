@@ -144,12 +144,12 @@ TEST_CASE("The assembled Bistro scene validates, loads through the Runtime path,
   const double firstFrameSeconds = secondsSince(firstStart);
   INFO("PbrNormalMapDemoRenderError " << (first.isErr() ? static_cast<int>(first.error()) : -1));
   REQUIRE(first.isOk());
-  // Every renderable resolves (mesh and material), but 368 of the 2909 sit
-  // under a non-uniformly-scaled node chain, and the Runtime's existing
-  // conformal-transform rule (checkConformalTransform(), PbrDirectLit)
-  // skips those per frame -- the fixture applies the same rule. Pinned
-  // here as measured (Plan 0046 M3 finding), not endorsed.
-  CHECK(fixture.lastDrawItemCount == 2909 - 368);
+  // Every renderable resolves (mesh and material) and every one is drawn:
+  // the 368 under a non-uniformly-scaled node chain, which the conformal
+  // rule skipped until Plan 0067 (Plan 0046 M3's pinned 2909 - 368), now
+  // pass the degenerate-only predicate (checkInvertibleNormalTransform(),
+  // ADR-0134 D2) the fixture applies as runFrame() does.
+  CHECK(fixture.lastDrawItemCount == 2909);
   CHECK(fixture.materialResourceMap.size() == 254);
 
   // 4. Steady state: every resource already realized.

@@ -30,7 +30,7 @@
 // loadAndInstantiateScene()/computePendingMaterialIds()/
 // realizePendingMaterials()/extractCameraMatrices()/
 // extractCameraWorldPosition()/extractFrameLightingData()/
-// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()
+// resolveMeshAsset()/resolveMaterialAsset()/checkInvertibleNormalTransform()
 // directly, never re-implementing any of them. Duplicated, not shared,
 // from pbr_anisotropic_demo_fixture.cpp (that file's own top-of-file
 // comment establishes this repository's convention for from-scratch
@@ -47,7 +47,7 @@ using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
 using atlantis::runtime::CameraWorldPositionData;
-using atlantis::runtime::checkConformalTransform;
+using atlantis::runtime::checkInvertibleNormalTransform;
 using atlantis::runtime::computePendingMaterialIds;
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::extractCameraWorldPosition;
@@ -620,7 +620,7 @@ atlantis::Result<PixelBuffer, PbrMaterialsShowcaseRenderError> renderPbrMaterial
     if (resolveMaterialAsset(*materialAsset, knownMaterialIds).isErr()) continue;
 
     // Gated on this entity's OWN MaterialAssetData.kind -- an
-    // UnlitTextured-bound entity never calls checkConformalTransform().
+    // UnlitTextured-bound entity never calls checkInvertibleNormalTransform().
     // Plan 0035 Milestone 5: this scene references every PBR kind that
     // needs this gate, so all four are listed.
     const auto materialDataIt = fixture.materialDataMap.find(*materialAsset);
@@ -630,7 +630,7 @@ atlantis::Result<PixelBuffer, PbrMaterialsShowcaseRenderError> renderPbrMaterial
         materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrClearcoat ||
         materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrSheen ||
         materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrAnisotropic) {
-      if (checkConformalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
+      if (checkInvertibleNormalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
     }
 
     const atlantis::renderer::Material* resolvedMaterial = nullptr;

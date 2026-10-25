@@ -26,7 +26,7 @@
 // Atlantis::RuntimeHost's real loadAndInstantiateScene()/
 // computePendingMaterialIds()/realizePendingMaterials()/
 // extractCameraMatrices()/resolveMeshAsset()/resolveMaterialAsset()/
-// extractFrameLightingData()/checkConformalTransform() directly, never
+// extractFrameLightingData()/checkInvertibleNormalTransform() directly, never
 // re-implementing any of them.
 
 namespace atlantis::image_regression {
@@ -39,7 +39,7 @@ using atlantis::rhi::BufferPurpose;
 using atlantis::rhi::DepthFormat;
 using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
-using atlantis::runtime::checkConformalTransform;
+using atlantis::runtime::checkInvertibleNormalTransform;
 using atlantis::runtime::computePendingMaterialIds;
 using atlantis::runtime::extractCameraMatrices;
 using atlantis::runtime::extractFrameLightingData;
@@ -441,11 +441,11 @@ atlantis::Result<PixelBuffer, LightingDemoRenderError> renderLightingDemoFrame(L
 
     // Plan 0019 Section P15: gated on this entity's OWN
     // MaterialAssetData.kind -- an UnlitTextured-bound entity never
-    // calls checkConformalTransform().
+    // calls checkInvertibleNormalTransform().
     const auto materialDataIt = fixture.materialDataMap.find(*materialAsset);
     if (materialDataIt == fixture.materialDataMap.end()) continue;  // resolveMaterialAsset() already confirmed membership; defensive only
     if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured) {
-      if (checkConformalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
+      if (checkInvertibleNormalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
     }
 
     const atlantis::renderer::Material* resolvedMaterial = nullptr;

@@ -36,7 +36,7 @@ namespace atlantis::image_regression {
 // (Phase 1 CPU load), computePendingMaterialIds()/realizePendingMaterials()
 // (Phase 2 GPU realization), extractCameraMatrices()/resolveMeshAsset()/
 // resolveMaterialAsset() helpers, AND (new to this fixture)
-// extractFrameLightingData()/checkConformalTransform() -- never a
+// extractFrameLightingData()/checkInvertibleNormalTransform() -- never a
 // fixture-private reimplementation of any of them (Spec 0019 D10's own
 // named requirement).
 //
@@ -155,7 +155,7 @@ enum class LightingDemoRenderError {
 
 // One full acquire -> updateTransforms() -> Lighting extraction and
 // publish (Plan 0022 Section M2: every call re-extracts, unconditional)
-// -> realize (Phase 2) -> draw (gated by checkConformalTransform() for
+// -> realize (Phase 2) -> draw (gated by checkInvertibleNormalTransform() for
 // every LitTextured-bound entity, Section P15) -> copy -> submit ->
 // waitIdle cycle. May be called more than once against the same
 // LightingDemoFixture, reusing the same cameraBuffer/depthTexture/

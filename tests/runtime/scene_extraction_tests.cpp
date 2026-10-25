@@ -17,7 +17,6 @@
 
 using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
-using atlantis::runtime::checkConformalTransform;
 using atlantis::runtime::checkInvertibleNormalTransform;
 using atlantis::runtime::computeLambertianDiffuse;
 using atlantis::runtime::computePbrDirectLighting;
@@ -569,60 +568,6 @@ TEST_CASE("extractFrameLightingData(): calling it twice with byte-identical inpu
   FrameLightingData firstBytes = firstResult.value();
   FrameLightingData secondBytes = secondResult.value();
   CHECK(std::memcmp(&firstBytes, &secondBytes, sizeof(FrameLightingData)) == 0);
-}
-
-// ---------------------------------------------------------------------
-// checkConformalTransform() -- Plan 0019 Sections P8/P15 (Spec 0019 D7),
-// Milestone 7/V12. Every hand-constructed 3x3 case D7's own proof
-// sketch names.
-// ---------------------------------------------------------------------
-
-TEST_CASE("checkConformalTransform(): identity is accepted", "[runtime][scene_extraction][light]") {
-  const Mat4 identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(identity).isOk());
-}
-
-TEST_CASE("checkConformalTransform(): a pure rotation is accepted", "[runtime][scene_extraction][light]") {
-  // A 90-degree rotation about Z: column0=(0,1,0), column1=(-1,0,0), column2=(0,0,1).
-  const Mat4 rotation{0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(rotation).isOk());
-}
-
-TEST_CASE("checkConformalTransform(): a uniform positive scale is accepted", "[runtime][scene_extraction][light]") {
-  const Mat4 uniformScale{2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(uniformScale).isOk());
-}
-
-TEST_CASE("checkConformalTransform(): a uniform NEGATIVE scale (a full point reflection) is accepted",
-          "[runtime][scene_extraction][light]") {
-  // D7's own explicitly-named "uniform scale of either sign" case -- -I is
-  // itself an orthogonal matrix, so this must be accepted, not rejected.
-  const Mat4 negativeUniformScale{-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(negativeUniformScale).isOk());
-}
-
-TEST_CASE("checkConformalTransform(): non-uniform scale is rejected", "[runtime][scene_extraction][light]") {
-  const Mat4 nonUniformScale{2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(nonUniformScale);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
-}
-
-TEST_CASE("checkConformalTransform(): shear is rejected", "[runtime][scene_extraction][light]") {
-  // column1 = (1,1,0) -- a nonzero (0,1) entry breaking column0/column1
-  // orthogonality beyond what any pure rotation would produce.
-  const Mat4 shear{1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(shear);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
-}
-
-TEST_CASE("checkConformalTransform(): a degenerate (near-zero-length) column is rejected",
-          "[runtime][scene_extraction][light]") {
-  const Mat4 degenerate{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1e-9f, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(degenerate);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
 }
 
 // ---------------------------------------------------------------------

@@ -34,7 +34,7 @@
 // realizePendingMaterials()/realizeOneMaterialCandidate()/
 // extractCameraMatrices()/extractCameraWorldPosition()/
 // extractFrameLightingData()/resolveMeshAsset()/resolveMaterialAsset()/
-// checkConformalTransform()/computeShadowLightSpaceMatrices() directly,
+// checkInvertibleNormalTransform()/computeShadowLightSpaceMatrices() directly,
 // never re-implementing any of them. The shadow path is real, mirroring
 // that fixture's own identical shape. The control material (Fixture A/B
 // mechanism, P19) is realized once, lazily, on the first
@@ -54,7 +54,7 @@ using atlantis::rhi::Extent2D;
 using atlantis::rhi::VertexInputLayout;
 using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
-using atlantis::runtime::checkConformalTransform;
+using atlantis::runtime::checkInvertibleNormalTransform;
 using atlantis::runtime::computePendingMaterialIds;
 using atlantis::runtime::computeShadowLightSpaceMatrices;
 using atlantis::runtime::extractCameraMatrices;
@@ -785,7 +785,7 @@ atlantis::Result<PixelBuffer, PbrNormalMapDemoRenderError> renderPbrNormalMapDem
     if (materialDataIt == fixture.materialDataMap.end()) continue;  // resolveMaterialAsset() already confirmed membership; defensive only
     if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
         materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
-      if (checkConformalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
+      if (checkInvertibleNormalTransform(renderable.worldMatrix).isErr()) continue;  // skip this entity for this frame only
     }
 
     const atlantis::renderer::Material* resolvedMaterial = nullptr;

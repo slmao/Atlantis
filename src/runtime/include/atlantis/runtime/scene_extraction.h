@@ -57,14 +57,6 @@ enum class SceneExtractionError {
   // world-matrix-derived direction instead of a camera's own forward
   // vector.
   DegenerateLightDirection,
-  // Plan 0019 Section P8/P15: a LitTextured-bound entity's own world
-  // matrix fails checkConformalTransform() -- its upper-left 3x3 is not
-  // (uniform-scale-times-)orthogonal, so the vertex shader's own direct
-  // objectToWorld-based normal transform (P11) would be wrong.
-  // Superseded by DegenerateWorldTransform (ADR-0134); kept, with
-  // checkConformalTransform(), for the image-regression fixtures until
-  // Plan 0067 M3 moves them over and removes both.
-  NonConformalNormalTransform,
   // ADR-0134 D2 (Spec 0067 R2): a lit entity's world 3x3 is degenerate --
   // checkInvertibleNormalTransform() -- so no normal direction exists.
   DegenerateWorldTransform,
@@ -298,20 +290,6 @@ struct LightExtractionInput {
 // or out-of-bounds write.
 [[nodiscard]] atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingData(
     const std::vector<LightExtractionInput>& lights);
-
-// Plan 0019 Section P8/P15: a per-entity, per-frame check, called only
-// for a LitTextured-bound entity's own current world matrix --
-// unrelated to light extraction itself, grouped here only because it
-// shares this file's own "world-matrix-driven, SceneExtractionError-
-// returning" shape. Accepts an upper-left 3x3 that is a pure rotation,
-// optionally combined with a uniform scale of either sign (D7's own
-// "conformal" definition); rejects non-uniform scale, shear, or a
-// degenerate (near-zero-length) column. Superseded by
-// checkInvertibleNormalTransform() (ADR-0134 D2): the Runtime no longer calls
-// it; the image-regression fixtures do until Plan 0067 M3 moves them over and
-// removes it (with its comment's "1% relative tolerance", which misstates
-// its 1e-4 bound on squared lengths).
-[[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(const Mat4& worldMatrix);
 
 // ADR-0134 D2 (Spec 0067 R2): the one predicate that decides which lit
 // (LitTextured- or PbrDirectLit-bound) entities the frame skips -- called
