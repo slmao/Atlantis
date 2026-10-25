@@ -2,7 +2,8 @@
 // and asks of the Runtime, over the Atlantis C# SDK only (ADR-0125 D1/D2):
 // the entity list, the scene camera, SetViewportCamera, Raycast, the
 // frame-time and latency measurements of the Phase 1 investigation, and Plan
-// 0066 M1's measurement drag (WorldMatrix.column3 writes, timed). One
+// 0066 M1's measurement drag (WorldMatrix.column3 writes, timed), and Plan
+// 0066 M5's pick overlay (SetViewportOverlay: an outline and a Gizmo). One
 // worker thread owns the RemoteSession (the SDK is not thread-safe), so the
 // UI thread never waits on the Runtime's frame. UI-free.
 using System;
@@ -267,6 +268,32 @@ public sealed class EditorWorker : IDisposable
                                  ray.Direction.Y, ray.Direction.Z));
         var answer = new PickResult(result, ray, ms);
         _post(() => Picked?.Invoke(answer));
+    });
+
+    /// <summary>
+    /// Plan 0066 M5 (Spec 0066 R7): the overlay for a pick -- <paramref name="entity"/> outlined, with a translate
+    /// Gizmo at its WorldMatrix's translation (read here, on the worker thread) -- or none (null: nothing picked).
+    /// An entity whose WorldMatrix cannot be read is outlined without a Gizmo.
+    /// </summary>
+    public void ShowPick(EntityGuid? entity) => Enqueue(session =>
+    {
+        ViewportOverlay? overlay = null;
+        if (entity is EntityGuid picked)
+        {
+            overlay = ViewportOverlay.Select(picked);
+            try
+            {
+                Vector4 column3 = _world!.Get<W.WorldMatrix>(picked).Column3;
+                overlay = GizmoOverlay.ForPick(picked, new Vector3(column3.X, column3.Y, column3.Z));
+            }
+            catch (RefusedException e)
+            {
+                _log.Write("overlay: no WorldMatrix for " + picked + " (" + e.Message + "), outline only");
+            }
+        }
+        ControlError? error = session.Control.SetViewportOverlay(overlay);
+        string what = overlay is null ? "cleared" : (overlay.Groups.Count > 0 ? "outline and Gizmo for " : "outline for ") + entity;
+        _log.Write("overlay " + what + (error is ControlError refused ? " refused: " + refused : ""));
     });
 
     /// <summary>

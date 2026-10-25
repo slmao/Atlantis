@@ -2,7 +2,10 @@
 // entity list and the embedded Viewport, and a status line. The Viewport's
 // host window is handed to atlantis_runtime as --parent-window; the Runtime's
 // forwarded input orbits and dollies the editor camera (SetViewportCamera)
-// and a click ray-casts (Raycast) and highlights the hit in the list. The
+// and a click ray-casts (Raycast) and highlights the hit in the list -- and,
+// Plan 0066 M5 (Spec 0066 R7), outlines it in the Viewport with a translate
+// Gizmo (SetViewportOverlay; a miss clears both, a camera change sends
+// nothing). The
 // status line and editor.log carry the Phase 1 measurements (P5).
 //
 // Plan 0066 M1 (Spec 0066 R8): with MeasureDrag, a Shift + left drag on the
@@ -448,12 +451,14 @@ public sealed class MainWindow : Window
             EntityRow? row = _scene?.Entities.FirstOrDefault(r => r.Guid == hit.Entity);
             _entities.SelectedItem = row;
             if (row is not null) _entities.ScrollIntoView(row);
+            _worker?.ShowPick(hit.Entity);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: {0} at {1:F3} ({2:F1} ms)", hit.Entity, hit.Distance,
                                       pick.InputToAnswerMs);
         }
         else
         {
             _entities.SelectedItem = null;
+            _worker?.ShowPick(null);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: no hit ({0:F1} ms)", pick.InputToAnswerMs);
         }
         UpdateStatus();
