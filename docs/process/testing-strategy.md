@@ -68,6 +68,17 @@ result, not an automatic gate; see [ci-strategy.md](ci-strategy.md).
   metric. This value is scoped to that fixture and reference environment,
   not generalized to a future scene or different hardware without its
   own calibration evidence.
+- **The reference environment** is where goldens are captured and
+  compared. From 2026-10-25 it is the AMD Radeon RX 7900 XT desktop
+  (Windows 10 Pro, AMD Ryzen 7 9700X, driver 26.10.1, its integrated GPU
+  disabled, 60 Hz), by the owner's ruling recorded as
+  [Spec 0011](../specs/0011-image-regression-testing-foundation.md)'s
+  Correction of that date. Until then it was the Intel Arc B370 laptop.
+  The goldens are the ones captured on the reference environment: those
+  that differ there are re-captured in one reviewed PR, categorized as a
+  reference-environment change. The 0/0 calibration is re-run there before
+  the rule is treated as valid there. A run on any other machine is not
+  reference-environment verification evidence.
 
 ## Debugging
 
