@@ -273,10 +273,22 @@ instead of the scene's; cleared when the client that set it disconnects) and
 Runtime keeps no pick geometry). They are control calls, not World verbs.
 Since Spec 0065 (ADR-0130 D3) the wire also carries `AuthoringConnection` as
 `authoring.*` (additive; `NoAuthoring` from a Runtime serving no session), and
-`control.status` carries `sceneGeneration`. See
+`control.status` carries `sceneGeneration`. Since Spec 0066 (ADR-0132)
+`RuntimeControl` has `setViewportOverlay`, carried by the wire and exposed by the
+CLI (`runtime overlay set|select|clear`, `runtime step --capture --with-overlay`)
+and Atlantis C# SDK: a client's Viewport overlay (Atlantis Connection's
+`ViewportOverlay`, `viewport_overlay.h` — a selection the Runtime outlines from
+the entities' meshes, and groups of segments, triangles and points from a closed
+set, each group world or screen-constant, each primitive depth-tested or on top),
+one per client within fixed limits (`InvalidRequest` over them, nothing
+changed). The Runtime draws the union of every client's overlay, and a client's
+overlay goes when it disconnects (Remote's server forms the union). A capture
+shows no overlay unless its step request asks (`withOverlay`), and then only the
+requester's own. See
 [ADR-0106](docs/adr/0106-attachable-runtime-transport-and-control.md),
-[ADR-0128](docs/adr/0128-remote-viewport-camera-and-raycast.md) and
-[ADR-0130](docs/adr/0130-authoring-access-interface-and-module-boundary.md).
+[ADR-0128](docs/adr/0128-remote-viewport-camera-and-raycast.md),
+[ADR-0130](docs/adr/0130-authoring-access-interface-and-module-boundary.md) and
+[ADR-0132](docs/adr/0132-viewport-overlay-surface.md).
 
 Atlantis Editor (Spec 0056, `Approved`) is one more ordinary client of a
 running Runtime: Hierarchy, a schema-generated Inspector, a Viewport and a
@@ -366,7 +378,10 @@ the CLI and both SDKs in the same Spec; there is no editor-only method, channel
 or file. Its OS calls (`user32`) are on its own windows and the Runtime's hosted
 child only, never engine code. It embeds the Viewport through Platform's
 child-window mode (below) and receives the Runtime's forwarded input (ADR-0126,
-V-a with route R-a, adopted at the Phase 1 checkpoint). **It is the one place
+V-a with route R-a, adopted at the Phase 1 checkpoint and kept by Spec 0066's
+input investigation). Since Spec 0066 a pick outlines the hit entity and draws a
+translate Gizmo at its translation through `SetViewportOverlay`, drawing only (no
+hit-testing, no editing); a miss clears both. **It is the one place
 NuGet packages are allowed** (ADR-0127): only packages on
 `src/editor_app/allowed_packages.txt`, each pinned exactly in
 `src/editor_app/Directory.Packages.props`, with committed `packages.lock.json`
@@ -412,7 +427,19 @@ is all or nothing: the new scene's assets resolved reusing what is loaded, a new
 bake and World access, the InProcess endpoint re-bound (the old World's queued
 events and failures delivered, never dropped; no command may be pending), and,
 after `waitIdle()`, every resource the new scene no longer references released.
-`RuntimeStatus.sceneGeneration` counts the swaps. The `atlantis_runtime`
+`RuntimeStatus.sceneGeneration` counts the swaps. Since Spec 0066 (ADR-0132 D4)
+`RuntimeControlHost` hands the clients' Viewport overlay to `RuntimeApplication`,
+which builds the overlay's pipelines at the first non-empty overlay (never at
+startup), resolves its selection each frame through the bake's GUID map, and
+draws it at one further named place of `runFrame()`, right after `drawFrame()` and
+before the editor's UI pass, through Renderer's second overlay input
+(`Renderer::drawViewportOverlay()`, RenderGraph passes after the scene's). With
+an overlay to draw, `drawFrame()` stops in `ColorAttachmentOutput` and the overlay
+continues from the end states `drawFrame()` now returns, loading the target and
+the frame's depth (ADR-0133: a RenderGraph binding may load an attachment instead
+of clearing it; every other binding still clears); without one the call is
+unchanged. A capture's re-render draws only the overlay its step request carries.
+The `atlantis_runtime`
 executable creates the authoring session lazily, at the first `authoring.*`
 request under `--listen` or `scene` command under `--exec`, and finds the
 scene's source through the committed catalog source and the build's generated
@@ -454,15 +481,20 @@ it adds no module, no dependency and no public API. The
 `runFrame()` diff guard now reads: identical to its base text except added
 `ATL_PROFILE_*` lines, `debugName` members and, since Spec 0061 Stage 2
 (PR #266), the ten lines of the cluster-mask build and region write
-(`runtime_application.cpp:1728–1737` since Spec 0065, under the `ClusterBuild`
+(`runtime_application.cpp:1734–1743` since Spec 0066, under the `ClusterBuild`
 zone), since Spec 0062 the three camera lines of place 5
-(`runtime_application.cpp:1584–1586`: the `frameCamera` choice — since Spec 0064
+(`runtime_application.cpp:1590–1592`: the `frameCamera` choice — since Spec 0064
 also taking the `RuntimeControl` camera — and the two reads that take it),
 since Spec 0064 the one line of the `SurfaceCreated` branch that records the
-window handle (`runtime_application.cpp:1337`) and, since Spec 0065, the four
+window handle (`runtime_application.cpp:1343`), since Spec 0065 the four
 lines of the scene reload swap point right after the `World` zone
-(`runtime_application.cpp:1316–1319`: its comment and
-`if (pendingSceneReload_.has_value() && !commandsHeld_) performPendingSceneReload();`);
+(`runtime_application.cpp:1322–1325`: its comment and
+`if (pendingSceneReload_.has_value() && !commandsHeld_) performPendingSceneReload();`)
+and, since Spec 0066, the fourteen lines of the Viewport overlay's named place
+(`runtime_application.cpp:1989–1998`: its comment, the scene's final state, the
+overlay's draw list, and the `drawFrame()` call's first two lines, which keep its
+returned end states and stop in `ColorAttachmentOutput` when an overlay follows;
+and `2019–2022`: the `drawViewportOverlayInto()` call);
 a further frame-path change enumerates its `runFrame()` lines in its PR.
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle

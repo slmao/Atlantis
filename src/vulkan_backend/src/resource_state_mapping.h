@@ -18,9 +18,12 @@ struct ImageBarrierPlan {
   VkPipelineStageFlags dstStage;
 };
 
-// before must not equal after -- render_graph::execute() never calls
-// transitionResource() for a no-op state pair, so this function does not
-// need to handle one. Deliberate note, not an oversight: ColorAttachmentWrite
+// before must not equal after, except for the two same-state entries
+// (ColorAttachmentOutput and DepthAttachmentReadWrite, ADR-0133 D2) that
+// render_graph::execute() records before a pass on a loaded attachment --
+// memory dependencies, no layout change; it never calls
+// transitionResource() for any other no-op state pair. Deliberate note, not
+// an oversight: ColorAttachmentWrite
 // maps to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, not COLOR_ATTACHMENT_OPTIMAL
 // -- clearColor() records vkCmdClearColorImage, which requires GENERAL or
 // TRANSFER_DST_OPTIMAL, not the render-pass-only COLOR_ATTACHMENT_OPTIMAL

@@ -337,6 +337,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
   a Plan amendment before M4 changes `runFrame()`. That ADR and amendment are reviewed in **their own docs PR** (as
   Spec 0065's Corrections were, PRs #281–#283), never folded into the implementation PR; the implementation PR
   cites that PR, and M4 does not start before it merges. Proposed: accept (as Plan 0064 J7).
+  - **Checkpoint ruled (slmao, 2026-10-24): R-a kept**, M1's proposed verdict, so no input ADR and no amendment.
+    M1's verdict table and measurements are in the implementation PR (DoD below).
 - **J9 — Docs split:** normative sentences with the implementation PR, narratives after merge (Plans 0062–0065).
   Proposed: accept.
 - **J10 — Budgets as reported targets:** Spec 0066 Q6's targets are reported against, as Plan 0065 J3/J9, never test
