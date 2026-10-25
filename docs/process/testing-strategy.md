@@ -74,10 +74,14 @@ result, not an automatic gate; see [ci-strategy.md](ci-strategy.md).
   disabled, 60 Hz), by the owner's ruling recorded as
   [Spec 0011](../specs/0011-image-regression-testing-foundation.md)'s
   Correction of that date. Until then it was the Intel Arc B370 laptop.
-  The goldens are the ones captured on the reference environment: those
-  that differ there are re-captured in one reviewed PR, categorized as a
-  reference-environment change. The 0/0 calibration is re-run there before
-  the rule is treated as valid there. A run on any other machine is not
+  The goldens are the ones captured on the reference environment. All of
+  them are re-captured there in one reviewed PR, so every sidecar records
+  it. Pixel changes are reviewed, and a golden whose pixels did not change
+  is listed as "pixels unchanged, provenance updated". The PR is a
+  reference-environment change extended to the change of the machine
+  ([ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)'s
+  Accepted Amendment of 2026-10-25). The 0/0 calibration is re-run there
+  before the rule is treated as valid there. A run on any other machine is not
   reference-environment verification evidence.
 
 ## Debugging

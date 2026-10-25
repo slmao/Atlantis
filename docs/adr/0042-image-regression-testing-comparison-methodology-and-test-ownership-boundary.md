@@ -747,3 +747,58 @@ category (2)/(3) confusion.
   must keep requiring real diff evidence. This amendment's category 1
   constraint (unavailable once the golden exists) keeps the exception
   scoped to exactly the bootstrap case.
+
+## Accepted Amendment — 2026-10-25
+
+**Status of this section:** accepted by Human Review on 2026-10-25, together with
+[Spec 0011](../specs/0011-image-regression-testing-foundation.md)'s Correction of the same date (slmao, the owner's
+ruling, recorded in the review of its docs PR, [PR #291](https://github.com/slmao/Atlantis/pull/291)). **This section
+does not itself change this ADR's top-level Status** (`Accepted` above is unchanged). The original Decision, Context,
+Consequences and Alternatives Considered above, and the Accepted Amendment of 2026-08-17, are preserved verbatim and are
+not superseded except where this section says so explicitly.
+
+### Human Review — Amendment Acceptance (2026-10-25)
+
+**Deciders:** slmao (`slmao <slmaosjtu@gmail.com>`). On 2026-10-25 the owner ruled that the reference environment moves
+to the AMD desktop, that one golden set is kept on it with no per-vendor sets, and that every golden is re-captured
+there. This amendment records what those rulings mean for this ADR, in the review of
+[PR #291](https://github.com/slmao/Atlantis/pull/291). No further Human Review is pending for it.
+
+### Amendment
+
+1. **The reference environment moved.** The Decision's "one reference GPU/driver" is, from 2026-10-25, the AMD desktop
+   named in Spec 0011's Correction: Windows 10 Pro (build 19045), AMD Ryzen 7 9700X, AMD Radeon RX 7900 XT (driver
+   26.10.1, `DRIVER_ID_AMD_PROPRIETARY`, Vulkan 1.4.359; its integrated GPU disabled), a 60 Hz display, Vulkan SDK
+   1.4.357.0.
+   - The vendor this ADR's text names (Intel Arc B370, integrated, Windows 11, driver 101.8509) was the reference
+     environment until then.
+   - What the Context and the Decision say was calibrated or verified on it remains the record of that environment.
+   - The calibration behind channel tolerance = 0 and failing-pixel budget = 0 is re-run on the new reference
+     environment before those values are treated as valid there (Spec 0011 Approval item 3 and its Correction). A
+     differing pixel there goes back to the owner, not into a tolerance.
+2. **The per-vendor trigger has fired, and is answered.** The Decision's golden-set strategy said "a future spec/ADR
+   revisits per-vendor golden sets if and when a second real GPU vendor becomes available".
+   - A second vendor is now available, so this is that revisit.
+   - **Answer (the owner's ruling): one golden set, on the new reference environment, no per-vendor sets.**
+   - The Intel goldens are replaced, not kept as a second set. Nothing compares against Intel goldens after the
+     re-capture, and the single-vendor limitation the Decision discloses now applies to the AMD environment.
+3. **How the golden-update PR that follows is categorized.**
+   - It is a **reference-environment change (category 2), extended to the change of the reference machine itself**.
+     Category 2 as written covers the reference machine's driver, OS or Vulkan runtime changing, not the machine.
+   - It carries category 2's evidence: for each golden, the old sidecar's provenance against the new capture's, and
+     the actual-vs-old-golden diff image and metrics the failure-output contract produces.
+   - It also carries category 3's explicit human approval: the owner's human golden review before merge.
+   - **Every golden is re-captured**, so every sidecar records the new environment. A golden whose pixels did not
+     change is listed as "pixels unchanged, provenance updated"; a golden whose pixels changed is listed with its diff
+     metrics and reviewed.
+   - The extension covers only this move. A later driver, OS or Vulkan runtime change on the new machine is category 2
+     as written, and a later move of the reference machine needs its own amendment.
+
+### Consequences of this amendment
+
+- Goldens compare byte for byte again on the machine where work is done, so image regression is a real gate there
+  rather than a list of known environment failures.
+- The single-vendor limitation is unchanged in kind: one vendor, now AMD. A pass on any other GPU, Intel included, is
+  not reference-environment evidence, and the `PROVENANCE MISMATCH` diagnostic says so there.
+- Every sidecar changes in one PR. The changes that need a reviewer's eye are the pixel changes; the
+  provenance-only ones are listed separately so they do not hide them.

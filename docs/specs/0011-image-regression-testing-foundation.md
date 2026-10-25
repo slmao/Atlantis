@@ -83,11 +83,17 @@
       Pro (build 19045), AMD Ryzen 7 9700X, AMD Radeon RX 7900 XT (driver
       26.10.1, `DRIVER_ID_AMD_PROPRIETARY`, Vulkan 1.4.359; its integrated
       GPU disabled), a 60 Hz display, Vulkan SDK 1.4.357.0.
-    - The goldens are the ones captured there. The goldens that fail there
-      are re-captured with the golden generator in one PR, categorized as a
-      **reference-environment change** (ADR-0042). That PR carries
-      before/after provenance and diff evidence and needs the owner's human
-      golden review. A golden that passes there stays as it is.
+    - The goldens are the ones captured there. **All goldens are
+      re-captured** with the golden generator in one PR, so every sidecar
+      records the new environment, and the pixel changes are reviewed:
+      - a golden whose pixels changed is listed with its diff metrics;
+      - one whose pixels did not change is listed as "pixels unchanged,
+        provenance updated".
+
+      That PR is a reference-environment change extended to the change of
+      the reference machine itself (ADR-0042's Accepted Amendment of
+      2026-10-25). It carries before/after provenance and diff evidence and
+      needs the owner's human golden review.
     - **The calibration is re-run there, not carried over.** Approval item
       3 says different hardware "requires its own fresh calibration before
       this rule is treated as still valid for that environment", and
@@ -101,14 +107,14 @@
       implementation (Risks).
     - Real-hardware verification still runs on a single GPU vendor/driver,
       now AMD; this is still not cross-vendor evidence.
-  - **ADRs:** ADR-0041 and ADR-0042 are unchanged.
-    - ADR-0042's golden-set strategy, one unified golden set on the one
-      reference vendor with no per-vendor branching, is kept: the set moves
-      whole to the new reference GPU.
-    - The vendor ADR-0042 names (Intel Arc) is the environment it was
-      decided in. Its promised revisit of per-vendor golden sets "if and
-      when a second real GPU vendor becomes available" is answered "not
-      now" by this ruling: one set, on the reference environment.
+  - **ADRs:** ADR-0041 is unchanged. ADR-0042 gains an Accepted Amendment
+    (2026-10-25) that records three things:
+    - the move of the reference environment;
+    - its answer to the per-vendor revisit, now triggered: one golden set,
+      on the new reference environment, no per-vendor sets, the Intel
+      goldens replaced;
+    - the golden-update PR's category: category 2 extended to the change of
+      the machine, with category 3's explicit human approval.
 
   Following this approval, ADR-0041 and ADR-0042 each move to `Accepted`
   and this spec moves to `Approved`. **This approval is not itself an
