@@ -124,8 +124,8 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 
 - **J1 — Spec Corrections:** none proposed.
   - **Added during M2 (slmao, 2026-10-26):** Spec 0067's Correction moving Bistro's scene camera.
-    - **Files:** `assets/bistro/bistro_overlay.scene.txt` joins this Plan's file list (its camera line only), as does
-      `runtime_smoke_gpu_tests.cpp`'s comment that describes the old pose.
+    - **Files:** `assets/bistro/bistro_overlay.scene.txt` joins this Plan's file list (its camera line only). The
+      comment in `runtime_smoke_gpu_tests.cpp` that describes the old pose changes with it.
     - **M3:** Bistro's golden is re-captured from the new camera.
     - **M4:** Bistro's gate numbers are reported in three steps, so the camera move and the newly drawn entities stay
       apart:
