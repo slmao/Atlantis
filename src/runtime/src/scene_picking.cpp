@@ -125,6 +125,15 @@ std::optional<AssetId> renderableMesh(const access::RuntimeWorldAccess& boundary
   return AssetId{*id};
 }
 
+std::optional<AssetId> renderableMaterial(const access::RuntimeWorldAccess& boundary, const EntityGuid& entity) {
+  const auto material = boundary.getProperty(
+      access::PropertyAddress{entity, schema::typeId(kRenderable), schema::fieldId(kRenderable, "materialAsset")});
+  if (material.isErr()) return std::nullopt;
+  const auto* id = std::get_if<std::uint64_t>(&material.value());  // Absent when the Renderable has none
+  if (id == nullptr) return std::nullopt;
+  return AssetId{*id};
+}
+
 std::vector<PickInstance> collectPickInstances(const access::RuntimeWorldAccess& boundary,
                                                const atlantis::world::BakedScene& scene) {
   const schema::TypeId worldMatrixType = schema::typeId(kWorldMatrix);

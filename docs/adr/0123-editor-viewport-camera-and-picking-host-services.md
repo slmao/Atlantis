@@ -120,3 +120,45 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
   42 MB for every non-editor run.
 - **A synchronous host callback for picking:** the result would be immediate, but a host callback would enter
   the editor library's interface, which ADR-0108 D2 keeps as plain values.
+
+## Accepted Amendment — 2026-10-25
+
+**Status of this section:** proposed in a bug-fix PR, [PR #295](https://github.com/slmao/Atlantis/pull/295), at the
+owner's direction (slmao, 2026-10-25); **accepted by the owner's review and merge of that PR**. Until that merge it is
+pending. **This section does not itself change this ADR's top-level Status** (`Accepted` above is unchanged). The
+Decision, Context, Consequences and Alternatives Considered above are preserved verbatim and are not superseded except
+where this section says so explicitly.
+
+### Human Review — Amendment Acceptance (2026-10-25)
+
+**Deciders:** slmao. The owner directed the fix on 2026-10-25 and accepts this amendment in the review of
+[PR #295](https://github.com/slmao/Atlantis/pull/295); the merge of that PR is the acceptance.
+
+### Amendment
+
+1. **D2's picking service picks what the frame draws.** D2 says the service "tests every entity with `Renderable`
+   and `WorldMatrix`". It now reads: every such entity **the frame draws**.
+   - **Excluded:** an entity the frame's extraction skips for a non-conformal world matrix is not pickable: a
+     `LitTextured`- or `PbrDirectLit`-bound entity whose `WorldMatrix` fails `checkConformalTransform()` (Spec 0019
+     D7, Plan 0019 P15, Plan 0023 M8).
+   - **Same test, same condition:** `pickRenderable()` applies the extraction's own test under the extraction's own
+     condition, per entity, at the entity's current `WorldMatrix`. An unlit or material-less entity is picked at
+     any matrix, because the frame draws it at any matrix.
+   - **Everything else in D2 is unchanged:** both triangle faces, alpha masks ignored, the nearest hit, the
+     retention rule. `renderableLocalBounds()` still answers an excluded entity's bounds.
+2. **Why it changes.** Found by Spec 0066's M6 visual check: on Bistro a far-away pick outlined an entity the scene
+   does not draw.
+   - 368 of Bistro's 2909 Renderables carry a non-uniform scale in their transform chain, so the frame skips them
+     every frame. The pick geometry kept them, so a ray could stop on invisible geometry.
+   - For example, the centre click from Bistro's scene camera selected `64f9581d-f2e3-…`, an undrawn entity 1.74 m
+     in front of the camera.
+3. **What inherits it.** `RuntimeControl::raycast()` is `pickRenderable()` (ADR-0128 D2), so the wire, the CLI's
+   `runtime raycast`, both SDKs and both editors inherit the rule with no change of their own.
+
+### Consequences of this amendment
+
+- A pick never names an entity the Viewport does not show.
+- **Picking costs slightly more:** one more property read per Renderable per pick (the entity's material). On
+  Bistro in Debug the 144-ray grid's mean went from 55.5 to 57.3 ms per pick.
+- **The content-side cause is not fixed here:** Bistro's non-uniformly scaled meshes are never drawn. That belongs
+  to a later importer Spec, which would bake non-uniform scale into the vertices at glTF import.

@@ -151,6 +151,17 @@ struct RuntimeSmokeTestAccess {
     return *app.worldAccess_;
   }
 
+  // ADR-0123 D2's amendment (2026-10-25): whether the frame gates this
+  // material's entities on checkConformalTransform() (LitTextured,
+  // PbrDirectLit), as runFrame()'s extraction reads materialDataMap_.
+  [[nodiscard]] static bool conformalGatedMaterial(const RuntimeApplication& app,
+                                                   atlantis::asset_system::AssetId material) {
+    const auto it = app.materialDataMap_.find(material);
+    return it != app.materialDataMap_.end() &&
+           (it->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
+            it->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit);
+  }
+
   // Plan 0044 Milestone 1: the three bloom Pipelines, built at startup when
   // the bloom shader paths are set; sceneWantsBloom_ from the active camera.
   [[nodiscard]] static bool hasBloomPipelines(const RuntimeApplication& app) {
@@ -1346,6 +1357,97 @@ TEST_CASE("Runtime under retainPickGeometry picks a Renderable and answers its b
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
 
+// ADR-0123 D2's amendment (2026-10-25; found by Spec 0066's M6 visual check
+// on Bistro): the service picks what the frame draws. An entity the frame
+// skips for a non-conformal world matrix (a LitTextured- or
+// PbrDirectLit-bound one failing checkConformalTransform(), Spec 0019 D7) is
+// not pickable; the same entity at a conformal matrix is.
+TEST_CASE("Runtime picks only what the frame draws: an entity skipped for a non-conformal world matrix is not pickable",
+          "[runtime][gpu][editor][picking]") {
+  namespace access = atlantis::world::access;
+  BootstrapConfig config = buildSmokeConfig();
+  config.retainPickGeometry = true;
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.runFrame();
+  access::RuntimeWorldAccess& boundary = RuntimeSmokeTestAccess::worldAccess(app);
+  const auto matrixType = ecs::componentTypeId<WorldMatrix>();
+  const auto column = [](int k) { return atlantis::schema::fieldId("world::WorldMatrix", "column" + std::to_string(k)); };
+  const auto materialField = atlantis::schema::fieldId("world::Renderable", "materialAsset");
+  const auto renderableType = ecs::componentTypeId<atlantis::world::Renderable>();
+
+  // Whatever the ray at the first Renderable meets first is H, the entity behind.
+  atlantis::asset_system::EntityGuid target;
+  const auto ray = rayAtFirstRenderable(app, target);
+  const auto original = app.pickRenderable(ray);
+  REQUIRE(original.has_value());
+
+  // A: another entity whose material the frame gates on the conformal test.
+  std::optional<atlantis::asset_system::EntityGuid> mover;
+  for (const auto& entity : boundary.listEntities()) {
+    if (entity == original->entity) continue;
+    const auto material = boundary.getProperty({entity, renderableType, materialField});
+    if (material.isErr()) continue;
+    const auto* id = std::get_if<std::uint64_t>(&material.value());
+    if (id != nullptr && RuntimeSmokeTestAccess::conformalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
+      mover = entity;
+      break;
+    }
+  }
+  REQUIRE(mover.has_value());
+  const auto bounds = app.renderableLocalBounds(*mover);
+  REQUIRE(bounds.has_value());
+  std::array<float, 3> centre{};
+  for (std::size_t axis = 0; axis < 3; ++axis) centre[axis] = 0.5f * (bounds->min[axis] + bounds->max[axis]);
+
+  // Puts A's local-bounds centre at `at`, scaled (sx, sy, sz), and applies it with one frame.
+  const auto place = [&](std::array<float, 3> at, float sx, float sy, float sz) {
+    const access::TransactionTicket ticket = boundary.submitTransaction({
+        access::SetProperty{{*mover, matrixType, column(0)}, std::array<float, 4>{sx, 0.0f, 0.0f, 0.0f}},
+        access::SetProperty{{*mover, matrixType, column(1)}, std::array<float, 4>{0.0f, sy, 0.0f, 0.0f}},
+        access::SetProperty{{*mover, matrixType, column(2)}, std::array<float, 4>{0.0f, 0.0f, sz, 0.0f}},
+        access::SetProperty{{*mover, matrixType, column(3)},
+                            std::array<float, 4>{at[0] - centre[0] * sx, at[1] - centre[1] * sy, at[2] - centre[2] * sz, 1.0f}},
+    });
+    REQUIRE(ticket.count == 4);
+    app.runFrame();
+    REQUIRE(app.shouldContinue());
+    REQUIRE(boundary.drainFailures().empty());
+    (void)boundary.drainEvents();
+  };
+
+  // A halfway along the ray, in front of H.
+  const float half = 0.5f * original->distance;
+  const std::array<float, 3> between{ray.origin[0] + ray.direction[0] * half, ray.origin[1] + ray.direction[1] * half,
+                                     ray.origin[2] + ray.direction[2] * half};
+  // Conformal (uniform scale): drawn, so it is what the ray hits first.
+  place(between, 0.5f, 0.5f, 0.5f);
+  const auto conformalHit = app.pickRenderable(ray);
+  REQUIRE(conformalHit.has_value());
+  CHECK(conformalHit->entity == *mover);
+  CHECK(conformalHit->distance < original->distance);
+  // Non-conformal (non-uniform scale): the frame skips it, so the ray passes
+  // it and hits H behind, as before A moved.
+  place(between, 0.5f, 1.0f, 0.5f);
+  const auto skippedHit = app.pickRenderable(ray);
+  REQUIRE(skippedHit.has_value());
+  CHECK(skippedHit->entity == original->entity);
+  CHECK(std::abs(skippedHit->distance - original->distance) <= 1.0e-4f * original->distance);
+
+  // A ray that meets nothing but A, far above the scene: no hit while A is
+  // non-conformal, A once it is conformal again.
+  const std::array<float, 3> aloft{0.0f, 500.0f, 0.0f};
+  const atlantis::runtime::PickRay alone{{0.0f, 500.0f, 50.0f}, {0.0f, 0.0f, -1.0f}};
+  place(aloft, 0.5f, 1.0f, 0.5f);
+  CHECK_FALSE(app.pickRenderable(alone).has_value());
+  place(aloft, 0.5f, 0.5f, 0.5f);
+  const auto aloneHit = app.pickRenderable(alone);
+  REQUIRE(aloneHit.has_value());
+  CHECK(aloneHit->entity == *mover);
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
 // --- Plan 0064 M2 (Spec 0064; ADR-0128 D1-D3): the Viewport camera and the
 // ray-cast through RuntimeControl -- what Atlantis Editor App drives over the
 // wire. Each in its own TEST_CASE: one application per process. ---------------
@@ -1931,6 +2033,41 @@ TEST_CASE("Editor E1 on Bistro: a click at the Viewport's centre picks an entity
     }
     WARN("Bistro pickRenderable(): worst " << worst << " ms, mean " << total / 144.0 << " ms over 144 rays, " << hits
                                            << " hits");
+
+    // ADR-0123 D2's amendment (2026-10-25): how many Renderables the frame
+    // skips for a non-conformal world matrix, so pickRenderable() skips them
+    // too (reported, never a verdict).
+    namespace access = atlantis::world::access;
+    access::RuntimeWorldAccess& boundary = RuntimeSmokeTestAccess::worldAccess(app);
+    const auto renderableType = ecs::componentTypeId<atlantis::world::Renderable>();
+    const auto materialField = atlantis::schema::fieldId("world::Renderable", "materialAsset");
+    const auto matrixType = ecs::componentTypeId<WorldMatrix>();
+    std::size_t renderables = 0;
+    std::size_t skipped = 0;
+    for (const auto& entity : boundary.listEntities()) {
+      const auto material = boundary.getProperty({entity, renderableType, materialField});
+      if (material.isErr()) continue;
+      ++renderables;
+      const auto* id = std::get_if<std::uint64_t>(&material.value());
+      if (id == nullptr || !RuntimeSmokeTestAccess::conformalGatedMaterial(app, atlantis::asset_system::AssetId{*id})) {
+        continue;
+      }
+      atlantis::runtime::Mat4 matrix{};
+      bool complete = true;
+      for (int k = 0; k < 4 && complete; ++k) {
+        const auto value = boundary.getProperty(
+            {entity, matrixType, atlantis::schema::fieldId("world::WorldMatrix", "column" + std::to_string(k))});
+        const auto* columnValue = value.isOk() ? std::get_if<std::array<float, 4>>(&value.value()) : nullptr;
+        if (columnValue == nullptr) {
+          complete = false;
+        } else {
+          std::memcpy(matrix.data() + k * 4, columnValue->data(), sizeof(float) * 4);
+        }
+      }
+      if (complete && atlantis::runtime::checkConformalTransform(matrix).isErr()) ++skipped;
+    }
+    WARN("Bistro: " << skipped << " of " << renderables
+                    << " Renderables are skipped by the frame for a non-conformal world matrix, so not pickable");
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif

@@ -60,4 +60,9 @@ struct PickInstance {
 [[nodiscard]] std::optional<atlantis::asset_system::AssetId> renderableMesh(
     const atlantis::world::access::RuntimeWorldAccess& access, const atlantis::asset_system::EntityGuid& entity);
 
+// The entity's Renderable material, through the operation boundary; empty when
+// it is not addressable, has no Renderable, or its Renderable has no material.
+[[nodiscard]] std::optional<atlantis::asset_system::AssetId> renderableMaterial(
+    const atlantis::world::access::RuntimeWorldAccess& access, const atlantis::asset_system::EntityGuid& entity);
+
 }  // namespace atlantis::runtime::detail

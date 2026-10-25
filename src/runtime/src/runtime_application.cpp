@@ -2316,9 +2316,26 @@ std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {
 // Plan 0062 P3/P6 (ADR-0123 D2): through the World's operation boundary, so
 // every addressable entity -- including those created since load -- is
 // pickable at its current WorldMatrix.
+//
+// ADR-0123 D2's amendment (2026-10-25): the service picks what the frame
+// draws. The frame's extraction skips a LitTextured- or PbrDirectLit-bound
+// entity whose world matrix fails checkConformalTransform() (Spec 0019 D7,
+// Plan 0019 P15, Plan 0023 M8), so such an entity is not pickable either:
+// the same test, under the same condition. Every other entity -- an unlit or
+// material-less one at any matrix included -- is picked exactly as before.
 std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) const {
   if (!scene_ || !worldAccess_.has_value() || pickGeometry_.empty()) return std::nullopt;
-  const std::vector<detail::PickInstance> instances = detail::collectPickInstances(*worldAccess_, *scene_);
+  std::vector<detail::PickInstance> instances = detail::collectPickInstances(*worldAccess_, *scene_);
+  std::erase_if(instances, [this](const detail::PickInstance& instance) {
+    const std::optional<atlantis::asset_system::AssetId> material =
+        detail::renderableMaterial(*worldAccess_, instance.entity);
+    if (!material.has_value()) return false;
+    const auto materialData = materialDataMap_.find(*material);
+    if (materialData == materialDataMap_.end()) return false;
+    const bool conformalGated = materialData->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
+                                materialData->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit;
+    return conformalGated && checkConformalTransform(instance.worldMatrix).isErr();
+  });
   return detail::pickNearest(instances, pickGeometry_, ray);
 }
 
