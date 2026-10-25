@@ -11,6 +11,7 @@
 #include <atlantis/render_graph/render_graph_builder.h>
 #include <atlantis/renderer/draw_item.h>
 #include <atlantis/renderer/ui_overlay.h>
+#include <atlantis/renderer/viewport_overlay.h>
 #include <atlantis/runtime/error_classification.h>
 #include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
@@ -19,6 +20,9 @@
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
 #include <atlantis/world/camera.h>
+#include <atlantis/world/ecs/world_components.h>
+#include <atlantis/world/renderable.h>
+#include <atlantis/world/world_matrix.h>
 
 #include <algorithm>
 #include <array>
@@ -791,6 +795,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   const std::vector<std::uint32_t> shadowCastVertexSpirv = std::move(shadowCastVertexSpirvOpt.value());
   const std::vector<std::uint32_t> shadowCastFragmentSpirv = std::move(shadowCastFragmentSpirvOpt.value());
   const VertexInputLayout shadowCastVertexInputLayout = std::move(shadowCastLayoutOpt.value());
+  // Plan 0066 P4: the selection mask reads the scene meshes through the same layout.
+  meshPositionVertexLayout_ = shadowCastVertexInputLayout;
 
   // Step 2h (Plan 0044 P9): the three bloom shader pairs -- only when
   // configured (all twelve paths; validateBloomBootstrapConfig() above
@@ -1980,8 +1986,16 @@ void RuntimeApplication::runFrame() {
     for (std::size_t i = 0; i < bloomPipelines_.size(); ++i) bloomInput->pipelines[i] = bloomPipelines_[i].get();
   }
 
-  renderer_.drawFrame(*commandList, overlay_ ? overlayViewportTarget() : *target, *depthTexture_, *cameraBuffer_, drawItems,
-                       overlay_ ? atlantis::rhi::ResourceState::ShaderRead : atlantis::rhi::ResourceState::PresentSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
+  // Plan 0066 P4, the named place (ADR-0132 D4, ADR-0133 D5): with a Viewport
+  // overlay to draw, the scene stops in ColorAttachmentOutput and the overlay
+  // continues from drawFrame()'s reported end states to the scene's final
+  // state; without one, drawFrame() is called exactly as before.
+  const atlantis::rhi::ResourceState sceneFinalState =
+      overlay_ ? atlantis::rhi::ResourceState::ShaderRead : atlantis::rhi::ResourceState::PresentSource;
+  const std::optional<atlantis::renderer::ViewportOverlayDrawList> viewportOverlayList =
+      viewportOverlay_.has_value() ? viewportOverlayDrawList(*viewportOverlay_, currentFormat) : std::nullopt;
+  const atlantis::renderer::FrameEndStates sceneEnd = renderer_.drawFrame(*commandList, overlay_ ? overlayViewportTarget() : *target, *depthTexture_, *cameraBuffer_, drawItems,
+                       viewportOverlayList ? atlantis::rhi::ResourceState::ColorAttachmentOutput : sceneFinalState, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
                        // Plan 0031 (Spec 0031 Requirement 8/10): the active
                        // Camera's own real exposureCompensationEv -- every
@@ -2002,6 +2016,10 @@ void RuntimeApplication::runFrame() {
                        // gates.
                        hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>(),
                        cameraWorldPosition, bloomInput.has_value() ? &*bloomInput : nullptr);
+  if (viewportOverlayList) {
+    static_cast<void>(drawViewportOverlayInto(*commandList, overlay_ ? overlayViewportTarget() : *target, sceneEnd,
+                                              sceneFinalState, extractionResult.value(), *viewportOverlayList));
+  }
   if (overlay_) drawOverlayInto(*commandList, *target);
 
   ATL_PROFILE_SCOPE_NAMED(submitZone, "Submit");
@@ -2343,6 +2361,221 @@ void RuntimeApplication::drawOverlayInto(atlantis::rhi::CommandList& commandList
   renderer_.drawOverlay(commandList, target, atlantis::rhi::ResourceState::PresentSource, list, resources);
 }
 
+// Plan 0066 P4 (ADR-0132 D4; J11): only where the shaders are; nothing loads
+// until a frame has an overlay to draw.
+void RuntimeApplication::enableViewportOverlay(ViewportOverlayShaderPaths paths) {
+  viewportOverlayShaders_ = std::move(paths);
+}
+
+void RuntimeApplication::setViewportOverlay(const std::optional<atlantis::connection::ViewportOverlay>& overlay) {
+  viewportOverlay_ = overlay;
+}
+
+// Plan 0066 P4 (J11): the shaders are loaded, and the format-independent
+// resources created, at the first call; the colour pipelines follow `format`
+// (rebuilt when it changes, as the UI overlay's do). Any failure is logged
+// once and the overlay is never drawn again -- the frame itself carries on.
+bool RuntimeApplication::viewportOverlayPipelinesFor(atlantis::rhi::Format format) {
+  using atlantis::rhi::ColorBlendMode;
+  if (viewportOverlayFailed_) return false;
+  const auto fail = [this](std::string_view why) {
+    ATLANTIS_LOG_ERROR("the Viewport overlay cannot be drawn: {}", why);
+    viewportOverlayFailed_ = true;
+    return false;
+  };
+  if (!viewportOverlayShaders_.has_value()) return fail("no shaders were given (enableViewportOverlay())");
+  const auto pipeline = [this](const std::vector<std::uint32_t>& vertex, const std::vector<std::uint32_t>& fragment,
+                               const VertexInputLayout& layout, atlantis::rhi::Format colorFormat,
+                               std::size_t pushConstantBytes, bool cameraUniform, std::uint32_t sampledTextures,
+                               bool depthAttachment, ColorBlendMode blend,
+                               std::string_view debugName) -> std::unique_ptr<atlantis::rhi::Pipeline> {
+    auto created = device_->createPipeline({.vertexShader = {.spirvWords = vertex.data(), .wordCount = vertex.size()},
+                                            .fragmentShader = {.spirvWords = fragment.data(), .wordCount = fragment.size()},
+                                            .vertexInputLayout = layout,
+                                            .colorFormat = colorFormat,
+                                            .depthFormat = DepthFormat::D32Sfloat,
+                                            .pushConstantSizeBytes = pushConstantBytes,
+                                            .sampledTextureBindingCount = sampledTextures,
+                                            .hasCameraUniformBinding = cameraUniform,
+                                            .hasDepthAttachment = depthAttachment,
+                                            .depthWriteEnabled = false,
+                                            .colorBlendMode = blend,
+                                            .debugName = debugName});
+    if (created.isErr()) return nullptr;
+    return std::move(created.value());
+  };
+
+  if (!viewportOverlaySpirv_.has_value()) {
+    const ViewportOverlayShaderPaths& paths = *viewportOverlayShaders_;
+    const auto load = [](const std::string& directory, const char* file) {
+      return loadSpirvFile(directory + "/" + file);
+    };
+    auto primitivesVertex = load(paths.primitivesDirectory, "viewport_overlay.vert.spv");
+    auto primitivesFragment = load(paths.primitivesDirectory, "viewport_overlay.frag.spv");
+    auto maskVertex = load(paths.maskDirectory, "selection_mask.vert.spv");
+    auto maskFragment = load(paths.maskDirectory, "selection_mask.frag.spv");
+    auto outlineVertex = load(paths.outlineDirectory, "selection_outline.vert.spv");
+    auto outlineFragment = load(paths.outlineDirectory, "selection_outline.frag.spv");
+    if (!primitivesVertex || !primitivesFragment || !maskVertex || !maskFragment || !outlineVertex || !outlineFragment) {
+      return fail("a shader file is missing or malformed");
+    }
+    viewportOverlaySpirv_ = ViewportOverlaySpirv{std::move(*primitivesVertex), std::move(*primitivesFragment),
+                                                 std::move(*maskVertex),       std::move(*maskFragment),
+                                                 std::move(*outlineVertex),    std::move(*outlineFragment)};
+
+    // The mask has its own format, so its pipeline never follows the target's.
+    selectionMaskPipeline_ = pipeline(viewportOverlaySpirv_->maskVertex, viewportOverlaySpirv_->maskFragment,
+                                      meshPositionVertexLayout_, atlantis::rhi::Format::Rgba8Unorm, sizeof(float) * 16,
+                                      true, 0, false, ColorBlendMode::Disabled, ATL_DEBUG_NAME("pipeline:selection_mask"));
+    auto camera = device_->createBuffer({.purpose = BufferPurpose::Uniform,
+                                         .sizeBytes = atlantis::renderer::kViewportOverlayCameraSizeBytes,
+                                         .debugName = ATL_DEBUG_NAME("viewport_overlay_camera")});
+    auto sampler = device_->createSampler({.debugName = ATL_DEBUG_NAME("selection_mask_sampler")});
+    if (!selectionMaskPipeline_ || camera.isErr() || sampler.isErr()) {
+      return fail("creating the selection mask's pipeline, the camera buffer or the sampler failed");
+    }
+    viewportOverlayCameraBuffer_ = std::move(camera.value());
+    selectionMaskSampler_ = std::move(sampler.value());
+  }
+
+  if (viewportOverlayPipelineFormat_ == format) return true;
+  viewportOverlayTestedPipeline_.reset();
+  viewportOverlayOnTopPipeline_.reset();
+  selectionOutlinePipeline_.reset();
+  viewportOverlayPipelineFormat_.reset();
+  const VertexInputLayout primitives = atlantis::renderer::viewportOverlayVertexInputLayout();
+  const VertexInputLayout fullscreenTriangle{
+      .strideBytes = sizeof(float) * 2,
+      .attributes = {{.location = 0, .offsetBytes = 0, .format = atlantis::rhi::VertexAttributeFormat::Float2}}};
+  viewportOverlayTestedPipeline_ =
+      pipeline(viewportOverlaySpirv_->primitivesVertex, viewportOverlaySpirv_->primitivesFragment, primitives, format,
+               atlantis::renderer::kViewportOverlayPushConstantSizeBytes, true, 0, true, ColorBlendMode::AlphaBlend,
+               ATL_DEBUG_NAME("pipeline:viewport_overlay_tested"));
+  viewportOverlayOnTopPipeline_ =
+      pipeline(viewportOverlaySpirv_->primitivesVertex, viewportOverlaySpirv_->primitivesFragment, primitives, format,
+               atlantis::renderer::kViewportOverlayPushConstantSizeBytes, true, 0, false, ColorBlendMode::AlphaBlend,
+               ATL_DEBUG_NAME("pipeline:viewport_overlay_on_top"));
+  selectionOutlinePipeline_ =
+      pipeline(viewportOverlaySpirv_->outlineVertex, viewportOverlaySpirv_->outlineFragment, fullscreenTriangle, format,
+               atlantis::renderer::kSelectionOutlinePushConstantSizeBytes, false, 1, false, ColorBlendMode::Disabled,
+               ATL_DEBUG_NAME("pipeline:selection_outline"));
+  if (!viewportOverlayTestedPipeline_ || !viewportOverlayOnTopPipeline_ || !selectionOutlinePipeline_) {
+    return fail("creating the overlay's pipelines for the target's format failed");
+  }
+  viewportOverlayPipelineFormat_ = format;
+  return true;
+}
+
+// Plan 0066 P4 (ADR-0132 D4): the control value as the Renderer's list. The
+// selection is resolved through the bake's GUID map at each entity's current
+// WorldMatrix; an unknown, destroyed or non-Renderable entity (or one whose
+// mesh is not loaded) is skipped without a word -- a selection goes stale
+// between frames (Spec 0066 R4).
+std::optional<atlantis::renderer::ViewportOverlayDrawList> RuntimeApplication::viewportOverlayDrawList(
+    const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format) {
+  using atlantis::renderer::ViewportOverlayDepth;
+  if (overlay.selection.empty() && overlay.groups.empty()) return std::nullopt;
+  if (!viewportOverlayPipelinesFor(format)) return std::nullopt;
+  const auto color = [](const atlantis::connection::OverlayColor& c) { return std::array<float, 4>{c.r, c.g, c.b, c.a}; };
+  const auto depth = [](atlantis::connection::OverlayDepth d) {
+    return d == atlantis::connection::OverlayDepth::OnTop ? ViewportOverlayDepth::OnTop : ViewportOverlayDepth::Tested;
+  };
+  atlantis::renderer::ViewportOverlayDrawList list;
+  for (const atlantis::connection::OverlayGroup& group : overlay.groups) {
+    atlantis::renderer::ViewportOverlayAnchor anchor;
+    if (group.anchor.has_value()) anchor = {group.anchor->position, group.anchor->pixelsPerUnit};
+    for (const auto& s : group.segments) list.addSegment(s.a, s.b, color(s.color), depth(s.depth), s.widthPixels, anchor);
+    for (const auto& t : group.triangles) list.addTriangle(t.a, t.b, t.c, color(t.color), depth(t.depth), anchor);
+    for (const auto& p : group.points) list.addPoint(p.p, color(p.color), depth(p.depth), p.sizePixels, anchor);
+  }
+  if (scene_) {
+    for (const atlantis::asset_system::EntityGuid& guid : overlay.selection) {
+      const std::optional<atlantis::world::ecs::EntityId> entity = scene_->entities.find(guid);
+      if (!entity.has_value() || !scene_->world.isValid(*entity)) continue;
+      const auto renderable = scene_->world.get<atlantis::world::Renderable>(*entity);
+      const auto worldMatrix = scene_->world.get<atlantis::world::WorldMatrix>(*entity);
+      if (renderable.isErr() || worldMatrix.isErr()) continue;
+      const auto mesh = meshResourceMap_.find(renderable.value().meshAsset);
+      if (mesh == meshResourceMap_.end()) continue;
+      list.selection.push_back(DrawItem{.mesh = &mesh->second,
+                                        .material = nullptr,
+                                        .objectToWorld = atlantis::world::toColumnMajor(worldMatrix.value())});
+    }
+  }
+  if (list.empty()) return std::nullopt;
+  return list;
+}
+
+// Plan 0066 P4 (ADR-0133 D5): the geometry buffers grow (doubling) to the list,
+// and the mask follows the target's extent; the Renderer records the passes.
+atlantis::renderer::FrameEndStates RuntimeApplication::drawViewportOverlayInto(
+    atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
+    atlantis::renderer::FrameEndStates sceneEnd, atlantis::rhi::ResourceState finalState,
+    const CameraMatrices& camera, const atlantis::renderer::ViewportOverlayDrawList& list) {
+  const auto grow = [this](std::unique_ptr<atlantis::rhi::Buffer>& buffer, BufferPurpose purpose, std::size_t bytes) {
+    if (buffer && buffer->sizeBytes() >= bytes) return;
+    std::size_t size = buffer ? buffer->sizeBytes() : std::size_t{64 * 1024};
+    while (size < bytes) size *= 2;
+    buffer.reset();
+    auto created = device_->createBuffer(
+        {.purpose = purpose,
+         .sizeBytes = size,
+         .indexType = atlantis::rhi::IndexType::Uint32,
+         .debugName = ATL_DEBUG_NAME(purpose == BufferPurpose::Vertex ? "viewport_overlay_vertices"
+                                                                       : "viewport_overlay_indices")});
+    ATLANTIS_CHECK_MSG(created.isOk(), "createBuffer() (the Viewport overlay's geometry) failed");
+    buffer = std::move(created.value());
+  };
+  grow(viewportOverlayVertexBuffer_, BufferPurpose::Vertex, atlantis::renderer::viewportOverlayVertexBytes(list));
+  grow(viewportOverlayIndexBuffer_, BufferPurpose::Index, atlantis::renderer::viewportOverlayIndexBytes(list));
+  const Extent2D extent = target.extent();
+  if (!selectionMask_ || !(selectionMaskExtent_ == extent)) {
+    selectionMaskTarget_.reset();  // the borrow, before its OffscreenTarget (ADR-0038)
+    selectionMask_.reset();
+    auto created = device_->createOffscreenTarget({.extent = extent,
+                                                   .format = atlantis::rhi::Format::Rgba8Unorm,
+                                                   .sampled = true,
+                                                   .debugName = ATL_DEBUG_NAME("selection_mask")});
+    ATLANTIS_CHECK_MSG(created.isOk(), "createOffscreenTarget() (the selection mask) failed");
+    selectionMask_ = std::move(created.value());
+    auto acquired = selectionMask_->acquireTarget();
+    ATLANTIS_CHECK_MSG(acquired.isOk(), "acquireTarget() (the selection mask) failed");
+    selectionMaskTarget_ = std::move(acquired.value());
+    selectionMaskExtent_ = extent;
+  }
+  const atlantis::renderer::ViewportOverlayResources resources{*viewportOverlayTestedPipeline_,
+                                                               *viewportOverlayOnTopPipeline_,
+                                                               *selectionMaskPipeline_,
+                                                               *selectionOutlinePipeline_,
+                                                               *viewportOverlayCameraBuffer_,
+                                                               *viewportOverlayVertexBuffer_,
+                                                               *viewportOverlayIndexBuffer_,
+                                                               *fullscreenTriangleVertexBuffer_,
+                                                               *fullscreenTriangleIndexBuffer_,
+                                                               *selectionMaskTarget_,
+                                                               *selectionMaskSampler_,
+                                                               isSrgbFormat(target.format())};
+  return renderer_.drawViewportOverlay(commandList, target, *depthTexture_, sceneEnd, finalState,
+                                       atlantis::renderer::ViewportOverlayCamera{camera.view, camera.projection}, list,
+                                       resources);
+}
+
+void RuntimeApplication::releaseViewportOverlayResources() {
+  selectionMaskTarget_.reset();  // the borrow, before its OffscreenTarget (ADR-0038)
+  selectionMask_.reset();
+  selectionMaskExtent_ = Extent2D{};
+  selectionMaskSampler_.reset();
+  viewportOverlayIndexBuffer_.reset();
+  viewportOverlayVertexBuffer_.reset();
+  viewportOverlayCameraBuffer_.reset();
+  selectionOutlinePipeline_.reset();
+  selectionMaskPipeline_.reset();
+  viewportOverlayOnTopPipeline_.reset();
+  viewportOverlayTestedPipeline_.reset();
+  viewportOverlayPipelineFormat_.reset();
+  viewportOverlaySpirv_.reset();
+}
+
 RuntimeExitReason RuntimeApplication::shutdown() {
   if (lifecycle_.state() == RuntimeLifecycleState::ShutDown) {
     return lastExitReason_;  // idempotent
@@ -2373,6 +2606,8 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   // Plan 0056 P6: an attached overlay's resources first (detachOverlay()
   // waits again, harmlessly, and is a no-op without one).
   detachOverlay();
+  // Plan 0066 P4: the Viewport overlay's resources, before the meshes and the Device.
+  releaseViewportOverlayResources();
   // Plan 0044 P9: the bloom resources, before the HDR target and Device.
   bloomTargets_.reset();
   for (auto& pipeline : bloomPipelines_) pipeline.reset();

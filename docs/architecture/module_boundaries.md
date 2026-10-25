@@ -177,6 +177,15 @@ non-pure `CommandList::beginRegion`/`endRegion`/`setDebugName` (no-ops by
 default). Both are present in every build configuration, so no public layout or
 virtual set depends on a build option. No Vulkan or Tracy type appears.
 
+Since Spec 0066 ([ADR-0133](../adr/0133-attachment-load-after-the-scene.md)
+D1) an attachment can keep what an earlier scope stored instead of being
+cleared: `rhi::AttachmentLoad { Clear, Load }` and a six-parameter
+`CommandList::beginRendering()` overload choosing it per attachment. The
+overload is not pure: by default it forwards both-`Clear` to the four-parameter
+call and treats any `Load` as a programmer error, so an implementation that
+cannot load stays valid. Loading requires the earlier writes to be made visible
+first; RenderGraph records that barrier.
+
 **Extension points:** a second backend (a native Metal backend for future
 iOS is the one named candidate — see
 [overview.md](overview.md#windowed-vs-headless-the-shared-path-across-platforms))
@@ -224,6 +233,13 @@ and a pipeline-statistics query, read back after the existing per-frame fence
 wait (no new wait), and the Tracy Vulkan context. Device and driver metadata
 reaches the Core recorder, not an RHI getter. None of it crosses the RHI.
 
+Since Spec 0066 ([ADR-0133](../adr/0133-attachment-load-after-the-scene.md)
+D2) the backend overrides the six-parameter `beginRendering()` with
+`VK_ATTACHMENT_LOAD_OP_LOAD` for a loading attachment, and its transition table
+gains two same-state entries (`ColorAttachmentOutput` → itself,
+`DepthAttachmentReadWrite` → itself): memory dependencies without a layout
+change, making an earlier scope's attachment writes visible to the load.
+
 **Extension points:** future iOS via MoltenVK would extend this module
 with a third WSI path (`VK_MVK_ios_surface`/`VK_EXT_metal_surface`); not
 designed, not implemented, not decided over the native-Metal-backend
@@ -255,6 +271,21 @@ execution; does not own long-lived GPU resources — those are owned per
 **Public/private boundary:** public surface is pass-declaration and
 resource-dependency APIs consumed by Renderer; graph-compilation/
 scheduling internals (topological sort, barrier synthesis) are private.
+
+Since Spec 0066 ([ADR-0133](../adr/0133-attachment-load-after-the-scene.md)
+D3) a graph can continue what an earlier graph drew:
+- a `ResourceBinding` carries `load` (its last member; `Clear` by default, so
+  every earlier binding is unchanged), meaningful for a colour target or a depth
+  texture: each draw pass using a `Load` binding as its attachment begins with it
+  loaded, after a same-state transition `execute()` records so the earlier
+  writes are visible;
+- a depth binding's `incomingState` is honoured (its `Undefined` default keeps
+  the clear-every-frame behaviour), and a `Load` binding whose `incomingState` is
+  `Undefined` is a programmer error (there is nothing to load);
+- a resource counts as used by any pass that declares it;
+- `execute()` returns the state it left each binding in, in binding order, and a
+  later graph continuing a resource passes that state as its `incomingState`,
+  never a literal one.
 
 **Extension points:** GPU-driven / data-dependent scheduling is a
 named future phase (see [AGENTS.md](../../AGENTS.md)) — not designed here,
@@ -298,6 +329,26 @@ Renderer-owned UI draw list (`renderer::UiDrawList`: textured,
 vertex-coloured, scissored triangles sampling a font atlas or a sampled
 offscreen Viewport target) as one RenderGraph pass into a `RenderTarget`;
 Renderer knows neither the UI library nor the editor.
+
+Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D3,
+[ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Renderer has a
+second overlay input. `Renderer::drawViewportOverlay()` draws a
+`ViewportOverlayDrawList` (`atlantis/renderer/viewport_overlay.h`) into the frame
+after `drawFrame()`, as RenderGraph passes:
+- the selection's draw items into an `Rgba8Unorm` mask at the target's extent,
+  in its own graph, then an edge pass compositing the outline over the target;
+- the depth-tested primitives against the frame's depth, read only;
+- then the on-top ones.
+
+Segments are expanded to screen-space quads in the vertex shader (no wide-lines
+feature), points are drawn as screen-space squares, and a screen-constant
+group's offsets are scaled at its anchor's view depth from the frame's camera.
+`drawFrame()` keeps its parameters and passes and now returns the states it
+left its colour target and depth in (`FrameEndStates`). The overlay loads both
+from those states, never from literal ones, and leaves the target in the
+frame's final state. The caller owns the overlay's pipelines and buffers
+(`ViewportOverlayResources`, borrowed); Renderer retains nothing and never
+submits.
 
 **Extension points:** scene/material submission API (future spec);
 multi-`RenderTarget` / multi-viewport rendering (future spec).
@@ -855,6 +906,22 @@ property by scene address, the active camera, the scene schema), Command (seven,
 closed), Event (nine, closed, `Applied{generation}` among them), Transaction —
 with a closed refusal set (the addressing errors and the Spec 0049 constraint
 names), plus `open`, `apply` and `save`. Atlantis Authoring implements it.
+Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D1, D2)
+`RuntimeControl` has `setViewportOverlay(std::optional<ViewportOverlay>)`, the
+value in `atlantis/connection/viewport_overlay.h`:
+- a selection (entity GUIDs the Runtime outlines from their meshes);
+- groups of segments, triangles and points from a closed set (straight-alpha
+  sRGB colour, `Tested` or `OnTop`, widths and sizes in pixels), each group
+  world or screen-constant (an anchor and pixels per unit).
+
+One client's overlay is limited to 256 groups, 65,536 segments, 65,536
+triangles, 16,384 points and 256 selected entities (`overlayWithinLimits`).
+Remote's server refuses an overlay over a limit, or one not well formed
+(`overlayWellFormed`), with `InvalidRequest`, and nothing changes. Runtime's
+implementation receives the union, which may exceed one client's limits, so it
+checks well-formedness only.
+`StepRequest` gains `withOverlay` (what a client asks for its capture) and
+`captureOverlay` (the overlay a transport resolved for it; never on the wire).
 
 **Depends on:** Atlantis Core and Atlantis World's public access
 (`world/access/*`) and schema (`world/world_schema.h`) headers only, and, since
@@ -937,7 +1004,13 @@ D3) the wire also carries `AuthoringConnection` as `authoring.*`, additively:
 the server opens a client's authoring connection at its first `authoring.*`
 request (`RemoteServer::serveAuthoring()`; `NoAuthoring` when the Runtime serves
 no session), the client half exposes it as `RemoteSession::authoring()`, and
-`control.status` carries `sceneGeneration` (absent reads 0).
+`control.status` carries `sceneGeneration` (absent reads 0). Since Spec 0066
+([ADR-0132](../adr/0132-viewport-overlay-surface.md) D2)
+`control.setViewportOverlay` carries Connection's overlay. The server keeps one
+overlay per client and hands the control their union, in client order, on every
+change and when a client disconnects. It resolves `control.step`'s `withOverlay`
+(absent reads `false`) to the requester's own overlay, so a capture never shows
+another client's.
 
 **Depends on:** Atlantis Connection only — no Runtime, ECS, Platform, RHI or
 Renderer include. Its OS socket code (Winsock / BSD sockets) is private to the
@@ -964,7 +1037,13 @@ the `scene` group (`open`, `nodes`, `get`, `set`, `create`, `destroy`, `add`,
 `AuthoringConnection` the host provides, in the same `cli/1` envelopes; `scene
 apply` waits for `Applied{generation}` while the Runtime runs and, while it is
 paused, returns its pending outcome at once and reports `Applied` after the
-command that lets it arrive.
+command that lets it arrive. Since Spec 0066 the `runtime overlay` group:
+- `set <file|->`: an overlay in its wire JSON form;
+- `select <guid>...`: a selection-only overlay;
+- `clear`.
+
+`runtime step --capture [<path>] --with-overlay` asks for the capture to show
+this client's overlay; `--with-overlay` without `--capture` is a usage error.
 
 **Depends on:** Atlantis Connection, and nothing else — it links only
 `Atlantis::Connection` and includes no Runtime, ECS, Platform, RHI or
@@ -1079,7 +1158,8 @@ library (`src/csharp/Atlantis.Gameplay/`, namespace `Atlantis.Gameplay`):
   the JSON and codec of `atlantis.remote/1` (byte-identical with the C++ codec
   on the conformance vectors), and `RemoteSession` / `RemoteControl` (hello,
   line framing, pipelining; since Spec 0064 `SetViewportCamera` and `Raycast`,
-  ADR-0128);
+  ADR-0128; since Spec 0066 `SetViewportOverlay` and `StepRequest.WithOverlay`,
+  with the overlay records of `Overlay.cs`, ADR-0132);
 - the reflective layer (`GameplayWorld`, `Transaction`, `Subscription`,
   `FailureLog`) and the typed layer (`Generated/World.g.cs`: record structs,
   `long` enums, `Field` / `ReadOnlyField` handles, `IComponent<T>` /
@@ -1132,7 +1212,12 @@ editor camera (orbit and dolly; held to the C++ model by
 from the Runtime's forwarded input, and ray-casts a click through `Raycast`.
 It also carries the Phase 1 measurements (frame times, input latency, UI
 responsiveness) in its status line and `editor.log`. The checkpoint adopted
-V-a (child-window embedding) with route R-a (forwarded input).
+V-a (child-window embedding) with route R-a (forwarded input); Spec 0066's input
+investigation kept R-a (Plan 0066 J8). Since Spec 0066 (R7) a pick also outlines
+the hit entity and draws a translate Gizmo at its translation through
+`SetViewportOverlay` (`GizmoOverlay`: one screen-constant group of axis segments
+with cone tips, on top). It draws only, with no hit-testing or editing; a miss
+clears both.
 
 **Depends on:** Atlantis C# SDK as a project reference, and its NuGet packages
 under ADR-0127: only packages on `src/editor_app/allowed_packages.txt` (Phase
@@ -1358,6 +1443,26 @@ and its amendments) Runtime can replace its scene:
   any failure nothing is swapped;
 - `RuntimeStatus.sceneGeneration` counts the swaps (E2's history clears on its
   change).
+
+Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
+[ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
+the clients' Viewport overlay:
+- `RuntimeControlHost::setViewportOverlay` keeps the union it is given
+  (well-formedness checked; the per-client limits are Remote's server's) and
+  hands it to `RuntimeApplication`;
+- the overlay's shaders are loaded and its pipelines built at the first frame
+  with a non-empty overlay, never at startup, so startup, Android's packaged
+  shaders and every frame without an overlay are unchanged (Plan 0066 J11);
+- each such frame resolves the selection through the bake's `EntityGuidMap` to
+  draw items at the current `WorldMatrix`; an unknown, destroyed or
+  non-Renderable entity is skipped silently;
+- it draws at one named place of `runFrame()`, right after `drawFrame()` and
+  before the editor's UI pass. With an overlay, `drawFrame()` stops in
+  `ColorAttachmentOutput` and `Renderer::drawViewportOverlay()` continues from
+  its returned end states to the frame's final state (present source, or
+  shader-read under `--editor`); without one, the call is unchanged;
+- a capture's re-render draws only its step request's `captureOverlay`, never
+  the union.
 
 **Extension points:** the headless entry point (offscreen target
 construction instead of Platform/Presentation) remains a future,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/viewport_overlay.h>
 #include <atlantis/result.h>
 
 #include <array>
@@ -10,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 // Spec 0055 R3 / ADR-0106 D3 (ruling Q2, K-a + V-a): the Runtime's lifecycle
@@ -65,6 +67,14 @@ struct CapturedImage {
 struct StepRequest {
   std::uint32_t frames = 1;              // at least 1
   std::optional<std::string> imagePath;  // write the last frame's image here (PNG)
+  // Spec 0066 R5 / ADR-0132 D2: a capture draws no Viewport overlay unless the
+  // request asks; it then draws only the requesting client's own overlay.
+  bool withOverlay = false;
+  // The requester's own overlay, filled by the transport that holds each
+  // client's overlay (Remote's server) when withOverlay is set; never carried
+  // on the wire, and ignored from a client. (Its initializer keeps
+  // StepRequest{frames, image} free of -Wmissing-field-initializers.)
+  std::optional<ViewportOverlay> captureOverlay{};
 };
 
 // The last stepped frame. `applied`: command application ran in the stepped
@@ -104,7 +114,7 @@ struct RayHit {
 };
 
 enum class ControlError {
-  InvalidRequest,  // zero frames
+  InvalidRequest,  // zero frames; a Viewport overlay not well formed or over its limits
   NotRendering,    // the Runtime has no drawable frame to capture (no window surface yet, or minimized)
   CaptureFailed,   // the offscreen render, readback or PNG write failed
   Stopped,         // the Runtime stopped before the step completed
@@ -177,6 +187,15 @@ class RuntimeControl {
   // current WorldMatrix (both triangle faces, alpha masks ignored; ADR-0123
   // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.
   [[nodiscard]] virtual atlantis::Result<std::optional<RayHit>, ControlError> raycast(const Ray& ray) = 0;
+  // Spec 0066 R2 / ADR-0132 D2: the calling client's Viewport overlay, drawn
+  // from the next frame on, replaced whole; none clears it. Each client has
+  // its own, the frame draws the union of all clients', and a client's
+  // overlay goes when its connection closes (a transport keeps them apart and
+  // hands its implementation the union). InvalidRequest when the overlay is
+  // not well formed or over one client's limits; nothing changes then. Not
+  // World state: no event reports it.
+  [[nodiscard]] virtual atlantis::Result<std::monostate, ControlError> setViewportOverlay(
+      std::optional<ViewportOverlay> overlay) = 0;
 };
 
 }  // namespace atlantis::connection

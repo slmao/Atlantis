@@ -40,6 +40,7 @@ struct Fake {
   std::vector<bool> holds;  // setCommandsHeld() per frame
   int frameDataCalls = 0;
   std::vector<std::string> images;
+  std::vector<std::optional<connection::ViewportOverlay>> captureOverlays;  // Plan 0066: each capture's overlay
   bool failFrameData = false;
 
   RuntimeControlHost::Target target() {
@@ -55,8 +56,9 @@ struct Fake {
       data.drawItemCount = static_cast<std::uint64_t>(frameDataCalls);
       return atlantis::Result<connection::FrameData, connection::ControlError>::Ok(data);
     };
-    t.captureImage = [this](const std::string& path) {
+    t.captureImage = [this](const std::string& path, const std::optional<connection::ViewportOverlay>& overlay) {
       images.push_back(path);
+      captureOverlays.push_back(overlay);
       return atlantis::Result<connection::CapturedImage, connection::ControlError>::Ok(
           connection::CapturedImage{path, 8, 4});
     };
@@ -138,6 +140,30 @@ TEST_CASE("control: steps run one at a time, in order; zero frames is refused at
   for (int i = 0; i < 4; ++i) frame(host);
   CHECK(order == std::vector<std::string>{"a@2", "b@3:shot.png"});
   CHECK(fake.images == std::vector<std::string>{"shot.png"});
+}
+
+// Plan 0066 P4 (Spec 0066 R5; J3): a capture is given the step's captureOverlay
+// -- the requester's own overlay, filled by the transport -- and nothing else:
+// the host's own overlay (the union) never reaches it.
+TEST_CASE("control: a capture is given its step's captureOverlay, never the union", "[runtime][control][overlay]") {
+  Fake fake;
+  RuntimeControlHost host(fake.target(), noDiagnostics());
+  connection::ViewportOverlay unionOverlay;
+  unionOverlay.selection = {atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value()};
+  REQUIRE(host.setViewportOverlay(unionOverlay).isOk());
+
+  connection::ViewportOverlay own;
+  own.groups.emplace_back();
+  connection::StepRequest withOwn{1, std::string("own.png")};
+  withOwn.withOverlay = true;
+  withOwn.captureOverlay = own;
+  host.step(connection::StepRequest{1, std::string("plain.png")}, [](StepResult) {});
+  host.step(withOwn, [](StepResult) {});
+  for (int i = 0; i < 3; ++i) frame(host);
+
+  REQUIRE(fake.captureOverlays.size() == 2);
+  CHECK_FALSE(fake.captureOverlays[0].has_value());  // no withOverlay: none, though the union is set
+  CHECK(fake.captureOverlays[1] == std::optional<connection::ViewportOverlay>{own});
 }
 
 TEST_CASE("control: a failing capture fails the step; stop() fails what is still waiting", "[runtime][control]") {
@@ -360,4 +386,35 @@ TEST_CASE("control: a held command survives a requested reload and settles on th
   CHECK(client->drainFailures().empty());
   CHECK(client->getProperty(intensity).value() != access::PropertyValue{6.5f});  // the new World's own value
   CHECK(edit.value > 0);
+}
+
+// Plan 0066 P1 (Spec 0066 R2; ADR-0132 D2): the host keeps the overlay it is handed (the transport's union, which
+// may exceed one client's limits) and passes it to its target; one not well formed is refused, nothing changed.
+TEST_CASE("control: the Viewport overlay is kept and passed on; one not well formed is refused",
+          "[runtime][control][overlay]") {
+  Fake fake;
+  std::vector<std::optional<connection::ViewportOverlay>> handed;
+  RuntimeControlHost::Target target = fake.target();
+  target.setViewportOverlay = [&handed](const std::optional<connection::ViewportOverlay>& o) { handed.push_back(o); };
+  RuntimeControlHost host(std::move(target), noDiagnostics());
+  CHECK_FALSE(host.viewportOverlay().has_value());
+
+  connection::ViewportOverlay overlay;
+  overlay.selection = {atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value()};
+  overlay.groups.resize(connection::kMaxOverlayGroups + 1);  // a union: over one client's limit, still accepted
+  REQUIRE(host.setViewportOverlay(overlay).isOk());
+  CHECK(host.viewportOverlay() == std::optional<connection::ViewportOverlay>{overlay});
+
+  connection::ViewportOverlay bad = overlay;
+  bad.groups[0].points.push_back({{0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f, 1.5f}, connection::OverlayDepth::Tested, 4.0f});
+  const auto refused = host.setViewportOverlay(bad);
+  REQUIRE(refused.isErr());
+  CHECK(refused.error() == connection::ControlError::InvalidRequest);
+  CHECK(host.viewportOverlay() == std::optional<connection::ViewportOverlay>{overlay});
+
+  REQUIRE(host.setViewportOverlay(std::nullopt).isOk());
+  CHECK_FALSE(host.viewportOverlay().has_value());
+  REQUIRE(handed.size() == 2);
+  CHECK(handed[0] == std::optional<connection::ViewportOverlay>{overlay});
+  CHECK_FALSE(handed[1].has_value());
 }

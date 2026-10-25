@@ -1,7 +1,10 @@
 // Spec 0064 Phase 1 (Plan 0064 P4, P5): what the editor reads from the World
 // and asks of the Runtime, over the Atlantis C# SDK only (ADR-0125 D1/D2):
-// the entity list, the scene camera, SetViewportCamera, Raycast, and the
-// frame-time and latency measurements of the Phase 1 investigation. One
+// the entity list, the scene camera, SetViewportCamera, Raycast, the
+// frame-time and latency measurements of the Phase 1 investigation, and Plan
+// 0066 M1's measurement drag (WorldMatrix.column3 writes, timed), and Plan
+// 0066 M5's pick overlay (SetViewportOverlay: an outline and a Gizmo) and M6's
+// overlay measurement (OverlayMeasurement.cs). One
 // worker thread owns the RemoteSession (the SDK is not thread-safe), so the
 // UI thread never waits on the Runtime's frame. UI-free.
 using System;
@@ -200,6 +203,17 @@ public sealed class EditorWorker : IDisposable
     private (ViewportCamera? Camera, long InputTicks, int Count)? _pendingCamera;
     private bool _stopping;
     private volatile bool _measureLatency;
+    // Plan 0066 M1: the measurement drag (worker-thread state, except the pending update under _lock).
+    private (float Dx, float Dy, long InputTicks, int Count)? _pendingDrag;
+    private bool _dragActive;  // set and cleared by the worker, read under _lock
+    private GameplayWorld? _world;
+    private EntityGuid _dragEntity;
+    private Vector4 _dragStart;
+    private Vector3 _dragRight;
+    private Vector3 _dragUp;
+    private float _dragUnitsPerPixel;
+    // The last write, until a later answer (after the frame that applied it) dates its first visible frame.
+    private (long InputTicks, double AckMs, ulong Frame, int Coalesced)? _unseenWrite;
 
     public EditorWorker(SessionInfo info, Action<Action> post, EditorLog log)
     {
@@ -218,6 +232,9 @@ public sealed class EditorWorker : IDisposable
 
     /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
     public string? SessionPath { get; init; }
+
+    /// <summary>Plan 0066 M1: where the measurement drag's writes and frames are recorded (null: no measurement).</summary>
+    public DragRecorder? Recorder { get; init; }
 
     /// <summary>When on, each camera update also waits for the first frame drawn from it (one more frame of round trips).</summary>
     public bool MeasureLatency
@@ -254,6 +271,157 @@ public sealed class EditorWorker : IDisposable
         _post(() => Picked?.Invoke(answer));
     });
 
+    /// <summary>
+    /// Plan 0066 M5 (Spec 0066 R7): the overlay for a pick -- <paramref name="entity"/> outlined, with a translate
+    /// Gizmo at its WorldMatrix's translation (read here, on the worker thread) -- or none (null: nothing picked).
+    /// An entity whose WorldMatrix cannot be read is outlined without a Gizmo.
+    /// </summary>
+    public void ShowPick(EntityGuid? entity) => Enqueue(session =>
+    {
+        ViewportOverlay? overlay = null;
+        if (entity is EntityGuid picked)
+        {
+            overlay = ViewportOverlay.Select(picked);
+            try
+            {
+                Vector4 column3 = _world!.Get<W.WorldMatrix>(picked).Column3;
+                overlay = GizmoOverlay.ForPick(picked, new Vector3(column3.X, column3.Y, column3.Z));
+            }
+            catch (RefusedException e)
+            {
+                _log.Write("overlay: no WorldMatrix for " + picked + " (" + e.Message + "), outline only");
+            }
+        }
+        ControlError? error = session.Control.SetViewportOverlay(overlay);
+        string what = overlay is null ? "cleared" : (overlay.Groups.Count > 0 ? "outline and Gizmo for " : "outline for ") + entity;
+        _log.Write("overlay " + what + (error is ControlError refused ? " refused: " + refused : ""));
+    });
+
+    /// <summary>Plan 0066 M6: the overlay measurement (OverlayMeasurement.cs); <paramref name="done"/> runs on the UI thread.</summary>
+    public void MeasureOverlay(OverlayMeasureRequest request, string label, Action<OverlayReport> done) => Enqueue(session =>
+    {
+        OverlayReport report = MeasureOverlay(session, request, label);
+        _log.Write("overlay measurement " + report);
+        _post(() => done(report));
+    });
+
+    private OverlayReport MeasureOverlay(RemoteSession session, OverlayMeasureRequest request, string label)
+    {
+        RemoteControl control = session.Control;
+        var phases = new List<OverlayPhase>();
+        OverlayReport Failed(string why) => new(label, null, 0, 0, Stats.Of(Array.Empty<double>()), phases, why);
+
+        EntityGuid entity;
+        if (request.Entity is EntityGuid given)
+        {
+            entity = given;
+        }
+        else
+        {
+            RaycastResult hit = control.Raycast(new Ray(request.Ray.Origin, request.Ray.Direction));
+            if (hit.Hit is not RayHit picked) return Failed("the pick ray hit nothing (" + (hit.Error?.ToString() ?? "miss") + ")");
+            entity = picked.Entity;
+        }
+        Vector4 column3 = _world!.Get<W.WorldMatrix>(entity).Column3;
+        ViewportOverlay overlay = GizmoOverlay.ForPick(entity, new Vector3(column3.X, column3.Y, column3.Z));
+        ViewportCamera still = SceneReader.ToViewportCamera(request.Pose);
+        control.SetViewportCamera(still);
+        double framePeriod = FrameSampler.Measure(control, 120).MedianMs;
+
+        // A phase: the overlay set (or not), then PhaseSeconds of frames, timed by status answers at both ends.
+        void Phase(string name, ViewportOverlay? shown)
+        {
+            if (control.SetViewportOverlay(shown) is ControlError refused) throw new InvalidOperationException("overlay refused: " + refused);
+            System.Threading.Thread.Sleep(1000);  // the change is drawn and settles before the phase starts
+            RuntimeStatus first = control.Status();
+            DateTime start = DateTime.UtcNow;
+            long startTicks = Stopwatch.GetTimestamp();
+            System.Threading.Thread.Sleep(TimeSpan.FromSeconds(request.PhaseSeconds));
+            RuntimeStatus last = control.Status();
+            double ms = Stopwatch.GetElapsedTime(startTicks).TotalMilliseconds;
+            double period = last.Frame > first.Frame ? ms / (last.Frame - first.Frame) : 0;
+            phases.Add(new OverlayPhase(name, shown is not null, start, DateTime.UtcNow, period));
+        }
+
+        // Send -> the answer after the first frame drawn with it.
+        double Dated(ViewportOverlay? shown)
+        {
+            long start = Stopwatch.GetTimestamp();
+            if (control.SetViewportOverlay(shown) is ControlError refused) throw new InvalidOperationException("overlay refused: " + refused);
+            _ = control.Status();
+            return Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        }
+
+        Phase("pristine", null);
+        double firstSend = Dated(overlay);
+        var orbit = new OrbitCamera();
+        orbit.Reset(request.Pose);
+        var sends = new List<double>(request.Sends);
+        for (int i = 0; i < request.Sends; ++i)
+        {
+            orbit.Orbit(4.0f, 0.0f);
+            control.SetViewportCamera(SceneReader.ToViewportCamera(orbit.Pose()));
+            control.SetViewportOverlay(null);
+            orbit.Orbit(4.0f, 0.0f);
+            control.SetViewportCamera(SceneReader.ToViewportCamera(orbit.Pose()));
+            sends.Add(Dated(overlay));
+        }
+        control.SetViewportCamera(still);
+        for (int pair = 0; pair < request.PhasePairs; ++pair)
+        {
+            Phase("off " + (pair + 1), null);
+            Phase("on " + (pair + 1), overlay);
+        }
+        control.SetViewportOverlay(null);
+        control.SetViewportCamera(null);
+        return new OverlayReport(label, entity, framePeriod, firstSend, Stats.Of(sends), phases);
+    }
+
+    /// <summary>
+    /// Plan 0066 M1: starts a measurement drag of <paramref name="entity"/> in the view plane of
+    /// <paramref name="pose"/>, a pixel being one pane pixel at the entity's depth.
+    /// </summary>
+    public void BeginDrag(EntityGuid entity, CameraPose pose, int paneHeight) => Enqueue(_ =>
+    {
+        if (_world is null) return;
+        _dragEntity = entity;
+        _dragStart = _world.Get<W.WorldMatrix>(entity).Column3;
+        float[] m = pose.WorldMatrix;
+        _dragRight = new Vector3(m[0], m[1], m[2]);
+        _dragUp = new Vector3(m[4], m[5], m[6]);
+        var forward = new Vector3(-m[8], -m[9], -m[10]);
+        var eye = new Vector3(m[12], m[13], m[14]);
+        float depth = MathF.Max(pose.Lens.NearZ, Vector3.Dot(new Vector3(_dragStart.X, _dragStart.Y, _dragStart.Z) - eye, forward));
+        _dragUnitsPerPixel = 2.0f * depth * MathF.Tan(pose.Lens.FovYRadians * 0.5f) / Math.Max(1, paneHeight);
+        lock (_lock) _dragActive = true;
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "drag begin {0} at depth {1:F2}", entity, depth));
+    });
+
+    /// <summary>Plan 0066 M1: the drag's offset from its press, in pane pixels; coalesced like camera updates.</summary>
+    public void DragTo(float dx, float dy, long inputTicks)
+    {
+        lock (_lock)
+        {
+            int count = _pendingDrag is { } pending ? pending.Count + 1 : 1;
+            long first = _pendingDrag is { } p ? p.InputTicks : inputTicks;
+            _pendingDrag = (dx, dy, first, count);
+            Monitor.Pulse(_lock);
+        }
+    }
+
+    /// <summary>Plan 0066 M1: the release -- the last offset is written, then the drag ends.</summary>
+    public void EndDrag(float dx, float dy, long inputTicks)
+    {
+        DragTo(dx, dy, inputTicks);
+        Enqueue(session =>
+        {
+            CloseUnseenWrite(session);
+            lock (_lock) _dragActive = false;
+            int refused = session.DrainFailures().Count;
+            _log.Write("drag end" + (refused > 0 ? ", " + refused + " write(s) refused" : ""));
+        });
+    }
+
     public void Measure(int frames) => Enqueue(session =>
     {
         FrameTimes times = FrameSampler.Measure(session.Control, frames, _capturePath);
@@ -287,6 +455,7 @@ public sealed class EditorWorker : IDisposable
         {
             session = RemoteSession.Connect(_info);
             var world = new GameplayWorld(session);
+            _world = world;
             SceneSnapshot snapshot = SceneReader.Read(world);
             _log.Write("connected: port " + _info.Port + ", " + snapshot.Entities.Count + " entities");
             _post(() => Connected?.Invoke(snapshot));
@@ -317,19 +486,36 @@ public sealed class EditorWorker : IDisposable
         {
             Action<RemoteSession>? work = null;
             (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
+            (float Dx, float Dy, long InputTicks, int Count)? drag = null;
             lock (_lock)
             {
-                while (!_stopping && _work.Count == 0 && _pendingCamera is null) Monitor.Wait(_lock);
+                // A pending drag offset waits for its BeginDrag (queued work) to have run.
+                while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive))
+                {
+                    Monitor.Wait(_lock);
+                }
                 if (_stopping) return;
                 if (_pendingCamera is not null)
                 {
                     camera = _pendingCamera;
                     _pendingCamera = null;
                 }
+                else if (_pendingDrag is not null && _dragActive)
+                {
+                    drag = _pendingDrag;
+                    _pendingDrag = null;
+                }
                 else
                 {
                     work = _work.Dequeue();
                 }
+            }
+            if (drag is { } offset)
+            {
+                WriteDrag(session, offset.Dx, offset.Dy, offset.InputTicks, offset.Count);
+                bool more;
+                lock (_lock) more = _pendingDrag is not null;
+                if (!more) CloseUnseenWrite(session);  // nothing follows to date it: ask once
             }
             if (camera is { } update)
             {
@@ -352,5 +538,47 @@ public sealed class EditorWorker : IDisposable
             }
             work?.Invoke(session);
         }
+    }
+
+    // Plan 0066 M1: one measurement write, without perturbing the next. The submit and a status are pipelined, so both
+    // are answered at the same frame boundary, after frame N (the status names N); the write is applied at the start
+    // of frame N+1. The next request answered -- the next write's, sent at once, or a status when no input follows --
+    // is answered after frame N+1, the first frame drawn with this write: that answer dates it. Latency counts from
+    // the oldest input the write coalesced (as Phase 1's camera latency did).
+    private void WriteDrag(RemoteSession session, float dx, float dy, long inputTicks, int coalesced)
+    {
+        Vector3 offset = _dragRight * (dx * _dragUnitsPerPixel) - _dragUp * (dy * _dragUnitsPerPixel);
+        var column3 = new Vector4(_dragStart.X + offset.X, _dragStart.Y + offset.Y, _dragStart.Z + offset.Z, _dragStart.W);
+        var address = new PropertyAddress(_dragEntity, W.Fields.WorldMatrix.Column3.Component, W.Fields.WorldMatrix.Column3.Id);
+        ulong submit = session.Send("connection.submit",
+                                    JsonValue.NewObject().Set("command", Codec.Encode(new SetProperty(address, column3))));
+        ulong status = session.Send("control.status");
+        session.AwaitResult(submit);
+        RuntimeStatus answered = Codec.DecodeStatus(session.AwaitResult(status)) ?? throw new InvalidOperationException("a malformed status");
+        long now = Stopwatch.GetTimestamp();
+        DateUnseenWrite(now);
+        double ack = Stopwatch.GetElapsedTime(inputTicks, now).TotalMilliseconds;
+        Recorder?.Frame(now, answered.Frame);
+        _unseenWrite = (inputTicks, ack, answered.Frame, coalesced);
+    }
+
+    // A status answered after the frame that applied the last write dates it; nothing to do without one.
+    private void CloseUnseenWrite(RemoteSession session)
+    {
+        if (_unseenWrite is null) return;
+        RuntimeStatus answered = session.Control.Status();
+        long now = Stopwatch.GetTimestamp();
+        Recorder?.Frame(now, answered.Frame);
+        DateUnseenWrite(now);
+    }
+
+    private void DateUnseenWrite(long answeredTicks)
+    {
+        if (_unseenWrite is not { } write) return;
+        _unseenWrite = null;
+        double toFrame = Stopwatch.GetElapsedTime(write.InputTicks, answeredTicks).TotalMilliseconds;
+        Recorder?.Write(new DragWrite(write.InputTicks, write.AckMs, toFrame, write.Frame, write.Coalesced));
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "drag write coalesced {0} input->ack {1:F1} ms input->frame {2:F1} ms frame {3}",
+                                 write.Coalesced, write.AckMs, toFrame, write.Frame));
     }
 }

@@ -234,6 +234,9 @@ struct RecordedBeginRendering {
   const atlantis::rhi::Texture* depth;  // nullptr if this scope had no depth attachment
   atlantis::rhi::ClearColorValue colorClear;
   float depthClear;
+  // Plan 0066 P3 (ADR-0133): Clear for the four-parameter call.
+  atlantis::rhi::AttachmentLoad colorLoad = atlantis::rhi::AttachmentLoad::Clear;
+  atlantis::rhi::AttachmentLoad depthLoad = atlantis::rhi::AttachmentLoad::Clear;
 };
 
 // Plan 0024 Milestone 2 -- the HdrColorTarget-shaped beginRendering()
@@ -328,6 +331,14 @@ class FakeCommandList final : public atlantis::rhi::CommandList {
   void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
                        atlantis::rhi::ClearColorValue colorClear, float depthClear) override {
     beginRenderingCalls.push_back(RecordedBeginRendering{&color, depth, colorClear, depthClear});
+    events.push_back(EventKind::BeginRendering);
+  }
+
+  // Plan 0066 P3 (ADR-0133 D1): recorded as the same event, with its loads.
+  void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear,
+                       atlantis::rhi::AttachmentLoad colorLoad, atlantis::rhi::AttachmentLoad depthLoad) override {
+    beginRenderingCalls.push_back(RecordedBeginRendering{&color, depth, colorClear, depthClear, colorLoad, depthLoad});
     events.push_back(EventKind::BeginRendering);
   }
 

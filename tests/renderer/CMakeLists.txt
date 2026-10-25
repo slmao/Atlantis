@@ -5,6 +5,8 @@ add_executable(atlantis_renderer_tests
   renderer_ownership_tests.cpp
   # Plan 0056 M3: the UI overlay pass's recording, on the fake command list.
   ui_overlay_tests.cpp
+  # Plan 0066 M3b (ADR-0132 D3): the Viewport overlay's draw list and passes.
+  viewport_overlay_tests.cpp
 )
 target_include_directories(atlantis_renderer_tests
   PRIVATE

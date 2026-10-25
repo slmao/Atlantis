@@ -12,6 +12,8 @@ add_executable(atlantis_render_graph_tests
   hdr_color_target_execution_tests.cpp
   shadow_map_execution_tests.cpp
   region_execution_tests.cpp
+  # Plan 0066 M3a (ADR-0133 D3): loading an attachment.
+  attachment_load_tests.cpp
 )
 
 # PRIVATE to this test target only -- needed once compile_algorithm_tests.cpp

@@ -413,6 +413,11 @@ int main(int argc, char** argv) {
   if (cliResult.listenPort.has_value() || cliResult.editor) {
     control = std::make_unique<atlantis::runtime::RuntimeControlHost>(
         atlantis::runtime::RuntimeControlHost::forApplication(app), atlantis::runtime::RuntimeControlHost::Options{});
+    // Plan 0066 P4 (ADR-0132 D4; J11): a served RuntimeControl can set a
+    // Viewport overlay; its shaders load only when one first arrives.
+    app.enableViewportOverlay(atlantis::runtime::ViewportOverlayShaderPaths{
+        ATLANTIS_RUNTIME_VIEWPORT_OVERLAY_SHADER_DIR, ATLANTIS_RUNTIME_SELECTION_MASK_SHADER_DIR,
+        ATLANTIS_RUNTIME_SELECTION_OUTLINE_SHADER_DIR});
   }
   if (cliResult.listenPort.has_value()) {
     auto listening = atlantis::remote::RemoteServer::listen(*cliResult.listenPort, atlantis::remote::generateToken(),

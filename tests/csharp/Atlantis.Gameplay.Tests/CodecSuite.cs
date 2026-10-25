@@ -42,7 +42,73 @@ public static class CodecSuite
 
         Edges(t, wires);
         AuthoringEdges(t, wires);
+        OverlayEdges(t, wires);
         Refusals(t);
+    }
+
+    // Plan 0066 P2: the overlay vectors decode to exact C# values; a step request without withOverlay (an older
+    // client's) decodes to false; malformed overlays are refused as overlayFromJson refuses them.
+    private static void OverlayEdges(TestContext t, Dictionary<string, JsonValue> wires)
+    {
+        var entity = EntityGuid.Parse("58005800-0000-4000-8000-0000000000b1");
+        ViewportOverlay empty = Codec.DecodeViewportOverlay(wires["overlay.empty"])!;
+        t.Check(empty.Selection.Count == 0 && empty.Groups.Count == 0, "overlay.empty: nothing selected, no groups");
+        ViewportOverlay selected = Codec.DecodeViewportOverlay(wires["overlay.selection"])!;
+        t.Check(selected.Selection.Count == 2 && selected.Selection[0] == entity && selected.Groups.Count == 0,
+                "overlay.selection: two entities, no groups");
+        OverlayGroup world = Codec.DecodeViewportOverlay(wires["overlay.world"])!.Groups[0];
+        t.Check(world.Anchor is null, "overlay.world: a world group has no anchor");
+        t.Equal(new OverlaySegment(Vector3.Zero, new Vector3(1.0f, 0.5f, -2.25f), new OverlayColor(1.0f, 0.25f, 0.0f, 1.0f),
+                                   OverlayDepth.Tested, 2.0f), world.Segments[0], "overlay.world: the first segment");
+        t.Equal(OverlayDepth.OnTop, world.Segments[1].Depth, "overlay.world: the second segment is on top");
+        t.Equal(new OverlayTriangle(Vector3.Zero, Vector3.UnitX, Vector3.UnitY, new OverlayColor(0.2f, 0.4f, 0.6f, 0.75f)),
+                world.Triangles[0], "overlay.world: the triangle");
+        t.Equal(new OverlayPoint(new Vector3(0.1f, 0.2f, 0.3f), new OverlayColor(1, 1, 1), OverlayDepth.OnTop, 6.5f),
+                world.Points[0], "overlay.world: the point");
+        ViewportOverlay both = Codec.DecodeViewportOverlay(wires["overlay.screen_constant"])!;
+        t.Equal<OverlayAnchor?>(new OverlayAnchor(new Vector3(1.5f, -2.0f, 4.0f), 96.0f), both.Groups[1].Anchor,
+                                "overlay.screen_constant: the anchor");
+        t.Check(both.Groups[1].Segments.Count == 3, "overlay.screen_constant: three axes");
+        var gizmo = new OverlayGroup(new OverlayAnchor(new Vector3(1.5f, -2.0f, 4.0f), 96.0f),
+            new[]
+            {
+                new OverlaySegment(Vector3.Zero, Vector3.UnitX, new OverlayColor(1, 0, 0), OverlayDepth.OnTop, 3.0f),
+                new OverlaySegment(Vector3.Zero, Vector3.UnitY, new OverlayColor(0, 1, 0), OverlayDepth.OnTop, 3.0f),
+                new OverlaySegment(Vector3.Zero, Vector3.UnitZ, new OverlayColor(0, 0, 1), OverlayDepth.OnTop, 3.0f),
+            },
+            Array.Empty<OverlayTriangle>(), Array.Empty<OverlayPoint>());
+        t.Check(W(Codec.Encode(new ViewportOverlay(new[] { entity }, new[] { world, gizmo }))) == W(wires["overlay.screen_constant"]),
+                "a hand-built overlay encodes to overlay.screen_constant's bytes");
+        t.Equal(new StepRequest(2, "D:/shots/overlay.png", true), Codec.DecodeStepRequest(wires["step.with_overlay"]),
+                "step.with_overlay: withOverlay true");
+        t.Equal(new StepRequest(1), Codec.DecodeStepRequest(Json.Parse("{\"frames\":1,\"image\":null}")),
+                "a step request without withOverlay: false");
+        t.Check(Codec.DecodeStepRequest(Json.Parse("{\"frames\":1,\"image\":null,\"withOverlay\":1}")) is null,
+                "refused a step request whose withOverlay is not a bool");
+
+        const string group = "{\"anchor\":null,\"segments\":[],\"triangles\":[],\"points\":[]}";
+        string[] bad =
+        {
+            "{\"selection\":[]}", "{\"groups\":[]}", "[]", "{\"selection\":[1],\"groups\":[]}",
+            "{\"selection\":[\"58005800-0000-4000-8000-0000000000B1\"],\"groups\":[]}",
+            "{\"selection\":[],\"groups\":[{\"segments\":[],\"triangles\":[],\"points\":[]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":{\"position\":[0,0,0]},\"segments\":[],\"triangles\":[],\"points\":[]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":null,\"segments\":[],\"triangles\":[]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":null,\"segments\":[{\"a\":[0,0,0],\"b\":[1,0,0],\"color\":[1,1,1],\"depth\":\"Tested\",\"width\":1}],\"triangles\":[],\"points\":[]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":null,\"segments\":[{\"a\":[0,0,0],\"b\":[1,0,0],\"color\":[1,1,1,1],\"depth\":\"Behind\",\"width\":1}],\"triangles\":[],\"points\":[]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":null,\"segments\":[],\"triangles\":[],\"points\":[{\"p\":[0,0,0],\"color\":[1,1,1,1],\"depth\":\"OnTop\",\"size\":\"4\"}]}]}",
+            "{\"selection\":[],\"groups\":[{\"anchor\":null,\"segments\":[],\"triangles\":[],\"points\":[{\"p\":[0,0,1e39],\"color\":[1,1,1,1],\"depth\":\"OnTop\",\"size\":4}]}]}",
+        };
+        foreach (string text in bad)
+        {
+            t.Check(Codec.DecodeViewportOverlay(Json.Parse(text)) is null, "refused overlay " + text);
+        }
+        t.Check(Codec.DecodeViewportOverlay(Json.Parse("{\"selection\":[],\"groups\":[" + group + "]}")) is not null,
+                "an empty world group decodes");
+        t.Throws<ArgumentException>(
+            () => Codec.Encode(new ViewportOverlay(Array.Empty<EntityGuid>(),
+                new[] { OverlayGroup.World(points: new[] { new OverlayPoint(new Vector3(float.NaN, 0, 0), new OverlayColor(1, 1, 1)) }) })),
+            "a non-finite overlay float has no JSON form");
     }
 
     // Decodes `wire` as `type` and re-encodes it; null if it does not decode.
@@ -68,6 +134,9 @@ public static class CodecSuite
                 return Codec.DecodeViewportCamera(wire) is ViewportCamera camera ? W(Codec.Encode(camera)) : null;
             case "Ray": return Codec.DecodeRay(wire) is Ray ray ? W(Codec.Encode(ray)) : null;
             case "RayHit": return Codec.DecodeRayHit(wire) is RayHit hit ? W(Codec.Encode(hit)) : null;
+            // Plan 0066 P2: the Viewport overlay (section 6.6).
+            case "ViewportOverlay":
+                return Codec.DecodeViewportOverlay(wire) is ViewportOverlay overlay ? W(Codec.Encode(overlay)) : null;
             case "SessionFile":
                 return SessionFile.TryParse(W(wire), out SessionInfo? session, out _)
                     ? SessionFile.Format(session!).TrimEnd('\n')

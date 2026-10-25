@@ -155,7 +155,7 @@ atlantis::Result<connection::FrameData, connection::ControlError> RuntimeApplica
 // Duplicated, not refactored out of runFrame() (P7): the frame-data equality
 // and image determinism tests pin the two together.
 atlantis::Result<connection::CapturedImage, connection::ControlError> RuntimeApplication::captureImage(
-    const std::string& path) {
+    const std::string& path, const std::optional<connection::ViewportOverlay>& overlay) {
   using ResultT = atlantis::Result<connection::CapturedImage, connection::ControlError>;
   using atlantis::rhi::ResourceState;
   if (!scene_ || !device_ || !presentation_ || !lastSeenFormat_.has_value() || !lastSeenExtent_.has_value() ||
@@ -240,14 +240,23 @@ atlantis::Result<connection::CapturedImage, connection::ControlError> RuntimeApp
   if (acquired.isErr()) return ResultT::Err(connection::ControlError::CaptureFailed);
   std::unique_ptr<atlantis::rhi::RenderTarget> target = std::move(acquired.value());
 
-  renderer_.drawFrame(*commandList.value(), *target, *depthTexture_, *cameraBuffer_, drawItems,
-                      ResourceState::TransferSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
+  // Plan 0066 P4 (Spec 0066 R5; ADR-0132 D2): the requester's own overlay,
+  // when its step asked -- never the window's union -- drawn as runFrame()
+  // draws one; without it, the capture is exactly as before.
+  const std::optional<atlantis::renderer::ViewportOverlayDrawList> overlayList =
+      overlay.has_value() ? viewportOverlayDrawList(*overlay, *lastSeenFormat_) : std::nullopt;
+  const atlantis::renderer::FrameEndStates sceneEnd = renderer_.drawFrame(*commandList.value(), *target, *depthTexture_, *cameraBuffer_, drawItems,
+                      overlayList ? ResourceState::ColorAttachmentOutput : ResourceState::TransferSource, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                       *fullscreenTriangleIndexBuffer_, *outputTransformPipeline, *outputTransformSampler_,
                       activeCamera->camera.exposureCompensationEv,
                       environmentLightingView.has_value() ? &*environmentLightingView : nullptr, skyPipeline_.get(),
                       *shadowMap_, *shadowMapSampler_, *shadowCastPipeline_, *shadowLightSpaceBuffer_,
                       hasDirectionalLight ? std::span<const DrawItem>(drawItems) : std::span<const DrawItem>(),
                       cameraWorldPosition, bloomInput.has_value() ? &*bloomInput : nullptr);
+  if (overlayList) {
+    static_cast<void>(drawViewportOverlayInto(*commandList.value(), *target, sceneEnd, ResourceState::TransferSource,
+                                              camera.value(), *overlayList));
+  }
 
   // The readback copy, as a RenderGraph pass (the image-regression fixtures'
   // shape): the target is already in TransferSource.

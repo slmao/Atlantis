@@ -12,6 +12,8 @@ add_library(atlantis_connection STATIC
   src/in_process_endpoint.cpp
   src/text.cpp
   src/json.cpp
+  # Plan 0066 P1 (ADR-0132 D1): the Viewport overlay's validation and JSON form.
+  src/viewport_overlay.cpp
   # Plan 0065 P3 (ADR-0130 D1): AuthoringConnection's value helpers; its InProcess
   # endpoint is Atlantis Authoring's (src/authoring).
   src/authoring_connection.cpp

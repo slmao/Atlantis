@@ -6,6 +6,8 @@ add_library(atlantis_renderer STATIC
   src/renderer.cpp
   # Plan 0056 P5 (ADR-0108 D3): the UI overlay pass.
   src/ui_overlay.cpp
+  # Plan 0066 P3 (ADR-0132 D3): the Viewport overlay's passes.
+  src/viewport_overlay.cpp
 )
 add_library(Atlantis::Renderer ALIAS atlantis_renderer)
 

@@ -2,8 +2,19 @@
 // entity list and the embedded Viewport, and a status line. The Viewport's
 // host window is handed to atlantis_runtime as --parent-window; the Runtime's
 // forwarded input orbits and dollies the editor camera (SetViewportCamera)
-// and a click ray-casts (Raycast) and highlights the hit in the list. The
+// and a click ray-casts (Raycast) and highlights the hit in the list -- and,
+// Plan 0066 M5 (Spec 0066 R7), outlines it in the Viewport with a translate
+// Gizmo (SetViewportOverlay; a miss clears both, a camera change sends
+// nothing). The
 // status line and editor.log carry the Phase 1 measurements (P5).
+//
+// Plan 0066 M1 (Spec 0066 R8): with MeasureDrag, a Shift + left drag on the
+// selected entity is the input investigation's measurement drag (no orbit, no
+// pick), recorded by a DragRecorder with the UI thread's tick gaps; with
+// AttachSession, the editor drives an already running, unembedded Runtime (the
+// no-attachment control), taking input in its own Viewport pane; with
+// DriveDrags, the protocol's drags are replayed with real OS input
+// (InputDriver), and drag-report.json is written when they end.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -21,7 +32,23 @@ using Avalonia.Threading;
 
 namespace Atlantis.Editor;
 
-public sealed record EditorOptions(string RuntimePath, string Scene);
+public sealed record EditorOptions(string RuntimePath, string Scene)
+{
+    // Plan 0066 M1: the input investigation's options (measurement-only).
+    public bool MeasureDrag { get; init; }
+    public string? AttachSession { get; init; }
+    public int DriveDrags { get; init; }
+    public bool ExitAfterDrive { get; init; }
+    public int SettleSeconds { get; init; } = 5;
+    // Plan 0066 M6: the overlay measurement's options (measurement-only).
+    public bool MeasureOverlay { get; init; }
+    public int OverlaySends { get; init; } = 50;
+    public int OverlayPhasePairs { get; init; } = 3;
+    public double OverlayPhaseSeconds { get; init; } = 15.0;
+    public (float X, float Y) PickNdc { get; init; }
+    public EntityGuid? OverlayEntity { get; init; }
+    public (int Width, int Height)? ViewportSize { get; init; }
+}
 
 public sealed class MainWindow : Window
 {
@@ -60,6 +87,10 @@ public sealed class MainWindow : Window
     private string _inputLine = "";
     private string _uiLine = "";
     private string _measureLine = "";
+    // Plan 0066 M1.
+    private readonly DragRecorder? _recorder;
+    private (int X, int Y)? _dragPress;
+    private bool _driving;
 
     public MainWindow(EditorOptions options)
     {
@@ -67,6 +98,28 @@ public sealed class MainWindow : Window
         _log = new EditorLog(Path.Combine(_workDirectory, "editor.log"));
         _log.Write("editor: runtime " + options.RuntimePath + ", scene " + options.Scene);
         Title = "Atlantis Editor (Phase 1 prototype) - " + options.Scene;
+        if (options.MeasureDrag)
+        {
+            _recorder = new DragRecorder();
+            if (options.AttachSession is null)
+            {
+                WindowState = WindowState.Maximized;  // Phase 1 measured maximized (Viewport 2374x1320 on the reference machine)
+            }
+            else
+            {
+                // The control: the left half of the screen, leaving the Runtime's own window visible beside it.
+                Opened += (_, _) =>
+                {
+                    if (Screens.Primary is not { } screen) return;
+                    PixelRect area = screen.WorkingArea;
+                    Position = area.Position;
+                    Width = area.Width / 2.0 / RenderScaling;
+                    Height = area.Height / RenderScaling;
+                };
+            }
+            Title +=options.AttachSession is null ? " - measure drag (embedded)" : " - measure drag (control, unembedded)";
+            _log.Write("measure drag: " + (options.AttachSession is null ? "embedded" : "attached to " + options.AttachSession));
+        }
         Width = 1400;
         Height = 860;
 
@@ -149,7 +202,13 @@ public sealed class MainWindow : Window
             _inputLine = "forwarded key 0x" + key.ToString("x2", CultureInfo.InvariantCulture) + (down ? " down" : " up");
             UpdateStatus();
         };
-        if (_runtime is not null) return;  // a re-created host window: the Runtime went with the old one
+        if (_runtime is not null || _worker is not null) return;  // a re-created host window: the Runtime went with the old one
+        if (_options.AttachSession is string attach)
+        {
+            // Plan 0066 M1's control: an unembedded Runtime, already running, attached over the wire only.
+            OnSession(null, SessionFile.Read(attach), 0.0, attach);
+            return;
+        }
         ulong parent = (ulong)window.Handle.ToInt64();
         var launch = new RuntimeLaunch(_options.RuntimePath, _options.Scene, parent, _workDirectory);
         Task.Run(() =>
@@ -159,7 +218,7 @@ public sealed class MainWindow : Window
             long started = Stopwatch.GetTimestamp();
             SessionInfo session = runtime.WaitForSession(TimeSpan.FromSeconds(120));
             double ms = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            Dispatcher.UIThread.Post(() => OnSession(runtime, session, ms));
+            Dispatcher.UIThread.Post(() => OnSession(runtime, session, ms, runtime.SessionPath));
         }).ContinueWith(task =>
         {
             if (task.Exception is null) return;
@@ -173,24 +232,28 @@ public sealed class MainWindow : Window
         }, TaskScheduler.Default);
     }
 
-    private void OnSession(RuntimeProcess runtime, SessionInfo session, double startMs)
+    private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         ViewportWindow? window = _viewport.Window;
-        if (window is not null && session.Window is ulong child)
+        if (runtime is not null && window is not null && session.Window is ulong child)
         {
             window.RuntimeChild = new IntPtr((long)child);
             window.FitRuntimeChild();
         }
         bool hosted = window?.RuntimeChildIsHosted() ?? false;
-        _runtimeLine = string.Format(CultureInfo.InvariantCulture,
-                                     "Runtime pid {0}, port {1}, child 0x{2:x} {3} ({4:F0} ms to listen); logs in {5}",
-                                     runtime.Pid, session.Port, session.Window ?? 0, hosted ? "hosted" : "NOT hosted",
-                                     startMs, _workDirectory);
+        _runtimeLine = runtime is null
+            ? string.Format(CultureInfo.InvariantCulture, "attached to port {0} (unembedded control); logs in {1}", session.Port,
+                            _workDirectory)
+            : string.Format(CultureInfo.InvariantCulture,
+                            "Runtime pid {0}, port {1}, child 0x{2:x} {3} ({4:F0} ms to listen); logs in {5}",
+                            runtime.Pid, session.Port, session.Window ?? 0, hosted ? "hosted" : "NOT hosted",
+                            startMs, _workDirectory);
         _log.Write(_runtimeLine);
         var worker = new EditorWorker(session, action => Dispatcher.UIThread.Post(action), _log)
         {
             MeasureLatency = _measureLatency.IsChecked == true,
-            SessionPath = runtime.SessionPath,
+            SessionPath = sessionPath,
+            Recorder = _recorder,
         };
         worker.Connected += OnConnected;
         worker.Failed += message =>
@@ -224,6 +287,85 @@ public sealed class MainWindow : Window
         if (scene.ScenePose is CameraPose pose) _camera.Reset(pose);
         else _camera.Reset(new CameraPose(new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 10, 1 }, CameraLens.Default));
         _cameraInitialized = true;
+        if (_recorder is not null && _entities.SelectedItem is null && scene.FirstRenderable is EntityGuid first)
+        {
+            _entities.SelectedItem = scene.Entities.FirstOrDefault(row => row.Guid == first);  // the drag's default subject
+        }
+        if (_options.DriveDrags > 0) StartDriver();
+        if (_options.MeasureOverlay) StartOverlayMeasurement();
+        UpdateStatus();
+    }
+
+    // Plan 0066 M6: the Viewport sized (--viewport, else maximized), then, once the scene has settled, the overlay
+    // measurement of the entity under PickNdc from the scene camera.
+    private void StartOverlayMeasurement()
+    {
+        if (_options.ViewportSize is { } size)
+        {
+            _sizeBox.Text = size.Width + "x" + size.Height;
+            ApplyViewportSize();
+        }
+        else
+        {
+            WindowState = WindowState.Maximized;
+        }
+        _measureLine = "measuring the overlay in " + _options.SettleSeconds + " s...";
+        UpdateStatus();
+        DispatcherTimer.RunOnce(() =>
+        {
+            ViewportWindow? window = _viewport.Window;
+            if (window is null || _worker is null || _scene?.ScenePose is not CameraPose pose) return;
+            CameraMatrices? matrices = CameraConvention.Matrices(pose, (float)window.Width / window.Height);
+            if (matrices is null) return;
+            PickRay ray = CameraConvention.RayThroughNdc(matrices, _options.PickNdc.X, _options.PickNdc.Y);
+            var request = new OverlayMeasureRequest(pose, ray, _options.OverlayEntity, _options.OverlaySends, _options.OverlayPhasePairs,
+                                                    _options.OverlayPhaseSeconds);
+            string label = string.Format(CultureInfo.InvariantCulture, "{0} viewport {1}x{2} {3}", _options.Scene, window.Width, window.Height,
+                                         _options.OverlayEntity is EntityGuid e
+                                             ? "entity " + e
+                                             : string.Format(CultureInfo.InvariantCulture, "pick ndc {0:F2},{1:F2}", _options.PickNdc.X, _options.PickNdc.Y));
+            _log.Write("overlay measurement: " + label);
+            _worker.MeasureOverlay(request, label, report =>
+            {
+                string path = OverlayReportFile.Write(_workDirectory, report);
+                _log.Write("overlay report written to " + path);
+                _measureLine = report.ToString();
+                UpdateStatus();
+                if (_options.ExitAfterDrive) Close();
+            });
+        }, TimeSpan.FromSeconds(_options.SettleSeconds));
+    }
+
+    // Plan 0066 M1: the protocol's drags, replayed with real OS input once the scene has settled.
+    private void StartDriver()
+    {
+        if (_driving || _viewport.Window is null) return;
+        _driving = true;
+        _measureLine = "driving " + _options.DriveDrags + " drags in " + _options.SettleSeconds + " s (the mouse is taken over)...";
+        UpdateStatus();
+        Topmost = true;  // the injected input lands on this window, never on a Runtime window beside it (the control)
+        DispatcherTimer.RunOnce(() =>
+        {
+            Activate();
+            ViewportWindow window = _viewport.Window!;
+            InputDriver.Run(window.ScreenRect, _options.DriveDrags, _log.Write, () => Dispatcher.UIThread.Post(OnDriveFinished));
+        }, TimeSpan.FromSeconds(_options.SettleSeconds));
+    }
+
+    private void OnDriveFinished()
+    {
+        WriteDragReport();
+        if (_options.ExitAfterDrive) Close();
+    }
+
+    private void WriteDragReport()
+    {
+        if (_recorder is null || _recorder.Drags == 0) return;
+        DragReport report = _recorder.Report(_options.Scene + (_options.AttachSession is null ? " embedded" : " control"));
+        string path = DragReportFile.Write(_workDirectory, report);
+        _log.Write("drag report " + report);
+        _log.Write("drag report written to " + path);
+        _measureLine = report.ToString();
         UpdateStatus();
     }
 
@@ -271,6 +413,7 @@ public sealed class MainWindow : Window
 
     private void OnPointer(ViewportPointerEvent e)
     {
+        if (_recorder is not null && MeasureDrag(e)) return;
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown:
@@ -297,6 +440,34 @@ public sealed class MainWindow : Window
                 break;
         }
         _inputLine = "forwarded " + e.Kind + " at " + e.X + "," + e.Y;
+    }
+
+    // Plan 0066 M1: Shift + left drag on the selected entity is the measurement drag (any left drag in a driven run,
+    // whose injected input cannot rely on keyboard focus). Returns whether it took the event.
+    private bool MeasureDrag(ViewportPointerEvent e)
+    {
+        switch (e.Kind)
+        {
+            case ViewportPointer.LeftDown when (e.Shift || _options.DriveDrags > 0) && _worker is not null && _cameraInitialized &&
+                                               _entities.SelectedItem is EntityRow row && _viewport.Window is { } window:
+                _dragPress = (e.X, e.Y);
+                _recorder!.Press(e.ArrivalTicks);
+                _log.Write("ui press at " + e.X + "," + e.Y);
+                _worker.BeginDrag(row.Guid, _camera.Pose(), window.Height);
+                _inputLine = "measurement drag of " + row.Label;
+                return true;
+            case ViewportPointer.Move when _dragPress is { } press:
+                _worker?.DragTo(e.X - press.X, e.Y - press.Y, e.ArrivalTicks);
+                return true;
+            case ViewportPointer.LeftUp when _dragPress is { } press:
+                _worker?.EndDrag(e.X - press.X, e.Y - press.Y, e.ArrivalTicks);
+                _recorder!.Release(e.ArrivalTicks);
+                _log.Write("ui release at " + e.X + "," + e.Y);
+                _dragPress = null;
+                return true;
+            default:
+                return false;
+        }
     }
 
     private void OnWheel(int delta, long arrivalTicks)
@@ -329,12 +500,14 @@ public sealed class MainWindow : Window
             EntityRow? row = _scene?.Entities.FirstOrDefault(r => r.Guid == hit.Entity);
             _entities.SelectedItem = row;
             if (row is not null) _entities.ScrollIntoView(row);
+            _worker?.ShowPick(hit.Entity);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: {0} at {1:F3} ({2:F1} ms)", hit.Entity, hit.Distance,
                                       pick.InputToAnswerMs);
         }
         else
         {
             _entities.SelectedItem = null;
+            _worker?.ShowPick(null);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: no hit ({0:F1} ms)", pick.InputToAnswerMs);
         }
         UpdateStatus();
@@ -344,7 +517,9 @@ public sealed class MainWindow : Window
     private void OnUiTick()
     {
         long now = Stopwatch.GetTimestamp();
-        _uiGaps.Add(Stopwatch.GetElapsedTime(_lastUiTick, now).TotalMilliseconds);
+        double gap = Stopwatch.GetElapsedTime(_lastUiTick, now).TotalMilliseconds;
+        _uiGaps.Add(gap);
+        if (_scene is not null) _recorder?.UiGap(now, gap);  // from the connection on: startup is not idle
         _lastUiTick = now;
         if (Stopwatch.GetElapsedTime(_uiWindowStart, now).TotalSeconds < 2.0) return;
         _uiWindowStart = now;
@@ -365,6 +540,7 @@ public sealed class MainWindow : Window
     private void Shutdown()
     {
         _uiTicker.Stop();
+        if (!_driving) WriteDragReport();  // a manual run's report (a driven run writes its own)
         _worker?.Dispose();
         _worker = null;
         if (_runtime is not null)

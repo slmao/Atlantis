@@ -269,6 +269,10 @@ target_compile_definitions(atlantis_runtime_gpu_tests PRIVATE
   # Plan 0044 Milestone 2: the bloom smoke TEST_CASE's scene.
   ATLANTIS_RUNTIME_BLOOM_SCENE_GUID="${ATLANTIS_bloom_demo_scene_GUID}"
   ATLANTIS_RUNTIME_EDITOR_UI_SHADER_DIR="${ATLANTIS_editor_ui_SHADER_OUTPUT_DIR}"
+  # Plan 0066 M4: viewport_overlay_gpu_tests.cpp enables the Viewport overlay as main.cpp does.
+  ATLANTIS_RUNTIME_VIEWPORT_OVERLAY_SHADER_DIR="${ATLANTIS_viewport_overlay_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_SELECTION_MASK_SHADER_DIR="${ATLANTIS_selection_mask_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_SELECTION_OUTLINE_SHADER_DIR="${ATLANTIS_selection_outline_SHADER_OUTPUT_DIR}"
   # Plan 0065 M4: the committed scene sources the authoring session opens, and
   # the build tree the reload fixture's catalog shares with the build's.
   ATLANTIS_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
@@ -279,6 +283,7 @@ add_dependencies(atlantis_runtime_gpu_tests minimal_mesh_shaders textured_quad_s
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
   bloom_downsample_shaders bloom_upsample_shaders bloom_composite_shaders editor_ui_shaders
+  viewport_overlay_shaders selection_mask_shaders selection_outline_shaders
   ${ATLANTIS_minimal_cube_TARGET} ${ATLANTIS_integrated_showcase_demo_scene_TARGET} ${ATLANTIS_ground_plane_TARGET}
   ${ATLANTIS_ibl_studio_TARGET} ${ATLANTIS_bloom_demo_scene_TARGET})
 

@@ -218,6 +218,19 @@ std::vector<DescriptorBinding> shadowCastExpectedDescriptorContract() {
   return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex}};
 }
 
+// Plan 0066 P3 (ADR-0132 D3): see the header's comment.
+std::vector<DescriptorBinding> viewportOverlayExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex}};
+}
+
+std::vector<DescriptorBinding> selectionMaskExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::UniformBuffer, .stage = ShaderStage::Vertex}};
+}
+
+std::vector<DescriptorBinding> selectionOutlineExpectedDescriptorContract() {
+  return {DescriptorBinding{.set = 0, .binding = 0, .type = DescriptorType::Sampler, .stage = ShaderStage::Fragment}};
+}
+
 atlantis::Result<std::monostate, ContractMismatchError> validateDescriptorContract(
     const ReflectionMetadata& metadata, const std::vector<DescriptorBinding>& expected) {
   using ResultType = atlantis::Result<std::monostate, ContractMismatchError>;

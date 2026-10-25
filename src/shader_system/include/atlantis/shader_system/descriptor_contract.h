@@ -180,6 +180,17 @@ namespace atlantis::shader_system {
 // at all.
 [[nodiscard]] std::vector<DescriptorBinding> shadowCastExpectedDescriptorContract();
 
+// Plan 0066 P3 (ADR-0132 D3): the Viewport overlay's three pairs.
+// - viewport_overlay and selection_mask: {set 0, binding 0, UniformBuffer,
+//   Vertex} -- the overlay's camera (view, projection), read only by
+//   vertexMain, as shadow_cast's light-space buffer is.
+// - selection_outline: {set 0, binding 0, Sampler, Fragment} -- the mask
+//   (no camera uniform: hasCameraUniformBinding false moves the sampler to
+//   binding 0, as for the output transform).
+[[nodiscard]] std::vector<DescriptorBinding> viewportOverlayExpectedDescriptorContract();
+[[nodiscard]] std::vector<DescriptorBinding> selectionMaskExpectedDescriptorContract();
+[[nodiscard]] std::vector<DescriptorBinding> selectionOutlineExpectedDescriptorContract();
+
 enum class ContractMismatchError {
   BindingCountMismatch,
   BindingNotFound,        // an expected {set, binding} pair is absent from the reflected shader

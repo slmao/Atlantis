@@ -74,6 +74,11 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
 
   void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
                        atlantis::rhi::ClearColorValue colorClear, float depthClear) override;
+  // Plan 0066 P3 (ADR-0133 D2): Load is VK_ATTACHMENT_LOAD_OP_LOAD; the
+  // four-parameter call above is this one with both Clear.
+  void beginRendering(atlantis::rhi::RenderTarget& color, atlantis::rhi::Texture* depth,
+                       atlantis::rhi::ClearColorValue colorClear, float depthClear,
+                       atlantis::rhi::AttachmentLoad colorLoad, atlantis::rhi::AttachmentLoad depthLoad) override;
   void endRendering() override;
 
   void bindPipeline(atlantis::rhi::Pipeline& pipeline) override;

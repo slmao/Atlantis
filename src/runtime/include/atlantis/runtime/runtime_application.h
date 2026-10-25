@@ -47,6 +47,16 @@
 
 namespace atlantis::runtime {
 
+// Plan 0066 P4 (ADR-0132 D4; J11): where the Viewport overlay's three compiled
+// shader pairs are -- each directory holds <name>.vert.spv and <name>.frag.spv
+// (viewport_overlay, selection_mask, selection_outline). Only paths: the
+// shaders are loaded at the first non-empty overlay.
+struct ViewportOverlayShaderPaths {
+  std::string primitivesDirectory;
+  std::string maskDirectory;
+  std::string outlineDirectory;
+};
+
 struct RenderableExtractionInput;  // scene_extraction.h
 
 // See Plan 0013 Section D4/D6/D7/D8. The composition object: owns
@@ -137,8 +147,14 @@ class RuntimeApplication {
   // written to `path` as PNG. Waits for the GPU to be idle. NotRendering
   // until a frame has drawn; CaptureFailed if the render, readback or write
   // fails. Frame thread only.
+  //
+  // Plan 0066 P4 (Spec 0066 R5; ADR-0132 D2, D4): `overlay` is the requesting
+  // client's own Viewport overlay when its step asked for one
+  // (StepRequest::captureOverlay); the image then shows it, and only it. None:
+  // the image shows no overlay, whatever the window shows.
   [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
-  captureImage(const std::string& path);
+  captureImage(const std::string& path,
+               const std::optional<atlantis::connection::ViewportOverlay>& overlay = std::nullopt);
 
   // Plan 0062 P3 (Spec 0062 R3; ADR-0123 D1, D3): between frames, the scene's
   // active camera -- its world matrix and Camera component, as the frame reads
@@ -165,6 +181,20 @@ class RuntimeApplication {
   // rules (and captures follow it); none restores the active camera. Between
   // frames, frame thread only.
   void setControlViewportCamera(const std::optional<atlantis::connection::ViewportCamera>& camera);
+
+  // Plan 0066 P4 (Spec 0066 R2, R3; ADR-0132 D4; J11): the Viewport overlay.
+  // enableViewportOverlay() records where its shaders are -- atlantis_runtime
+  // does so when it serves a RuntimeControl -- and loads nothing.
+  // setViewportOverlay() takes the union of the clients' overlays (from
+  // RuntimeControlHost), drawn from the next frame on, after the scene, into
+  // the frame's scene target (the swapchain image, or the Viewport target
+  // under --editor); none clears it. The shaders are loaded and the pipelines
+  // built at the first frame with a non-empty overlay; a frame without one is
+  // unchanged. The selection is resolved each frame through the bake's GUID
+  // map: an unknown, destroyed or non-Renderable entity is skipped, silently.
+  // Between frames, frame thread only.
+  void enableViewportOverlay(ViewportOverlayShaderPaths paths);
+  void setViewportOverlay(const std::optional<atlantis::connection::ViewportOverlay>& overlay);
   [[nodiscard]] std::optional<LocalBounds> renderableLocalBounds(const atlantis::asset_system::EntityGuid& entity) const;
 
   // The loaded scene's catalog GUID (Plan 0047 P17).
@@ -219,6 +249,25 @@ class RuntimeApplication {
   // only while overlay_ or controlCamera_ is set, by runFrame() and the
   // capture path.
   [[nodiscard]] ActiveCameraInput viewportFrameCamera(const ActiveCameraInput& active);
+
+  // Plan 0066 P4 (ADR-0132 D4, ADR-0133 D5): the helpers of runFrame()'s named
+  // overlay place, also used by the capture path. viewportOverlayDrawList()
+  // translates `overlay` into the Renderer's draw list -- nullopt when there
+  // is nothing to draw, or the overlay cannot be drawn (not enabled, or its
+  // shaders or pipelines failed: logged once) -- bringing the pipelines to
+  // `format` first. drawViewportOverlayInto() then records it into `target`
+  // after drawFrame(), continuing from drawFrame()'s reported end states and
+  // ending `target` in `finalState`. Both run after this frame's acquire (or
+  // the capture's waitIdle()) drained the GPU work that last used the
+  // overlay's resources.
+  [[nodiscard]] std::optional<atlantis::renderer::ViewportOverlayDrawList> viewportOverlayDrawList(
+      const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format);
+  [[nodiscard]] atlantis::renderer::FrameEndStates drawViewportOverlayInto(
+      atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
+      atlantis::renderer::FrameEndStates sceneEnd, atlantis::rhi::ResourceState finalState,
+      const CameraMatrices& camera, const atlantis::renderer::ViewportOverlayDrawList& list);
+  [[nodiscard]] bool viewportOverlayPipelinesFor(atlantis::rhi::Format format);
+  void releaseViewportOverlayResources();
 
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).
@@ -401,6 +450,37 @@ class RuntimeApplication {
   bool overlayCameraRejectionLogged_ = false;
   // Spec 0064 / ADR-0128 D1: the RuntimeControl's camera, when one is set.
   std::optional<ViewportCameraOverride> controlCamera_;
+  // Plan 0066 P4 (ADR-0132 D4; J11): the Viewport overlay -- the clients'
+  // union, its shaders' paths, and its GPU resources, created at the first
+  // non-empty overlay (the pipelines rebuilt for a new format, the mask for a
+  // new extent). Released by shutdown() before the Device.
+  std::optional<atlantis::connection::ViewportOverlay> viewportOverlay_;
+  std::optional<ViewportOverlayShaderPaths> viewportOverlayShaders_;
+  bool viewportOverlayFailed_ = false;  // a shader or pipeline failed: logged once, never drawn
+  // The shadow pass's mesh layout (the scene meshes' stride, the position at
+  // location 0), which the selection mask reads the meshes through.
+  atlantis::rhi::VertexInputLayout meshPositionVertexLayout_;
+  struct ViewportOverlaySpirv {
+    std::vector<std::uint32_t> primitivesVertex;
+    std::vector<std::uint32_t> primitivesFragment;
+    std::vector<std::uint32_t> maskVertex;
+    std::vector<std::uint32_t> maskFragment;
+    std::vector<std::uint32_t> outlineVertex;
+    std::vector<std::uint32_t> outlineFragment;
+  };
+  std::optional<ViewportOverlaySpirv> viewportOverlaySpirv_;
+  std::unique_ptr<atlantis::rhi::Pipeline> viewportOverlayTestedPipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> viewportOverlayOnTopPipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> selectionMaskPipeline_;
+  std::unique_ptr<atlantis::rhi::Pipeline> selectionOutlinePipeline_;
+  std::optional<atlantis::rhi::Format> viewportOverlayPipelineFormat_;
+  std::unique_ptr<atlantis::rhi::Buffer> viewportOverlayCameraBuffer_;
+  std::unique_ptr<atlantis::rhi::Buffer> viewportOverlayVertexBuffer_;
+  std::unique_ptr<atlantis::rhi::Buffer> viewportOverlayIndexBuffer_;
+  std::unique_ptr<atlantis::rhi::Sampler> selectionMaskSampler_;
+  std::unique_ptr<atlantis::rhi::OffscreenTarget> selectionMask_;
+  std::unique_ptr<atlantis::rhi::RenderTarget> selectionMaskTarget_;  // the borrow of selectionMask_
+  atlantis::rhi::Extent2D selectionMaskExtent_;
   std::vector<std::uint32_t> overlayVertexSpirv_;
   std::vector<std::uint32_t> overlayFragmentSpirv_;
   std::unique_ptr<atlantis::rhi::SampledTexture> overlayFontAtlas_;

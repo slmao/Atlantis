@@ -441,6 +441,33 @@ void authoringVectors(std::vector<Vector>& out) {
   REQUIRE(withWindow.isOk());
   out.push_back({"session_file.window", "SessionFile", withWindow.value()});
   authoringVectors(out);
+  // Plan 0066 P2 (Spec 0066 R1, R5; ADR-0132 D1): the Viewport overlay (section 6.6) and the step's withOverlay.
+  using connection::OverlayDepth;
+  out.push_back({"overlay.empty", "ViewportOverlay", codec::encode(connection::ViewportOverlay{})});
+  connection::ViewportOverlay selected;
+  selected.selection = {kEntity, kOther};
+  out.push_back({"overlay.selection", "ViewportOverlay", codec::encode(selected)});
+  connection::OverlayGroup world;
+  world.segments.push_back({{0.0f, 0.0f, 0.0f}, {1.0f, 0.5f, -2.25f}, {1.0f, 0.25f, 0.0f, 1.0f}, OverlayDepth::Tested, 2.0f});
+  world.segments.push_back({{-1.0f, 0.0f, 3.0f}, {1.0f, 0.0f, 3.0f}, {0.0f, 1.0f, 0.0f, 0.5f}, OverlayDepth::OnTop, 1.0f});
+  world.triangles.push_back(
+      {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.2f, 0.4f, 0.6f, 0.75f}, OverlayDepth::Tested});
+  world.points.push_back({{0.1f, 0.2f, 0.3f}, {1.0f, 1.0f, 1.0f, 1.0f}, OverlayDepth::OnTop, 6.5f});
+  connection::ViewportOverlay worldOverlay;
+  worldOverlay.groups.push_back(world);
+  out.push_back({"overlay.world", "ViewportOverlay", codec::encode(worldOverlay)});
+  connection::OverlayGroup gizmo;
+  gizmo.anchor = connection::OverlayAnchor{{1.5f, -2.0f, 4.0f}, 96.0f};
+  gizmo.segments.push_back({{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}, OverlayDepth::OnTop, 3.0f});
+  gizmo.segments.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}, OverlayDepth::OnTop, 3.0f});
+  gizmo.segments.push_back({{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}, OverlayDepth::OnTop, 3.0f});
+  connection::ViewportOverlay both;
+  both.selection = {kEntity};
+  both.groups = {world, gizmo};
+  out.push_back({"overlay.screen_constant", "ViewportOverlay", codec::encode(both)});
+  connection::StepRequest withOverlay{2, std::string("D:/shots/overlay.png")};
+  withOverlay.withOverlay = true;
+  out.push_back({"step.with_overlay", "StepRequest", codec::encode(withOverlay)});
   return out;
 }
 

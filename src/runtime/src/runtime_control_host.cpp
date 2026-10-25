@@ -42,7 +42,14 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   Target target;
   target.setCommandsHeld = [&application](bool held) { application.setCommandsHeld(held); };
   target.frameData = [&application] { return application.captureFrameData(); };
-  target.captureImage = [&application](const std::string& path) { return application.captureImage(path); };
+  target.captureImage = [&application](const std::string& path,
+                                       const std::optional<connection::ViewportOverlay>& overlay) {
+    return application.captureImage(path, overlay);
+  };
+  // Plan 0066 P4 (ADR-0132 D4): the union, drawn from the next frame on.
+  target.setViewportOverlay = [&application](const std::optional<connection::ViewportOverlay>& overlay) {
+    application.setViewportOverlay(overlay);
+  };
   target.setViewportCamera = [&application](const std::optional<connection::ViewportCamera>& camera) {
     application.setControlViewportCamera(camera);
   };
@@ -99,7 +106,7 @@ void RuntimeControlHost::afterFrame() {
   report.applied = true;
   report.data = std::move(data.value());
   if (finished.request.imagePath.has_value()) {
-    auto image = target_.captureImage(*finished.request.imagePath);
+    auto image = target_.captureImage(*finished.request.imagePath, finished.request.captureOverlay);
     if (image.isErr()) {
       finished.done(ResultT::Err(image.error()));
       return;
@@ -144,6 +151,15 @@ connection::DiagnosticBatch RuntimeControlHost::diagnostics(std::uint64_t afterS
 
 void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCamera> camera) {
   if (target_.setViewportCamera) target_.setViewportCamera(camera);
+}
+
+atlantis::Result<std::monostate, connection::ControlError> RuntimeControlHost::setViewportOverlay(
+    std::optional<connection::ViewportOverlay> overlay) {
+  using ResultT = atlantis::Result<std::monostate, connection::ControlError>;
+  if (overlay && !connection::overlayWellFormed(*overlay)) return ResultT::Err(connection::ControlError::InvalidRequest);
+  overlay_ = std::move(overlay);
+  if (target_.setViewportOverlay) target_.setViewportOverlay(overlay_);
+  return ResultT::Ok(std::monostate{});
 }
 
 atlantis::Result<std::optional<connection::RayHit>, connection::ControlError> RuntimeControlHost::raycast(

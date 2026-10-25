@@ -63,8 +63,10 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
   struct Target {
     std::function<void(bool held)> setCommandsHeld;
     std::function<atlantis::Result<atlantis::connection::FrameData, atlantis::connection::ControlError>()> frameData;
+    // Plan 0066 P4 (Spec 0066 R5): with the step's captureOverlay -- the
+    // requester's own overlay when it asked, else none.
     std::function<atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>(
-        const std::string& path)>
+        const std::string& path, const std::optional<atlantis::connection::ViewportOverlay>& overlay)>
         captureImage;
     // Spec 0064 / ADR-0128 D1, D2: the control camera and the ray-cast.
     std::function<void(const std::optional<atlantis::connection::ViewportCamera>&)> setViewportCamera;
@@ -74,6 +76,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
     atlantis::asset_system::AssetGuid scene;
     // Plan 0065 P4 (ADR-0131 D5): the World's generation; unset reads 0.
     std::function<std::uint64_t()> sceneGeneration;
+    // Plan 0066 P4 (ADR-0132 D4): the union of the clients' Viewport overlays, drawn from the next frame on.
+    std::function<void(const std::optional<atlantis::connection::ViewportOverlay>&)> setViewportOverlay;
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 
@@ -105,6 +109,14 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
   void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
   [[nodiscard]] atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(
       const atlantis::connection::Ray& ray) override;
+  // Spec 0066 R2 (Plan 0066 J2): its caller is the transport, which hands it the union of its clients' overlays --
+  // so only well-formedness is checked here; one client's limits are the transport's to apply.
+  [[nodiscard]] atlantis::Result<std::monostate, atlantis::connection::ControlError> setViewportOverlay(
+      std::optional<atlantis::connection::ViewportOverlay> overlay) override;
+  // The overlay last set (the union), for the frame (Plan 0066 M4).
+  [[nodiscard]] const std::optional<atlantis::connection::ViewportOverlay>& viewportOverlay() const noexcept {
+    return overlay_;
+  }
 
  private:
   struct PendingStep {
@@ -119,6 +131,7 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
   std::uint64_t frame_ = 0;
   std::deque<PendingStep> steps_;  // front: the step in progress (once started)
   bool stepStarted_ = false;
+  std::optional<atlantis::connection::ViewportOverlay> overlay_;
 };
 
 }  // namespace atlantis::runtime

@@ -396,6 +396,22 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     params.set("camera", camera.has_value() ? codec::encode(*camera) : Value());
     (void)state_->call("control.setViewportCamera", std::move(params));
   }
+  // Spec 0066 / ADR-0132 D2.
+  atlantis::Result<std::monostate, atlantis::connection::ControlError> setViewportOverlay(
+      std::optional<atlantis::connection::ViewportOverlay> overlay) override {
+    using ResultT = atlantis::Result<std::monostate, atlantis::connection::ControlError>;
+    Value params = Value::object();
+    params.set("overlay", overlay.has_value() ? codec::encode(*overlay) : Value());
+    const auto result = state_->call("control.setViewportOverlay", std::move(params));
+    if (result) {
+      if (const Value* ok = result->find("ok"); ok != nullptr && ok->isNull()) return ResultT::Ok(std::monostate{});
+      if (const Value* err = result->find("err"); err != nullptr) {
+        if (const auto error = codec::decodeControlError(*err)) return ResultT::Err(*error);
+      }
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return ResultT::Err(atlantis::connection::ControlError::Stopped);
+  }
   atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(
       const atlantis::connection::Ray& ray) override {
     using ResultT = atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError>;

@@ -461,6 +461,20 @@ public sealed class RemoteControl
             JsonValue.NewObject().Set("camera", camera is null ? JsonValue.Null() : Codec.Encode(camera)));
 
     /// <summary>
+    /// Spec 0066 R2 / ADR-0132 D2 (Plan 0066 P2): this session's Viewport overlay, drawn from the Runtime's next frame
+    /// with every other client's; null clears it. InvalidRequest (and nothing changed) for one not well formed or over
+    /// its limits. The Runtime removes it when this session closes.
+    /// </summary>
+    public ControlError? SetViewportOverlay(ViewportOverlay? overlay)
+    {
+        JsonValue result = _session.Call("control.setViewportOverlay",
+            JsonValue.NewObject().Set("overlay", overlay is null ? JsonValue.Null() : Codec.Encode(overlay)));
+        if (result.Find("ok") is { IsNull: true }) return null;
+        if (result.Find("err") is JsonValue err && Codec.DecodeControlError(err) is ControlError error) return error;
+        throw _session.Malformed("control.setViewportOverlay");
+    }
+
+    /// <summary>
     /// Spec 0064 / ADR-0128 D2: the nearest Renderable <paramref name="ray"/> hits (Hit null for a miss), or
     /// NoGeometry when the Runtime keeps no pick geometry.
     /// </summary>

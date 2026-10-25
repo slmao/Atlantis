@@ -254,15 +254,16 @@ struct FrameResources {
   FakePipeline shadowCastPipeline;
   FakeBuffer shadowLightSpaceBuffer{atlantis::rhi::BufferPurpose::Uniform, 0};
 
-  void draw(FakeCommandList& commandList, const std::vector<DrawItem>& drawItems,
-            const std::vector<DrawItem>& shadowCasters,
-            const std::optional<std::array<float, 3>>& cameraWorldPosition) {
+  // Plan 0066 M3a: returns drawFrame()'s reported end states (ADR-0133 D3).
+  atlantis::renderer::FrameEndStates draw(
+      FakeCommandList& commandList, const std::vector<DrawItem>& drawItems, const std::vector<DrawItem>& shadowCasters,
+      const std::optional<std::array<float, 3>>& cameraWorldPosition,
+      atlantis::rhi::ResourceState finalColorState = atlantis::rhi::ResourceState::PresentSource) {
     Renderer renderer;
-    renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems,
-                       atlantis::rhi::ResourceState::PresentSource, hdrColorTarget, fullscreenVertexBuffer,
-                       fullscreenIndexBuffer, outputTransformPipeline, outputTransformSampler, 0.0f, nullptr, nullptr,
-                       shadowMap, shadowMapSampler, shadowCastPipeline, shadowLightSpaceBuffer, shadowCasters,
-                       cameraWorldPosition);
+    return renderer.drawFrame(commandList, colorTarget, depthTarget, cameraBuffer, drawItems, finalColorState,
+                              hdrColorTarget, fullscreenVertexBuffer, fullscreenIndexBuffer, outputTransformPipeline,
+                              outputTransformSampler, 0.0f, nullptr, nullptr, shadowMap, shadowMapSampler,
+                              shadowCastPipeline, shadowLightSpaceBuffer, shadowCasters, cameraWorldPosition);
   }
 };
 
@@ -375,4 +376,24 @@ TEST_CASE("drawFrame(): a blended draw item with no camera position trips the ch
   CountingFailureHandler handler;
   resources.draw(commandList, drawItems, {}, std::nullopt);
   CHECK(handler.failures == 1);
+}
+
+// Plan 0066 M3a (ADR-0133 D3, extending ADR-0022): drawFrame() reports where it
+// left its colour target (its finalColorState, whatever that is) and its depth
+// (the scene draw pass's DepthAttachmentReadWrite) -- the states a later graph
+// continues them from.
+TEST_CASE("drawFrame(): returns its colour target's and depth's end states", "[renderer][end_states]") {
+  const Mesh mesh = fakeMesh();
+  const Material opaque = fakePbrMaterial(MaterialAlphaMode::Opaque);
+  const std::vector<DrawItem> drawItems{{.mesh = &mesh, .material = &opaque, .objectToWorld = translation(1, 0, -2)}};
+  for (const auto finalColorState : {atlantis::rhi::ResourceState::PresentSource,
+                                     atlantis::rhi::ResourceState::ColorAttachmentOutput,
+                                     atlantis::rhi::ResourceState::ShaderRead}) {
+    FakeCommandList commandList;
+    FrameResources resources;
+    const atlantis::renderer::FrameEndStates end =
+        resources.draw(commandList, drawItems, {}, std::nullopt, finalColorState);
+    CHECK(end.color == finalColorState);
+    CHECK(end.depth == atlantis::rhi::ResourceState::DepthAttachmentReadWrite);
+  }
 }
