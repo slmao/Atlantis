@@ -123,6 +123,15 @@ Each milestone builds and runs the affected suites (Debug) before the next.
 ## Joint Review decisions — ruled (slmao, 2026-10-26): J1–J4 as proposed
 
 - **J1 — Spec Corrections:** none proposed.
+  - **Added during M2 (slmao, 2026-10-26):** Spec 0067's Correction moving Bistro's scene camera.
+    - **Files:** `assets/bistro/bistro_overlay.scene.txt` joins this Plan's file list (its camera line only), as does
+      `runtime_smoke_gpu_tests.cpp`'s comment that describes the old pose.
+    - **M3:** Bistro's golden is re-captured from the new camera.
+    - **M4:** Bistro's gate numbers are reported in three steps, so the camera move and the newly drawn entities stay
+      apart:
+      - `main`;
+      - M2 with the old camera;
+      - M2 with the new camera.
 - **J2 — Shader sharing:** repeat the helper verbatim in each lit shader, as the lit variants already repeat their
   shared code. A CPU-mirror test pins the formula. Proposed: accept. The alternative, include support in the Shader
   System, is a separate change with its own build-graph implications.

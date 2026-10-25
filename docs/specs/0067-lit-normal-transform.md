@@ -9,6 +9,26 @@
   numerically and Q3/Q4 refined as recorded below; recorded once in [Plan 0067](../plans/0067-lit-normal-transform.md).
   Reviewed in this Spec's own branch PR, [PR #296](https://github.com/slmao/Atlantis/pull/296), where the rulings are
   recorded before it merges. The open-question text keeps the options as the record of what was weighed.
+
+  **Correction (2026-10-26, post-Approval, owner ruling during Plan 0067 M2):** Bistro's scene camera moves.
+  - **Why:** once M2 draws the 368 non-conformal entities, the scene camera stands 1.74 m behind a newly drawn chunk of
+    `Paris_Building_0010` (`64f9581d-f2e3-…`), which fills the view. The camera sits at (-22, 1.7, 22), yaw -0.86, the
+    pose [Spec 0055](0055-agent-runtime-cli.md)'s Correction names.
+    - The café light `425c3b17-…`, which Spec 0055's north-star image check edits (4.5 → 9), then changes no pixel.
+      Two north-star tests fail: the Runtime one in process and the Editor one.
+    - Before M2 the same edit changed only 4 pixels.
+  - **Ruled (slmao):** move the camera rather than change the check. The camera was picked from four candidates, each
+    shown with a screenshot and each verified through one REPL connection.
+  - **Corrected:** `assets/bistro/bistro_overlay.scene.txt`'s camera stands at (-18.358, 1.7, 15.084) with rotation
+    (pitch 0.1424, yaw -1.0472, roll 0), a three-quarter view of the café corner. Captured from the scene file there,
+    the café edit changes 124 pixels by more than 2 levels.
+  - **Consequences:** the move is a second, separate cause of change in two places:
+    - Bistro's golden, which M3 re-captures anyway;
+    - the performance gate's Bistro numbers, since the benchmark renders from the scene camera.
+
+    Plan 0067 reports the two causes separately. Spec 0055's Correction stays as the record of the pose at its time.
+  - **Unchanged:** the north-star checks themselves (Spec 0055's corrected chain: the café light, 4.5 → 9, "the image
+    differs"), and every other overlay entry.
 - **Related ADR(s):** [ADR-0134](../adr/0134-lit-normal-transform-by-cofactor.md) (`Accepted` 2026-10-26): supersedes
   [ADR-0062](../adr/0062-runtime-frame-lighting-data-and-rhi-uniform-buffer-stage-visibility.md)'s Decision 4, and with
   it the conformal gate that [ADR-0074](../adr/0074-pbr-normal-map-material-descriptor-and-shader-contract.md)'s tangent
