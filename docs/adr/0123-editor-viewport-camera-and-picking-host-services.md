@@ -162,3 +162,29 @@ where this section says so explicitly.
   Bistro in Debug the 144-ray grid's mean went from 55.5 to 57.3 ms per pick.
 - **The content-side cause is not fixed here:** Bistro's non-uniformly scaled meshes are never drawn. That belongs
   to a later importer Spec, which would bake non-uniform scale into the vertices at glTF import.
+
+## Accepted Amendment — 2026-10-26
+
+**Status of this section:** accepted by Human Review on 2026-10-26 (slmao's rulings on Spec 0067, recorded in
+[PR #296](https://github.com/slmao/Atlantis/pull/296) together with [ADR-0134](0134-lit-normal-transform-by-cofactor.md)).
+**This section does not itself change this ADR's top-level Status** (`Accepted` above is unchanged). It changes the
+wording of the 2026-10-25 amendment's item 1 and nothing else; the Decision, Context, Consequences, Alternatives
+Considered and the rest of that amendment are unchanged.
+
+### Human Review — Amendment Acceptance (2026-10-26)
+
+**Deciders:** slmao — ruled Spec 0067 Q5 (P-a: picking uses ADR-0134 D2's predicate) on 2026-10-26, in the review of
+[PR #296](https://github.com/slmao/Atlantis/pull/296). No decision above is reopened.
+
+### Amendment
+
+1. **The rule stays; its predicate changes.** The 2026-10-25 amendment's item 1 reads: an entity "the frame's
+   extraction skips for a non-conformal world matrix is not pickable", under the conformal test
+   (`checkConformalTransform()`).
+   - From ADR-0134 the frame skips a lit entity only for a degenerate world matrix (ADR-0134 D2), so the item now reads:
+     **the service picks what the frame draws**, and an entity the frame skips under ADR-0134 D2's predicate
+     (`checkInvertibleNormalTransform()`) is not pickable.
+   - The same predicate, under the same material condition, is called by the frame's extraction, the capture path and
+     `pickRenderable()`.
+2. **Effect.** A non-conformal but invertible lit entity, such as one of Bistro's 368, is drawn and therefore pickable.
+   A degenerate one is neither. `RuntimeControl::raycast()` (ADR-0128 D2) inherits this as before.
