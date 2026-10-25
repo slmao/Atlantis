@@ -46,7 +46,8 @@ TEST_CASE("planTransition maps Undefined -> ColorAttachmentWrite to a transfer-w
   REQUIRE(plan.newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   REQUIRE(plan.srcAccessMask == 0);
   REQUIRE(plan.dstAccessMask == VK_ACCESS_TRANSFER_WRITE_BIT);
-  REQUIRE(plan.srcStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+  // The acquire wait's stage, so the transition follows the wait (see below).
+  REQUIRE(plan.srcStage == atlantis::vulkan_backend::detail::kAcquireWaitStage);
   REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
 
@@ -68,8 +69,31 @@ TEST_CASE("planTransition maps Undefined -> PresentSource to a no-op-access disc
   REQUIRE(plan.newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
   REQUIRE(plan.srcAccessMask == 0);
   REQUIRE(plan.dstAccessMask == 0);
-  REQUIRE(plan.srcStage == VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
+  REQUIRE(plan.srcStage == atlantis::vulkan_backend::detail::kAcquireWaitStage);
   REQUIRE(plan.dstStage == VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+}
+
+// The first barrier a frame records on an acquired swapchain image is one of
+// the Undefined -> X entries. Its layout transition writes the image, so its
+// source stage must be the stage submit() waits on the acquire semaphore at:
+// with TOP_OF_PIPE the transition is unordered against the wait, the
+// WRITE_AFTER_READ synchronization validation reports against
+// vkAcquireNextImageKHR.
+TEST_CASE("planTransition orders every Undefined -> X transition after the swapchain acquire wait",
+          "[vulkan_backend][resource_state_mapping]") {
+  using atlantis::vulkan_backend::detail::kAcquireWaitStage;
+  CHECK(kAcquireWaitStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  for (const ResourceState after :
+       {ResourceState::ColorAttachmentOutput, ResourceState::ColorAttachmentWrite, ResourceState::PresentSource}) {
+    const auto plan = planTransition(ResourceState::Undefined, after);
+    CHECK(plan.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED);
+    CHECK(plan.srcAccessMask == 0);
+    CHECK(plan.srcStage == kAcquireWaitStage);
+  }
+  const auto output = planTransition(ResourceState::Undefined, ResourceState::ColorAttachmentOutput);
+  CHECK(output.newLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  CHECK(output.dstAccessMask == VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
+  CHECK(output.dstStage == VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 }
 
 TEST_CASE("planTransition maps ColorAttachmentOutput -> TransferSource to a color-output-to-transfer-read barrier",

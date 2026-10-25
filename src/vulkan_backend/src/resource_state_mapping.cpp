@@ -8,13 +8,27 @@ namespace {
 
 using atlantis::rhi::ResourceState;
 
+// The three Undefined -> X entries below are the first barrier a frame
+// records on an acquired swapchain image (the scene's output transform, the
+// UI pass, Spec 0006's clear, or a frame that only presents). Their layout
+// transition writes the image, so it must not start before the presentation
+// engine has finished with it. submit() waits on the acquire semaphore at
+// VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT (vulkan_device.cpp); a
+// barrier whose source stage is that same stage chains onto the wait, while
+// TOP_OF_PIPE leaves the transition unordered against it -- the
+// WRITE_AFTER_READ synchronization validation reports against
+// vkAcquireNextImageKHR. So the source stage is COLOR_ATTACHMENT_OUTPUT (no
+// source access: the old contents are discarded). For an offscreen target,
+// which has no semaphore, this only adds an execution dependency on earlier
+// colour output. kAcquireWaitStage is declared in resource_state_mapping.h.
+
 [[nodiscard]] ImageBarrierPlan undefinedToColorAttachmentWrite() {
   return ImageBarrierPlan{
       .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
       .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
       .srcAccessMask = 0,
       .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-      .srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .srcStage = kAcquireWaitStage,
       .dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT,
   };
 }
@@ -36,7 +50,7 @@ using atlantis::rhi::ResourceState;
       .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
       .srcAccessMask = 0,
       .dstAccessMask = 0,
-      .srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .srcStage = kAcquireWaitStage,
       .dstStage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
   };
 }
@@ -50,7 +64,7 @@ using atlantis::rhi::ResourceState;
       .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
       .srcAccessMask = 0,
       .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-      .srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+      .srcStage = kAcquireWaitStage,
       .dstStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
   };
 }

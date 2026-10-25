@@ -33,4 +33,10 @@ struct ImageBarrierPlan {
 // Section 8).
 [[nodiscard]] ImageBarrierPlan planTransition(atlantis::rhi::ResourceState before, atlantis::rhi::ResourceState after);
 
+// The stage at which submit() waits on a swapchain image's acquire
+// semaphore. The Undefined -> X transitions (the first barrier on an
+// acquired image) take it as their source stage, so the layout transition
+// is ordered after the wait; the two must stay the same stage.
+inline constexpr VkPipelineStageFlags kAcquireWaitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
 }  // namespace atlantis::vulkan_backend::detail

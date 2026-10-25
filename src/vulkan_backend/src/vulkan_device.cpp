@@ -23,6 +23,7 @@
 #include "dynamic_rendering.h"
 #include "dynamic_rendering_entry_points.h"
 #include "hdr_color_target_capability.h"
+#include "resource_state_mapping.h"
 #include "sampled_texture_format_mapping.h"
 #include "shadow_map_capability.h"
 #include "validation.h"
@@ -667,7 +668,10 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
   // VkSubmitInfo construction below -- never passed as a wait/signal
   // semaphore entry itself.
   const VkSemaphore signalSemaphore = access->renderFinishedSemaphore();
-  const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  // The acquire wait's stage: the first barrier on the image takes it as its
+  // source stage (resource_state_mapping.h), which orders the layout
+  // transition after the presentation engine is done with the image.
+  const VkPipelineStageFlags waitStage = detail::kAcquireWaitStage;
   const VkCommandBuffer commandBuffer = vulkanCommandList.commandBuffer();
 
   VkSubmitInfo submitInfo{};
