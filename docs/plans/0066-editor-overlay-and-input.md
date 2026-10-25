@@ -37,6 +37,19 @@
     - **Spec 0066 Correction (2026-10-24):** R3 and R4 unchanged; its Architectural Impact list names ADR-0133 (the
       open question of PR #288, answered yes).
     - M3 starts only after PR #288 merges.
+- **Implementation:** M1–M7 merged in [PR #290](https://github.com/slmao/Atlantis/pull/290) (`7cf06a2`).
+  - **Where it was verified:** M2–M3b on the Intel Arc B370 laptop; M4 onward on the AMD RX 7900 XT desktop, which
+    became the reference machine on 2026-10-25 (Spec 0011 and Spec 0060 Corrections, [PR #291](https://github.com/slmao/Atlantis/pull/291)).
+    It was verified there after the goldens were re-captured ([PR #292](https://github.com/slmao/Atlantis/pull/292)) and
+    its baseline recorded ([PR #293](https://github.com/slmao/Atlantis/pull/293)).
+  - **Results:** every golden byte-identical; the performance gate `pass` (the changed `runFrame()` lines
+    1989–1998 and 2019–2022); M1's and M6's measurements reported against Q6 in PR #290 (overlay latency
+    2.0 frames, GPU cost 0.10–0.30 ms).
+  - **M4's synchronization-validation run** needed the swapchain acquire fix of
+    [PR #289](https://github.com/slmao/Atlantis/pull/289) first.
+  - **Owner's visual check:** the default scene was right. On Bistro, far-away picks outlined an entity the scene
+    does not draw (the pick geometry keeps the non-conformal entities the renderer skips). This is a pre-existing
+    disagreement and a named follow-up, not this Plan's code.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source

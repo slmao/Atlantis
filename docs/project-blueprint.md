@@ -924,7 +924,20 @@ milestone being listed does not authorize starting it — see Section 1.
     command-application point (held with the commands by a pause), equal to a fresh start on the saved document;
     save writes a hand-authored source losslessly (Plan 0049's F5 fixed), an imported scene never
     ([ADR-0129](adr/0129-authoring-document-ownership.md)–[ADR-0131](adr/0131-authoring-apply-and-runtime-scene-reload.md)).
-    No Runtime World verb is added.
+    No Runtime World verb is added;
+  - since [Spec 0066](specs/0066-editor-overlay-and-input.md) (merged
+    [PR #290](https://github.com/slmao/Atlantis/pull/290)), Phase 2's first step, in five parts:
+    - **the overlay:** a client draws into the Viewport through a per-client overlay on `RuntimeControl`
+      (`setViewportOverlay`: a closed set of segments, triangles and points in world or screen-constant groups, and a
+      selection the Runtime outlines from the entities' meshes), on the wire, in the CLI and the C# SDK;
+    - **its lifetime and captures:** the Runtime draws every client's union, and a client's overlay goes when it
+      disconnects. A capture shows no overlay unless the requester asks, and then only its own;
+    - **the drawing:** the Renderer draws it as RenderGraph passes after the scene, which needed attachments that
+      load what an earlier graph stored ([ADR-0132](adr/0132-viewport-overlay-surface.md),
+      [ADR-0133](adr/0133-attachment-load-after-the-scene.md));
+    - **the editor:** Atlantis Editor App uses it to outline a pick and draw a translate Gizmo, drawing only;
+    - **input:** the drag path was measured first and route R-a kept (about three Runtime frames of drag latency,
+      no UI stall over 100 ms).
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -955,8 +968,9 @@ milestone being listed does not authorize starting it — see Section 1.
     a shared or persisted history, an edit-history panel, grouping across
     gestures and a conditional write verb for atomic conflict detection
     (Spec 0063 Non-Goals / Out of Scope); pixel-exact or
-    alpha-accurate picking and a rendered selection outline (Spec 0062 Out of
-    Scope; remote picking itself landed with Spec 0064); the editor
+    alpha-accurate picking (Spec 0062 Out of Scope; remote picking itself
+    landed with Spec 0064, and a rendered selection outline with Spec
+    0066's Viewport overlay, which the frozen ImGui editor has not adopted); the editor
     application's Phases 2–4 — E3's UI over the data layer Spec 0065 landed,
     the port of E1/E2's models, the editor games are made in — and frame
     streaming across processes (Spec 0064 Out of Scope / later phases);
@@ -965,6 +979,13 @@ milestone being listed does not authorize starting it — see Section 1.
     the authoring components, a node move command, saving imported scenes or
     "save as", multi-document sessions and a separate authoring process
     (Spec 0065 Non-Goals / Out of Scope);
+  - the E3 authoring editor over the Viewport overlay (Gizmo hit-testing and
+    editing, Hierarchy, Inspector, two-document undo, apply/save UI), text,
+    icons and textured primitives in the overlay, R-b input
+    (`control.drainInput`) and the ImGui editor adopting the overlay
+    (Spec 0066 Out of Scope); picking that agrees with drawing, since a pick
+    can hit an entity the scene skips for a non-conformal world matrix
+    (found by Spec 0066's visual check on Bistro);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 
