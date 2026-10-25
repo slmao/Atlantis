@@ -39,7 +39,7 @@ namespace atlantis::image_regression {
 // loadAndInstantiateScene()/computePendingMaterialIds()/
 // realizePendingMaterials()/extractCameraMatrices()/
 // extractCameraWorldPosition()/extractFrameLightingData()/
-// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()
+// resolveMeshAsset()/resolveMaterialAsset()/checkInvertibleNormalTransform()
 // helpers -- never a fixture-private reimplementation of any of them.
 //
 // Unlike PbrMaterialDemoFixture, this fixture ALSO loads the real

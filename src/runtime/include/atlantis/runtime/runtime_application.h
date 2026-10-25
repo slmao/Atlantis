@@ -169,9 +169,9 @@ class RuntimeApplication {
   // Renderable and a WorldMatrix that `ray` (world space, unit direction)
   // hits, at its current WorldMatrix, both triangle faces, alpha masks
   // ignored -- of the entities the frame draws: one the frame skips for a
-  // non-conformal world matrix (a LitTextured- or PbrDirectLit-bound entity
-  // failing checkConformalTransform()) is not pickable (ADR-0123 D2,
-  // amended 2026-10-25). renderableLocalBounds(): the local bounds of the entity's
+  // degenerate world matrix (a LitTextured- or PbrDirectLit-bound entity
+  // failing checkInvertibleNormalTransform(), ADR-0134 D2) is not pickable
+  // (ADR-0123 D2, amended 2026-10-25 and 2026-10-26). renderableLocalBounds(): the local bounds of the entity's
   // Renderable mesh. Between frames, frame thread only.
   [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
   // Spec 0064 / ADR-0128 D2: whether the configuration kept pick geometry

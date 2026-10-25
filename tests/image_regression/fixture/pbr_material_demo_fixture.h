@@ -38,7 +38,7 @@ namespace atlantis::image_regression {
 // (Phase 1 CPU load), computePendingMaterialIds()/realizePendingMaterials()
 // (Phase 2 GPU realization), extractCameraMatrices()/
 // extractCameraWorldPosition()/extractFrameLightingData()/
-// resolveMeshAsset()/resolveMaterialAsset()/checkConformalTransform()
+// resolveMeshAsset()/resolveMaterialAsset()/checkInvertibleNormalTransform()
 // helpers -- never a fixture-private reimplementation of any of them.
 //
 // Unlike LightingDemoFixture, this fixture owns its own, independent
@@ -172,7 +172,7 @@ enum class PbrMaterialDemoRenderError {
 // One full acquire -> updateTransforms() -> Camera/Lighting/
 // CameraWorldPosition extraction and publish (unconditional, every
 // call, matching Plan 0022's own corrected dynamic contract) ->
-// realize (Phase 2) -> draw (gated by checkConformalTransform() for
+// realize (Phase 2) -> draw (gated by checkInvertibleNormalTransform() for
 // every LitTextured- or PbrDirectLit-bound entity) -> copy -> submit
 // -> waitIdle cycle. May be called more than once against the same
 // PbrMaterialDemoFixture, reusing the same cameraBuffer/depthTexture/

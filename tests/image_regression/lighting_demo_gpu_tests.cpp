@@ -371,19 +371,50 @@ TEST_CASE("LightingDemoFixture: World::setLight() before a second render call ch
   CHECK(publishedIntensity == 999.0f);
 }
 
-TEST_CASE("LightingDemoFixture: a LitTextured-bound entity given a deliberately non-conformal world transform is "
-          "skipped for that frame's own DrawItem list, never scene-load/frame-fatal",
+TEST_CASE("LightingDemoFixture: a LitTextured-bound entity given a non-uniformly scaled world transform is drawn, "
+          "and one given a degenerate world transform is skipped for that frame only, never scene-load/frame-fatal",
           "[image_regression][gpu][lighting]") {
-  // Baseline: confirm the scene's own single Renderable normally covers
-  // a real, meaningful fraction of the frame.
-  auto baselineFixtureResult = setUpLightingDemoFixture(buildTestConfig());
-  REQUIRE(baselineFixtureResult.isOk());
-  LightingDemoFixture& baselineFixture = baselineFixtureResult.value();
-  auto baselineResult = renderLightingDemoFrame(baselineFixture);
+  // Spec 0067 R2 / ADR-0134 D2 (Plan 0067 M3): Spec 0019 D7's rejected
+  // non-uniform scale is drawn now; only a degenerate world 3x3 is skipped.
+  auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
+  REQUIRE(fixtureResult.isOk());
+  LightingDemoFixture& fixture = fixtureResult.value();
+  auto baselineResult = renderLightingDemoFrame(fixture);
   REQUIRE(baselineResult.isOk());
-  REQUIRE(coverageFraction(baselineResult.value()) > 0.01);
-  REQUIRE(atlantis::image_regression::renderableEntities(*baselineFixture.scene).size() == 1);
+  const double baselineCoverage = coverageFraction(baselineResult.value());
+  REQUIRE(baselineCoverage > 0.01);
 
+  const std::vector<EntityId> renderables = atlantis::image_regression::renderableEntities(*fixture.scene);
+  REQUIRE(renderables.size() == 1);
+  const EntityId litEntity = renderables.front();
+  auto transformResult = fixture.scene->world.get<Transform>(litEntity);
+  REQUIRE(transformResult.isOk());
+
+  Transform nonUniform = transformResult.value();
+  nonUniform.localScale = {2.0f, 1.0f, 1.0f};  // non-uniform scale -- D7's own formerly rejected case
+  atlantis::image_regression::setRootTransform(*fixture.scene, litEntity, nonUniform);
+  auto nonUniformResult = renderLightingDemoFrame(fixture);
+  REQUIRE(nonUniformResult.isOk());
+  // Drawn, and twice as wide as the baseline cube.
+  CHECK(coverageFraction(nonUniformResult.value()) > baselineCoverage);
+
+  Transform degenerate = transformResult.value();
+  degenerate.localScale = {2.0f, 1.0f, 0.0f};  // a zero column -- no normal direction exists
+  atlantis::image_regression::setRootTransform(*fixture.scene, litEntity, degenerate);
+  auto degenerateResult = renderLightingDemoFrame(fixture);
+  REQUIRE(degenerateResult.isOk());  // never scene-load/frame-fatal -- a recoverable, per-entity skip
+  // The cube is completely absent -- this scene's own single Renderable
+  // was the only entity ever eligible to draw, and it was skipped.
+  CHECK(coverageFraction(degenerateResult.value()) == 0.0);
+}
+
+TEST_CASE("LightingDemoFixture: under a non-uniform scale, a captured pixel matches computeLambertianDiffuse() at the "
+          "analytic normal (the inverse transpose), not at the world matrix's own transform of the normal",
+          "[image_regression][gpu][lighting]") {
+  // Spec 0067 R1 / ADR-0134 D1 (Plan 0067 M3): the lit shaders transform
+  // normals by the world 3x3's cofactor. Checked here against the analytic
+  // inverse transpose, with the "known cube vertex" test's own derivation
+  // (sample point, texture average, tone mapping) at a scaled cube.
   auto fixtureResult = setUpLightingDemoFixture(buildTestConfig());
   REQUIRE(fixtureResult.isOk());
   LightingDemoFixture& fixture = fixtureResult.value();
@@ -393,16 +424,104 @@ TEST_CASE("LightingDemoFixture: a LitTextured-bound entity given a deliberately 
   const EntityId litEntity = renderables.front();
   auto transformResult = fixture.scene->world.get<Transform>(litEntity);
   REQUIRE(transformResult.isOk());
-  Transform nonConformal = transformResult.value();
-  nonConformal.localScale = {2.0f, 1.0f, 1.0f};  // non-uniform scale -- D7's own rejected case
-  atlantis::image_regression::setRootTransform(*fixture.scene, litEntity, nonConformal);
+  Transform scaled = transformResult.value();
+  // The cube's authored transform is the identity, so its world 3x3 below
+  // is exactly diag(scale).
+  REQUIRE(scaled.localPosition.x == 0.0f);
+  REQUIRE(scaled.localPosition.y == 0.0f);
+  REQUIRE(scaled.localPosition.z == 0.0f);
+  REQUIRE(scaled.localEulerAnglesRadians.x == 0.0f);
+  REQUIRE(scaled.localEulerAnglesRadians.y == 0.0f);
+  REQUIRE(scaled.localEulerAnglesRadians.z == 0.0f);
+  const Vec3 scale{1.0f, 1.0f, 0.25f};
+  scaled.localScale = {scale.x, scale.y, scale.z};
+  atlantis::image_regression::setRootTransform(*fixture.scene, litEntity, scaled);
+
+  const SamplePoint local = knownCubeSamplePoint();
+  const Vec3 worldPosition{local.worldPosition.x * scale.x, local.worldPosition.y * scale.y,
+                           local.worldPosition.z * scale.z};
+  const auto normalized = [](const Vec3& v) {
+    const float length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    return Vec3{v.x / length, v.y / length, v.z / length};
+  };
+  // diag(s)'s inverse transpose is diag(1/s): the analytic normal. The
+  // shaders before Spec 0067 took mul((float3x3)objectToWorld, n): diag(s) n.
+  const Vec3 analyticNormal = normalized(
+      {local.worldNormal.x / scale.x, local.worldNormal.y / scale.y, local.worldNormal.z / scale.z});
+  const Vec3 directNormal = normalized(
+      {local.worldNormal.x * scale.x, local.worldNormal.y * scale.y, local.worldNormal.z * scale.z});
+
+  // The scene's Directional light lies within about 18 degrees of the
+  // unscaled normal, where the cosine is too flat to tell the two normals
+  // apart. Aimed along -analyticNormal instead (N.L = 1 there), it lights
+  // the two candidates (about 55 degrees apart) most differently. The
+  // expected colors below come from the scene's own extracted lights, so a
+  // misaimed light fails the discrimination check, not the comparison.
+  const auto directional = findLightByKind(fixture, LightKind::Directional);
+  REQUIRE(directional.has_value());
+  Transform aimed;
+  aimed.localEulerAnglesRadians = {std::asin(-analyticNormal.y), std::atan2(analyticNormal.x, analyticNormal.z),
+                                   0.0f};
+  atlantis::image_regression::setRootTransform(*fixture.scene, *directional, aimed);
 
   auto renderResult = renderLightingDemoFrame(fixture);
-  REQUIRE(renderResult.isOk());  // never scene-load/frame-fatal -- a recoverable, per-entity skip
+  REQUIRE(renderResult.isOk());
+  const PixelBuffer& frame = renderResult.value();
 
-  // The cube is completely absent -- this scene's own single Renderable
-  // was the only entity ever eligible to draw, and it was skipped.
-  CHECK(coverageFraction(renderResult.value()) == 0.0);
+  const auto screen = screenPixelFor(fixture, worldPosition);
+  REQUIRE(screen.has_value());
+
+  const std::vector<LightExtractionInput> lightInputs = atlantis::runtime::collectLights(*fixture.scene);
+  const auto lightingResult = extractFrameLightingData(lightInputs);
+  REQUIRE(lightingResult.isOk());
+
+  // texColor: the bilinear+repeat sample at UV (0,0), the average of the
+  // texture's four corner texels -- the "known cube vertex" test's own
+  // derivation.
+  REQUIRE(fixture.materialDataMap.size() == 1);
+  const auto textureIt = fixture.textureDataMap.find(fixture.materialDataMap.begin()->second.textureAsset);
+  REQUIRE(textureIt != fixture.textureDataMap.end());
+  const auto& textureData = textureIt->second;
+  REQUIRE(textureData.width > 0);
+  REQUIRE(textureData.height > 0);
+  const auto texelAt = [&](std::uint32_t x, std::uint32_t y) -> std::array<float, 4> {
+    const std::size_t offset = (static_cast<std::size_t>(y) * textureData.width + x) * 4;
+    return {textureData.pixelBytes[offset] / 255.0f, textureData.pixelBytes[offset + 1] / 255.0f,
+            textureData.pixelBytes[offset + 2] / 255.0f, textureData.pixelBytes[offset + 3] / 255.0f};
+  };
+  const auto c00 = texelAt(0, 0);
+  const auto c10 = texelAt(textureData.width - 1, 0);
+  const auto c01 = texelAt(0, textureData.height - 1);
+  const auto c11 = texelAt(textureData.width - 1, textureData.height - 1);
+  const Vec3 texColor{(c00[0] + c10[0] + c01[0] + c11[0]) * 0.25f, (c00[1] + c10[1] + c01[1] + c11[1]) * 0.25f,
+                      (c00[2] + c10[2] + c01[2] + c11[2]) * 0.25f};
+
+  const auto expectedRgb = [&](const Vec3& normal) {
+    const Vec3 accumulated = computeLambertianDiffuse(worldPosition, normal, lightingResult.value());
+    const auto outputByte = [](float linearValue) {
+      return static_cast<int>(std::lround(tonemapAndEncodeUnorm(linearValue) * 255.0f));
+    };
+    return std::array<int, 3>{outputByte(texColor.x * accumulated.x), outputByte(texColor.y * accumulated.y),
+                              outputByte(texColor.z * accumulated.z)};
+  };
+  const auto maxChannelDifference = [](const std::array<int, 3>& a, const std::array<int, 3>& b) {
+    return std::max({std::abs(a[0] - b[0]), std::abs(a[1] - b[1]), std::abs(a[2] - b[2])});
+  };
+  const std::array<int, 3> analytic = expectedRgb(analyticNormal);
+  const std::array<int, 3> direct = expectedRgb(directNormal);
+  const auto pixel = pixelAt(frame, screen->first, screen->second);
+  const std::array<int, 3> actual{pixel[0], pixel[1], pixel[2]};
+  INFO("actual " << actual[0] << " " << actual[1] << " " << actual[2] << "; analytic " << analytic[0] << " "
+                 << analytic[1] << " " << analytic[2] << "; direct " << direct[0] << " " << direct[1] << " "
+                 << direct[2]);
+
+  // The "known cube vertex" test's own disclosed tolerance. The scale is
+  // chosen so the two candidate normals' colors lie more than twice that
+  // apart, so the check can tell them apart.
+  constexpr int kTolerancePerChannel = 12;
+  REQUIRE(maxChannelDifference(analytic, direct) > 2 * kTolerancePerChannel);
+  CHECK(maxChannelDifference(actual, analytic) <= kTolerancePerChannel);
+  CHECK(maxChannelDifference(actual, direct) > kTolerancePerChannel);
 }
 
 TEST_CASE("LightingDemoFixture: realizing the LitTextured material via the wrong MaterialKind (as if "

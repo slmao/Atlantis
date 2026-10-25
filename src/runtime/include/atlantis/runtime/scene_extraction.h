@@ -57,11 +57,9 @@ enum class SceneExtractionError {
   // world-matrix-derived direction instead of a camera's own forward
   // vector.
   DegenerateLightDirection,
-  // Plan 0019 Section P8/P15: a LitTextured-bound entity's own world
-  // matrix fails checkConformalTransform() -- its upper-left 3x3 is not
-  // (uniform-scale-times-)orthogonal, so the vertex shader's own direct
-  // objectToWorld-based normal transform (P11) would be wrong.
-  NonConformalNormalTransform,
+  // ADR-0134 D2 (Spec 0067 R2): a lit entity's world 3x3 is degenerate --
+  // checkInvertibleNormalTransform() -- so no normal direction exists.
+  DegenerateWorldTransform,
 };
 
 struct CameraMatrices {
@@ -293,15 +291,21 @@ struct LightExtractionInput {
 [[nodiscard]] atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingData(
     const std::vector<LightExtractionInput>& lights);
 
-// Plan 0019 Section P8/P15: a per-entity, per-frame check, called only
-// for a LitTextured-bound entity's own current world matrix --
-// unrelated to light extraction itself, grouped here only because it
-// shares this file's own "world-matrix-driven, SceneExtractionError-
-// returning" shape. Accepts an upper-left 3x3 that is a pure rotation,
-// optionally combined with a uniform scale of either sign (D7's own
-// "conformal" definition); rejects non-uniform scale, shear, or a
-// degenerate (near-zero-length) column.
-[[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(const Mat4& worldMatrix);
+// ADR-0134 D2 (Spec 0067 R2): the one predicate that decides which lit
+// (LitTextured- or PbrDirectLit-bound) entities the frame skips -- called
+// by runFrame()'s extraction, the capture path and pickRenderable(). The
+// lit shaders transform normals by the world 3x3's cofactor (ADR-0134 D1),
+// correct for every invertible matrix, so only a degenerate one fails
+// (DegenerateWorldTransform):
+// - a near-zero column: |ci| < kDegenerateLengthEpsilon (1e-6);
+// - near-coplanar columns: |det M| < 1e-4 * |c0| |c1| |c2|. The ratio is 1
+//   for any matrix with orthogonal columns whatever its scale and falls only
+//   as the columns approach a plane (a 45-degree shear gives 0.71); float32
+//   cancellation makes det's sign unreliable around 1e-6;
+// - a non-finite entry (no normal direction exists).
+// Non-uniform scale, shear and reflections pass.
+[[nodiscard]] atlantis::Result<std::monostate, SceneExtractionError> checkInvertibleNormalTransform(
+    const Mat4& worldMatrix);
 
 // Plan 0019 Section P14: the one, single C++-side definition -- see
 // shaders/lit_textured/lit_textured.slang's own

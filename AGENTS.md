@@ -490,11 +490,15 @@ window handle (`runtime_application.cpp:1343`), since Spec 0065 the four
 lines of the scene reload swap point right after the `World` zone
 (`runtime_application.cpp:1322–1325`: its comment and
 `if (pendingSceneReload_.has_value() && !commandsHeld_) performPendingSceneReload();`)
-and, since Spec 0066, the fourteen lines of the Viewport overlay's named place
-(`runtime_application.cpp:1989–1998`: its comment, the scene's final state, the
+since Spec 0066 the fourteen lines of the Viewport overlay's named place
+(`runtime_application.cpp:1982–1991`: its comment, the scene's final state, the
 overlay's draw list, and the `drawFrame()` call's first two lines, which keep its
 returned end states and stop in `ColorAttachmentOutput` when an overlay follows;
-and `2019–2022`: the `drawViewportOverlayInto()` call);
+and `2012–2015`: the `drawViewportOverlayInto()` call)
+and, since Spec 0067 (ADR-0134 D2), the ten lines of the lit-entity skip in the
+extraction loop (`runtime_application.cpp:1915–1920`: its comment; `1927–1928`:
+the `checkInvertibleNormalTransform()` call and its test; `1933–1934`: the
+skip's log message);
 a further frame-path change enumerates its `runFrame()` lines in its PR.
 
 **Atlantis Platform** is the per-OS windowing/surface/lifecycle

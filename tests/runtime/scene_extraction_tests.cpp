@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -16,7 +17,7 @@
 
 using atlantis::runtime::CameraMatrices;
 using atlantis::runtime::CameraWorldPositionData;
-using atlantis::runtime::checkConformalTransform;
+using atlantis::runtime::checkInvertibleNormalTransform;
 using atlantis::runtime::computeLambertianDiffuse;
 using atlantis::runtime::computePbrDirectLighting;
 using atlantis::runtime::computeShadowLightSpaceMatrices;
@@ -570,57 +571,69 @@ TEST_CASE("extractFrameLightingData(): calling it twice with byte-identical inpu
 }
 
 // ---------------------------------------------------------------------
-// checkConformalTransform() -- Plan 0019 Sections P8/P15 (Spec 0019 D7),
-// Milestone 7/V12. Every hand-constructed 3x3 case D7's own proof
-// sketch names.
+// checkInvertibleNormalTransform() -- ADR-0134 D2 (Spec 0067 R2, Plan 0067
+// M2). Spec 0019 M7/V12's seven hand-constructed cases, each against the
+// new predicate: (1)-(4) and (7) keep their outcome, (5) non-uniform scale
+// and (6) shear flip from rejected to accepted; then the cases D2 adds.
 // ---------------------------------------------------------------------
 
-TEST_CASE("checkConformalTransform(): identity is accepted", "[runtime][scene_extraction][light]") {
-  const Mat4 identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(identity).isOk());
+namespace {
+[[nodiscard]] bool invertibleAccepted(const Mat4& m) { return checkInvertibleNormalTransform(m).isOk(); }
+[[nodiscard]] bool rejectedAsDegenerate(const Mat4& m) {
+  const auto result = checkInvertibleNormalTransform(m);
+  return result.isErr() && result.error() == SceneExtractionError::DegenerateWorldTransform;
+}
+}  // namespace
+
+TEST_CASE("checkInvertibleNormalTransform(): V12 (1)-(4) -- identity, rotation and uniform scale of either sign "
+          "stay accepted",
+          "[runtime][scene_extraction][normal_transform]") {
+  CHECK(invertibleAccepted({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  CHECK(invertibleAccepted({0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  CHECK(invertibleAccepted({2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1}));
+  CHECK(invertibleAccepted({-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1}));
 }
 
-TEST_CASE("checkConformalTransform(): a pure rotation is accepted", "[runtime][scene_extraction][light]") {
-  // A 90-degree rotation about Z: column0=(0,1,0), column1=(-1,0,0), column2=(0,0,1).
-  const Mat4 rotation{0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(rotation).isOk());
+TEST_CASE("checkInvertibleNormalTransform(): V12 (5) non-uniform scale flips to accepted",
+          "[runtime][scene_extraction][normal_transform]") {
+  CHECK(invertibleAccepted({2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  // Bistro's measured case: (s, s, 1), s = 1.0244.
+  CHECK(invertibleAccepted({1.0244f, 0, 0, 0, 0, 1.0244f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  // A strong anisotropy is still invertible.
+  CHECK(invertibleAccepted({1000.0f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0.001f, 0, 0, 0, 0, 1}));
 }
 
-TEST_CASE("checkConformalTransform(): a uniform positive scale is accepted", "[runtime][scene_extraction][light]") {
-  const Mat4 uniformScale{2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(uniformScale).isOk());
+TEST_CASE("checkInvertibleNormalTransform(): V12 (6) shear flips to accepted",
+          "[runtime][scene_extraction][normal_transform]") {
+  CHECK(invertibleAccepted({1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  // A non-uniform scale with a reflection (negative determinant) too.
+  CHECK(invertibleAccepted({-2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
 }
 
-TEST_CASE("checkConformalTransform(): a uniform NEGATIVE scale (a full point reflection) is accepted",
-          "[runtime][scene_extraction][light]") {
-  // D7's own explicitly-named "uniform scale of either sign" case -- -I is
-  // itself an orthogonal matrix, so this must be accepted, not rejected.
-  const Mat4 negativeUniformScale{-1, 0, 0, 0, 0, -1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1};
-  REQUIRE(checkConformalTransform(negativeUniformScale).isOk());
+TEST_CASE("checkInvertibleNormalTransform(): V12 (7) a near-zero column stays rejected, now as DegenerateWorldTransform",
+          "[runtime][scene_extraction][normal_transform]") {
+  CHECK(rejectedAsDegenerate({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1e-9f, 0, 0, 0, 0, 1}));
+  CHECK(rejectedAsDegenerate({0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
 }
 
-TEST_CASE("checkConformalTransform(): non-uniform scale is rejected", "[runtime][scene_extraction][light]") {
-  const Mat4 nonUniformScale{2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(nonUniformScale);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
+TEST_CASE("checkInvertibleNormalTransform(): coplanar columns are rejected at the 1e-4 volume ratio (D2)",
+          "[runtime][scene_extraction][normal_transform]") {
+  // column2 = column0 + column1: exactly coplanar, every column of unit-scale length.
+  CHECK(rejectedAsDegenerate({1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 1}));
+  // column2 tilted 1e-5 out of the column0-column1 plane: ratio ~7e-6 < 1e-4, rejected.
+  CHECK(rejectedAsDegenerate({1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1.4142e-5f, 0, 0, 0, 0, 1}));
+  // Tilted 1e-3 out of the plane: ratio ~7e-4 > 1e-4, accepted.
+  CHECK(invertibleAccepted({1, 0, 0, 0, 0, 1, 0, 0, 1, 1, 1.4142e-3f, 0, 0, 0, 0, 1}));
+  // A 45-degree shear keeps a ratio of 0.71 and is accepted.
+  CHECK(invertibleAccepted({1, 0, 0, 0, 0.70710678f, 0.70710678f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
 }
 
-TEST_CASE("checkConformalTransform(): shear is rejected", "[runtime][scene_extraction][light]") {
-  // column1 = (1,1,0) -- a nonzero (0,1) entry breaking column0/column1
-  // orthogonality beyond what any pure rotation would produce.
-  const Mat4 shear{1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(shear);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
-}
-
-TEST_CASE("checkConformalTransform(): a degenerate (near-zero-length) column is rejected",
-          "[runtime][scene_extraction][light]") {
-  const Mat4 degenerate{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1e-9f, 0, 0, 0, 0, 1};
-  const auto result = checkConformalTransform(degenerate);
-  REQUIRE(result.isErr());
-  REQUIRE(result.error() == SceneExtractionError::NonConformalNormalTransform);
+TEST_CASE("checkInvertibleNormalTransform(): a non-finite matrix is rejected",
+          "[runtime][scene_extraction][normal_transform]") {
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const float infinity = std::numeric_limits<float>::infinity();
+  CHECK(rejectedAsDegenerate({nan, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
+  CHECK_FALSE(invertibleAccepted({infinity, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}));
 }
 
 // ---------------------------------------------------------------------

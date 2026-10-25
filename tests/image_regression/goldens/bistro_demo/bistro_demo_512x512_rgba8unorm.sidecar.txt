@@ -1,6 +1,6 @@
 schema_version: 3
-capture_date: 2026-10-25T10:10:24Z
-source_revision: 8cbd71e894054dcbb83753ed2c38279e864cbecd
+capture_date: 2026-10-25T18:08:22Z
+source_revision: 9737a8d05411c1e564b25b314c632593046ef8a1
 gpu_vendor: AMD
 gpu_model: AMD Radeon RX 7900 XT
 driver_version: 26.10.1 (LLPC)

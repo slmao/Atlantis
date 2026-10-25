@@ -342,58 +342,25 @@ atlantis::Result<FrameLightingData, SceneExtractionError> extractFrameLightingDa
   return atlantis::Result<FrameLightingData, SceneExtractionError>::Ok(data);
 }
 
-// Plan 0019 Section P8/P15 (Spec 0019 D7): the upper-left 3x3 of
-// worldMatrix is conformal iff it equals a uniform scale (either sign)
-// times an orthogonal matrix -- equivalently, its three column vectors
-// are pairwise orthogonal and of equal length. A uniform NEGATIVE scale
-// (e.g. -1 * I, a full point reflection) still satisfies both: -I is
-// itself an orthogonal matrix (its columns stay pairwise orthogonal and
-// equal-length), matching D7's own explicitly-named "uniform scale of
-// either sign" acceptance case.
-atlantis::Result<std::monostate, SceneExtractionError> checkConformalTransform(const Mat4& worldMatrix) {
+atlantis::Result<std::monostate, SceneExtractionError> checkInvertibleNormalTransform(const Mat4& worldMatrix) {
+  using ResultT = atlantis::Result<std::monostate, SceneExtractionError>;
+  // ADR-0134 D2's coplanarity bound (see the header).
+  constexpr float kCoplanarRatio = 1e-4f;
   const Vec3 col0{worldMatrix[0], worldMatrix[1], worldMatrix[2]};
   const Vec3 col1{worldMatrix[4], worldMatrix[5], worldMatrix[6]};
   const Vec3 col2{worldMatrix[8], worldMatrix[9], worldMatrix[10]};
-
   const float len0 = length(col0);
   const float len1 = length(col1);
   const float len2 = length(col2);
-  // Reuses the identical near-zero-length numerical boundary
-  // DegenerateLightDirection's own check already exercises for a
-  // different matrix column (P15's own explicit "consistent epsilon
-  // treatment" requirement).
-  if (len0 < kDegenerateLengthEpsilon || len1 < kDegenerateLengthEpsilon || len2 < kDegenerateLengthEpsilon) {
-    return atlantis::Result<std::monostate, SceneExtractionError>::Err(
-        SceneExtractionError::NonConformalNormalTransform);
+  if (!std::isfinite(len0 * len1 * len2) || !(len0 >= kDegenerateLengthEpsilon) ||
+      !(len1 >= kDegenerateLengthEpsilon) || !(len2 >= kDegenerateLengthEpsilon)) {
+    return ResultT::Err(SceneExtractionError::DegenerateWorldTransform);  // NaN and infinity too
   }
-
-  // A 1% relative tolerance on squared length/dot-product magnitudes --
-  // an Implementation-time closure (disclosed here, not silently
-  // widened) accommodating ordinary floating-point matrix composition
-  // error for genuinely conformal inputs, while still rejecting every
-  // hand-constructed non-uniform-scale/shear test case (Milestone 7/V12)
-  // by a comfortable margin.
-  constexpr float kRelativeToleranceSquared = 1e-4f;
-
-  const float len0Sq = len0 * len0;
-  const float len1Sq = len1 * len1;
-  const float len2Sq = len2 * len2;
-  const float avgLenSq = (len0Sq + len1Sq + len2Sq) / 3.0f;
-  const float lengthTolerance = kRelativeToleranceSquared * avgLenSq;
-
-  const bool lengthsEqual = std::abs(len0Sq - avgLenSq) <= lengthTolerance &&
-                             std::abs(len1Sq - avgLenSq) <= lengthTolerance &&
-                             std::abs(len2Sq - avgLenSq) <= lengthTolerance;
-
-  const bool orthogonal = std::abs(dot(col0, col1)) <= lengthTolerance &&
-                           std::abs(dot(col0, col2)) <= lengthTolerance &&
-                           std::abs(dot(col1, col2)) <= lengthTolerance;
-
-  if (!lengthsEqual || !orthogonal) {
-    return atlantis::Result<std::monostate, SceneExtractionError>::Err(
-        SceneExtractionError::NonConformalNormalTransform);
+  const float det = dot(col0, cross(col1, col2));
+  if (!(std::abs(det) >= kCoplanarRatio * len0 * len1 * len2)) {
+    return ResultT::Err(SceneExtractionError::DegenerateWorldTransform);
   }
-  return atlantis::Result<std::monostate, SceneExtractionError>::Ok({});
+  return ResultT::Ok({});
 }
 
 // Plan 0019 Section P14: a direct, line-for-line C++ transcription of

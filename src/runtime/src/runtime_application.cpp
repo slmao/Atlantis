@@ -1912,33 +1912,26 @@ void RuntimeApplication::runFrame() {
       // materialDataMap_, read here a second time -- never a new
       // load) -- an UnlitTextured-bound entity, or one with no
       // material at all (the untextured fallback path, handled
-      // outside this if block entirely), never calls
-      // checkConformalTransform(); its own world matrix may be
-      // arbitrarily non-uniform-scaled or sheared with no effect.
-      // Plan 0023 Milestone 8 (found and fixed during this Milestone's
-      // own implementation, applying an already-Approved rule, not a
-      // new design decision): PbrDirectLit shares this exact same
-      // gating requirement -- pbr_direct_lit.slang's own vertexMain()
-      // transforms the normal identically to lit_textured.slang's own
-      // `mul((float3x3)pushConstants.objectToWorld, input.normal)`
-      // (Milestone 4), so a non-conformal PbrDirectLit-bound entity's
-      // own world normal would silently be wrong with no defensive
-      // skip if left out of this gate, exactly the defect class Spec
-      // 0019 D7/P15 already fixed for LitTextured.
+      // outside this if block entirely), is never checked.
+      // ADR-0134 D2 (Spec 0067, superseding Spec 0019 D7): the lit
+      // shaders transform normals by the world 3x3's cofactor, correct
+      // for any invertible matrix, so only a degenerate one is skipped
+      // -- by the one predicate the capture path and pickRenderable()
+      // also call.
       const auto materialDataIt = materialDataMap_.find(*materialAsset);
       ATLANTIS_CHECK_MSG(materialDataIt != materialDataMap_.end(),
                           "runFrame(): a resolveMaterialAsset()-confirmed material AssetId must already be a key "
                           "in materialDataMap_ (Phase 1 load)");
       if (materialDataIt->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
           materialDataIt->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit) {
-        const auto conformalResult = checkConformalTransform(renderable.worldMatrix);
-        if (conformalResult.isErr()) {
+        const auto normalTransformResult = checkInvertibleNormalTransform(renderable.worldMatrix);
+        if (normalTransformResult.isErr()) {
           // Recoverable, per-entity, per-frame -- never scene-load-
           // fatal, matching this loop's own established "keep going,
           // log, skip" philosophy for a bad mesh/material reference.
           ATLANTIS_LOG_ERROR(
-              "runFrame(): a LitTextured- or PbrDirectLit-bound entity's own world matrix failed "
-              "checkConformalTransform() -- skipping this entity for this frame only");
+              "runFrame(): a LitTextured- or PbrDirectLit-bound entity's own world matrix is degenerate "
+              "(checkInvertibleNormalTransform()) -- skipping this entity for this frame only");
           continue;
         }
       }
@@ -2317,12 +2310,13 @@ std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {
 // every addressable entity -- including those created since load -- is
 // pickable at its current WorldMatrix.
 //
-// ADR-0123 D2's amendment (2026-10-25): the service picks what the frame
-// draws. The frame's extraction skips a LitTextured- or PbrDirectLit-bound
-// entity whose world matrix fails checkConformalTransform() (Spec 0019 D7,
-// Plan 0019 P15, Plan 0023 M8), so such an entity is not pickable either:
-// the same test, under the same condition. Every other entity -- an unlit or
-// material-less one at any matrix included -- is picked exactly as before.
+// ADR-0123 D2's amendments (2026-10-25, 2026-10-26): the service picks what
+// the frame draws. The frame's extraction skips a LitTextured- or
+// PbrDirectLit-bound entity whose world matrix is degenerate
+// (checkInvertibleNormalTransform(), ADR-0134 D2), so such an entity is not
+// pickable either: the same predicate, under the same condition. Every other
+// entity -- non-uniformly scaled, sheared, unlit or material-less included --
+// is picked.
 std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) const {
   if (!scene_ || !worldAccess_.has_value() || pickGeometry_.empty()) return std::nullopt;
   std::vector<detail::PickInstance> instances = detail::collectPickInstances(*worldAccess_, *scene_);
@@ -2332,9 +2326,9 @@ std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) co
     if (!material.has_value()) return false;
     const auto materialData = materialDataMap_.find(*material);
     if (materialData == materialDataMap_.end()) return false;
-    const bool conformalGated = materialData->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
+    const bool litGated = materialData->second.kind == atlantis::asset_system::MaterialKind::LitTextured ||
                                 materialData->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit;
-    return conformalGated && checkConformalTransform(instance.worldMatrix).isErr();
+    return litGated && checkInvertibleNormalTransform(instance.worldMatrix).isErr();
   });
   return detail::pickNearest(instances, pickGeometry_, ray);
 }
