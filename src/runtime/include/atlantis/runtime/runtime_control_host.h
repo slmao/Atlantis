@@ -63,8 +63,10 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
   struct Target {
     std::function<void(bool held)> setCommandsHeld;
     std::function<atlantis::Result<atlantis::connection::FrameData, atlantis::connection::ControlError>()> frameData;
+    // Plan 0066 P4 (Spec 0066 R5): with the step's captureOverlay -- the
+    // requester's own overlay when it asked, else none.
     std::function<atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>(
-        const std::string& path)>
+        const std::string& path, const std::optional<atlantis::connection::ViewportOverlay>& overlay)>
         captureImage;
     // Spec 0064 / ADR-0128 D1, D2: the control camera and the ray-cast.
     std::function<void(const std::optional<atlantis::connection::ViewportCamera>&)> setViewportCamera;

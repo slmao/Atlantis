@@ -42,7 +42,14 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   Target target;
   target.setCommandsHeld = [&application](bool held) { application.setCommandsHeld(held); };
   target.frameData = [&application] { return application.captureFrameData(); };
-  target.captureImage = [&application](const std::string& path) { return application.captureImage(path); };
+  target.captureImage = [&application](const std::string& path,
+                                       const std::optional<connection::ViewportOverlay>& overlay) {
+    return application.captureImage(path, overlay);
+  };
+  // Plan 0066 P4 (ADR-0132 D4): the union, drawn from the next frame on.
+  target.setViewportOverlay = [&application](const std::optional<connection::ViewportOverlay>& overlay) {
+    application.setViewportOverlay(overlay);
+  };
   target.setViewportCamera = [&application](const std::optional<connection::ViewportCamera>& camera) {
     application.setControlViewportCamera(camera);
   };
@@ -99,7 +106,7 @@ void RuntimeControlHost::afterFrame() {
   report.applied = true;
   report.data = std::move(data.value());
   if (finished.request.imagePath.has_value()) {
-    auto image = target_.captureImage(*finished.request.imagePath);
+    auto image = target_.captureImage(*finished.request.imagePath, finished.request.captureOverlay);
     if (image.isErr()) {
       finished.done(ResultT::Err(image.error()));
       return;

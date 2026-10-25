@@ -2409,3 +2409,321 @@ TEST_CASE("atlantis_runtime --benchmark: stdout is exactly one JSON document, an
   fs::remove_all(dir);
 }
 #endif
+
+// --- Plan 0066 M4 (Spec 0066 R3-R5; ADR-0132 D4; ADR-0133 D5): the Viewport
+// overlay at the Runtime's named place, under fatal Validation Layers. Each in
+// its own TEST_CASE: one application per process. Positions are projected with
+// the camera the frame draws from, so the checks follow the scene's camera. ----
+
+namespace {
+
+[[nodiscard]] atlantis::runtime::ViewportOverlayShaderPaths viewportOverlayShaders() {
+  return {ATLANTIS_RUNTIME_VIEWPORT_OVERLAY_SHADER_DIR, ATLANTIS_RUNTIME_SELECTION_MASK_SHADER_DIR,
+          ATLANTIS_RUNTIME_SELECTION_OUTLINE_SHADER_DIR};
+}
+
+// A point `distance` in front of a camera at `world` (column-major), `right` units to its right.
+[[nodiscard]] std::array<float, 3> inFrontOf(const atlantis::runtime::Mat4& world, float distance, float right = 0.0f) {
+  return {world[12] - world[8] * distance + world[0] * right, world[13] - world[9] * distance + world[1] * right,
+          world[14] - world[10] * distance + world[2] * right};
+}
+
+// The pixel `p` projects to under `camera` on an `extent` target (the Vulkan viewport: NDC -1 is the top row).
+[[nodiscard]] std::array<std::uint32_t, 2> pixelOf(const atlantis::runtime::CameraMatrices& camera,
+                                                   const std::array<float, 3>& p, atlantis::rhi::Extent2D extent) {
+  const auto apply = [](const atlantis::runtime::Mat4& m, const std::array<float, 4>& v) {
+    std::array<float, 4> r{};
+    for (std::size_t row = 0; row < 4; ++row) {
+      for (std::size_t column = 0; column < 4; ++column) r[row] += m[column * 4 + row] * v[column];
+    }
+    return r;
+  };
+  const auto clip = apply(camera.projection, apply(camera.view, {p[0], p[1], p[2], 1.0f}));
+  const float x = (clip[0] / clip[3] * 0.5f + 0.5f) * static_cast<float>(extent.width);
+  const float y = (clip[1] / clip[3] * 0.5f + 0.5f) * static_cast<float>(extent.height);
+  REQUIRE((x >= 0.0f && y >= 0.0f && x < static_cast<float>(extent.width) && y < static_cast<float>(extent.height)));
+  return {static_cast<std::uint32_t>(x), static_cast<std::uint32_t>(y)};
+}
+
+// One on-top point of `sizePixels`, in `rgba`.
+[[nodiscard]] atlantis::connection::ViewportOverlay pointOverlay(const std::array<float, 3>& at,
+                                                                 const atlantis::connection::OverlayColor& rgba,
+                                                                 float sizePixels = 24.0f) {
+  atlantis::connection::ViewportOverlay overlay;
+  overlay.groups.emplace_back();
+  overlay.groups[0].points.push_back(
+      atlantis::connection::OverlayPoint{at, rgba, atlantis::connection::OverlayDepth::OnTop, sizePixels});
+  return overlay;
+}
+
+constexpr atlantis::connection::OverlayColor kOverlayRed{1.0f, 0.0f, 0.0f, 1.0f};
+constexpr atlantis::connection::OverlayColor kOverlayGreen{0.0f, 1.0f, 0.0f, 1.0f};
+
+// An RGB pixel of a decoded PNG (RGBA).
+[[nodiscard]] std::array<std::uint8_t, 3> pngPixel(const atlantis::image_regression::DecodedPng& png, std::uint32_t x,
+                                                   std::uint32_t y) {
+  const std::size_t i = (static_cast<std::size_t>(y) * png.pixels.width + x) * 4;
+  return {png.pixels.rgba8[i], png.pixels.rgba8[i + 1], png.pixels.rgba8[i + 2]};
+}
+[[nodiscard]] bool isRed(const std::array<std::uint8_t, 3>& p) { return p[0] >= 250 && p[1] <= 5 && p[2] <= 5; }
+[[nodiscard]] bool isGreen(const std::array<std::uint8_t, 3>& p) { return p[0] <= 5 && p[1] >= 250 && p[2] <= 5; }
+
+}  // namespace
+
+TEST_CASE("Runtime with a Viewport overlay: frames and plain captures are unchanged; a capture shows only its own",
+          "[runtime][gpu][control][overlay]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_overlay_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const auto bytes = [](const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  };
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto sceneData = app.captureFrameData();
+  REQUIRE(sceneData.isOk());
+  REQUIRE(app.captureImage((dir / "before.png").string()).isOk());
+
+  // The window draws the union; frame data and a capture without the requester's overlay do not change.
+  const auto pose = app.activeCameraPose();
+  REQUIRE(pose.has_value());
+  const std::array<float, 3> centre = inFrontOf(pose->worldMatrix, 2.0f);
+  app.enableViewportOverlay(viewportOverlayShaders());
+  const atlantis::connection::ViewportOverlay own = pointOverlay(centre, kOverlayRed);
+  REQUIRE(control.setViewportOverlay(own).isOk());
+  for (int i = 0; i < 2; ++i) app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(app.captureFrameData().value() == sceneData.value());
+  REQUIRE(app.captureImage((dir / "plain.png").string()).isOk());
+  const bool unchanged = bytes(dir / "before.png") == bytes(dir / "plain.png");  // a bool: Catch must not print PNGs
+  CHECK(unchanged);
+
+  // With the requester's own overlay: it shows, where the frame's camera puts it.
+  const auto shown = app.captureImage((dir / "own.png").string(), own);
+  REQUIRE(shown.isOk());
+  const atlantis::rhi::Extent2D extent{shown.value().width, shown.value().height};
+  const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+  const auto sceneCamera = atlantis::runtime::extractCameraMatrices(pose->worldMatrix, pose->camera.fovYRadians,
+                                                                    pose->camera.nearZ, pose->camera.farZ, aspect);
+  REQUIRE(sceneCamera.isOk());
+  const auto at = pixelOf(sceneCamera.value(), centre, extent);
+  const auto ownPng = atlantis::image_regression::decodePng(dir / "own.png");
+  const auto plainPng = atlantis::image_regression::decodePng(dir / "plain.png");
+  REQUIRE(ownPng.isOk());
+  REQUIRE(plainPng.isOk());
+  CHECK(isRed(pngPixel(ownPng.value(), at[0], at[1])));
+  CHECK_FALSE(isRed(pngPixel(plainPng.value(), at[0], at[1])));
+
+  // Under the control camera, the overlay is drawn from that camera.
+  atlantis::connection::ViewportCamera moved{pose->worldMatrix, pose->camera.fovYRadians, pose->camera.nearZ,
+                                             pose->camera.farZ};
+  moved.worldMatrix[12] += 0.5f;
+  moved.worldMatrix[13] += 0.25f;
+  control.setViewportCamera(moved);
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const std::array<float, 3> movedCentre = inFrontOf(moved.worldMatrix, 2.0f, 0.3f);
+  REQUIRE(app.captureImage((dir / "moved.png").string(), pointOverlay(movedCentre, kOverlayGreen)).isOk());
+  const auto movedCamera = atlantis::runtime::extractCameraMatrices(moved.worldMatrix, moved.fovYRadians, moved.nearZ,
+                                                                    moved.farZ, aspect);
+  REQUIRE(movedCamera.isOk());
+  const auto movedAt = pixelOf(movedCamera.value(), movedCentre, extent);
+  const auto movedPng = atlantis::image_regression::decodePng(dir / "moved.png");
+  REQUIRE(movedPng.isOk());
+  CHECK(isGreen(pngPixel(movedPng.value(), movedAt[0], movedAt[1])));
+
+  // Cleared: the frame goes on as before.
+  control.setViewportCamera(std::nullopt);
+  REQUIRE(control.setViewportOverlay(std::nullopt).isOk());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Runtime with a Viewport overlay under --editor: drawn into the Viewport target; a stale selection draws "
+          "nothing",
+          "[runtime][gpu][editor][overlay]") {
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  FakeOverlay editor;
+  REQUIRE(app.attachOverlay(editor, overlayShaders()).isOk());
+  app.enableViewportOverlay(viewportOverlayShaders());
+  app.runFrame();
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto baseline = RuntimeSmokeTestAccess::readViewport(app);
+  const auto rgb = [](const auto& readback, std::uint32_t x, std::uint32_t y) {
+    const bool bgra =
+        readback.format == atlantis::rhi::Format::Bgra8Unorm || readback.format == atlantis::rhi::Format::Bgra8Srgb;
+    const std::size_t i = (static_cast<std::size_t>(y) * readback.extent.width + x) * 4;
+    return std::array<std::uint8_t, 3>{readback.pixels[i + (bgra ? 2 : 0)], readback.pixels[i + 1],
+                                       readback.pixels[i + (bgra ? 0 : 2)]};
+  };
+  const auto outlinePixels = [&rgb](const auto& readback) {
+    const auto& c = atlantis::renderer::kSelectionOutlineColor;
+    const auto close = [](std::uint8_t v, float e) { return std::abs(static_cast<float>(v) - e * 255.0f) <= 3.0f; };
+    std::size_t count = 0;
+    for (std::uint32_t y = 0; y < readback.extent.height; ++y) {
+      for (std::uint32_t x = 0; x < readback.extent.width; ++x) {
+        const auto p = rgb(readback, x, y);
+        if (close(p[0], c[0]) && close(p[1], c[1]) && close(p[2], c[2])) ++count;
+      }
+    }
+    return count;
+  };
+
+  // An unknown entity selected: nothing drawn.
+  atlantis::connection::ViewportOverlay unknown;
+  unknown.selection = {atlantis::asset_system::parseEntityGuid("58005800-0000-4000-8000-0000000000ee").value()};
+  app.setViewportOverlay(unknown);
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == baseline.pixels));
+
+  // A point in front of the camera: in the Viewport target, where the frame's camera puts it.
+  const auto pose = app.activeCameraPose();
+  REQUIRE(pose.has_value());
+  const std::array<float, 3> centre = inFrontOf(pose->worldMatrix, 2.0f);
+  app.setViewportOverlay(pointOverlay(centre, kOverlayRed));
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto withPoint = RuntimeSmokeTestAccess::readViewport(app);
+  const float aspect = static_cast<float>(withPoint.extent.width) / static_cast<float>(withPoint.extent.height);
+  const auto camera = atlantis::runtime::extractCameraMatrices(pose->worldMatrix, pose->camera.fovYRadians,
+                                                               pose->camera.nearZ, pose->camera.farZ, aspect);
+  REQUIRE(camera.isOk());
+  const auto at = pixelOf(camera.value(), centre, withPoint.extent);
+  CHECK(isRed(rgb(withPoint, at[0], at[1])));
+  CHECK_FALSE(isRed(rgb(baseline, at[0], at[1])));
+
+  // A Renderable selected: its outline appears.
+  atlantis::asset_system::EntityGuid selected;
+  static_cast<void>(rayAtFirstRenderable(app, selected));
+  atlantis::connection::ViewportOverlay selection;
+  selection.selection = {selected};
+  app.setViewportOverlay(selection);
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK(outlinePixels(RuntimeSmokeTestAccess::readViewport(app)) > outlinePixels(baseline) + 16);
+
+  // Destroyed while selected: the selection draws nothing.
+  {
+    auto connection = app.openConnection();
+    connection->submit(atlantis::world::access::DestroyEntity{selected});
+    app.runFrame();
+  }
+  REQUIRE(app.shouldContinue());
+  app.setViewportOverlay(std::nullopt);
+  app.runFrame();
+  const auto afterDestroy = RuntimeSmokeTestAccess::readViewport(app);
+  app.setViewportOverlay(selection);
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  CHECK((RuntimeSmokeTestAccess::readViewport(app).pixels == afterDestroy.pixels));
+
+  app.detachOverlay();
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("Runtime over loopback: two clients' overlays; each capture shows only its own; a disconnect removes its own",
+          "[runtime][gpu][remote][overlay]") {
+  namespace fs = std::filesystem;
+  const fs::path dir = fs::temp_directory_path() / "atlantis_overlay_tests" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  app.enableViewportOverlay(viewportOverlayShaders());
+  atlantis::runtime::RuntimeControlHost::Options options;
+  options.recordDiagnostics = false;
+  atlantis::runtime::RuntimeControlHost control(atlantis::runtime::RuntimeControlHost::forApplication(app), options);
+  auto listening = atlantis::remote::RemoteServer::listen(
+      0, atlantis::remote::generateToken(), app.sceneGuid(), [&app] { return app.openConnection(); }, &control);
+  REQUIRE(listening.isOk());
+  std::unique_ptr<atlantis::remote::RemoteServer> server = std::move(listening.value());
+  atlantis::remote::RemoteOptions remoteOptions;
+  remoteOptions.whileWaiting = [&] {
+    control.beforeFrame();
+    app.runFrame();
+    control.afterFrame();
+    server->poll();
+  };
+  auto a = atlantis::remote::connectRemote(server->session(), remoteOptions);
+  auto b = atlantis::remote::connectRemote(server->session(), remoteOptions);
+  REQUIRE(a.isOk());
+  REQUIRE(b.isOk());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+
+  const auto pose = app.activeCameraPose();
+  REQUIRE(pose.has_value());
+  const std::array<float, 3> aAt = inFrontOf(pose->worldMatrix, 2.0f, -0.3f);
+  const std::array<float, 3> bAt = inFrontOf(pose->worldMatrix, 2.0f, 0.3f);
+  REQUIRE(a.value()->control().setViewportOverlay(pointOverlay(aAt, kOverlayRed)).isOk());
+  REQUIRE(b.value()->control().setViewportOverlay(pointOverlay(bAt, kOverlayGreen)).isOk());
+  REQUIRE(control.viewportOverlay().has_value());
+  CHECK(control.viewportOverlay()->groups.size() == 2);  // the union of both
+
+  const auto capture = [&](atlantis::remote::RemoteSession& session, const char* name, bool withOverlay) {
+    atlantis::connection::StepRequest request{1, (dir / name).string()};
+    request.withOverlay = withOverlay;
+    std::optional<atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>> report;
+    session.control().step(
+        request, [&](atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError> r) {
+          report = std::move(r);
+        });
+    REQUIRE(report.has_value());
+    REQUIRE(report->isOk());
+    REQUIRE(report->value().image.has_value());
+    auto png = atlantis::image_regression::decodePng(dir / name);
+    REQUIRE(png.isOk());
+    return std::move(png.value());
+  };
+  const auto aOwn = capture(*a.value(), "a.png", true);
+  const auto bOwn = capture(*b.value(), "b.png", true);
+  const auto neither = capture(*a.value(), "none.png", false);
+  const atlantis::rhi::Extent2D extent{aOwn.pixels.width, aOwn.pixels.height};
+  const float aspect = static_cast<float>(extent.width) / static_cast<float>(extent.height);
+  const auto camera = atlantis::runtime::extractCameraMatrices(pose->worldMatrix, pose->camera.fovYRadians,
+                                                               pose->camera.nearZ, pose->camera.farZ, aspect);
+  REQUIRE(camera.isOk());
+  const auto aPixel = pixelOf(camera.value(), aAt, extent);
+  const auto bPixel = pixelOf(camera.value(), bAt, extent);
+  CHECK(isRed(pngPixel(aOwn, aPixel[0], aPixel[1])));
+  CHECK_FALSE(isGreen(pngPixel(aOwn, bPixel[0], bPixel[1])));  // never another client's
+  CHECK(isGreen(pngPixel(bOwn, bPixel[0], bPixel[1])));
+  CHECK_FALSE(isRed(pngPixel(bOwn, aPixel[0], aPixel[1])));
+  CHECK_FALSE(isRed(pngPixel(neither, aPixel[0], aPixel[1])));  // without withOverlay: neither
+  CHECK_FALSE(isGreen(pngPixel(neither, bPixel[0], bPixel[1])));
+
+  // B goes: only its own overlay goes with it.
+  b.value().reset();
+  for (int i = 0; i < 20 && control.viewportOverlay().has_value() && control.viewportOverlay()->groups.size() != 1;
+       ++i) {
+    app.runFrame();
+    server->poll();
+  }
+  REQUIRE(control.viewportOverlay().has_value());
+  CHECK(control.viewportOverlay()->groups.size() == 1);
+  CHECK(control.viewportOverlay()->groups[0].points[0].color == kOverlayRed);
+
+  a.value().reset();
+  server.reset();
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}

@@ -40,6 +40,7 @@ struct Fake {
   std::vector<bool> holds;  // setCommandsHeld() per frame
   int frameDataCalls = 0;
   std::vector<std::string> images;
+  std::vector<std::optional<connection::ViewportOverlay>> captureOverlays;  // Plan 0066: each capture's overlay
   bool failFrameData = false;
 
   RuntimeControlHost::Target target() {
@@ -55,8 +56,9 @@ struct Fake {
       data.drawItemCount = static_cast<std::uint64_t>(frameDataCalls);
       return atlantis::Result<connection::FrameData, connection::ControlError>::Ok(data);
     };
-    t.captureImage = [this](const std::string& path) {
+    t.captureImage = [this](const std::string& path, const std::optional<connection::ViewportOverlay>& overlay) {
       images.push_back(path);
+      captureOverlays.push_back(overlay);
       return atlantis::Result<connection::CapturedImage, connection::ControlError>::Ok(
           connection::CapturedImage{path, 8, 4});
     };
@@ -138,6 +140,30 @@ TEST_CASE("control: steps run one at a time, in order; zero frames is refused at
   for (int i = 0; i < 4; ++i) frame(host);
   CHECK(order == std::vector<std::string>{"a@2", "b@3:shot.png"});
   CHECK(fake.images == std::vector<std::string>{"shot.png"});
+}
+
+// Plan 0066 P4 (Spec 0066 R5; J3): a capture is given the step's captureOverlay
+// -- the requester's own overlay, filled by the transport -- and nothing else:
+// the host's own overlay (the union) never reaches it.
+TEST_CASE("control: a capture is given its step's captureOverlay, never the union", "[runtime][control][overlay]") {
+  Fake fake;
+  RuntimeControlHost host(fake.target(), noDiagnostics());
+  connection::ViewportOverlay unionOverlay;
+  unionOverlay.selection = {atlantis::asset_system::parseEntityGuid("52052052-0001-4052-8052-000000000001").value()};
+  REQUIRE(host.setViewportOverlay(unionOverlay).isOk());
+
+  connection::ViewportOverlay own;
+  own.groups.emplace_back();
+  connection::StepRequest withOwn{1, std::string("own.png")};
+  withOwn.withOverlay = true;
+  withOwn.captureOverlay = own;
+  host.step(connection::StepRequest{1, std::string("plain.png")}, [](StepResult) {});
+  host.step(withOwn, [](StepResult) {});
+  for (int i = 0; i < 3; ++i) frame(host);
+
+  REQUIRE(fake.captureOverlays.size() == 2);
+  CHECK_FALSE(fake.captureOverlays[0].has_value());  // no withOverlay: none, though the union is set
+  CHECK(fake.captureOverlays[1] == std::optional<connection::ViewportOverlay>{own});
 }
 
 TEST_CASE("control: a failing capture fails the step; stop() fails what is still waiting", "[runtime][control]") {
