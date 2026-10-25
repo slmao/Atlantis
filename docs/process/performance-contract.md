@@ -12,6 +12,20 @@ protocol, a committed baseline per hardware profile, a gate whose verdict an age
 changes must run it. It is a **local, manual** gate like image regression: run and reported by whoever opens the PR.
 No CI runs it, and no CTest asserts a measured time.
 
+## The reference machine
+
+From 2026-10-25 the reference machine is the AMD Radeon RX 7900 XT desktop (Windows 10 Pro, AMD Ryzen 7 9700X, driver
+26.10.1, its integrated GPU disabled, a 60 Hz display, FIFO), by the owner's ruling recorded as
+[Spec 0060](../specs/0060-performance-contract.md)'s seventh Correction. Until then it was the Intel Arc B370 laptop.
+
+- **The Intel baseline:** that laptop's profile, `intel-r-arc-tm-b370-gpu-windows-60hz`, keeps its baseline in the
+  store as archived data. It is not refreshed or deleted, and it judges only a run on that hardware. The gate selects a
+  baseline by the running machine's profile, so on the desktop it is never consulted.
+- **The desktop's baseline:** it gets its own, an initial baseline (category 4 below), recorded by the flow below with
+  the policy unchanged.
+- **Older numbers:** the numbers this page gives for "the reference machine" were measured on the Intel laptop (the
+  calibration study, the GPU's bimodal main pass, the resolution figures); they stay as that record.
+
 ## Running the gate
 
 Build with profiling on and **Tracy off**, Release, on the machine that has a baseline for it (the verdict says if it

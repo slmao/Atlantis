@@ -155,6 +155,33 @@
   - **Follow-up found by the first committed baseline (2026-10-18):** `validateStore` still demanded a canary reference of every
     committed baseline, so the committed-store guard test failed on the first baseline recorded under this Correction. The guard
     now asks for the canary only when the policy does (`record.requireCanary`, set from `canary.required`); ADRs unchanged.
+  **Correction (2026-10-25, seventh, post-Approval, owner ruling: the reference machine moves):** which machine is the
+  reference machine, and what becomes of its baseline.
+  - **The approved text** (Context "Reference machine: Intel Core Ultra 5 338H, Intel Arc B370 integrated GPU …", the
+    Acceptance, and the operator note) has the Intel laptop as the reference machine. The one committed baseline is its
+    profile's, `intel-r-arc-tm-b370-gpu-windows-60hz`.
+  - **Why it changes:** the owner (slmao, 2026-10-25) moved the reference environment to the desktop where the project's
+    work is now done (the same move as Spec 0011's Correction of the same date). The gate selects a baseline by the running
+    machine's profile, so on the desktop the Intel baseline judges nothing: a PR that the gate applies to reads
+    `incomparable`.
+  - **Corrected:**
+    - **The new reference machine:** from 2026-10-25 it is that desktop: Windows 10 Pro, AMD Ryzen 7 9700X, AMD Radeon
+      RX 7900 XT (driver 26.10.1; its integrated GPU disabled), a 60 Hz display, FIFO.
+    - **The Intel baseline is kept as archived data:** it stays in the store unchanged, it is not refreshed or deleted,
+      and the store guard still validates it. It is that profile's baseline, judging only a run on that hardware.
+    - **The desktop's baseline:** it gets one under category 4 (**initial baseline**: a hardware profile that has none),
+      recorded under the full protocol in its own dedicated PR, with the policy as it stands.
+    - **The policy is carried over unchanged:** `tests/performance/gate_policy.json`'s tolerances, `k`, dispersion
+      factor, record bars and report-only GPU tier, with its `measured` block naming the Intel calibration study. The record bar
+      and the initial baseline's acceptance (20 live gates on unchanged code, one agent run, one injected CPU slowdown that
+      must fail) are the check that those numbers hold on the new machine.
+    - **If they do not hold:** if the record bar refuses repeatedly for a reason specific to this hardware, the owner
+      rules on a further Correction. The policy is not edited to get a recording through.
+    - **Older numbers:** the numbers this Spec gives for "the reference machine" were measured on the Intel laptop and
+      stay as that record.
+  - **ADRs:** ADR-0118, ADR-0119 and ADR-0120 are unchanged. One baseline per hardware profile, a profile's baseline
+    judging only its own hardware, and the reason categories already cover a new profile; which machine is the reference
+    is an environment fact, not a decision.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated

@@ -65,6 +65,57 @@
      infrastructure provisioning — **this approval does not authorize or
      implement any CI infrastructure.**
 
+  **Correction (2026-10-25, post-Approval, owner ruling: the reference
+  environment moves):** which machine is "the one reference GPU/driver".
+  - **The approved text** (Approval items 2–3, Comparison algorithm,
+    Reproducibility, Testing) has one reference GPU/driver, Intel Arc
+    (integrated: an Intel Core Ultra 5 338H laptop, Arc B370, driver
+    101.8509, Windows 11). The goldens were captured there, and channel
+    tolerance and failing-pixel budget were calibrated at 0 there.
+  - **Why it changes:** the owner (slmao, 2026-10-25) moved the reference
+    environment to the desktop where the project's work is now done.
+    Another GPU vendor rasterizes differently, so the Intel goldens cannot
+    judge a change made there: 29 scene goldens and Bistro's fail on it
+    for `main` and for a branch alike, with byte-identical failure images
+    ([PR #290](https://github.com/slmao/Atlantis/pull/290)).
+  - **Corrected:**
+    - From 2026-10-25 the reference environment is that desktop: Windows 10
+      Pro (build 19045), AMD Ryzen 7 9700X, AMD Radeon RX 7900 XT (driver
+      26.10.1, `DRIVER_ID_AMD_PROPRIETARY`, Vulkan 1.4.359; its integrated
+      GPU disabled), a 60 Hz display, Vulkan SDK 1.4.357.0.
+    - The goldens are the ones captured there. **All goldens are
+      re-captured** with the golden generator in one PR, so every sidecar
+      records the new environment, and the pixel changes are reviewed:
+      - a golden whose pixels changed is listed with its diff metrics;
+      - one whose pixels did not change is listed as "pixels unchanged,
+        provenance updated".
+
+      That PR is a reference-environment change extended to the change of
+      the reference machine itself (ADR-0042's Accepted Amendment of
+      2026-10-25). It carries before/after provenance and diff evidence and
+      needs the owner's human golden review.
+    - **The calibration is re-run there, not carried over.** Approval item
+      3 says different hardware "requires its own fresh calibration before
+      this rule is treated as still valid for that environment", and
+      Reproducibility scopes the determinism evidence to the GPU/driver
+      calibrated against. The re-run repeats this Spec's protocol (21 Debug
+      and 21 Release captures of the reused fixture, 7 independent launches
+      × 3 in-process cycles each) and is recorded in the golden PR.
+    - If the re-run finds a differing pixel at any threshold, channel
+      tolerance and failing-pixel budget are not treated as 0 there. The
+      owner rules on a further Correction; the tolerance is not loosened in
+      implementation (Risks).
+    - Real-hardware verification still runs on a single GPU vendor/driver,
+      now AMD; this is still not cross-vendor evidence.
+  - **ADRs:** ADR-0041 is unchanged. ADR-0042 gains an Accepted Amendment
+    (2026-10-25) that records three things:
+    - the move of the reference environment;
+    - its answer to the per-vendor revisit, now triggered: one golden set,
+      on the new reference environment, no per-vendor sets, the Intel
+      goldens replaced;
+    - the golden-update PR's category: category 2 extended to the change of
+      the machine, with category 3's explicit human approval.
+
   Following this approval, ADR-0041 and ADR-0042 each move to `Accepted`
   and this spec moves to `Approved`. **This approval is not itself an
   authorization to implement** — a Plan may be drafted per
