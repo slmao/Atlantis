@@ -251,6 +251,10 @@ class PowerWatch {
   plan.canarySettleSeconds = policy.canary.settleSeconds;
   if (plan.canary) plan.startCheck = makeStartCheck(request, policy, baselinesDir);
   plan.tempDir = env.tempDir;
+  if (plan.pin && env.pinnedCores.empty()) {
+    err << "atlantis_runtime: --gate: this machine offers no logical processor in processor group 0 to pin the children to\n";
+    return bench::kExitEnvironment;
+  }
 
   const TempDirScope tempDir(env.tempDir);
   PowerWatch power(env.power, request.requireMains.value_or(policy.protocol.requireMainsPower));
@@ -268,6 +272,7 @@ class PowerWatch {
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
   protocol.pin = plan.pin;
+  protocol.cores = env.pinnedCores;
   protocol.power = power.value();
   auto set = buildSet(protocol, session.runDocuments);
   if (set.isErr()) {
@@ -395,6 +400,11 @@ class PowerWatch {
            "smoke runs\n";
     return bench::kExitInitFailure;
   }
+  if (plan.pin && env.pinnedCores.empty()) {
+    err << "atlantis_runtime: --gate --record: this machine offers no logical processor in processor group 0 to pin the "
+           "children to\n";
+    return bench::kExitEnvironment;
+  }
   if (request.profileId.has_value() && *request.profileId != "auto" && !isValidProfileId(*request.profileId)) {
     err << "atlantis_runtime: --gate --record: '" << *request.profileId << "' is not a valid profile id (a-z, 0-9, '-')\n";
     return bench::kExitInitFailure;
@@ -435,6 +445,7 @@ class PowerWatch {
   protocol.idleWait = plan.idleWait;
   protocol.k = policy.protocol.k;
   protocol.pin = plan.pin;
+  protocol.cores = env.pinnedCores;
   protocol.power = power.value();
   auto set = buildSet(protocol, documents);
   if (set.isErr()) {
@@ -598,6 +609,12 @@ int runGate(const GateRequest& request) {
   environment.tempDir = (fs::temp_directory_path() / ("atlantis_gate_" + std::to_string(static_cast<unsigned long long>(
                               std::chrono::steady_clock::now().time_since_epoch().count())))).string();
   environment.performanceDir = ATLANTIS_PERFORMANCE_DIR;
+  // The same choice the pinned children make for themselves (pinCurrentProcess), recorded in protocol.pin.
+  std::string coresError;
+  if (const std::optional<unsigned> processor = pinnedLogicalProcessor(systemCpuCores(coresError));
+      processor && coresError.empty()) {
+    environment.pinnedCores = singleProcessorCores(*processor);
+  }
   environment.in = &std::cin;
   environment.out = &std::cout;
   environment.err = &std::cerr;

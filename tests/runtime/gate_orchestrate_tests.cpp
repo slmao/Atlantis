@@ -433,32 +433,43 @@ TEST_CASE("the end canary waits for the GPU to settle out of the benchmark child
   CHECK(clock3.slept == clock2.slept);
 }
 
-TEST_CASE("the performance-core mask is the highest efficiency class of group 0", "[runtime][gate][orchestrate]") {
+// Spec 0060 eighth Correction: a pinned child is restricted to one fixed logical processor.
+
+TEST_CASE("the pinned processor is the highest-numbered one, on a CPU of one class", "[runtime][gate][orchestrate]") {
   using atlantis::runtime::gate::CpuCore;
-  // A 12-core hybrid layout as the OS reports it: 4 P (class 2), 4 E (class 1), 4 LP-E (class 0).
+  // The reference desktop's Ryzen 7 9700X as Windows reports it there (SMT off): 8 processors of one class.
+  std::vector<CpuCore> eight;
+  for (unsigned i = 0; i < 8; ++i) eight.push_back({0, i, 0});
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(eight) == 7u);
+  // With SMT on, 16: the last thread of the last core, as far from processor 0 as it can be.
+  std::vector<CpuCore> sixteen;
+  for (unsigned i = 0; i < 16; ++i) sixteen.push_back({0, i, 0});
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(sixteen) == 15u);
+  // The order of the list does not matter.
+  std::vector<CpuCore> reversed(eight.rbegin(), eight.rend());
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(reversed) == 7u);
+}
+
+TEST_CASE("the pinned processor is of the highest efficiency class", "[runtime][gate][orchestrate]") {
+  using atlantis::runtime::gate::CpuCore;
+  // A 12-core hybrid layout: 4 P (class 2), 4 E (class 1), 4 LP-E (class 0) -- the archived Intel profile's machine.
   std::vector<CpuCore> hybrid;
   for (unsigned i = 0; i < 4; ++i) hybrid.push_back({0, i, 2});
   for (unsigned i = 4; i < 8; ++i) hybrid.push_back({0, i, 1});
   for (unsigned i = 8; i < 12; ++i) hybrid.push_back({0, i, 0});
-  CHECK(atlantis::runtime::gate::performanceCoreMask(hybrid) == 0x00FULL);
-
-  // Two classes only; the order of the list does not matter.
-  std::vector<CpuCore> twoClass = {{0, 3, 0}, {0, 0, 1}, {0, 2, 0}, {0, 1, 1}};
-  CHECK(atlantis::runtime::gate::performanceCoreMask(twoClass) == 0x3ULL);
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(hybrid) == 3u);  // the last P core, not the last processor
+  std::vector<CpuCore> topLater = {{0, 0, 0}, {0, 1, 0}, {0, 2, 1}, {0, 3, 1}};
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(topLater) == 3u);
+  // Only processor 0 of the top class: it is the one.
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(std::vector<CpuCore>{{0, 0, 1}, {0, 1, 0}}) == 0u);
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(std::vector<CpuCore>{{0, 0, 0}}) == 0u);
 }
 
-TEST_CASE("the performance-core mask does not restrict a homogeneous or unknown CPU", "[runtime][gate][orchestrate]") {
+TEST_CASE("the pinned processor is in group 0, or there is none", "[runtime][gate][orchestrate]") {
   using atlantis::runtime::gate::CpuCore;
-  CHECK(atlantis::runtime::gate::performanceCoreMask({}) == 0);
-  std::vector<CpuCore> homogeneous;
-  for (unsigned i = 0; i < 8; ++i) homogeneous.push_back({0, i, 0});
-  CHECK(atlantis::runtime::gate::performanceCoreMask(homogeneous) == 0);
-}
-
-TEST_CASE("the performance-core mask ignores cores outside group 0", "[runtime][gate][orchestrate]") {
-  using atlantis::runtime::gate::CpuCore;
-  std::vector<CpuCore> grouped = {{0, 0, 1}, {0, 1, 0}, {1, 0, 1}, {1, 1, 0}};
-  CHECK(atlantis::runtime::gate::performanceCoreMask(grouped) == 0x1ULL);
-  std::vector<CpuCore> onlyElsewhere = {{0, 0, 0}, {1, 0, 1}};
-  CHECK(atlantis::runtime::gate::performanceCoreMask(onlyElsewhere) == 0);
+  CHECK_FALSE(atlantis::runtime::gate::pinnedLogicalProcessor({}).has_value());
+  CHECK_FALSE(atlantis::runtime::gate::pinnedLogicalProcessor(std::vector<CpuCore>{{1, 0, 1}, {1, 1, 1}}).has_value());
+  // Group 1's higher class does not count: the choice is among group 0's processors.
+  std::vector<CpuCore> grouped = {{0, 0, 0}, {0, 1, 0}, {1, 0, 1}, {1, 1, 1}};
+  CHECK(atlantis::runtime::gate::pinnedLogicalProcessor(grouped) == 1u);
 }

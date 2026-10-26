@@ -21,6 +21,9 @@ struct GateEnvironment {
   CpuSampler* sampler = nullptr;
   Clock* clock = nullptr;
   PowerProbe* power = nullptr;  // where the machine's power comes from
+  // The logical processor a pinned child is restricted to, as recorded (singleProcessorCores()); empty when
+  // this machine offers none, and a pinned run then refuses (exit 3).
+  std::string pinnedCores;
   std::string tempDir;         // created and removed by the run
   std::string performanceDir;  // holds gate_policy.json and baselines/ unless the request names others
   std::istream* in = nullptr;   // stdin: the changed paths for --applies

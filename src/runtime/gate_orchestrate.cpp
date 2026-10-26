@@ -244,20 +244,17 @@ SessionResult runSession(const RunPlan& plan, ChildLauncher& launcher, CpuSample
   return out;
 }
 
-std::uint64_t performanceCoreMask(std::span<const CpuCore> cores) {
-  if (cores.empty()) return 0;
-  unsigned lowest = cores.front().efficiencyClass;
-  unsigned highest = lowest;
+std::optional<unsigned> pinnedLogicalProcessor(std::span<const CpuCore> cores) {
+  std::optional<CpuCore> chosen;  // the highest class, then the highest index within it
   for (const CpuCore& core : cores) {
-    lowest = std::min(lowest, core.efficiencyClass);
-    highest = std::max(highest, core.efficiencyClass);
+    if (core.group != 0 || core.index >= 64) continue;
+    if (!chosen || core.efficiencyClass > chosen->efficiencyClass ||
+        (core.efficiencyClass == chosen->efficiencyClass && core.index > chosen->index)) {
+      chosen = core;
+    }
   }
-  if (lowest == highest) return 0;  // homogeneous: every core is already the "performance" class
-  std::uint64_t mask = 0;
-  for (const CpuCore& core : cores) {
-    if (core.efficiencyClass == highest && core.group == 0 && core.index < 64) mask |= std::uint64_t{1} << core.index;
-  }
-  return mask;
+  if (!chosen) return std::nullopt;
+  return chosen->index;
 }
 
 }  // namespace atlantis::runtime::gate

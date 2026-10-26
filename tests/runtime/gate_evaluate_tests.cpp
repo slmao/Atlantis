@@ -400,8 +400,41 @@ TEST_CASE("a pinned run is never judged against an unpinned baseline, or the oth
 
 TEST_CASE("the verdict records the pinning state and conformance needs it", "[runtime][gate][evaluate]") {
   const auto pinned = run(same());
-  CHECK(*gate::at(pinned.document, {"protocol", "pin"}) == gate::pinValue(true));
+  CHECK(*gate::at(pinned.document, {"protocol", "pin"}) == gate::pinValue(true, "logical_processor_2"));
   CHECK(gate::at(pinned.document, {"protocol", "conformant"})->asBool());
+}
+
+// Spec 0060 eighth Correction: a pinned run names its one logical processor.
+
+TEST_CASE("a run pinned under the previous core rule is not conformant and is not judged against a single-processor baseline",
+          "[runtime][gate][evaluate]") {
+  SetProtocol previous;
+  previous.cores = "highest_efficiency_class";  // what a run recorded before the eighth Correction names
+  // The candidate (first) under the previous rule against a single-processor baseline (second).
+  const auto verdict = gate::evaluate(makeSet(baselineAggregates(), {}, previous), makeSet(baselineAggregates()),
+                                      testPolicy(), ref());
+  CHECK(verdict.result == "incomparable");
+  const std::string reason = verdict.document.find("reasons")->asArray()[0].asString();
+  CHECK(reason.find("protocol.pin differs") != std::string::npos);
+  // The reason shows both pins, so an operator sees which rule each was recorded under.
+  CHECK(reason.find("logical_processor_2") != std::string::npos);
+  CHECK(reason.find("highest_efficiency_class") != std::string::npos);
+  CHECK_FALSE(gate::at(verdict.document, {"protocol", "conformant"})->asBool());
+  // Two such documents compare, but the run still does not follow the policy.
+  const auto both = gate::evaluate(makeSet(baselineAggregates(), {}, previous), makeSet(baselineAggregates(), {}, previous),
+                                   testPolicy(), ref());
+  CHECK(both.result == "pass");
+  CHECK_FALSE(gate::at(both.document, {"protocol", "conformant"})->asBool());
+}
+
+TEST_CASE("a run pinned to another processor than its baseline's is not judged against it", "[runtime][gate][evaluate]") {
+  SetProtocol other;
+  other.cores = "logical_processor_4";
+  // The candidate (first) on processor 4 against a baseline (second) recorded on processor 2.
+  const auto verdict = gate::evaluate(makeSet(baselineAggregates(), {}, other), makeSet(baselineAggregates()),
+                                      testPolicy(), ref());
+  CHECK(verdict.result == "incomparable");
+  CHECK(gate::at(verdict.document, {"protocol", "conformant"})->asBool());  // the run itself follows the policy
 }
 
 // Spec 0060 Correction 2026-10-14: only the headline totals' dispersion can make a verdict inconclusive.
