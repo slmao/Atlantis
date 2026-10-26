@@ -3,8 +3,12 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-26
+- **Implementation:** merged — M1–M4 in [PR #297](https://github.com/slmao/Atlantis/pull/297), on `main` at `debeeb3`.
+  Verified on the reference machine: three goldens re-captured and approved with the merge (`fog_distance_demo`,
+  `fog_height_demo`, and `bistro_demo` from the corrected camera), the rest byte-identical. The performance gate
+  fails on Bistro's counters by design (Q4); the baseline refresh follows in its own PR.
 - **Related Plan(s):** [Plan 0067](../plans/0067-lit-normal-transform.md) (`Approved`; Joint Human Review 2026-10-26
-  recorded in its header). As with Specs 0062–0066, the Plan was drafted together with this Spec.
+  recorded in its header; implemented in PR #297). As with Specs 0062–0066, the Plan was drafted together with this Spec.
 - **Approval:** slmao, 2026-10-26 — owner rulings Q1–Q5, each as its recommendation, with Q2's thresholds stated
   numerically and Q3/Q4 refined as recorded below; recorded once in [Plan 0067](../plans/0067-lit-normal-transform.md).
   Reviewed in this Spec's own branch PR, [PR #296](https://github.com/slmao/Atlantis/pull/296), where the rulings are

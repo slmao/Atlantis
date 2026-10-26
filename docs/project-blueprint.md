@@ -937,7 +937,16 @@ milestone being listed does not authorize starting it — see Section 1.
       [ADR-0133](adr/0133-attachment-load-after-the-scene.md));
     - **the editor:** Atlantis Editor App uses it to outline a pick and draw a translate Gizmo, drawing only;
     - **input:** the drag path was measured first and route R-a kept (about three Runtime frames of drag latency,
-      no UI stall over 100 ms).
+      no UI stall over 100 ms);
+  - since [Spec 0067](specs/0067-lit-normal-transform.md) (merged
+    [PR #297](https://github.com/slmao/Atlantis/pull/297)), lit normals under any world matrix:
+    - **the shaders:** the eleven lit shaders transform normals by the world 3×3's cofactor, which is exact for
+      any invertible matrix;
+    - **the skip:** only a degenerate world matrix skips a lit entity, through one predicate the frame, the
+      capture path and picking share ([ADR-0134](adr/0134-lit-normal-transform-by-cofactor.md); ADR-0123's
+      second amendment);
+    - **Bistro:** it draws all 2909 Renderables, 368 of them for the first time, from a scene camera moved by
+      the Spec's Correction.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -983,9 +992,9 @@ milestone being listed does not authorize starting it — see Section 1.
     editing, Hierarchy, Inspector, two-document undo, apply/save UI), text,
     icons and textured primitives in the overlay, R-b input
     (`control.drainInput`) and the ImGui editor adopting the overlay
-    (Spec 0066 Out of Scope); picking that agrees with drawing, since a pick
-    can hit an entity the scene skips for a non-conformal world matrix
-    (found by Spec 0066's visual check on Bistro);
+    (Spec 0066 Out of Scope);
+  - importer-side scale baking and negative-determinant tangent handedness
+    (Spec 0067 Out of Scope);
   - attaching to an Android Runtime and server-side filtered listing
     (Spec 0055 Out of Scope).
 

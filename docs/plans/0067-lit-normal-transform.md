@@ -29,6 +29,22 @@
     - changes limited to this Plan's file list, deviations disclosed;
     - the changed `runFrame()` lines enumerated (M2 on);
     - the performance gate reported as measured.
+- **Implementation:** M1–M4 merged in [PR #297](https://github.com/slmao/Atlantis/pull/297) (`debeeb3`), with this
+  Plan's rulings, J3 and the camera Correction in [PR #296](https://github.com/slmao/Atlantis/pull/296) (`96a731b`).
+  - **Goldens:** `fog_distance_demo` and `fog_height_demo` 1 pixel ±1 each (J3); `bistro_demo` a new view (the
+    corrected camera and the 368 newly drawn entities); the other 27 byte-identical. The three were approved with the
+    owner's merge of PR #297.
+  - **Gate, in three steps** (`main` / M2 with the old camera / HEAD):
+    - `main`: `pass`;
+    - both later steps: counter `fail` by design (Q4). `draw_calls` 4778 → 5489 and `ia_primitives` +48 % in both;
+      only `fragment_invocations` differs with the camera (+69.5 % vs +108 %);
+    - `gpu_busy_ms` (report-only) 8.93 → 12.04 → 12.6;
+    - `cpu_active_ms` 2.54 → 2.05–2.09: the frame no longer logs an error per skipped entity per frame.
+  - **Changed `runFrame()` lines:** 1915–1920, 1927–1928 and 1933–1934.
+  - **Suites:** Debug and Release full suites (only the Windows-10-only power-throttling test fails), VVL clean,
+    `assembleDebug`.
+  - **Deviations:** disclosed in the PR. The analytic-normal GPU test uses the lighting demo's cube with an aimed
+    light, not a sphere, and moved to M3.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source
