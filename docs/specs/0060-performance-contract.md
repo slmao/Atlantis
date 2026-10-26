@@ -182,6 +182,76 @@
   - **ADRs:** ADR-0118, ADR-0119 and ADR-0120 are unchanged. One baseline per hardware profile, a profile's baseline
     judging only its own hardware, and the reason categories already cover a new profile; which machine is the reference
     is an environment fact, not a decision.
+  **Correction (2026-10-26, eighth, post-Approval, owner ruling "option 1" on the CPU bimodality investigation):** the
+  pinned protocol restricts each benchmark child to **one** fixed logical processor.
+  - **The approved text** (the M7 ruling and the fifth Correction) pins a child with power throttling off, HIGH priority
+    and the cores of the highest efficiency class. On a CPU of one class that leaves every core open to the render thread.
+  - **Why that is not enough:** on the AMD reference desktop the Bistro gate's CPU tier reads two levels. `cpu_active_ms`
+    is about 2.0 ms in one and about 1.83 ms in the other, and the whole difference is in `zones.RenderExtraction` (about
+    0.66 against 0.47 ms) and `acquire_ms` (0.066 against 0.042 ms). Every other CPU zone is flat, and so is every
+    counter.
+    - **Persistence:** a level persists for whole sessions and flips with the machine's state.
+    - **Effect on a baseline:** the refresh recorded after Spec 0067 (PR #299) caught session 1 in the high level and
+      sessions 2-3 in the low one. Its centre sits in the low level, and 2 of 5 acceptance gates failed on unchanged
+      code (+10.7 % and +9.3 %).
+    - **The cause:** the main thread sleeps about 14.7 ms per frame in `vkWaitForFences` (60 Hz FIFO). The first work
+      after it wakes (the acquire, then the extraction) is slower when the core it wakes on was deep in idle. Which core
+      that is, the scheduler decides, by the rest of the machine's activity.
+    - **The investigation** (local, uncommitted instrumentation, reverted): interleaved runs, 8-10 per placement, on
+      this machine's 8 logical processors (Ryzen 7 9700X, SMT off). Run p50s:
+
+      | Placement | RenderExtraction (ms) | cpu_active_ms |
+      |---|---|---|
+      | all 8 (the fifth Correction's pin) | 0.389-0.714, two levels by time | 1.73-2.07 |
+      | processors 0, 2, 4, 6 | 0.469-0.591, flipping with the row above | 1.81-1.98 |
+      | one processor (4) | 0.710-0.801 | 2.05-2.16 |
+      | all 8, the fence wait spinning instead of sleeping | 0.343-0.369 | 1.56-1.64 |
+      | one processor, spinning | 0.342-0.349 | 1.56-1.57 |
+
+      Spinning removes the slow level wherever the thread runs, so it is the wake. A per-thread census shows only the
+      main thread using CPU, so it is not contention inside the process.
+    - **Which processor:** one processor at a time, interleaved, 6 runs each unless noted:
+
+      | Processor | RenderExtraction (ms) | cpu_active_ms (spread) | acquire_ms |
+      |---|---|---|---|
+      | 0 | 0.469-0.492 | 1.80-1.85 (2.4 %) | 0.037-0.043 |
+      | 1 | 0.683-0.743 | 2.05-2.09 (2.0 %) | 0.066-0.068 |
+      | 2 (12 runs) | 0.715-0.792 | 2.08-2.15 (3.5 %) | 0.067-0.069 |
+      | 4 | 0.767-0.805 | 2.13-2.17 (1.9 %) | 0.068-0.070 |
+      | 6 | 0.732-0.757 | 2.09-2.13 (1.8 %) | 0.032-0.034 |
+      | 7 | 0.740-0.774 | 2.13-2.15 (1.0 %) | 0.033-0.034 |
+
+      Processor 0 reads warm because the system's interrupt and background work keeps it awake, which makes its level
+      depend on that work. Every other processor reads the cold-wake level, deterministically.
+  - **Corrected:**
+    - **The pin:** `--pin-process on` restricts the process (`SetProcessAffinityMask`, processor group 0) to **one**
+      logical processor: the highest-numbered processor of the highest `EfficiencyClass` that `GetSystemCpuSetInformation`
+      reports. On the reference desktop that is **processor 7**. On a hybrid CPU it is the last P core (processor 3 on the
+      archived Intel profile's machine), and with SMT on it is the last thread of the last core.
+    - **Why processor 7:** the far end from processor 0, which takes most of the system's interrupt and background work.
+      It has the tightest spread measured (1.0 %) and a cheaper acquire than processors 1-2. The rule needs only the
+      class and the index.
+    - **Failure:** a pinned child that has no processor in group 0, or cannot set the affinity, exits 3 as before.
+    - **The record:** `protocol.pin.cores` names the processor, `logical_processor_<index>` (`logical_processor_7` on
+      the reference desktop), where #255 wrote `highest_efficiency_class`. A run is conformant only when its pin names
+      one processor.
+    - **Retired baselines:** the evaluator compares `protocol.pin` whole, so a baseline recorded under the previous pin
+      reads `incomparable`. This retires the desktop's initial baseline (PR #293) until it is re-recorded, and the
+      archived Intel baseline on its own hardware. The Spec 0067 refresh (PR #299) is superseded and closed unmerged.
+    - **What the gate measures:** by design, the frame in the cold-wake state, on the pinned processor (`cpu_active_ms`
+      about 2.03-2.08 ms on Bistro). That is slower than a real app's average, whose thread sometimes wakes warm, but the
+      same in every session. The gate compares one state with itself and makes no claim about the average.
+    - **Rejected:** spinning on the fence in benchmark mode (the measured frame would no longer sleep like a shipping
+      frame), and a wider CPU tolerance (it would blunt the CPU tier for every change).
+  - **Named follow-up (an optimization candidate, not part of this Correction):** the extraction is mostly linear
+    asset-ID lookups. `resolveMeshAsset` searches 551 ids and `resolveMaterialAsset` / `collectReferencedMaterialIds`
+    254, for each of Bistro's 2909 entities: about 1.5 M comparisons per frame. Hashed or indexed lookups would cut
+    both its cost and its exposure to a slow wake. It would be its own Spec under the Performance Contract.
+  - **ADRs:** unchanged. ADR-0119 D7 forbids the protocol from setting clocks or power plans, and adds no measurement.
+    Restricting the process to one processor is OS placement, the same class of control as the fifth Correction's
+    core-class affinity, the priority class and the EcoQoS opt-out, so it stays within the fifth Correction's reading.
+    It sets no hardware state and adds nothing to the frame loop, zones or counters. Choosing the processor so that
+    the measured state is deterministic is a choice of where to measure, not a control of how the hardware runs.
 - **Related ADR(s)** (both `Accepted` 2026-10-11, together with this Spec's
   approval):
   - [ADR-0118](../adr/0118-performance-contract.md): performance as a gated
