@@ -54,6 +54,8 @@ const std::vector<Field> kIdentity = {
   if (value->isString()) return value->asString();
   if (value->isNumber()) return value->numberText();
   if (value->isBool()) return value->asBool() ? "true" : "false";
+  // An object or array (protocol.pin is one) is shown as its JSON text.
+  if (value->isObject() || value->isArray()) return atlantis::connection::json::write(*value);
   return "null";
 }
 

@@ -414,7 +414,11 @@ TEST_CASE("a run pinned under the previous core rule is not conformant and is no
   const auto verdict = gate::evaluate(makeSet(baselineAggregates(), {}, previous), makeSet(baselineAggregates()),
                                       testPolicy(), ref());
   CHECK(verdict.result == "incomparable");
-  CHECK(verdict.document.find("reasons")->asArray()[0].asString().find("protocol.pin differs") != std::string::npos);
+  const std::string reason = verdict.document.find("reasons")->asArray()[0].asString();
+  CHECK(reason.find("protocol.pin differs") != std::string::npos);
+  // The reason shows both pins, so an operator sees which rule each was recorded under.
+  CHECK(reason.find("logical_processor_2") != std::string::npos);
+  CHECK(reason.find("highest_efficiency_class") != std::string::npos);
   CHECK_FALSE(gate::at(verdict.document, {"protocol", "conformant"})->asBool());
   // Two such documents compare, but the run still does not follow the policy.
   const auto both = gate::evaluate(makeSet(baselineAggregates(), {}, previous), makeSet(baselineAggregates(), {}, previous),
