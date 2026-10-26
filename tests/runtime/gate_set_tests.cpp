@@ -108,7 +108,7 @@ TEST_CASE("the set records the protocol and the runs' common meta, scene and set
   CHECK(gate::at(doc, {"protocol", "idle_wait"})->asBool() == false);
   CHECK(number(gate::at(doc, {"protocol", "preheat_seconds"})) == 0.0);
   CHECK(gate::at(doc, {"protocol", "child_stderr"})->asString() == "discarded");
-  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(false));  // the default protocol is unpinned
+  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(false, ""));  // the default protocol is unpinned
   CHECK(gate::at(doc, {"scene", "name"})->asString() == "bistro");
   CHECK(number(gate::at(doc, {"settings", "resolution", "width"})) == 1920.0);
   CHECK(gate::at(doc, {"meta", "system", "gpu"})->asString() == "Test GPU");
@@ -168,17 +168,31 @@ TEST_CASE("the power source is recorded in the set", "[runtime][gate][set]") {
 }
 
 TEST_CASE("the pinning state is recorded in the set", "[runtime][gate][set]") {
-  CHECK(gate::at(gate::pinValue(true), {"power_throttling"})->asString() == "disabled");
-  CHECK(gate::at(gate::pinValue(true), {"priority_class"})->asString() == "high");
-  CHECK(gate::at(gate::pinValue(false), {"power_throttling"})->asString() == "default");
-  CHECK(gate::at(gate::pinValue(false), {"priority_class"})->asString() == "normal");
-  CHECK(gate::at(gate::pinValue(true), {"cores"})->asString() == "highest_efficiency_class");
-  CHECK(gate::at(gate::pinValue(false), {"cores"})->asString() == "all");
+  CHECK(gate::at(gate::pinValue(true, "logical_processor_2"), {"power_throttling"})->asString() == "disabled");
+  CHECK(gate::at(gate::pinValue(true, "logical_processor_2"), {"priority_class"})->asString() == "high");
+  CHECK(gate::at(gate::pinValue(false, ""), {"power_throttling"})->asString() == "default");
+  CHECK(gate::at(gate::pinValue(false, ""), {"priority_class"})->asString() == "normal");
+  // Spec 0060 eighth Correction: a pinned run names its one logical processor; an unpinned one may use all.
+  CHECK(gate::at(gate::pinValue(true, "logical_processor_2"), {"cores"})->asString() == "logical_processor_2");
+  CHECK(gate::at(gate::pinValue(false, "logical_processor_2"), {"cores"})->asString() == "all");
   const std::vector<json::Value> runs{makeRun({{"cpu_active_ms", 12.0}})};
   gate::Protocol pinned = protocol();
   pinned.pin = true;
+  pinned.cores = gate::singleProcessorCores(2);
   const auto set = gate::buildSet(pinned, runs);
   REQUIRE(set.isOk());
-  CHECK(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(true));
-  CHECK_FALSE(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(false));
+  CHECK(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(true, "logical_processor_2"));
+  CHECK_FALSE(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(true, "logical_processor_4"));
+  CHECK_FALSE(*gate::at(set.value(), {"protocol", "pin"}) == gate::pinValue(false, ""));
+}
+
+TEST_CASE("a single logical processor is named one way only", "[runtime][gate][set]") {
+  CHECK(gate::singleProcessorCores(0) == "logical_processor_0");
+  CHECK(gate::singleProcessorCores(2) == "logical_processor_2");
+  CHECK(gate::singleProcessorCores(63) == "logical_processor_63");
+  for (const unsigned i : {0u, 2u, 15u, 63u}) CHECK(gate::isSingleProcessorCores(gate::singleProcessorCores(i)));
+  for (const char* other : {"all", "highest_efficiency_class", "logical_processor_", "logical_processor_02",
+                            "logical_processor_2x", "logical_processor_-1", "logical_processor_123", ""}) {
+    CHECK_FALSE(gate::isSingleProcessorCores(other));
+  }
 }

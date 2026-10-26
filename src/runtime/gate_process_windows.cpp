@@ -171,8 +171,27 @@ bool pinCurrentProcess(std::string& error) {
     error = "SetPriorityClass(HIGH_PRIORITY_CLASS) failed with error " + std::to_string(GetLastError());
     return false;
   }
-  // Restrict the process to the highest efficiency class (the P cores of a hybrid CPU), so the
-  // scheduler cannot put the render threads on an E or LP-E core between sessions.
+  // Restrict the process to one fixed logical processor (Spec 0060 eighth Correction), so the render
+  // thread wakes from the frame's fence wait on the same core in every run and session.
+  std::string coresError;
+  const std::vector<CpuCore> cores = systemCpuCores(coresError);
+  if (!coresError.empty()) {
+    error = coresError;
+    return false;
+  }
+  const std::optional<unsigned> processor = pinnedLogicalProcessor(cores);
+  if (!processor) {
+    error = "no logical processor in processor group 0 to pin to";
+    return false;
+  }
+  if (!SetProcessAffinityMask(GetCurrentProcess(), static_cast<DWORD_PTR>(std::uint64_t{1} << *processor))) {
+    error = "SetProcessAffinityMask failed with error " + std::to_string(GetLastError());
+    return false;
+  }
+  return true;
+}
+
+std::vector<CpuCore> systemCpuCores(std::string& error) {
   ULONG length = 0;
   GetSystemCpuSetInformation(nullptr, 0, &length, GetCurrentProcess(), 0);
   std::vector<std::uint8_t> buffer(length);
@@ -180,7 +199,7 @@ bool pinCurrentProcess(std::string& error) {
       !GetSystemCpuSetInformation(reinterpret_cast<PSYSTEM_CPU_SET_INFORMATION>(buffer.data()), length, &length,
                                   GetCurrentProcess(), 0)) {
     error = "GetSystemCpuSetInformation failed with error " + std::to_string(GetLastError());
-    return false;
+    return {};
   }
   std::vector<CpuCore> cores;
   for (ULONG offset = 0; offset < length;) {
@@ -191,12 +210,7 @@ bool pinCurrentProcess(std::string& error) {
     }
     offset += info->Size;
   }
-  const std::uint64_t mask = performanceCoreMask(cores);
-  if (mask != 0 && !SetProcessAffinityMask(GetCurrentProcess(), static_cast<DWORD_PTR>(mask))) {
-    error = "SetProcessAffinityMask failed with error " + std::to_string(GetLastError());
-    return false;
-  }
-  return true;
+  return cores;
 }
 
 std::unique_ptr<CpuSampler> makeSystemCpuSampler() { return std::make_unique<WindowsCpuSampler>(); }

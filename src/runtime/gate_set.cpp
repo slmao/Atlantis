@@ -33,12 +33,28 @@ void take(RunValues& out, const std::string& key, const Value& leaf) {
 
 }  // namespace
 
-Value pinValue(bool pinned) {
+Value pinValue(bool pinned, std::string_view cores) {
   Value out = Value::object();
   out.set("power_throttling", Value::string(pinned ? "disabled" : "default"));
   out.set("priority_class", Value::string(pinned ? "high" : "normal"));
-  out.set("cores", Value::string(pinned ? "highest_efficiency_class" : "all"));
+  out.set("cores", Value::string(pinned ? std::string(cores) : std::string("all")));
   return out;
+}
+
+namespace {
+constexpr std::string_view kSingleProcessorPrefix = "logical_processor_";
+}  // namespace
+
+std::string singleProcessorCores(unsigned index) {
+  return std::string(kSingleProcessorPrefix) + std::to_string(index);
+}
+
+bool isSingleProcessorCores(std::string_view cores) {
+  if (!cores.starts_with(kSingleProcessorPrefix)) return false;
+  const std::string_view digits = cores.substr(kSingleProcessorPrefix.size());
+  return !digits.empty() && digits.size() <= 2 &&
+         std::all_of(digits.begin(), digits.end(), [](char c) { return c >= '0' && c <= '9'; }) &&
+         singleProcessorCores(static_cast<unsigned>(std::stoul(std::string(digits)))) == cores;
 }
 
 ResultRunValues extractRunValues(const Value& benchmarkDocument) {
@@ -94,7 +110,7 @@ ResultValue buildSet(const Protocol& protocol, std::span<const Value> runDocumen
   protocolValue.set("preheat_seconds", num(protocol.preheatSeconds));
   protocolValue.set("idle_wait", Value::boolean(protocol.idleWait));
   protocolValue.set("k", num(protocol.k));
-  protocolValue.set("pin", pinValue(protocol.pin));
+  protocolValue.set("pin", pinValue(protocol.pin, protocol.cores));
   protocolValue.set("power", Value::string(protocol.power));
   protocolValue.set("child_stderr", Value::string("discarded"));
   set.set("protocol", std::move(protocolValue));

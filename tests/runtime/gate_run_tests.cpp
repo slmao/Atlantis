@@ -67,6 +67,7 @@ struct Fixture {
     gate::Protocol protocol;
     protocol.preheatSeconds = 60.0;
     protocol.pin = true;
+    protocol.cores = gate::singleProcessorCores(2);
     protocol.power = "mains";
     auto set = gate::buildSet(protocol, runs);
     REQUIRE(set.isOk());
@@ -118,6 +119,7 @@ struct Fixture {
     gate::GateEnvironment env;
     env.launcher = &launcher;
     env.power = &power;
+    env.pinnedCores = pinnedCores;
     env.sampler = sampler != nullptr ? sampler : &idle;
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
@@ -139,6 +141,8 @@ struct Fixture {
 
   fs::path root;
   FakePower power;  // mains unless a test says otherwise
+  // The processor a pinned child is restricted to (Spec 0060 eighth Correction); empty: the machine offers none.
+  std::string pinnedCores = gate::singleProcessorCores(2);
 };
 
 cli::GateRequest request() {
@@ -173,6 +177,21 @@ TEST_CASE("an unchanged candidate passes: exit 0 and exactly one gate document o
   CHECK(std::count(o.out.begin(), o.out.end(), '\n') == 1);  // one document, one line
   CHECK(o.err.empty());
   CHECK_FALSE(fs::exists(f.root / "tmp"));  // the children's directory is gone
+}
+
+TEST_CASE("a pinned gate names its children's processor, and refuses on a machine that offers none",
+          "[runtime][gate][run]") {
+  Fixture f;
+  f.writeStore();
+  const auto o = f.run(request());
+  CHECK(gate::at(o.verdict, {"protocol", "pin", "cores"})->asString() == "logical_processor_2");
+  Fixture none;
+  none.writeStore();
+  none.pinnedCores.clear();
+  const auto refused = none.run(request());
+  CHECK(refused.exitCode == 3);
+  CHECK(refused.calls.empty());  // before any child
+  CHECK(refused.err.find("no logical processor") != std::string::npos);
 }
 
 TEST_CASE("without --json stdout is a short summary, not the document", "[runtime][gate][run]") {

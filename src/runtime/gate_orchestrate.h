@@ -158,11 +158,12 @@ struct CpuCore {
   unsigned efficiencyClass = 0;
 };
 
-// The affinity mask (group 0) of the cores of the highest efficiency class -- the P cores of a hybrid
-// CPU -- that the pinned benchmark children are restricted to (Spec 0060 Correction 2026-10-17:
-// which class the render threads land on moved cpu_active_ms by ~15 % between sessions). 0 means
-// "no restriction": the CPU is homogeneous, the list is empty, or no highest-class core is in group 0.
-[[nodiscard]] std::uint64_t performanceCoreMask(std::span<const CpuCore> cores);
+// The one logical processor (group 0) a pinned benchmark child is restricted to (Spec 0060 eighth
+// Correction 2026-10-26: free to move, the render thread woke from the frame's fence wait on a cold or a
+// warm core by machine state, moving cpu_active_ms between two levels). The highest-numbered group-0
+// processor of the highest efficiency class: the far end from logical processor 0, which takes most of
+// the system's interrupt and background work. nullopt when no processor is in group 0.
+[[nodiscard]] std::optional<unsigned> pinnedLogicalProcessor(std::span<const CpuCore> cores);
 
 // The real implementations (Windows only; gate_process_windows.cpp).
 [[nodiscard]] std::unique_ptr<Clock> makeSystemClock();
@@ -174,6 +175,8 @@ struct CpuCore {
 [[nodiscard]] std::unique_ptr<ChildLauncher> makeProcessLauncher(std::string executablePath);
 // The running executable's own path.
 [[nodiscard]] std::string currentExecutablePath();
+// GetSystemCpuSetInformation: every logical processor this process may use; `error` is set on failure.
+[[nodiscard]] std::vector<CpuCore> systemCpuCores(std::string& error);
 #endif
 
 }  // namespace atlantis::runtime::gate

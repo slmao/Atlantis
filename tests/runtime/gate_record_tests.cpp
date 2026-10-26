@@ -67,6 +67,7 @@ struct Fixture {
     gate::GateEnvironment env;
     env.launcher = &launcher;
     env.power = &power;
+    env.pinnedCores = gate::singleProcessorCores(2);
     env.sampler = &idle;
     env.clock = &clock;
     env.tempDir = (root / "tmp").string();
@@ -157,8 +158,8 @@ TEST_CASE("recording runs the protocol once per session, waits between sessions,
   CHECK(*gate::numberOf(gate::at(doc, {"protocol", "runs"})) == 5.0);
   CHECK(gate::at(doc, {"protocol", "idle_wait"})->asBool());
   CHECK(*gate::numberOf(gate::at(doc, {"protocol", "preheat_seconds"})) == 60.0);
-  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(true));
-  CHECK(*gate::at(doc, {"baseline", "pin"}) == gate::pinValue(true));  // the pinning state is in the provenance
+  CHECK(*gate::at(doc, {"protocol", "pin"}) == gate::pinValue(true, "logical_processor_2"));
+  CHECK(*gate::at(doc, {"baseline", "pin"}) == gate::pinValue(true, "logical_processor_2"));  // the pinning state is in the provenance
   CHECK(gate::at(doc, {"protocol", "power"})->asString() == "mains");
   CHECK(gate::at(doc, {"baseline", "power"})->asString() == "mains");  // and so is the power source
   CHECK(gate::at(doc, {"baseline", "profile"})->asString() == "test-gpu-windows-60hz");

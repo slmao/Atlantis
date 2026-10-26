@@ -35,13 +35,22 @@ struct Protocol {
   bool idleWait = true;
   double k = 3.0;
   bool pin = false;  // the children ran with --pin-process on
+  // The logical processor the pinned children were restricted to (singleProcessorCores()); unused unpinned.
+  std::string cores;
   // The power source the sessions ran on: `mains`, `battery`, `unknown`, or `mixed` when it changed.
   std::string power = "unknown";
 };
 
 // The pinning state a run was made under, as the documents record it: a pinned run is never
-// compared against an unpinned baseline (the evaluator refuses).
-[[nodiscard]] Value pinValue(bool pinned);
+// compared against an unpinned baseline, nor against one pinned to another processor (the evaluator
+// refuses). `cores` is the pinned run's processor (singleProcessorCores()); unpinned runs record `all`.
+[[nodiscard]] Value pinValue(bool pinned, std::string_view cores);
+
+// `protocol.pin.cores` of a run pinned to one logical processor (Spec 0060 eighth Correction):
+// `logical_processor_<index>`.
+[[nodiscard]] std::string singleProcessorCores(unsigned index);
+// Whether a `protocol.pin.cores` value names one logical processor, as singleProcessorCores() writes it.
+[[nodiscard]] bool isSingleProcessorCores(std::string_view cores);
 
 // One run's run-level values, keyed `cpu_active_ms`, `zones.<Zone>`,
 // `passes.<label>.gpu_ms`, ...

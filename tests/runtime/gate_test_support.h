@@ -162,6 +162,7 @@ struct SetProtocol {
   bool idleWait = true;
   double k = 3.0;
   bool pin = true;
+  std::string cores = "logical_processor_2";  // the processor a pinned run names
   std::string power = "mains";
 };
 
@@ -204,7 +205,7 @@ struct CanarySpec {
   p.set("preheat_seconds", gate::num(protocol.preheatSeconds));
   p.set("idle_wait", Value::boolean(protocol.idleWait));
   p.set("k", gate::num(protocol.k));
-  p.set("pin", gate::pinValue(protocol.pin));
+  p.set("pin", gate::pinValue(protocol.pin, protocol.cores));
   p.set("power", Value::string(protocol.power));
   p.set("child_stderr", Value::string("discarded"));
   doc.set("protocol", std::move(p));

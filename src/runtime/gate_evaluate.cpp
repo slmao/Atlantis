@@ -100,9 +100,13 @@ struct Aggregate {
   const bool idleWait = idle != nullptr && idle->isBool() && idle->asBool();
   // A run that skipped the idle wait or the preheat, or took fewer runs than the
   // policy asks, is a smoke run: it is reported as such and never a recording.
+  // Pinned as the policy asks: since Spec 0060's eighth Correction a pinned run names the one logical
+  // processor it ran on, which depends on the machine (the baseline comparison matches it exactly).
   const Value* pin = at(candidate, {"protocol", "pin"});
-  const Value expectedPin = pinValue(policy.protocol.pinProcess);
-  const bool pinned = pin != nullptr && *pin == expectedPin;
+  const Value* pinCores = pin != nullptr ? pin->find("cores") : nullptr;
+  const std::string cores = pinCores != nullptr && pinCores->isString() ? pinCores->asString() : std::string();
+  const bool pinned = pin != nullptr && *pin == pinValue(policy.protocol.pinProcess, cores) &&
+                      (!policy.protocol.pinProcess || isSingleProcessorCores(cores));
   const Value* power = at(candidate, {"protocol", "power"});
   const bool onMains = power != nullptr && power->isString() && power->asString() == "mains";
   const bool conformant = idleWait && preheat >= policy.protocol.preheatSeconds && runs >= policy.protocol.runs &&

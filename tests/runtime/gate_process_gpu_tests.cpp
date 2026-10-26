@@ -154,11 +154,16 @@ TEST_CASE("pinning the process opts out of power throttling and raises the prior
   REQUIRE(GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)));
   CHECK((state.ControlMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) != 0);  // the process controls it
   CHECK((state.StateMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) == 0);    // and throttling is off
-  // The affinity is the highest-efficiency-class cores, or untouched on a homogeneous CPU.
+  // The affinity is the one logical processor pinnedLogicalProcessor() chooses on this machine (Spec 0060 eighth
+  // Correction), inside the system's mask.
   DWORD_PTR processMask = 0;
   DWORD_PTR systemMask = 0;
   REQUIRE(GetProcessAffinityMask(GetCurrentProcess(), &processMask, &systemMask));
-  CHECK(processMask != 0);
+  std::string coresError;
+  const auto processor = gate::pinnedLogicalProcessor(gate::systemCpuCores(coresError));
+  CHECK(coresError.empty());
+  REQUIRE(processor.has_value());
+  CHECK(processMask == (DWORD_PTR{1} << *processor));
   CHECK((processMask & systemMask) == processMask);
 }
 
@@ -228,6 +233,7 @@ void writeThrowawayStore(const fs::path& root, const std::string& profileGpu) {
   protocol.preheatSeconds = 0.0;
   protocol.idleWait = false;
   protocol.pin = true;
+  protocol.cores = gate::singleProcessorCores(2);
   protocol.power = "mains";
   auto set = gate::buildSet(protocol, session.runDocuments);
   REQUIRE(set.isOk());
