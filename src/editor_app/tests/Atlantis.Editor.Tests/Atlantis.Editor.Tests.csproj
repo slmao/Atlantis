@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../Atlantis.Editor/Atlantis.Editor.csproj" />
+    <ProjectReference Include="../../Atlantis.Editor.Model/Atlantis.Editor.Model.csproj" />
   </ItemGroup>
 
 </Project>

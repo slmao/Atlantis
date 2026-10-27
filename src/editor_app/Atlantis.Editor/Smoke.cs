@@ -19,6 +19,7 @@ using System.Text;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
+using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
 
@@ -51,7 +52,7 @@ public static class Smoke
                 Check("the scene camera's view is the C# convention's", Near(sceneView, expectedScene.View),
                       Describe(sceneView, expectedScene.View));
 
-                var camera = new OrbitCamera();
+                var camera = new EditorCamera();
                 camera.Reset(scenePose);
                 camera.Orbit(30.0f, -10.0f);
                 camera.Dolly(1.0f);

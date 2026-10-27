@@ -19,6 +19,7 @@ using System.Threading;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
+using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
 
@@ -354,7 +355,7 @@ public sealed class EditorWorker : IDisposable
 
         Phase("pristine", null);
         double firstSend = Dated(overlay);
-        var orbit = new OrbitCamera();
+        var orbit = new EditorCamera();
         orbit.Reset(request.Pose);
         var sends = new List<double>(request.Sends);
         for (int i = 0; i < request.Sends; ++i)

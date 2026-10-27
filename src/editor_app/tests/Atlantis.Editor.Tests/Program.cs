@@ -13,6 +13,8 @@
 // viewport_overlay shader's) puts them for a known camera, against E1's
 // ImGui handles (editor_view.cpp: 80-pixel axes along each axis's projected
 // direction).
+// Plan 0068 M1 (ModelVectors.cs): Atlantis.Editor.Model against every vector
+// file the C++ models generate (ADR-0137 D1).
 //
 //   Atlantis.Editor.Tests --repo <source dir>
 using System;
@@ -23,10 +25,11 @@ using System.Numerics;
 using System.Text;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
+using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor.Tests;
 
-public static class Program
+public static partial class Program
 {
     private const float Tolerance = 2e-5f;
     private static int s_passed;
@@ -49,6 +52,12 @@ public static class Program
             Run(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             DragReportChecks();
             GizmoChecks(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
+            // Plan 0068 M1 (ADR-0137 D1): every ported model against its vectors.
+            string conformance = Path.Combine(repo, "tests", "csharp", "conformance");
+            PickingChecks(Path.Combine(conformance, "picking_vectors.jsonl"));
+            GizmoVectorChecks(Path.Combine(conformance, "gizmo_vectors.jsonl"));
+            WorldMatrixChecks(Path.Combine(conformance, "world_matrix_vectors.jsonl"));
+            HistoryTranscriptChecks(Path.Combine(conformance, "history_transcripts.jsonl"));
         }
         catch (Exception e)
         {
@@ -102,7 +111,7 @@ public static class Program
                 case "navigation":
                 {
                     ++navigations;
-                    var camera = new OrbitCamera();
+                    var camera = new EditorCamera();
                     camera.Reset(Pose(data.Find("reset")!));
                     foreach (JsonValue step in data.Find("steps")!.Items)
                     {
@@ -124,7 +133,7 @@ public static class Program
                     break;
                 }
                 default:
-                    Fail(name + ": unknown kind " + kind);
+                    if (!CameraKindPlan0068(kind, name, data)) Fail(name + ": unknown kind " + kind);
                     break;
             }
         }

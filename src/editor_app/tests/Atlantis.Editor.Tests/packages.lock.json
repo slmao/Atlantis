@@ -158,10 +158,17 @@
       "atlantis.editor": {
         "type": "Project",
         "dependencies": {
+          "Atlantis.Editor.Model": "[1.0.0, )",
           "Atlantis.Gameplay": "[1.0.0, )",
           "Avalonia": "[12.1.4, 12.1.4]",
           "Avalonia.Desktop": "[12.1.4, 12.1.4]",
           "Avalonia.Themes.Fluent": "[12.1.4, 12.1.4]"
+        }
+      },
+      "atlantis.editor.model": {
+        "type": "Project",
+        "dependencies": {
+          "Atlantis.Gameplay": "[1.0.0, )"
         }
       },
       "atlantis.gameplay": {

@@ -5,8 +5,8 @@
 // translation: three axis segments along the world's axes, each with a cone
 // tip of triangles, all on top. One unit of the group is HandlePixels pixels
 // at the anchor's depth, so an axis parallel to the image plane is as long
-// on screen as E1's ImGui handle (src/editor/src/view/editor_view.cpp:
-// kHandlePixels, the 3-pixel line, the 10-pixel tip 5 pixels wide each side,
+// on screen as E1's ImGui handle (gizmo.h's kGizmoHandlePixels since Plan
+// 0068 M1; editor_view.cpp: the 3-pixel line, the 10-pixel tip 5 pixels wide each side,
 // kAxisColors). Draws only: no hit-testing, no editing (Spec 0066 Q4, Q5).
 // UI-free.
 using System;
@@ -14,7 +14,7 @@ using System.Collections.Generic;
 using System.Numerics;
 using Atlantis.Gameplay;
 
-namespace Atlantis.Editor;
+namespace Atlantis.Editor.Model;
 
 public static class GizmoOverlay
 {

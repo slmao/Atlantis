@@ -29,6 +29,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using Atlantis.Editor.Model;
+using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
 
@@ -68,7 +70,7 @@ public sealed class MainWindow : Window
     private readonly Button _applySize = new() { Content = "Set viewport size" };
     private (int Width, int Height)? _targetSize;
     private int _sizeCorrections;
-    private readonly OrbitCamera _camera = new();
+    private readonly EditorCamera _camera = new();
     private readonly DispatcherTimer _uiTicker = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly List<double> _uiGaps = new();
     private long _lastUiTick = Stopwatch.GetTimestamp();

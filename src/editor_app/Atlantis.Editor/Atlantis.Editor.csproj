@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+    <ProjectReference Include="../Atlantis.Editor.Model/Atlantis.Editor.Model.csproj" />
   </ItemGroup>
 
 </Project>

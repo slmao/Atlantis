@@ -27,6 +27,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using Atlantis.Gameplay;
+using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
 
