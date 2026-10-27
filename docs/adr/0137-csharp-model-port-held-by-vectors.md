@@ -1,11 +1,13 @@
 # ADR 0137: The C# Editor Models Are Held to the C++ Models by Generated Vectors
 
-- **Status:** Proposed
-- **Date:** 2026-10-27
+- **Status:** Accepted
+- **Date:** 2026-10-27 (accepted 2026-10-27)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0068's branch PR)
+- **Acceptance:** slmao, 2026-10-27 (owner rulings on Spec 0068 Q1–Q8, each as recommended with J4 changed,
+  recorded once in [Plan 0068](../plans/0068-authoring-editor.md); the ADR text was reviewed in
+  [PR #302](https://github.com/slmao/Atlantis/pull/302))
 - **Related Spec:** [Spec 0068: The E3 Authoring Editor in Atlantis Editor App](../specs/0068-authoring-editor.md)
-  (`Draft`; its Q4)
+  (`Approved` 2026-10-27; its Q4)
 - **Related ADR(s):**
   - **Extends** [ADR-0125](0125-out-of-process-editor-platform-and-uniform-client-interface.md) D4. D4 says E1/E2's
     C++ models and ADR-0123/0124 are the reference contracts a C# port keeps. This ADR decides *how* the port keeps
@@ -55,9 +57,10 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
    - The functions are the handle layout from a camera and a matrix, the hit-test, and the pointer-to-amount
      mapping.
    - The frozen ImGui view calls them, and its E1 tests stay unchanged and green.
-   - This is the one C++ editor change the E3 editor needs. If the owner rules against touching the frozen editor
-     (Plan 0068 J2), the vectors come from a C++ test-only copy of that math instead, and the risk of drift between
-     the copy and the view is recorded.
+   - This is the one C++ editor change the E3 editor needs. It is a change that a shared-surface Spec requires
+     under ADR-0125 D4 (the frozen editor's models are the reference the port keeps), not a thaw of the ImGui
+     editor: no behaviour of it changes. A C++ test-only copy of the math was weighed and rejected (Plan 0068 J2,
+     ruled 2026-10-27).
 4. **A change to a C++ model that changes its vectors** is a change to the C# port as well, in the same PR. The
    stale-file failure enforces it.
 
@@ -74,8 +77,7 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 
 - **Vector files grow,** and every C++ model change regenerates them with review.
 - **Behaviour without a C++ reference rests on C# tests alone.**
-- **D3 touches the frozen ImGui editor's source** (behaviour-preserving). The alternative copy can drift from the
-  view it copies.
+- **D3 touches the frozen ImGui editor's source** (behaviour-preserving, held by E1's unchanged tests).
 
 ## Alternatives Considered
 

@@ -1,19 +1,28 @@
 # Plan: The E3 Authoring Editor in Atlantis Editor App
 
-- **Spec:** [Spec 0068: The E3 Authoring Editor in Atlantis Editor App](../specs/0068-authoring-editor.md) (`Draft`).
-  - **ADRs** (all `Proposed`): [ADR-0135](../adr/0135-two-document-edit-and-apply.md),
+- **Spec:** [Spec 0068: The E3 Authoring Editor in Atlantis Editor App](../specs/0068-authoring-editor.md) (`Approved`
+  2026-10-27).
+  - **ADRs** (all `Accepted` 2026-10-27): [ADR-0135](../adr/0135-two-document-edit-and-apply.md),
     [ADR-0136](../adr/0136-structural-edit-records.md),
     [ADR-0137](../adr/0137-csharp-model-port-held-by-vectors.md).
   - **Drafted together with the Spec** at the maintainer's direction (2026-10-27), against the Spec's recommended
     options: Q1 E-a, Q2 A-a, Q3 U-a, Q4 M-a, Q5 P-a, Q6 S-a, Q7 C-a, Q8's targets.
   - **Unchanged ADRs:** ADR-0103, ADR-0123, ADR-0125 D1–D3, ADR-0127, ADR-0129, ADR-0130, ADR-0132, ADR-0133 and
     ADR-0134.
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
-- **Joint Human Review:** pending. Once approved, it records the reviewer, the date, and the PR naming this Plan and
-  its Spec and authorizing implementation on `feature/0068-authoring-editor`, M1–M7 in this Plan's order, with the J8
-  checkpoint after M4.
-  - **Constraints (proposed, as Plans 0064–0067):**
+- **Joint Human Review:** slmao, 2026-10-27 — this Plan and [Spec 0068](../specs/0068-authoring-editor.md) reviewed
+  together in [PR #302](https://github.com/slmao/Atlantis/pull/302); the rulings are recorded on that branch before it
+  merges.
+  - **Spec:** Q1 E-a, Q2 A-a, Q3 U-a, Q4 M-a, Q5 P-a, Q6 S-a, Q7 C-a, Q8's targets, each as recommended, with Q5's
+    reparent rule changed (J4).
+  - **Plan:** J1–J8 as proposed, with J4 changed. J9 (the docs split) was not part of this ruling; it stays proposed
+    and is put again with M7.
+  - **ADRs:** ADR-0135, ADR-0136 and ADR-0137 `Accepted`; ADR-0131 gains a dated amendment (2026-10-27) for ADR-0135
+    D4's history clause.
+  - **Authorization:** implementation on `feature/0068-authoring-editor` from `origin/main` once PR #302 has merged:
+    **M1–M4 only, then stop for the owner's J8 ruling** on M4's numbers. M5 does not start before it.
+  - **Constraints (as Plans 0064–0067):**
     - no merge by the agent, no push to `main`;
     - every golden byte-identical, none re-captured;
     - `tests/performance/baselines/` and `gate_policy.json` untouched;
@@ -100,8 +109,10 @@ The engine, the wire and the SDKs are unchanged.
 1. **M1 — Model library and vectors** (P1's ported models, P2, P3). The library builds headless, the C# runner
    checks every vector file, the C++ generators are green, and E1's tests are unchanged and green.
 2. **M2 — Hierarchy and selection** (R3, R6; P4 in part).
-   - The tree follows events; create, destroy (subtree) and reparent (keeping world placement, Q5) each run as one
-     transaction and then an apply.
+   - The tree follows events; create, destroy (subtree) and reparent each run as one transaction and then an apply.
+   - Reparent keeps world placement or is refused (J4). Tests: under a parent scaled (1, 1, 0.25) and rotated, the
+     reparent is refused with its reason and the document unchanged; under a uniformly scaled parent, the node's
+     world matrix is kept bit for bit within `gizmo.h`'s TRS tolerance.
    - The one selection drives the overlay (outline, markers).
    - Another client's `NodeDestroyed` deselects.
 3. **M3 — Inspector** (R4): reflective editors, commit on Enter or blur as one transaction and an apply, add/remove
@@ -157,7 +168,7 @@ The engine, the wire and the SDKs are unchanged.
 - **Hierarchy scale (about 6000 nodes on Bistro):** virtualized rows. The open time is measured (Q8).
 - **A model that drifts from the C++ reference:** the stale-file and C# vector tests fail in the same build.
 
-## Joint Review decisions — proposed
+## Joint Review decisions — ruled (slmao, 2026-10-27): J1–J8 as proposed, J4 changed
 
 - **J1 — Spec Corrections:** none proposed.
 - **J2 — Where the Gizmo handle vectors come from:**
@@ -165,13 +176,18 @@ The engine, the wire and the SDKs are unchanged.
     pure functions, with no change in behaviour (ADR-0137 D3). The frozen view calls them, and E1's tests stay
     green.
   - **The alternative:** a C++ test-only copy of that math, with the risk of drift from the view recorded.
+  - **Ruled: the extraction** (ADR-0137 D3). It is a change a shared-surface Spec requires under ADR-0125 D4, not a
+    thaw of the ImGui editor. The test-only copy is rejected.
 - **J3 — Preview scope during a drag:**
   - **Recommended:** the dragged node and all its descendants (ADR-0135 D1), measured at M4.
   - **If Bistro's deep subtrees break Q8's drag target,** the owner rules at J8 between node-only previews and a cap
     (for example 256 descendants, beyond which only the node previews).
-- **J4 — Reparent keeps world placement** (Spec Q5): `SetParent` plus the local `Transform` that keeps the world
-  matrix. Where that is not a TRS within `gizmo.h`'s tolerance, the local values are kept, and the result is stated in
-  the status line. Proposed: accept.
+  - **Ruled: the cap now.** A drag previews the dragged node and its descendants up to 256 of them; beyond that, only
+    the dragged node previews. M4 measures both cases.
+- **J4 — Reparent keeps world placement, or is refused** (Spec Q5, R3, R5): `SetParent` plus the local `Transform`
+  that keeps the world matrix. Where that local matrix is not a TRS within `gizmo.h`'s tolerance (a non-uniformly
+  scaled parent), the reparent is **refused**, its reason shown and the document unchanged. **Ruled, changed** from
+  the proposal, which kept the local values and stated the result in the status line.
 - **J5 — Project layout:** `Atlantis.Editor.Model` as its own project with no Avalonia reference, so the model runner
   needs no UI. The editor app references it. Proposed: accept.
 - **J6 — Vector tolerances:** 2e-5 absolute for floats, as the camera vectors use; exact for integers, GUIDs, enums
@@ -186,6 +202,7 @@ The engine, the wire and the SDKs are unchanged.
 - **J8 — The M4 checkpoint:** the owner rules on M4's drag and release numbers against Q8 (J3's preview scope) before
   M5 starts.
 - **J9 — Docs split:** normative sentences with the implementation PR, narratives after merge (Plans 0062–0067).
+  Not part of the 2026-10-27 ruling; put again with M7.
 
 ## Verification Checklist
 

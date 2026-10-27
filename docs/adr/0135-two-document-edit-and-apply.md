@@ -1,11 +1,13 @@
 # ADR 0135: Two-Document Editing — Previews on the Runtime World, Commits on the Authoring Document, Automatic Apply
 
-- **Status:** Proposed
-- **Date:** 2026-10-27
+- **Status:** Accepted
+- **Date:** 2026-10-27 (accepted 2026-10-27)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0068's branch PR)
+- **Acceptance:** slmao, 2026-10-27 (owner rulings on Spec 0068 Q1–Q8, each as recommended with J4 changed,
+  recorded once in [Plan 0068](../plans/0068-authoring-editor.md); the ADR text was reviewed in
+  [PR #302](https://github.com/slmao/Atlantis/pull/302))
 - **Related Spec:** [Spec 0068: The E3 Authoring Editor in Atlantis Editor App](../specs/0068-authoring-editor.md)
-  (`Draft`; its Q1, Q2)
+  (`Approved` 2026-10-27; its Q1, Q2)
 - **Related ADR(s):**
   - **Extends** [ADR-0124](0124-editor-transaction-and-client-side-undo.md):
     - D1: a gesture's previews are unrecorded and its release is one Editor Transaction. The previews now go to the
@@ -49,8 +51,8 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
      descendants (computed from the document's hierarchy) to the Runtime World, in one `RuntimeConnection`
      transaction.
    - Previews are never recorded and never written to the document.
-   - If a deep subtree makes this too slow (Spec 0068 Q8), the preview may be limited to the dragged node by an owner
-     ruling, without changing this decision.
+   - **The preview is capped at 256 descendants** (Plan 0068 J3, ruled): a node with more previews alone. The cap
+     bounds a batch's writes on deep subtrees (Bistro) without changing this decision.
 2. **A committed edit is one authoring transaction.**
    - A Gizmo release, an Inspector commit, a Hierarchy command, an undo and a redo each submit exactly one
      `AuthoringConnection` transaction, from the closed command set.

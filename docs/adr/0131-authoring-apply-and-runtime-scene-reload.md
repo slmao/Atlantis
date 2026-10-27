@@ -167,3 +167,23 @@ the CLI's `scene apply` under pause returns its pending outcome and reports `App
 Recorded in the review of its docs PR. On 2026-10-24, while implementing it, slmao ruled item 4: the old World's
 queued events are delivered at the re-bind rather than dropped, so a command applied in the swap frame settles as
 its event. This amendment records what the Correction means for D4; no other decision above is reopened.
+
+## Accepted Amendment — 2026-10-27
+
+**Status of this section:** accepted by Human Review on 2026-10-27, with Spec 0068 and
+[ADR-0135](0135-two-document-edit-and-apply.md) (slmao). **This section does not itself change this ADR's top-level
+Status** (`Accepted` above is unchanged). The Decision, Context, Consequences, Alternatives Considered and the Accepted
+Amendments of 2026-10-22 and 2026-10-23 are preserved verbatim and are not superseded except where this section says so
+explicitly. It amends D5's history clause only.
+
+1. **D5's "E2's history clears on a change of scene generation" applies to a history over the Runtime World,** as E2's
+   is. A history over the authoring document (ADR-0135 D4) is not cleared by a change of scene generation, because the
+   editor's own applies change it at every committed edit. Such a history clears when the document is reopened from
+   disk (`DocumentReopened`) and when its editor session ends.
+2. **Kept unchanged:** D5's scene generation itself (`RuntimeStatus.sceneGeneration`, incremented by every reload) and
+   every other decision of this ADR.
+
+### Human Review — Amendment Acceptance (2026-10-27)
+
+**Deciders:** slmao — ruled Spec 0068 Q1–Q8 (2026-10-27), each as recommended, accepting ADR-0135, whose D4 needs this
+amendment. Recorded in the review of Spec 0068's branch PR, [PR #302](https://github.com/slmao/Atlantis/pull/302).

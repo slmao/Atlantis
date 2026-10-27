@@ -1,11 +1,13 @@
 # ADR 0136: Structural Edit Records — Create, Destroy, Components and Reparent in the Editor's History
 
-- **Status:** Proposed
-- **Date:** 2026-10-27
+- **Status:** Accepted
+- **Date:** 2026-10-27 (accepted 2026-10-27)
 - **Deciders:** slmao
-- **Acceptance:** pending (review of Spec 0068's branch PR)
+- **Acceptance:** slmao, 2026-10-27 (owner rulings on Spec 0068 Q1–Q8, each as recommended with J4 changed,
+  recorded once in [Plan 0068](../plans/0068-authoring-editor.md); the ADR text was reviewed in
+  [PR #302](https://github.com/slmao/Atlantis/pull/302))
 - **Related Spec:** [Spec 0068: The E3 Authoring Editor in Atlantis Editor App](../specs/0068-authoring-editor.md)
-  (`Draft`; its Q3)
+  (`Approved` 2026-10-27; its Q3)
 - **Related ADR(s):**
   - **Extends** [ADR-0124](0124-editor-transaction-and-client-side-undo.md). D4 names structural edits as "a later
     extension of the write list's variant". This ADR is that extension. It keeps:
@@ -92,7 +94,9 @@ PRs. After acceptance, a changed decision requires a new superseding ADR.
 - **A destroy record holds a subtree's full values.** A large Bistro subtree is a large record and a large undo
   transaction (one validation, about 22 ms, whatever its size).
 - **A re-created node returns at its old position.** If other nodes were created meanwhile, its position shifts by
-  the order's own rule. The node order is not otherwise restorable, since it is immutable (Spec 0065).
+  the order's own rule. The node order is not otherwise restorable, since it is immutable (Spec 0065); an exact
+  restore needs a move command, a later Spec. **Accepted as written** (2026-10-27), as is D3's conservative refusal
+  rule.
 - **The refusal rules are conservative:** a harmless outside change (another client edits a child's field) also
   refuses the undo of a create.
 

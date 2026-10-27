@@ -1,21 +1,25 @@
 # Spec: The E3 Authoring Editor in Atlantis Editor App (Spec 0064 Phase 2, step 2)
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-27
-- **Related Plan(s):** [Plan 0068](../plans/0068-authoring-editor.md) (`Draft`). As with Specs 0062–0067, the Plan is
-  drafted together with this Spec at the maintainer's direction.
-- **Approval:** pending (review of this Spec's own branch PR).
+- **Related Plan(s):** [Plan 0068](../plans/0068-authoring-editor.md) (`Approved`; Joint Human Review 2026-10-27
+  recorded in its header). As with Specs 0062–0067, the Plan was drafted together with this Spec.
+- **Approval:** slmao, 2026-10-27 — owner rulings Q1–Q8, each as its recommendation, with one change: a reparent
+  whose world placement cannot be kept is refused (Plan J4). Recorded once in
+  [Plan 0068](../plans/0068-authoring-editor.md). Reviewed in this Spec's own branch PR,
+  [PR #302](https://github.com/slmao/Atlantis/pull/302), where the rulings are recorded before it merges. The
+  open-question text keeps the options as the record of what was weighed.
 - **Related ADR(s):**
-  - [ADR-0135](../adr/0135-two-document-edit-and-apply.md) (`Proposed`): how the editor edits on two documents. A drag
+  - [ADR-0135](../adr/0135-two-document-edit-and-apply.md) (`Accepted` 2026-10-27): how the editor edits on two documents. A drag
     previews on the Runtime World. A committed edit is one authoring transaction, followed by an apply. The history
     lives on the authoring document and is not cleared by the editor's own applies (Q1, Q2).
     - **Extends** ADR-0124 D1/D4 and ADR-0131 D7.
     - **Amends** ADR-0131 D5's history clause for a history over the authoring document.
-  - [ADR-0136](../adr/0136-structural-edit-records.md) (`Proposed`): structural edits are history records (create,
+  - [ADR-0136](../adr/0136-structural-edit-records.md) (`Accepted` 2026-10-27): structural edits are history records (create,
     destroy, add and remove component, reparent), with what each record holds and when its undo is refused (Q3).
     **Extends** ADR-0124 D1–D4 (its "later extension of the write list's variant").
-  - [ADR-0137](../adr/0137-csharp-model-port-held-by-vectors.md) (`Proposed`): the C# port of E1/E2's models is held
+  - [ADR-0137](../adr/0137-csharp-model-port-held-by-vectors.md) (`Accepted` 2026-10-27): the C# port of E1/E2's models is held
     to the C++ models by vectors that C++ tests generate. Behaviour with no C++ reference is specified by an ADR and
     tested in C# (Q4). **Extends** ADR-0125 D4, which already names the C++ models as the reference contracts a C#
     port keeps; D4 itself is not amended.
@@ -194,7 +198,7 @@ Phase 2's first cut. Everything below is client-side, so it can land without tou
   - **Create:** a node with a Transform is created under the selected node (or at the root), appended to the order,
     in one transaction.
   - **Destroy:** the selected node and its whole subtree go in one transaction (Fact 2).
-  - **Reparent:** by drag and drop, one transaction (Q5's world-placement rule). A refusal (`ParentAcyclic`, …)
+  - **Reparent:** by drag and drop, one transaction: `SetParent` plus the local `Transform` that keeps the node's world matrix. Where that local matrix is not a TRS within `gizmo.h`'s tolerance (under a non-uniformly scaled parent), the reparent is **refused**: its reason is shown and the document is unchanged (J4, as ruled). A refusal by the document (`ParentAcyclic`, …) also
     shows its reason and changes nothing.
   - **Bistro:** about 6000 nodes stay usable (virtualized rows; Q8 reports the time to open).
 - **R4 — Inspector.**
@@ -215,7 +219,7 @@ Phase 2's first cut. Everything below is client-side, so it can land without tou
   - **Matrices:** the new world matrix is converted to the node's local `Transform` through its parent's world
     matrix. Where that local matrix is not a TRS within `gizmo.h`'s shear tolerance (a rotation or scale under a
     non-uniformly scaled parent), that mode's handles are shown disabled for the node, with the reason. Translate is
-    always available.
+    always available. The same TRS rule refuses a reparent that cannot keep the node's world placement (R3).
 - **R6 — Selection.** One selection, shared by the Viewport pick, the Hierarchy and the Inspector, and sent as the
   overlay's selection set with the Gizmo (Q6).
   - Lights and cameras are pickable by E1's markers (overlay points).
@@ -294,7 +298,7 @@ document's refusal as final.
 
 ## Architectural Impact
 
-Three decisions, each with a Proposed ADR:
+Three decisions, each with an ADR (`Accepted` 2026-10-27):
 - **Two documents** (ADR-0135):
   - previews go to the Runtime World and commits to the authoring document, followed by an automatic, coalesced
     apply;
@@ -350,7 +354,8 @@ Risks:
   blur, so it adds no load per keystroke.
 - **Imported scenes** (Bistro) cannot be saved: edits there are for trying things out, which the refusal states.
 
-Open questions — each with options and a recommendation:
+Open questions — all eight ruled by the owner (slmao, 2026-10-27), each as its recommendation, with Q5's reparent
+rule changed to a refusal (Plan J4); rulings recorded in Plan 0068:
 
 - **Q1 — The two-document editing model.** (ADR-0135)
   - **(E-a) Previews on the Runtime World per pointer batch; the release is one authoring transaction, then an
@@ -412,8 +417,10 @@ Open questions — each with options and a recommendation:
     - the apply state;
     - Save (with the imported-scene refusal);
     - Play/Pause/Step.
-  - **Reparent keeps the node's world placement:** the transaction is `SetParent` plus the local `Transform` that
-    keeps its world matrix. Where that is not a TRS (R5's rule), it keeps the local values and says so.
+  - **Reparent keeps the node's world placement, or is refused:** the transaction is `SetParent` plus the local
+    `Transform` that keeps its world matrix. Where that is not a TRS within `gizmo.h`'s tolerance (R5's rule), the
+    reparent is refused, its reason shown and the document unchanged. **Ruled** (J4 changed): refused, not kept with
+    the local values.
   - **Out:** content browser, prefabs, multi-selection editing beyond the outline, custom inspectors, plugins.
   - **(P-b) A smaller first cut** (Hierarchy and Inspector, no Gizmo editing): the Gizmo is what the overlay was
     built for, and E1's math exists, so it costs little to include.
