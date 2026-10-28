@@ -106,10 +106,12 @@ public sealed class DocumentTree
     {
         _rows.Clear();
         _order.Clear();
-        foreach (NodeSummary summary in document.ListNodes())
+        IReadOnlyList<NodeSummary> nodes = document.ListNodes();
+        IReadOnlyList<IReadOnlyList<TypeId>> components = document.ListComponents(nodes.Select(n => n.Node).ToList());
+        for (int i = 0; i < nodes.Count; ++i)
         {
-            _order.Add(summary.Node);
-            _rows[summary.Node] = new Row { Parent = summary.Parent, Components = document.ListComponents(summary.Node).ToList() };
+            _order.Add(nodes[i].Node);
+            _rows[nodes[i].Node] = new Row { Parent = nodes[i].Parent, Components = components[i].ToList() };
         }
         Changed();
     }
@@ -236,6 +238,14 @@ public sealed class ApplyController
             return;
         }
         Issue();
+    }
+
+    /// <summary>Records an apply the caller already sent (pipelined with its commit): in flight, as if Request() had issued it.</summary>
+    public void NoteRequested()
+    {
+        ++Issued;
+        _inFlight = true;
+        Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
     }
 
     /// <summary>The Runtime's pause state: a pause holds the reload (ADR-0131, amended 2026-10-23).</summary>

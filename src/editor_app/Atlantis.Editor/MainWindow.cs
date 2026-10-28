@@ -75,6 +75,13 @@ public sealed class MainWindow : Window
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _pickedUp;
     private bool _syncingSelection;
+    // Plan 0068 M4: the Gizmo's settings, the selected node's matrix and availability, and the grab in progress.
+    private readonly ComboBox _gizmoMode = new() { ItemsSource = new[] { "Move", "Rotate", "Scale" }, SelectedIndex = 0, MinWidth = 80 };
+    private readonly ComboBox _gizmoSpace = new() { ItemsSource = new[] { "World", "Local" }, SelectedIndex = 0, MinWidth = 80 };
+    private readonly CheckBox _gizmoSnap = new() { Content = "Snap" };
+    private GizmoSnapshot? _gizmoShown;
+    private GizmoGrab? _gizmoGrab;
+    private GizmoMode _gizmoGrabMode;
     // Plan 0068 M3: the Inspector panel, rebuilt from the worker's snapshots (not while a field is being typed in).
     private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
     private InspectorSnapshot? _inspectorShown;
@@ -171,6 +178,7 @@ public sealed class MainWindow : Window
         DockPanel.SetDock(tools, Dock.Bottom);
         var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         foreach (Button b in new[] { _create, _destroy, _toRoot, _pickUp, _moveHere }) { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
         state.Children.Add(_applyLine);
         state.Children.Add(_editLine);
@@ -214,6 +222,9 @@ public sealed class MainWindow : Window
             _worker?.Measure(600);
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
+        _gizmoMode.SelectionChanged += (_, _) => SendGizmoSettings();
+        _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
+        _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
         _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
         _destroy.Click += (_, _) =>
         {
@@ -324,6 +335,8 @@ public sealed class MainWindow : Window
         worker.Picked += OnPicked;
         worker.HierarchyChanged += OnHierarchyChanged;
         worker.InspectorChanged += OnInspectorChanged;
+        worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
+        worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
         worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
         worker.EditNotice += text => _editLine.Text = text;
         worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
@@ -481,9 +494,54 @@ public sealed class MainWindow : Window
         _worker?.SetCamera(null, Stopwatch.GetTimestamp());
     }
 
+    private GizmoMode ModeUi => _gizmoMode.SelectedIndex switch { 1 => GizmoMode.Rotate, 2 => GizmoMode.Scale, _ => GizmoMode.Translate };
+
+    private GizmoSpace SpaceUi => _gizmoSpace.SelectedIndex == 1 ? GizmoSpace.Local : GizmoSpace.World;
+
+    private void SendGizmoSettings() => _worker?.SetGizmo(ModeUi, SpaceUi, _gizmoSnap.IsChecked == true);
+
+    // Plan 0068 M4 (Spec 0068 R5): a press on a handle of the selected node's Gizmo grabs it -- E1's handle layout and its
+    // 8-pixel pick (gizmo.h's math, ported and held by vectors) -- a move drags it (previews on the Runtime World, one
+    // coalesced batch per worker turn), the release commits. Returns whether it took the event.
+    private bool GizmoPointer(ViewportPointerEvent e)
+    {
+        ViewportWindow? window = _viewport.Window;
+        switch (e.Kind)
+        {
+            case ViewportPointer.LeftDown when _gizmoShown is { World: { } world, Availability: { } availability } && _worker is not null &&
+                                               _cameraInitialized && window is { Width: > 0, Height: > 0 }:
+            {
+                CameraMatrices? camera = _camera.Matrices((float)window.Width / window.Height);
+                if (camera is null) return false;
+                GizmoMode mode = GizmoLayout.EffectiveMode(availability, ModeUi);
+                GizmoSpace space = GizmoLayout.EffectiveSpace(world, SpaceUi);
+                Vector3[] directions = GizmoLayout.Directions(world, mode, space);
+                var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
+                GizmoHandle?[]? handles = Gizmo.Handles(camera, rect, new Vector3(world[12], world[13], world[14]), directions);
+                if (handles is null || Gizmo.Grab(handles, directions, camera, mode, new Vector2(e.X, e.Y)) is not GizmoGrab grab) return false;
+                _gizmoGrab = grab;
+                _gizmoGrabMode = mode;
+                _pressed = null;
+                _worker.BeginGizmoDrag(grab.Axis);
+                _inputLine = "gizmo " + mode + " " + grab.Axis;
+                return true;
+            }
+            case ViewportPointer.Move when _gizmoGrab is { } grab:
+                _worker?.GizmoDragTo(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
+                return true;
+            case ViewportPointer.LeftUp when _gizmoGrab is { } grab:
+                _worker?.EndGizmoDrag(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
+                _gizmoGrab = null;
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void OnPointer(ViewportPointerEvent e)
     {
         if (_recorder is not null && MeasureDrag(e)) return;
+        if (GizmoPointer(e)) return;
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown:

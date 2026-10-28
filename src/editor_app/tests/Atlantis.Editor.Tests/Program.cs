@@ -63,6 +63,8 @@ public static partial class Program
             ApplyControllerChecks();
             // Plan 0068 M3: the Inspector's model.
             InspectorChecks();
+            // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
+            GizmoDragChecks();
         }
         catch (Exception e)
         {

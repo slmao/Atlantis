@@ -159,7 +159,7 @@ public static class Smoke
     {
         void check(string name, bool ok, string detail = "") => record(name, ok, detail);
         check("authoring: the document opens", session.Authoring.Document() is not null || session.Authoring.Open() is null);
-        var document = new RemoteAuthoringDocument(session.Authoring);
+        var document = new RemoteAuthoringDocument(session.Authoring, session);
         var tree = new DocumentTree();
         tree.Rebuild(document);
         check("authoring: the tree has the scene's nodes", tree.Count > 0, tree.Count + " nodes");

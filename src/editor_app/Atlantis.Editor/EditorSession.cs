@@ -207,6 +207,38 @@ public sealed class EditorLog : IDisposable
 /// Owns the RemoteSession on its own thread. Camera updates are coalesced (only the newest is sent); ray-casts and
 /// measurements are queued. Results are posted back through <c>post</c> (the UI thread's dispatcher).
 /// </summary>
+/// <summary>The selected node's world matrix and what its Gizmo can edit, as the worker last computed them.</summary>
+public sealed record GizmoSnapshot(EntityGuid? Node, float[]? World, GizmoAvailability? Availability);
+
+/// <summary>Previews: the Runtime World's WorldMatrix of each node, one transaction per batch (ADR-0135 D1).</summary>
+internal sealed class RuntimeWorldPreview : IWorldPreview
+{
+    private static readonly Field<W.WorldMatrix, Vector4>[] Columns =
+    {
+        W.Fields.WorldMatrix.Column0, W.Fields.WorldMatrix.Column1, W.Fields.WorldMatrix.Column2, W.Fields.WorldMatrix.Column3,
+    };
+
+    private readonly Func<RemoteSession?> _session;
+
+    public RuntimeWorldPreview(Func<RemoteSession?> session) => _session = session;
+
+    public void Write(IReadOnlyList<(EntityGuid Node, float[] World)> matrices)
+    {
+        RemoteSession? session = _session();
+        if (session is null) return;
+        var commands = new List<Atlantis.Gameplay.Command>(matrices.Count * 4);
+        foreach (var (node, m) in matrices)
+        {
+            for (int k = 0; k < 4; ++k)
+            {
+                commands.Add(new Atlantis.Gameplay.SetProperty(new PropertyAddress(node, Columns[k].Component, Columns[k].Id),
+                                                               new Vector4(m[k * 4], m[k * 4 + 1], m[k * 4 + 2], m[k * 4 + 3])));
+            }
+        }
+        session.SubmitTransaction(commands);
+    }
+}
+
 /// <summary>The Inspector as the worker last read it: the subject's fields, its components and the ones it could add.</summary>
 public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<InspectorField> Fields,
                                        IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable);
@@ -247,6 +279,16 @@ public sealed class EditorWorker : IDisposable
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _selected;
     private InspectorModel? _inspector;
+    // Plan 0068 M4: the Gizmo (worker-thread state, except the pending batch under _lock).
+    private GizmoDragController? _gizmo;
+    private RemoteSession? _previewSession;
+    private GizmoMode _gizmoMode = GizmoMode.Translate;
+    private GizmoSpace _gizmoSpace = GizmoSpace.World;
+    private bool _gizmoSnap;
+    private (float Amount, long Ticks, int Count)? _pendingGizmo;
+    private bool _gizmoActive;  // set and cleared by the worker, read under _lock
+    private long? _commitTicks;  // the last commit's start, until its Applied dates it
+    private int _previewBatches;
 
     public EditorWorker(SessionInfo info, Action<Action> post, EditorLog log)
     {
@@ -270,6 +312,8 @@ public sealed class EditorWorker : IDisposable
     public event Action<string>? EditNotice;
     public event Action<EntityGuid>? NodeCreatedByEditor;
     public event Action<InspectorSnapshot>? InspectorChanged;
+    public event Action<GizmoSnapshot>? GizmoChanged;
+    public event Action<double, string>? CommitApplied;
 
     /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
     public string? SessionPath { get; init; }
@@ -470,6 +514,51 @@ public sealed class EditorWorker : IDisposable
         return (plan, node);
     });
 
+    /// <summary>Plan 0068 M4 (Spec 0068 R5): the Gizmo's mode, space and snapping (Ctrl held while dragging in E1).</summary>
+    public void SetGizmo(GizmoMode mode, GizmoSpace space, bool snap) => Enqueue(session =>
+    {
+        _gizmoMode = mode;
+        _gizmoSpace = space;
+        _gizmoSnap = snap;
+        SendOverlay(session);
+    });
+
+    /// <summary>Plan 0068 M4: the press grabbed <paramref name="axis"/> of the selected node's Gizmo.</summary>
+    public void BeginGizmoDrag(GizmoAxis axis) => Enqueue(session =>
+    {
+        if (_gizmo is null || _selected is not EntityGuid node) return;
+        GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
+        GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
+        GizmoSpace space = GizmoLayout.EffectiveSpace(_transforms.WorldOf(_document!, _tree, node), _gizmoSpace);
+        if (!_gizmo.Begin(node, mode, space, axis, _gizmoSnap)) return;
+        _previewBatches = 0;
+        lock (_lock) _gizmoActive = true;
+        _log.Write("gizmo begin " + mode + " " + space + " " + axis + " on " + node + " (" + _gizmo.PreviewedDescendants + " descendants previewed)");
+    });
+
+    /// <summary>Plan 0068 M4: the drag amount from the press (units, a factor or radians); batches coalesce like the camera's.</summary>
+    public void GizmoDragTo(float amount, long inputTicks)
+    {
+        lock (_lock)
+        {
+            int count = _pendingGizmo is { } pending ? pending.Count + 1 : 1;
+            long first = _pendingGizmo is { } p ? p.Ticks : inputTicks;
+            _pendingGizmo = (amount, first, count);
+            Monitor.Pulse(_lock);
+        }
+    }
+
+    /// <summary>Plan 0068 M4: the release -- the last batch is written, then the final matrix commits as one authoring transaction.</summary>
+    public void EndGizmoDrag(float amount, long inputTicks)
+    {
+        GizmoDragTo(amount, inputTicks);
+        Enqueue(session =>
+        {
+            lock (_lock) _gizmoActive = false;
+            ReleaseGizmo(session);
+        });
+    }
+
     /// <summary>Plan 0068 M3 (Spec 0068 R4): a field's text committed as one transaction (then an apply), or its refusal shown.</summary>
     public void CommitField(string path, string text) => Edit(document => (_inspector!.Commit(path, text), null));
 
@@ -498,6 +587,56 @@ public sealed class EditorWorker : IDisposable
         PostInspector();
     });
 
+    // The release: one authoring transaction from the final matrix, then an apply; a refusal reverts the preview.
+    private void ReleaseGizmo(RemoteSession session)
+    {
+        if (_document is null || _apply is null || _gizmo is null) return;
+        EntityGuid? node = _selected;
+        EditPlan plan = _gizmo.Release();
+        if (plan.Refusal is string reason)
+        {
+            if (reason != "unchanged")
+            {
+                _log.Write("gizmo " + plan.Label + " refused: " + reason);
+                _post(() => EditNotice?.Invoke(plan.Label + " refused: " + reason));
+            }
+            SendOverlay(session);
+            return;
+        }
+        long start = Stopwatch.GetTimestamp();
+        _document.SubmitTransaction(plan.Commands);
+        IReadOnlyList<CommandFailure> failures = _document.DrainFailures();
+        double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        if (failures.Count > 0)
+        {
+            if (node is EntityGuid n) _gizmo.RevertRelease(n);
+            string why = plan.Label + " refused by the document: " + failures[0].Error;
+            _log.Write("gizmo " + why);
+            _post(() => EditNotice?.Invoke(why));
+            PollDocument(session);
+            SendOverlay(session);
+            return;
+        }
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "gizmo {0}: committed in {1:F1} ms after {2} preview batch(es)", plan.Label, ms, _previewBatches));
+        _commitTicks = start;
+        _apply.Request();
+        PollDocument(session);
+        SendOverlay(session);
+        PostInspector();
+        _post(() => EditNotice?.Invoke(plan.Label));
+    }
+
+    // One batch of the drag: the node (and its descendants) previewed on the Runtime World, the overlay following.
+    private void PreviewGizmo(RemoteSession session, float amount, long inputTicks, int coalesced)
+    {
+        if (_gizmo is null) return;
+        _gizmo.Preview(amount);
+        ++_previewBatches;
+        SendOverlay(session);
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "gizmo batch coalesced {0} input->write {1:F1} ms", coalesced,
+                                 Stopwatch.GetElapsedTime(inputTicks).TotalMilliseconds));
+    }
+
     // One edit: planned on this thread against the tree as of now, submitted as one transaction, then an apply.
     private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan) => Enqueue(session =>
     {
@@ -519,6 +658,7 @@ public sealed class EditorWorker : IDisposable
         _document.SubmitTransaction(edit.Commands);
         IReadOnlyList<CommandFailure> failures = _document.DrainFailures();
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        if (failures.Count == 0) _commitTicks = start;
         if (failures.Count > 0)
         {
             string why = edit.Label + " refused by the document: " + failures[0].Error;
@@ -548,12 +688,14 @@ public sealed class EditorWorker : IDisposable
                 _post(() => EditNotice?.Invoke("the authoring document cannot be opened: " + error));
                 return;
             }
-            var document = new RemoteAuthoringDocument(session.Authoring);
+            var document = new RemoteAuthoringDocument(session.Authoring, session);
             long start = Stopwatch.GetTimestamp();
             _tree.Rebuild(document);
             _document = document;
             _apply = new ApplyController(document);
             _inspector = new InspectorModel(document);
+            _gizmo = new GizmoDragController(document, _tree, _transforms, new RuntimeWorldPreview(() => _previewSession));
+            _previewSession = session;
             DocumentInfo? info = document.Info();
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
@@ -597,6 +739,13 @@ public sealed class EditorWorker : IDisposable
             PostInspector();
         }
         if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
+        if (_commitTicks is long committed && events.Any(e => e is Applied))
+        {
+            double applied = Stopwatch.GetElapsedTime(committed).TotalMilliseconds;
+            _commitTicks = null;
+            _log.Write(string.Format(CultureInfo.InvariantCulture, "commit->applied {0:F1} ms", applied));
+            _post(() => CommitApplied?.Invoke(applied, _applyText));
+        }
         if (_apply.Text != _applyText)
         {
             _applyText = _apply.Text;
@@ -633,14 +782,22 @@ public sealed class EditorWorker : IDisposable
 
     private void SendOverlay(RemoteSession session)
     {
-        Vector3? at = null;
-        if (_document is not null && _selected is EntityGuid node && _tree.Contains(node))
+        OverlayGroup? gizmo = null;
+        GizmoSnapshot snapshot = new(null, null, null);
+        if (_document is not null && _gizmo is not null && _selected is EntityGuid node && _tree.Contains(node))
         {
-            float[] world = _transforms.WorldOf(_document, _tree, node);
-            at = new Vector3(world[12], world[13], world[14]);
+            float[] world = _gizmo.Dragging && _gizmo.LatestWorld is { } latest ? latest : _transforms.WorldOf(_document, _tree, node);
+            GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
+            GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
+            GizmoSpace space = GizmoLayout.EffectiveSpace(world, _gizmoSpace);
+            // While dragging, the axes stay where the drag began (the overlay's handles do not swing with the previewed rotation).
+            Vector3[] directions = GizmoLayout.Directions(_gizmo.Dragging ? _transforms.WorldOf(_document, _tree, node) : world, mode, space);
+            gizmo = GizmoOverlay.ModeGizmo(new Vector3(world[12], world[13], world[14]), mode, directions, _gizmo.Axis is GizmoAxis axis ? (int)axis : null);
+            snapshot = new GizmoSnapshot(node, world, availability);
         }
-        ViewportOverlay overlay = GizmoOverlay.ForSelection(_selected, at, _markers);
+        ViewportOverlay overlay = GizmoOverlay.ForSelection(_selected, gizmo, _markers);
         if (session.Control.SetViewportOverlay(overlay) is ControlError refused) _log.Write("overlay refused: " + refused);
+        _post(() => GizmoChanged?.Invoke(snapshot));
     }
 
     public void Measure(int frames) => Enqueue(session =>
@@ -709,10 +866,12 @@ public sealed class EditorWorker : IDisposable
             Action<RemoteSession>? work = null;
             (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
             (float Dx, float Dy, long InputTicks, int Count)? drag = null;
+            (float Amount, long Ticks, int Count)? gizmoBatch = null;
             lock (_lock)
             {
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
-                while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive))
+                while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive) &&
+                       !(_pendingGizmo is not null && _gizmoActive))
                 {
                     if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
@@ -727,11 +886,17 @@ public sealed class EditorWorker : IDisposable
                     drag = _pendingDrag;
                     _pendingDrag = null;
                 }
+                else if (_pendingGizmo is not null && _gizmoActive)
+                {
+                    gizmoBatch = _pendingGizmo;
+                    _pendingGizmo = null;
+                }
                 else if (_work.Count > 0)
                 {
                     work = _work.Dequeue();
                 }
             }
+            if (gizmoBatch is { } batch) PreviewGizmo(session, batch.Amount, batch.Ticks, batch.Count);
             if (drag is { } offset)
             {
                 WriteDrag(session, offset.Dx, offset.Dy, offset.InputTicks, offset.Count);

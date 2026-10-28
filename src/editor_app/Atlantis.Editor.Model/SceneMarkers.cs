@@ -30,6 +30,37 @@ public sealed class LocalTransforms
         return local;
     }
 
+    /// <summary>Reads the nodes' local Transforms not yet cached in one pipelined batch.</summary>
+    public void Prefetch(IAuthoringDocument document, IEnumerable<EntityGuid> nodes)
+    {
+        var missing = nodes.Where(n => !_cache.ContainsKey(n)).Distinct().ToList();
+        var addresses = new List<SceneAddress>();
+        var owners = new List<(EntityGuid Node, int Field)>();
+        string[] fields = { "localPosition", "localEulerAnglesRadians", "localScale" };
+        foreach (EntityGuid node in missing)
+        {
+            for (int f = 0; f < fields.Length; ++f)
+            {
+                if (SceneSchema.AddressOf(document.Schema, node, "Transform", fields[f]) is SceneAddress a)
+                {
+                    addresses.Add(a);
+                    owners.Add((node, f));
+                }
+            }
+        }
+        IReadOnlyList<PropertyValue?> values = document.GetProperties(addresses);
+        var read = missing.ToDictionary(n => n, _ => new Vector3?[3]);
+        for (int i = 0; i < owners.Count; ++i)
+        {
+            if (values[i] is PropertyValue v && v.TryGetVec3(out Vector3 x)) read[owners[i].Node][owners[i].Field] = x;
+        }
+        foreach (EntityGuid node in missing)
+        {
+            Vector3?[] r = read[node];
+            _cache[node] = new LocalTransform(r[0] ?? Vector3.Zero, r[1] ?? Vector3.Zero, r[2] ?? Vector3.One);
+        }
+    }
+
     /// <summary>A node's world matrix, solved from the cached local Transforms up its parent chain.</summary>
     public float[] WorldOf(IAuthoringDocument document, DocumentTree tree, EntityGuid node)
     {
@@ -71,13 +102,25 @@ public static class SceneMarkers
         TypeId? light = SceneSchema.TypeOf(schema, "Light"), camera = SceneSchema.TypeOf(schema, "Camera"),
                 renderable = SceneSchema.TypeOf(schema, "Renderable");
         var markers = new List<Marker>();
+        var wanted = new List<(EntityGuid Node, MarkerKind Kind)>();
         foreach (EntityGuid node in tree.Order)
         {
             IReadOnlyList<TypeId> components = tree.ComponentsOf(node);
             if (renderable is TypeId r && components.Contains(r)) continue;
             MarkerKind? kind = light is TypeId l && components.Contains(l) ? MarkerKind.Light
                              : camera is TypeId c && components.Contains(c) ? MarkerKind.Camera : null;
-            if (kind is not MarkerKind k) continue;
+            if (kind is MarkerKind k) wanted.Add((node, k));
+        }
+        // Every marker's parent chain in one pipelined read, not a frame per property.
+        var chains = new List<EntityGuid>();
+        foreach (var (node, _) in wanted)
+        {
+            var seen = new HashSet<EntityGuid>();
+            for (EntityGuid? current = node; current is EntityGuid c && seen.Add(c); current = tree.ParentOf(c)) chains.Add(c);
+        }
+        transforms.Prefetch(document, chains);
+        foreach (var (node, k) in wanted)
+        {
             float[] world = transforms.WorldOf(document, tree, node);
             markers.Add(new Marker(node, k, new Vector3(world[12], world[13], world[14])));
         }

@@ -28,8 +28,14 @@ public interface IAuthoringDocument
     /// <summary>A node's component types, sorted; empty for an unknown node.</summary>
     IReadOnlyList<TypeId> ListComponents(EntityGuid node);
 
+    /// <summary>Several nodes' component types in the input's order; a document that can pipeline the reads overrides it.</summary>
+    IReadOnlyList<IReadOnlyList<TypeId>> ListComponents(IReadOnlyList<EntityGuid> nodes) => nodes.Select(ListComponents).ToList();
+
     /// <summary>A property's value; null when it cannot be read.</summary>
     PropertyValue? GetProperty(SceneAddress address);
+
+    /// <summary>Several properties in the input's order (null where one cannot be read); a document that can pipeline the reads overrides it.</summary>
+    IReadOnlyList<PropertyValue?> GetProperties(IReadOnlyList<SceneAddress> addresses) => addresses.Select(GetProperty).ToList();
 
     /// <summary>The active camera's node; null when there is none.</summary>
     EntityGuid? ActiveCamera();
@@ -55,10 +61,16 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
 {
     private readonly AuthoringSession _session;
     private readonly SubscriptionId _subscription;
+    private readonly RemoteSession? _wire;
 
-    public RemoteAuthoringDocument(AuthoringSession session)
+    // Answered at a Runtime frame boundary each (~47 ms on Bistro), so reading a big document call by call is minutes;
+    // with the wire the batched reads share a boundary. No new wire call (ADR-0125 D2).
+    private const int PipelineWindow = 256;
+
+    public RemoteAuthoringDocument(AuthoringSession session, RemoteSession? wire = null)
     {
         _session = session;
+        _wire = wire;
         _subscription = session.Subscribe(new EventFilter());
     }
 
@@ -76,6 +88,56 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
     {
         var components = _session.ListComponents(node);
         return components.IsOk ? components.Value! : Array.Empty<TypeId>();
+    }
+
+    public IReadOnlyList<IReadOnlyList<TypeId>> ListComponents(IReadOnlyList<EntityGuid> nodes)
+    {
+        if (_wire is null) return nodes.Select(ListComponents).ToList();
+        var all = new List<IReadOnlyList<TypeId>>(nodes.Count);
+        for (int start = 0; start < nodes.Count; start += PipelineWindow)
+        {
+            int count = Math.Min(PipelineWindow, nodes.Count - start);
+            var ids = new List<ulong>(count);
+            for (int i = 0; i < count; ++i)
+            {
+                ids.Add(_wire.Send("authoring.listComponents", JsonValue.NewObject().Set("node", Codec.Encode(nodes[start + i]))));
+            }
+            foreach (ulong id in ids)
+            {
+                JsonValue result = _wire.AwaitResult(id);
+                var types = new List<TypeId>();
+                if (result.Find("ok") is JsonValue ok)
+                {
+                    foreach (JsonValue item in ok.Items)
+                    {
+                        if (Codec.DecodeTypeId(item) is TypeId type) types.Add(type);
+                    }
+                }
+                all.Add(types);
+            }
+        }
+        return all;
+    }
+
+    public IReadOnlyList<PropertyValue?> GetProperties(IReadOnlyList<SceneAddress> addresses)
+    {
+        if (_wire is null) return addresses.Select(GetProperty).ToList();
+        var all = new List<PropertyValue?>(addresses.Count);
+        for (int start = 0; start < addresses.Count; start += PipelineWindow)
+        {
+            int count = Math.Min(PipelineWindow, addresses.Count - start);
+            var ids = new List<ulong>(count);
+            for (int i = 0; i < count; ++i)
+            {
+                ids.Add(_wire.Send("authoring.getProperty", JsonValue.NewObject().Set("address", Codec.Encode(addresses[start + i]))));
+            }
+            foreach (ulong id in ids)
+            {
+                JsonValue result = _wire.AwaitResult(id);
+                all.Add(result.Find("ok") is JsonValue ok ? Codec.DecodePropertyValue(ok) : null);
+            }
+        }
+        return all;
     }
 
     public PropertyValue? GetProperty(SceneAddress address)
