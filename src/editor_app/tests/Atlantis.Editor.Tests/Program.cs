@@ -58,6 +58,9 @@ public static partial class Program
             GizmoVectorChecks(Path.Combine(conformance, "gizmo_vectors.jsonl"));
             WorldMatrixChecks(Path.Combine(conformance, "world_matrix_vectors.jsonl"));
             HistoryTranscriptChecks(Path.Combine(conformance, "history_transcripts.jsonl"));
+            // Plan 0068 M2: the Hierarchy's model, its commands (J4) and the apply controller, against a fake document.
+            HierarchyChecks();
+            ApplyControllerChecks();
         }
         catch (Exception e)
         {

@@ -17,8 +17,13 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using Atlantis.Gameplay;
+using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
+using Command = Atlantis.Gameplay.Authoring.Command;
+using Event = Atlantis.Gameplay.Authoring.Event;
+using DestroyNode = Atlantis.Gameplay.Authoring.DestroyNode;
+using CommandFailure = Atlantis.Gameplay.Authoring.CommandFailure;
 using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
@@ -116,6 +121,7 @@ public static class Smoke
                           PngPixels.Read(afterImage.Path).SamePixels(PngPixels.Read(again.Path)),
                           cleared?.ToString() ?? after.Error?.ToString() ?? "");
                 }
+                AuthoringChecks(session, Check);
             }
             Check("the Runtime closes", runtime.CloseMainWindow());
             exitCode = runtime.WaitForExit(TimeSpan.FromSeconds(30));
@@ -144,6 +150,97 @@ public static class Smoke
             Console.Error.WriteLine((ok ? "  ok    " : "  FAIL  ") + name + (detail.Length > 0 ? " -- " + detail : ""));
         }
         return passed ? 0 : 1;
+    }
+
+    // Plan 0068 M2 (Spec 0068 R3, R7; ADR-0135 D2-D3): the Hierarchy's model against the real authoring session -- the
+    // tree from ListNodes(), a created node as one transaction with an apply that lands (Applied), a subtree destroyed in
+    // one transaction, a reparent kept or refused (J4), and the local-transform cache following the document's events.
+    private static void AuthoringChecks(RemoteSession session, Action<string, bool, string> record)
+    {
+        void check(string name, bool ok, string detail = "") => record(name, ok, detail);
+        check("authoring: the document opens", session.Authoring.Document() is not null || session.Authoring.Open() is null);
+        var document = new RemoteAuthoringDocument(session.Authoring);
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        check("authoring: the tree has the scene's nodes", tree.Count > 0, tree.Count + " nodes");
+        var transforms = new LocalTransforms();
+        var apply = new ApplyController(document);
+
+        void Settle()
+        {
+            foreach (Event e in document.DrainEvents())
+            {
+                tree.Apply(e, document);
+                transforms.Apply(e);
+                apply.Apply(e);
+            }
+        }
+        // A request is answered at the Runtime's next frame boundary: step until Applied settles.
+        bool WaitApplied()
+        {
+            for (int i = 0; i < 20 && apply.Status == ApplyStatus.Applying; ++i)
+            {
+                session.Control.Step(new StepRequest(1));
+                Settle();
+            }
+            return apply.Status == ApplyStatus.Applied;
+        }
+        string lastRefusal = "";
+        bool Commit(EditPlan plan)
+        {
+            document.SubmitTransaction(plan.Commands);
+            session.Control.Step(new StepRequest(1));  // the smoke's Runtime is paused: a frame applies what was submitted
+            IReadOnlyList<CommandFailure> failures = document.DrainFailures();
+            bool refused = failures.Count > 0;
+            lastRefusal = refused ? plan.Label + ": " + failures[0].Error : "";
+            Settle();
+            if (!refused) apply.Request();
+            return !refused;
+        }
+
+        ulong before = (ulong)tree.Count;
+        var (create, node) = HierarchyCommands.CreateChild(document, tree, null);
+        check("authoring: create is one accepted transaction", Commit(create) && tree.Contains(node) && (ulong)tree.Count == before + 1, lastRefusal);
+        check("authoring: the apply lands (Applied, the Runtime reloaded)", WaitApplied() && apply.Generation > 0, apply.Text);
+
+        // A child under it, then the subtree destroyed in one transaction.
+        var (createChild, child) = HierarchyCommands.CreateChild(document, tree, node);
+        check("authoring: a child is created under the node", Commit(createChild) && tree.ParentOf(child) == node);
+        check("authoring: the destroyed subtree is the node and its child",
+              HierarchyCommands.DestroySubtree(document, tree, node).Commands.OfType<DestroyNode>().Count() == 2);
+        check("authoring: the subtree is destroyed in one transaction",
+              Commit(HierarchyCommands.DestroySubtree(document, tree, node)) && !tree.Contains(node) && !tree.Contains(child) &&
+              (ulong)tree.Count == before);
+        check("authoring: the apply after the destroy lands", WaitApplied() || apply.Status == ApplyStatus.Applying, apply.Text);
+
+        // J4 against the real document: a node under a parent scaled (1, 1, 0.25) and rotated is refused; nothing is sent.
+        var (makeParent, squashed) = HierarchyCommands.CreateChild(document, tree, null);
+        var (makeSibling, sibling) = HierarchyCommands.CreateChild(document, tree, null);
+        bool made = Commit(makeParent) && Commit(makeSibling);
+        var plan = new List<Command>();
+        plan.AddRange(TransformMath.WriteLocal(document.Schema, squashed, new LocalTransform(new Vector3(2, 0, -1), new Vector3(0.3f, 0.5f, 0.2f), new Vector3(1, 1, 0.25f))));
+        plan.AddRange(TransformMath.WriteLocal(document.Schema, sibling, new LocalTransform(new Vector3(5, 1, 3), new Vector3(0.4f, 0.1f, 0.7f), new Vector3(1, 1.5f, 1))));
+        made &= Commit(new EditPlan("set transforms", plan));
+        check("authoring: two test nodes with transforms are written", made);
+        EditPlan refusedPlan = HierarchyCommands.Reparent(document, tree, sibling, squashed);
+        check("authoring: reparent under a squashed, rotated parent is refused (J4), nothing submitted",
+              refusedPlan.Refusal == HierarchyCommands.NotRepresentable && refusedPlan.Commands.Count == 0 && tree.ParentOf(sibling) is null);
+        float[] worldBefore = TransformMath.WorldOf(document, tree, sibling);
+        var uniform = HierarchyCommands.CreateChild(document, tree, null);
+        bool kept = Commit(uniform.Plan) &&
+                    Commit(new EditPlan("set transform", TransformMath.WriteLocal(document.Schema, uniform.Node,
+                        new LocalTransform(new Vector3(-1, 4, 2), new Vector3(0.2f, -0.6f, 0.3f), new Vector3(2, 2, 2))))) &&
+                    Commit(HierarchyCommands.Reparent(document, tree, sibling, uniform.Node));
+        float[] worldAfter = TransformMath.WorldOf(document, tree, sibling);
+        check("authoring: under a uniformly scaled, rotated parent the world matrix is kept",
+              kept && tree.ParentOf(sibling) == uniform.Node && worldBefore.Zip(worldAfter).All(p => MathF.Abs(p.First - p.Second) <= 1e-4f * MathF.Max(1.0f, MathF.Abs(p.First))),
+              "kept=" + kept);
+        // Leave the document as found: destroy the test nodes (the sibling's subtree is under `uniform`).
+        Commit(HierarchyCommands.DestroySubtree(document, tree, squashed));
+        Commit(HierarchyCommands.DestroySubtree(document, tree, uniform.Node));
+        check("authoring: the document is back to its node count", (ulong)tree.Count == before, tree.Count + " of " + before);
+        check("authoring: the tree equals a fresh read of the document",
+              document.ListNodes().Select(n => n.Node).SequenceEqual(tree.Order));
     }
 
     private static bool Near(IReadOnlyList<float> actual, float[] expected)

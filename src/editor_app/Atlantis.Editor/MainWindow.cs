@@ -27,6 +27,7 @@ using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
@@ -59,7 +60,20 @@ public sealed class MainWindow : Window
     private readonly EditorOptions _options;
     private readonly string _workDirectory = RuntimeProcess.NewWorkDirectory();
     private readonly EditorLog _log;
+    // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
+    private readonly Selection _selection = new();
+    private readonly Button _create = new() { Content = "Create child" };
+    private readonly Button _destroy = new() { Content = "Destroy subtree" };
+    private readonly Button _toRoot = new() { Content = "Move to root" };
+    private readonly Button _pickUp = new() { Content = "Pick up" };
+    private readonly Button _moveHere = new() { Content = "Move under selection", IsEnabled = false };
+    private readonly TextBlock _applyLine = new() { Text = "authoring: connecting..." };
+    private readonly TextBlock _editLine = new();
+    private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
+    private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
+    private EntityGuid? _pickedUp;
+    private bool _syncingSelection;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
     private readonly TextBox _notes = new();
@@ -131,6 +145,9 @@ public sealed class MainWindow : Window
         _status.Height = 96;
         _notes.PlaceholderText = "Type here (keyboard focus check)";
         _entities.SelectionMode = SelectionMode.Single;
+        _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
+            new TextBlock { Text = row.Label, Margin = new Thickness(row.Depth * 14, 0, 0, 0) });
+        _entities.SelectionChanged += (_, _) => OnHierarchySelected();
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         buttons.Children.Add(_measureFrames);
@@ -144,11 +161,20 @@ public sealed class MainWindow : Window
         sizing.Children.Add(_applySize);
         tools.Children.Add(sizing);
         var left = new DockPanel { Margin = new Thickness(6) };
-        var heading = new TextBlock { Text = "Entities", Margin = new Thickness(0, 0, 0, 4) };
+        var heading = new TextBlock { Text = "Hierarchy", Margin = new Thickness(0, 0, 0, 4) };
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(tools, Dock.Bottom);
+        var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        foreach (Button b in new[] { _create, _destroy, _toRoot, _pickUp, _moveHere }) { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
+        state.Children.Add(_applyLine);
+        state.Children.Add(_editLine);
+        DockPanel.SetDock(edits, Dock.Top);
+        DockPanel.SetDock(state, Dock.Bottom);
         left.Children.Add(heading);
+        left.Children.Add(edits);
         left.Children.Add(tools);
+        left.Children.Add(state);
         left.Children.Add(_entities);
 
         var grid = new Grid
@@ -177,6 +203,27 @@ public sealed class MainWindow : Window
             _worker?.Measure(600);
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
+        _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
+        _destroy.Click += (_, _) =>
+        {
+            if (_selection.Node is EntityGuid node) _worker?.DestroySubtree(node);
+        };
+        _toRoot.Click += (_, _) =>
+        {
+            if (_selection.Node is EntityGuid node) _worker?.Reparent(node, null);
+        };
+        _pickUp.Click += (_, _) =>
+        {
+            _pickedUp = _selection.Node;
+            _moveHere.IsEnabled = _pickedUp is not null;
+            _editLine.Text = _pickedUp is EntityGuid n ? "picked up " + n.Value.ToString("N")[..8] + ": select its new parent" : "";
+        };
+        _moveHere.Click += (_, _) =>
+        {
+            if (_pickedUp is EntityGuid node && _selection.Node is EntityGuid parent) _worker?.Reparent(node, parent);
+            _pickedUp = null;
+            _moveHere.IsEnabled = false;
+        };
         _applySize.Click += (_, _) => ApplyViewportSize();
         _measureLatency.IsCheckedChanged += (_, _) =>
         {
@@ -264,6 +311,16 @@ public sealed class MainWindow : Window
             UpdateStatus();
         };
         worker.Picked += OnPicked;
+        worker.HierarchyChanged += OnHierarchyChanged;
+        worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        worker.EditNotice += text => _editLine.Text = text;
+        worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
+            "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
+        worker.NodesDestroyed += nodes =>
+        {
+            if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
+        };
+        worker.NodeCreatedByEditor += node => SetSelection(node, true);
         worker.CameraAcked += ack =>
         {
             _cameraLine = string.Format(CultureInfo.InvariantCulture, "camera: input->ack {0:F1} ms{1} ({2} coalesced)",
@@ -285,13 +342,12 @@ public sealed class MainWindow : Window
     private void OnConnected(SceneSnapshot scene)
     {
         _scene = scene;
-        _entities.ItemsSource = scene.Entities;
         if (scene.ScenePose is CameraPose pose) _camera.Reset(pose);
         else _camera.Reset(new CameraPose(new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 10, 1 }, CameraLens.Default));
         _cameraInitialized = true;
-        if (_recorder is not null && _entities.SelectedItem is null && scene.FirstRenderable is EntityGuid first)
+        if (_recorder is not null && _selection.Node is null && scene.FirstRenderable is EntityGuid first)
         {
-            _entities.SelectedItem = scene.Entities.FirstOrDefault(row => row.Guid == first);  // the drag's default subject
+            SetSelection(first, true);  // the drag's default subject
         }
         if (_options.DriveDrags > 0) StartDriver();
         if (_options.MeasureOverlay) StartOverlayMeasurement();
@@ -451,12 +507,12 @@ public sealed class MainWindow : Window
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown when (e.Shift || _options.DriveDrags > 0) && _worker is not null && _cameraInitialized &&
-                                               _entities.SelectedItem is EntityRow row && _viewport.Window is { } window:
+                                               _selection.Node is EntityGuid selected && _viewport.Window is { } window:
                 _dragPress = (e.X, e.Y);
                 _recorder!.Press(e.ArrivalTicks);
                 _log.Write("ui press at " + e.X + "," + e.Y);
-                _worker.BeginDrag(row.Guid, _camera.Pose(), window.Height);
-                _inputLine = "measurement drag of " + row.Label;
+                _worker.BeginDrag(selected, _camera.Pose(), window.Height);
+                _inputLine = "measurement drag of " + selected.Value.ToString("N")[..8];
                 return true;
             case ViewportPointer.Move when _dragPress is { } press:
                 _worker?.DragTo(e.X - press.X, e.Y - press.Y, e.ArrivalTicks);
@@ -486,6 +542,15 @@ public sealed class MainWindow : Window
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
         CameraMatrices? matrices = _camera.Matrices((float)window.Width / window.Height);
         if (matrices is null) return;
+        // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
+        var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
+        if (Picking.PickMarker(_markers, matrices, rect, x, y) is EntityGuid marker)
+        {
+            SetSelection(marker, true);
+            _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
+            UpdateStatus();
+            return;
+        }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
         float ndcY = (float)y / window.Height * 2.0f - 1.0f;
         _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks);
@@ -499,20 +564,60 @@ public sealed class MainWindow : Window
         }
         else if (pick.Result.Hit is RayHit hit)
         {
-            EntityRow? row = _scene?.Entities.FirstOrDefault(r => r.Guid == hit.Entity);
-            _entities.SelectedItem = row;
-            if (row is not null) _entities.ScrollIntoView(row);
-            _worker?.ShowPick(hit.Entity);
+            SetSelection(hit.Entity, true);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: {0} at {1:F3} ({2:F1} ms)", hit.Entity, hit.Distance,
                                       pick.InputToAnswerMs);
         }
         else
         {
-            _entities.SelectedItem = null;
-            _worker?.ShowPick(null);
+            SetSelection(null, true);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: no hit ({0:F1} ms)", pick.InputToAnswerMs);
         }
         UpdateStatus();
+    }
+
+    // Plan 0068 M2 (Spec 0068 R6, Q6): the one selection. A change anywhere -- the Viewport pick, the Hierarchy, a
+    // node destroyed -- updates the list's highlight and the overlay (outline, Gizmo, markers).
+    private void SetSelection(EntityGuid? node, bool scroll)
+    {
+        _selection.Select(node);
+        _syncingSelection = true;
+        try
+        {
+            HierarchyRow? row = node is EntityGuid n ? _hierarchyRows.FirstOrDefault(r => r.Node == n) : null;
+            _entities.SelectedItem = row;
+            if (scroll && row is not null) _entities.ScrollIntoView(row);
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
+        _worker?.ShowSelection(node);
+    }
+
+    private void OnHierarchySelected()
+    {
+        if (_syncingSelection) return;
+        EntityGuid? node = (_entities.SelectedItem as HierarchyRow)?.Node;
+        if (node == _selection.Node) return;
+        _selection.Select(node);
+        _worker?.ShowSelection(node);
+    }
+
+    private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)
+    {
+        _hierarchyRows = rows;
+        _markers = markers;
+        _syncingSelection = true;
+        try
+        {
+            _entities.ItemsSource = rows;
+            _entities.SelectedItem = _selection.Node is EntityGuid n ? rows.FirstOrDefault(r => r.Node == n) : null;
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
     }
 
     // The UI thread's responsiveness (P5 U2, input-queue coupling): the gaps between 16 ms timer ticks.

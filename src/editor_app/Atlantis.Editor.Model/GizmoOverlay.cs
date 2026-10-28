@@ -40,6 +40,27 @@ public static class GizmoOverlay
     public static ViewportOverlay ForPick(EntityGuid entity, Vector3 position) =>
         new(new[] { entity }, new[] { TranslateGizmo(position) });
 
+    /// <summary>E1's marker colour (kMarkerColor: IM_COL32(235, 235, 235, 230)) and a size the pick radius covers.</summary>
+    public static readonly OverlayColor MarkerColor = new(235 / 255.0f, 235 / 255.0f, 235 / 255.0f, 230 / 255.0f);
+    public const float MarkerPixels = 9.0f;
+
+    /// <summary>
+    /// Plan 0068 M2 (Spec 0068 R6, Q6): the editor's overlay -- the selected node outlined, a translate Gizmo at its world
+    /// position when it has one, and a point at every light and camera marker (drawn on top, as E1 draws them).
+    /// </summary>
+    public static ViewportOverlay ForSelection(EntityGuid? node, Vector3? gizmoAt, IReadOnlyList<Marker> markers)
+    {
+        var groups = new List<OverlayGroup>(2);
+        if (gizmoAt is Vector3 position) groups.Add(TranslateGizmo(position));
+        if (markers.Count > 0)
+        {
+            var points = new List<OverlayPoint>(markers.Count);
+            foreach (Marker marker in markers) points.Add(new OverlayPoint(marker.Position, MarkerColor, OverlayDepth.OnTop, MarkerPixels));
+            groups.Add(OverlayGroup.World(points: points));
+        }
+        return new ViewportOverlay(node is EntityGuid n ? new[] { n } : Array.Empty<EntityGuid>(), groups);
+    }
+
     /// <summary>
     /// The translate Gizmo anchored at <paramref name="position"/>: per axis (X, Y, Z) one segment from the anchor to
     /// one unit along it, then its cone's 2 * TipSides triangles; one unit is HandlePixels pixels.

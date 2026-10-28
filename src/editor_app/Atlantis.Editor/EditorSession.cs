@@ -4,7 +4,11 @@
 // frame-time and latency measurements of the Phase 1 investigation, and Plan
 // 0066 M1's measurement drag (WorldMatrix.column3 writes, timed), and Plan
 // 0066 M5's pick overlay (SetViewportOverlay: an outline and a Gizmo) and M6's
-// overlay measurement (OverlayMeasurement.cs). One
+// overlay measurement (OverlayMeasurement.cs). Plan 0068 M2: the authoring
+// document -- opened through the session's AuthoringSession, its events
+// drained every ~50 ms into the Hierarchy's tree, the local-Transform cache
+// and the apply controller; the Hierarchy's edits as one transaction each,
+// then an apply (ADR-0135 D2, D3); the selection's overlay. One
 // worker thread owns the RemoteSession (the SDK is not thread-safe), so the
 // UI thread never waits on the Runtime's frame. UI-free.
 using System;
@@ -17,8 +21,19 @@ using System.Numerics;
 using System.Text;
 using System.Threading;
 using Atlantis.Gameplay;
+using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
+using Command = Atlantis.Gameplay.Authoring.Command;
+using CommandFailure = Atlantis.Gameplay.Authoring.CommandFailure;
+using Event = Atlantis.Gameplay.Authoring.Event;
+using EventFilter = Atlantis.Gameplay.Authoring.EventFilter;
+using SetProperty = Atlantis.Gameplay.Authoring.SetProperty;
+using AddComponent = Atlantis.Gameplay.Authoring.AddComponent;
+using RemoveComponent = Atlantis.Gameplay.Authoring.RemoveComponent;
+using PropertyChanged = Atlantis.Gameplay.Authoring.PropertyChanged;
+using ComponentAdded = Atlantis.Gameplay.Authoring.ComponentAdded;
+using ComponentRemoved = Atlantis.Gameplay.Authoring.ComponentRemoved;
 using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
@@ -215,6 +230,18 @@ public sealed class EditorWorker : IDisposable
     private float _dragUnitsPerPixel;
     // The last write, until a later answer (after the frame that applied it) dates its first visible frame.
     private (long InputTicks, double AckMs, ulong Frame, int Coalesced)? _unseenWrite;
+    // Plan 0068 M2: the authoring document's view, worker-thread state.
+    private const double PollMilliseconds = 50.0;
+    private IAuthoringDocument? _document;
+    private readonly DocumentTree _tree = new();
+    private readonly LocalTransforms _transforms = new();
+    private ApplyController? _apply;
+    private string _applyText = "";
+    private ulong _postedGeneration = ulong.MaxValue;
+    private bool _transformsChanged;
+    private long _lastPoll;
+    private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
+    private EntityGuid? _selected;
 
     public EditorWorker(SessionInfo info, Action<Action> post, EditorLog log)
     {
@@ -230,6 +257,13 @@ public sealed class EditorWorker : IDisposable
     public event Action<PickResult>? Picked;
     public event Action<CameraAck>? CameraAcked;
     public event Action<FrameTimes>? Measured;
+    // Plan 0068 M2.
+    public event Action<DocumentInfo?>? DocumentOpened;
+    public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
+    public event Action<string>? ApplyStateChanged;
+    public event Action<IReadOnlyList<EntityGuid>>? NodesDestroyed;
+    public event Action<string>? EditNotice;
+    public event Action<EntityGuid>? NodeCreatedByEditor;
 
     /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
     public string? SessionPath { get; init; }
@@ -423,6 +457,150 @@ public sealed class EditorWorker : IDisposable
         });
     }
 
+    /// <summary>Plan 0068 M2 (Spec 0068 R3): a node with a Transform under <paramref name="parent"/> (null: the root).</summary>
+    public void CreateChild(EntityGuid? parent) => Edit(document =>
+    {
+        var (plan, node) = HierarchyCommands.CreateChild(document, _tree, parent);
+        return (plan, node);
+    });
+
+    /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
+    public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
+
+    /// <summary>Plan 0068 M2 (J4): the node under <paramref name="parent"/>, keeping its world placement, or refused.</summary>
+    public void Reparent(EntityGuid node, EntityGuid? parent) =>
+        Edit(document => (HierarchyCommands.Reparent(document, _tree, node, parent), null));
+
+    /// <summary>
+    /// Plan 0068 M2 (Spec 0068 R6): the overlay for the selection -- the node outlined, a translate Gizmo at its world
+    /// position (from the document), and the light and camera markers.
+    /// </summary>
+    public void ShowSelection(EntityGuid? node) => Enqueue(session =>
+    {
+        _selected = node;
+        SendOverlay(session);
+    });
+
+    // One edit: planned on this thread against the tree as of now, submitted as one transaction, then an apply.
+    private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan) => Enqueue(session =>
+    {
+        if (_document is null || _apply is null)
+        {
+            _post(() => EditNotice?.Invoke("no authoring document"));
+            return;
+        }
+        PollDocument(session);
+        var (edit, created) = plan(_document);
+        if (edit.Refusal is string reason)
+        {
+            _log.Write("edit " + edit.Label + " refused: " + reason);
+            _post(() => EditNotice?.Invoke(edit.Label + " refused: " + reason));
+            return;
+        }
+        long start = Stopwatch.GetTimestamp();
+        _document.SubmitTransaction(edit.Commands);
+        IReadOnlyList<CommandFailure> failures = _document.DrainFailures();
+        double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        if (failures.Count > 0)
+        {
+            string why = edit.Label + " refused by the document: " + failures[0].Error;
+            _log.Write("edit " + why);
+            _post(() => EditNotice?.Invoke(why));
+            PollDocument(session);
+            return;
+        }
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
+                                 edit.Commands.Count, ms));
+        _apply.Request();
+        PollDocument(session);
+        _post(() => EditNotice?.Invoke(edit.Label));
+        if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
+    });
+
+    // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
+    private void OpenDocument(RemoteSession session)
+    {
+        try
+        {
+            if (session.Authoring.Document() is null && session.Authoring.Open() is OpenError error)
+            {
+                _log.Write("authoring: open refused: " + error);
+                _post(() => EditNotice?.Invoke("the authoring document cannot be opened: " + error));
+                return;
+            }
+            var document = new RemoteAuthoringDocument(session.Authoring);
+            long start = Stopwatch.GetTimestamp();
+            _tree.Rebuild(document);
+            _document = document;
+            _apply = new ApplyController(document);
+            DocumentInfo? info = document.Info();
+            PostHierarchy(session);
+            _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
+                                     _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
+            _post(() => DocumentOpened?.Invoke(info));
+        }
+        catch (Exception e) when (e is GameplayException or InvalidOperationException or IOException)
+        {
+            _log.Write("authoring: " + e.Message);
+            _post(() => EditNotice?.Invoke("no authoring document: " + e.Message));
+        }
+    }
+
+    // Drains the authoring events into the tree, the transform cache and the apply controller; posts what changed.
+    private void PollDocument(RemoteSession session)
+    {
+        _lastPoll = Stopwatch.GetTimestamp();
+        if (_document is null || _apply is null) return;
+        IReadOnlyList<Event> events = _document.DrainEvents();
+        if (events.Count == 0) return;
+        var destroyed = new List<EntityGuid>();
+        foreach (Event e in events)
+        {
+            _tree.Apply(e, _document);
+            _transforms.Apply(e);
+            _apply.Apply(e);
+            if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
+            if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
+        }
+        if (destroyed.Count > 0)
+        {
+            if (_selected is EntityGuid s && destroyed.Contains(s)) _selected = null;
+            _post(() => NodesDestroyed?.Invoke(destroyed));
+        }
+        if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
+        if (_apply.Text != _applyText)
+        {
+            _applyText = _apply.Text;
+            string text = _applyText;
+            _log.Write("apply: " + text);
+            _post(() => ApplyStateChanged?.Invoke(text));
+        }
+    }
+
+    private void PostHierarchy(RemoteSession session)
+    {
+        if (_document is null) return;
+        _postedGeneration = _tree.Generation;
+        _transformsChanged = false;
+        IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema);
+        _markers = SceneMarkers.Of(_document, _tree, _transforms);
+        IReadOnlyList<Marker> markers = _markers;
+        _post(() => HierarchyChanged?.Invoke(rows, markers));
+        SendOverlay(session);
+    }
+
+    private void SendOverlay(RemoteSession session)
+    {
+        Vector3? at = null;
+        if (_document is not null && _selected is EntityGuid node && _tree.Contains(node))
+        {
+            float[] world = _transforms.WorldOf(_document, _tree, node);
+            at = new Vector3(world[12], world[13], world[14]);
+        }
+        ViewportOverlay overlay = GizmoOverlay.ForSelection(_selected, at, _markers);
+        if (session.Control.SetViewportOverlay(overlay) is ControlError refused) _log.Write("overlay refused: " + refused);
+    }
+
     public void Measure(int frames) => Enqueue(session =>
     {
         FrameTimes times = FrameSampler.Measure(session.Control, frames, _capturePath);
@@ -460,6 +638,7 @@ public sealed class EditorWorker : IDisposable
             SceneSnapshot snapshot = SceneReader.Read(world);
             _log.Write("connected: port " + _info.Port + ", " + snapshot.Entities.Count + " entities");
             _post(() => Connected?.Invoke(snapshot));
+            OpenDocument(session);
         }
         catch (Exception e)
         {
@@ -493,7 +672,7 @@ public sealed class EditorWorker : IDisposable
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
                 while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive))
                 {
-                    Monitor.Wait(_lock);
+                    if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
                 if (_stopping) return;
                 if (_pendingCamera is not null)
@@ -506,7 +685,7 @@ public sealed class EditorWorker : IDisposable
                     drag = _pendingDrag;
                     _pendingDrag = null;
                 }
-                else
+                else if (_work.Count > 0)
                 {
                     work = _work.Dequeue();
                 }
@@ -538,6 +717,7 @@ public sealed class EditorWorker : IDisposable
                 _post(() => CameraAcked?.Invoke(acked));
             }
             work?.Invoke(session);
+            if (Stopwatch.GetElapsedTime(_lastPoll).TotalMilliseconds >= PollMilliseconds) PollDocument(session);
         }
     }
 
@@ -552,7 +732,7 @@ public sealed class EditorWorker : IDisposable
         var column3 = new Vector4(_dragStart.X + offset.X, _dragStart.Y + offset.Y, _dragStart.Z + offset.Z, _dragStart.W);
         var address = new PropertyAddress(_dragEntity, W.Fields.WorldMatrix.Column3.Component, W.Fields.WorldMatrix.Column3.Id);
         ulong submit = session.Send("connection.submit",
-                                    JsonValue.NewObject().Set("command", Codec.Encode(new SetProperty(address, column3))));
+                                    JsonValue.NewObject().Set("command", Codec.Encode(new Atlantis.Gameplay.SetProperty(address, column3))));
         ulong status = session.Send("control.status");
         session.AwaitResult(submit);
         RuntimeStatus answered = Codec.DecodeStatus(session.AwaitResult(status)) ?? throw new InvalidOperationException("a malformed status");
