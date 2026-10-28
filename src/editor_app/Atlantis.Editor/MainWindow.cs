@@ -28,6 +28,7 @@ using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
@@ -74,6 +75,10 @@ public sealed class MainWindow : Window
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _pickedUp;
     private bool _syncingSelection;
+    // Plan 0068 M3: the Inspector panel, rebuilt from the worker's snapshots (not while a field is being typed in).
+    private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
+    private InspectorSnapshot? _inspectorShown;
+    private InspectorSnapshot? _inspectorDeferred;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
     private readonly TextBox _notes = new();
@@ -179,18 +184,24 @@ public sealed class MainWindow : Window
 
         var grid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("320,5,*"),
+            ColumnDefinitions = new ColumnDefinitions("320,5,*,5,320"),
             RowDefinitions = new RowDefinitions("*,Auto"),
         };
         Grid.SetColumn(left, 0);
         var splitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
         Grid.SetColumn(splitter, 1);
         Grid.SetColumn(_viewport, 2);
+        var inspectorSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
+        Grid.SetColumn(inspectorSplitter, 3);
+        var inspectorScroll = new ScrollViewer { Content = _inspectorPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        Grid.SetColumn(inspectorScroll, 4);
         Grid.SetRow(_status, 1);
-        Grid.SetColumnSpan(_status, 3);
+        Grid.SetColumnSpan(_status, 5);
         grid.Children.Add(left);
         grid.Children.Add(splitter);
         grid.Children.Add(_viewport);
+        grid.Children.Add(inspectorSplitter);
+        grid.Children.Add(inspectorScroll);
         grid.Children.Add(_status);
         Content = grid;
 
@@ -312,6 +323,7 @@ public sealed class MainWindow : Window
         };
         worker.Picked += OnPicked;
         worker.HierarchyChanged += OnHierarchyChanged;
+        worker.InspectorChanged += OnInspectorChanged;
         worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
         worker.EditNotice += text => _editLine.Text = text;
         worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
@@ -602,6 +614,111 @@ public sealed class MainWindow : Window
         if (node == _selection.Node) return;
         _selection.Select(node);
         _worker?.ShowSelection(node);
+    }
+
+    // Plan 0068 M3 (Spec 0068 R4): one typed editor per field -- a text box committed on Enter or loss of focus (one
+    // transaction each), a combo box for an enum, a clear button for an optional field, a note for a read-only one --
+    // and Add / Remove component. The panel is not rebuilt under a field being typed in: the snapshot waits.
+    private void OnInspectorChanged(InspectorSnapshot snapshot)
+    {
+        if (_inspectorShown is not null && snapshot.Subject == _inspectorShown.Subject && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox focused &&
+            _inspectorPanel.GetVisualDescendants().Contains(focused))
+        {
+            _inspectorDeferred = snapshot;
+            return;
+        }
+        BuildInspector(snapshot);
+    }
+
+    private void BuildInspector(InspectorSnapshot snapshot)
+    {
+        _inspectorShown = snapshot;
+        _inspectorDeferred = null;
+        _inspectorPanel.Children.Clear();
+        if (snapshot.Subject is not EntityGuid subject)
+        {
+            _inspectorPanel.Children.Add(new TextBlock { Text = "Select a node in the Hierarchy.", Opacity = 0.6 });
+            return;
+        }
+        _inspectorPanel.Children.Add(new TextBlock { Text = "Node " + subject, FontWeight = Avalonia.Media.FontWeight.SemiBold, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        foreach (var (component, name) in snapshot.Components)
+        {
+            var header = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+            if (name != "Transform")
+            {
+                var remove = new Button { Content = "Remove", Padding = new Thickness(6, 0) };
+                TypeId id = component;
+                remove.Click += (_, _) => _worker?.RemoveComponent(id);
+                DockPanel.SetDock(remove, Dock.Right);
+                header.Children.Add(remove);
+            }
+            header.Children.Add(new TextBlock { Text = name, FontWeight = Avalonia.Media.FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            _inspectorPanel.Children.Add(header);
+            foreach (InspectorField field in snapshot.Fields.Where(f => f.Component == component)) _inspectorPanel.Children.Add(FieldRow(field));
+        }
+        if (snapshot.Addable.Count > 0)
+        {
+            var add = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var choice = new ComboBox { ItemsSource = snapshot.Addable.Select(a => a.Name).ToList(), SelectedIndex = 0, MinWidth = 140 };
+            var button = new Button { Content = "Add component", Margin = new Thickness(6, 0, 0, 0) };
+            button.Click += (_, _) =>
+            {
+                if (choice.SelectedIndex >= 0) _worker?.AddComponent(snapshot.Addable[choice.SelectedIndex].Id);
+            };
+            DockPanel.SetDock(button, Dock.Right);
+            add.Children.Add(button);
+            add.Children.Add(choice);
+            _inspectorPanel.Children.Add(add);
+        }
+    }
+
+    private Control FieldRow(InspectorField field)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*,Auto") };
+        row.Children.Add(new TextBlock { Text = field.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
+        Control editor;
+        if (field.Control == FieldControl.Enum && field.Editable)
+        {
+            var combo = new ComboBox { ItemsSource = field.Choices.Select(c => c.Name).ToList(), SelectedItem = field.Text, HorizontalAlignment = HorizontalAlignment.Stretch };
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is string chosen && chosen != field.Text) _worker?.CommitField(field.Path, chosen);
+            };
+            editor = combo;
+        }
+        else
+        {
+            var box = new TextBox { Text = field.Text, IsReadOnly = !field.Editable, Opacity = field.Editable ? 1.0 : 0.6 };
+            if (field.Optional && !field.Present) box.PlaceholderText = "(absent)";
+            string original = field.Text;
+            void Commit()
+            {
+                if (!field.Editable || (box.Text ?? "") == original) return;
+                original = box.Text ?? "";
+                _worker?.CommitField(field.Path, original);
+            }
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Avalonia.Input.Key.Enter) Commit();
+                if (e.Key == Avalonia.Input.Key.Escape) box.Text = original;
+            };
+            box.LostFocus += (_, _) =>
+            {
+                Commit();
+                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() => BuildInspector(waiting));
+            };
+            editor = box;
+        }
+        Grid.SetColumn(editor, 1);
+        row.Children.Add(editor);
+        if (field.Optional && field.Present && field.Editable)
+        {
+            var clear = new Button { Content = "×", Padding = new Thickness(6, 0), Margin = new Thickness(4, 0, 0, 0) };
+            clear.Click += (_, _) => _worker?.ClearField(field.Path);
+            Grid.SetColumn(clear, 2);
+            row.Children.Add(clear);
+        }
+        return row;
     }
 
     private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)

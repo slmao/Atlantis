@@ -61,6 +61,8 @@ public static partial class Program
             // Plan 0068 M2: the Hierarchy's model, its commands (J4) and the apply controller, against a fake document.
             HierarchyChecks();
             ApplyControllerChecks();
+            // Plan 0068 M3: the Inspector's model.
+            InspectorChecks();
         }
         catch (Exception e)
         {

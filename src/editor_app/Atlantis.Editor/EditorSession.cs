@@ -207,6 +207,10 @@ public sealed class EditorLog : IDisposable
 /// Owns the RemoteSession on its own thread. Camera updates are coalesced (only the newest is sent); ray-casts and
 /// measurements are queued. Results are posted back through <c>post</c> (the UI thread's dispatcher).
 /// </summary>
+/// <summary>The Inspector as the worker last read it: the subject's fields, its components and the ones it could add.</summary>
+public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<InspectorField> Fields,
+                                       IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable);
+
 public sealed class EditorWorker : IDisposable
 {
     private readonly SessionInfo _info;
@@ -242,6 +246,7 @@ public sealed class EditorWorker : IDisposable
     private long _lastPoll;
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _selected;
+    private InspectorModel? _inspector;
 
     public EditorWorker(SessionInfo info, Action<Action> post, EditorLog log)
     {
@@ -264,6 +269,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<IReadOnlyList<EntityGuid>>? NodesDestroyed;
     public event Action<string>? EditNotice;
     public event Action<EntityGuid>? NodeCreatedByEditor;
+    public event Action<InspectorSnapshot>? InspectorChanged;
 
     /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
     public string? SessionPath { get; init; }
@@ -464,6 +470,16 @@ public sealed class EditorWorker : IDisposable
         return (plan, node);
     });
 
+    /// <summary>Plan 0068 M3 (Spec 0068 R4): a field's text committed as one transaction (then an apply), or its refusal shown.</summary>
+    public void CommitField(string path, string text) => Edit(document => (_inspector!.Commit(path, text), null));
+
+    /// <summary>Plan 0068 M3: an optional field cleared.</summary>
+    public void ClearField(string path) => Edit(document => (_inspector!.Clear(path), null));
+
+    public void AddComponent(TypeId component) => Edit(document => (_inspector!.AddComponent(component), null));
+
+    public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
+
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
     public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
 
@@ -479,6 +495,7 @@ public sealed class EditorWorker : IDisposable
     {
         _selected = node;
         SendOverlay(session);
+        PostInspector();
     });
 
     // One edit: planned on this thread against the tree as of now, submitted as one transaction, then an apply.
@@ -495,6 +512,7 @@ public sealed class EditorWorker : IDisposable
         {
             _log.Write("edit " + edit.Label + " refused: " + reason);
             _post(() => EditNotice?.Invoke(edit.Label + " refused: " + reason));
+            PostInspector();  // the field reverts to the document's value
             return;
         }
         long start = Stopwatch.GetTimestamp();
@@ -507,12 +525,14 @@ public sealed class EditorWorker : IDisposable
             _log.Write("edit " + why);
             _post(() => EditNotice?.Invoke(why));
             PollDocument(session);
+            PostInspector();
             return;
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
                                  edit.Commands.Count, ms));
         _apply.Request();
         PollDocument(session);
+        PostInspector();
         _post(() => EditNotice?.Invoke(edit.Label));
         if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
     });
@@ -533,6 +553,7 @@ public sealed class EditorWorker : IDisposable
             _tree.Rebuild(document);
             _document = document;
             _apply = new ApplyController(document);
+            _inspector = new InspectorModel(document);
             DocumentInfo? info = document.Info();
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
@@ -567,6 +588,14 @@ public sealed class EditorWorker : IDisposable
             if (_selected is EntityGuid s && destroyed.Contains(s)) _selected = null;
             _post(() => NodesDestroyed?.Invoke(destroyed));
         }
+        // Another client's change to the selected node (or the node going) refreshes the Inspector.
+        if (_selected is EntityGuid subject && events.Any(e => e is PropertyChanged { Address.Node: var n } && n == subject ||
+                                                              e is ComponentAdded { Node: var a } && a == subject ||
+                                                              e is ComponentRemoved { Node: var r } && r == subject || e is DocumentReopened) ||
+            destroyed.Count > 0)
+        {
+            PostInspector();
+        }
         if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
         if (_apply.Text != _applyText)
         {
@@ -575,6 +604,19 @@ public sealed class EditorWorker : IDisposable
             _log.Write("apply: " + text);
             _post(() => ApplyStateChanged?.Invoke(text));
         }
+    }
+
+    // Re-reads the selected node's components and fields (on this thread) and posts them.
+    private void PostInspector()
+    {
+        if (_inspector is null || _document is null) return;
+        EntityGuid? subject = _selected is EntityGuid s && _tree.Contains(s) ? s : null;
+        _inspector.Refresh(subject);
+        IReadOnlyList<SchemaType> schema = _document.Schema;
+        var snapshot = new InspectorSnapshot(subject, _inspector.Fields,
+                                             _inspector.Components.Select(c => (c, SceneSchema.NameOf(schema, c))).ToList(),
+                                             _inspector.Addable().Select(t => (t.Id, t.ShortName)).ToList());
+        _post(() => InspectorChanged?.Invoke(snapshot));
     }
 
     private void PostHierarchy(RemoteSession session)

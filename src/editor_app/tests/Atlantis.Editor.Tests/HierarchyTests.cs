@@ -26,8 +26,10 @@ namespace Atlantis.Editor.Tests;
 /// <summary>An in-memory authoring document: the closed command set, validation, events and Applied.</summary>
 internal sealed class FakeDocument : IAuthoringDocument
 {
-    public static readonly TypeId Transform = new(101), Light = new(102), CameraType = new(103);
+    public static readonly TypeId Transform = new(101), Light = new(102), CameraType = new(103), LightKind = new(104), CameraFog = new(105);
     public static readonly FieldId Position = new(1), Euler = new(2), ScaleField = new(3);
+    // Plan 0068 M3: a Light's fields (an enum and an optional one), a Camera's nested fog and a read-only exposure.
+    public static readonly FieldId Intensity = new(11), Color = new(12), Kind = new(13), Range = new(14), Fog = new(15), Exposure = new(16), Density = new(17);
 
     private sealed class Node
     {
@@ -51,13 +53,32 @@ internal sealed class FakeDocument : IAuthoringDocument
         new SchemaType(Transform, "asset_system::scene::Transform", TypeKind.Struct, 1,
                        new[]
                        {
-                           new SchemaField(Position, "localPosition", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Editable),
-                           new SchemaField(Euler, "localEulerAnglesRadians", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Editable),
-                           new SchemaField(ScaleField, "localScale", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Editable),
+                           new SchemaField(Position, "localPosition", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Serializable),
+                           new SchemaField(Euler, "localEulerAnglesRadians", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Serializable),
+                           new SchemaField(ScaleField, "localScale", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Serializable),
                        },
                        Array.Empty<SchemaConstant>()),
-        new SchemaType(Light, "asset_system::scene::Light", TypeKind.Struct, 1, Array.Empty<SchemaField>(), Array.Empty<SchemaConstant>()),
-        new SchemaType(CameraType, "asset_system::scene::Camera", TypeKind.Struct, 1, Array.Empty<SchemaField>(), Array.Empty<SchemaConstant>()),
+        new SchemaType(Light, "asset_system::scene::Light", TypeKind.Struct, 1,
+                       new[]
+                       {
+                           new SchemaField(Intensity, "intensity", TypeKind.Primitive, PrimitiveKind.Float32, default, FieldFlags.Serializable),
+                           new SchemaField(Color, "color", TypeKind.Primitive, PrimitiveKind.Vec3Float32, default, FieldFlags.Serializable),
+                           new SchemaField(Kind, "kind", TypeKind.Enum, default, LightKind, FieldFlags.Serializable),
+                           new SchemaField(Range, "range", TypeKind.Primitive, PrimitiveKind.Float32, default, FieldFlags.Serializable | FieldFlags.Optional),
+                       },
+                       Array.Empty<SchemaConstant>()),
+        new SchemaType(LightKind, "asset_system::scene::LightKind", TypeKind.Enum, 1, Array.Empty<SchemaField>(),
+                       new[] { new SchemaConstant("Directional", 0), new SchemaConstant("Point", 1) }),
+        new SchemaType(CameraType, "asset_system::scene::Camera", TypeKind.Struct, 1,
+                       new[]
+                       {
+                           new SchemaField(Exposure, "exposureCompensationEv", TypeKind.Primitive, PrimitiveKind.Float32, default, FieldFlags.None),
+                           new SchemaField(Fog, "fog", TypeKind.Struct, default, CameraFog, FieldFlags.Serializable),
+                       },
+                       Array.Empty<SchemaConstant>()),
+        new SchemaType(CameraFog, "asset_system::scene::CameraFog", TypeKind.Struct, 1,
+                       new[] { new SchemaField(Density, "density", TypeKind.Primitive, PrimitiveKind.Float32, default, FieldFlags.Serializable) },
+                       Array.Empty<SchemaConstant>()),
     };
 
     public static EntityGuid Guid(int n) => EntityGuid.Parse($"00000000-0000-4000-8000-{n:D12}");
@@ -69,6 +90,7 @@ internal sealed class FakeDocument : IAuthoringDocument
         var node = new Node { Parent = parent };
         node.Components.Add(Transform.Value);
         foreach (TypeId t in more) node.Components.Add(t.Value);
+        foreach (TypeId t in more) SeedDefaults(id, t, _values);
         _nodes.Add((id, node));
         _values[new SceneAddress(id, Transform, Position)] = PropertyValue.FromVec3(local.Position);
         _values[new SceneAddress(id, Transform, Euler)] = PropertyValue.FromVec3(local.EulerRadians);
@@ -77,6 +99,23 @@ internal sealed class FakeDocument : IAuthoringDocument
     }
 
     public void SetCamera(EntityGuid? camera) => _camera = camera;
+
+    // A component's fields at their defaults, as the real session adds one.
+    private static void SeedDefaults(EntityGuid id, TypeId component, Dictionary<SceneAddress, PropertyValue> values)
+    {
+        if (component == Light)
+        {
+            values[new SceneAddress(id, Light, Intensity)] = PropertyValue.FromFloat32(1.0f);
+            values[new SceneAddress(id, Light, Color)] = PropertyValue.FromVec3(Vector3.One);
+            values[new SceneAddress(id, Light, Kind)] = PropertyValue.FromEnum(0);
+            values[new SceneAddress(id, Light, Range)] = PropertyValue.Absent;
+        }
+        else if (component == CameraType)
+        {
+            values[new SceneAddress(id, CameraType, Exposure)] = PropertyValue.FromFloat32(0.0f);
+            values[new SceneAddress(id, CameraType, Density)] = PropertyValue.FromFloat32(0.5f);
+        }
+    }
 
     public int Submissions { get; private set; }
 
@@ -140,6 +179,25 @@ internal sealed class FakeDocument : IAuthoringDocument
                     values[s.Address] = s.Value;
                     events.Add(new PropertyChanged(s.Address, s.Value));
                     break;
+                case AddComponent ac:
+                {
+                    int i = nodes.FindIndex(n => n.Id == ac.Node);
+                    if (i < 0) { refusal ??= AuthoringError.UnknownNode; break; }
+                    if (!nodes[i].Item2.Components.Add(ac.Component.Value)) { refusal ??= AuthoringError.ComponentAlreadyPresent; break; }
+                    SeedDefaults(ac.Node, ac.Component, values);
+                    events.Add(new ComponentAdded(ac.Node, ac.Component));
+                    break;
+                }
+                case RemoveComponent rc:
+                {
+                    int i = nodes.FindIndex(n => n.Id == rc.Node);
+                    if (i < 0) { refusal ??= AuthoringError.UnknownNode; break; }
+                    if (rc.Component == Transform) { refusal ??= AuthoringError.ComponentRequired; break; }
+                    if (!nodes[i].Item2.Components.Remove(rc.Component.Value)) { refusal ??= AuthoringError.ComponentMissing; break; }
+                    foreach (SceneAddress a in values.Keys.Where(k => k.Node == rc.Node && k.Component == rc.Component).ToList()) values.Remove(a);
+                    events.Add(new ComponentRemoved(rc.Node, rc.Component));
+                    break;
+                }
                 case SetActiveCamera a:
                     camera = a.Camera;
                     events.Add(new ActiveCameraChanged(a.Camera));

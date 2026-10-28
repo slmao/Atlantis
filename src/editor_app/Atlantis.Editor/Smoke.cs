@@ -235,6 +235,39 @@ public static class Smoke
         check("authoring: under a uniformly scaled, rotated parent the world matrix is kept",
               kept && tree.ParentOf(sibling) == uniform.Node && worldBefore.Zip(worldAfter).All(p => MathF.Abs(p.First - p.Second) <= 1e-4f * MathF.Max(1.0f, MathF.Abs(p.First))),
               "kept=" + kept);
+        // Plan 0068 M3 (Spec 0068 R4): the Inspector against the real schema -- a real light's intensity commits as one
+        // SetProperty, its enum shows by name, a camera's nested fog is reflected, and the value is restored.
+        var inspector = new InspectorModel(document);
+        TypeId? lightType = SceneSchema.TypeOf(document.Schema, "Light"), cameraType = SceneSchema.TypeOf(document.Schema, "Camera");
+        EntityGuid? lightNode = tree.Order.Cast<EntityGuid?>().FirstOrDefault(n => lightType is TypeId l && tree.ComponentsOf(n!.Value).Contains(l));
+        EntityGuid? cameraNode = tree.Order.Cast<EntityGuid?>().FirstOrDefault(n => cameraType is TypeId c && tree.ComponentsOf(n!.Value).Contains(c));
+        check("inspector: the scene has a light and a camera", lightNode is not null && cameraNode is not null);
+        if (lightNode is EntityGuid lightId && cameraNode is EntityGuid cameraId)
+        {
+            inspector.Refresh(lightId);
+            InspectorField? intensity = inspector.Find("Light.intensity");
+            InspectorField? kind = inspector.Find("Light.kind");
+            check("inspector: a real light's fields are reflected from the schema",
+                  inspector.Fields.Count(f => f.Component == lightType) >= 3 && intensity is { Control: FieldControl.Float, Editable: true } &&
+                  kind is { Control: FieldControl.Enum, Choices.Count: > 0 }, string.Join(", ", inspector.Fields.Select(f => f.Path)));
+            check("inspector: an enum shows a name from the schema's constants", kind is not null && kind.Choices.Any(c => c.Name == kind.Text), kind?.Text ?? "");
+            float original = intensity!.Value!.Value.AsFloat32();
+            EditPlan commit = inspector.Commit("Light.intensity", (original + 1.25f).ToString("R", CultureInfo.InvariantCulture));
+            check("inspector: a commit is one SetProperty", commit.Refusal is null && commit.Commands.Count == 1, commit.Refusal ?? "");
+            check("inspector: the real document accepts it", Commit(commit), lastRefusal);
+            inspector.Refresh(lightId);
+            check("inspector: the refreshed field shows the committed value",
+                  MathF.Abs(inspector.Find("Light.intensity")!.Value!.Value.AsFloat32() - (original + 1.25f)) < 1e-4f);
+            check("inspector: the apply lands", WaitApplied(), apply.Text);
+            Commit(inspector.Commit("Light.intensity", original.ToString("R", CultureInfo.InvariantCulture)));  // restore
+            inspector.Refresh(lightId);
+            check("inspector: the value is restored", MathF.Abs(inspector.Find("Light.intensity")!.Value!.Value.AsFloat32() - original) < 1e-4f);
+            inspector.Refresh(cameraId);
+            check("inspector: a camera's nested fog is reflected in place", inspector.Fields.Any(f => f.Path.StartsWith("Camera.fog.", StringComparison.Ordinal)),
+                  string.Join(", ", inspector.Fields.Where(f => f.Component == cameraType).Select(f => f.Path)));
+            check("inspector: the Transform cannot be removed", inspector.RemoveComponent(SceneSchema.TypeOf(document.Schema, "Transform")!.Value).Refusal == "the Transform is required");
+        }
+
         // Leave the document as found: destroy the test nodes (the sibling's subtree is under `uniform`).
         Commit(HierarchyCommands.DestroySubtree(document, tree, squashed));
         Commit(HierarchyCommands.DestroySubtree(document, tree, uniform.Node));
