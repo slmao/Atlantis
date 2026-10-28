@@ -405,5 +405,24 @@ public static partial class Program
         Check(apply.Status == ApplyStatus.Failed && apply.Text.StartsWith("failed: CookFailed"), "apply: a refused apply is shown with its reason");
         apply.Request();
         Check(apply.Status == ApplyStatus.Applying, "apply: the next request retries");
+
+        // J8: Commit is the commit and its apply as one; a refusal sends no apply; while one is in flight it coalesces.
+        var doc2 = new FakeDocument();
+        var apply2 = new ApplyController(doc2);
+        var missing = new EntityGuid(Guid.NewGuid());
+        Check(apply2.Commit(new Command[] { new DestroyNode(missing) }).Count == 1 && doc2.Applies == 0 && apply2.Status == ApplyStatus.Idle,
+              "commit: a refused transaction sends no apply");
+        Check(apply2.Commit(new Command[] { new CreateNode(null, 0UL, Array.Empty<TypeId>()) }).Count == 0 &&
+              doc2.Applies == 1 && apply2.Status == ApplyStatus.Applying, "commit: an accepted transaction sends its apply with it");
+        apply2.Commit(new Command[] { new CreateNode(null, 0UL, Array.Empty<TypeId>()) });
+        Check(doc2.Applies == 1, "commit: while an apply is in flight the next one waits");
+        doc2.Reload();
+        foreach (Event e in doc2.DrainEvents()) apply2.Apply(e);
+        Check(doc2.Applies == 2 && apply2.Status == ApplyStatus.Applying, "commit: the waiting apply is issued at Applied");
+        doc2.Reload();
+        foreach (Event e in doc2.DrainEvents()) apply2.Apply(e);
+        doc2.NextApplyError = ApplyError.CookFailed;
+        apply2.Commit(new Command[] { new CreateNode(null, 0UL, Array.Empty<TypeId>()) });
+        Check(apply2.Status == ApplyStatus.Failed, "commit: a refused apply is shown as Failed");
     }
 }

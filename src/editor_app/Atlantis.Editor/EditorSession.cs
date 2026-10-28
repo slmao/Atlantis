@@ -604,8 +604,7 @@ public sealed class EditorWorker : IDisposable
             return;
         }
         long start = Stopwatch.GetTimestamp();
-        _document.SubmitTransaction(plan.Commands);
-        IReadOnlyList<CommandFailure> failures = _document.DrainFailures();
+        IReadOnlyList<CommandFailure> failures = _apply.Commit(plan.Commands);
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         if (failures.Count > 0)
         {
@@ -619,7 +618,6 @@ public sealed class EditorWorker : IDisposable
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "gizmo {0}: committed in {1:F1} ms after {2} preview batch(es)", plan.Label, ms, _previewBatches));
         _commitTicks = start;
-        _apply.Request();
         PollDocument(session);
         SendOverlay(session);
         PostInspector();
@@ -655,8 +653,7 @@ public sealed class EditorWorker : IDisposable
             return;
         }
         long start = Stopwatch.GetTimestamp();
-        _document.SubmitTransaction(edit.Commands);
-        IReadOnlyList<CommandFailure> failures = _document.DrainFailures();
+        IReadOnlyList<CommandFailure> failures = _apply.Commit(edit.Commands);
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         if (failures.Count == 0) _commitTicks = start;
         if (failures.Count > 0)
@@ -670,7 +667,6 @@ public sealed class EditorWorker : IDisposable
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
                                  edit.Commands.Count, ms));
-        _apply.Request();
         PollDocument(session);
         PostInspector();
         _post(() => EditNotice?.Invoke(edit.Label));

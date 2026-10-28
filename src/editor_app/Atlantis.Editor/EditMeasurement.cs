@@ -131,20 +131,12 @@ public static class EditMeasurement
             return apply.Status == ApplyStatus.Applied ? Stopwatch.GetElapsedTime(t0).TotalMilliseconds : double.NaN;
         }
 
-        // The same commit with the submit, the failure drain and the apply sent together: each wire call is answered at a
+        // The same commit through ApplyController.Commit (J8), the submit, the failure drain and the apply sent together: each wire call is answered at a
         // frame boundary, so one after another they cost a frame apiece; sent together they share one.
         double CommitPipelinedAndWait(IReadOnlyList<Command> commands)
         {
             long t0 = Stopwatch.GetTimestamp();
-            JsonValue list = JsonValue.NewArray();
-            foreach (Command command in commands) list.Push(Codec.Encode(command));
-            ulong submit = session.Send("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
-            ulong failures = session.Send("authoring.drainFailures");
-            ulong applyCall = session.Send("authoring.apply");
-            session.AwaitResult(submit);
-            bool refused = session.AwaitResult(failures).Items.Count > 0;
-            session.AwaitResult(applyCall);
-            apply.NoteRequested();  // the apply was sent above; the controller only tracks its Applied
+            bool refused = apply.Commit(commands).Count > 0;  // the product's path: submit, drain and apply sent together
             while (apply.Status != ApplyStatus.Applied && Stopwatch.GetElapsedTime(t0).TotalSeconds < 20)
             {
                 Settle();

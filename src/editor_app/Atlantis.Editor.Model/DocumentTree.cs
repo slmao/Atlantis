@@ -248,6 +248,34 @@ public sealed class ApplyController
         Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
     }
 
+    /// <summary>
+    /// A commit with its apply (J8): pipelined when no apply is in flight, else the commit then a coalesced request.
+    /// Returns the refusals; a refused apply is the controller's Failed state, as for Request().
+    /// </summary>
+    public IReadOnlyList<CommandFailure> Commit(IReadOnlyList<Command> commands)
+    {
+        if (_inFlight)
+        {
+            _document.SubmitTransaction(commands);
+            IReadOnlyList<CommandFailure> refused = _document.DrainFailures();
+            if (refused.Count == 0) Request();
+            return refused;
+        }
+        CommitOutcome outcome = _document.CommitAndApply(commands);
+        if (!outcome.ApplySent) return outcome.Failures;
+        if (outcome.ApplyError is ApplyError error)
+        {
+            ++Issued;
+            LastError = error;
+            Status = ApplyStatus.Failed;
+        }
+        else
+        {
+            NoteRequested();
+        }
+        return outcome.Failures;
+    }
+
     /// <summary>The Runtime's pause state: a pause holds the reload (ADR-0131, amended 2026-10-23).</summary>
     public void SetPaused(bool paused)
     {

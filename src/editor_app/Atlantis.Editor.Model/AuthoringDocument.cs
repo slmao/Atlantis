@@ -46,6 +46,18 @@ public interface IAuthoringDocument
     /// <summary>Refusals of this client's submissions since the last drain.</summary>
     IReadOnlyList<CommandFailure> DrainFailures();
 
+    /// <summary>
+    /// Submit, drain the failures and apply as one: a document that can pipeline the three overrides it, so they share a
+    /// Runtime frame boundary (J8). The default is the three calls in turn, applying only when nothing was refused.
+    /// </summary>
+    CommitOutcome CommitAndApply(IReadOnlyList<Command> commands)
+    {
+        SubmitTransaction(commands);
+        IReadOnlyList<CommandFailure> failures = DrainFailures();
+        if (failures.Count > 0) return new CommitOutcome(failures, false, null);
+        return new CommitOutcome(failures, true, Apply());
+    }
+
     /// <summary>Every authoring event since the last drain, every client's, in the order applied.</summary>
     IReadOnlyList<Event> DrainEvents();
 
@@ -55,6 +67,9 @@ public interface IAuthoringDocument
     /// <summary>Writes a hand-authored document to its source; null on success.</summary>
     SaveError? Save();
 }
+
+/// <summary>A commit's refusals, whether an apply was sent with it, and that apply's refusal.</summary>
+public sealed record CommitOutcome(IReadOnlyList<CommandFailure> Failures, bool ApplySent, ApplyError? ApplyError);
 
 /// <summary>The real document: the SDK's AuthoringSession over atlantis.remote/1.</summary>
 public sealed class RemoteAuthoringDocument : IAuthoringDocument
@@ -155,6 +170,31 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
     public TransactionTicket SubmitTransaction(IReadOnlyList<Command> commands) => _session.SubmitTransaction(commands);
 
     public IReadOnlyList<CommandFailure> DrainFailures() => _session.DrainFailures();
+
+    public CommitOutcome CommitAndApply(IReadOnlyList<Command> commands)
+    {
+        if (_wire is null)
+        {
+            SubmitTransaction(commands);
+            IReadOnlyList<CommandFailure> failures = DrainFailures();
+            return failures.Count > 0 ? new CommitOutcome(failures, false, null) : new CommitOutcome(failures, true, Apply());
+        }
+        // A refused submit still gets its apply: the document is then unchanged, so the reload is the same scene again.
+        JsonValue list = JsonValue.NewArray();
+        foreach (Command command in commands) list.Push(Codec.Encode(command));
+        ulong submit = _wire.Send("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
+        ulong drain = _wire.Send("authoring.drainFailures");
+        ulong apply = _wire.Send("authoring.apply");
+        _wire.AwaitResult(submit);
+        var refused = new List<CommandFailure>();
+        foreach (JsonValue item in _wire.AwaitResult(drain).Items)
+        {
+            if (Codec.DecodeAuthoringFailure(item) is CommandFailure failure) refused.Add(failure);
+        }
+        JsonValue applied = _wire.AwaitResult(apply);
+        ApplyError? error = applied.Find("err") is JsonValue err ? Codec.DecodeApplyError(err) : null;
+        return new CommitOutcome(refused, true, error);
+    }
 
     public IReadOnlyList<Event> DrainEvents()
     {
