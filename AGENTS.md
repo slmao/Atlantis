@@ -380,8 +380,18 @@ child only, never engine code. It embeds the Viewport through Platform's
 child-window mode (below) and receives the Runtime's forwarded input (ADR-0126,
 V-a with route R-a, adopted at the Phase 1 checkpoint and kept by Spec 0066's
 input investigation). Since Spec 0066 a pick outlines the hit entity and draws a
-translate Gizmo at its translation through `SetViewportOverlay`, drawing only (no
-hit-testing, no editing); a miss clears both. **It is the one place
+translate Gizmo at its translation through `SetViewportOverlay`; a miss clears
+both. Since Spec 0068 (ADR-0135–ADR-0137) it is the authoring editor: its
+models live in a headless C# library (`Atlantis.Editor.Model`, no Avalonia, no
+package) — E1/E2's models ported and held to the C++ by generated conformance
+vectors (ADR-0137), beside new C# models with no C++ reference — and its
+editing is two-document (ADR-0135): a drag previews on the Runtime World, every
+committed edit is one authoring transaction with its apply, coalesced, and the
+editor's own history (ADR-0136, structural records included) refuses steps
+whose document changed elsewhere, surviving applies and clearing on
+`DocumentReopened`; the panels are the Hierarchy, the reflective Inspector,
+Gizmo editing and apply/save/play. Still no editor-only method, channel or file.
+**It is the one place
 NuGet packages are allowed** (ADR-0127): only packages on
 `src/editor_app/allowed_packages.txt`, each pinned exactly in
 `src/editor_app/Directory.Packages.props`, with committed `packages.lock.json`
@@ -390,7 +400,8 @@ files, locked-mode restore, its own `NuGet.config` (nuget.org, or
 `cmake/check_editor_app_packages.cmake`; the C# SDK's zero-NuGet rule is
 unchanged. CMake declares it only with `ATLANTIS_BUILD_EDITOR_APP=ON` (default
 `OFF`) and a .NET 10.0.1xx SDK; Android never. See
-[ADR-0125](docs/adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md)–[ADR-0128](docs/adr/0128-remote-viewport-camera-and-raycast.md).
+[ADR-0125](docs/adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md)–[ADR-0128](docs/adr/0128-remote-viewport-camera-and-raycast.md)
+and [ADR-0135](docs/adr/0135-two-document-edit-and-apply.md)–[ADR-0137](docs/adr/0137-csharp-model-port-held-by-vectors.md).
 
 Atlantis Runtime (Spec 0013, `Approved`; extended by Spec 0014,
 `Approved`, and Spec 0015, `Approved`) is the actual composition root — a private

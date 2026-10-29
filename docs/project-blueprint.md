@@ -946,7 +946,25 @@ milestone being listed does not authorize starting it — see Section 1.
       capture path and picking share ([ADR-0134](adr/0134-lit-normal-transform-by-cofactor.md); ADR-0123's
       second amendment);
     - **Bistro:** it draws all 2909 Renderables, 368 of them for the first time, from a scene camera moved by
-      the Spec's Correction.
+      the Spec's Correction;
+  - since [Spec 0068](specs/0068-authoring-editor.md) (merged
+    [PR #303](https://github.com/slmao/Atlantis/pull/303)), Phase 2's second step, the authoring editor:
+    - **the models:** a headless C# model library (`Atlantis.Editor.Model`, no Avalonia, no package) holds E1/E2's
+      camera, picking, Gizmo, world-matrix and history models ported from C++ — kept honest by the generated
+      conformance vectors — beside new C# models with no C++ reference (the tree, the Inspector, the apply
+      controller, the structural records) ([ADR-0137](adr/0137-csharp-model-port-held-by-vectors.md)); the Gizmo's
+      handle math lives once in `gizmo.h` (J2);
+    - **the editing:** two-document (ADR-0135) — a drag previews on the Runtime World one transaction per batch (the
+      node and up to 256 descendants), and every committed edit is one authoring transaction submitted with its
+      apply, coalesced; the history is the editor's own, property and structural records alike (ADR-0136), refusing
+      a step whose document changed elsewhere, surviving applies and clearing on `DocumentReopened`;
+    - **the panels:** the Hierarchy, the reflective Inspector, Gizmo editing (world/local, snapping, J4's
+      non-uniform-scale refusals), toolbar undo/redo with labels, and apply/save/play — the apply state always
+      visible, a pause holding applies, an imported scene's save refused with its reason;
+    - **the verification:** a live integration test scripts the whole session on the default scene and Bistro (52
+      checks each), and the J7 acceptance ran scripted through the worker with the real CLI as the second client —
+      the same-frame step is Spec 0065's north-star save → rebuild → restart. No wire call, World verb or engine
+      change.
 
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
@@ -972,27 +990,28 @@ milestone being listed does not authorize starting it — see Section 1.
   - custom components, a time model or scheduler, Runtime-hosted game
     logic, and a batch query on `RuntimeConnection` (Spec 0057 Non-Goals /
     Out of Scope);
-  - the editor's tree Hierarchy, Custom Inspectors, saving and Android
-    hosting (Spec 0056 Non-Goals / Out of Scope); undo of structural edits,
-    a shared or persisted history, an edit-history panel, grouping across
-    gestures and a conditional write verb for atomic conflict detection
-    (Spec 0063 Non-Goals / Out of Scope); pixel-exact or
+  - the frozen ImGui editor's Custom Inspectors and Android hosting (Spec 0056
+    Non-Goals / Out of Scope; the tree Hierarchy and saving landed in Atlantis
+    Editor App with Specs 0065/0068); a shared or persisted history, an
+    edit-history panel, grouping across gestures and a conditional write verb
+    for atomic conflict detection (Spec 0063 Non-Goals / Out of Scope; undo of
+    structural edits landed client-side with Spec 0068); pixel-exact or
     alpha-accurate picking (Spec 0062 Out of Scope; remote picking itself
     landed with Spec 0064, and a rendered selection outline with Spec
-    0066's Viewport overlay, which the frozen ImGui editor has not adopted); the editor
-    application's Phases 2–4 — E3's UI over the data layer Spec 0065 landed,
-    the port of E1/E2's models, the editor games are made in — and frame
-    streaming across processes (Spec 0064 Out of Scope / later phases);
+    0066's Viewport overlay, which the frozen ImGui editor has not adopted); the
+    editor application's remaining phases — E4–E6, and frame
+    streaming across processes (Spec 0064 Out of Scope / later phases; E3's
+    data layer and editor landed with Specs 0065 and 0068);
   - live projection of document edits into the Runtime World, incremental
     validation (Plan 0065 J9 measured 22 ms against 10 ms), typed bindings of
     the authoring components, a node move command, saving imported scenes or
     "save as", multi-document sessions and a separate authoring process
     (Spec 0065 Non-Goals / Out of Scope);
-  - the E3 authoring editor over the Viewport overlay (Gizmo hit-testing and
-    editing, Hierarchy, Inspector, two-document undo, apply/save UI), text,
-    icons and textured primitives in the overlay, R-b input
+  - text, icons and textured primitives in the overlay, R-b input
     (`control.drainInput`) and the ImGui editor adopting the overlay
-    (Spec 0066 Out of Scope);
+    (Spec 0066 Out of Scope; the E3 authoring editor itself — Gizmo hit-testing
+    and editing, Hierarchy, Inspector, two-document undo, apply/save — landed
+    with Spec 0068);
   - importer-side scale baking and negative-determinant tangent handedness
     (Spec 0067 Out of Scope);
   - attaching to an Android Runtime and server-side filtered listing

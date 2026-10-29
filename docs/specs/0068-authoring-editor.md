@@ -1,6 +1,11 @@
 # Spec: The E3 Authoring Editor in Atlantis Editor App (Spec 0064 Phase 2, step 2)
 
 - **Status:** Approved
+- **Implementation:** merged — M1–M7 in [PR #303](https://github.com/slmao/Atlantis/pull/303), on `main` at
+  `3a99f74`. Q8 ruled at merge: the one miss (undo → `Applied` on Bistro, 173.7 ms median against 150) accepted as
+  measured; the J7 acceptance run executed through the product's session layer with the real CLI as the second
+  client and recorded on the PR (both scenes green; the same-frame step follows Spec 0065's north star,
+  save → rebuild → restart).
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Created:** 2026-10-27
 - **Related Plan(s):** [Plan 0068](../plans/0068-authoring-editor.md) (`Approved`; Joint Human Review 2026-10-27
