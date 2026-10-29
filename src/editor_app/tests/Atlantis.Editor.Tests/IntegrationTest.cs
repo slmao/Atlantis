@@ -59,8 +59,8 @@ public static class IntegrationTest
         for (int i = 0; i < checks.Count; ++i)
         {
             if (i > 0) report.Append(',');
-            report.Append("{\"name\":\"").Append(checks[i].Name).Append("\",\"ok\":").Append(checks[i].Ok ? "true" : "false")
-                  .Append(",\"detail\":\"").Append(checks[i].Detail.Replace("\\", "\\\\").Replace("\"", "\\\"")).Append("\"}");
+            report.Append("{\"name\":\"").Append(checks[i].Name.Replace("\r", " ").Replace("\n", " ").Replace("\\", "\\\\").Replace("\"", "\\\"")).Append("\",\"ok\":").Append(checks[i].Ok ? "true" : "false")
+                  .Append(",\"detail\":\"").Append(checks[i].Detail.Replace("\r", " ").Replace("\n", " ").Replace("\\", "\\\\").Replace("\"", "\\\"")).Append("\"}");
         }
         int failed = checks.Count(c => !c.Ok);
         report.Append("],\"passed\":").Append(checks.Count - failed).Append(",\"failed\":").Append(failed).Append('}');

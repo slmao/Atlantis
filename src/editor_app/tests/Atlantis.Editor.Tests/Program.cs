@@ -37,19 +37,26 @@ public static partial class Program
 
     public static int Main(string[] args)
     {
-        string? repo = null, runtime = null, scene = "integrated_showcase_demo";
-        bool integration = false;
+        string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
+        bool integration = false, acceptance = false;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
             else if (args[i] == "--integration") integration = true;
+            else if (args[i] == "--j7") acceptance = true;
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
+            else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
         }
         if (integration)
         {
             // Plan 0068 M7 (P5): the live scripted session against atlantis_runtime (GPU).
             return runtime is null ? Usage() : IntegrationTest.Run(runtime, scene);
+        }
+        if (acceptance)
+        {
+            // Plan 0068 M7 (J7): the owner's acceptance run, scripted (GPU).
+            return runtime is null || cli is null ? Usage() : J7Acceptance.Run(runtime, cli, scene);
         }
         if (repo is null)
         {
