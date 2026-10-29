@@ -73,6 +73,12 @@ public sealed class MainWindow : Window
     // Plan 0068 M5: the history's Undo and Redo, labelled with the edit they would step over.
     private readonly Button _undo = new() { Content = "Undo", IsEnabled = false };
     private readonly Button _redo = new() { Content = "Redo", IsEnabled = false };
+    // Plan 0068 M6 (Spec 0068 R9): the document's save and the Runtime's transport. The Runtime starts playing, so
+    // Pause is the enabled action until the first play state says otherwise.
+    private readonly Button _save = new() { Content = "Save" };
+    private readonly Button _play = new() { Content = "Play", IsEnabled = false };
+    private readonly Button _pause = new() { Content = "Pause" };
+    private readonly Button _step = new() { Content = "Step", IsEnabled = false };
     private readonly TextBlock _applyLine = new() { Text = "authoring: connecting..." };
     private readonly TextBlock _editLine = new();
     private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
@@ -181,7 +187,8 @@ public sealed class MainWindow : Window
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(tools, Dock.Bottom);
         var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere }) { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _play, _pause, _step })
+        { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
         foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
         state.Children.Add(_applyLine);
@@ -232,6 +239,10 @@ public sealed class MainWindow : Window
         _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
+        _save.Click += (_, _) => _worker?.Save();
+        _play.Click += (_, _) => _worker?.Play();
+        _pause.Click += (_, _) => _worker?.Pause();
+        _step.Click += (_, _) => _worker?.StepFrame();
         KeyDown += (_, e) =>
         {
             // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
@@ -358,6 +369,13 @@ public sealed class MainWindow : Window
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
         worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
+        worker.PlayStateChanged += playing =>
+        {
+            _play.IsEnabled = !playing;
+            _pause.IsEnabled = playing;
+            _step.IsEnabled = !playing;
+        };
         worker.EditNotice += text => _editLine.Text = text;
         worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
             "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";

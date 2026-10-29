@@ -279,6 +279,9 @@ public sealed class EditorWorker : IDisposable
     private EditHistory? _history;
     private AuthoringEditTarget? _historyTarget;
     private string _applyText = "";
+    // Plan 0068 M6 (Spec 0068 R9): the Runtime's play state -- true until the first status says otherwise (it starts
+    // running), polled on the document's cadence and after each transport call.
+    private bool _playing = true;
     private ulong _postedGeneration = ulong.MaxValue;
     private bool _transformsChanged;
     private long _lastPoll;
@@ -314,6 +317,8 @@ public sealed class EditorWorker : IDisposable
     public event Action<DocumentInfo?>? DocumentOpened;
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
     public event Action<string>? ApplyStateChanged;
+    // Plan 0068 M6: whether the Runtime is playing (false: paused).
+    public event Action<bool>? PlayStateChanged;
     public event Action<IReadOnlyList<EntityGuid>>? NodesDestroyed;
     public event Action<string>? EditNotice;
     public event Action<EntityGuid>? NodeCreatedByEditor;
@@ -728,6 +733,52 @@ public sealed class EditorWorker : IDisposable
         _post(() => EditNotice?.Invoke(notice));
     }
 
+    /// <summary>Plan 0068 M6 (Spec 0068 R9): the Runtime's transport, through RuntimeControl. Play resumes the frames
+    /// (and a held apply goes with them); Pause holds both; Step runs one frame while paused.</summary>
+    public void Play() => Enqueue(session =>
+    {
+        session.Control.Resume();
+        PollStatus(session);
+    });
+
+    public void Pause() => Enqueue(session =>
+    {
+        session.Control.Pause();
+        PollStatus(session);
+    });
+
+    public void StepFrame() => Enqueue(session =>
+    {
+        StepResult stepped = session.Control.Step(new StepRequest(1));
+        _log.Write(stepped.Report is FrameReport report
+                       ? string.Format(CultureInfo.InvariantCulture, "step: frame {0}", report.Frame)
+                       : "step: " + stepped.Error);
+        PollStatus(session);
+        PollDocument(session);  // a held apply went with the frame: take its Applied now
+    });
+
+    /// <summary>Writes the document to its source; an imported scene is refused with the reason (Spec 0068 R9).</summary>
+    public void Save() => Enqueue(session =>
+    {
+        if (_document is null) return;
+        long start = Stopwatch.GetTimestamp();
+        SaveError? error = _document.Save();
+        double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        DocumentInfo? info = _document.Info();
+        if (error is SaveError refused)
+        {
+            // The refusal states what an imported scene's edits are for (Spec 0068, the risk "Imported scenes").
+            string reason = refused == SaveError.ImportedSceneNotSavable
+                ? "an imported scene is not savable; its edits are for trying things out"
+                : refused.ToString();
+            _log.Write(string.Format(CultureInfo.InvariantCulture, "save refused ({0}) in {1:F1} ms", refused, ms));
+            _post(() => EditNotice?.Invoke("save refused (" + refused + "): " + reason));
+            return;
+        }
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "saved {0} in {1:F1} ms", info?.SourcePath, ms));
+        _post(() => EditNotice?.Invoke("saved " + info?.SourcePath));
+    });
+
     // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
     private void OpenDocument(RemoteSession session)
     {
@@ -804,13 +855,40 @@ public sealed class EditorWorker : IDisposable
             _log.Write(string.Format(CultureInfo.InvariantCulture, "commit->applied {0:F1} ms", applied));
             _post(() => CommitApplied?.Invoke(applied, _applyText));
         }
-        if (_apply.Text != _applyText)
+        PostApplyState();
+    }
+
+    // Plan 0068 M6 (Spec 0068 R9): the Runtime's play state, from control.status. A pause also holds applies, which
+    // the apply controller then shows as pending; while it plays, an apply replaces the scene -- gameplay clients'
+    // runtime-side changes included (ADR-0131 D7) -- which the apply state names: the wire carries no client list, so
+    // playing is that note's signal.
+    private void PollStatus(RemoteSession session)
+    {
+        RuntimeStatus status = session.Control.Status();
+        _apply?.SetPaused(status.Paused);
+        bool playing = !status.Paused;
+        if (playing == _playing)
         {
-            _applyText = _apply.Text;
-            string text = _applyText;
-            _log.Write("apply: " + text);
-            _post(() => ApplyStateChanged?.Invoke(text));
+            PostApplyState();
+            return;
         }
+        _playing = playing;
+        _log.Write(playing ? "runtime: playing" : "runtime: paused");
+        _post(() => PlayStateChanged?.Invoke(playing));
+        PostApplyState();
+    }
+
+    // The apply state line: the controller's text, with the play note appended while the Runtime plays.
+    private const string PlayNote = " · playing: an apply replaces the scene, gameplay clients' changes included";
+
+    private void PostApplyState()
+    {
+        if (_apply is null) return;
+        string text = _apply.Text + (_playing ? PlayNote : "");
+        if (text == _applyText) return;
+        _applyText = text;
+        _log.Write("apply: " + text);
+        _post(() => ApplyStateChanged?.Invoke(text));
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.
@@ -925,6 +1003,7 @@ public sealed class EditorWorker : IDisposable
             (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
             (float Dx, float Dy, long InputTicks, int Count)? drag = null;
             (float Amount, long Ticks, int Count)? gizmoBatch = null;
+            bool interacting;  // a pointer interaction is using the wire: its latency wins over the status poll
             lock (_lock)
             {
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
@@ -933,6 +1012,7 @@ public sealed class EditorWorker : IDisposable
                 {
                     if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
+                interacting = _dragActive || _gizmoActive;
                 if (_stopping) return;
                 if (_pendingCamera is not null)
                 {
@@ -982,7 +1062,12 @@ public sealed class EditorWorker : IDisposable
                 _post(() => CameraAcked?.Invoke(acked));
             }
             work?.Invoke(session);
-            if (Stopwatch.GetElapsedTime(_lastPoll).TotalMilliseconds >= PollMilliseconds) PollDocument(session);
+            if (Stopwatch.GetElapsedTime(_lastPoll).TotalMilliseconds >= PollMilliseconds)
+            {
+                // Plan 0068 M6: the play state rides the document's poll cadence, but never a pointer interaction's wire.
+                if (!interacting) PollStatus(session);
+                PollDocument(session);
+            }
         }
     }
 
