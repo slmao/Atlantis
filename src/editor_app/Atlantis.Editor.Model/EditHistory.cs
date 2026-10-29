@@ -12,7 +12,10 @@
 // difference of shape from C++: the target drains its own failures, so
 // Update() takes none (the authoring target does, Spec 0065 R12). Held to the
 // C++ history by tests/csharp/conformance/history_transcripts.jsonl. ADR-0136's
-// structural records join in Plan 0068 M5. UI-free.
+// structural records (StructuralEdits.cs) join in Plan 0068 M5: a record may
+// carry entries besides its writes, which the history compares and replays
+// through the target's view and SubmitCommands; a record of writes alone behaves
+// exactly as before. UI-free.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -28,7 +31,11 @@ public readonly record struct PropertyWrite(SceneAddress Address, PropertyValue 
 /// One logical edit: an ordered, non-empty list of writes under a label for the UI. Forward writes every After,
 /// inverse every Before, in this order, each direction as one transaction.
 /// </summary>
-public sealed record EditTransaction(string Label, IReadOnlyList<PropertyWrite> Writes);
+public sealed record EditTransaction(string Label, IReadOnlyList<PropertyWrite> Writes, IReadOnlyList<EditEntry>? Entries = null)
+{
+    /// <summary>The structural entries (ADR-0136), in the order the edit made them; empty for a record of writes alone.</summary>
+    public IReadOnlyList<EditEntry> Structure => Entries ?? Array.Empty<EditEntry>();
+}
 
 /// <summary>A submitted transaction, as its target numbers it.</summary>
 public readonly record struct EditHandle(ulong First, ulong Count);
@@ -66,6 +73,17 @@ public interface IEditTarget
 
     /// <summary>The invalidations observed since the last drain, in order.</summary>
     IReadOnlyList<Invalidation> DrainInvalidations();
+
+    // Plan 0068 M5 (ADR-0136): what structural records need. A target without them cannot hold such a record.
+
+    /// <summary>The document as it is now, for comparing a structural record; null for a target of properties only.</summary>
+    IDocumentView? View => null;
+
+    /// <summary>The scene schema, for building the commands of a structural step.</summary>
+    IReadOnlyList<SchemaType> Schema => Array.Empty<SchemaType>();
+
+    /// <summary>Submits a step's commands as one transaction and tracks its settlement.</summary>
+    EditHandle SubmitCommands(IReadOnlyList<Command> commands) => throw new NotSupportedException("this target holds properties only");
 }
 
 public enum HistoryResult
@@ -122,7 +140,7 @@ public sealed class EditHistory
     /// </summary>
     public void Record(EditTransaction edit, EditHandle handle)
     {
-        if (edit.Writes.Count == 0) return;
+        if (edit.Writes.Count == 0 && edit.Structure.Count == 0) return;
         _redo.Clear();
         foreach (Pending pending in _pending) pending.RedoCleared = true;
         _target.Track(handle, WritesOf(edit, forward: true));
@@ -206,6 +224,20 @@ public sealed class EditHistory
                 from.RemoveAt(from.Count - 1);
                 return HistoryResult.ChangedElsewhere;
             }
+        }
+        if (edit.Structure.Count > 0)
+        {
+            if (_target.View is not IDocumentView view || StructuralSteps.Check(edit, forward, view) is not HistoryResult refusal)
+            {
+                from.RemoveAt(from.Count - 1);
+                EditHandle submitted = _target.SubmitCommands(StructuralSteps.Commands(edit, forward, _target.Schema));
+                Notice = (forward ? "redo " : "undo ") + edit.Label;
+                _pending.Add(new Pending { Edit = edit, Handle = submitted, Step = kind });
+                return HistoryResult.Submitted;
+            }
+            Notice = "\"" + edit.Label + "\" dropped: " + (refusal == HistoryResult.Invalidated ? "what it edited is gone" : "changed elsewhere");
+            from.RemoveAt(from.Count - 1);
+            return refusal;
         }
         from.RemoveAt(from.Count - 1);
         EditHandle handle = _target.Submit(WritesOf(edit, forward));

@@ -263,6 +263,9 @@ internal sealed class FakeDocument : IAuthoringDocument
     /// <summary>The Runtime's reload: Applied for the next generation.</summary>
     public void Reload() => _events.Add(new Applied(++_generation));
 
+    /// <summary>Another client's Open of the same source: the document is reread (ADR-0135 D4).</summary>
+    public void Reopen() => _events.Add(new DocumentReopened(default));
+
     public SaveError? Save() => null;
 }
 

@@ -28,6 +28,7 @@ using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Input;
 using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.Threading;
@@ -69,6 +70,9 @@ public sealed class MainWindow : Window
     private readonly Button _toRoot = new() { Content = "Move to root" };
     private readonly Button _pickUp = new() { Content = "Pick up" };
     private readonly Button _moveHere = new() { Content = "Move under selection", IsEnabled = false };
+    // Plan 0068 M5: the history's Undo and Redo, labelled with the edit they would step over.
+    private readonly Button _undo = new() { Content = "Undo", IsEnabled = false };
+    private readonly Button _redo = new() { Content = "Redo", IsEnabled = false };
     private readonly TextBlock _applyLine = new() { Text = "authoring: connecting..." };
     private readonly TextBlock _editLine = new();
     private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
@@ -177,7 +181,7 @@ public sealed class MainWindow : Window
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(tools, Dock.Bottom);
         var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        foreach (Button b in new[] { _create, _destroy, _toRoot, _pickUp, _moveHere }) { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere }) { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
         foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
         state.Children.Add(_applyLine);
@@ -226,6 +230,15 @@ public sealed class MainWindow : Window
         _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
         _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
+        _undo.Click += (_, _) => _worker?.Undo();
+        _redo.Click += (_, _) => _worker?.Redo();
+        KeyDown += (_, e) =>
+        {
+            // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
+            if ((e.KeyModifiers & KeyModifiers.Control) == 0 || FocusManager?.GetFocusedElement() is TextBox) return;
+            if (e.Key == Key.Z && (e.KeyModifiers & KeyModifiers.Shift) == 0) { _worker?.Undo(); e.Handled = true; }
+            else if (e.Key == Key.Y || e.Key == Key.Z) { _worker?.Redo(); e.Handled = true; }
+        };
         _destroy.Click += (_, _) =>
         {
             if (_selection.Node is EntityGuid node) _worker?.DestroySubtree(node);
@@ -335,6 +348,13 @@ public sealed class MainWindow : Window
         worker.Picked += OnPicked;
         worker.HierarchyChanged += OnHierarchyChanged;
         worker.InspectorChanged += OnInspectorChanged;
+        worker.HistoryChanged += history =>
+        {
+            _undo.IsEnabled = history.CanUndo;
+            _redo.IsEnabled = history.CanRedo;
+            _undo.Content = history.CanUndo ? "Undo " + history.UndoLabel : "Undo";
+            _redo.Content = history.CanRedo ? "Redo " + history.RedoLabel : "Redo";
+        };
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
         worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;

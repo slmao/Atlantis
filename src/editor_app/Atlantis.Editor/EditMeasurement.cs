@@ -12,6 +12,7 @@
 //   - the release -> Applied time (the authoring transaction submitted and the
 //     apply requested, until the Runtime reports Applied), and the same for an
 //     Inspector-style commit;
+//   - Plan 0068 M5: an undo -> Applied, through the history the worker holds;
 // for a leaf node, and for the node with the largest subtree of at most 256
 // descendants (previewed with it), and for one with more than 256 where there
 // is one (J3: only the node previews). Prints one JSON object. UI-free.
@@ -29,6 +30,7 @@ using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using Command = Atlantis.Gameplay.Authoring.Command;
+using CommandFailure = Atlantis.Gameplay.Authoring.CommandFailure;
 using Event = Atlantis.Gameplay.Authoring.Event;
 using PropertyChanged = Atlantis.Gameplay.Authoring.PropertyChanged;
 
@@ -224,6 +226,66 @@ public static class EditMeasurement
             inspector.Refresh(lightId);
             CommitAndWait(inspector.Commit("Light.intensity", (inspector.Find("Light.intensity")!.Value!.Value.AsFloat32() - 0.5f * Drags).ToString("R", CultureInfo.InvariantCulture)));
             report.Append(Stats.Of(times).Json());
+        }
+        else
+        {
+            report.Append("null");
+        }
+
+        // Plan 0068 M5: an undo → Applied, through the history the worker holds (the recorder around the commit, the
+        // step one transaction and then an apply); the redo that puts it back is not measured, as the drags' restore.
+        report.Append(",\"undo_to_applied_ms\":");
+        if (light is EntityGuid undoLight)
+        {
+            var inspector = new InspectorModel(document);
+            var target = new AuthoringEditTarget(document, tree, apply);
+            var history = new EditHistory(target);
+            double UndoAndWait()
+            {
+                long t0 = Stopwatch.GetTimestamp();
+                HistoryResult result = history.Undo();
+                history.Update();
+                if (result != HistoryResult.Submitted) return double.NaN;
+                while (apply.Status != ApplyStatus.Applied && Stopwatch.GetElapsedTime(t0).TotalSeconds < 20)
+                {
+                    Settle();
+                    if (apply.Status == ApplyStatus.Applied) break;
+                    Thread.Sleep(1);
+                }
+                return apply.Status == ApplyStatus.Applied ? Stopwatch.GetElapsedTime(t0).TotalMilliseconds : double.NaN;
+            }
+
+            void WaitApplied()
+            {
+                while (apply.Status != ApplyStatus.Applied)
+                {
+                    Settle();
+                    if (apply.Status == ApplyStatus.Applied) break;
+                    Thread.Sleep(1);
+                }
+            }
+
+            var undos = new List<double>();
+            for (int i = 0; i < Drags; ++i)
+            {
+                inspector.Refresh(undoLight);
+                EditPlan plan = inspector.Commit("Light.intensity", (inspector.Find("Light.intensity")!.Value!.Value.AsFloat32() + 0.5f)
+                                                                 .ToString("R", CultureInfo.InvariantCulture));
+                EditRecorder? recorder = EditRecorder.Begin(document, tree, plan);
+                IReadOnlyList<CommandFailure> committed = apply.Commit(plan.Commands);  // the product's path: commit and apply together
+                if (recorder is not null && committed.Count == 0)
+                {
+                    history.Record(recorder.Finish(document.Schema), target.Committed(committed));
+                    history.Update();
+                }
+                WaitApplied();  // the undo's apply is its own, not coalesced behind the commit's
+                double ms = UndoAndWait();
+                if (!double.IsNaN(ms)) undos.Add(ms);
+                history.Redo();  // put it back, not measured
+                history.Update();
+                WaitApplied();
+            }
+            report.Append(Stats.Of(undos).Json());
         }
         else
         {

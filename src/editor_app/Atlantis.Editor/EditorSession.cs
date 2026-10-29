@@ -208,6 +208,9 @@ public sealed class EditorLog : IDisposable
 /// measurements are queued. Results are posted back through <c>post</c> (the UI thread's dispatcher).
 /// </summary>
 /// <summary>The selected node's world matrix and what its Gizmo can edit, as the worker last computed them.</summary>
+/// <summary>Plan 0068 M5 (Spec 0068 R8): what the toolbar shows of the history.</summary>
+public sealed record HistorySnapshot(bool CanUndo, bool CanRedo, string UndoLabel, string RedoLabel, string Notice);
+
 public sealed record GizmoSnapshot(EntityGuid? Node, float[]? World, GizmoAvailability? Availability);
 
 /// <summary>Previews: the Runtime World's WorldMatrix of each node, one transaction per batch (ADR-0135 D1).</summary>
@@ -272,6 +275,9 @@ public sealed class EditorWorker : IDisposable
     private readonly DocumentTree _tree = new();
     private readonly LocalTransforms _transforms = new();
     private ApplyController? _apply;
+    // Plan 0068 M5: the history of this editor's own edits, property and structural (ADR-0136), over the document.
+    private EditHistory? _history;
+    private AuthoringEditTarget? _historyTarget;
     private string _applyText = "";
     private ulong _postedGeneration = ulong.MaxValue;
     private bool _transformsChanged;
@@ -313,6 +319,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<EntityGuid>? NodeCreatedByEditor;
     public event Action<InspectorSnapshot>? InspectorChanged;
     public event Action<GizmoSnapshot>? GizmoChanged;
+    public event Action<HistorySnapshot>? HistoryChanged;
     public event Action<double, string>? CommitApplied;
 
     /// <summary>The session file's path, for the CLI command lines the log prints.</summary>
@@ -604,6 +611,7 @@ public sealed class EditorWorker : IDisposable
             return;
         }
         long start = Stopwatch.GetTimestamp();
+        EditRecorder? recorder = EditRecorder.Begin(_document, _tree, plan);
         IReadOnlyList<CommandFailure> failures = _apply.Commit(plan.Commands);
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         if (failures.Count > 0)
@@ -618,6 +626,7 @@ public sealed class EditorWorker : IDisposable
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "gizmo {0}: committed in {1:F1} ms after {2} preview batch(es)", plan.Label, ms, _previewBatches));
         _commitTicks = start;
+        RecordEdit(recorder, failures);
         PollDocument(session);
         SendOverlay(session);
         PostInspector();
@@ -653,6 +662,7 @@ public sealed class EditorWorker : IDisposable
             return;
         }
         long start = Stopwatch.GetTimestamp();
+        EditRecorder? recorder = EditRecorder.Begin(_document, _tree, edit);
         IReadOnlyList<CommandFailure> failures = _apply.Commit(edit.Commands);
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
         if (failures.Count == 0) _commitTicks = start;
@@ -667,11 +677,56 @@ public sealed class EditorWorker : IDisposable
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
                                  edit.Commands.Count, ms));
+        RecordEdit(recorder, failures);
         PollDocument(session);
         PostInspector();
         _post(() => EditNotice?.Invoke(edit.Label));
         if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
     });
+
+    // A committed edit joins the history (settled at once: the commit was applied, or refused, when submitted).
+    private void RecordEdit(EditRecorder? recorder, IReadOnlyList<CommandFailure> failures)
+    {
+        if (_history is null || _historyTarget is null || _document is null || failures.Count > 0) return;
+        if (recorder is null)
+        {
+            _log.Write("history: this edit cannot be recorded, so it is not undoable");
+            return;
+        }
+        _history.Record(recorder.Finish(_document.Schema), _historyTarget.Committed(failures));
+        _history.Update();
+        PostHistory();
+    }
+
+    private void PostHistory()
+    {
+        if (_history is null) return;
+        var snapshot = new HistorySnapshot(_history.CanUndo, _history.CanRedo, _history.UndoLabel, _history.RedoLabel, _history.Notice);
+        _post(() => HistoryChanged?.Invoke(snapshot));
+    }
+
+    /// <summary>Plan 0068 M5 (Spec 0068 R8): undo the last edit -- one transaction, then an apply -- or say why not.</summary>
+    public void Undo() => Enqueue(session => HistoryStep(session, undo: true));
+
+    public void Redo() => Enqueue(session => HistoryStep(session, undo: false));
+
+    private void HistoryStep(RemoteSession session, bool undo)
+    {
+        if (_history is null) return;
+        PollDocument(session);
+        long start = Stopwatch.GetTimestamp();
+        HistoryResult result = undo ? _history.Undo() : _history.Redo();
+        _history.Update();
+        _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
+                                 _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
+        if (result == HistoryResult.Submitted) _commitTicks = start;
+        string notice = _history.Notice;
+        PollDocument(session);
+        PostHistory();
+        PostInspector();
+        SendOverlay(session);
+        _post(() => EditNotice?.Invoke(notice));
+    }
 
     // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
     private void OpenDocument(RemoteSession session)
@@ -690,6 +745,8 @@ public sealed class EditorWorker : IDisposable
             _document = document;
             _apply = new ApplyController(document);
             _inspector = new InspectorModel(document);
+            _historyTarget = new AuthoringEditTarget(document, _tree, _apply);
+            _history = new EditHistory(_historyTarget);
             _gizmo = new GizmoDragController(document, _tree, _transforms, new RuntimeWorldPreview(() => _previewSession));
             _previewSession = session;
             DocumentInfo? info = document.Info();
@@ -720,6 +777,11 @@ public sealed class EditorWorker : IDisposable
             _apply.Apply(e);
             if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
             if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
+        }
+        if (events.Any(e => e is DocumentReopened) && _history is not null)
+        {
+            _history.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
+            PostHistory();
         }
         if (destroyed.Count > 0)
         {
