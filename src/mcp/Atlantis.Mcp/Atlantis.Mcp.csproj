@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Atlantis MCP (Spec 0070 R1; ADR-0138 D1): the agent tool layer's host,
+    a console application serving MCP over stdio on one side and speaking
+    atlantis.remote/1 through the Atlantis C# SDK (a project reference) on
+    the other. One process, one Runtime session, no native code, no engine
+    access beyond the wire. Managed packages under ADR-0138 D2 (ADR-0127's
+    mechanism, this area's own allow-list); lock file committed.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Atlantis.Mcp</RootNamespace>
+    <AssemblyName>Atlantis.Mcp</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+  </ItemGroup>
+
+</Project>
