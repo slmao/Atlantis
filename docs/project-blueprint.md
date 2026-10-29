@@ -966,6 +966,18 @@ milestone being listed does not authorize starting it — see Section 1.
       the same-frame step is Spec 0065's north-star save → rebuild → restart. No wire call, World verb or engine
       change.
 
+  The editor platform's direction (maintainer direction, 2026-10-29): Atlantis Editor is a
+  programmable authoring platform — C++ Runtime + C# Gameplay + C# Editor + Avalonia — whose one
+  shared, structured client surface serves the GUI, human scripts, CI and AI agents alike (the
+  no-editor-only-channel rule, ADR-0125 D2, is the held invariant; "Editor SDK" means the C# SDK plus
+  the editor's model library, not a second API). Phase 1 (the prototype) and Phase 2's two steps
+  (Specs 0065 and 0068) have landed. What remains, each its own Spec when it starts: the agent tool
+  layer — an MCP host over `atlantis.remote/1`, pencilled as Spec 0070; node names (Spec 0069,
+  pencilled); an asset browser and the asset pipeline's client surface; C#-authored gameplay
+  components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
+  prefabs; a C# plugin system; and the AI-native loop (headless scripted run/capture/evaluate over
+  the same tools). Named only, not designed or scaffolded.
+
   Runtime applies pending commands at the start of every frame. These each
   remain a future Spec's work:
   - a system scheduler;
