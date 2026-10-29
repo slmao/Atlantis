@@ -1,10 +1,12 @@
 # ADR 0138: The Agent Tool Layer Host — Placement, Dependency Policy and Tool Shape
 
-- **Status:** Draft
-- **Date:** 2026-10-29
+- **Status:** Accepted
+- **Date:** 2026-10-29 (accepted 2026-10-30)
 - **Deciders:** slmao
-- **Acceptance:** pending (with [Spec 0070](../specs/0070-agent-tool-layer.md)'s review)
-- **Related Spec:** [Spec 0070: The Agent Tool Layer — an MCP Host over atlantis.remote/1](../specs/0070-agent-tool-layer.md) (`Draft`)
+- **Acceptance:** slmao, 2026-10-30 (owner rulings on Spec 0070 Q1–Q6, each as recommended, recorded
+  once in [Spec 0070](../specs/0070-agent-tool-layer.md); the ADR text was reviewed in
+  [PR #306](https://github.com/slmao/Atlantis/pull/306))
+- **Related Spec:** [Spec 0070: The Agent Tool Layer — an MCP Host over atlantis.remote/1](../specs/0070-agent-tool-layer.md) (`Approved` 2026-10-30)
 - **Related ADR(s):**
   - **Keeps** [ADR-0125](0125-out-of-process-editor-platform-and-uniform-client-interface.md) D2 — no
     client-only capability: every tool is a wire call any client can make.

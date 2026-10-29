@@ -1,12 +1,15 @@
 # Spec: The Agent Tool Layer — an MCP Host over atlantis.remote/1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** slmao (drafted by ZCode at explicit human direction, 2026-10-29)
 - **Created:** 2026-10-29
-- **Related Plan(s):** none yet — drafted for review
-- **Approval:** pending
-- **Related ADR(s):** [ADR-0138](../adr/0138-agent-tool-layer-host.md) (Draft, drafted with this Spec:
-  the host's placement, dependency policy and tool shape)
+- **Related Plan(s):** [Plan 0070](../plans/0070-agent-tool-layer.md) (`Draft`, drafted for joint
+  review with this Spec)
+- **Approval:** slmao, 2026-10-30 — owner rulings Q1–Q6, **each as recommended**, recorded on this
+  Spec's own branch PR, [PR #306](https://github.com/slmao/Atlantis/pull/306), before it merges.
+  The open-question text keeps the options as the record of what was weighed.
+- **Related ADR(s):** [ADR-0138](../adr/0138-agent-tool-layer-host.md) (`Accepted` 2026-10-30, with
+  this Spec's review: the host's placement, dependency policy and tool shape)
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 State each requirement once; link ADR rationale and map verification to the
