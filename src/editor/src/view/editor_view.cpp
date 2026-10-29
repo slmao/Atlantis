@@ -32,11 +32,6 @@ namespace {
 constexpr ImTextureID kFontAtlasTextureId = 1;
 constexpr ImTextureID kViewportTextureId = 2;
 
-// The Gizmo's handles: their on-screen length, and how close the pointer must
-// be to pick one.
-constexpr float kHandlePixels = 80.0f;
-constexpr float kPickPixels = 8.0f;
-
 // Restores the previously current UI-library context when it leaves scope, so
 // an Editor never leaves its context installed as process-global state.
 class ContextScope {
@@ -108,11 +103,6 @@ using Vec3 = std::array<float, 3>;
   return ImVec2((*pixel)[0], (*pixel)[1]);
 }
 
-// Whether a world direction points toward the camera (view space looks down -z).
-[[nodiscard]] bool facesCamera(const CameraMatrices& camera, const Vec3& direction) {
-  return camera.view[2] * direction[0] + camera.view[6] * direction[1] + camera.view[10] * direction[2] > 0.0f;
-}
-
 // A world point through a column-major 4x4.
 [[nodiscard]] Vec3 transformPoint(const MatrixColumns& m, const Vec3& p) {
   return {m[0][0] * p[0] + m[1][0] * p[1] + m[2][0] * p[2] + m[3][0],
@@ -127,27 +117,12 @@ constexpr ImU32 kMarkerColor = IM_COL32(235, 235, 235, 230);
 
 [[nodiscard]] float length(ImVec2 v) { return std::sqrt(v.x * v.x + v.y * v.y); }
 
-[[nodiscard]] float distanceToSegment(ImVec2 p, ImVec2 a, ImVec2 b) {
-  const ImVec2 ab(b.x - a.x, b.y - a.y);
-  const float lengthSquared = ab.x * ab.x + ab.y * ab.y;
-  float t = lengthSquared > 0.0f ? ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / lengthSquared : 0.0f;
-  t = std::clamp(t, 0.0f, 1.0f);
-  return length(ImVec2(p.x - (a.x + ab.x * t), p.y - (a.y + ab.y * t)));
-}
-
 constexpr std::array<ImU32, 3> kAxisColors{IM_COL32(230, 60, 60, 255), IM_COL32(70, 200, 70, 255),
                                            IM_COL32(70, 120, 240, 255)};
 constexpr ImU32 kActiveAxisColor = IM_COL32(250, 220, 60, 255);
 
-// One axis handle on screen: from the origin along the axis's projected
-// direction, kHandlePixels long; `pixelsPerUnit` is how many pixels one world
-// unit along the axis covers at the origin.
-struct AxisHandle {
-  ImVec2 origin;
-  ImVec2 direction;  // unit, screen space
-  ImVec2 end;
-  float pixelsPerUnit = 0.0f;
-};
+// A point of gizmo.h's pixel arrays as the UI library's vector.
+[[nodiscard]] ImVec2 toImVec2(const std::array<float, 2>& p) { return ImVec2(p[0], p[1]); }
 
 }  // namespace
 
@@ -165,15 +140,8 @@ struct EditorView::State {
   std::map<std::string, std::array<char, 64>> guidBuffers;
   std::array<char, 64> filter{};
 
-  // The Gizmo drag in progress, in screen terms.
-  struct Drag {
-    GizmoAxis axis = GizmoAxis::X;
-    ImVec2 start;
-    AxisHandle handle;
-    float startAngle = 0.0f;
-    bool towardCamera = false;  // the axis points toward the camera (Rotate's screen direction)
-  };
-  std::optional<Drag> drag;
+  // The Gizmo drag in progress, in screen terms (gizmo.h's grab, Plan 0068 M1).
+  std::optional<GizmoGrab> drag;
 
   // Plan 0062 P10: the navigation drag in progress (it holds the pointer from
   // press to release), a left press that may become a click, and the
@@ -706,50 +674,40 @@ bool EditorView::State::gizmo(ViewModels& models, const std::optional<CameraMatr
   const CameraMatrices& camera = *cameraMatrices;
   const MatrixColumns& matrix = *model.matrix();
   const Vec3 position{matrix[3][0], matrix[3][1], matrix[3][2]};
-  const std::optional<ImVec2> center = project(camera, position, origin, size);
-  if (!center.has_value()) return false;
-
-  std::array<std::optional<AxisHandle>, 3> handles;
+  // gizmo.h's handle math (ADR-0137 D3): the layout, the grab and the drag amount.
   std::array<Vec3, 3> directions{};
-  for (std::size_t axis = 0; axis < 3; ++axis) {
-    directions[axis] = model.axisDirection(static_cast<GizmoAxis>(axis));
-    const Vec3 unit{position[0] + directions[axis][0], position[1] + directions[axis][1],
-                    position[2] + directions[axis][2]};
-    const std::optional<ImVec2> tip = project(camera, unit, origin, size);
-    if (!tip.has_value()) continue;
-    const ImVec2 delta(tip->x - center->x, tip->y - center->y);
-    const float pixels = length(delta);
-    if (pixels < 1e-3f) continue;
-    const ImVec2 direction(delta.x / pixels, delta.y / pixels);
-    handles[axis] = AxisHandle{*center, direction,
-                               ImVec2(center->x + direction.x * kHandlePixels, center->y + direction.y * kHandlePixels),
-                               pixels};
-  }
+  for (std::size_t axis = 0; axis < 3; ++axis) directions[axis] = model.axisDirection(static_cast<GizmoAxis>(axis));
+  const std::optional<GizmoHandles> handles =
+      gizmoHandles(camera, PixelRect{origin.x, origin.y, size.x, size.y}, position, directions);
+  if (!handles.has_value()) return false;
 
   ImDrawList& draw = *ImGui::GetWindowDrawList();
   draw.PushClipRect(origin, ImVec2(origin.x + size.x, origin.y + size.y), true);
   const ImVec2 pointer = ImGui::GetIO().MousePos;
   for (std::size_t axis = 0; axis < 3; ++axis) {
-    if (!handles[axis].has_value()) continue;
-    const AxisHandle& handle = *handles[axis];
+    if (!(*handles)[axis].has_value()) continue;
+    const GizmoHandle& handle = *(*handles)[axis];
+    const ImVec2 handleOrigin = toImVec2(handle.origin);
+    const ImVec2 handleEnd = toImVec2(handle.end);
+    const ImVec2 direction = toImVec2(handle.direction);
     const bool active = drag.has_value() && static_cast<std::size_t>(drag->axis) == axis;
     const ImU32 color = active ? kActiveAxisColor : kAxisColors[axis];
     switch (model.mode()) {
       case GizmoMode::Translate:
-        draw.AddLine(handle.origin, handle.end, color, 3.0f);
-        draw.AddTriangleFilled(ImVec2(handle.end.x + handle.direction.x * 10.0f, handle.end.y + handle.direction.y * 10.0f),
-                               ImVec2(handle.end.x - handle.direction.y * 5.0f, handle.end.y + handle.direction.x * 5.0f),
-                               ImVec2(handle.end.x + handle.direction.y * 5.0f, handle.end.y - handle.direction.x * 5.0f),
+        draw.AddLine(handleOrigin, handleEnd, color, 3.0f);
+        draw.AddTriangleFilled(ImVec2(handleEnd.x + direction.x * 10.0f, handleEnd.y + direction.y * 10.0f),
+                               ImVec2(handleEnd.x - direction.y * 5.0f, handleEnd.y + direction.x * 5.0f),
+                               ImVec2(handleEnd.x + direction.y * 5.0f, handleEnd.y - direction.x * 5.0f),
                                color);
         break;
       case GizmoMode::Scale:
-        draw.AddLine(handle.origin, handle.end, color, 3.0f);
-        draw.AddRectFilled(ImVec2(handle.end.x - 5.0f, handle.end.y - 5.0f), ImVec2(handle.end.x + 5.0f, handle.end.y + 5.0f),
+        draw.AddLine(handleOrigin, handleEnd, color, 3.0f);
+        draw.AddRectFilled(ImVec2(handleEnd.x - 5.0f, handleEnd.y - 5.0f), ImVec2(handleEnd.x + 5.0f, handleEnd.y + 5.0f),
                            color);
         break;
       case GizmoMode::Rotate:
-        draw.AddCircle(handle.end, 9.0f, color, 0, 3.0f);
-        draw.AddLine(handle.origin, handle.end, color, 1.0f);
+        draw.AddCircle(handleEnd, kGizmoRotateRingPixels, color, 0, 3.0f);
+        draw.AddLine(handleOrigin, handleEnd, color, 1.0f);
         break;
     }
   }
@@ -758,20 +716,7 @@ bool EditorView::State::gizmo(ViewModels& models, const std::optional<CameraMatr
   ImGuiIO& io = ImGui::GetIO();
   bool grabbed = false;
   if (!drag.has_value() && hovered && mayGrab && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-    float best = kPickPixels;
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-      if (!handles[axis].has_value()) continue;
-      const AxisHandle& handle = *handles[axis];
-      const float distance = model.mode() == GizmoMode::Rotate
-                                 ? std::fabs(length(ImVec2(pointer.x - handle.end.x, pointer.y - handle.end.y)) - 9.0f)
-                                 : distanceToSegment(pointer, handle.origin, handle.end);
-      if (distance <= best) {
-        best = distance;
-        drag = Drag{static_cast<GizmoAxis>(axis), pointer, handle,
-                    std::atan2(pointer.y - handle.origin.y, pointer.x - handle.origin.x),
-                    facesCamera(camera, directions[axis])};
-      }
-    }
+    drag = gizmoGrab(*handles, directions, camera, model.mode(), {pointer.x, pointer.y});
     if (drag.has_value()) {
       model.beginDrag(drag->axis);
       grabbed = true;
@@ -783,21 +728,7 @@ bool EditorView::State::gizmo(ViewModels& models, const std::optional<CameraMatr
     drag.reset();
     return grabbed;
   }
-  const ImVec2 moved(pointer.x - drag->start.x, pointer.y - drag->start.y);
-  const float along = moved.x * drag->handle.direction.x + moved.y * drag->handle.direction.y;
-  switch (model.mode()) {
-    case GizmoMode::Translate: model.dragTo(along / drag->handle.pixelsPerUnit); break;
-    case GizmoMode::Scale: model.dragTo(1.0f + along / kHandlePixels); break;
-    case GizmoMode::Rotate: {
-      // Screen y points down: a positive (right-handed) rotation about an
-      // axis facing the camera turns counter-clockwise on screen, i.e. by a
-      // decreasing screen angle.
-      float angle = std::atan2(pointer.y - drag->handle.origin.y, pointer.x - drag->handle.origin.x) - drag->startAngle;
-      if (drag->towardCamera) angle = -angle;
-      model.dragTo(angle);
-      break;
-    }
-  }
+  model.dragTo(gizmoDragAmount(model.mode(), *drag, {pointer.x, pointer.y}));
   return grabbed;
 }
 

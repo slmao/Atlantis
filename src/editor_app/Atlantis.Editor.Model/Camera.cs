@@ -1,14 +1,15 @@
-// Spec 0064 Phase 1 (Plan 0064 P4; ADR-0125 D4): the E1 editor camera
-// (src/editor/include/atlantis/editor/model/viewport_camera.h), ported to C#
-// minimally -- the host's camera convention (view, projection, pick ray) and
-// the orbit/dolly navigation. Client state only: the pose is handed to the
-// Runtime with RemoteControl.SetViewportCamera (ADR-0128 D1). Held to the C++
-// model by tests/csharp/conformance/camera_vectors.jsonl
-// (src/editor_app/tests/Atlantis.Editor.Tests). UI-free.
+// Spec 0064 Phase 1 (Plan 0064 P4) and Plan 0068 M1 (Spec 0068 R1; ADR-0137
+// D1): the E1 editor camera (src/editor/include/atlantis/editor/model/
+// viewport_camera.h), ported to C# -- the host's camera convention (view,
+// projection, NDC, view depth, pick ray) and every navigation of
+// ViewportCameraModel (look, orbit, pan, dolly, dolly drag, fly, fly speed,
+// frame). Client state only: the pose is handed to the Runtime with
+// RemoteControl.SetViewportCamera (ADR-0128 D1). Held to the C++ model by
+// tests/csharp/conformance/camera_vectors.jsonl. UI-free.
 using System;
 using System.Numerics;
 
-namespace Atlantis.Editor;
+namespace Atlantis.Editor.Model;
 
 /// <summary>A camera's lens, as the World's Camera holds it.</summary>
 public readonly record struct CameraLens(float FovYRadians, float NearZ, float FarZ)
@@ -46,6 +47,31 @@ public static class CameraConvention
         float[] view = LookAt(eye.X, eye.Y, eye.Z, eye.X + forward.X, eye.Y + forward.Y, eye.Z + forward.Z);
         float[] projection = Perspective(pose.Lens.FovYRadians, aspect, pose.Lens.NearZ, pose.Lens.FarZ);
         return new CameraMatrices(view, projection);
+    }
+
+    /// <summary>A world point to normalized device coordinates (x right, y down); null behind the camera.</summary>
+    public static Vector2? ProjectToNdc(CameraMatrices camera, Vector3 point)
+    {
+        Span<float> view = stackalloc float[4];
+        Span<float> clip = stackalloc float[4];
+        float[] v = camera.View, p = camera.Projection;
+        for (int row = 0; row < 4; ++row)
+        {
+            view[row] = v[0 * 4 + row] * point.X + v[1 * 4 + row] * point.Y + v[2 * 4 + row] * point.Z + v[3 * 4 + row];
+        }
+        for (int row = 0; row < 4; ++row)
+        {
+            clip[row] = p[0 * 4 + row] * view[0] + p[1 * 4 + row] * view[1] + p[2 * 4 + row] * view[2] + p[3 * 4 + row] * view[3];
+        }
+        if (!(clip[3] > 1e-6f)) return null;
+        return new Vector2(clip[0] / clip[3], clip[1] / clip[3]);
+    }
+
+    /// <summary>A world point's distance in front of the camera (its -z in view space).</summary>
+    public static float ViewDepth(CameraMatrices camera, Vector3 point)
+    {
+        float[] v = camera.View;
+        return -(v[2] * point.X + v[6] * point.Y + v[10] * point.Z + v[14]);
     }
 
     /// <summary>
@@ -124,17 +150,25 @@ public static class CameraConvention
 }
 
 /// <summary>
-/// The editor camera (E1's ViewportCameraModel, orbit and dolly only): an eye, a yaw and a pitch (no roll), a pivot
-/// in front of the eye and a lens. yaw = pitch = 0 looks down -z; positive yaw turns left, positive pitch looks up.
+/// The editor camera (E1's ViewportCameraModel): an eye, a yaw and a pitch (no roll), a pivot in front of the eye, a
+/// fly speed and a lens. yaw = pitch = 0 looks down -z; positive yaw turns left, positive pitch looks up. Navigation
+/// follows Spec 0062 R2: angles per pointer pixel, distances scaled by the pivot distance, motion in units per second.
 /// Not thread-safe.
 /// </summary>
-public sealed class OrbitCamera
+public sealed class EditorCamera
 {
     public const float MaxPitchRadians = 1.5533430f;     // 89 degrees
+    public const float LookRadiansPerPixel = 0.0043633f;   // 0.25 degrees
     public const float OrbitRadiansPerPixel = 0.0052360f; // 0.3 degrees
     public const float MinPivotDistance = 0.05f;
     public const float DefaultPivotDistance = 10.0f;
     public const float WheelDollyFactor = 0.85f;          // per notch toward the pivot
+    public const float DragDollyPerPixel = 0.01f;         // distance *= exp(-k * pixels)
+    public const float MinFlySpeed = 0.05f;
+    public const float MaxFlySpeed = 500.0f;
+    public const float DefaultFlySpeed = 5.0f;            // units per second
+    public const float FlySpeedStep = 1.25f;              // per wheel notch
+    public const float FastFlyFactor = 4.0f;              // Shift
 
     private const float DegenerateLengthEpsilon = 1e-6f;
 
@@ -143,17 +177,20 @@ public sealed class OrbitCamera
     private float _yaw;
     private float _pitch;
     private float _pivotDistance = DefaultPivotDistance;
+    private float _flySpeed = DefaultFlySpeed;
     private CameraLens _lens = CameraLens.Default;
 
+    public Vector3 Eye => _eye;
     public float Yaw => _yaw;
     public float Pitch => _pitch;
     public float PivotDistance => _pivotDistance;
+    public float FlySpeed => _flySpeed;
     public CameraLens Lens => _lens;
 
     /// <summary>True once a navigation has moved the camera off the pose it was reset to.</summary>
     public bool Navigated => _resetWorldMatrix is null;
 
-    /// <summary>Takes the pose's eye, direction (pitch clamped) and lens; the pivot distance is kept.</summary>
+    /// <summary>Takes the pose's eye, direction (pitch clamped) and lens; the pivot distance and fly speed are kept.</summary>
     public void Reset(CameraPose pose)
     {
         float[] m = pose.WorldMatrix;
@@ -195,17 +232,37 @@ public sealed class OrbitCamera
         return new Vector3(-MathF.Sin(_yaw) * c, MathF.Sin(_pitch), -MathF.Cos(_yaw) * c);
     }
 
+    /// <summary>Horizontal, unit.</summary>
     public Vector3 Right() => new(MathF.Cos(_yaw), 0.0f, -MathF.Sin(_yaw));
 
-    public Vector3 Pivot() => _eye + Scale(Forward(), _pivotDistance);
+    /// <summary>The camera's up, unit.</summary>
+    public Vector3 Up() => CameraConvention.Cross(Right(), Forward());
 
-    /// <summary>A drag turns the camera about the pivot (the eye moves): right looks right, down looks down.</summary>
+    public Vector3 Pivot() => Add(_eye, Scale(Forward(), _pivotDistance));
+
+    /// <summary>Right-button drag: turns about the eye. Right looks right, down (positive dy) looks down.</summary>
+    public void Look(float dxPixels, float dyPixels)
+    {
+        _resetWorldMatrix = null;
+        SetDirection(_yaw - dxPixels * LookRadiansPerPixel, _pitch - dyPixels * LookRadiansPerPixel);
+    }
+
+    /// <summary>Alt + left drag: the same turn, about the pivot (the eye moves).</summary>
     public void Orbit(float dxPixels, float dyPixels)
     {
         _resetWorldMatrix = null;
         Vector3 center = Pivot();
         SetDirection(_yaw - dxPixels * OrbitRadiansPerPixel, _pitch - dyPixels * OrbitRadiansPerPixel);
-        _eye = center + Scale(Forward(), -_pivotDistance);
+        _eye = Add(center, Scale(Forward(), -_pivotDistance));
+    }
+
+    /// <summary>Middle drag: the point under the pointer at the pivot's depth follows the pointer.</summary>
+    public void Pan(float dxPixels, float dyPixels, float viewportHeightPixels)
+    {
+        _resetWorldMatrix = null;
+        if (!(viewportHeightPixels > 0.0f)) return;
+        float unitsPerPixel = 2.0f * _pivotDistance * MathF.Tan(_lens.FovYRadians * 0.5f) / viewportHeightPixels;
+        _eye = Add(_eye, Add(Scale(Right(), -dxPixels * unitsPerPixel), Scale(Up(), dyPixels * unitsPerPixel)));
     }
 
     /// <summary>The wheel: positive notches move toward the pivot.</summary>
@@ -214,7 +271,47 @@ public sealed class OrbitCamera
         _resetWorldMatrix = null;
         Vector3 center = Pivot();
         _pivotDistance = MathF.Max(MinPivotDistance, _pivotDistance * MathF.Pow(WheelDollyFactor, notches));
-        _eye = center + Scale(Forward(), -_pivotDistance);
+        _eye = Add(center, Scale(Forward(), -_pivotDistance));
+    }
+
+    /// <summary>Alt + right drag: a drag down (positive dy) moves toward the pivot.</summary>
+    public void DollyDrag(float dyPixels)
+    {
+        _resetWorldMatrix = null;
+        Vector3 center = Pivot();
+        _pivotDistance = MathF.Max(MinPivotDistance, _pivotDistance * MathF.Exp(-DragDollyPerPixel * dyPixels));
+        _eye = Add(center, Scale(Forward(), -_pivotDistance));
+    }
+
+    /// <summary>
+    /// Right button held + W/A/S/D/Q/E: <paramref name="direction"/> is (right, world-up, forward) in [-1, 1] each;
+    /// moves fly speed (x FastFlyFactor when <paramref name="fast"/>) per second.
+    /// </summary>
+    public void Fly(Vector3 direction, float deltaSeconds, bool fast)
+    {
+        _resetWorldMatrix = null;
+        if (!(deltaSeconds > 0.0f)) return;
+        float distance = _flySpeed * (fast ? FastFlyFactor : 1.0f) * deltaSeconds;
+        Vector3 move = Add(Add(Scale(Right(), direction.X), Scale(Vector3.UnitY, direction.Y)), Scale(Forward(), direction.Z));
+        _eye = Add(_eye, Scale(move, distance));
+    }
+
+    /// <summary>Right button held + wheel.</summary>
+    public void ScaleFlySpeed(float notches) =>
+        _flySpeed = Math.Clamp(_flySpeed * MathF.Pow(FlySpeedStep, notches), MinFlySpeed, MaxFlySpeed);
+
+    /// <summary>
+    /// F: the pivot moves to <paramref name="center"/> and, when radius > 0, the distance becomes the one at which a
+    /// sphere of that radius fits the vertical field of view.
+    /// </summary>
+    public void Frame(Vector3 center, float radius)
+    {
+        _resetWorldMatrix = null;
+        if (radius > 0.0f && float.IsFinite(radius))
+        {
+            _pivotDistance = MathF.Max(MinPivotDistance, radius / MathF.Sin(_lens.FovYRadians * 0.5f));
+        }
+        _eye = Add(center, Scale(Forward(), -_pivotDistance));
     }
 
     private void SetDirection(float yaw, float pitch)
@@ -224,5 +321,7 @@ public sealed class OrbitCamera
         _pitch = Math.Clamp(pitch, -MaxPitchRadians, MaxPitchRadians);
     }
 
+    // Component-wise, as the C++ model's add()/scale() (no fused or reordered arithmetic).
+    private static Vector3 Add(Vector3 a, Vector3 b) => new(a.X + b.X, a.Y + b.Y, a.Z + b.Z);
     private static Vector3 Scale(Vector3 v, float s) => new(v.X * s, v.Y * s, v.Z * s);
 }

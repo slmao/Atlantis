@@ -27,8 +27,13 @@ using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
+using Avalonia.Input;
+using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.Threading;
+using Atlantis.Editor.Model;
+using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
 
@@ -57,7 +62,40 @@ public sealed class MainWindow : Window
     private readonly EditorOptions _options;
     private readonly string _workDirectory = RuntimeProcess.NewWorkDirectory();
     private readonly EditorLog _log;
+    // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
+    private readonly Selection _selection = new();
+    private readonly Button _create = new() { Content = "Create child" };
+    private readonly Button _destroy = new() { Content = "Destroy subtree" };
+    private readonly Button _toRoot = new() { Content = "Move to root" };
+    private readonly Button _pickUp = new() { Content = "Pick up" };
+    private readonly Button _moveHere = new() { Content = "Move under selection", IsEnabled = false };
+    // Plan 0068 M5: the history's Undo and Redo, labelled with the edit they would step over.
+    private readonly Button _undo = new() { Content = "Undo", IsEnabled = false };
+    private readonly Button _redo = new() { Content = "Redo", IsEnabled = false };
+    // Plan 0068 M6 (Spec 0068 R9): the document's save and the Runtime's transport. The Runtime starts playing, so
+    // Pause is the enabled action until the first play state says otherwise.
+    private readonly Button _save = new() { Content = "Save" };
+    private readonly Button _play = new() { Content = "Play", IsEnabled = false };
+    private readonly Button _pause = new() { Content = "Pause" };
+    private readonly Button _step = new() { Content = "Step", IsEnabled = false };
+    private readonly TextBlock _applyLine = new() { Text = "authoring: connecting..." };
+    private readonly TextBlock _editLine = new();
+    private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
+    private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
+    private EntityGuid? _pickedUp;
+    private bool _syncingSelection;
+    // Plan 0068 M4: the Gizmo's settings, the selected node's matrix and availability, and the grab in progress.
+    private readonly ComboBox _gizmoMode = new() { ItemsSource = new[] { "Move", "Rotate", "Scale" }, SelectedIndex = 0, MinWidth = 80 };
+    private readonly ComboBox _gizmoSpace = new() { ItemsSource = new[] { "World", "Local" }, SelectedIndex = 0, MinWidth = 80 };
+    private readonly CheckBox _gizmoSnap = new() { Content = "Snap" };
+    private GizmoSnapshot? _gizmoShown;
+    private GizmoGrab? _gizmoGrab;
+    private GizmoMode _gizmoGrabMode;
+    // Plan 0068 M3: the Inspector panel, rebuilt from the worker's snapshots (not while a field is being typed in).
+    private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
+    private InspectorSnapshot? _inspectorShown;
+    private InspectorSnapshot? _inspectorDeferred;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
     private readonly TextBox _notes = new();
@@ -68,7 +106,7 @@ public sealed class MainWindow : Window
     private readonly Button _applySize = new() { Content = "Set viewport size" };
     private (int Width, int Height)? _targetSize;
     private int _sizeCorrections;
-    private readonly OrbitCamera _camera = new();
+    private readonly EditorCamera _camera = new();
     private readonly DispatcherTimer _uiTicker = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly List<double> _uiGaps = new();
     private long _lastUiTick = Stopwatch.GetTimestamp();
@@ -129,6 +167,9 @@ public sealed class MainWindow : Window
         _status.Height = 96;
         _notes.PlaceholderText = "Type here (keyboard focus check)";
         _entities.SelectionMode = SelectionMode.Single;
+        _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
+            new TextBlock { Text = row.Label, Margin = new Thickness(row.Depth * 14, 0, 0, 0) });
+        _entities.SelectionChanged += (_, _) => OnHierarchySelected();
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         buttons.Children.Add(_measureFrames);
@@ -142,27 +183,44 @@ public sealed class MainWindow : Window
         sizing.Children.Add(_applySize);
         tools.Children.Add(sizing);
         var left = new DockPanel { Margin = new Thickness(6) };
-        var heading = new TextBlock { Text = "Entities", Margin = new Thickness(0, 0, 0, 4) };
+        var heading = new TextBlock { Text = "Hierarchy", Margin = new Thickness(0, 0, 0, 4) };
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(tools, Dock.Bottom);
+        var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
+        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _play, _pause, _step })
+        { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
+        var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
+        state.Children.Add(_applyLine);
+        state.Children.Add(_editLine);
+        DockPanel.SetDock(edits, Dock.Top);
+        DockPanel.SetDock(state, Dock.Bottom);
         left.Children.Add(heading);
+        left.Children.Add(edits);
         left.Children.Add(tools);
+        left.Children.Add(state);
         left.Children.Add(_entities);
 
         var grid = new Grid
         {
-            ColumnDefinitions = new ColumnDefinitions("320,5,*"),
+            ColumnDefinitions = new ColumnDefinitions("320,5,*,5,320"),
             RowDefinitions = new RowDefinitions("*,Auto"),
         };
         Grid.SetColumn(left, 0);
         var splitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
         Grid.SetColumn(splitter, 1);
         Grid.SetColumn(_viewport, 2);
+        var inspectorSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
+        Grid.SetColumn(inspectorSplitter, 3);
+        var inspectorScroll = new ScrollViewer { Content = _inspectorPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
+        Grid.SetColumn(inspectorScroll, 4);
         Grid.SetRow(_status, 1);
-        Grid.SetColumnSpan(_status, 3);
+        Grid.SetColumnSpan(_status, 5);
         grid.Children.Add(left);
         grid.Children.Add(splitter);
         grid.Children.Add(_viewport);
+        grid.Children.Add(inspectorSplitter);
+        grid.Children.Add(inspectorScroll);
         grid.Children.Add(_status);
         Content = grid;
 
@@ -175,6 +233,43 @@ public sealed class MainWindow : Window
             _worker?.Measure(600);
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
+        _gizmoMode.SelectionChanged += (_, _) => SendGizmoSettings();
+        _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
+        _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
+        _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
+        _undo.Click += (_, _) => _worker?.Undo();
+        _redo.Click += (_, _) => _worker?.Redo();
+        _save.Click += (_, _) => _worker?.Save();
+        _play.Click += (_, _) => _worker?.Play();
+        _pause.Click += (_, _) => _worker?.Pause();
+        _step.Click += (_, _) => _worker?.StepFrame();
+        KeyDown += (_, e) =>
+        {
+            // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
+            if ((e.KeyModifiers & KeyModifiers.Control) == 0 || FocusManager?.GetFocusedElement() is TextBox) return;
+            if (e.Key == Key.Z && (e.KeyModifiers & KeyModifiers.Shift) == 0) { _worker?.Undo(); e.Handled = true; }
+            else if (e.Key == Key.Y || e.Key == Key.Z) { _worker?.Redo(); e.Handled = true; }
+        };
+        _destroy.Click += (_, _) =>
+        {
+            if (_selection.Node is EntityGuid node) _worker?.DestroySubtree(node);
+        };
+        _toRoot.Click += (_, _) =>
+        {
+            if (_selection.Node is EntityGuid node) _worker?.Reparent(node, null);
+        };
+        _pickUp.Click += (_, _) =>
+        {
+            _pickedUp = _selection.Node;
+            _moveHere.IsEnabled = _pickedUp is not null;
+            _editLine.Text = _pickedUp is EntityGuid n ? "picked up " + n.Value.ToString("N")[..8] + ": select its new parent" : "";
+        };
+        _moveHere.Click += (_, _) =>
+        {
+            if (_pickedUp is EntityGuid node && _selection.Node is EntityGuid parent) _worker?.Reparent(node, parent);
+            _pickedUp = null;
+            _moveHere.IsEnabled = false;
+        };
         _applySize.Click += (_, _) => ApplyViewportSize();
         _measureLatency.IsCheckedChanged += (_, _) =>
         {
@@ -262,6 +357,33 @@ public sealed class MainWindow : Window
             UpdateStatus();
         };
         worker.Picked += OnPicked;
+        worker.HierarchyChanged += OnHierarchyChanged;
+        worker.InspectorChanged += OnInspectorChanged;
+        worker.HistoryChanged += history =>
+        {
+            _undo.IsEnabled = history.CanUndo;
+            _redo.IsEnabled = history.CanRedo;
+            _undo.Content = history.CanUndo ? "Undo " + history.UndoLabel : "Undo";
+            _redo.Content = history.CanRedo ? "Redo " + history.RedoLabel : "Redo";
+        };
+        worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
+        worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
+        worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
+        worker.PlayStateChanged += playing =>
+        {
+            _play.IsEnabled = !playing;
+            _pause.IsEnabled = playing;
+            _step.IsEnabled = !playing;
+        };
+        worker.EditNotice += text => _editLine.Text = text;
+        worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
+            "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
+        worker.NodesDestroyed += nodes =>
+        {
+            if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
+        };
+        worker.NodeCreatedByEditor += node => SetSelection(node, true);
         worker.CameraAcked += ack =>
         {
             _cameraLine = string.Format(CultureInfo.InvariantCulture, "camera: input->ack {0:F1} ms{1} ({2} coalesced)",
@@ -283,13 +405,12 @@ public sealed class MainWindow : Window
     private void OnConnected(SceneSnapshot scene)
     {
         _scene = scene;
-        _entities.ItemsSource = scene.Entities;
         if (scene.ScenePose is CameraPose pose) _camera.Reset(pose);
         else _camera.Reset(new CameraPose(new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 10, 1 }, CameraLens.Default));
         _cameraInitialized = true;
-        if (_recorder is not null && _entities.SelectedItem is null && scene.FirstRenderable is EntityGuid first)
+        if (_recorder is not null && _selection.Node is null && scene.FirstRenderable is EntityGuid first)
         {
-            _entities.SelectedItem = scene.Entities.FirstOrDefault(row => row.Guid == first);  // the drag's default subject
+            SetSelection(first, true);  // the drag's default subject
         }
         if (_options.DriveDrags > 0) StartDriver();
         if (_options.MeasureOverlay) StartOverlayMeasurement();
@@ -411,9 +532,54 @@ public sealed class MainWindow : Window
         _worker?.SetCamera(null, Stopwatch.GetTimestamp());
     }
 
+    private GizmoMode ModeUi => _gizmoMode.SelectedIndex switch { 1 => GizmoMode.Rotate, 2 => GizmoMode.Scale, _ => GizmoMode.Translate };
+
+    private GizmoSpace SpaceUi => _gizmoSpace.SelectedIndex == 1 ? GizmoSpace.Local : GizmoSpace.World;
+
+    private void SendGizmoSettings() => _worker?.SetGizmo(ModeUi, SpaceUi, _gizmoSnap.IsChecked == true);
+
+    // Plan 0068 M4 (Spec 0068 R5): a press on a handle of the selected node's Gizmo grabs it -- E1's handle layout and its
+    // 8-pixel pick (gizmo.h's math, ported and held by vectors) -- a move drags it (previews on the Runtime World, one
+    // coalesced batch per worker turn), the release commits. Returns whether it took the event.
+    private bool GizmoPointer(ViewportPointerEvent e)
+    {
+        ViewportWindow? window = _viewport.Window;
+        switch (e.Kind)
+        {
+            case ViewportPointer.LeftDown when _gizmoShown is { World: { } world, Availability: { } availability } && _worker is not null &&
+                                               _cameraInitialized && window is { Width: > 0, Height: > 0 }:
+            {
+                CameraMatrices? camera = _camera.Matrices((float)window.Width / window.Height);
+                if (camera is null) return false;
+                GizmoMode mode = GizmoLayout.EffectiveMode(availability, ModeUi);
+                GizmoSpace space = GizmoLayout.EffectiveSpace(world, SpaceUi);
+                Vector3[] directions = GizmoLayout.Directions(world, mode, space);
+                var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
+                GizmoHandle?[]? handles = Gizmo.Handles(camera, rect, new Vector3(world[12], world[13], world[14]), directions);
+                if (handles is null || Gizmo.Grab(handles, directions, camera, mode, new Vector2(e.X, e.Y)) is not GizmoGrab grab) return false;
+                _gizmoGrab = grab;
+                _gizmoGrabMode = mode;
+                _pressed = null;
+                _worker.BeginGizmoDrag(grab.Axis);
+                _inputLine = "gizmo " + mode + " " + grab.Axis;
+                return true;
+            }
+            case ViewportPointer.Move when _gizmoGrab is { } grab:
+                _worker?.GizmoDragTo(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
+                return true;
+            case ViewportPointer.LeftUp when _gizmoGrab is { } grab:
+                _worker?.EndGizmoDrag(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
+                _gizmoGrab = null;
+                return true;
+            default:
+                return false;
+        }
+    }
+
     private void OnPointer(ViewportPointerEvent e)
     {
         if (_recorder is not null && MeasureDrag(e)) return;
+        if (GizmoPointer(e)) return;
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown:
@@ -449,12 +615,12 @@ public sealed class MainWindow : Window
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown when (e.Shift || _options.DriveDrags > 0) && _worker is not null && _cameraInitialized &&
-                                               _entities.SelectedItem is EntityRow row && _viewport.Window is { } window:
+                                               _selection.Node is EntityGuid selected && _viewport.Window is { } window:
                 _dragPress = (e.X, e.Y);
                 _recorder!.Press(e.ArrivalTicks);
                 _log.Write("ui press at " + e.X + "," + e.Y);
-                _worker.BeginDrag(row.Guid, _camera.Pose(), window.Height);
-                _inputLine = "measurement drag of " + row.Label;
+                _worker.BeginDrag(selected, _camera.Pose(), window.Height);
+                _inputLine = "measurement drag of " + selected.Value.ToString("N")[..8];
                 return true;
             case ViewportPointer.Move when _dragPress is { } press:
                 _worker?.DragTo(e.X - press.X, e.Y - press.Y, e.ArrivalTicks);
@@ -484,6 +650,15 @@ public sealed class MainWindow : Window
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
         CameraMatrices? matrices = _camera.Matrices((float)window.Width / window.Height);
         if (matrices is null) return;
+        // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
+        var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
+        if (Picking.PickMarker(_markers, matrices, rect, x, y) is EntityGuid marker)
+        {
+            SetSelection(marker, true);
+            _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
+            UpdateStatus();
+            return;
+        }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
         float ndcY = (float)y / window.Height * 2.0f - 1.0f;
         _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks);
@@ -497,20 +672,165 @@ public sealed class MainWindow : Window
         }
         else if (pick.Result.Hit is RayHit hit)
         {
-            EntityRow? row = _scene?.Entities.FirstOrDefault(r => r.Guid == hit.Entity);
-            _entities.SelectedItem = row;
-            if (row is not null) _entities.ScrollIntoView(row);
-            _worker?.ShowPick(hit.Entity);
+            SetSelection(hit.Entity, true);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: {0} at {1:F3} ({2:F1} ms)", hit.Entity, hit.Distance,
                                       pick.InputToAnswerMs);
         }
         else
         {
-            _entities.SelectedItem = null;
-            _worker?.ShowPick(null);
+            SetSelection(null, true);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: no hit ({0:F1} ms)", pick.InputToAnswerMs);
         }
         UpdateStatus();
+    }
+
+    // Plan 0068 M2 (Spec 0068 R6, Q6): the one selection. A change anywhere -- the Viewport pick, the Hierarchy, a
+    // node destroyed -- updates the list's highlight and the overlay (outline, Gizmo, markers).
+    private void SetSelection(EntityGuid? node, bool scroll)
+    {
+        _selection.Select(node);
+        _syncingSelection = true;
+        try
+        {
+            HierarchyRow? row = node is EntityGuid n ? _hierarchyRows.FirstOrDefault(r => r.Node == n) : null;
+            _entities.SelectedItem = row;
+            if (scroll && row is not null) _entities.ScrollIntoView(row);
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
+        _worker?.ShowSelection(node);
+    }
+
+    private void OnHierarchySelected()
+    {
+        if (_syncingSelection) return;
+        EntityGuid? node = (_entities.SelectedItem as HierarchyRow)?.Node;
+        if (node == _selection.Node) return;
+        _selection.Select(node);
+        _worker?.ShowSelection(node);
+    }
+
+    // Plan 0068 M3 (Spec 0068 R4): one typed editor per field -- a text box committed on Enter or loss of focus (one
+    // transaction each), a combo box for an enum, a clear button for an optional field, a note for a read-only one --
+    // and Add / Remove component. The panel is not rebuilt under a field being typed in: the snapshot waits.
+    private void OnInspectorChanged(InspectorSnapshot snapshot)
+    {
+        if (_inspectorShown is not null && snapshot.Subject == _inspectorShown.Subject && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox focused &&
+            _inspectorPanel.GetVisualDescendants().Contains(focused))
+        {
+            _inspectorDeferred = snapshot;
+            return;
+        }
+        BuildInspector(snapshot);
+    }
+
+    private void BuildInspector(InspectorSnapshot snapshot)
+    {
+        _inspectorShown = snapshot;
+        _inspectorDeferred = null;
+        _inspectorPanel.Children.Clear();
+        if (snapshot.Subject is not EntityGuid subject)
+        {
+            _inspectorPanel.Children.Add(new TextBlock { Text = "Select a node in the Hierarchy.", Opacity = 0.6 });
+            return;
+        }
+        _inspectorPanel.Children.Add(new TextBlock { Text = "Node " + subject, FontWeight = Avalonia.Media.FontWeight.SemiBold, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        foreach (var (component, name) in snapshot.Components)
+        {
+            var header = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+            if (name != "Transform")
+            {
+                var remove = new Button { Content = "Remove", Padding = new Thickness(6, 0) };
+                TypeId id = component;
+                remove.Click += (_, _) => _worker?.RemoveComponent(id);
+                DockPanel.SetDock(remove, Dock.Right);
+                header.Children.Add(remove);
+            }
+            header.Children.Add(new TextBlock { Text = name, FontWeight = Avalonia.Media.FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            _inspectorPanel.Children.Add(header);
+            foreach (InspectorField field in snapshot.Fields.Where(f => f.Component == component)) _inspectorPanel.Children.Add(FieldRow(field));
+        }
+        if (snapshot.Addable.Count > 0)
+        {
+            var add = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+            var choice = new ComboBox { ItemsSource = snapshot.Addable.Select(a => a.Name).ToList(), SelectedIndex = 0, MinWidth = 140 };
+            var button = new Button { Content = "Add component", Margin = new Thickness(6, 0, 0, 0) };
+            button.Click += (_, _) =>
+            {
+                if (choice.SelectedIndex >= 0) _worker?.AddComponent(snapshot.Addable[choice.SelectedIndex].Id);
+            };
+            DockPanel.SetDock(button, Dock.Right);
+            add.Children.Add(button);
+            add.Children.Add(choice);
+            _inspectorPanel.Children.Add(add);
+        }
+    }
+
+    private Control FieldRow(InspectorField field)
+    {
+        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*,Auto") };
+        row.Children.Add(new TextBlock { Text = field.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
+        Control editor;
+        if (field.Control == FieldControl.Enum && field.Editable)
+        {
+            var combo = new ComboBox { ItemsSource = field.Choices.Select(c => c.Name).ToList(), SelectedItem = field.Text, HorizontalAlignment = HorizontalAlignment.Stretch };
+            combo.SelectionChanged += (_, _) =>
+            {
+                if (combo.SelectedItem is string chosen && chosen != field.Text) _worker?.CommitField(field.Path, chosen);
+            };
+            editor = combo;
+        }
+        else
+        {
+            var box = new TextBox { Text = field.Text, IsReadOnly = !field.Editable, Opacity = field.Editable ? 1.0 : 0.6 };
+            if (field.Optional && !field.Present) box.PlaceholderText = "(absent)";
+            string original = field.Text;
+            void Commit()
+            {
+                if (!field.Editable || (box.Text ?? "") == original) return;
+                original = box.Text ?? "";
+                _worker?.CommitField(field.Path, original);
+            }
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Avalonia.Input.Key.Enter) Commit();
+                if (e.Key == Avalonia.Input.Key.Escape) box.Text = original;
+            };
+            box.LostFocus += (_, _) =>
+            {
+                Commit();
+                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() => BuildInspector(waiting));
+            };
+            editor = box;
+        }
+        Grid.SetColumn(editor, 1);
+        row.Children.Add(editor);
+        if (field.Optional && field.Present && field.Editable)
+        {
+            var clear = new Button { Content = "×", Padding = new Thickness(6, 0), Margin = new Thickness(4, 0, 0, 0) };
+            clear.Click += (_, _) => _worker?.ClearField(field.Path);
+            Grid.SetColumn(clear, 2);
+            row.Children.Add(clear);
+        }
+        return row;
+    }
+
+    private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)
+    {
+        _hierarchyRows = rows;
+        _markers = markers;
+        _syncingSelection = true;
+        try
+        {
+            _entities.ItemsSource = rows;
+            _entities.SelectedItem = _selection.Node is EntityGuid n ? rows.FirstOrDefault(r => r.Node == n) : null;
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
     }
 
     // The UI thread's responsiveness (P5 U2, input-queue coupling): the gaps between 16 ms timer ticks.

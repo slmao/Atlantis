@@ -189,6 +189,12 @@
         "resolved": "0.94.1",
         "contentHash": "11YMr7FnAbL83bQmVxlhbIKHvSLxjO81D12Ej0QMSGXMDTxNA9MTOa4MQxx43nv5el/efuPHwzyrj6a5ha2gug=="
       },
+      "atlantis.editor.model": {
+        "type": "Project",
+        "dependencies": {
+          "Atlantis.Gameplay": "[1.0.0, )"
+        }
+      },
       "atlantis.gameplay": {
         "type": "Project"
       }

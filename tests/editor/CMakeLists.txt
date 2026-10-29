@@ -9,6 +9,8 @@ add_executable(atlantis_editor_tests
   editor_model_tests.cpp
   # Plan 0056 M5: the view layer, headless, driven by scripted input.
   editor_view_tests.cpp
+  # Plan 0068 M1 (ADR-0137 D3): gizmo.h's pure handle and drag math.
+  gizmo_math_tests.cpp
 )
 
 # ImGui::ImGui is linked here only so the tests can observe the UI library's

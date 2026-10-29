@@ -13,6 +13,8 @@
 // viewport_overlay shader's) puts them for a known camera, against E1's
 // ImGui handles (editor_view.cpp: 80-pixel axes along each axis's projected
 // direction).
+// Plan 0068 M1 (ModelVectors.cs): Atlantis.Editor.Model against every vector
+// file the C++ models generate (ADR-0137 D1).
 //
 //   Atlantis.Editor.Tests --repo <source dir>
 using System;
@@ -23,10 +25,11 @@ using System.Numerics;
 using System.Text;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
+using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor.Tests;
 
-public static class Program
+public static partial class Program
 {
     private const float Tolerance = 2e-5f;
     private static int s_passed;
@@ -34,21 +37,51 @@ public static class Program
 
     public static int Main(string[] args)
     {
-        string? repo = null;
-        for (int i = 0; i + 1 < args.Length; ++i)
+        string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
+        bool integration = false, acceptance = false;
+        for (int i = 0; i < args.Length; ++i)
         {
-            if (args[i] == "--repo") repo = args[i + 1];
+            if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
+            else if (args[i] == "--integration") integration = true;
+            else if (args[i] == "--j7") acceptance = true;
+            else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
+            else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
+            else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
+        }
+        if (integration)
+        {
+            // Plan 0068 M7 (P5): the live scripted session against atlantis_runtime (GPU).
+            return runtime is null ? Usage() : IntegrationTest.Run(runtime, scene);
+        }
+        if (acceptance)
+        {
+            // Plan 0068 M7 (J7): the owner's acceptance run, scripted (GPU).
+            return runtime is null || cli is null ? Usage() : J7Acceptance.Run(runtime, cli, scene);
         }
         if (repo is null)
         {
-            Console.Error.WriteLine("usage: Atlantis.Editor.Tests --repo <source dir>");
-            return 2;
+            return Usage();
         }
         try
         {
             Run(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             DragReportChecks();
             GizmoChecks(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
+            // Plan 0068 M1 (ADR-0137 D1): every ported model against its vectors.
+            string conformance = Path.Combine(repo, "tests", "csharp", "conformance");
+            PickingChecks(Path.Combine(conformance, "picking_vectors.jsonl"));
+            GizmoVectorChecks(Path.Combine(conformance, "gizmo_vectors.jsonl"));
+            WorldMatrixChecks(Path.Combine(conformance, "world_matrix_vectors.jsonl"));
+            HistoryTranscriptChecks(Path.Combine(conformance, "history_transcripts.jsonl"));
+            // Plan 0068 M2: the Hierarchy's model, its commands (J4) and the apply controller, against a fake document.
+            HierarchyChecks();
+            ApplyControllerChecks();
+            // Plan 0068 M3: the Inspector's model.
+            InspectorChecks();
+            // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
+            GizmoDragChecks();
+            // Plan 0068 M5: the history over the authoring document, structural records included.
+            HistoryChecks();
         }
         catch (Exception e)
         {
@@ -56,6 +89,13 @@ public static class Program
         }
         Console.WriteLine($"camera convention: {s_passed} checks passed, {s_failed} failed");
         return s_failed == 0 && s_passed > 0 ? 0 : 1;
+    }
+
+    private static int Usage()
+    {
+        Console.Error.WriteLine("usage: Atlantis.Editor.Tests --repo <source dir>");
+        Console.Error.WriteLine("       Atlantis.Editor.Tests --integration --runtime <exe> [--scene <name>]");
+        return 2;
     }
 
     private static void Run(string path)
@@ -102,7 +142,7 @@ public static class Program
                 case "navigation":
                 {
                     ++navigations;
-                    var camera = new OrbitCamera();
+                    var camera = new EditorCamera();
                     camera.Reset(Pose(data.Find("reset")!));
                     foreach (JsonValue step in data.Find("steps")!.Items)
                     {
@@ -124,7 +164,7 @@ public static class Program
                     break;
                 }
                 default:
-                    Fail(name + ": unknown kind " + kind);
+                    if (!CameraKindPlan0068(kind, name, data)) Fail(name + ": unknown kind " + kind);
                     break;
             }
         }

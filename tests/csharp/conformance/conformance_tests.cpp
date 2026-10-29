@@ -17,7 +17,15 @@
 //     point, and the orbit/dolly navigation -- from the C++ model
 //     (atlantis/editor/model/viewport_camera.h, itself pinned to the host's
 //     extraction by tests/runtime/editor_camera_convention_tests.cpp).
-//     Atlantis Editor App's C# port is held to it.
+//     Atlantis Editor App's C# port is held to it. Plan 0068 M1 appends the
+//     whole camera: every navigation step, points projected with their depth.
+//   - Plan 0068 M1 (ADR-0137 D1), the E3 editor's C# models:
+//     picking_vectors.jsonl (pixels, rays through pixels, marker picks),
+//     gizmo_vectors.jsonl (decompose/compose, axis directions, drag
+//     matrices, snapping, the screen handles with their grabs and drag
+//     amounts), world_matrix_vectors.jsonl (world matrices solved over a
+//     node hierarchy by the authoring World) and history_transcripts.jsonl
+//     (E2's edit history, scripted step by step against a fake target).
 // A committed file that differs from what the C++ code produces now fails
 // here, with the expected text written to the build tree (the Plan 0057 J4
 // pattern); nothing rewrites a committed file.
@@ -33,8 +41,12 @@
 #include <atlantis/authoring/authoring_session.h>
 #include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/json.h>
+#include <atlantis/editor/model/edit_history.h>
+#include <atlantis/editor/model/gizmo.h>
 #include <atlantis/editor/model/viewport_camera.h>
+#include <atlantis/editor/model/viewport_picking.h>
 #include <atlantis/remote/session_file.h>
+#include <atlantis/world/world.h>
 #include <atlantis/world/world_schema.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -49,9 +61,11 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <span>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -587,6 +601,623 @@ namespace ed = atlantis::editor;
   return model.pose();
 }
 
+// --- Plan 0068 M1 (ADR-0137 D1): the E3 editor's C# models' vectors ------------
+
+// One JSON line: {"case":..., "kind":..., "data":...}.
+struct VectorLines {
+  std::string text;
+  void add(std::string_view name, std::string_view kind, json::Value body) {
+    json::Value out = json::Value::object();
+    out.set("case", json::Value::string(std::string(name)));
+    out.set("kind", json::Value::string(std::string(kind)));
+    out.set("data", std::move(body));
+    text += json::write(out) + "\n";
+  }
+};
+
+[[nodiscard]] json::Value columnsJson(const ed::MatrixColumns& columns) {
+  json::Value out = json::Value::array();
+  for (const auto& column : columns) out.push(floatArray(column));
+  return out;
+}
+
+[[nodiscard]] json::Value optionalPixel(const std::optional<std::array<float, 2>>& pixel) {
+  return pixel.has_value() ? floatArray(*pixel) : json::Value();
+}
+
+[[nodiscard]] json::Value rectJson(const ed::PixelRect& rect) {
+  return floatArray(std::array<float, 4>{rect.x, rect.y, rect.width, rect.height});
+}
+
+[[nodiscard]] json::Value matricesJson(const ed::CameraMatrices& camera) {
+  json::Value out = json::Value::object();
+  out.set("view", floatArray(camera.view));
+  out.set("projection", floatArray(camera.projection));
+  return out;
+}
+
+// camera_vectors.jsonl, extended (Plan 0068 P2): the whole camera -- every
+// navigation step, the projection of points and their view depth.
+void appendFullCameraVectors(std::string& text, const ed::CameraPose& bistroLike, const ed::CameraPose& tilted) {
+  VectorLines lines;
+  struct Step {
+    std::string_view op;
+    std::array<float, 4> args;
+  };
+  const std::array<Step, 12> steps{{{"look", {25.0f, -12.0f, 0.0f, 0.0f}},
+                                    {"pan", {30.0f, -18.0f, 720.0f, 0.0f}},
+                                    {"dollyDrag", {45.0f, 0.0f, 0.0f, 0.0f}},
+                                    {"fly", {1.0f, 0.0f, 0.5f, 0.25f}},
+                                    {"flyFast", {-0.5f, 1.0f, -1.0f, 0.1f}},
+                                    {"scaleFlySpeed", {2.0f, 0.0f, 0.0f, 0.0f}},
+                                    {"fly", {0.0f, 0.0f, 1.0f, 0.5f}},
+                                    {"frame", {1.0f, 2.0f, -3.0f, 1.5f}},
+                                    {"look", {-300.0f, 900.0f, 0.0f, 0.0f}},
+                                    {"frame", {-4.0f, 0.5f, 6.0f, 0.0f}},
+                                    {"scaleFlySpeed", {-40.0f, 0.0f, 0.0f, 0.0f}},
+                                    {"orbit", {12.0f, 5.0f, 0.0f, 0.0f}}}};
+  for (const auto& [name, pose] : {std::pair<std::string_view, const ed::CameraPose*>{"bistro_like", &bistroLike},
+                                   std::pair<std::string_view, const ed::CameraPose*>{"tilted", &tilted}}) {
+    ed::ViewportCameraModel model;
+    model.reset(*pose);
+    json::Value body = json::Value::object();
+    body.set("reset", poseJson(*pose));
+    json::Value after = json::Value::array();
+    for (const Step& step : steps) {
+      const auto& a = step.args;
+      if (step.op == "look") model.look(a[0], a[1]);
+      if (step.op == "pan") model.pan(a[0], a[1], a[2]);
+      if (step.op == "dollyDrag") model.dollyDrag(a[0]);
+      if (step.op == "fly") model.fly({a[0], a[1], a[2]}, a[3], false);
+      if (step.op == "flyFast") model.fly({a[0], a[1], a[2]}, a[3], true);
+      if (step.op == "scaleFlySpeed") model.scaleFlySpeed(a[0]);
+      if (step.op == "frame") model.frame({a[0], a[1], a[2]}, a[3]);
+      if (step.op == "orbit") model.orbit(a[0], a[1]);
+      json::Value entry = json::Value::object();
+      entry.set("op", json::Value::string(std::string(step.op)));
+      entry.set("args", floatArray(a));
+      entry.set("pose", poseJson(model.pose()));
+      entry.set("pivot", floatArray(model.pivot()));
+      entry.set("pivotDistance", json::Value::number(model.pivotDistance()));
+      entry.set("flySpeed", json::Value::number(model.flySpeed()));
+      entry.set("yawPitch", floatArray(std::array<float, 2>{model.yaw(), model.pitch()}));
+      after.push(std::move(entry));
+    }
+    body.set("steps", std::move(after));
+    lines.add("navigation_full." + std::string(name), "navigation_full", std::move(body));
+  }
+  // Points projected to NDC with their view depth; one behind the camera.
+  const auto camera = ed::cameraMatrices(bistroLike, 16.0f / 9.0f);
+  REQUIRE(camera.has_value());
+  for (const auto& point : {ed::Vec3{-18.0f, 1.0f, 18.0f}, ed::Vec3{-10.0f, 4.0f, 9.5f}, ed::Vec3{-30.0f, 1.7f, 30.0f}}) {
+    json::Value body = matricesJson(*camera);
+    body.set("point", floatArray(point));
+    const auto ndc = ed::projectToNdc(*camera, point);
+    body.set("ndc", optionalPixel(ndc));
+    body.set("depth", json::Value::number(ed::viewDepth(*camera, point)));
+    char name[64];
+    std::snprintf(name, sizeof name, "project.%.1f.%.1f.%.1f", static_cast<double>(point[0]),
+                  static_cast<double>(point[1]), static_cast<double>(point[2]));
+    lines.add(name, "project", std::move(body));
+  }
+  text += lines.text;
+}
+
+// picking_vectors.jsonl: pixels of points, rays through pixels, marker picks.
+[[nodiscard]] std::string pickingVectorsText() {
+  VectorLines lines;
+  const ed::CameraPose pose = lookingFrom({-22.0f, 1.7f, 22.0f}, -0.86f, -0.05f, {1.0472f, 0.1f, 500.0f});
+  const ed::PixelRect rect{12.0f, 40.0f, 1280.0f, 720.0f};
+  const auto camera = ed::cameraMatrices(pose, rect.width / rect.height);
+  REQUIRE(camera.has_value());
+  for (const auto& point : {ed::Vec3{-18.0f, 1.0f, 18.0f}, ed::Vec3{-10.0f, 4.0f, 9.5f}, ed::Vec3{-30.0f, 1.7f, 30.0f}}) {
+    json::Value body = matricesJson(*camera);
+    body.set("rect", rectJson(rect));
+    body.set("point", floatArray(point));
+    body.set("pixel", optionalPixel(ed::pixelOf(*camera, rect, point)));
+    lines.add("pixel." + std::to_string(static_cast<int>(point[0])), "pixel", std::move(body));
+  }
+  for (const auto& pixel : {std::array<float, 2>{12.0f, 40.0f}, std::array<float, 2>{652.0f, 400.0f},
+                            std::array<float, 2>{1100.5f, 90.25f}}) {
+    const ed::Ray ray = ed::rayThroughPixel(*camera, rect, pixel[0], pixel[1]);
+    json::Value body = matricesJson(*camera);
+    body.set("rect", rectJson(rect));
+    body.set("pixel", floatArray(pixel));
+    body.set("origin", floatArray(ray.origin));
+    body.set("direction", floatArray(ray.direction));
+    lines.add("ray." + std::to_string(static_cast<int>(pixel[0])), "ray", std::move(body));
+  }
+  // Markers: two near one another (the nearer by depth wins), one behind the camera, one far off.
+  const auto markerGuid = [](int n) {
+    char text[40];
+    std::snprintf(text, sizeof text, "00000000-0000-4000-8000-%012d", n);
+    return atlantis::asset_system::parseEntityGuid(text).value();
+  };
+  const std::vector<ed::Marker> markers{{markerGuid(1), ed::MarkerKind::Light, {-18.0f, 1.0f, 18.0f}},
+                                        {markerGuid(2), ed::MarkerKind::Camera, {-14.0f, 0.95f, 14.0f}},
+                                        {markerGuid(3), ed::MarkerKind::Light, {-30.0f, 1.7f, 30.0f}},
+                                        {markerGuid(4), ed::MarkerKind::Light, {-10.0f, 4.0f, 9.5f}},
+                                        // On marker 1's pick ray, farther away: marker 1 is the nearer.
+                                        {markerGuid(5), ed::MarkerKind::Camera, {-14.0f, 0.3f, 14.0f}}};
+  json::Value markerJson = json::Value::array();
+  for (const ed::Marker& marker : markers) {
+    json::Value m = json::Value::object();
+    m.set("entity", json::Value::string(atlantis::asset_system::toString(marker.entity)));
+    m.set("position", floatArray(marker.position));
+    markerJson.push(std::move(m));
+  }
+  std::vector<std::array<float, 2>> clicks;
+  for (const ed::Marker& marker : markers) {
+    if (const auto at = ed::pixelOf(*camera, rect, marker.position)) {
+      clicks.push_back(*at);
+      clicks.push_back({(*at)[0] + 7.0f, (*at)[1] - 6.0f});  // inside 10 pixels
+      clicks.push_back({(*at)[0] + 11.0f, (*at)[1]});        // outside
+    }
+  }
+  for (std::size_t i = 0; i < clicks.size(); ++i) {
+    json::Value body = matricesJson(*camera);
+    body.set("rect", rectJson(rect));
+    body.set("markers", markerJson);
+    body.set("click", floatArray(clicks[i]));
+    const auto picked = ed::pickMarker(markers, *camera, rect, clicks[i][0], clicks[i][1]);
+    body.set("picked", picked ? json::Value::string(atlantis::asset_system::toString(*picked)) : json::Value());
+    lines.add("marker." + std::to_string(i), "marker", std::move(body));
+  }
+  return lines.text;
+}
+
+// gizmo_vectors.jsonl: decompose/compose, axis directions, drag matrices, and
+// the screen handles with their grabs and drag amounts (ADR-0137 D3).
+[[nodiscard]] std::string gizmoVectorsText() {
+  VectorLines lines;
+  const auto rotation = [](float yaw, float pitch, float roll) {
+    // A rotation as the World composes one (Ry * Rx * Rz), for varied inputs.
+    const float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+    const float cr = std::cos(roll), sr = std::sin(roll);
+    const std::array<float, 9> ry{cy, 0, -sy, 0, 1, 0, sy, 0, cy};
+    const std::array<float, 9> rx{1, 0, 0, 0, cp, sp, 0, -sp, cp};
+    const std::array<float, 9> rz{cr, sr, 0, -sr, cr, 0, 0, 0, 1};
+    const auto mul = [](const std::array<float, 9>& a, const std::array<float, 9>& b) {
+      std::array<float, 9> out{};
+      for (int c = 0; c < 3; ++c)
+        for (int r = 0; r < 3; ++r)
+          for (int k = 0; k < 3; ++k) out[c * 3 + r] += a[k * 3 + r] * b[c * 3 + k];
+      return out;
+    };
+    return mul(ry, mul(rx, rz));
+  };
+  struct Named {
+    std::string_view name;
+    ed::MatrixColumns columns;
+  };
+  ed::Trs rotated;
+  rotated.translation = {1.5f, -2.0f, 4.25f};
+  rotated.rotation = rotation(0.7f, -0.3f, 0.2f);
+  rotated.scale = {1.5f, 0.5f, 2.0f};
+  ed::Trs reflected = rotated;
+  reflected.scale = {-1.0f, 1.0f, 1.0f};
+  ed::MatrixColumns sheared = ed::compose(rotated);
+  sheared[1][0] += 0.25f;
+  ed::MatrixColumns degenerate = ed::compose(rotated);
+  degenerate[2] = {0.0f, 0.0f, 0.0f, 0.0f};
+  ed::MatrixColumns projective = ed::compose(rotated);
+  projective[0][3] = 0.5f;
+  const std::array<Named, 6> matrices{{{"identity", ed::compose(ed::Trs{})},
+                                       {"rotated", ed::compose(rotated)},
+                                       {"reflected", ed::compose(reflected)},
+                                       {"sheared", sheared},
+                                       {"degenerate", degenerate},
+                                       {"projective", projective}}};
+  for (const Named& m : matrices) {
+    json::Value body = json::Value::object();
+    body.set("matrix", columnsJson(m.columns));
+    const auto trs = ed::decompose(m.columns);
+    if (trs.has_value()) {
+      json::Value t = json::Value::object();
+      t.set("translation", floatArray(trs->translation));
+      t.set("rotation", floatArray(trs->rotation));
+      t.set("scale", floatArray(trs->scale));
+      body.set("trs", std::move(t));
+      body.set("recomposed", columnsJson(ed::compose(*trs)));
+    } else {
+      body.set("trs", json::Value());
+    }
+    lines.add("decompose." + std::string(m.name), "decompose", std::move(body));
+  }
+  // Axis directions and drag matrices from the rotated and the reflected starts.
+  const std::array<std::pair<std::string_view, ed::GizmoMode>, 3> modes{
+      {{"translate", ed::GizmoMode::Translate}, {"rotate", ed::GizmoMode::Rotate}, {"scale", ed::GizmoMode::Scale}}};
+  const std::array<std::pair<std::string_view, ed::GizmoSpace>, 2> spaces{
+      {{"world", ed::GizmoSpace::World}, {"local", ed::GizmoSpace::Local}}};
+  for (const Named& start : {matrices[1], matrices[2]}) {
+    const ed::Trs trs = *ed::decompose(start.columns);
+    for (const auto& [modeName, mode] : modes) {
+      for (const auto& [spaceName, space] : spaces) {
+        for (int axis = 0; axis < 3; ++axis) {
+          const auto a = static_cast<ed::GizmoAxis>(axis);
+          json::Value body = json::Value::object();
+          body.set("start", columnsJson(start.columns));
+          body.set("mode", json::Value::string(std::string(modeName)));
+          body.set("space", json::Value::string(std::string(spaceName)));
+          body.set("axis", json::Value::number(static_cast<std::int64_t>(axis)));
+          body.set("direction", floatArray(ed::gizmoAxisDirection(trs, mode, space, a)));
+          json::Value drags = json::Value::array();
+          for (const float amount : {0.37f, -1.2f, 2.0f}) {
+            for (const bool snap : {false, true}) {
+              json::Value d = json::Value::object();
+              d.set("amount", json::Value::number(amount));
+              d.set("snap", json::Value::boolean(snap));
+              d.set("matrix", columnsJson(ed::gizmoDragMatrix(start.columns, mode, space, a, amount, snap)));
+              drags.push(std::move(d));
+            }
+          }
+          body.set("drags", std::move(drags));
+          char name[96];
+          std::snprintf(name, sizeof name, "drag.%s.%s.%s.%d", std::string(start.name).c_str(),
+                        std::string(modeName).c_str(), std::string(spaceName).c_str(), axis);
+          lines.add(name, "drag", std::move(body));
+        }
+      }
+    }
+  }
+  // Snapping on its own.
+  for (const auto& [modeName, mode] : modes) {
+    json::Value body = json::Value::object();
+    body.set("mode", json::Value::string(std::string(modeName)));
+    json::Value pairs = json::Value::array();
+    for (const float amount : {-0.74f, -0.26f, 0.0f, 0.04f, 0.249f, 0.251f, 1.3f, 3.14159f}) {
+      pairs.push(floatArray(std::array<float, 2>{amount, ed::snapGizmoAmount(mode, amount)}));
+    }
+    body.set("pairs", std::move(pairs));
+    lines.add("snap." + std::string(modeName), "snap", std::move(body));
+  }
+  // Handles, grabs and drag amounts: an oblique camera and a head-on one.
+  const ed::PixelRect rect{0.0f, 0.0f, 1280.0f, 720.0f};
+  ed::CameraPose headOn;
+  const std::array<std::pair<std::string_view, ed::CameraPose>, 2> cameras{
+      {{"oblique", lookingFrom({-22.0f, 1.7f, 22.0f}, -0.86f, -0.05f, {1.0472f, 0.1f, 500.0f})}, {"head_on", headOn}}};
+  const std::array<std::pair<std::string_view, ed::Vec3>, 2> positions{
+      {{"ahead", ed::Vec3{-18.5f, 1.25f, 17.0f}}, {"front", ed::Vec3{1.5f, -0.75f, -12.0f}}}};
+  for (std::size_t c = 0; c < cameras.size(); ++c) {
+    const auto camera = ed::cameraMatrices(cameras[c].second, rect.width / rect.height);
+    REQUIRE(camera.has_value());
+    const ed::Vec3 position = positions[c].second;
+    for (const Named& start : {matrices[0], matrices[1]}) {
+      ed::MatrixColumns columns = start.columns;
+      columns[3] = {position[0], position[1], position[2], 1.0f};
+      const ed::Trs trs = *ed::decompose(columns);
+      for (const auto& [modeName, mode] : modes) {
+        std::array<ed::Vec3, 3> directions{};
+        for (int axis = 0; axis < 3; ++axis) {
+          directions[static_cast<std::size_t>(axis)] =
+              ed::gizmoAxisDirection(trs, mode, ed::GizmoSpace::Local, static_cast<ed::GizmoAxis>(axis));
+        }
+        const auto handles = ed::gizmoHandles(*camera, rect, position, directions);
+        json::Value body = matricesJson(*camera);
+        body.set("rect", rectJson(rect));
+        body.set("position", floatArray(position));
+        body.set("mode", json::Value::string(std::string(modeName)));
+        json::Value dirJson = json::Value::array();
+        for (const ed::Vec3& d : directions) dirJson.push(floatArray(d));
+        body.set("directions", std::move(dirJson));
+        json::Value handleJson = json::Value::array();
+        std::vector<std::array<float, 2>> presses;
+        if (handles.has_value()) {
+          for (const auto& handle : *handles) {
+            if (!handle.has_value()) {
+              handleJson.push(json::Value());
+              continue;
+            }
+            json::Value h = json::Value::object();
+            h.set("origin", floatArray(handle->origin));
+            h.set("direction", floatArray(handle->direction));
+            h.set("end", floatArray(handle->end));
+            h.set("pixelsPerUnit", json::Value::number(handle->pixelsPerUnit));
+            handleJson.push(std::move(h));
+            // Presses on the segment's middle, near its end's ring, and beside it.
+            presses.push_back({(handle->origin[0] + handle->end[0]) * 0.5f, (handle->origin[1] + handle->end[1]) * 0.5f});
+            presses.push_back({handle->end[0] + 9.0f, handle->end[1]});
+            presses.push_back({handle->end[0] - handle->direction[1] * 12.0f, handle->end[1] + handle->direction[0] * 12.0f});
+          }
+        }
+        body.set("handles", handles.has_value() ? std::move(handleJson) : json::Value());
+        json::Value grabs = json::Value::array();
+        for (const auto& press : presses) {
+          json::Value g = json::Value::object();
+          g.set("press", floatArray(press));
+          const auto grab = ed::gizmoGrab(*handles, directions, *camera, mode, press);
+          if (!grab.has_value()) {
+            g.set("axis", json::Value());
+          } else {
+            g.set("axis", json::Value::number(static_cast<std::int64_t>(grab->axis)));
+            g.set("startAngle", json::Value::number(grab->startAngle));
+            g.set("towardCamera", json::Value::boolean(grab->towardCamera));
+            json::Value amounts = json::Value::array();
+            for (const auto& offset : {std::array<float, 2>{25.0f, 0.0f}, std::array<float, 2>{-13.5f, 40.0f},
+                                       std::array<float, 2>{0.0f, -60.0f}}) {
+              const std::array<float, 2> to{press[0] + offset[0], press[1] + offset[1]};
+              amounts.push(floatArray(std::array<float, 3>{to[0], to[1], ed::gizmoDragAmount(mode, *grab, to)}));
+            }
+            g.set("amounts", std::move(amounts));
+          }
+          grabs.push(std::move(g));
+        }
+        body.set("grabs", std::move(grabs));
+        char name[96];
+        std::snprintf(name, sizeof name, "handles.%s.%s.%s", std::string(cameras[c].first).c_str(),
+                      std::string(start.name).c_str(), std::string(modeName).c_str());
+        lines.add(name, "handles", std::move(body));
+      }
+    }
+  }
+  return lines.text;
+}
+
+// world_matrix_vectors.jsonl: world matrices solved over a node hierarchy by
+// the authoring stage's World (the bake copies them bit for bit).
+[[nodiscard]] std::string worldMatrixVectorsText() {
+  VectorLines lines;
+  struct Node {
+    int parent;  // index into the list, -1 at the root
+    atlantis::world::Transform local;
+  };
+  const auto t = [](atlantis::world::Vec3 p, atlantis::world::Vec3 r, atlantis::world::Vec3 s) {
+    atlantis::world::Transform out;
+    out.localPosition = p;
+    out.localEulerAnglesRadians = r;
+    out.localScale = s;
+    return out;
+  };
+  const std::vector<std::pair<std::string_view, std::vector<Node>>> scenes{
+      {"chain",
+       {{-1, t({1.0f, 2.0f, 3.0f}, {0.1f, 0.7f, -0.2f}, {1.0f, 1.0f, 1.0f})},
+        {0, t({0.5f, 0.0f, -1.0f}, {0.0f, -0.4f, 0.3f}, {2.0f, 2.0f, 2.0f})},
+        {1, t({0.0f, 1.0f, 0.0f}, {1.2f, 0.0f, 0.0f}, {1.0f, 0.5f, 1.0f})}}},
+      {"non_uniform_parent",
+       {{-1, t({0.0f, 0.0f, 0.0f}, {0.0f, 0.4f, 0.0f}, {1.0f, 1.0f, 0.25f})},
+        {0, t({2.0f, 0.0f, 1.0f}, {0.3f, 0.2f, 0.1f}, {1.0f, 1.0f, 1.0f})}}},
+      {"siblings_and_reflection",
+       {{-1, t({-3.0f, 0.0f, 2.0f}, {0.0f, 0.0f, 0.0f}, {-1.0f, 1.0f, 1.0f})},
+        {0, t({1.0f, 1.0f, 1.0f}, {0.5f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f})},
+        {0, t({-1.0f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.5f, 0.5f, 0.5f})},
+        {-1, t({4.0f, 4.0f, 4.0f}, {-0.2f, 2.5f, 0.0f}, {1.0f, 3.0f, 1.0f})}}},
+  };
+  for (const auto& [name, nodes] : scenes) {
+    atlantis::world::World world;
+    std::vector<decltype(world.createEntity())> ids;
+    for (const Node& node : nodes) {
+      ids.push_back(world.createEntity());
+      REQUIRE(world.setLocalTransform(ids.back(), node.local).isOk());
+      if (node.parent >= 0) REQUIRE(world.setParent(ids.back(), ids[static_cast<std::size_t>(node.parent)]).isOk());
+    }
+    world.updateTransforms();
+    json::Value list = json::Value::array();
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      const Node& node = nodes[i];
+      json::Value n = json::Value::object();
+      n.set("parent", node.parent >= 0 ? json::Value::number(static_cast<std::int64_t>(node.parent)) : json::Value());
+      n.set("position", floatArray(std::array<float, 3>{node.local.localPosition.x, node.local.localPosition.y,
+                                                         node.local.localPosition.z}));
+      n.set("rotation", floatArray(std::array<float, 3>{node.local.localEulerAnglesRadians.x,
+                                                         node.local.localEulerAnglesRadians.y,
+                                                         node.local.localEulerAnglesRadians.z}));
+      n.set("scale", floatArray(std::array<float, 3>{node.local.localScale.x, node.local.localScale.y,
+                                                      node.local.localScale.z}));
+      const auto matrix = world.getWorldMatrix(ids[i]);
+      REQUIRE(matrix.isOk());
+      n.set("world", floatArray(matrix.value()));
+      list.push(std::move(n));
+    }
+    json::Value body = json::Value::object();
+    body.set("nodes", std::move(list));
+    lines.add("world." + std::string(name), "world", std::move(body));
+  }
+  return lines.text;
+}
+
+// history_transcripts.jsonl: E2's EditHistory, step by step, against a fake
+// edit target whose transactions settle at the next update().
+class TranscriptTarget final : public ed::EditTarget {
+ public:
+  std::map<atlantis::asset_system::scene::PropertyAddress, access::PropertyValue> values;
+  bool refuseNext = false;
+  std::vector<ed::Invalidation> invalidations;
+  json::Value submitted = json::Value::array();  // the writes submitted since the last step
+
+  std::optional<access::PropertyValue> read(const atlantis::asset_system::scene::PropertyAddress& address) override {
+    const auto it = values.find(address);
+    if (it == values.end()) return std::nullopt;
+    return it->second;
+  }
+  ed::EditHandle submit(std::span<const ed::AddressedValue> writes) override {
+    const ed::EditHandle handle{next_++, 1};
+    json::Value w = json::Value::array();
+    for (const auto& [address, value] : writes) w.push(writeJson(address, value));
+    submitted.push(std::move(w));
+    pending_.push_back({handle, std::vector<ed::AddressedValue>(writes.begin(), writes.end()), refuseNext});
+    refuseNext = false;
+    return handle;
+  }
+  void track(ed::EditHandle handle, std::span<const ed::AddressedValue> writes) override {
+    pending_.push_back({handle, std::vector<ed::AddressedValue>(writes.begin(), writes.end()), false});
+  }
+  [[nodiscard]] ed::Settlement settlement(ed::EditHandle handle) const override {
+    for (const auto& [h, s] : reported_) {
+      if (h == handle) return s;
+    }
+    return ed::Settlement::Pending;
+  }
+  [[nodiscard]] std::string refusalText(ed::EditHandle handle) const override {
+    return settlement(handle) == ed::Settlement::Refused ? "refused by the fake target" : "";
+  }
+  void update(std::span<const access::CommandFailure>) override {
+    reported_.clear();
+    for (const Pending& p : pending_) {
+      if (!p.refused) {
+        for (const auto& [address, value] : p.writes) values[address] = value;
+      }
+      reported_.emplace_back(p.handle, p.refused ? ed::Settlement::Refused : ed::Settlement::Applied);
+    }
+    pending_.clear();
+  }
+  std::vector<ed::Invalidation> drainInvalidations() override { return std::exchange(invalidations, {}); }
+  // A handle for a transaction submitted by its maker (an edit the history records).
+  ed::EditHandle allocate() { return ed::EditHandle{next_++, 1}; }
+
+  static json::Value writeJson(const atlantis::asset_system::scene::PropertyAddress& address,
+                               const access::PropertyValue& value) {
+    json::Value w = json::Value::object();
+    w.set("node", json::Value::string(atlantis::asset_system::toString(address.node)));
+    w.set("component", json::Value::number(static_cast<std::int64_t>(address.component.value)));
+    w.set("field", json::Value::number(static_cast<std::int64_t>(address.field.value)));
+    w.set("value", json::Value::number(std::get<float>(value)));
+    return w;
+  }
+
+ private:
+  struct Pending {
+    ed::EditHandle handle;
+    std::vector<ed::AddressedValue> writes;
+    bool refused = false;
+  };
+  std::uint64_t next_ = 1;
+  std::vector<Pending> pending_;
+  std::vector<std::pair<ed::EditHandle, ed::Settlement>> reported_;
+};
+
+[[nodiscard]] std::string historyTranscriptsText() {
+  using atlantis::asset_system::scene::PropertyAddress;
+  const auto node = [](int n) {
+    char text[40];
+    std::snprintf(text, sizeof text, "00000000-0000-4000-8000-%012d", n);
+    return atlantis::asset_system::parseEntityGuid(text).value();
+  };
+  const auto address = [&](int n, std::uint64_t component, std::uint64_t field) {
+    return PropertyAddress{node(n), atlantis::schema::TypeId{component}, atlantis::schema::FieldId{field}};
+  };
+  // A scripted step: op and its arguments.
+  struct Step {
+    std::string op;                                              // edit, update, undo, redo, external, invalidate, refuse_next, clear
+    std::string label;                                           // edit
+    std::vector<std::tuple<PropertyAddress, float, float>> writes;  // edit: address, before, after
+    PropertyAddress at{};                                        // external
+    float value = 0.0f;                                          // external
+    std::optional<std::uint64_t> component;                      // invalidate (with `at`'s node)
+  };
+  const auto edit = [](std::string label, std::vector<std::tuple<PropertyAddress, float, float>> writes) {
+    Step s;
+    s.op = "edit";
+    s.label = std::move(label);
+    s.writes = std::move(writes);
+    return s;
+  };
+  const auto op = [](std::string name) {
+    Step s;
+    s.op = std::move(name);
+    return s;
+  };
+  const auto external = [](PropertyAddress at, float value) {
+    Step s;
+    s.op = "external";
+    s.at = at;
+    s.value = value;
+    return s;
+  };
+  const auto invalidate = [](PropertyAddress at, std::optional<std::uint64_t> component) {
+    Step s;
+    s.op = "invalidate";
+    s.at = at;
+    s.component = component;
+    return s;
+  };
+  const PropertyAddress a = address(1, 10, 1);
+  const PropertyAddress b = address(1, 10, 2);
+  const PropertyAddress c = address(2, 20, 1);
+  std::vector<std::pair<std::string, std::vector<Step>>> scenarios;
+  scenarios.push_back({"undo_redo",
+                       {edit("move", {{a, 0.0f, 1.0f}}), op("update"), op("undo"), op("update"), op("redo"),
+                        op("update"), op("undo"), op("update"), op("undo"), op("redo"), op("update")}});
+  scenarios.push_back({"waiting_and_new_edit_clears_redo",
+                       {edit("first", {{a, 0.0f, 1.0f}}), op("undo"), op("update"), edit("second", {{b, 0.0f, 2.0f}, {a, 1.0f, 3.0f}}),
+                        op("update"), op("undo"), op("update"), op("undo"), op("update"), op("redo"), op("update"),
+                        edit("third", {{c, 0.0f, 5.0f}}), op("update"), op("redo")}});
+  scenarios.push_back({"changed_elsewhere",
+                       {edit("a", {{a, 0.0f, 1.0f}}), edit("b", {{b, 0.0f, 2.0f}}), op("update"), external(b, 7.0f),
+                        op("undo"), op("undo"), op("update"), external(a, 9.0f), op("redo")}});
+  scenarios.push_back({"invalidation_and_refusal",
+                       {edit("on 1", {{a, 0.0f, 1.0f}}), edit("on 2", {{c, 0.0f, 4.0f}}), op("update"),
+                        invalidate(c, std::nullopt), op("update"), op("undo"), op("update"), op("refuse_next"),
+                        op("redo"), op("update"), invalidate(a, 10), op("update"), op("undo")}});
+  scenarios.push_back({"empty_edit_and_clear",
+                       {edit("nothing", {}), op("undo"), edit("x", {{a, 0.0f, 1.0f}}), op("update"), op("clear"),
+                        op("undo")}});
+
+  std::string text;
+  for (const auto& [name, steps] : scenarios) {
+    TranscriptTarget target;
+    for (const PropertyAddress& at : {a, b, c}) target.values[at] = 0.0f;
+    ed::EditHistory history(target);
+    json::Value out = json::Value::array();
+    for (const Step& step : steps) {
+      json::Value s = json::Value::object();
+      s.set("op", json::Value::string(step.op));
+      std::string result;
+      if (step.op == "edit") {
+        ed::EditTransaction transaction{step.label, {}};
+        json::Value writes = json::Value::array();
+        for (const auto& [at, before, after] : step.writes) {
+          transaction.writes.push_back({at, before, after});
+          json::Value w = TranscriptTarget::writeJson(at, after);
+          w.set("before", json::Value::number(before));
+          writes.push(std::move(w));
+        }
+        s.set("label", json::Value::string(step.label));
+        s.set("writes", std::move(writes));
+        history.record(std::move(transaction), target.allocate());
+      } else if (step.op == "update") {
+        history.update({});
+      } else if (step.op == "undo" || step.op == "redo") {
+        const ed::HistoryResult r = step.op == "undo" ? history.undo() : history.redo();
+        static constexpr std::array<std::string_view, 5> kNames{"Submitted", "NothingTo", "Waiting", "ChangedElsewhere",
+                                                                "Invalidated"};
+        result = std::string(kNames[static_cast<std::size_t>(r)]);
+      } else if (step.op == "external") {
+        target.values[step.at] = step.value;
+        s.set("write", TranscriptTarget::writeJson(step.at, step.value));
+      } else if (step.op == "invalidate") {
+        target.invalidations.push_back(
+            {step.at.node, step.component.has_value() ? std::optional<atlantis::schema::TypeId>(atlantis::schema::TypeId{*step.component})
+                                                      : std::nullopt});
+        s.set("node", json::Value::string(atlantis::asset_system::toString(step.at.node)));
+        s.set("component", step.component.has_value() ? json::Value::number(static_cast<std::int64_t>(*step.component))
+                                                      : json::Value());
+      } else if (step.op == "refuse_next") {
+        target.refuseNext = true;
+      } else if (step.op == "clear") {
+        history.clear();
+      }
+      json::Value expect = json::Value::object();
+      expect.set("result", result.empty() ? json::Value() : json::Value::string(result));
+      expect.set("submitted", std::exchange(target.submitted, json::Value::array()));
+      expect.set("waiting", json::Value::boolean(history.waiting()));
+      expect.set("canUndo", json::Value::boolean(history.canUndo()));
+      expect.set("canRedo", json::Value::boolean(history.canRedo()));
+      expect.set("undoDepth", json::Value::number(static_cast<std::int64_t>(history.undoDepth())));
+      expect.set("redoDepth", json::Value::number(static_cast<std::int64_t>(history.redoDepth())));
+      expect.set("undoLabel", json::Value::string(std::string(history.undoLabel())));
+      expect.set("redoLabel", json::Value::string(std::string(history.redoLabel())));
+      expect.set("notice", json::Value::string(history.notice()));
+      s.set("expect", std::move(expect));
+      out.push(std::move(s));
+    }
+    json::Value line = json::Value::object();
+    line.set("scenario", json::Value::string(name));
+    line.set("steps", std::move(out));
+    text += json::write(line) + "\n";
+  }
+  return text;
+}
+
 // Plan 0064 P4: the editor camera's convention, one case per line.
 [[nodiscard]] std::string cameraVectorsText() {
   std::string text;
@@ -678,6 +1309,8 @@ namespace ed = atlantis::editor;
     body.set("steps", std::move(after));
     line("navigation." + std::string(name), "navigation", std::move(body));
   }
+  // Plan 0068 M1: the whole camera, appended (the lines above are unchanged).
+  appendFullCameraVectors(text, bistroLike, tilted);
   return text;
 }
 
@@ -703,4 +1336,29 @@ TEST_CASE("the vectors are deterministic and LF-only", "[csharp][conformance]") 
   const std::string t = transcriptsText();
   CHECK(transcriptsText() == t);
   CHECK(t.find('\r') == std::string::npos);
+}
+
+// Plan 0068 M1 (ADR-0137 D1): the E3 editor's C# models' vectors.
+TEST_CASE("picking_vectors.jsonl is what the C++ editor picking computes now", "[csharp][conformance]") {
+  checkCurrent(pickingVectorsText(), "picking_vectors.jsonl");
+}
+
+TEST_CASE("gizmo_vectors.jsonl is what the C++ Gizmo math computes now", "[csharp][conformance]") {
+  checkCurrent(gizmoVectorsText(), "gizmo_vectors.jsonl");
+}
+
+TEST_CASE("world_matrix_vectors.jsonl is what the authoring World solves now", "[csharp][conformance]") {
+  checkCurrent(worldMatrixVectorsText(), "world_matrix_vectors.jsonl");
+}
+
+TEST_CASE("history_transcripts.jsonl is what E2's edit history does now", "[csharp][conformance]") {
+  checkCurrent(historyTranscriptsText(), "history_transcripts.jsonl");
+}
+
+TEST_CASE("the editor model vectors are deterministic and LF-only", "[csharp][conformance]") {
+  for (const auto& generate : {&pickingVectorsText, &gizmoVectorsText, &worldMatrixVectorsText, &historyTranscriptsText}) {
+    const std::string a = generate();
+    CHECK(generate() == a);
+    CHECK(a.find('\r') == std::string::npos);
+  }
 }

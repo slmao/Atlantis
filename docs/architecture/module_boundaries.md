@@ -1204,7 +1204,11 @@ project (not a package); the SDK's zero-NuGet rule is unchanged.
 [ADR-0125](../adr/0125-out-of-process-editor-platform-and-uniform-client-interface.md),
 [ADR-0126](../adr/0126-viewport-embedding-and-input-routing.md),
 [ADR-0127](../adr/0127-editor-application-managed-dependency-policy.md),
-[ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md)).
+[ADR-0128](../adr/0128-remote-viewport-camera-and-raycast.md);
+E3, the authoring editor, by Spec 0068,
+[ADR-0135](../adr/0135-two-document-edit-and-apply.md),
+[ADR-0136](../adr/0136-structural-edit-records.md) and
+[ADR-0137](../adr/0137-csharp-model-port-held-by-vectors.md)).
 
 **Responsibilities:** the product editor — a separate .NET 10 Avalonia
 application (`src/editor_app/`, namespace `Atlantis.Editor`) that is one more
@@ -1222,8 +1226,29 @@ V-a (child-window embedding) with route R-a (forwarded input); Spec 0066's input
 investigation kept R-a (Plan 0066 J8). Since Spec 0066 (R7) a pick also outlines
 the hit entity and draws a translate Gizmo at its translation through
 `SetViewportOverlay` (`GizmoOverlay`: one screen-constant group of axis segments
-with cone tips, on top). It draws only, with no hit-testing or editing; a miss
-clears both.
+with cone tips, on top). A miss clears both; the Gizmo hit-tests and edits
+since Spec 0068.
+
+Since Spec 0068 (E3) the app is the authoring editor, over a headless model
+library of its own (`src/editor_app/Atlantis.Editor.Model/` — plain .NET, no
+Avalonia, no package): E1/E2's models ported to C# and held to the C++ models
+by the generated vectors of `tests/csharp/conformance/` (the camera, extended
+to the whole model; picking and markers; the Gizmo's math and J2's handle
+functions; the world-matrix solve; E2's property-history transcripts), beside
+new C# models with no C++ reference (ADR-0137) — the tree Hierarchy, the
+reflective Inspector, the selection, the apply controller and the structural
+edit records. Its editing is two-document (ADR-0135): a Gizmo drag writes
+disposable previews to the Runtime World one transaction per batch (the
+dragged node and up to 256 descendants, Plan J3), and every committed edit —
+a release, an Inspector commit, a Hierarchy command, an undo or a redo — is
+one authoring transaction submitted with its apply (J8), coalesced while one
+is in flight. The history is the editor's own (ADR-0136): property records and
+structural ones (a node's or component's life with every value, the active
+camera, a parent), refused and dropped when the document no longer holds what
+the edit left; it survives applies and clears on `DocumentReopened`. Apply,
+save and play are always shown: the apply state (including `pending: paused`),
+Save with the imported-scene refusal, and Play/Pause/Step through
+`RuntimeControl`. The engine, the wire and both SDKs are unchanged by E3.
 
 **Depends on:** Atlantis C# SDK as a project reference, and its NuGet packages
 under ADR-0127: only packages on `src/editor_app/allowed_packages.txt` (Phase
@@ -1246,10 +1271,10 @@ tests `atlantis_editor_app_tests`, and the ctest label `editor_app`) only with
 last subdirectory of the root `CMakeLists.txt`; a default configure declares
 nothing and fetches no package. Android never declares it.
 
-**Extension points:** Phase 2 and later (E3's data layer, E5, E4, E6 in the
-maintainer's order) are specified after the Phase 1 checkpoint; each
-capability they need is added to the shared client surface for the wire, the
-CLI and both SDKs in the same Spec (ADR-0125 D2).
+**Extension points:** Phase 2 and later (E5, E4, E6 in the maintainer's
+order; E3, the authoring editor, shipped as Spec 0068) are specified after the
+Phase 1 checkpoint; each capability they need is added to the shared client
+surface for the wire, the CLI and both SDKs in the same Spec (ADR-0125 D2).
 
 ---
 

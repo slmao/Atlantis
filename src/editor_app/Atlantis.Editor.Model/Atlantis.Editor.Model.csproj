@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Atlantis Editor App's models (Spec 0068 R1; Plan 0068 J5; ADR-0137): the
+    E1/E2 models ported to C# and the E3 editor's own, as a plain .NET 10
+    library with no Avalonia reference and no package, so the model tests run
+    headless. Its only engine access is the Atlantis C# SDK (a project
+    reference, ADR-0125 D1). Held to the C++ models by the vectors under
+    tests/csharp/conformance/ (ADR-0137 D1). Lock file per ADR-0127 D2.
+  -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Atlantis.Editor.Model</RootNamespace>
+    <AssemblyName>Atlantis.Editor.Model</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../csharp/Atlantis.Gameplay/Atlantis.Gameplay.csproj" />
+  </ItemGroup>
+
+</Project>

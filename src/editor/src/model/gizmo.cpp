@@ -4,6 +4,7 @@
 #include <atlantis/connection/text.h>
 #include <atlantis/editor/model/viewport_camera.h>
 
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <utility>
@@ -144,22 +145,151 @@ void GizmoModel::setSpace(GizmoSpace space) {
   if (!dragging()) space_ = space;
 }
 
-std::array<float, 3> GizmoModel::axisDirection(GizmoAxis axis) const {
+std::array<float, 3> gizmoAxisDirection(const Trs& trs, GizmoMode mode, GizmoSpace space, GizmoAxis axis) {
   const auto k = static_cast<std::size_t>(axis);
-  const bool local = mode_ == GizmoMode::Scale || space_ == GizmoSpace::Local;
+  const bool local = mode == GizmoMode::Scale || space == GizmoSpace::Local;
   if (!local) {
     Vec3 unit{0.0f, 0.0f, 0.0f};
     unit[k] = 1.0f;
     return unit;
   }
+  // The rotation column; a reflection (a negative x scale) flips the x axis
+  // the entity's own frame points along.
+  const float sign = k == 0 && trs.scale[0] < 0.0f ? -1.0f : 1.0f;
+  return {trs.rotation[k * 3 + 0] * sign, trs.rotation[k * 3 + 1] * sign, trs.rotation[k * 3 + 2] * sign};
+}
+
+float snapGizmoAmount(GizmoMode mode, float amount) {
+  switch (mode) {
+    case GizmoMode::Translate: return std::round(amount / kTranslateSnap) * kTranslateSnap;
+    case GizmoMode::Rotate: return std::round(amount / kRotateSnapRadians) * kRotateSnapRadians;
+    case GizmoMode::Scale: return std::fmax(std::round(amount / kScaleSnap) * kScaleSnap, kScaleSnap);
+  }
+  return amount;
+}
+
+MatrixColumns gizmoDragMatrix(const MatrixColumns& start, GizmoMode mode, GizmoSpace space, GizmoAxis axis,
+                              float amount, bool snap) {
+  const std::optional<Trs> startTrs = decompose(start);
+  ATLANTIS_CHECK_MSG(startTrs.has_value(), "gizmoDragMatrix(): the start matrix has no TRS form");
+  if (!startTrs.has_value()) return start;
+  const auto k = static_cast<std::size_t>(axis);
+  if (snap) amount = snapGizmoAmount(mode, amount);
+  switch (mode) {
+    case GizmoMode::Translate: {
+      MatrixColumns columns = start;
+      if (space == GizmoSpace::World) {
+        columns[3][k] = start[3][k] + amount;
+      } else {
+        const Vec3 direction = gizmoAxisDirection(*startTrs, mode, space, axis);
+        for (std::size_t i = 0; i < 3; ++i) columns[3][i] = start[3][i] + direction[i] * amount;
+      }
+      return columns;
+    }
+    case GizmoMode::Rotate: {
+      Trs trs = *startTrs;
+      // World: about the world axis (R_axis * R). Local: about the entity's own
+      // axis (R * R_axis), which leaves that axis where it was.
+      trs.rotation = space == GizmoSpace::World ? multiply(axisRotation(axis, amount), startTrs->rotation)
+                                                : multiply(startTrs->rotation, axisRotation(axis, amount));
+      return compose(trs);
+    }
+    case GizmoMode::Scale: {
+      Trs trs = *startTrs;
+      trs.scale[k] = startTrs->scale[k] * std::fmax(amount, 1e-4f);
+      return compose(trs);
+    }
+  }
+  return start;
+}
+
+std::optional<GizmoHandles> gizmoHandles(const CameraMatrices& camera, const PixelRect& rect, const Vec3& position,
+                                         const std::array<Vec3, 3>& directions) {
+  const std::optional<std::array<float, 2>> center = pixelOf(camera, rect, position);
+  if (!center.has_value()) return std::nullopt;
+  GizmoHandles handles;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    const Vec3 unit{position[0] + directions[axis][0], position[1] + directions[axis][1],
+                    position[2] + directions[axis][2]};
+    const std::optional<std::array<float, 2>> tip = pixelOf(camera, rect, unit);
+    if (!tip.has_value()) continue;
+    const std::array<float, 2> delta{(*tip)[0] - (*center)[0], (*tip)[1] - (*center)[1]};
+    const float pixels = std::sqrt(delta[0] * delta[0] + delta[1] * delta[1]);
+    if (pixels < 1e-3f) continue;
+    const std::array<float, 2> direction{delta[0] / pixels, delta[1] / pixels};
+    handles[axis] = GizmoHandle{*center, direction,
+                                {(*center)[0] + direction[0] * kGizmoHandlePixels,
+                                 (*center)[1] + direction[1] * kGizmoHandlePixels},
+                                pixels};
+  }
+  return handles;
+}
+
+bool gizmoAxisFacesCamera(const CameraMatrices& camera, const Vec3& direction) {
+  return camera.view[2] * direction[0] + camera.view[6] * direction[1] + camera.view[10] * direction[2] > 0.0f;
+}
+
+namespace {
+
+[[nodiscard]] float pixelLength(const std::array<float, 2>& v) { return std::sqrt(v[0] * v[0] + v[1] * v[1]); }
+
+[[nodiscard]] float distanceToSegment(const std::array<float, 2>& p, const std::array<float, 2>& a,
+                                      const std::array<float, 2>& b) {
+  const std::array<float, 2> ab{b[0] - a[0], b[1] - a[1]};
+  const float lengthSquared = ab[0] * ab[0] + ab[1] * ab[1];
+  float t = lengthSquared > 0.0f ? ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / lengthSquared : 0.0f;
+  t = std::clamp(t, 0.0f, 1.0f);
+  return pixelLength({p[0] - (a[0] + ab[0] * t), p[1] - (a[1] + ab[1] * t)});
+}
+
+}  // namespace
+
+std::optional<GizmoGrab> gizmoGrab(const GizmoHandles& handles, const std::array<Vec3, 3>& directions,
+                                   const CameraMatrices& camera, GizmoMode mode, const std::array<float, 2>& pointer) {
+  std::optional<GizmoGrab> grab;
+  float best = kGizmoPickPixels;
+  for (std::size_t axis = 0; axis < 3; ++axis) {
+    if (!handles[axis].has_value()) continue;
+    const GizmoHandle& handle = *handles[axis];
+    const float distance =
+        mode == GizmoMode::Rotate
+            ? std::fabs(pixelLength({pointer[0] - handle.end[0], pointer[1] - handle.end[1]}) - kGizmoRotateRingPixels)
+            : distanceToSegment(pointer, handle.origin, handle.end);
+    if (distance <= best) {
+      best = distance;
+      grab = GizmoGrab{static_cast<GizmoAxis>(axis), pointer, handle,
+                       std::atan2(pointer[1] - handle.origin[1], pointer[0] - handle.origin[0]),
+                       gizmoAxisFacesCamera(camera, directions[axis])};
+    }
+  }
+  return grab;
+}
+
+float gizmoDragAmount(GizmoMode mode, const GizmoGrab& grab, const std::array<float, 2>& pointer) {
+  const std::array<float, 2> moved{pointer[0] - grab.start[0], pointer[1] - grab.start[1]};
+  const float along = moved[0] * grab.handle.direction[0] + moved[1] * grab.handle.direction[1];
+  switch (mode) {
+    case GizmoMode::Translate: return along / grab.handle.pixelsPerUnit;
+    case GizmoMode::Scale: return 1.0f + along / kGizmoHandlePixels;
+    case GizmoMode::Rotate: {
+      // Screen y points down: a positive (right-handed) rotation about an
+      // axis facing the camera turns counter-clockwise on screen, i.e. by a
+      // decreasing screen angle.
+      const float angle = std::atan2(pointer[1] - grab.handle.origin[1], pointer[0] - grab.handle.origin[0]) -
+                          grab.startAngle;
+      return grab.towardCamera ? -angle : angle;
+    }
+  }
+  return 0.0f;
+}
+
+std::array<float, 3> GizmoModel::axisDirection(GizmoAxis axis) const {
+  if (mode_ != GizmoMode::Scale && space_ == GizmoSpace::World) return gizmoAxisDirection(Trs{}, mode_, space_, axis);
   const std::optional<Trs> trs = dragging() ? std::optional<Trs>(dragStartTrs_)
                                             : (matrix_.has_value() ? decompose(*matrix_) : std::nullopt);
   ATLANTIS_CHECK_MSG(trs.has_value(), "GizmoModel::axisDirection(): no Gizmo");
   if (!trs.has_value()) return {0.0f, 0.0f, 0.0f};
-  // The rotation column; a reflection (a negative x scale) flips the x axis
-  // the entity's own frame points along.
-  const float sign = k == 0 && trs->scale[0] < 0.0f ? -1.0f : 1.0f;
-  return {trs->rotation[k * 3 + 0] * sign, trs->rotation[k * 3 + 1] * sign, trs->rotation[k * 3 + 2] * sign};
+  return gizmoAxisDirection(*trs, mode_, space_, axis);
 }
 
 void GizmoModel::beginDrag(GizmoAxis axis) {
@@ -172,42 +302,7 @@ void GizmoModel::beginDrag(GizmoAxis axis) {
 
 void GizmoModel::dragTo(float amount) {
   if (!dragging() || !std::isfinite(amount)) return;
-  const auto axis = static_cast<std::size_t>(*dragAxis_);
-  if (snap_) {
-    switch (mode_) {
-      case GizmoMode::Translate: amount = std::round(amount / kTranslateSnap) * kTranslateSnap; break;
-      case GizmoMode::Rotate: amount = std::round(amount / kRotateSnapRadians) * kRotateSnapRadians; break;
-      case GizmoMode::Scale: amount = std::fmax(std::round(amount / kScaleSnap) * kScaleSnap, kScaleSnap); break;
-    }
-  }
-  switch (mode_) {
-    case GizmoMode::Translate: {
-      MatrixColumns columns = dragStart_;
-      if (space_ == GizmoSpace::World) {
-        columns[3][axis] = dragStart_[3][axis] + amount;
-      } else {
-        const Vec3 direction = axisDirection(*dragAxis_);
-        for (std::size_t i = 0; i < 3; ++i) columns[3][i] = dragStart_[3][i] + direction[i] * amount;
-      }
-      matrix_ = columns;
-      break;
-    }
-    case GizmoMode::Rotate: {
-      Trs trs = dragStartTrs_;
-      // World: about the world axis (R_axis * R). Local: about the entity's own
-      // axis (R * R_axis), which leaves that axis where it was.
-      trs.rotation = space_ == GizmoSpace::World ? multiply(axisRotation(*dragAxis_, amount), dragStartTrs_.rotation)
-                                                 : multiply(dragStartTrs_.rotation, axisRotation(*dragAxis_, amount));
-      matrix_ = compose(trs);
-      break;
-    }
-    case GizmoMode::Scale: {
-      Trs trs = dragStartTrs_;
-      trs.scale[axis] = dragStartTrs_.scale[axis] * std::fmax(amount, 1e-4f);
-      matrix_ = compose(trs);
-      break;
-    }
-  }
+  matrix_ = gizmoDragMatrix(dragStart_, mode_, space_, *dragAxis_, amount, snap_);
   dirty_ = true;
 }
 

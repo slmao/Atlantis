@@ -3,6 +3,9 @@
 //   Atlantis.Editor [--runtime <atlantis_runtime.exe>] [--scene <name>]
 //       The editor shell, embedding the Runtime's Viewport (V-a, route R-a).
 //   Atlantis.Editor --smoke [--runtime <exe>] [--scene <name>] [--out <file>]
+//   Atlantis.Editor --measure-edit [--runtime <exe>] [--scene <name>] [--out <file>]
+//       Plan 0068 M4's edit measurement (headless, measurement-only): Gizmo drags through the editor's own controller and
+//       preview path, release -> Applied, an Inspector commit -> Applied, and the Hierarchy's open time.
 //       Headless: starts the Runtime without embedding, connects, lists the
 //       entities, sets and clears a camera (checking the frame's view), and
 //       ray-casts; exit 0 when every check passed.
@@ -49,6 +52,7 @@ public static class Program
         string? sessionPath = null;
         int measureFrames = 0;
         bool smoke = false;
+        bool measureEdit = false;
         bool measureDrag = false;
         string? attach = null;
         int drive = 0;
@@ -73,6 +77,7 @@ public static class Program
                 case "--session": sessionPath = Next(); break;
                 case "--measure-frames": measureFrames = int.Parse(Next(), System.Globalization.CultureInfo.InvariantCulture); break;
                 case "--smoke": smoke = true; break;
+                case "--measure-edit": measureEdit = true; break;
                 case "--measure-drag": measureDrag = true; break;
                 case "--attach": attach = Next(); break;
                 case "--drive": drive = int.Parse(Next(), System.Globalization.CultureInfo.InvariantCulture); break;
@@ -115,6 +120,7 @@ public static class Program
         if (attach is null && runtime is null) return Usage("pass --runtime <atlantis_runtime.exe> or set ATLANTIS_RUNTIME");
         runtime = runtime is null ? "" : Path.GetFullPath(runtime);
         if (smoke) return Smoke.Run(runtime, scene, outPath);
+        if (measureEdit) return EditMeasurement.Run(runtime, scene, outPath);  // Plan 0068 M4 (P6)
 
         var options = new EditorOptions(runtime, scene)
         {
@@ -142,6 +148,7 @@ public static class Program
         Console.Error.WriteLine(
             "usage: Atlantis.Editor [--runtime <exe>] [--scene <name>]\n" +
             "       Atlantis.Editor --smoke [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
+            "       Atlantis.Editor --measure-edit [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
             "       Atlantis.Editor --measure-frames <n> --session <session file> [--out <file>]\n" +
             "       Atlantis.Editor --measure-drag [--runtime <exe>] [--scene <name>] [--attach <session file>] [--drive <n> [--settle <s>] [--exit-after]]\n" +
             "       Atlantis.Editor --measure-overlay [--runtime <exe>] [--scene <name>] [--viewport WxH] [--pick-ndc x,y | --entity <guid>]\n" +
