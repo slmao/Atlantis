@@ -97,6 +97,15 @@ if(ATLANTIS_BUILD_TESTS)
   # --listen, without embedding (GPU: the Runtime renders).
   add_test(NAME "editor_app: headless smoke against atlantis_runtime --listen"
     COMMAND "${ATLANTIS_DOTNET}" "${atlantis_editor_app_DLL}" --smoke --runtime "$<TARGET_FILE:atlantis_runtime>")
+  # Plan 0068 M7 (P5; Spec 0068 Testing): the scripted editor session on both
+  # scenes -- the same steps; Bistro's save is the imported-scene refusal.
+  # RUN_SERIAL: the default scene's save writes and byte-restores the one
+  # committed scene source.
+  add_test(NAME "editor_app: integration on the default scene"
+    COMMAND "${ATLANTIS_DOTNET}" "${atlantis_editor_app_tests_DLL}" --integration --runtime "$<TARGET_FILE:atlantis_runtime>")
+  add_test(NAME "editor_app: integration on bistro"
+    COMMAND "${ATLANTIS_DOTNET}" "${atlantis_editor_app_tests_DLL}" --integration
+            --runtime "$<TARGET_FILE:atlantis_runtime>" --scene bistro)
   set_tests_properties(
     "editor_app: package policy"
     "editor_app: package policy refuses unpinned, unlisted and unlocked packages"
@@ -104,4 +113,6 @@ if(ATLANTIS_BUILD_TESTS)
     PROPERTIES LABELS editor_app TIMEOUT 600)
   set_tests_properties("editor_app: headless smoke against atlantis_runtime --listen"
     PROPERTIES LABELS "editor_app;gpu" TIMEOUT 600 RUN_SERIAL TRUE)
+  set_tests_properties("editor_app: integration on the default scene" "editor_app: integration on bistro"
+    PROPERTIES LABELS "editor_app;gpu" TIMEOUT 900 RUN_SERIAL TRUE)
 endif()

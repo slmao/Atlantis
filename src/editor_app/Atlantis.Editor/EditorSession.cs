@@ -213,8 +213,9 @@ public sealed record HistorySnapshot(bool CanUndo, bool CanRedo, string UndoLabe
 
 public sealed record GizmoSnapshot(EntityGuid? Node, float[]? World, GizmoAvailability? Availability);
 
-/// <summary>Previews: the Runtime World's WorldMatrix of each node, one transaction per batch (ADR-0135 D1).</summary>
-internal sealed class RuntimeWorldPreview : IWorldPreview
+/// <summary>Previews: the Runtime World's WorldMatrix of each node, one transaction per batch (ADR-0135 D1). Public for
+/// the tests project's live integration test, which drives real drags as EditMeasurement does.</summary>
+public sealed class RuntimeWorldPreview : IWorldPreview
 {
     private static readonly Field<W.WorldMatrix, Vector4>[] Columns =
     {

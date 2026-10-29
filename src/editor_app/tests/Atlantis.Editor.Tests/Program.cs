@@ -37,15 +37,23 @@ public static partial class Program
 
     public static int Main(string[] args)
     {
-        string? repo = null;
-        for (int i = 0; i + 1 < args.Length; ++i)
+        string? repo = null, runtime = null, scene = "integrated_showcase_demo";
+        bool integration = false;
+        for (int i = 0; i < args.Length; ++i)
         {
-            if (args[i] == "--repo") repo = args[i + 1];
+            if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
+            else if (args[i] == "--integration") integration = true;
+            else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
+            else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
+        }
+        if (integration)
+        {
+            // Plan 0068 M7 (P5): the live scripted session against atlantis_runtime (GPU).
+            return runtime is null ? Usage() : IntegrationTest.Run(runtime, scene);
         }
         if (repo is null)
         {
-            Console.Error.WriteLine("usage: Atlantis.Editor.Tests --repo <source dir>");
-            return 2;
+            return Usage();
         }
         try
         {
@@ -74,6 +82,13 @@ public static partial class Program
         }
         Console.WriteLine($"camera convention: {s_passed} checks passed, {s_failed} failed");
         return s_failed == 0 && s_passed > 0 ? 0 : 1;
+    }
+
+    private static int Usage()
+    {
+        Console.Error.WriteLine("usage: Atlantis.Editor.Tests --repo <source dir>");
+        Console.Error.WriteLine("       Atlantis.Editor.Tests --integration --runtime <exe> [--scene <name>]");
+        return 2;
     }
 
     private static void Run(string path)
