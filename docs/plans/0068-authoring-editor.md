@@ -10,6 +10,10 @@
   - **Unchanged ADRs:** ADR-0103, ADR-0123, ADR-0125 D1–D3, ADR-0127, ADR-0129, ADR-0130, ADR-0132, ADR-0133 and
     ADR-0134.
 - **Status:** Approved
+- **Implementation:** M1–M7 merged in [PR #303](https://github.com/slmao/Atlantis/pull/303) (`3a99f74`; the
+  milestones' own commits are `dcb25db`…`403abdf` on its branch). The J8 checkpoint passed on M4's numbers; Q8's
+  one miss (undo → `Applied` on Bistro) was accepted as measured at merge, and J7 ran scripted through the
+  worker with the real CLI as the second client, recorded on the PR.
 - **Author:** slmao (drafted by Claude Code at explicit human direction)
 - **Joint Human Review:** slmao, 2026-10-27 — this Plan and [Spec 0068](../specs/0068-authoring-editor.md) reviewed
   together in [PR #302](https://github.com/slmao/Atlantis/pull/302); the rulings are recorded on that branch before it
