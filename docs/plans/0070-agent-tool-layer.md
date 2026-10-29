@@ -5,11 +5,16 @@
   - **ADR:** [ADR-0138](../adr/0138-agent-tool-layer-host.md) (`Accepted` 2026-10-30).
   - **Unchanged ADRs:** ADR-0106, ADR-0112, ADR-0113, ADR-0125 (D2 held), ADR-0127 (mechanism
     extended, allow-list not), ADR-0128, ADR-0130, ADR-0131, ADR-0132.
-- **Status:** Draft (for joint review with the Spec)
+- **Status:** Approved
 - **Author:** slmao (drafted by ZCode at explicit human direction)
-- **Joint Human Review:** pending — with [Spec 0070](../specs/0070-agent-tool-layer.md), in
-  [PR #306](https://github.com/slmao/Atlantis/pull/306); J1–J6 below are put for ruling, and the
-  review's authorization gates implementation.
+- **Joint Human Review:** slmao, 2026-10-30 — this Plan and [Spec 0070](../specs/0070-agent-tool-layer.md) reviewed
+  together in [PR #306](https://github.com/slmao/Atlantis/pull/306); the rulings are recorded on that branch before
+  it merges:
+  - **Spec:** Q1–Q6 each as recommended (ruled 2026-10-30, before the Plan was drafted).
+  - **Plan:** J1–J6 each as recommended (ruled 2026-10-30).
+  - **Authorization:** implementation of **M1–M5** on `feature/0070-agent-tool-layer` from `origin/main`
+    once PR #306 has merged. Deviations are disclosed in the implementation PR; the Spec, the Plan and
+    ADR-0138 are not modified to match implementation.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 Describe ordered changes, file scope, and verification. Keep complete source

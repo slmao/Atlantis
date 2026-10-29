@@ -3,8 +3,8 @@
 - **Status:** Approved
 - **Author:** slmao (drafted by ZCode at explicit human direction, 2026-10-29)
 - **Created:** 2026-10-29
-- **Related Plan(s):** [Plan 0070](../plans/0070-agent-tool-layer.md) (`Draft`, drafted for joint
-  review with this Spec)
+- **Related Plan(s):** [Plan 0070](../plans/0070-agent-tool-layer.md) (`Approved`; Joint Human Review
+  2026-10-30 — J1–J6 each as recommended — recorded in its header)
 - **Approval:** slmao, 2026-10-30 — owner rulings Q1–Q6, **each as recommended**, recorded on this
   Spec's own branch PR, [PR #306](https://github.com/slmao/Atlantis/pull/306), before it merges.
   The open-question text keeps the options as the record of what was weighed.
