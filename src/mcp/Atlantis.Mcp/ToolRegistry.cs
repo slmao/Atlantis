@@ -12,13 +12,13 @@ using ModelContextProtocol.Server;
 
 namespace Atlantis.Mcp;
 
-internal sealed record ToolMapping(Tool Tool, string Method);
+internal sealed record ToolMapping(Tool Tool, string Method, Func<JsonValue, JsonValue>? Compose = null);
 
 /// <summary>
 /// Spec 0070 R2's closed exact tier. Immutable declarations; concurrent calls are serialized by
 /// IAtlantisSession. Results preserve the wire value, including in-band errors and deferred failures.
 /// </summary>
-internal sealed class ToolRegistry(IAtlantisSession session)
+internal sealed partial class ToolRegistry(IAtlantisSession session)
 {
     private const string WorldModel = " Runtime World writes are disposable runtime-side tweaks; "
         + "persistent edits belong to the authoring document and land on explicit authoring.apply.";
@@ -55,7 +55,7 @@ internal sealed class ToolRegistry(IAtlantisSession session)
         Declare("control.status", "control.status", "Read pause state, frame, scene and sceneGeneration.", ControlModel),
         Declare("control.pause", "control.pause", "Hold Runtime commands and pending scene reloads.", ControlModel),
         Declare("control.resume", "control.resume", "Resume Runtime command application and pending scene reloads.", ControlModel),
-        Declare("control.step", "control.step", "Run the requested frames and return the frame report and optional capture path.", ControlModel,
+        Declare("control.step", "control.step", "Run the requested frames; return the frame report and optional capture path plus PNG image content.", ControlModel,
             ToolSchemas.Parameters(("request", ToolSchemas.StepRequest))),
         Declare("control.raycast", "control.raycast", "Read the nearest mesh hit or null; NoGeometry when pick geometry is unavailable.", ControlModel,
             ToolSchemas.Parameters(("ray", ToolSchemas.Ray))),
@@ -66,6 +66,8 @@ internal sealed class ToolRegistry(IAtlantisSession session)
         Declare("control.diagnostics", "control.diagnostics", "Read diagnostics after a sequence, up to max entries.", ControlModel,
             ToolSchemas.Parameters(("after", ToolSchemas.Integer), ("max", ToolSchemas.Integer))),
     ];
+
+    internal static ImmutableArray<ToolMapping> AllMappings => Mappings.AddRange(ConvenienceMappings).AddRange(EventMappings);
 
     private static ToolMapping Declare(string name, string method, string description, string model, JsonElement? schema = null) =>
         new(new Tool { Name = name, Description = description + model, InputSchema = schema ?? ToolSchemas.Parameters() }, method);
@@ -79,7 +81,7 @@ internal sealed class ToolRegistry(IAtlantisSession session)
             {
                 ListToolsResult result = new()
                 {
-                    Tools = Mappings.Select(m => m.Tool).ToImmutableArray(),
+                    Tools = AllMappings.Select(m => m.Tool).ToImmutableArray(),
                 };
                 return ValueTask.FromResult(result);
             },
@@ -90,20 +92,32 @@ internal sealed class ToolRegistry(IAtlantisSession session)
     internal CallToolResult Invoke(CallToolRequestParams? request, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        ToolMapping? mapping = Mappings.FirstOrDefault(m => m.Tool.Name == request?.Name);
+        ToolMapping? mapping = AllMappings.FirstOrDefault(m => m.Tool.Name == request?.Name);
         if (mapping is null) return Error("UnknownTool: no tool is named '" + request?.Name + "'");
         JsonElement parameters = JsonSerializer.SerializeToElement(request?.Arguments ?? new Dictionary<string, JsonElement>());
         if (!ToolSchemas.Matches(mapping.Tool.InputSchema, parameters))
             return Error("InvalidArguments: arguments must match the tool's input schema");
         try
         {
-            JsonValue response = session.Request(mapping.Method, Json.Parse(parameters.GetRawText()));
+            JsonValue wireParameters = Json.Parse(parameters.GetRawText());
+            if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            if (mapping.Method is "connection.drainEvents" or "authoring.drainEvents")
+            {
+                JsonValue subscription = SubscriptionFor(mapping.Method);
+                if (subscription.Find("error") is JsonValue subscriptionError) return Forward(subscriptionError, true);
+                wireParameters = JsonValue.NewObject().Set("subscription", subscription.Find("result")!);
+            }
+            JsonValue response = session.Request(mapping.Method, wireParameters);
             if (response.Find("error") is JsonValue error) return Forward(error, true);
             if (response.Find("result") is not JsonValue result) return Error("ProtocolError: response has no result or error");
             bool refused = result.Find("err") is not null
                 || (mapping.Method is "connection.drainFailures" or "authoring.drainFailures"
                     && result.IsArray && result.Items.Count > 0);
-            return Forward(result, refused);
+            CallToolResult forwarded = Forward(result, refused);
+            if (!refused && mapping.Method == "control.step"
+                && wireParameters.Find("request")?.Find("image") is { IsString: true })
+                AddCapture(forwarded, result);
+            return forwarded;
         }
         catch (RemoteException e)
         {

@@ -1,4 +1,4 @@
-// Plan 0070 M1/M2 (Spec 0070 R1-R2; ADR-0138 D1): the MCP host.
+// Plan 0070 M1–M3 (Spec 0070 R1–R7; ADR-0138 D1): the MCP host.
 // One process, one Runtime session: the session file is found exactly as
 // the CLI finds it (--session, else ATLANTIS_SESSION, else the default
 // path), the connection is the C# SDK's, and the MCP server speaks stdio
@@ -7,8 +7,8 @@
 // registry (no Hosting/DI packages; the allow-listed set stays one
 // package). The host exits when its stdin closes (the agent host went
 // away) or the Runtime session dies; it opens no listening socket of its
-// own. ToolRegistry declares the exact tier; composition, events and image
-// content follow in M3.
+// own. ToolRegistry declares the exact/composed tiers, holds the two event
+// subscriptions, and returns captures as PNG content (Plan 0070 M3).
 using System;
 using System.Threading.Tasks;
 using Atlantis.Gameplay.Remote;
@@ -50,6 +50,16 @@ internal static class Program
         }
         using RemoteSession connection = session;
         IAtlantisSession atlantis = new AtlantisSession(connection);
+        var registry = new ToolRegistry(atlantis);
+        try
+        {
+            registry.InitializeSubscriptions();
+        }
+        catch (Exception e)
+        {
+            Console.Error.WriteLine("atlantis-mcp: subscriptions failed: " + e.Message);
+            return 3;
+        }
 
         // The session watcher: a Runtime that goes away ends the host (Spec R1). The wire's calls
         // are answered at frame boundaries, so a status unanswered after seconds is a dead session.
@@ -71,7 +81,6 @@ internal static class Program
 
         using StderrLoggerFactory logs = new();
 
-        var registry = new ToolRegistry(atlantis);
         var options = new McpServerOptions
         {
             ServerInfo = new Implementation { Name = "atlantis-mcp", Version = "0.1.0" },

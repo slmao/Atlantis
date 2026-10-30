@@ -9,6 +9,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 
 namespace Atlantis.Mcp.Tests;
 
@@ -60,6 +62,61 @@ internal static class SessionChecks
         }
     }
 
+    // The production executable, not the test server entry point: verify that its connect path
+    // actually initializes the subscriptions before MCP tools are served. The engine is a fixture,
+    // so this remains GPU-free and does not substitute for Plan 0070 M4's live Runtime sessions.
+    internal static async Task RunHost(Action<bool, string> check)
+    {
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(20));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var requests = new ConcurrentQueue<JsonValue>();
+        Task server = Serve(listener, requests, deadline.Token);
+        string file = Path.Combine(Path.GetTempPath(), "atlantis-mcp-session-" + Guid.NewGuid().ToString("N") + ".json");
+        try
+        {
+            JsonValue info = JsonValue.NewObject().Set("protocol", JsonValue.String("atlantis.remote/1"))
+                .Set("token", JsonValue.String("M2-fixture"))
+                .Set("port", JsonValue.Number((long)((IPEndPoint)listener.LocalEndpoint).Port))
+                .Set("pid", JsonValue.Number(1L)).Set("scene", JsonValue.String("11111111-2222-4333-8444-555555555555"));
+            File.WriteAllText(file, Json.Write(info));
+            await using (McpClient client = await McpClient.CreateAsync(new StdioClientTransport(new StdioClientTransportOptions
+            {
+                Name = "M3 production host", Command = "dotnet", Arguments = [typeof(ToolRegistry).Assembly.Location, "--session", file],
+            }), cancellationToken: deadline.Token))
+            {
+                var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
+                check(tools.Count == 32, "production host discovers all 32 tools after connecting");
+                CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
+                check(status.IsError != true, "production host forwards control through the SDK");
+                foreach (string name in new[] { "world.drain_events", "authoring.drain_events" })
+                {
+                    CallToolResult result = await client.CallToolAsync(name, cancellationToken: deadline.Token);
+                    check(result.IsError != true && result.Content[0] is TextContentBlock text && text.Text == "{\"ok\":[]}",
+                        "production host drains its own subscription: " + name);
+                }
+            }
+            await server.WaitAsync(deadline.Token);
+            JsonValue[] sent = requests.ToArray();
+            check(sent[2].Find("method")?.AsString == "connection.subscribe"
+                && sent[3].Find("method")?.AsString == "authoring.subscribe", "both subscriptions precede production tool calls");
+            check(sent.Count(r => r.Find("method")?.AsString.EndsWith(".subscribe", StringComparison.Ordinal) == true) == 2,
+                "production host creates exactly one subscription per family");
+            check(sent.Single(r => r.Find("method")?.AsString == "connection.drainEvents").Find("params")?.Find("subscription")?.NumberText == "41",
+                "production World drain uses the server's subscription ID");
+            check(sent.Single(r => r.Find("method")?.AsString == "authoring.drainEvents").Find("params")?.Find("subscription")?.NumberText == "73",
+                "production authoring drain uses the server's subscription ID");
+        }
+        finally
+        {
+            File.Delete(file);
+            deadline.Cancel();
+            listener.Stop();
+            try { await server; }
+            catch (OperationCanceledException) { }
+        }
+    }
+
     private static async Task Serve(TcpListener listener, ConcurrentQueue<JsonValue> requests, CancellationToken token)
     {
         using TcpClient client = await listener.AcceptTcpClientAsync(token);
@@ -79,6 +136,9 @@ internal static class SessionChecks
                 {
                     "hello" => Json.Parse("{\"scene\":\"11111111-2222-4333-8444-555555555555\"}"),
                     "connection.schema" => JsonValue.NewArray(),
+                    "connection.subscribe" => JsonValue.Number(41L),
+                    "authoring.subscribe" => JsonValue.Number(73L),
+                    "connection.drainEvents" or "authoring.drainEvents" => Json.Parse("{\"ok\":[]}"),
                     _ => request.Find("params")!,
                 });
             await writer.WriteLineAsync(Json.Write(response).AsMemory(), token);

@@ -54,7 +54,7 @@ foreach(_other IN ITEMS atlantis_csharp_tests atlantis_csharp_gameplay_demo atla
 endforeach()
 
 if(ATLANTIS_BUILD_TESTS)
-  # Plan 0070 M2 (P2/P5): GPU-free exact-tier tests over a fake session and
+  # Plan 0070 M2/M3 (P2/P3/P5): GPU-free tool tests over a fake session and
   # the real MCP handlers. No new package; the runner references the host.
   set(_mcp_test_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests/Atlantis.Mcp.Tests")
   set(_mcp_test_dll "${_mcp_root}/Atlantis.Mcp.Tests/Atlantis.Mcp.Tests.dll")
@@ -74,9 +74,9 @@ if(ATLANTIS_BUILD_TESTS)
     COMMENT "dotnet build Atlantis.Mcp.Tests ($<CONFIG>)"
     VERBATIM)
   add_custom_target(atlantis_mcp_tests ALL DEPENDS "${_mcp_test_dll}")
-  add_test(NAME "mcp: exact tier"
-    COMMAND "${ATLANTIS_DOTNET}" "${_mcp_test_dll}")
-  set_tests_properties("mcp: exact tier" PROPERTIES LABELS mcp TIMEOUT 120)
+  add_test(NAME "mcp: tool mappings, composition, events and captures"
+    COMMAND "${ATLANTIS_DOTNET}" "${_mcp_test_dll}" --repo "${CMAKE_SOURCE_DIR}")
+  set_tests_properties("mcp: tool mappings, composition, events and captures" PROPERTIES LABELS mcp TIMEOUT 120)
 
   # ADR-0138 D2 (Plan 0070 J5): the package policy, one script over both managed
   # areas, and that it refuses what it must for this one too.

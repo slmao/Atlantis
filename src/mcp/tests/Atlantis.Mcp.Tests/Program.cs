@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -13,7 +14,7 @@ using A = Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Mcp.Tests;
 
-internal static class Program
+internal static partial class Program
 {
     private const string Entity = "11111111-2222-4333-8444-555555555555";
     private const string TypeId = "0x123456789abcdef0";
@@ -45,7 +46,7 @@ internal static class Program
         ("control.status", "control.status", "{}", $$$"""{"paused":false,"frame":18446744073709551615,"scene":"{{{Entity}}}","sceneGeneration":2}"""),
         ("control.pause", "control.pause", "{}", "null"),
         ("control.resume", "control.resume", "{}", "null"),
-        ("control.step", "control.step", """{"request":{"frames":2,"image":"C:\\帧.png","withOverlay":true}}""", """{"ok":{"frame":2,"applied":true,"data":{"directionalLights":[],"pointLights":[],"view":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"projection":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"drawItemCount":3},"image":{"path":"C:\\帧.png","width":640,"height":480}}}"""),
+        ("control.step", "control.step", """{"request":{"frames":2,"image":null,"withOverlay":true}}""", """{"ok":{"frame":2,"applied":true,"data":{"directionalLights":[],"pointLights":[],"view":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"projection":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"drawItemCount":3},"image":null}}"""),
         ("control.raycast", "control.raycast", """{"ray":{"origin":[0,1,2],"direction":[0,0,-1]}}""", $$$"""{"ok":{"entity":"{{{Entity}}}","distance":1e-05}}"""),
         ("control.set_viewport_camera", "control.setViewportCamera", "{\"camera\":" + Camera + "}", "null"),
         ("control.set_viewport_overlay", "control.setViewportOverlay", """{"overlay":{"selection":[],"groups":[]}}""", """{"ok":null}"""),
@@ -56,19 +57,27 @@ internal static class Program
     {
         if (args.Contains("--fake-host")) return await FakeHost(false);
         if (args.Contains("--result-host")) return await FakeHost(true);
+        if (args.Contains("--m3-host")) return await FakeHost(false, new QueueSession { RejectCommands = true });
         try
         {
             MappingChecks();
             ArgumentChecks();
             RefusalChecks();
             await McpChecks();
+            int at = Array.IndexOf(args, "--repo");
+            string repo = at >= 0 ? args[at + 1] : Directory.GetCurrentDirectory();
+            CompositionChecks(repo);
+            EventAndFailureChecks();
+            CaptureChecks();
+            await M3McpChecks();
             await SessionChecks.Run(Check);
-            Console.WriteLine($"MCP exact tier: {_passed} checks passed, 0 failed");
+            await SessionChecks.RunHost(Check);
+            Console.WriteLine($"MCP M3: {_passed} checks passed, 0 failed");
             return 0;
         }
         catch (Exception e)
         {
-            Console.Error.WriteLine($"MCP exact tier: {_passed} checks passed, FAILED: {e}");
+            Console.Error.WriteLine($"MCP M3: {_passed} checks passed, FAILED: {e}");
             return 1;
         }
     }
@@ -248,9 +257,10 @@ internal static class Program
         }
     }
 
-    private static async Task<int> FakeHost(bool results)
+    private static async Task<int> FakeHost(bool results, IAtlantisSession? seam = null)
     {
-        var registry = new ToolRegistry(new FakeSession { Echo = !results, FixtureResults = results });
+        var registry = new ToolRegistry(seam ?? new FakeSession { Echo = !results, FixtureResults = results });
+        registry.InitializeSubscriptions();
         McpServerOptions options = new()
         {
             ServerInfo = new Implementation { Name = "M2-fake-session", Version = "1" },
@@ -272,7 +282,7 @@ internal static class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(Cases.Select(c => c.Tool).Order()), "MCP tools/list exposes all R2 tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 32 approved M3 tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
@@ -310,6 +320,8 @@ internal static class Program
         {
             Calls.Add((method, parameters));
             if (Failure is not null) throw Failure;
+            if (method == "connection.subscribe") return Json.Parse("{\"result\":41}");
+            if (method == "authoring.subscribe") return Json.Parse("{\"result\":73}");
             if (FixtureResults) return Json.Parse("{\"result\":" + Cases.Single(c => c.Method == method).Result + "}");
             return Echo ? JsonValue.NewObject().Set("result", JsonValue.NewObject()
                 .Set("method", JsonValue.String(method)).Set("params", parameters)) : Json.Parse(Response);

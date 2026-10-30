@@ -12,13 +12,13 @@ namespace Atlantis.Mcp;
 internal static class ToolSchemas
 {
     internal static readonly JsonNode Integer = Type("integer");
-    private static readonly JsonNode String = Type("string");
+    internal static readonly JsonNode String = Type("string");
     private static readonly JsonNode Boolean = Type("boolean");
     private static readonly JsonNode Number = Type("number");
     private static readonly JsonNode Float = Choice(Number, Enum("nan", "inf", "-inf"));
     private static readonly JsonNode Vec3 = Vector(Float, 3);
     private static readonly JsonNode Vec4 = Vector(Float, 4);
-    private static readonly JsonNode Value = Choice(
+    internal static readonly JsonNode Value = Choice(
         Object(("u64", String)), Object(("f32", Float)), Object(("vec3", Vec3)), Object(("vec4", Vec4)),
         Object(("assetGuid", String)), Object(("entityGuid", String)), Object(("enum", Integer)),
         Object(("absent", new JsonObject { ["const"] = true })));
@@ -57,6 +57,8 @@ internal static class ToolSchemas
 
     internal static JsonElement Parameters(params (string Name, JsonNode Shape)[] fields) =>
         JsonSerializer.SerializeToElement(Object(fields));
+
+    internal static JsonNode ParametersNode(params (string Name, JsonNode Shape)[] fields) => Object(fields);
 
     private static JsonObject Object(params (string Name, JsonNode Shape)[] fields)
     {
