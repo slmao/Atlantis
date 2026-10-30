@@ -5,7 +5,8 @@
   [Plan 0070](0070-agent-tool-layer.md).
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending. This Plan and Spec 0071 require joint review and explicit
+- **Joint Human Review:** Pending in [PR #308](https://github.com/slmao/Atlantis/pull/308).
+  This Plan and Spec 0071 require joint review and explicit
   implementation authorization; this documentation PR authorizes no code work.
 - **Related ADRs:** ADR-0138 and ADR-0130 remain Accepted; no ADR change proposed (Spec 0071,
   Architectural Impact).

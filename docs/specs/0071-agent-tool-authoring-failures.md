@@ -4,7 +4,8 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-10-30
 - **Related Plan(s):** [Plan 0071](../plans/0071-agent-tool-authoring-failures.md) (In Review)
-- **Approval:** Pending; this proposal does not authorize implementation.
+- **Approval:** Pending in [PR #308](https://github.com/slmao/Atlantis/pull/308);
+  this proposal does not authorize implementation.
 - **Related ADR(s):** [ADR-0138](../adr/0138-agent-tool-layer-host.md) and
   [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md), both Accepted and
   proposed unchanged; see Architectural Impact.
