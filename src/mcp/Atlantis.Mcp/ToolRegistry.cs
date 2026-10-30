@@ -23,7 +23,8 @@ internal sealed class ToolRegistry(IAtlantisSession session)
     private const string WorldModel = " Runtime World writes are disposable runtime-side tweaks; "
         + "persistent edits belong to the authoring document and land on explicit authoring.apply.";
     private const string AuthoringModel = " Edits change the authoring document; only explicit "
-        + "authoring.apply makes it the running scene. Apply may be held while paused; Applied events follow the reload.";
+        + "authoring.apply makes it the running scene. After submission, explicitly call authoring.drain_failures "
+        + "and correlate tickets before applying: a ticket alone is not edit success. Apply may be held while paused; Applied events follow the reload.";
     private const string ControlModel = " Runtime control does not edit the authoring document; "
         + "document edits land on explicit authoring.apply, while Runtime World writes are disposable tweaks.";
 
@@ -43,6 +44,8 @@ internal sealed class ToolRegistry(IAtlantisSession session)
         Declare("authoring.submit_transaction", "authoring.submitTransaction",
             "Submit one atomic document command list; returns its ticket. Refusals are deferred under that ticket.", AuthoringModel,
             ToolSchemas.Parameters(("commands", ToolSchemas.Array(ToolSchemas.AuthoringCommand)))),
+        Declare("authoring.drain_failures", "authoring.drainFailures",
+            "Return and clear all this connection's outstanding document command failures, in order, not only the last transaction's.", AuthoringModel),
         Declare("authoring.open", "authoring.open", "Open or reopen the running scene's source document.", AuthoringModel),
         Declare("authoring.document", "authoring.document", "Read document identity, provenance, source and node count; null before open.", AuthoringModel),
         Declare("authoring.apply", "authoring.apply", "Explicitly hand the document to the Runtime for reload.", AuthoringModel),
@@ -98,7 +101,8 @@ internal sealed class ToolRegistry(IAtlantisSession session)
             if (response.Find("error") is JsonValue error) return Forward(error, true);
             if (response.Find("result") is not JsonValue result) return Error("ProtocolError: response has no result or error");
             bool refused = result.Find("err") is not null
-                || (mapping.Method == "connection.drainFailures" && result.IsArray && result.Items.Count > 0);
+                || (mapping.Method is "connection.drainFailures" or "authoring.drainFailures"
+                    && result.IsArray && result.Items.Count > 0);
             return Forward(result, refused);
         }
         catch (RemoteException e)

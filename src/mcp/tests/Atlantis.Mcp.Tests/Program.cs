@@ -35,6 +35,7 @@ internal static class Program
         ("authoring.list_nodes", "authoring.listNodes", "{}", $$$"""{"ok":[{"node":"{{{Entity}}}","parent":null}]}"""),
         ("authoring.get_property", "authoring.getProperty", "{\"address\":" + SceneAddress + "}", """{"ok":{"f32":-0}}"""),
         ("authoring.submit_transaction", "authoring.submitTransaction", """{"commands":[]}""", """{"first":1,"count":0}"""),
+        ("authoring.drain_failures", "authoring.drainFailures", "{}", "[]"),
         ("authoring.open", "authoring.open", "{}", """{"ok":null}"""),
         ("authoring.document", "authoring.document", "{}", $$$"""{"scene":"{{{Entity}}}","provenance":"Imported","source":"C:\\源\\scene.txt","nodeCount":3}"""),
         ("authoring.apply", "authoring.apply", "{}", """{"ok":null}"""),
@@ -87,7 +88,7 @@ internal static class Program
     private static void MappingChecks()
     {
         Check(ToolRegistry.Mappings.Select(m => m.Tool.Name).Order().SequenceEqual(Cases.Select(c => c.Tool).Order()),
-            "exactly R2's 22 tool names, without M3 tools or subscription management");
+            "exactly the 23 approved exact-tier names, without subscription management");
         Check(ToolRegistry.Mappings.Select(m => m.Method).Distinct().Count() == Cases.Length, "one distinct wire method per tool");
         foreach (var c in Cases)
         {
@@ -190,6 +191,17 @@ internal static class Program
     {
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
+        foreach (string reason in Enum.GetNames<A.AuthoringError>())
+        {
+            string failuresJson = "[{\"ticket\":18446744073709551615,\"error\":\"" + reason
+                + "\"},{\"ticket\":2,\"error\":\"UnknownNode\"}]";
+            FakeSession session = new() { Response = "{\"result\":" + failuresJson + "}" };
+            CallToolResult result = new ToolRegistry(session).Invoke(Request("authoring.drain_failures", "{}"));
+            Check(result.IsError == true && session.Calls.Count == 1
+                && session.Calls[0].Method == "authoring.drainFailures"
+                && Json.Write(session.Calls[0].Parameters) == "{}", "authoring drain " + reason + " is one exact request");
+            CheckForward(result, failuresJson, "authoring drain preserves all tickets, order and " + reason);
+        }
         Refusals<A.OpenError>("authoring.open");
         Refusals<A.ApplyError>("authoring.apply");
         Refusals<A.SaveError>("authoring.save");
