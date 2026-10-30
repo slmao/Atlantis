@@ -55,6 +55,18 @@ internal static partial class Program
 
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--integration"))
+        {
+            string? Argument(string name)
+            {
+                int index = Array.IndexOf(args, name);
+                return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+            }
+            string? runtime = Argument("--runtime");
+            if (runtime is null) { Console.Error.WriteLine("--integration requires --runtime <path>"); return 2; }
+            return await IntegrationTest.Run(runtime, Argument("--host") ?? typeof(ToolRegistry).Assembly.Location,
+                Argument("--scene") ?? "integrated_showcase_demo", Argument("--output-dir") ?? Path.Combine("build", "mcp-integration"));
+        }
         if (args.Contains("--fake-host")) return await FakeHost(false);
         if (args.Contains("--result-host")) return await FakeHost(true);
         if (args.Contains("--m3-host")) return await FakeHost(false, new QueueSession { RejectCommands = true });

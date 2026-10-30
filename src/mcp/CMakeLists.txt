@@ -78,6 +78,24 @@ if(ATLANTIS_BUILD_TESTS)
     COMMAND "${ATLANTIS_DOTNET}" "${_mcp_test_dll}" --repo "${CMAKE_SOURCE_DIR}")
   set_tests_properties("mcp: tool mappings, composition, events and captures" PROPERTIES LABELS mcp TIMEOUT 120)
 
+  # Plan 0070 M4 / Plan 0071 S4: real Runtime + real stdio hosts on both scenes.
+  # The test target owns the executable dependency; the MCP host's dependencies stay unchanged.
+  add_dependencies(atlantis_mcp_tests atlantis_runtime)
+  set(_mcp_live_scenes integrated_showcase_demo)
+  if(DEFINED ATLANTIS_bistro_scene_TARGET)
+    list(APPEND _mcp_live_scenes bistro)
+  else()
+    message(STATUS "Atlantis MCP: Bistro live test unavailable until Bistro content is configured")
+  endif()
+  foreach(_scene IN LISTS _mcp_live_scenes)
+    add_test(NAME "mcp: live integration on ${_scene}"
+      COMMAND "${ATLANTIS_DOTNET}" "${_mcp_test_dll}" --integration
+              --runtime "$<TARGET_FILE:atlantis_runtime>" --host "${atlantis_mcp_DLL}"
+              --scene "${_scene}" --output-dir "${CMAKE_CURRENT_BINARY_DIR}/integration/$<CONFIG>/${_scene}")
+    set_tests_properties("mcp: live integration on ${_scene}"
+      PROPERTIES LABELS "mcp;gpu" TIMEOUT 900 RUN_SERIAL TRUE)
+  endforeach()
+
   # ADR-0138 D2 (Plan 0070 J5): the package policy, one script over both managed
   # areas, and that it refuses what it must for this one too.
   add_test(NAME "mcp: package policy"
