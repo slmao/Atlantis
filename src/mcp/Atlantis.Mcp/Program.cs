@@ -1,4 +1,4 @@
-// Plan 0070 M1 (Spec 0070 R1-R2; ADR-0138 D1): the MCP host's skeleton.
+// Plan 0070 M1/M2 (Spec 0070 R1-R2; ADR-0138 D1): the MCP host.
 // One process, one Runtime session: the session file is found exactly as
 // the CLI finds it (--session, else ATLANTIS_SESSION, else the default
 // path), the connection is the C# SDK's, and the MCP server speaks stdio
@@ -7,16 +7,11 @@
 // registry (no Hosting/DI packages; the allow-listed set stays one
 // package). The host exits when its stdin closes (the agent host went
 // away) or the Runtime session dies; it opens no listening socket of its
-// own. This milestone's one tool is control.status -- the exact tier's
-// first entry and the skeleton's proof; the tier and the composed tools
-// are M2/M3.
+// own. ToolRegistry declares the exact tier; composition, events and image
+// content follow in M3.
 using System;
-using System.Collections.Immutable;
-using System.ComponentModel;
 using System.Threading.Tasks;
-using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -54,6 +49,7 @@ internal static class Program
             return 3;
         }
         using RemoteSession connection = session;
+        IAtlantisSession atlantis = new AtlantisSession(connection);
 
         // The session watcher: a Runtime that goes away ends the host (Spec R1). The wire's calls
         // are answered at frame boundaries, so a status unanswered after seconds is a dead session.
@@ -64,7 +60,7 @@ internal static class Program
                 await Task.Delay(TimeSpan.FromSeconds(5));
                 try
                 {
-                    _ = connection.Control.Status();
+                    _ = atlantis.Request("control.status", JsonValue.NewObject());
                 }
                 catch (Exception)
                 {
@@ -75,31 +71,16 @@ internal static class Program
 
         using StderrLoggerFactory logs = new();
 
-        var registry = new ToolRegistry(
-        [
-            McpServerTool.Create(
-                ([Description(
-                    "The Runtime's status: paused, the frame count, the scene and its generation. Editing happens "
-                    + "on the authoring document; authoring.apply makes it the running scene.")]
-                (IServiceProvider services) => services.GetRequiredService<RemoteSession>().Control.Status()),
-                new McpServerToolCreateOptions { Name = "control.status", ReadOnly = true, Idempotent = true }),
-        ]);
+        var registry = new ToolRegistry(atlantis);
         var options = new McpServerOptions
         {
             ServerInfo = new Implementation { Name = "atlantis-mcp", Version = "0.1.0" },
             Capabilities = new ServerCapabilities { Tools = new ToolsCapability() },
         };
         registry.Wire(options);
-        await using McpServer server = McpServer.Create(new StdioServerTransport("atlantis-mcp", logs), options, logs,
-                                                        new ServiceProviders(session));
+        await using McpServer server = McpServer.Create(new StdioServerTransport("atlantis-mcp", logs), options, logs);
         await server.RunAsync();
         return 0;
-    }
-
-    /// <summary>The one service the tools take: the session (M2's seam formalizes this).</summary>
-    private sealed class ServiceProviders(RemoteSession session) : IServiceProvider
-    {
-        public object? GetService(Type serviceType) => serviceType == typeof(RemoteSession) ? session : null;
     }
 }
 

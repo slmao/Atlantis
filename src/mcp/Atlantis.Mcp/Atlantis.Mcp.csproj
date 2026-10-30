@@ -23,4 +23,8 @@
     <PackageReference Include="ModelContextProtocol" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Atlantis.Mcp.Tests" />
+  </ItemGroup>
+
 </Project>
