@@ -166,7 +166,12 @@ Atlantis Vulkan Backend, Atlantis RenderGraph, Atlantis Renderer, Atlantis
 Shader System, Atlantis Asset System, Atlantis World, Atlantis Connection,
 Atlantis Authoring, Atlantis Remote, Atlantis CLI, Atlantis Editor, Atlantis
 Gameplay SDK, Atlantis Runtime, Atlantis Tools**, and — managed, outside the native module
-graph — **Atlantis C# SDK** and **Atlantis Editor App**.
+graph — **Atlantis C# SDK**, **Atlantis Editor App** and **Atlantis MCP**.
+Atlantis MCP (Specs 0070/0071, ADR-0138) is a managed stdio client of the C#
+SDK only, with its own pinned-package allow-list, closed exact/composed tools
+and explicit `authoring.drain_failures` settlement before apply; it adds no
+native, protocol or SDK capability (details in
+[module_boundaries.md](docs/architecture/module_boundaries.md#atlantis-mcp)).
 Atlantis Asset System (Spec 0012, `Approved`; extended by Spec 0015,
 `Approved`, with a second asset type, scene graphs) depends on Atlantis
 Core only — no RHI, Renderer, Shader System, or Atlantis World
@@ -391,8 +396,8 @@ editor's own history (ADR-0136, structural records included) refuses steps
 whose document changed elsewhere, surviving applies and clearing on
 `DocumentReopened`; the panels are the Hierarchy, the reflective Inspector,
 Gizmo editing and apply/save/play. Still no editor-only method, channel or file.
-**It is the one place
-NuGet packages are allowed** (ADR-0127): only packages on
+**Its NuGet packages are allowed under ADR-0127** (Atlantis MCP has its own
+allow-list under ADR-0138): only packages on
 `src/editor_app/allowed_packages.txt`, each pinned exactly in
 `src/editor_app/Directory.Packages.props`, with committed `packages.lock.json`
 files, locked-mode restore, its own `NuGet.config` (nuget.org, or

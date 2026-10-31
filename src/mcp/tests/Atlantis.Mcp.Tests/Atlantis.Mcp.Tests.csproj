@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Plan 0070 P5: GPU-free console runner, with no test framework package. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Atlantis.Mcp.Tests</RootNamespace>
+    <AssemblyName>Atlantis.Mcp.Tests</AssemblyName>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Atlantis.Mcp/Atlantis.Mcp.csproj" />
+  </ItemGroup>
+</Project>

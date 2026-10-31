@@ -1194,7 +1194,8 @@ with zero NuGet and `eol=lf`, by `tests/csharp/check_csharp_rules.cmake`).
 it with `dotnet build` only when a .NET 10.0.1xx SDK is found
 (`cmake/AtlantisDotnet.cmake`, `ATLANTIS_REQUIRE_CSHARP`); Android never
 declares a C# target. Since Spec 0064, Atlantis Editor App references it as a
-project (not a package); the SDK's zero-NuGet rule is unchanged.
+project (not a package); since Spec 0070, Atlantis MCP does the same. The
+SDK's zero-NuGet rule is unchanged.
 
 ---
 
@@ -1267,14 +1268,95 @@ hosted child (editor-side OS UI work, not engine code — Plan 0064 J5).
 
 **Depended on by:** nothing. CMake declares it (`atlantis_editor_app`, its
 tests `atlantis_editor_app_tests`, and the ctest label `editor_app`) only with
-`ATLANTIS_BUILD_EDITOR_APP=ON` (default `OFF`) and a .NET 10.0.1xx SDK, as the
-last subdirectory of the root `CMakeLists.txt`; a default configure declares
+`ATLANTIS_BUILD_EDITOR_APP=ON` (default `OFF`) and a .NET 10.0.1xx SDK, from the
+root `CMakeLists.txt`; a default configure declares
 nothing and fetches no package. Android never declares it.
 
 **Extension points:** Phase 2 and later (E5, E4, E6 in the maintainer's
 order; E3, the authoring editor, shipped as Spec 0068) are specified after the
 Phase 1 checkpoint; each capability they need is added to the shared client
 surface for the wire, the CLI and both SDKs in the same Spec (ADR-0125 D2).
+
+---
+
+## Atlantis MCP
+
+**Status: Approved** ([Spec 0070](../specs/0070-agent-tool-layer.md),
+[Spec 0071](../specs/0071-agent-tool-authoring-failures.md),
+[ADR-0138](../adr/0138-agent-tool-layer-host.md)); this section describes the
+implemented managed host, independently of the document's proposed baseline.
+
+**Responsibilities:** `src/mcp/Atlantis.Mcp/` (`Atlantis.Mcp`) is a console
+MCP server over stdio and an ordinary client of one running Runtime. Its
+closed tool registry is versioned with `atlantis.remote/1`: 23 exact tools
+for World queries/transactions/failures, the authoring document and lifecycle,
+and Runtime control; seven convenience tools composing exactly one authoring
+transaction; two event drains. The declarations and argument schemas live in
+[`ToolRegistry`](../../src/mcp/Atlantis.Mcp/ToolRegistry.cs) and its partial
+files, with structural argument checks in
+[`ToolSchemas`](../../src/mcp/Atlantis.Mcp/ToolSchemas.cs). The host invents no
+command, policy, retry or privileged capability. Schema tools return the
+engine's descriptors; document edits reach the Runtime on explicit apply,
+whereas World writes are disposable runtime changes.
+
+Wire results are preserved as structured JSON and matching JSON text.
+Refusals retain their reason strings as MCP tool errors. In particular,
+`authoring.drain_failures` forwards `authoring.drainFailures` with `{}`,
+returning the complete ordered ticket/error array: an empty array succeeds,
+a nonempty array has `isError: true`. Submission tickets do not prove edit
+success. Clients submit, explicitly drain their own connection's failures
+and correlate tickets, then apply an edit with no refusal. The drain consumes
+all outstanding failures on that connection, independently of event drains;
+the host does not settle, retry or apply inside a convenience call. A stale
+node can produce `UnknownNode`; ordinary overwrites gain no version check or
+editor-history conflict semantics.
+
+**Depends on:** Atlantis C# SDK by project reference and the official
+`ModelContextProtocol` package, pinned at 2.3.0. ADR-0127's mechanism is
+applied to this area's own `src/mcp/allowed_packages.txt`, central exact pins,
+committed per-project lock files, locked restore and `NuGet.config`.
+`ATLANTIS_NUGET_OFFLINE_FEED` can select a local package feed. The shared
+`cmake/check_editor_app_packages.cmake` checks both managed areas with
+negative tests; the C# SDK remains zero-NuGet. No native library, Runtime
+header, engine plugin or SDK/protocol extension is involved.
+**Not a C++ module and not in the native dependency graph.**
+
+**Ownership and lifetime:** one process owns one SDK session and one
+unrestricted subscription per event family, created at connect. Their IDs
+remain private; `world.drain_events` and `authoring.drain_events` return and
+clear the corresponding connection's queue. No subscribe/unsubscribe tools,
+push notifications, resources or prompts are exposed. Failed subscriptions
+retain their refusal for the drain to report without retry. The internal
+`IAtlantisSession` adapter serializes calls to the synchronous, non-thread-safe
+SDK session, including the host's liveness checks. The host exits on stdin
+closure or session death and opens no listening socket; SDK disconnect owns
+subscription cleanup. Stdout carries only MCP; diagnostics go to stderr.
+
+`control.step` with capture preserves the frame report and returned path and
+adds the PNG bytes as an MCP image block. Capture is observed after explicit
+apply and `Applied{generation}` (step first if the Runtime is paused). An
+unreadable capture is a tool error retaining the report, not a fabricated
+image or another step.
+
+**Depended on by:** no engine module. CMake declares `atlantis_mcp` and,
+with tests enabled, `atlantis_mcp_tests`, only under `ATLANTIS_BUILD_MCP=ON`
+(default OFF) with a .NET 10.0.1xx SDK. A default configure declares neither
+and restores no MCP package; Android never declares them. Build with
+`cmake -S . -B build -DATLANTIS_BUILD_MCP=ON`, then
+`cmake --build build --config Debug --target atlantis_mcp_tests`. Configure
+Bistro content through the Runtime's existing content option for both live
+tests; `ctest --test-dir build -C Debug -L mcp --output-on-failure` runs the
+tool, package-policy and available live tests. Only the test target depends
+on the native Runtime executable.
+
+An MCP client launches `dotnet <build>/csharp/Debug/Atlantis.Mcp/Atlantis.Mcp.dll`
+with optional `--session <path>`; discovery falls back to `ATLANTIS_SESSION`,
+then `./.atlantis/runtime.session.json`, relative to the host's working
+directory. Start the Runtime separately with `--listen` as for any client.
+
+**Extension points:** new capabilities require the shared wire/CLI/SDK Spec
+path of ADR-0125 D2; resources/prompts, push, multiplexing and non-stdio
+transports remain outside this host's approved scope.
 
 ---
 

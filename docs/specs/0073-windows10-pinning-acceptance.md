@@ -1,10 +1,11 @@
 # Spec: Windows 10 Acceptance Scope for the Pinning Test Repair
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-10-31
-- **Related Plan(s):** [Plan 0073](../plans/0073-windows10-pinning-acceptance.md) (In Review)
-- **Approval:** Pending joint human review in [PR #310](https://github.com/slmao/Atlantis/pull/310).
+- **Related Plan(s):** [Plan 0073](../plans/0073-windows10-pinning-acceptance.md) (Approved)
+- **Approval:** slmao, 2026-10-31; [PR #310](https://github.com/slmao/Atlantis/pull/310) human-merged;
+  J1–J3 approved as recommended. Joint authorization is recorded in Plan 0073.
 - **Related ADR(s):** None new; see Architectural Impact.
 - **Supplements:** [Spec 0072](0072-mcp-acceptance-verification.md) / [Plan 0072](../plans/0072-mcp-acceptance-verification.md), whose joint approval is recorded in [PR #309](https://github.com/slmao/Atlantis/pull/309#issuecomment-6539457400).
 

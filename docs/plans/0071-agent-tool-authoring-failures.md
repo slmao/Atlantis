@@ -1,13 +1,16 @@
 # Plan: Authoring Failure Drain for the Agent Tool Layer
 
-- **Spec:** [Spec 0071](../specs/0071-agent-tool-authoring-failures.md) (In Review), supplementing
+- **Spec:** [Spec 0071](../specs/0071-agent-tool-authoring-failures.md) (Approved), supplementing
   Approved [Spec 0070](../specs/0070-agent-tool-layer.md) and
   [Plan 0070](0070-agent-tool-layer.md).
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending in [PR #308](https://github.com/slmao/Atlantis/pull/308).
-  This Plan and Spec 0071 require joint review and explicit
-  implementation authorization; this documentation PR authorizes no code work.
+- **Joint Human Review:** slmao, 2026-10-31 — this Plan and Spec 0071 reviewed together;
+  J1–J4 each approved as recommended, existing Accepted ADRs retained. Evidence:
+  [owner ruling on PR #308](https://github.com/slmao/Atlantis/pull/308#issuecomment-6528146125).
+  **Distinct authorization:** S2–S5 on `feature/0070-agent-tool-layer` in PR #307, alongside
+  Plan 0070 M3–M5, after the human merge of PR #308 (satisfied 2026-10-31). The current
+  execution is limited to S2/S3 and M3, then stops; M4/M5 require a later execution.
 - **Related ADRs:** ADR-0138 and ADR-0130 remain Accepted; no ADR change proposed (Spec 0071,
   Architectural Impact).
 
@@ -82,7 +85,7 @@ these is a deviation to report before coding, not permission to expand this list
 - The original M3–M5 requirements and their ordering remain; this follow-up adds only the
   correction and acceptance deltas. The current request ends after S1's review submission.
 
-## Joint Review — Pending Rulings
+## Joint Review — Reviewed Proposals (J1–J4; rulings in header)
 
 | Ruling | Recommendation |
 |---|---|
