@@ -3,8 +3,9 @@
 - **Spec:** [Spec 0072](../specs/0072-mcp-acceptance-verification.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of this Plan and Spec 0072 together; no implementation
-  authorization. The current request ends after review submission even if a ruling arrives.
+- **Joint Human Review:** Pending review of this Plan and Spec 0072 together in
+  [PR #309](https://github.com/slmao/Atlantis/pull/309); no implementation authorization.
+  The current request ends after review submission even if a ruling arrives.
 - **Related:** Approved [Plan 0070](0070-agent-tool-layer.md) M5 and
   [Plan 0071](0071-agent-tool-authoring-failures.md) S5;
   [PR #307 diagnosis](https://github.com/slmao/Atlantis/pull/307#issuecomment-6539088905).

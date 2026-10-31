@@ -4,7 +4,8 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-10-31
 - **Related Plan(s):** [Plan 0072](../plans/0072-mcp-acceptance-verification.md) (In Review)
-- **Approval:** Pending joint human review; no implementation authorization.
+- **Approval:** Pending joint human review in [PR #309](https://github.com/slmao/Atlantis/pull/309);
+  no implementation authorization.
 - **Related ADR(s):** ADR-0118, ADR-0119, ADR-0130 and ADR-0138 retained; see Architectural Impact.
 - **Supplements:** [Spec 0070](0070-agent-tool-layer.md) / [Plan 0070](../plans/0070-agent-tool-layer.md)
   M5 and [Spec 0071](0071-agent-tool-authoring-failures.md) / [Plan 0071](../plans/0071-agent-tool-authoring-failures.md) S5.
