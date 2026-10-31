@@ -171,6 +171,10 @@ enum class SceneArtifactDecodeError {
   // re-derived from the artifact's own bytes, never trusting a
   // well-formed cooker.
   TooManyLights,
+  // Spec 0074: existing component exclusivity and reserved-zero reference
+  // contracts, checked after the preceding artifact validations.
+  ConflictingComponents,
+  ZeroAssetReference,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --

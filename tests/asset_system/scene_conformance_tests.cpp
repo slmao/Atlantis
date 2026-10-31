@@ -627,7 +627,7 @@ TEST_CASE("conformance: Light.kind's Enumerated domain is enforced on both sides
   CHECK(decoded.error() == as::SceneArtifactDecodeError::NonFiniteValue);
 }
 
-TEST_CASE("conformance: Renderable's NonNilGuid domain -- source rejects; decode side is KnownGap F3 (ruling J1)",
+TEST_CASE("conformance: Renderable's NonNilGuid domain rejects nil source GUIDs and zero artifact keys",
           "[asset_system][scene][conformance]") {
   const scene::AuthoringScene base = baseScene();
   const Cooked baseCooked = cook(textOf(base));
@@ -638,10 +638,12 @@ TEST_CASE("conformance: Renderable's NonNilGuid domain -- source rejects; decode
     const std::string guid = as::toString(offset == 96 ? asset(1) : asset(2));
     replaceOnce(text, guid, "00000000-0000-0000-0000-000000000000");
     expectRejected(text, parseFails(as::SceneSourceParseError::MalformedGuid));
-    // F3: the artifact carries keys only and the decoder accepts key 0.
+    // Spec 0074: the artifact projects the non-nil reference contract to nonzero keys.
     std::vector<std::byte> bytes = baseCooked.artifact;
     putU64(bytes, recordOffset(kMeshNode, offset), 0);
-    CHECK(as::decodeSceneArtifact(bytes).isOk());
+    const auto decoded = as::decodeSceneArtifact(bytes);
+    REQUIRE(decoded.isErr());
+    CHECK(decoded.error() == as::SceneArtifactDecodeError::ZeroAssetReference);
   }
 }
 
@@ -649,14 +651,11 @@ TEST_CASE("conformance: Renderable's NonNilGuid domain -- source rejects; decode
 
 namespace {
 
-enum class DecodeMarker { Rejected, KnownGapAccepted };
-
 struct ConstraintCase {
   scene::Constraint id;
   std::string sourceText;
   SourceExpectation source;
   std::vector<std::byte> artifact;  // a valid artifact, patched
-  DecodeMarker marker = DecodeMarker::Rejected;
   as::SceneArtifactDecodeError decodeError = as::SceneArtifactDecodeError::NonFiniteValue;
 };
 
@@ -735,14 +734,13 @@ struct ConstraintCase {
     c.decodeError = SceneArtifactDecodeError::ActiveCameraMissingCamera;
     out.push_back(c);
   }
-  {  // ComponentExclusivity: the grammar cannot author it; the decoder accepts
-     // it (KnownGap F1, ruling J1).
+  {  // ComponentExclusivity, enforced on both sides (Spec 0074).
     ConstraintCase c{Constraint::ComponentExclusivity, baseText,
                      parseFails(SceneSourceParseError::InvalidComponentGroup), baseArtifact};
     const std::string material = "material=" + as::toString(asset(2));
     replaceOnce(c.sourceText, material, material + " camera_fov_y=1.0 camera_near_z=0.5 camera_far_z=10.0");
     putU32(c.artifact, recordOffset(kCameraNode, kHasLight), 1);  // a camera node that is also a light
-    c.marker = DecodeMarker::KnownGapAccepted;
+    c.decodeError = SceneArtifactDecodeError::ConflictingComponents;
     out.push_back(c);
   }
   {  // LightRangeMatchesKind: a point light with range 0.
@@ -808,12 +806,8 @@ TEST_CASE("conformance: every scene constraint is enforced as today's code enfor
     expectRejected(c.sourceText, c.source);
     REQUIRE(c.artifact.size() > 0);
     const auto decoded = as::decodeSceneArtifact(c.artifact);
-    if (c.marker == DecodeMarker::KnownGapAccepted) {
-      CHECK(decoded.isOk());  // recorded gap: update this case if the decoder is ever tightened
-    } else {
-      REQUIRE(decoded.isErr());
-      CHECK(decoded.error() == c.decodeError);
-    }
+    REQUIRE(decoded.isErr());
+    CHECK(decoded.error() == c.decodeError);
   }
 }
 
