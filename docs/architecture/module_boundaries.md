@@ -1194,7 +1194,8 @@ with zero NuGet and `eol=lf`, by `tests/csharp/check_csharp_rules.cmake`).
 it with `dotnet build` only when a .NET 10.0.1xx SDK is found
 (`cmake/AtlantisDotnet.cmake`, `ATLANTIS_REQUIRE_CSHARP`); Android never
 declares a C# target. Since Spec 0064, Atlantis Editor App references it as a
-project (not a package); the SDK's zero-NuGet rule is unchanged.
+project (not a package); since Spec 0070, Atlantis MCP does the same. The
+SDK's zero-NuGet rule is unchanged.
 
 ---
 
@@ -1267,8 +1268,8 @@ hosted child (editor-side OS UI work, not engine code — Plan 0064 J5).
 
 **Depended on by:** nothing. CMake declares it (`atlantis_editor_app`, its
 tests `atlantis_editor_app_tests`, and the ctest label `editor_app`) only with
-`ATLANTIS_BUILD_EDITOR_APP=ON` (default `OFF`) and a .NET 10.0.1xx SDK, as the
-last subdirectory of the root `CMakeLists.txt`; a default configure declares
+`ATLANTIS_BUILD_EDITOR_APP=ON` (default `OFF`) and a .NET 10.0.1xx SDK, from the
+root `CMakeLists.txt`; a default configure declares
 nothing and fetches no package. Android never declares it.
 
 **Extension points:** Phase 2 and later (E5, E4, E6 in the maintainer's
