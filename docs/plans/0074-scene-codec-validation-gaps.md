@@ -3,8 +3,9 @@
 - **Spec:** [Spec 0074](../specs/0074-scene-codec-validation-gaps.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of Spec 0074 and this Plan together; reviewing PR
-  to be linked on submission. No implementation authority is inferred from proposal submission.
+- **Joint Human Review:** Pending review of Spec 0074 and this Plan together in
+  [PR #311](https://github.com/slmao/Atlantis/pull/311). No implementation authority is
+  inferred from proposal submission.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

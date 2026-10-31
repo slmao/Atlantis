@@ -4,7 +4,7 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
 - **Related Plan(s):** [Plan 0074](../plans/0074-scene-codec-validation-gaps.md) (In Review)
-- **Approval:** Pending joint human review; reviewing PR to be linked on submission.
+- **Approval:** Pending joint human review in [PR #311](https://github.com/slmao/Atlantis/pull/311).
 - **Related ADR(s):** ADR-0052/0053, ADR-0097 and ADR-0100 retained; see Architectural Impact.
 - **Supplements:** [Plan 0049 findings and J1/J2](../plans/0049-schema-driven-authoring-scene.md#joint-review-decisions--ruled-joint-human-review-slmao-2026-10-05-pr-203).
 
