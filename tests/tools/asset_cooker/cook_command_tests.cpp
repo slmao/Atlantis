@@ -6,6 +6,8 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <random>
 #include <sstream>
 #include <string>
@@ -95,6 +97,44 @@ constexpr std::string_view kValidSquareSource =
     "index: 2 3 0\n";
 
 }  // namespace
+
+TEST_CASE("codec 0074 CLI reports scene capacity refusal without outputs or stamp", "[asset_cooker][codec0074]") {
+  TempDirGuard dir("scene_capacity");
+  const auto assetRoot = dir.path / "assets";
+  const auto sourcePath = assetRoot / "oversized.scene.txt";
+  const auto outputDir = dir.path / "out";
+  std::ostringstream source;
+  source << "atlantis_scene_source_version: 7\nnode_count: 65537\nactive_camera: none\n";
+  for (unsigned i = 1; i <= 65537; ++i) {
+    source << "node: node_id=" << i << " guid=00740074-0074-4074-8074-"
+           << std::hex << std::setw(12) << std::setfill('0') << i << std::dec
+           << " parent=none position=0 0 0 rotation=0 0 0 scale=1 1 1\n";
+  }
+  writeFile(sourcePath, source.str());
+  CookCommandRequest request;
+  request.kind = atlantis::tools::asset_cooker::AssetKind::Scene;
+  request.sourcePath = sourcePath.string();
+  request.assetRoot = assetRoot.string();
+  request.outputDir = outputDir.string();
+  request.stampPath = (dir.path / "scene.stamp").string();
+  request.catalogSourcePath = writeCatalogSourceCovering(assetRoot, dir.path / "asset_catalog.txt").string();
+  std::ostringstream diagnostics;
+  int exitCode = 0;
+  {
+    struct RestoreCerr {
+      std::streambuf* previous;
+      ~RestoreCerr() { std::cerr.rdbuf(previous); }
+    } restore{std::cerr.rdbuf(diagnostics.rdbuf())};
+    exitCode = runCookCommand(request);
+  }
+  CHECK(exitCode != 0);
+  CHECK(diagnostics.str().find("scene node count exceeds artifact capacity") != std::string::npos);
+  CHECK_FALSE(fs::exists(outputDir / "oversized.ascene"));
+  CHECK_FALSE(fs::exists(outputDir / "oversized.ascene.meta.txt"));
+  CHECK_FALSE(fs::exists(outputDir / "oversized.ascene.catalog.txt"));
+  CHECK_FALSE(fs::exists(request.stampPath));
+  CHECK(findTempFiles(outputDir, "oversized.ascene").empty());
+}
 
 TEST_CASE("runCookCommand cooks a well-formed asset and writes a stamp", "[asset_cooker]") {
   TempDirGuard dir("cook_success");

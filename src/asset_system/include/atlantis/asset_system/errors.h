@@ -129,6 +129,8 @@ enum class SceneCookError {
   // example a camera and a light on one node, which the grammar cannot hold),
   // so it is refused rather than narrowed.
   NotRepresentableInSource,
+  // Spec 0074: the parsed scene exceeds the existing artifact capacity.
+  NodeCountOutOfRange,
 };
 
 // decodeScene()'s own conditions -- never assumes a well-formed cooker

@@ -113,6 +113,10 @@ namespace fs = std::filesystem;
   // Step 2: EmptyScene.
   if (parsed.nodes.empty()) return ResultT::Err(SceneCookError::EmptyScene);
 
+  // Spec 0074: refuse before derived allocations or narrowing the count;
+  // a successful cook must fit the decoder's existing format capacity.
+  if (parsed.nodes.size() > kMaxSceneArtifactNodeCount) return ResultT::Err(SceneCookError::NodeCountOutOfRange);
+
   // Step 3: duplicate node_id -- O(n log n) via sort + adjacency.
   {
     std::vector<std::uint32_t> ids;

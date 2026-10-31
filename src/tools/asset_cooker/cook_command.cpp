@@ -230,6 +230,8 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
       return "metadata write failed";
     case SceneCookError::NotRepresentableInSource:  // Plan 0065 P1: in-memory cook only
       return "document not representable in scene source";
+    case SceneCookError::NodeCountOutOfRange:
+      return "scene node count exceeds artifact capacity";
   }
   return "unknown scene cook error";
 }
