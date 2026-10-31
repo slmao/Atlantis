@@ -3,8 +3,9 @@
 - **Spec:** [Spec 0073](../specs/0073-windows10-pinning-acceptance.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of Spec 0073 and this Plan together; reviewing PR to
-  be linked on submission. Owner direction is the proposal's basis, not a completed joint gate.
+- **Joint Human Review:** Pending review of Spec 0073 and this Plan together in
+  [PR #310](https://github.com/slmao/Atlantis/pull/310). Owner direction is the proposal's basis,
+  not a completed joint gate.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
