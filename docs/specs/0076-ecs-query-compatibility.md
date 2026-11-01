@@ -1,11 +1,11 @@
 # Spec: Const ECS Query Compatibility Boundary
 
-- **Status:** In Review
+- **Status:** Approved by owner joint review; PR #316 manual merge pending
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
-- **Related Plan(s):** [Plan 0076](../plans/0076-ecs-query-compatibility.md) (In Review)
-- **Approval:** Pending joint human review in [PR #316](https://github.com/slmao/Atlantis/pull/316).
-- **Related ADR(s):** [ADR-0140](../adr/0140-distinct-const-query-entry-point.md) (Proposed), partially superseding ADR-0139's same-name API decision only.
+- **Related Plan(s):** [Plan 0076](../plans/0076-ecs-query-compatibility.md) (jointly approved; manual merge pending)
+- **Approval:** slmao, 2026-11-01; [joint approval evidence](https://github.com/slmao/Atlantis/pull/316#issuecomment-6554469797). Implementation awaits manual merge of [PR #316](https://github.com/slmao/Atlantis/pull/316).
+- **Related ADR(s):** [ADR-0140](../adr/0140-distinct-const-query-entry-point.md) (Accepted), partially superseding ADR-0139's same-name API decision only.
 - **Origin:** [Draft implementation #315](https://github.com/slmao/Atlantis/pull/315), blocked at Plan 0075 S2; [0075 approval evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).

@@ -1,9 +1,9 @@
 # Plan: Const ECS Query Compatibility Boundary
 
-- **Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (jointly approved; manual merge pending)
+- **Status:** Approved by owner joint review; PR #316 manual merge pending
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending joint review of Spec 0076 and this Plan, including proposed [ADR-0140](../adr/0140-distinct-const-query-entry-point.md), in [PR #316](https://github.com/slmao/Atlantis/pull/316). No implementation authority from this submission.
+- **Joint Human Review:** slmao jointly approved Spec 0076 and this Plan, J1–J4 as recommended, and accepted ADR-0140 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/316#issuecomment-6554469797). S2–S4 in #315 are explicitly authorized after owner manually merges [PR #316](https://github.com/slmao/Atlantis/pull/316), currently pending; no Runtime consumer adoption or #307 dependency, and all existing evidence/gate obligations remain.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
