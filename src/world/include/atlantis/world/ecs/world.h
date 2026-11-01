@@ -68,7 +68,7 @@ struct GuidBinding;  // the creation-time binding in entity_guid_map.h
 // (Plan 0050 J1); defer them through a CommandBuffer. get/set/has stay allowed
 // inside a query (J8). Iteration order is archetype creation order, then
 // chunk, then row.
-// Spec 0075 / ADR-0139: a const receiver always lends const component
+// Specs 0075/0076, ADR-0139/0140: queryReadOnly always lends const component
 // references, with the same lifetime/order and shared structural protection.
 // A separate mutable alias may still get/set/has or run nested queries: this
 // is live access, not a snapshot or a write lock. Const queries also maintain
@@ -142,13 +142,13 @@ class World {
   }
 
   // T and const T both project const T&; constrain the expression actually
-  // invoked, so writable callbacks are rejected before body instantiation.
+  // invoked. The distinct name keeps this constraint out of old query calls.
   template <typename... Ts, typename Fn>
     requires((Component<std::remove_const_t<Ts>> && ...) &&
              requires(Fn& callback, EntityId id, const std::remove_const_t<Ts>&... components) {
                callback(EntityId{id}, components...);
              })
-  void query(Fn&& fn) const {
+  void queryReadOnly(Fn&& fn) const {
     const std::array<schema::TypeId, sizeof...(Ts)> ids{componentTypeId<std::remove_const_t<Ts>>()...};
     auto visit = [&fn](const detail::ConstChunkView& view) {
       for (std::size_t row = 0; row < view.rows; ++row) {

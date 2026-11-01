@@ -3,6 +3,7 @@
 - **Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (Approved)
 - **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
+- **Approved follow-up:** [Plan 0076](0076-ecs-query-compatibility.md) supplies the explicit API-name correction and resumption sequence; all unchanged verification gates below remain binding.
 - **Joint Human Review:** slmao jointly approved Spec 0075 and this Plan, J1–J4 as
   recommended, and accepted ADR-0139 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026).
   S2–S4 authorized on an independent latest-main branch after manual merge of
