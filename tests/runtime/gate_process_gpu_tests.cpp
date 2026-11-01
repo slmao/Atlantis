@@ -14,6 +14,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -33,6 +34,57 @@ namespace {
 
 namespace gate = atlantis::runtime::gate;
 namespace fs = std::filesystem;
+
+struct PinningOsIdentity {
+  bool known = false;
+  DWORD platform = 0;
+  DWORD major = 0;
+  DWORD minor = 0;
+  DWORD build = 0;
+  BYTE product = 0;
+};
+
+[[nodiscard]] PinningOsIdentity pinningOsIdentity() {
+  const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll == nullptr) return {};
+  using ReadVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+  const auto readVersion = std::bit_cast<ReadVersion>(GetProcAddress(ntdll, "RtlGetVersion"));
+  if (readVersion == nullptr) return {};
+  OSVERSIONINFOEXW version{};
+  version.dwOSVersionInfoSize = sizeof(version);
+  // The export takes the base pointer; the size selects its extended record.
+  if (readVersion(reinterpret_cast<OSVERSIONINFOW*>(&version)) != 0) return {};
+  return {true, version.dwPlatformId, version.dwMajorVersion, version.dwMinorVersion,
+          version.dwBuildNumber, version.wProductType};
+}
+
+struct PowerReadbackFacts {
+  DWORD requestVersion;
+  std::size_t requestSize;
+  bool queried;
+  DWORD error;
+  DWORD controlMask;
+  DWORD stateMask;
+};
+
+enum class PowerReadbackResult { Observed, Unavailable, Failure };
+
+// Spec 0077 R3: only the known legacy readback is optional, never pinning setup.
+[[nodiscard]] constexpr PowerReadbackResult classifyPowerReadback(const PinningOsIdentity& os,
+                                                                const PowerReadbackFacts& facts) {
+  if (facts.requestVersion != PROCESS_POWER_THROTTLING_CURRENT_VERSION ||
+      facts.requestSize != sizeof(PROCESS_POWER_THROTTLING_STATE)) return PowerReadbackResult::Failure;
+  if (facts.queried) {
+    const DWORD speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    return (facts.controlMask & speed) != 0 && (facts.stateMask & speed) == 0
+               ? PowerReadbackResult::Observed
+               : PowerReadbackResult::Failure;
+  }
+  const bool legacy = os.known && os.platform == VER_PLATFORM_WIN32_NT && os.product == VER_NT_WORKSTATION &&
+                      os.major == 10 && os.minor == 0 && os.build >= 10240 && os.build <= 22620;
+  return legacy && facts.error == ERROR_INVALID_PARAMETER ? PowerReadbackResult::Unavailable
+                                                        : PowerReadbackResult::Failure;
+}
 
 struct TempDir {
   TempDir() {
@@ -149,11 +201,6 @@ TEST_CASE("pinning the process opts out of power throttling and raises the prior
   REQUIRE(gate::pinCurrentProcess(error));
   CHECK(error.empty());
   CHECK(GetPriorityClass(GetCurrentProcess()) == HIGH_PRIORITY_CLASS);
-  PROCESS_POWER_THROTTLING_STATE state{};
-  state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-  REQUIRE(GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state)));
-  CHECK((state.ControlMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) != 0);  // the process controls it
-  CHECK((state.StateMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) == 0);    // and throttling is off
   // The affinity is the one logical processor pinnedLogicalProcessor() chooses on this machine (Spec 0060 eighth
   // Correction), inside the system's mask.
   DWORD_PTR processMask = 0;
@@ -163,8 +210,93 @@ TEST_CASE("pinning the process opts out of power throttling and raises the prior
   const auto processor = gate::pinnedLogicalProcessor(gate::systemCpuCores(coresError));
   CHECK(coresError.empty());
   REQUIRE(processor.has_value());
+  REQUIRE(*processor < sizeof(DWORD_PTR) * 8);
   CHECK(processMask == (DWORD_PTR{1} << *processor));
   CHECK((processMask & systemMask) == processMask);
+
+  const PinningOsIdentity os = pinningOsIdentity();
+  PROCESS_POWER_THROTTLING_STATE state{};
+  state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  const DWORD requestVersion = state.Version;
+  const BOOL queried = GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
+  const DWORD queryError = queried ? ERROR_SUCCESS : GetLastError();
+  const PowerReadbackResult result = classifyPowerReadback(
+      os, {requestVersion, sizeof(state), queried != FALSE, queryError, state.ControlMask, state.StateMask});
+  const char* status = result == PowerReadbackResult::Observed ? "observed" :
+                       result == PowerReadbackResult::Unavailable ? "unavailable" : "failure";
+  std::printf("pinning readback=%s; known=%u; platform=%lu; os=%lu.%lu.%lu; product=%u; requestVersion=%lu; "
+              "requestSize=%zu; query=%u; error=%lu; selected=%u; affinity=%llu; systemAffinity=%llu; ",
+              status, static_cast<unsigned>(os.known), static_cast<unsigned long>(os.platform),
+              static_cast<unsigned long>(os.major), static_cast<unsigned long>(os.minor),
+              static_cast<unsigned long>(os.build), static_cast<unsigned>(os.product),
+              static_cast<unsigned long>(requestVersion), sizeof(state), static_cast<unsigned>(queried != FALSE),
+              static_cast<unsigned long>(queryError), *processor, static_cast<unsigned long long>(processMask),
+              static_cast<unsigned long long>(systemMask));
+  if (queried) {
+    std::printf("control=%lu; state=%lu\n", static_cast<unsigned long>(state.ControlMask),
+                static_cast<unsigned long>(state.StateMask));
+  } else {
+    std::printf("control/state=unobserved\n");
+  }
+  CHECK(os.known);  // an unknown identity cannot establish real-host acceptance
+  CHECK(os.platform == VER_PLATFORM_WIN32_NT);
+  CHECK(os.product == VER_NT_WORKSTATION);
+  CHECK(result != PowerReadbackResult::Failure);
+}
+
+TEST_CASE("pinning readback classification admits only the reviewed legacy capability",
+          "[runtime][gate][process][pinning_classification]") {
+  // Injected values only; supported/early-Windows-11 cases are not real-host evidence.
+  const PinningOsIdentity legacy{true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_WORKSTATION};
+  const PinningOsIdentity supported{true, VER_PLATFORM_WIN32_NT, 10, 0, 22621, VER_NT_WORKSTATION};
+  constexpr DWORD current = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  constexpr DWORD speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+  constexpr std::size_t size = sizeof(PROCESS_POWER_THROTTLING_STATE);
+  const PowerReadbackFacts observed{current, size, true, ERROR_SUCCESS, speed, 0};
+  const PowerReadbackFacts error87{current, size, false, ERROR_INVALID_PARAMETER, 0, 0};
+  using Result = PowerReadbackResult;
+  struct Sample {
+    const char* name;
+    PinningOsIdentity os;
+    PowerReadbackFacts query;
+    Result expected;
+  };
+  const Sample samples[]{
+      {"supported correct bits", supported, observed, Result::Observed},
+      {"legacy correct bits still verified", legacy, observed, Result::Observed},
+      {"unknown identity successful query", {}, observed, Result::Observed},
+      {"future identity successful query", {true, VER_PLATFORM_WIN32_NT, 11, 0, 1, VER_NT_WORKSTATION}, observed, Result::Observed},
+      {"current Windows 10 legacy exception", legacy, error87, Result::Unavailable},
+      {"early Windows 11 synthetic only", {true, VER_PLATFORM_WIN32_NT, 10, 0, 22000, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"lower included boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 10240, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"upper included boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 22620, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"below legacy boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 10239, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"supported boundary failure", supported, error87, Result::Failure},
+      {"later supported failure", {true, VER_PLATFORM_WIN32_NT, 10, 0, 26100, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"unknown identity failure", {}, error87, Result::Failure},
+      {"failed identity probe", {false, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"non NT platform", {true, VER_PLATFORM_WIN32_WINDOWS, 10, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"server product", {true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_SERVER}, error87, Result::Failure},
+      {"unknown product", {true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, 0}, error87, Result::Failure},
+      {"other major version", {true, VER_PLATFORM_WIN32_NT, 11, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"other minor version", {true, VER_PLATFORM_WIN32_NT, 10, 1, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"access denied", legacy, {current, size, false, ERROR_ACCESS_DENIED, 0, 0}, Result::Failure},
+      {"not supported error", legacy, {current, size, false, ERROR_NOT_SUPPORTED, 0, 0}, Result::Failure},
+      {"failed query with zero error", legacy, {current, size, false, ERROR_SUCCESS, 0, 0}, Result::Failure},
+      {"failed query masks do not establish observed", supported, {current, size, false, ERROR_INVALID_PARAMETER, speed, 0}, Result::Failure},
+      {"legacy failure masks stay unobserved", legacy, {current, size, false, ERROR_INVALID_PARAMETER, speed, 0}, Result::Unavailable},
+      {"missing control bit", supported, {current, size, true, 0, 0, 0}, Result::Failure},
+      {"legacy throttling enabled", legacy, {current, size, true, 0, speed, speed}, Result::Failure},
+      {"unrelated bits are allowed", supported, {current, size, true, 0, speed | 2u, 2u}, Result::Observed},
+      {"bad request version on success", supported, {0, size, true, 0, speed, 0}, Result::Failure},
+      {"bad request size on success", supported, {current, 0, true, 0, speed, 0}, Result::Failure},
+      {"bad request version on failure", legacy, {0, size, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
+      {"undersized request on failure", legacy, {current, size - 1, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
+      {"oversized request on failure", legacy, {current, size + 1, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
+  };
+  for (const Sample& sample : samples) {
+    DYNAMIC_SECTION(sample.name) { CHECK(classifyPowerReadback(sample.os, sample.query) == sample.expected); }
+  }
 }
 
 TEST_CASE("a pinned benchmark child runs and writes its document", "[runtime][gpu][gate][process]") {
