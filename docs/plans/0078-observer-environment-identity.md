@@ -6,8 +6,10 @@
 - **Joint Human Review:** slmao jointly approved Spec 0078 and this Plan, J1–J4 as recommended,
   2026-11-01, retaining existing ADRs; [owner ruling and distinct S2 authorization](https://github.com/slmao/Atlantis/pull/318#issuecomment-6560323466).
   The human merge prerequisite is satisfied by `bb76829`. S2 is authorized under a new
-  independent 45-minute offline budget, including verification/reporting. No live collection,
-  performance measurement or S3 authority; #307 stays Draft and all old evidence is retained.
+  independent 45-minute offline budget, including verification/reporting, now closed.
+  [Distinct S3 authorization](https://github.com/slmao/Atlantis/pull/307#issuecomment-6560793258),
+  slmao, 2026-11-02: new independent 150-minute execution under R5's fixed order/caps/stops.
+  #307 stays Draft; all old evidence is retained and no merge is authorized.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
