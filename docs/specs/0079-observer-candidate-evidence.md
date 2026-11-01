@@ -4,7 +4,7 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-02
 - **Related Plan(s):** [Plan 0079](../plans/0079-observer-candidate-evidence.md) (In Review)
-- **Approval:** Pending joint human review.
+- **Approval:** Pending joint human review in [PR #319](https://github.com/slmao/Atlantis/pull/319).
 - **Related ADR(s):** None new; see Architectural Impact.
 - **Supplements:** [Spec 0078](0078-observer-environment-identity.md) /
   [Plan 0078](../plans/0078-observer-environment-identity.md), without changing its association rules.
@@ -88,7 +88,8 @@ that evidence survived; it does not verify six children, authorize F1 or pass M5
 scope, sampling frequency, live helper probe or tracing facility. Publication is tied
 to the existing query/read/assertion passes, rather than an additional polling loop.
 Q1 keeps the nine counters at no more than1Hz, initial/20-second environment checks
-and CPU0/normal constraints; F1 gains no periodic candidate collection. Account for
+and CPU0/normal constraints; F1 retains 0078's minimum archiver/parent identity and
+before/after checks, with no candidate sampler or periodic process/CIM queries. Account for
 the new logical writes/hash reads and CPU work using the existing evidence publisher
 and accounting, retaining their provider/kernel/physical-IO/tail limitations. No new
 interference threshold, subtraction or total-overhead bound is introduced. The
@@ -117,7 +118,7 @@ Freeze these new record rules/scripts with all native/content/policy/tool inputs
 before the first launch; changed native inputs require matching verification or stop.
 
 The fixed schedule remains **Q1→F1, at most two gate parents**, unchanged formal gate
-defaults/settings/store/timeouts. A normal comparable/conformant pass **or fail**
+defaults/settings/store/timeouts. A normal comparable/conformant Q1 pass **or fail**
 continues only with complete association and candidate/environment/counter/archive/
 accounting evidence. Every other anomaly, drift, missing input, read/storage/identity
 failure, validation diagnostic or phase/total-budget exhaustion stops with F1 canceled.

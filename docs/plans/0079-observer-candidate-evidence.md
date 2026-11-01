@@ -3,7 +3,8 @@
 - **Spec:** [Spec 0079](../specs/0079-observer-candidate-evidence.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending joint review of Spec 0079 and this Plan;
+- **Joint Human Review:** Pending joint review of Spec 0079 and this Plan in
+  [PR #319](https://github.com/slmao/Atlantis/pull/319);
   no implementation or live execution authority is granted by submission.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
