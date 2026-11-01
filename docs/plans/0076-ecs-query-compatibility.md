@@ -4,6 +4,7 @@
 - **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Joint Human Review:** slmao jointly approved Spec 0076 and this Plan, J1–J4 as recommended, and accepted ADR-0140 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/316#issuecomment-6554469797). Owner manually merged [PR #316](https://github.com/slmao/Atlantis/pull/316) as `4cf7546` and explicitly authorized S2–S4 in #315; no Runtime consumer adoption or #307 dependency, and all existing evidence/gate obligations remain.
+- **Implementation:** [Draft PR #315](https://github.com/slmao/Atlantis/pull/315#issuecomment-6554829759), S2 verification blocked; S3/S4 pending.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
