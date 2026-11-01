@@ -4,7 +4,7 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
 - **Related Plan(s):** [Plan 0076](../plans/0076-ecs-query-compatibility.md) (In Review)
-- **Approval:** Pending joint human review.
+- **Approval:** Pending joint human review in [PR #316](https://github.com/slmao/Atlantis/pull/316).
 - **Related ADR(s):** [ADR-0140](../adr/0140-distinct-const-query-entry-point.md) (Proposed), partially superseding ADR-0139's same-name API decision only.
 - **Origin:** [Draft implementation #315](https://github.com/slmao/Atlantis/pull/315), blocked at Plan 0075 S2; [0075 approval evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026).
 

@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-11-01
 - **Deciders:** slmao (pending)
-- **Acceptance:** Pending joint review of Spec/Plan 0076.
+- **Acceptance:** Pending joint review of Spec/Plan 0076 in [PR #316](https://github.com/slmao/Atlantis/pull/316).
 - **Related Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (In Review)
 - **Supersedes:** Upon acceptance, ADR-0139 in part: same-name const query API and the related alternative rationale only. Its remaining decisions are retained.
 - **Prior acceptance:** [Owner acceptance of ADR-0139](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026), recorded in [Draft #315](https://github.com/slmao/Atlantis/pull/315).

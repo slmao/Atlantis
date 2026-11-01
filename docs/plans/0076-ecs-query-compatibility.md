@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending joint review of Spec 0076 and this Plan, including proposed [ADR-0140](../adr/0140-distinct-const-query-entry-point.md). No implementation authority from this submission.
+- **Joint Human Review:** Pending joint review of Spec 0076 and this Plan, including proposed [ADR-0140](../adr/0140-distinct-const-query-entry-point.md), in [PR #316](https://github.com/slmao/Atlantis/pull/316). No implementation authority from this submission.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
