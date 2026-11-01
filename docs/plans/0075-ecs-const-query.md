@@ -1,10 +1,12 @@
 # Plan: Read-only Query on a Const ECS World
 
-- **Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending joint review of Spec 0075 and this Plan, with
-  [ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md), in [PR #314](https://github.com/slmao/Atlantis/pull/314).
+- **Joint Human Review:** slmao jointly approved Spec 0075 and this Plan, J1–J4 as
+  recommended, and accepted ADR-0139 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026).
+  S2–S4 authorized on an independent latest-main branch after manual merge of
+  [PR #314](https://github.com/slmao/Atlantis/pull/314), now merged; no Runtime consumer changes or #307 dependency.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

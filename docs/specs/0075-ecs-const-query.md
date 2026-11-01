@@ -1,11 +1,11 @@
 # Spec: Read-only Query on a Const ECS World
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
-- **Related Plan(s):** [Plan 0075](../plans/0075-ecs-const-query.md) (In Review)
-- **Approval:** Pending joint human review in [PR #314](https://github.com/slmao/Atlantis/pull/314).
-- **Related ADR(s):** [ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md) (Proposed), extending ADR-0101 access semantics.
+- **Related Plan(s):** [Plan 0075](../plans/0075-ecs-const-query.md) (Approved)
+- **Approval:** slmao, 2026-11-01; [joint approval](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026), [PR #314](https://github.com/slmao/Atlantis/pull/314) manually merged.
+- **Related ADR(s):** [ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md) (Accepted), extending ADR-0101 access semantics.
 - **Origin:** Candidate 9 and [Plan 0051 J1](../plans/0051-authoring-scene-runtime-world-bake.md).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
