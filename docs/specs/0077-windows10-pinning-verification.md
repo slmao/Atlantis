@@ -1,10 +1,10 @@
 # Spec: Independent Windows 10 Pinning Test Acceptance for PR #315
 
-- **Status:** In Review
+- **Status:** Approved by owner joint review; PR #317 manual merge pending
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
-- **Related Plan(s):** [Plan 0077](../plans/0077-windows10-pinning-verification.md) (In Review)
-- **Approval:** Pending joint human review in [PR #317](https://github.com/slmao/Atlantis/pull/317).
+- **Related Plan(s):** [Plan 0077](../plans/0077-windows10-pinning-verification.md) (jointly approved; manual merge pending)
+- **Approval:** slmao, 2026-11-01; [joint approval evidence](https://github.com/slmao/Atlantis/pull/317#issuecomment-6555054368). Implementation awaits owner manual merge of [PR #317](https://github.com/slmao/Atlantis/pull/317); existing ADRs retained.
 - **Related ADR(s):** None new; see Architectural Impact.
 - **Supplements:** [Spec/Plan 0075](../plans/0075-ecs-const-query.md) and [Spec/Plan 0076](../plans/0076-ecs-query-compatibility.md) for [Draft PR #315](https://github.com/slmao/Atlantis/pull/315) only.
 - **Prior design basis:** [0072 R2](0072-mcp-acceptance-verification.md) and [0073 R1/R2](0073-windows10-pinning-acceptance.md), with approval evidence in [#309](https://github.com/slmao/Atlantis/pull/309#issuecomment-6539457400) / [#310](https://github.com/slmao/Atlantis/pull/310#issuecomment-6544807766). Their #307-specific authority does not transfer automatically.
