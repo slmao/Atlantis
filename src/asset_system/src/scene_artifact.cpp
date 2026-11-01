@@ -356,6 +356,20 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
     decoded.activeCameraIndex = activeCameraIndexRaw;
   }
 
+  // Spec 0074: keep prior artifact errors ahead of these enforcement repairs;
+  // among new defects, declaration order wins, then exclusivity within a node.
+  for (const auto& node : decoded.nodes) {
+    const unsigned componentCount = static_cast<unsigned>(node.camera.has_value()) +
+                                    static_cast<unsigned>(node.renderable.has_value()) +
+                                    static_cast<unsigned>(node.light.has_value());
+    if (componentCount > 1) return ResultT::Err(SceneArtifactDecodeError::ConflictingComponents);
+    if (node.renderable.has_value() &&
+        (node.renderable->meshAsset == 0 ||
+         (node.renderable->materialAsset.has_value() && *node.renderable->materialAsset == 0))) {
+      return ResultT::Err(SceneArtifactDecodeError::ZeroAssetReference);
+    }
+  }
+
   return ResultT::Ok(std::move(decoded));
 }
 

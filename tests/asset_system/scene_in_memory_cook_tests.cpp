@@ -69,8 +69,7 @@ struct TempDir {
 [[nodiscard]] as::EntityGuid entity(std::uint32_t n) {
   as::GuidBytes bytes{};
   bytes[0] = std::byte{0xe6};
-  bytes[14] = static_cast<std::byte>((n >> 8) & 0xffu);
-  bytes[15] = static_cast<std::byte>(n & 0xffu);
+  for (unsigned i = 0; i < 4; ++i) bytes[15 - i] = static_cast<std::byte>((n >> (8 * i)) & 0xffu);
   return as::entityGuidFromBytes(bytes).value();
 }
 
@@ -200,6 +199,63 @@ void checkInMemoryEqualsBuild(const BuildCookedScene& built) {
 }
 
 }  // namespace
+
+TEST_CASE("codec 0074 text and document cooks enforce the inclusive artifact capacity",
+          "[asset_system][scene][in_memory_cook][codec0074]") {
+  scene::AuthoringScene document;
+  document.nodes.reserve(as::kMaxSceneArtifactNodeCount + 1U);
+  for (std::uint32_t i = 0; i <= as::kMaxSceneArtifactNodeCount; ++i) {
+    scene::AuthoringNode node;
+    node.guid = entity(i + 1U);  // full 32-bit identity, including across the 16-bit boundary
+    document.nodes.push_back(node);
+  }
+  for (const std::size_t count : {std::size_t{65537}, std::size_t{65536}}) {
+    document.nodes.resize(count);
+    const auto mapped = scene::toParsedSceneSource(document);
+    REQUIRE(mapped.isOk());
+    const auto textCook = as::cookSceneSource(as::serializeSceneSource(mapped.value()), sceneGuid());
+    const auto documentCook = as::cookSceneToMemory(document, sceneGuid());
+    if (count > as::kMaxSceneArtifactNodeCount) {
+      REQUIRE(textCook.isErr());
+      CHECK(textCook.error() == as::SceneCookError::NodeCountOutOfRange);
+      REQUIRE(documentCook.isErr());
+      CHECK(documentCook.error() == as::SceneCookError::NodeCountOutOfRange);
+      auto duplicateId = mapped.value();
+      duplicateId.nodes.back().nodeId = duplicateId.nodes.front().nodeId;
+      const auto duplicateCook = as::cookSceneSource(as::serializeSceneSource(duplicateId), sceneGuid());
+      REQUIRE(duplicateCook.isErr());
+      CHECK(duplicateCook.error() == as::SceneCookError::NodeCountOutOfRange);
+      document.nodes.front().parent = document.nodes.front().guid;
+      const auto cyclicCook = as::cookSceneToMemory(document, sceneGuid());
+      REQUIRE(cyclicCook.isErr());
+      CHECK(cyclicCook.error() == as::SceneCookError::NodeCountOutOfRange);
+      document.nodes.front().parent.reset();
+    } else {
+      REQUIRE(textCook.isOk());
+      REQUIRE(documentCook.isOk());
+      CHECK(textCook.value() == documentCook.value());
+      const auto decoded = as::decodeScene(documentCook.value());
+      REQUIRE(decoded.isOk());
+      CHECK(decoded.value().nodeCount() == count);
+    }
+  }
+  document.nodes.clear();
+  const auto empty = as::cookSceneToMemory(document, sceneGuid());
+  REQUIRE(empty.isErr());
+  CHECK(empty.error() == as::SceneCookError::EmptyScene);
+}
+
+TEST_CASE("codec 0074 preserves cook error numbers and independent behavior version", "[asset_system][scene][codec0074]") {
+  const as::SceneCookError oldErrors[] = {as::SceneCookError::SourceFileUnreadable, as::SceneCookError::SourceParseFailed,
+      as::SceneCookError::EmptyScene, as::SceneCookError::DuplicateNodeId, as::SceneCookError::UndeclaredParentReference,
+      as::SceneCookError::ParentCycle, as::SceneCookError::UndeclaredActiveCameraReference,
+      as::SceneCookError::ActiveCameraMissingCamera, as::SceneCookError::NonFiniteValue,
+      as::SceneCookError::ArtifactWriteFailed, as::SceneCookError::MetadataWriteFailed,
+      as::SceneCookError::NilEntityGuid, as::SceneCookError::DuplicateEntityGuid, as::SceneCookError::NotRepresentableInSource};
+  for (std::size_t i = 0; i < std::size(oldErrors); ++i) CHECK(static_cast<std::size_t>(oldErrors[i]) == i);
+  CHECK(static_cast<int>(as::SceneCookError::NodeCountOutOfRange) == 14);
+  CHECK(as::kSceneCookerVersion == "atlantis-scene-cooker/2");
+}
 
 // ================================================== in-memory = build, every scene
 

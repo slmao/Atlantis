@@ -129,6 +129,8 @@ enum class SceneCookError {
   // example a camera and a light on one node, which the grammar cannot hold),
   // so it is refused rather than narrowed.
   NotRepresentableInSource,
+  // Spec 0074: the parsed scene exceeds the existing artifact capacity.
+  NodeCountOutOfRange,
 };
 
 // decodeScene()'s own conditions -- never assumes a well-formed cooker
@@ -171,6 +173,10 @@ enum class SceneArtifactDecodeError {
   // re-derived from the artifact's own bytes, never trusting a
   // well-formed cooker.
   TooManyLights,
+  // Spec 0074: existing component exclusivity and reserved-zero reference
+  // contracts, checked after the preceding artifact validations.
+  ConflictingComponents,
+  ZeroAssetReference,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --

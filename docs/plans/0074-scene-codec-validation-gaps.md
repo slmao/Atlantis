@@ -1,12 +1,13 @@
 # Plan: Close Scene Codec Validation Gaps F1, F3 and F4
 
-- **Spec:** [Spec 0074](../specs/0074-scene-codec-validation-gaps.md) (joint approval recorded; human merge pending)
-- **Status:** In Review; joint approval recorded, human merge pending
+- **Spec:** [Spec 0074](../specs/0074-scene-codec-validation-gaps.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Joint Human Review:** slmao jointly approved Spec 0074 and this Plan, J1–J4 as recommended,
   on 2026-11-01; [PR #311 evidence](https://github.com/slmao/Atlantis/pull/311#issuecomment-6546350130).
   Existing ADRs retained. S2–S4 are authorized after slmao's manual merge of #311, on a separate
-  implementation branch from freshly fetched `origin/main`, independent of #307. Human merge pending.
+  implementation branch from freshly fetched `origin/main`, independent of #307. [PR #311](https://github.com/slmao/Atlantis/pull/311)
+  was manually merged on 2026-11-01 (Asia/Shanghai); slmao confirmed S2–S4 implementation authorization.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
