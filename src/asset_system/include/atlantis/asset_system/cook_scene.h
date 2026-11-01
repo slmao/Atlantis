@@ -16,7 +16,7 @@ namespace atlantis::asset_system {
 // cooker's own behavior version -- independently versioned from
 // kImporterVersion (cook.h), matching that constant's own
 // determinism-preserving role and rationale exactly.
-inline constexpr std::string_view kSceneCookerVersion = "atlantis-scene-cooker/1";
+inline constexpr std::string_view kSceneCookerVersion = "atlantis-scene-cooker/2";
 
 // Plan 0065 P1 (ADR-0131 D2): a scene cooked in memory -- exactly the bytes
 // cookScene() writes to the artifact file and the sidecar text it writes to
@@ -49,6 +49,9 @@ struct CookedScene {
 // source file and writing the two files -- the parse, every check, the
 // artifact encode and the sidecar text -- over source text in memory. The
 // errors are cookScene()'s, never SourceFileUnreadable or a write failure.
+// Spec 0074: after parsing, empty scenes are refused first, then counts above
+// kMaxSceneArtifactNodeCount with NodeCountOutOfRange, before derived cook
+// validation/allocation. This is not a bound on parsing or document mapping.
 // assetGuid must not be nil.
 [[nodiscard]] atlantis::Result<CookedScene, SceneCookError> cookSceneSource(std::string_view sourceText,
                                                                              const AssetGuid& assetGuid);

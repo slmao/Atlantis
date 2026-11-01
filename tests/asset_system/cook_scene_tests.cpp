@@ -3,6 +3,8 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/decode_scene.h>
+#include <atlantis/asset_system/scene_source.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -104,6 +106,59 @@ TEST_CASE("cookScene succeeds on a well-formed scene and writes both output file
   REQUIRE(result.isOk());
   CHECK(fs::exists(artifactPath));
   CHECK(fs::exists(metadataPath));
+}
+
+TEST_CASE("codec 0074 file cook accepts capacity and preserves outputs on count refusal", "[asset_system][scene][codec0074]") {
+  TempDirGuard dir("capacity");
+  const auto sourcePath = dir.path / "scene.scene.txt";
+  const auto artifactPath = dir.path / "scene.ascene";
+  const auto metadataPath = dir.path / "scene.ascene.meta.txt";
+  ParsedSceneSource source;
+  for (std::uint32_t i = 0; i < kMaxSceneArtifactNodeCount; ++i) {
+    ParsedSceneNode node;
+    node.nodeId = i + 1U;
+    GuidBytes bytes{};
+    bytes[0] = std::byte{0x74};
+    for (unsigned b = 0; b < 4; ++b) bytes[15 - b] = static_cast<std::byte>(((i + 1U) >> (8 * b)) & 0xffU);
+    node.entityGuid = entityGuidFromBytes(bytes).value();
+    source.nodes.push_back(node);
+  }
+  writeFile(sourcePath, serializeSceneSource(source));
+  const auto atLimit = cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
+  REQUIRE(atLimit.isOk());
+  const auto decoded = decodeScene(artifactPath.string(), metadataPath.string());
+  REQUIRE(decoded.isOk());
+  CHECK(decoded.value().nodeCount() == kMaxSceneArtifactNodeCount);
+  const auto previousArtifact = readFileBytes(artifactPath);
+  const auto previousMetadata = readFileBytes(metadataPath);
+  ParsedSceneNode extra;
+  extra.nodeId = kMaxSceneArtifactNodeCount + 1U;
+  GuidBytes extraGuid{};
+  extraGuid[0] = std::byte{0x75};  // distinct from every existing node, including at the boundary
+  extra.entityGuid = entityGuidFromBytes(extraGuid).value();
+  source.nodes.push_back(extra);
+  writeFile(sourcePath, serializeSceneSource(source));
+  const auto oversized = cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
+  REQUIRE(oversized.isErr());
+  CHECK(oversized.error() == SceneCookError::NodeCountOutOfRange);
+  CHECK(readFileBytes(artifactPath) == previousArtifact);
+  CHECK(readFileBytes(metadataPath) == previousMetadata);
+  CHECK(findTempFiles(dir.path, "scene.ascene").empty());
+  const auto newArtifact = dir.path / "new.ascene";
+  const auto newMetadata = dir.path / "new.ascene.meta.txt";
+  const auto fresh = cookScene(sourcePath.string(), testAssetGuid("scene"), newArtifact.string(), newMetadata.string());
+  REQUIRE(fresh.isErr());
+  CHECK(fresh.error() == SceneCookError::NodeCountOutOfRange);
+  CHECK_FALSE(fs::exists(newArtifact));
+  CHECK_FALSE(fs::exists(newMetadata));
+  // Capacity must also win over later duplicate node/GUID errors.
+  source.nodes.back() = source.nodes.front();
+  writeFile(sourcePath, serializeSceneSource(source));
+  const auto duplicate = cookScene(sourcePath.string(), testAssetGuid("scene"), artifactPath.string(), metadataPath.string());
+  REQUIRE(duplicate.isErr());
+  CHECK(duplicate.error() == SceneCookError::NodeCountOutOfRange);
+  CHECK(readFileBytes(artifactPath) == previousArtifact);
+  CHECK(readFileBytes(metadataPath) == previousMetadata);
 }
 
 TEST_CASE("cookScene resolves a node's material= reference to an AssetId (Plan 0018 Section P6)",

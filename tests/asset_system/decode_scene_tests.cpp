@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/logical_path.h>
 #include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/scene_metadata.h>
 #include <atlantis/asset_system/scene_types.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -18,6 +19,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <atlantis/asset_system/asset_guid.h>
@@ -108,6 +110,140 @@ constexpr std::string_view kValidTwoNodeTextSource =
 // ---------------------------------------------------------------------
 // V8: full round-trip through cookScene() + decodeScene(), every field.
 // ---------------------------------------------------------------------
+
+namespace {
+
+void putCodecU32(std::vector<std::byte>& bytes, std::size_t offset, std::uint32_t value) {
+  for (unsigned i = 0; i < 4; ++i) bytes[offset + i] = static_cast<std::byte>((value >> (8 * i)) & 0xffU);
+}
+
+void checkCodecRefusal(const std::vector<std::byte>& bytes, SceneArtifactDecodeError expected) {
+  const auto artifact = decodeSceneArtifact(bytes);
+  REQUIRE(artifact.isErr());
+  CHECK(artifact.error() == expected);
+  CookedScene cooked{bytes, serializeSceneMetadata({testAssetGuid("codec"), kSceneArtifactSchemaVersion,
+                                                   static_cast<std::uint32_t>((bytes.size() - kSceneArtifactHeaderSizeBytes) /
+                                                                              kSceneArtifactNodeRecordSizeBytes)})};
+  const auto memory = decodeScene(cooked);
+  REQUIRE(memory.isErr());
+  CHECK(memory.error() == expected);
+  TempDirGuard dir("codec_refusal");
+  const auto artifactPath = dir.path / "scene.ascene";
+  const auto metadataPath = dir.path / "scene.ascene.meta.txt";
+  {
+    std::ofstream out(artifactPath, std::ios::binary);
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    REQUIRE(out.good());
+  }
+  const auto missingMetadata = decodeScene(artifactPath.string(), metadataPath.string());
+  REQUIRE(missingMetadata.isErr());
+  CHECK(missingMetadata.error() == SceneArtifactDecodeError::MetadataUnreadable);
+  writeFile(metadataPath, cooked.metadataText);
+  const auto file = decodeScene(artifactPath.string(), metadataPath.string());
+  REQUIRE(file.isErr());
+  CHECK(file.error() == expected);
+  cooked.metadataText = "invalid metadata";
+  const auto badMetadata = decodeScene(cooked);
+  REQUIRE(badMetadata.isErr());
+  CHECK(badMetadata.error() == expected);
+}
+
+void checkCodecAcceptance(const std::vector<std::byte>& bytes) {
+  CHECK(decodeSceneArtifact(bytes).isOk());
+  const CookedScene cooked{bytes, serializeSceneMetadata({testAssetGuid("codec"), kSceneArtifactSchemaVersion, 1})};
+  CHECK(decodeScene(cooked).isOk());
+}
+
+}  // namespace
+
+TEST_CASE("codec 0074 rejects all conflicting component combinations and preserves single components",
+          "[asset_system][scene][codec0074]") {
+  for (unsigned mask = 0; mask < 8; ++mask) {
+    INFO("component mask " << mask);
+    ValidatedSceneNode node;
+    if ((mask & 1U) != 0) node.camera = DecodedCamera{1.0f, 0.1f, 10.0f};
+    if ((mask & 2U) != 0) node.renderable = DecodedRenderable{123, 456};
+    if ((mask & 4U) != 0) node.light = DecodedLight{DecodedLightKind::Point, 1, 1, 1, 1, 1};
+    auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt, testEntityGuids(1));
+    // All nonzero flag values still mean present; inactive slots remain ignored.
+    for (const auto& [bit, offset] : std::array<std::pair<unsigned, std::size_t>, 3>{{{1, 36}, {2, 92}, {4, 116}}}) {
+      if ((mask & bit) != 0) putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + offset, 7);
+    }
+    if ((mask & 2U) != 0) putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 104, 9);
+    if (std::popcount(mask) > 1) {
+      checkCodecRefusal(bytes, SceneArtifactDecodeError::ConflictingComponents);
+    } else {
+      const auto decoded = decodeSceneArtifact(bytes);
+      REQUIRE(decoded.isOk());
+      CHECK(decoded.value().nodes[0].camera.has_value() == node.camera.has_value());
+      CHECK(decoded.value().nodes[0].renderable.has_value() == node.renderable.has_value());
+      CHECK(decoded.value().nodes[0].light.has_value() == node.light.has_value());
+      checkCodecAcceptance(bytes);
+    }
+  }
+}
+
+TEST_CASE("codec 0074 checks only active asset keys without catalog resolution", "[asset_system][scene][codec0074]") {
+  for (const auto& renderable : std::array<DecodedRenderable, 5>{{{0, std::nullopt}, {0, 0}, {0, 456},
+                                                               {123, 0}, {123, 456}}}) {
+    ValidatedSceneNode node;
+    node.renderable = renderable;
+    const auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt, testEntityGuids(1));
+    if (renderable.meshAsset == 0 || (renderable.materialAsset && *renderable.materialAsset == 0)) {
+      checkCodecRefusal(bytes, SceneArtifactDecodeError::ZeroAssetReference);
+    } else {
+      checkCodecAcceptance(bytes);
+    }
+  }
+  ValidatedSceneNode node;
+  node.renderable = DecodedRenderable{123, std::nullopt};
+  auto bytes = encodeSceneArtifact({node}, {std::nullopt}, std::nullopt, testEntityGuids(1));
+  checkCodecAcceptance(bytes);  // absent material key zero
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 108, 999);  // absent material's unused slot
+  checkCodecAcceptance(bytes);
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 92, 0);
+  checkCodecAcceptance(bytes);  // absent Renderable ignores both key slots
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 104, 3);
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::MaterialWithoutRenderable);
+}
+
+TEST_CASE("codec 0074 preserves existing errors and orders new defects by node then exclusivity",
+          "[asset_system][scene][codec0074]") {
+  auto nodes = makeTwoNodes();
+  nodes[0].renderable->meshAsset = 0;
+  nodes[1].renderable = DecodedRenderable{0, std::nullopt};
+  auto bytes = encodeSceneArtifact(nodes, {std::nullopt, std::nullopt}, 1, testEntityGuids(2));
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::ZeroAssetReference);  // first node wins
+  nodes[0].camera = DecodedCamera{1, 0.1f, 10};
+  bytes = encodeSceneArtifact(nodes, {std::nullopt, std::nullopt}, 1, testEntityGuids(2));
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::ConflictingComponents);  // same node
+  const auto validBytes = bytes;
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + kSceneArtifactNodeRecordSizeBytes, 0x7fc00000U);
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::NonFiniteValue);  // later node, old check
+  bytes = validBytes;
+  putCodecU32(bytes, 16, 2);
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::OutOfRangeActiveCameraIndex);  // last old phase
+  bytes = validBytes;
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 144, 1);
+  putCodecU32(bytes, kSceneArtifactHeaderSizeBytes + 148, 0);
+  checkCodecRefusal(bytes, SceneArtifactDecodeError::CyclicParent);
+}
+
+TEST_CASE("codec 0074 appends decoder errors without renumbering existing outcomes", "[asset_system][scene][codec0074]") {
+  const std::array oldErrors = {SceneArtifactDecodeError::ArtifactUnreadable, SceneArtifactDecodeError::MetadataUnreadable,
+      SceneArtifactDecodeError::TooSmallForHeader, SceneArtifactDecodeError::BadMagic,
+      SceneArtifactDecodeError::UnknownSchemaVersion, SceneArtifactDecodeError::InconsistentOffsets,
+      SceneArtifactDecodeError::SizeMismatch, SceneArtifactDecodeError::EmptyScene,
+      SceneArtifactDecodeError::NodeCountOutOfRange, SceneArtifactDecodeError::OutOfRangeParentIndex,
+      SceneArtifactDecodeError::CyclicParent, SceneArtifactDecodeError::OutOfRangeActiveCameraIndex,
+      SceneArtifactDecodeError::ActiveCameraMissingCamera, SceneArtifactDecodeError::NonFiniteValue,
+      SceneArtifactDecodeError::MetadataParseFailed, SceneArtifactDecodeError::MetadataArtifactMismatch,
+      SceneArtifactDecodeError::MaterialWithoutRenderable, SceneArtifactDecodeError::NilEntityGuid,
+      SceneArtifactDecodeError::DuplicateEntityGuid, SceneArtifactDecodeError::TooManyLights};
+  for (std::size_t i = 0; i < oldErrors.size(); ++i) CHECK(static_cast<std::size_t>(oldErrors[i]) == i);
+  CHECK(static_cast<int>(SceneArtifactDecodeError::ConflictingComponents) == 20);
+  CHECK(static_cast<int>(SceneArtifactDecodeError::ZeroAssetReference) == 21);
+}
 
 TEST_CASE("decodeScene reproduces every field cookScene() encoded (V8)", "[asset_system][scene]") {
   TempDirGuard dir("roundtrip");
