@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0077](../specs/0077-windows10-pinning-verification.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending joint review of Spec 0077 and this Plan. No implementation authority from this submission.
+- **Joint Human Review:** Pending joint review of Spec 0077 and this Plan in [PR #317](https://github.com/slmao/Atlantis/pull/317). No implementation authority from this submission.
 - **ADR disposition:** Retain ADR-0118/0119/0139/0140; no new ADR proposed (Spec Architectural Impact).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
