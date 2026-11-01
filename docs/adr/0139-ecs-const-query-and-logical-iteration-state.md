@@ -3,7 +3,7 @@
 - **Status:** Proposed
 - **Date:** 2026-11-01
 - **Deciders:** slmao (pending)
-- **Acceptance:** Pending joint human review; reviewing PR to be linked on submission.
+- **Acceptance:** Pending joint human review in [PR #314](https://github.com/slmao/Atlantis/pull/314).
 - **Related Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (In Review)
 - **Related ADR(s):** Extends [ADR-0101 D6](0101-runtime-ecs-core-storage-identity-and-placement.md); retains its storage/identity/single-thread rules and [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md). No accepted ADR is superseded or edited.
 

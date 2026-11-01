@@ -4,7 +4,7 @@
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
 - **Joint Human Review:** Pending joint review of Spec 0075 and this Plan, with
-  [ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md); reviewing PR to be linked on submission.
+  [ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md), in [PR #314](https://github.com/slmao/Atlantis/pull/314).
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
