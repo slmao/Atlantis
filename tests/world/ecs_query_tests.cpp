@@ -230,7 +230,11 @@ TEST_CASE("ecs const query: shared guard refuses structural aliases and releases
   REQUIRE(world.remove<Renderable>(id).isOk());
 
   struct Interrupted {};
-  CHECK_THROWS_AS(readOnly.queryReadOnly<Transform>([](ecs::EntityId, const Transform&) { throw Interrupted{}; }), Interrupted);
+  // Keep both callback outcomes reachable to the compiler while exercising a
+  // real throw; an unconditionally throwing row makes MSVC flag the loop step.
+  CHECK_THROWS_AS(readOnly.queryReadOnly<Transform>([&](ecs::EntityId current, const Transform&) {
+    if (readOnly.isValid(current)) throw Interrupted{};
+  }), Interrupted);
   REQUIRE(world.add<Renderable>(id).isOk());  // test-owned unwinding left no active query
 }
 
