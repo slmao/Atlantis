@@ -2,6 +2,7 @@
 
 - **Spec:** [Spec 0074](../specs/0074-scene-codec-validation-gaps.md) (Approved)
 - **Status:** Approved
+- **Implementation:** S2–S4 completed; [PR #312](https://github.com/slmao/Atlantis/pull/312) manually merged by slmao on 2026-11-01; [final readiness review](https://github.com/slmao/Atlantis/pull/312#issuecomment-6553306506).
 - **Author:** Codex, at slmao's explicit direction
 - **Joint Human Review:** slmao jointly approved Spec 0074 and this Plan, J1–J4 as recommended,
   on 2026-11-01; [PR #311 evidence](https://github.com/slmao/Atlantis/pull/311#issuecomment-6546350130).
