@@ -1,9 +1,11 @@
 # Plan: Const ECS Query Compatibility Boundary
 
-- **Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (jointly approved; manual merge pending)
-- **Status:** Approved by owner joint review; PR #316 manual merge pending
+- **Spec:** [Spec 0076](../specs/0076-ecs-query-compatibility.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** slmao jointly approved Spec 0076 and this Plan, J1–J4 as recommended, and accepted ADR-0140 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/316#issuecomment-6554469797). S2–S4 in #315 are explicitly authorized after owner manually merges [PR #316](https://github.com/slmao/Atlantis/pull/316), currently pending; no Runtime consumer adoption or #307 dependency, and all existing evidence/gate obligations remain.
+- **Joint Human Review:** slmao jointly approved Spec 0076 and this Plan, J1–J4 as recommended, and accepted ADR-0140 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/316#issuecomment-6554469797). Owner manually merged [PR #316](https://github.com/slmao/Atlantis/pull/316) as `4cf7546` and explicitly authorized S2–S4 in #315; no Runtime consumer adoption or #307 dependency, and all existing evidence/gate obligations remain.
+- **Implementation:** [Draft PR #315](https://github.com/slmao/Atlantis/pull/315#issuecomment-6556141343): S2/S3 implementation, nested-query/CommandBuffer coverage and as-built documentation are present, with current correctness evidence recorded. S4 acceptance remains held for formal performance verification and the disclosed unresolved failure; no automatic readiness or merge.
+- **Approved follow-up:** [Plan 0077](0077-windows10-pinning-verification.md) addresses the pinning-test scope/acceptance independently; remaining original stages and gates are retained.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

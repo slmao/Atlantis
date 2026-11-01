@@ -1,10 +1,11 @@
 # Plan: Independent Windows 10 Pinning Test Acceptance for PR #315
 
-- **Spec:** [Spec 0077](../specs/0077-windows10-pinning-verification.md) (jointly approved; manual merge pending)
-- **Status:** Approved by owner joint review; PR #317 manual merge pending
+- **Spec:** [Spec 0077](../specs/0077-windows10-pinning-verification.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** slmao jointly approved Spec 0077 and this Plan, J1–J4 as recommended, on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/317#issuecomment-6555054368). S2–S4 in #315 are explicitly authorized after owner manually merges [PR #317](https://github.com/slmao/Atlantis/pull/317), currently pending. Current Windows10 acceptance only, Windows11 unverified; no #307 dependency, all failure evidence/gates retained, stop/report deviations or blockers without expansion or performance investigation; keep Draft and do not merge automatically.
+- **Joint Human Review:** slmao jointly approved Spec 0077 and this Plan, J1–J4 as recommended, on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/317#issuecomment-6555054368). Owner manually merged [PR #317](https://github.com/slmao/Atlantis/pull/317) as `dec11cd` and explicitly authorized S2–S4 in #315. Current Windows10 acceptance only, Windows11 unverified; no #307 dependency, all failure evidence/gates retained, stop/report deviations or blockers without expansion or performance investigation; keep Draft and do not merge automatically.
 - **ADR disposition:** Owner approved retaining ADR-0118/0119/0139/0140 unchanged; no new ADR (Spec Architectural Impact).
+- **Implementation:** [Draft PR #315](https://github.com/slmao/Atlantis/pull/315#issuecomment-6555305025): S2 correction and S3 verification complete on current Windows 10; S4 evidence/hold recorded. Windows 11 unverified; original 0075/0076 acceptance remains incomplete.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

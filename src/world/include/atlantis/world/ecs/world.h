@@ -34,6 +34,15 @@ struct ChunkView {
 
 using ChunkVisitor = void (*)(void* context, const ChunkView& view);
 
+// Spec 0075 / ADR-0139: receiver-const traversal never exposes writable columns.
+struct ConstChunkView {
+  std::size_t rows = 0;
+  const EntityId* entities = nullptr;
+  const std::byte* const* columns = nullptr;
+};
+
+using ConstChunkVisitor = void (*)(void* context, const ConstChunkView& view);
+
 struct EntityRecord {
   std::uint64_t generation = 0;
   bool alive = false;
@@ -59,6 +68,11 @@ struct GuidBinding;  // the creation-time binding in entity_guid_map.h
 // (Plan 0050 J1); defer them through a CommandBuffer. get/set/has stay allowed
 // inside a query (J8). Iteration order is archetype creation order, then
 // chunk, then row.
+// Specs 0075/0076, ADR-0139/0140: queryReadOnly always lends const component
+// references, with the same lifetime/order and shared structural protection.
+// A separate mutable alias may still get/set/has or run nested queries: this
+// is live access, not a snapshot or a write lock. Const queries also maintain
+// logical iteration depth and do not permit concurrent readers.
 //
 // Not thread-safe (ADR-0004): one thread uses a World at a time. Instances
 // are independent; there is no global state.
@@ -127,6 +141,25 @@ class World {
         ids, [](void* context, const detail::ChunkView& view) { (*static_cast<Visit*>(context))(view); }, &visit);
   }
 
+  // T and const T both project const T&; constrain the expression actually
+  // invoked. The distinct name keeps this constraint out of old query calls.
+  template <typename... Ts, typename Fn>
+    requires((Component<std::remove_const_t<Ts>> && ...) &&
+             requires(Fn& callback, EntityId id, const std::remove_const_t<Ts>&... components) {
+               callback(EntityId{id}, components...);
+             })
+  void queryReadOnly(Fn&& fn) const {
+    const std::array<schema::TypeId, sizeof...(Ts)> ids{componentTypeId<std::remove_const_t<Ts>>()...};
+    auto visit = [&fn](const detail::ConstChunkView& view) {
+      for (std::size_t row = 0; row < view.rows; ++row) {
+        invokeConstRow<Ts...>(fn, view, row, std::index_sequence_for<Ts...>{});
+      }
+    };
+    using Visit = decltype(visit);
+    forEachMatchingChunk(
+        ids, [](void* context, const detail::ConstChunkView& view) { (*static_cast<Visit*>(context))(view); }, &visit);
+  }
+
  private:
   friend class CommandBuffer;
   friend struct detail::GuidBinding;
@@ -135,6 +168,11 @@ class World {
   template <typename... Ts, typename Fn, std::size_t... I>
   static void invokeRow(Fn& fn, const detail::ChunkView& view, std::size_t row, std::index_sequence<I...>) {
     fn(view.entities[row], reinterpret_cast<Ts*>(view.columns[I])[row]...);
+  }
+
+  template <typename... Ts, typename Fn, std::size_t... I>
+  static void invokeConstRow(Fn& fn, const detail::ConstChunkView& view, std::size_t row, std::index_sequence<I...>) {
+    fn(EntityId{view.entities[row]}, reinterpret_cast<const std::remove_const_t<Ts>*>(view.columns[I])[row]...);
   }
 
   [[nodiscard]] atlantis::Result<std::monostate, EcsError> addComponent(EntityId id, const ComponentInfo& info,
@@ -146,6 +184,8 @@ class World {
   [[nodiscard]] atlantis::Result<std::monostate, EcsError> writeComponent(EntityId id, const ComponentInfo& info,
                                                                          const void* bytes);
   void forEachMatchingChunk(std::span<const schema::TypeId> types, detail::ChunkVisitor visitor, void* context);
+  void forEachMatchingChunk(std::span<const schema::TypeId> types, detail::ConstChunkVisitor visitor,
+                            void* context) const;
 
   [[nodiscard]] bool iterating() const noexcept { return queryDepth_ > 0; }
   [[nodiscard]] bool refuseIfIterating() const;  // asserts in Debug; true when refused
@@ -165,7 +205,7 @@ class World {
   std::vector<std::uint32_t> freeList_;  // LIFO
   std::vector<std::unique_ptr<Archetype>> archetypes_;  // creation order; [0] is the empty archetype
   std::map<std::vector<schema::TypeId>, std::uint32_t> archetypeIndex_;
-  std::uint32_t queryDepth_ = 0;
+  mutable std::uint32_t queryDepth_ = 0;  // logical access bookkeeping shared by both query paths
 };
 
 }  // namespace atlantis::world::ecs
