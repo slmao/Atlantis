@@ -1,0 +1,29 @@
+<Project>
+  <!--
+    Atlantis MCP (Spec 0070; ADR-0138 D2): every package version, exact and
+    in one place (central package management), for the projects under
+    src/mcp/ only; the C# SDK keeps zero NuGet.
+
+    Locked restore: each project commits its packages.lock.json and restores
+    in locked mode, so a version or content-hash drift fails the restore.
+    After changing a version here, regenerate the lock file once with
+      dotnet restore src/mcp/Atlantis.Mcp/Atlantis.Mcp.csproj -p:RestoreLockedMode=false
+    and review the lock-file diff with the change. Checked by
+    cmake/check_editor_app_packages.cmake (parameterized over the managed
+    areas; Spec 0070 Plan J5).
+
+    ModelContextProtocol 2.3.0: the official C# SDK of the Model Context
+    Protocol (modelcontextprotocol/csharp-sdk, maintained with Microsoft),
+    MIT licence, pinned at Plan 0070 M1 (J1).
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>false</CentralPackageTransitivePinningEnabled>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(RestoreLockedMode)' == ''">true</RestoreLockedMode>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="ModelContextProtocol" Version="[2.3.0]" />
+  </ItemGroup>
+</Project>

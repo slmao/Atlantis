@@ -1,10 +1,10 @@
 # Spec: Temporary Observer Environment Evidence and Identity Boundaries
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
-- **Related Plan(s):** [Plan 0078](../plans/0078-observer-environment-identity.md) (In Review)
-- **Approval:** Pending joint human review in [PR #318](https://github.com/slmao/Atlantis/pull/318).
+- **Related Plan(s):** [Plan 0078](../plans/0078-observer-environment-identity.md) (Approved)
+- **Approval:** slmao, 2026-11-01, J1–J4 as recommended; [PR #318](https://github.com/slmao/Atlantis/pull/318) human-merged. Joint authorization is recorded in Plan 0078.
 - **Related ADR(s):** None new; see Architectural Impact.
 - **Supplements:** [0072](0072-mcp-acceptance-verification.md),
   [0073](0073-windows10-pinning-acceptance.md) and the bounded formal-execution

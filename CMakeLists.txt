@@ -353,4 +353,13 @@ if(NOT ANDROID)
   elseif(ATLANTIS_BUILD_EDITOR_APP)
     message(STATUS "Atlantis Editor App is not declared: no .NET 10.0.1xx SDK")
   endif()
+
+  # Spec 0070 (ADR-0138 D1): the agent tool layer's MCP host, a managed client
+  # like the editor app; declared only on demand, never on Android.
+  option(ATLANTIS_BUILD_MCP "Build the Atlantis MCP host (Spec 0070; restores ModelContextProtocol from NuGet)" OFF)
+  if(ATLANTIS_BUILD_MCP AND ATLANTIS_CSHARP_ENABLED)
+    add_subdirectory(src/mcp)
+  elseif(ATLANTIS_BUILD_MCP)
+    message(STATUS "Atlantis MCP is not declared: no .NET 10.0.1xx SDK")
+  endif()
 endif()
