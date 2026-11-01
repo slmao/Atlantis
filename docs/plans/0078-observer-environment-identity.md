@@ -3,7 +3,8 @@
 - **Spec:** [Spec 0078](../specs/0078-observer-environment-identity.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of Spec 0078 and this Plan together;
+- **Joint Human Review:** Pending review of Spec 0078 and this Plan together in
+  [PR #318](https://github.com/slmao/Atlantis/pull/318);
   no implementation or live execution is authorized by this proposal.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).

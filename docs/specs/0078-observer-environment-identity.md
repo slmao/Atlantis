@@ -4,7 +4,7 @@
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-11-01
 - **Related Plan(s):** [Plan 0078](../plans/0078-observer-environment-identity.md) (In Review)
-- **Approval:** Pending joint human review.
+- **Approval:** Pending joint human review in [PR #318](https://github.com/slmao/Atlantis/pull/318).
 - **Related ADR(s):** None new; see Architectural Impact.
 - **Supplements:** [0072](0072-mcp-acceptance-verification.md),
   [0073](0073-windows10-pinning-acceptance.md) and the bounded formal-execution
