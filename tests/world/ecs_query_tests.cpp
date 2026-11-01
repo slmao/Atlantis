@@ -238,6 +238,138 @@ TEST_CASE("ecs const query: shared guard refuses structural aliases and releases
   REQUIRE(world.add<Renderable>(id).isOk());  // test-owned unwinding left no active query
 }
 
+TEST_CASE("ecs const query: nested paths share protection until the outermost exit and keep live aliases",
+          "[world][ecs][query][const_query]") {
+  bool mutableOuter = false;
+  bool mutableInner = false;
+  SECTION("read/read") {}
+  SECTION("read/mutable") { mutableInner = true; }
+  SECTION("mutable/read") { mutableOuter = true; }
+
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  const ecs::World& readOnly = world;
+  ecs::World other;
+  RecordAssertions recorded;
+  const auto checkProtected = [&] {
+    REQUIRE(world.createEntity() == ecs::kInvalidEntityId);
+    const auto destroyed = world.destroyEntity(id);
+    REQUIRE_FALSE(destroyed.isOk());
+    CHECK(destroyed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto added = world.add<Renderable>(id);
+    REQUIRE_FALSE(added.isOk());
+    CHECK(added.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto removed = world.remove<Transform>(id);
+    REQUIRE_FALSE(removed.isOk());
+    CHECK(removed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+  };
+
+  std::size_t outerCalls = 0;
+  std::size_t innerCalls = 0;
+  auto outer = [&](ecs::EntityId current, auto& value) {
+    ++outerCalls;
+    CHECK(current == id);
+    CHECK(world.has<Transform>(current).value());
+    REQUIRE(world.set<Transform>(current, at(2)).isOk());
+    CHECK(value.localPosition.x == 2);  // a const projection is live, not a copy
+    auto inner = [&](ecs::EntityId nested, auto& nestedValue) {
+      ++innerCalls;
+      CHECK(nested == current);
+      CHECK(&nestedValue == &value);
+      REQUIRE(world.set<Transform>(nested, at(3)).isOk());
+      CHECK(nestedValue.localPosition.x == 3);
+      CHECK(value.localPosition.x == 3);
+      checkProtected();
+
+      const auto foreign = other.createEntity();
+      REQUIRE(foreign != ecs::kInvalidEntityId);
+      REQUIRE(other.add<Transform>(foreign).isOk());
+      REQUIRE(other.remove<Transform>(foreign).isOk());
+      REQUIRE(other.destroyEntity(foreign).isOk());
+    };
+    if (mutableInner) world.query<Transform>(inner);
+    else readOnly.queryReadOnly<Transform>(inner);
+    checkProtected();  // the inner exit must not release the outer guard
+    CHECK(world.get<Transform>(current).value().localPosition.x == 3);
+    CHECK(value.localPosition.x == 3);
+
+    std::size_t noMatches = 0;
+    readOnly.queryReadOnly<Light>([&](ecs::EntityId, const Light&) { ++noMatches; });
+    CHECK(noMatches == 0);
+    checkProtected();  // a no-match nested walk must balance its own guard
+  };
+  if (mutableOuter) world.query<Transform>(outer);
+  else readOnly.queryReadOnly<Transform>(outer);
+
+  CHECK(outerCalls == 1);
+  CHECK(innerCalls == 1);
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 12);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+  CHECK(world.get<Transform>(id).value().localPosition.x == 3);
+  CHECK_FALSE(world.has<Renderable>(id).value());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  REQUIRE(world.remove<Transform>(id).isOk());
+  REQUIRE(world.destroyEntity(id).isOk());
+  CHECK(world.createEntity() != ecs::kInvalidEntityId);
+}
+
+TEST_CASE("ecs const query: nested unwinding keeps the outer guard and then releases both paths",
+          "[world][ecs][query][const_query]") {
+  bool mutableOuter = false;
+  bool mutableInner = false;
+  SECTION("read/read") {}
+  SECTION("read/mutable") { mutableInner = true; }
+  SECTION("mutable/read") { mutableOuter = true; }
+
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  const ecs::World& readOnly = world;
+  RecordAssertions recorded;
+  struct Interrupted {};
+  auto outer = [&](ecs::EntityId current, auto&) {
+    auto inner = [&](ecs::EntityId nested, auto&) {
+      if (readOnly.isValid(nested)) throw Interrupted{};
+    };
+    const auto runInner = [&] {
+      if (mutableInner) world.query<Transform>(inner);
+      else readOnly.queryReadOnly<Transform>(inner);
+    };
+    CHECK_THROWS_AS(runInner(), Interrupted);
+    REQUIRE(world.createEntity() == ecs::kInvalidEntityId);
+    const auto added = world.add<Renderable>(current);
+    REQUIRE_FALSE(added.isOk());
+    CHECK(added.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto removed = world.remove<Transform>(current);
+    REQUIRE_FALSE(removed.isOk());
+    CHECK(removed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto destroyed = world.destroyEntity(current);
+    REQUIRE_FALSE(destroyed.isOk());
+    CHECK(destroyed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    if (readOnly.isValid(current)) throw Interrupted{};
+  };
+  const auto runOuter = [&] {
+    if (mutableOuter) world.query<Transform>(outer);
+    else readOnly.queryReadOnly<Transform>(outer);
+  };
+  CHECK_THROWS_AS(runOuter(), Interrupted);
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 4);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+  CHECK(world.get<Transform>(id).value().localPosition.x == 1);
+  CHECK_FALSE(world.has<Renderable>(id).value());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  REQUIRE(world.remove<Transform>(id).isOk());
+  REQUIRE(world.destroyEntity(id).isOk());
+  CHECK(world.createEntity() != ecs::kInvalidEntityId);
+}
+
 TEST_CASE("ecs const query: existing generic mutable callbacks keep writable references",
           "[world][ecs][query][const_query]") {
   ecs::World world = populatedWorld();
