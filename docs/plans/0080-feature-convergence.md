@@ -1,10 +1,11 @@
 # Plan: Feature Convergence and Proportional Verification
 
-- **Spec:** [Spec 0080](../specs/0080-feature-convergence.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0080](../specs/0080-feature-convergence.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at owner direction
-- **Joint Human Review:** Pending joint review of this Plan and Spec 0080;
-  no active governance change yet.
+- **Joint Human Review:** slmao, 2026-11-02, [PR #320](https://github.com/slmao/Atlantis/pull/320):
+  this Plan and Spec 0080 jointly approved, with implementation authority recorded
+  in the PR checklist; human merge `77aa565` satisfies the implementation prerequisite.
 
 ## Objective
 

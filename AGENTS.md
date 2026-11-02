@@ -52,17 +52,21 @@ guessing.
    is not implementation-ready until a human has approved it. Use
    [docs/specs/template.md](docs/specs/template.md).
 
-2. **Plan** (`docs/plans/`) — Turns an approved spec into an ordered, reviewable
+2. **Plan** (`docs/plans/`) — Turns the spec into an ordered, reviewable
    task breakdown: files/modules touched, sequencing, and a verification
    checklist that maps back to the spec. A plan is not implementation-ready
-   until a human has approved it. Use [docs/plans/template.md](docs/plans/template.md).
+   until a human has approved it. Spec and Plan may be drafted together and
+   submitted in one reviewing PR. Use [docs/plans/template.md](docs/plans/template.md).
 
 3. **Human Review** — The explicit gate between planning and coding: a
    human has read the spec and plan together and signed off that
    implementation may begin. This is a distinct checkpoint, not implied by
    the individual spec/plan approvals above — an agent does not start
    Implementation on its own judgment that "the spec and plan look
-   approved enough."
+   approved enough." One explicit joint sign-off may approve both documents
+   and authorize implementation through verification and a review-ready PR;
+   separate sequential approval ceremonies are not required. Honor any
+   explicit merge prerequisite, checkpoint, scope limit, budget or stop.
 
 4. **ADR** (`docs/adr/`) — Any architectural decision identified by a spec gets
    its own ADR: context, decision, consequences, alternatives considered.
@@ -74,10 +78,10 @@ guessing.
    Human Review — not discovered as a gap during implementation.
 
 5. **Implementation** — Code written strictly against the approved plan.
-   If reality forces a deviation from the plan, stop and call it out
-   explicitly in the PR rather than silently drifting — a deviation that
-   changes architecture means back to step 1. Do not modify the spec to
-   make implementation easier; a spec that turns out to be wrong gets a
+   Classify and record deviations using the execution rules below. Stop
+   dependent work for a design change; continue independent authorized work.
+   A deviation that changes architecture means back to step 1. Do not modify
+   the spec to make implementation easier; a spec that turns out to be wrong gets a
    revision or follow-up spec, reviewed like any other change, not a
    silent edit to match what got built. Do not fold in unrelated
    refactoring — a plan's file list is the scope, not a starting point for
@@ -87,14 +91,60 @@ guessing.
    and [docs/process/testing-strategy.md](docs/process/testing-strategy.md).
    Vulkan Validation Layers must run clean; see
    [docs/process/definition-of-done.md](docs/process/definition-of-done.md).
-   Build and run the test suite after implementation — verification is not
-   optional or assumed-passing.
+   Build and run relevant tests after meaningful implementation changes,
+   and complete every remaining applicable gate for the final candidate.
+   Verification is not optional or assumed-passing; evidence reuse follows
+   the execution rules below.
 
 7. **PR → Merge** — A PR is opened using the repository's
    [PR template](.github/PULL_REQUEST_TEMPLATE.md), linking the spec, plan,
    and any ADRs. See [docs/process/git-workflow.md](docs/process/git-workflow.md).
    An agent never merges its own PR to `main` and never pushes directly to
    `main`. A human reviews and merges.
+
+## Execution and feature convergence
+
+- **Continue under one authorization.** After the joint review and required
+  merge, carry the approved feature through implementation, verification and
+  a review-ready PR. Milestones are progress reports, not new permission
+  gates, unless the human explicitly made them gates. Do not infer new stops.
+- **Fix ordinary errors within scope.** Repair implementation bugs, failing
+  tests and disposable helper/fixture errors without another Spec or approval
+  when contracts, acceptance semantics, dependencies, boundaries and protected
+  paths are unchanged. Preserve failures and explain reruns. Ordinary offline
+  retesting is distinct from performance sampling: explicit measurement
+  protocols, budgets and stop conditions remain binding.
+- **Keep small adjustments small.** Report routine implementation choices in
+  the PR. A necessary file-list or sequencing adjustment that changes no
+  contract, architecture, dependency, build/CI behavior, data format, governance
+  or acceptance criterion needs one explicit human approval in that PR, not a
+  new Spec/Plan pair. Link that adjustment without rewriting approved history.
+  Changes in those protected categories require a reviewed revision/follow-up
+  and the applicable ADR decision. Ask about the specific unresolved change;
+  do not stop unrelated authorized work.
+- **Verify the affected behavior.** Map requirements to checks in the Plan.
+  Run focused build/tests after meaningful changes and all remaining required
+  checks for the final candidate. Reuse results only when the relevant source,
+  tests, dependencies, build inputs, assets and environment are unchanged;
+  cite revision, configuration and evidence in the PR. Reassess affected checks
+  after integration or changed inputs. Uncertain provenance is not reusable.
+  Documentation-only changes need document checks, not an unrelated engine
+  rebuild. Do not silently reduce an explicitly approved verification list.
+- **Converge on the approved acceptance criteria.** Do not add diagnostic
+  tools, elaborate evidence frameworks or extra proof obligations as implicit
+  prerequisites. Develop only the minimal helpers needed for required checks;
+  broader investigation is a separate scoped task. Distinguish a product
+  regression, a pre-existing/base failure, an environment refusal and a helper
+  defect using evidence, and state uncertainty. Report a blocker with a
+  concrete next decision; do not create repeated status-only proposals.
+  Independent work may continue, but unresolved required gates are not a pass.
+- **Preserve in-flight decisions.** These defaults do not reset closed budgets,
+  remove explicit human holds, resume stopped measurements or waive existing
+  failures. The owner may consolidate execution-only holds in one PR instruction;
+  changing acceptance criteria still requires design review. Performance
+  applicability, protocol, baseline rules, Vulkan/golden checks and human merge
+  remain in force. Do not reinterpret a selected performance gate as optional
+  merely because a matched file is a build file.
 
 ## Phase 1 constraints (do not silently expand these)
 
@@ -698,8 +748,10 @@ default.
   pass.
 - No PR merges with failing tests, or with validation-layer warnings/
   errors on any GPU-touching path.
-- Build and run the relevant tests after every implementation step, not
-  only right before opening a PR.
+- Build and run focused tests after meaningful implementation changes, and
+  complete the final applicable checklist. Reuse unaffected evidence only
+  under Execution and feature convergence; no automatic full-suite rerun for
+  a documentation-only update or unchanged input.
 
 ## Git workflow
 
@@ -760,8 +812,10 @@ and [Spec 0033](docs/specs/0033-documentation-lifecycle-and-compaction.md).
   test inventories belong in code and PRs. Small pseudocode or normative layout
   fragments are appropriate when needed to resolve an ambiguity.
 - Draft corrections are folded into the text. After approval and implementation
-  start, semantic changes require reviewed follow-up Specs/Plans. Changed
-  architectural decisions require superseding ADRs; Accepted ADRs are not
+  start, semantic changes require reviewed revisions/follow-up Specs/Plans.
+  Nonsemantic file-list/sequencing adjustments use the narrow PR approval rule
+  in Execution and feature convergence; keep the original documents intact.
+  Changed architectural decisions require superseding ADRs; Accepted ADRs are not
   rewritten or compacted in place.
 - Editorial compaction of completed Specs/Plans requires a reviewed Plan naming
   the files, preserved semantics and links, and a reference to the compaction PR.
@@ -802,5 +856,7 @@ No PR is complete until every applicable item is checked.
 
 ## When you're unsure
 
-Stop and ask the human. Escalating a question costs a message. Guessing
-wrong on architecture costs months.
+Escalate the concrete unresolved architectural, scope or acceptance decision
+with evidence and a recommendation. Continue independent authorized work.
+Ordinary implementation and helper repairs within the approved boundaries
+do not require a new permission request.
