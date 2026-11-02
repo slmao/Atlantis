@@ -1,10 +1,10 @@
 # Spec: Feature Convergence and Proportional Verification
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at owner direction
 - **Created:** 2026-11-02
 - **Related Plan(s):** [Plan 0080](../plans/0080-feature-convergence.md)
-- **Approval:** Pending joint review
+- **Approval:** slmao, 2026-11-02, [PR #320](https://github.com/slmao/Atlantis/pull/320).
 - **Related ADR(s):** None — see Architectural Impact
 
 ## Summary

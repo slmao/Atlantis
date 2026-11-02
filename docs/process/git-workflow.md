@@ -62,9 +62,12 @@ branch, its spec, and its plan are traceable to each other at a glance.
   way code does. "Approved" means merged to `main` with reviewer sign-off,
   not a verbal go-ahead in chat.
 - A spec/plan is edited in place while in `Draft`/`In Review` status. Once
-  `Approved` and implementation has started against it, further changes go
-  through a new revision or a follow-up spec — don't rewrite history
-  underneath work already in flight.
+  `Approved` and implementation has started against it, semantic changes go
+  through a reviewed revision or follow-up spec — don't rewrite history
+  underneath work already in flight. Nonsemantic file-list/sequencing adjustments
+  follow the narrow PR approval rule in
+  [AGENTS.md](../../AGENTS.md#execution-and-feature-convergence); the original
+  documents remain intact.
 
 - Completed Specs/Plans may undergo editorial compaction only through an
   explicitly scoped, reviewed Plan under
