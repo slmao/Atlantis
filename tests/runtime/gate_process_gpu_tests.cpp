@@ -14,8 +14,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
-#include <chrono>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -35,51 +35,55 @@ namespace {
 namespace gate = atlantis::runtime::gate;
 namespace fs = std::filesystem;
 
-struct DesktopVersion {
+struct PinningOsIdentity {
   bool known = false;
+  DWORD platform = 0;
   DWORD major = 0;
   DWORD minor = 0;
   DWORD build = 0;
-  BYTE productType = 0;
+  BYTE product = 0;
 };
 
-DesktopVersion realDesktopVersion() {
-  using RtlGetVersion = LONG(WINAPI*)(OSVERSIONINFOEXW*);
-  const HMODULE module = GetModuleHandleW(L"ntdll.dll");
-  if (module == nullptr) return {};
-  const auto getVersion = std::bit_cast<RtlGetVersion>(GetProcAddress(module, "RtlGetVersion"));
-  if (getVersion == nullptr) return {};
+[[nodiscard]] PinningOsIdentity pinningOsIdentity() {
+  const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  if (ntdll == nullptr) return {};
+  using ReadVersion = LONG(WINAPI*)(OSVERSIONINFOW*);
+  const auto readVersion = std::bit_cast<ReadVersion>(GetProcAddress(ntdll, "RtlGetVersion"));
+  if (readVersion == nullptr) return {};
   OSVERSIONINFOEXW version{};
   version.dwOSVersionInfoSize = sizeof(version);
-  if (getVersion(&version) != 0 || version.dwPlatformId != VER_PLATFORM_WIN32_NT || version.dwMajorVersion == 0) return {};
-  return {true, version.dwMajorVersion, version.dwMinorVersion, version.dwBuildNumber, version.wProductType};
+  // The export takes the base pointer; the size selects its extended record.
+  if (readVersion(reinterpret_cast<OSVERSIONINFOW*>(&version)) != 0) return {};
+  return {true, version.dwPlatformId, version.dwMajorVersion, version.dwMinorVersion,
+          version.dwBuildNumber, version.wProductType};
 }
 
-enum class PowerReadback { Observed, Unavailable, Failure };
-
-struct PowerQueryObservation {
-  DWORD requestedVersion;
-  std::size_t requestedSize;
-  bool succeeded;
+struct PowerReadbackFacts {
+  DWORD requestVersion;
+  std::size_t requestSize;
+  bool queried;
   DWORD error;
   DWORD controlMask;
   DWORD stateMask;
 };
 
-// Spec 0072 R2: only this known legacy query capability is optional. Production setup,
-// priority and affinity remain mandatory; an unknown OS or another error never grants N/A.
-PowerReadback classifyPowerReadback(const DesktopVersion& version, const PowerQueryObservation& query) {
-  if (query.requestedVersion != PROCESS_POWER_THROTTLING_CURRENT_VERSION ||
-      query.requestedSize != sizeof(PROCESS_POWER_THROTTLING_STATE)) return PowerReadback::Failure;
-  if (query.succeeded) {
-    return (query.controlMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) != 0 &&
-                   (query.stateMask & PROCESS_POWER_THROTTLING_EXECUTION_SPEED) == 0
-               ? PowerReadback::Observed
-               : PowerReadback::Failure;
+enum class PowerReadbackResult { Observed, Unavailable, Failure };
+
+// Spec 0077 R3: only the known legacy readback is optional, never pinning setup.
+[[nodiscard]] constexpr PowerReadbackResult classifyPowerReadback(const PinningOsIdentity& os,
+                                                                const PowerReadbackFacts& facts) {
+  if (facts.requestVersion != PROCESS_POWER_THROTTLING_CURRENT_VERSION ||
+      facts.requestSize != sizeof(PROCESS_POWER_THROTTLING_STATE)) return PowerReadbackResult::Failure;
+  if (facts.queried) {
+    const DWORD speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    return (facts.controlMask & speed) != 0 && (facts.stateMask & speed) == 0
+               ? PowerReadbackResult::Observed
+               : PowerReadbackResult::Failure;
   }
-  const bool legacyDesktop = version.known && version.productType == VER_NT_WORKSTATION && version.major == 10 &&
-                             version.minor == 0 && version.build >= 10240 && version.build < 22621;
-  return legacyDesktop && query.error == ERROR_INVALID_PARAMETER ? PowerReadback::Unavailable : PowerReadback::Failure;
+  const bool legacy = os.known && os.platform == VER_PLATFORM_WIN32_NT && os.product == VER_NT_WORKSTATION &&
+                      os.major == 10 && os.minor == 0 && os.build >= 10240 && os.build <= 22620;
+  return legacy && facts.error == ERROR_INVALID_PARAMETER ? PowerReadbackResult::Unavailable
+                                                        : PowerReadbackResult::Failure;
 }
 
 struct TempDir {
@@ -206,75 +210,92 @@ TEST_CASE("pinning the process opts out of power throttling and raises the prior
   const auto processor = gate::pinnedLogicalProcessor(gate::systemCpuCores(coresError));
   CHECK(coresError.empty());
   REQUIRE(processor.has_value());
+  REQUIRE(*processor < sizeof(DWORD_PTR) * 8);
   CHECK(processMask == (DWORD_PTR{1} << *processor));
   CHECK((processMask & systemMask) == processMask);
 
-  const DesktopVersion version = realDesktopVersion();
+  const PinningOsIdentity os = pinningOsIdentity();
   PROCESS_POWER_THROTTLING_STATE state{};
   state.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
-  const DWORD requestedVersion = state.Version;
+  const DWORD requestVersion = state.Version;
   const BOOL queried = GetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
   const DWORD queryError = queried ? ERROR_SUCCESS : GetLastError();
-  const PowerReadback readback = classifyPowerReadback(
-      version, {requestedVersion, sizeof(state), queried != FALSE, queryError, state.ControlMask, state.StateMask});
-  const char* status = readback == PowerReadback::Observed ? "observed" :
-                       readback == PowerReadback::Unavailable ? "unavailable" : "failure";
-  std::printf("pinning readback: %s; osKnown=%u; os=%lu.%lu.%lu; productType=%u; requestVersion=%lu; size=%zu; "
-              "query=%u; error=%lu; control=%lu; state=%lu\n",
-              status, static_cast<unsigned>(version.known), static_cast<unsigned long>(version.major),
-              static_cast<unsigned long>(version.minor), static_cast<unsigned long>(version.build),
-              static_cast<unsigned>(version.productType), static_cast<unsigned long>(requestedVersion), sizeof(state),
-              static_cast<unsigned>(queried != FALSE), static_cast<unsigned long>(queryError),
-              static_cast<unsigned long>(state.ControlMask), static_cast<unsigned long>(state.StateMask));
-  CHECK(readback != PowerReadback::Failure);
+  const PowerReadbackResult result = classifyPowerReadback(
+      os, {requestVersion, sizeof(state), queried != FALSE, queryError, state.ControlMask, state.StateMask});
+  const char* status = result == PowerReadbackResult::Observed ? "observed" :
+                       result == PowerReadbackResult::Unavailable ? "unavailable" : "failure";
+  std::printf("pinning readback=%s; known=%u; platform=%lu; os=%lu.%lu.%lu; product=%u; requestVersion=%lu; "
+              "requestSize=%zu; query=%u; error=%lu; selected=%u; affinity=%llu; systemAffinity=%llu; ",
+              status, static_cast<unsigned>(os.known), static_cast<unsigned long>(os.platform),
+              static_cast<unsigned long>(os.major), static_cast<unsigned long>(os.minor),
+              static_cast<unsigned long>(os.build), static_cast<unsigned>(os.product),
+              static_cast<unsigned long>(requestVersion), sizeof(state), static_cast<unsigned>(queried != FALSE),
+              static_cast<unsigned long>(queryError), *processor, static_cast<unsigned long long>(processMask),
+              static_cast<unsigned long long>(systemMask));
+  if (queried) {
+    std::printf("control=%lu; state=%lu\n", static_cast<unsigned long>(state.ControlMask),
+                static_cast<unsigned long>(state.StateMask));
+  } else {
+    std::printf("control/state=unobserved\n");
+  }
+  CHECK(os.known);  // an unknown identity cannot establish real-host acceptance
+  CHECK(os.platform == VER_PLATFORM_WIN32_NT);
+  CHECK(os.product == VER_NT_WORKSTATION);
+  CHECK(result != PowerReadbackResult::Failure);
 }
 
-TEST_CASE("power-state readback classification preserves pinning verification", "[runtime][gate][process][pinning]") {
-  // Pure value cases require neither an OS query nor a GPU; the real test above owns those calls.
-  const DesktopVersion legacy{true, 10, 0, 19045, VER_NT_WORKSTATION};
-  const DesktopVersion supported{true, 10, 0, 22621, VER_NT_WORKSTATION};
+TEST_CASE("pinning readback classification admits only the reviewed legacy capability",
+          "[runtime][gate][process][pinning_classification]") {
+  // Injected values only; supported/early-Windows-11 cases are not real-host evidence.
+  const PinningOsIdentity legacy{true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_WORKSTATION};
+  const PinningOsIdentity supported{true, VER_PLATFORM_WIN32_NT, 10, 0, 22621, VER_NT_WORKSTATION};
   constexpr DWORD current = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
   constexpr DWORD speed = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
   constexpr std::size_t size = sizeof(PROCESS_POWER_THROTTLING_STATE);
-  const PowerQueryObservation good{current, size, true, ERROR_SUCCESS, speed, 0};
-  const PowerQueryObservation error87{current, size, false, ERROR_INVALID_PARAMETER, 0, 0};
-  struct Case {
+  const PowerReadbackFacts observed{current, size, true, ERROR_SUCCESS, speed, 0};
+  const PowerReadbackFacts error87{current, size, false, ERROR_INVALID_PARAMETER, 0, 0};
+  using Result = PowerReadbackResult;
+  struct Sample {
     const char* name;
-    DesktopVersion version;
-    PowerQueryObservation query;
-    PowerReadback expected;
+    PinningOsIdentity os;
+    PowerReadbackFacts query;
+    Result expected;
   };
-  const Case cases[]{
-      {"supported correct readback", supported, good, PowerReadback::Observed},
-      {"legacy success is verified", legacy, good, PowerReadback::Observed},
-      {"unknown OS success is verified", {}, good, PowerReadback::Observed},
-      {"future OS success is verified", {true, 11, 0, 1, VER_NT_WORKSTATION}, good, PowerReadback::Observed},
-      {"reference Windows 10 capability", legacy, error87, PowerReadback::Unavailable},
-      {"early Windows 11 capability", {true, 10, 0, 22000, VER_NT_WORKSTATION}, error87, PowerReadback::Unavailable},
-      {"legacy lower bound", {true, 10, 0, 10240, VER_NT_WORKSTATION}, error87, PowerReadback::Unavailable},
-      {"legacy upper bound", {true, 10, 0, 22620, VER_NT_WORKSTATION}, error87, PowerReadback::Unavailable},
-      {"supported boundary error is fatal", supported, error87, PowerReadback::Failure},
-      {"later supported error is fatal", {true, 10, 0, 26100, VER_NT_WORKSTATION}, error87, PowerReadback::Failure},
-      {"older OS is outside exception", {true, 10, 0, 10239, VER_NT_WORKSTATION}, error87, PowerReadback::Failure},
-      {"unknown OS cannot excuse failure", {}, error87, PowerReadback::Failure},
-      {"unknown major cannot excuse failure", {true, 11, 0, 1, VER_NT_WORKSTATION}, error87, PowerReadback::Failure},
-      {"unknown minor cannot excuse failure", {true, 10, 1, 19045, VER_NT_WORKSTATION}, error87, PowerReadback::Failure},
-      {"server is outside desktop exception", {true, 10, 0, 19045, VER_NT_SERVER}, error87, PowerReadback::Failure},
-      {"unknown product cannot excuse failure", {true, 10, 0, 19045, 0}, error87, PowerReadback::Failure},
-      {"failed identity probe cannot excuse failure", {false, 10, 0, 19045, VER_NT_WORKSTATION}, error87, PowerReadback::Failure},
-      {"access denied remains fatal", legacy, {current, size, false, ERROR_ACCESS_DENIED, 0, 0}, PowerReadback::Failure},
-      {"other unsupported error remains fatal", legacy, {current, size, false, ERROR_NOT_SUPPORTED, 0, 0}, PowerReadback::Failure},
-      {"failed query without error remains fatal", legacy, {current, size, false, ERROR_SUCCESS, 0, 0}, PowerReadback::Failure},
-      {"missing control bit", supported, {current, size, true, 0, 0, 0}, PowerReadback::Failure},
-      {"throttling enabled", legacy, {current, size, true, 0, speed, speed}, PowerReadback::Failure},
-      {"unrelated bits preserve the required bits", supported, {current, size, true, 0, speed | 2u, 2u}, PowerReadback::Observed},
-      {"malformed version on success", supported, {0, size, true, 0, speed, 0}, PowerReadback::Failure},
-      {"malformed size on success", supported, {current, 0, true, 0, speed, 0}, PowerReadback::Failure},
-      {"malformed version cannot grant exception", legacy, {0, size, false, ERROR_INVALID_PARAMETER, 0, 0}, PowerReadback::Failure},
-      {"malformed size cannot grant exception", legacy, {current, size - 1, false, ERROR_INVALID_PARAMETER, 0, 0}, PowerReadback::Failure},
+  const Sample samples[]{
+      {"supported correct bits", supported, observed, Result::Observed},
+      {"legacy correct bits still verified", legacy, observed, Result::Observed},
+      {"unknown identity successful query", {}, observed, Result::Observed},
+      {"future identity successful query", {true, VER_PLATFORM_WIN32_NT, 11, 0, 1, VER_NT_WORKSTATION}, observed, Result::Observed},
+      {"current Windows 10 legacy exception", legacy, error87, Result::Unavailable},
+      {"early Windows 11 synthetic only", {true, VER_PLATFORM_WIN32_NT, 10, 0, 22000, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"lower included boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 10240, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"upper included boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 22620, VER_NT_WORKSTATION}, error87, Result::Unavailable},
+      {"below legacy boundary", {true, VER_PLATFORM_WIN32_NT, 10, 0, 10239, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"supported boundary failure", supported, error87, Result::Failure},
+      {"later supported failure", {true, VER_PLATFORM_WIN32_NT, 10, 0, 26100, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"unknown identity failure", {}, error87, Result::Failure},
+      {"failed identity probe", {false, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"non NT platform", {true, VER_PLATFORM_WIN32_WINDOWS, 10, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"server product", {true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, VER_NT_SERVER}, error87, Result::Failure},
+      {"unknown product", {true, VER_PLATFORM_WIN32_NT, 10, 0, 19045, 0}, error87, Result::Failure},
+      {"other major version", {true, VER_PLATFORM_WIN32_NT, 11, 0, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"other minor version", {true, VER_PLATFORM_WIN32_NT, 10, 1, 19045, VER_NT_WORKSTATION}, error87, Result::Failure},
+      {"access denied", legacy, {current, size, false, ERROR_ACCESS_DENIED, 0, 0}, Result::Failure},
+      {"not supported error", legacy, {current, size, false, ERROR_NOT_SUPPORTED, 0, 0}, Result::Failure},
+      {"failed query with zero error", legacy, {current, size, false, ERROR_SUCCESS, 0, 0}, Result::Failure},
+      {"failed query masks do not establish observed", supported, {current, size, false, ERROR_INVALID_PARAMETER, speed, 0}, Result::Failure},
+      {"legacy failure masks stay unobserved", legacy, {current, size, false, ERROR_INVALID_PARAMETER, speed, 0}, Result::Unavailable},
+      {"missing control bit", supported, {current, size, true, 0, 0, 0}, Result::Failure},
+      {"legacy throttling enabled", legacy, {current, size, true, 0, speed, speed}, Result::Failure},
+      {"unrelated bits are allowed", supported, {current, size, true, 0, speed | 2u, 2u}, Result::Observed},
+      {"bad request version on success", supported, {0, size, true, 0, speed, 0}, Result::Failure},
+      {"bad request size on success", supported, {current, 0, true, 0, speed, 0}, Result::Failure},
+      {"bad request version on failure", legacy, {0, size, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
+      {"undersized request on failure", legacy, {current, size - 1, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
+      {"oversized request on failure", legacy, {current, size + 1, false, ERROR_INVALID_PARAMETER, 0, 0}, Result::Failure},
   };
-  for (const Case& sample : cases) {
-    DYNAMIC_SECTION(sample.name) { CHECK(classifyPowerReadback(sample.version, sample.query) == sample.expected); }
+  for (const Sample& sample : samples) {
+    DYNAMIC_SECTION(sample.name) { CHECK(classifyPowerReadback(sample.os, sample.query) == sample.expected); }
   }
 }
 

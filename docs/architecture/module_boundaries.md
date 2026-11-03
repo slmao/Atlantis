@@ -777,9 +777,19 @@ neither replaces nor wraps `World`.
   copyable, trivially destructible and standard-layout, and must be described
   in its module's schema table.
 - **Storage and access.** Rows live in 16 KiB chunks per archetype. Point
-  access (`get`/`set`) is by value. `query<Ts...>()` hands a callback
-  references that are valid for one call; structural changes are refused
-  while a query runs and are deferred through a `CommandBuffer`.
+  access (`get`/`set`) is by value. Mutable-World `query<Ts...>()` preserves
+  per-term `T&`/`const T&` access; `queryReadOnly<Ts...>() const` always lends
+  const component references, for `T` and `const T` alike, in the same order
+  ([ADR-0139](../adr/0139-ecs-const-query-and-logical-iteration-state.md),
+  [ADR-0140](../adr/0140-distinct-const-query-entry-point.md)). References last
+  for one callback only. Both paths share per-World logical iteration depth:
+  structural changes and whole `CommandBuffer::apply` (including set-only
+  buffers) are refused until the outermost query exits; deferred recording
+  remains allowed and refused buffers retain their commands. Nested queries
+  and `get`/`has`/non-structural `set` through a legitimate mutable alias stay
+  allowed, so borrowed values are live, not snapshots or write-locked data.
+  Const traversal remains single-threaded/not thread-safe, with no concurrent-
+  reader guarantee; different Worlds remain independent.
 - **Identity.** `ecs::EntityId` follows ADR-0049's handle rules. `EntityGuid`
   binds only at creation (`createEntities()` → `EntityGuidMap`,
   `ecs/entity_guid_map.h`), so the ECS stores no GUID (ADR-0097 D5).

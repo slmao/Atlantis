@@ -124,6 +124,91 @@ TEST_CASE("ecs command buffer: apply during a query applies nothing and keeps th
   CHECK(world.has<Renderable>(e).value());
 }
 
+TEST_CASE("ecs command buffer: nested read-only paths retain whole and set-only batches until outer exit",
+          "[world][ecs][command_buffer][const_query]") {
+  bool mutableOuter = false;
+  bool mutableInner = false;
+  SECTION("read/read") {}
+  SECTION("read/mutable") { mutableInner = true; }
+  SECTION("mutable/read") { mutableOuter = true; }
+
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  REQUIRE(world.add<Light>(id).isOk());
+  const auto doomed = world.createEntity();
+  const ecs::World& readOnly = world;
+  ecs::CommandBuffer buffer;
+  ecs::CommandBuffer setOnly;
+  RecordAssertions recorded;
+  const auto checkRefused = [&](ecs::CommandBuffer& commands, std::size_t count) {
+    const auto report = commands.apply(world);
+    REQUIRE(report.failures.size() == count);
+    for (std::size_t i = 0; i < count; ++i) {
+      CHECK(report.failures[i].commandIndex == i);
+      CHECK(report.failures[i].error == ecs::EcsError::StructuralChangeDuringQuery);
+    }
+    CHECK(report.created.empty());
+    CHECK(commands.size() == count);
+    CHECK(world.get<Transform>(id).value().localPosition.x == 1);
+    CHECK(world.has<Light>(id).value());
+    CHECK_FALSE(world.has<Renderable>(id).value());
+    CHECK(world.isValid(doomed));
+    std::size_t entities = 0;
+    readOnly.queryReadOnly<>([&](ecs::EntityId) { ++entities; });
+    CHECK(entities == 2);
+  };
+
+  std::size_t outerCalls = 0;
+  std::size_t innerCalls = 0;
+  auto outer = [&](ecs::EntityId current, auto& value) {
+    ++outerCalls;
+    // Recording changes only the buffers, even while read-only traversal runs.
+    buffer.set<Transform>(current, at(9));
+    const auto pending = buffer.create();
+    buffer.add<Transform>(pending, at(7));
+    buffer.add<Renderable>(current);
+    buffer.remove<Light>(current);
+    buffer.destroy(doomed);
+    setOnly.set<Transform>(current, at(42));
+    auto inner = [&](ecs::EntityId nested, auto&) {
+      ++innerCalls;
+      CHECK(nested == current);
+      checkRefused(buffer, 6);
+      checkRefused(setOnly, 1);
+    };
+    if (mutableInner) world.query<Transform>(inner);
+    else readOnly.queryReadOnly<Transform>(inner);
+    checkRefused(buffer, 6);
+    checkRefused(setOnly, 1);
+    CHECK(value.localPosition.x == 1);
+  };
+  if (mutableOuter) world.query<Transform>(outer);
+  else readOnly.queryReadOnly<Transform>(outer);
+  CHECK(outerCalls == 1);
+  CHECK(innerCalls == 1);
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 4);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+
+  const auto later = buffer.apply(world);
+  CHECK(later.failures.empty());
+  REQUIRE(later.created.size() == 1);
+  CHECK(world.get<Transform>(later.created[0]).value().localPosition.x == 7);
+  CHECK(world.get<Transform>(id).value().localPosition.x == 9);
+  CHECK(world.has<Renderable>(id).value());
+  CHECK_FALSE(world.has<Light>(id).value());
+  CHECK_FALSE(world.isValid(doomed));
+  CHECK(buffer.empty());
+  const auto setLater = setOnly.apply(world);
+  CHECK(setLater.failures.empty());
+  CHECK(setLater.created.empty());
+  CHECK(world.get<Transform>(id).value().localPosition.x == 42);
+  CHECK(setOnly.empty());
+}
+
 TEST_CASE("ecs command buffer: a PendingEntity from another buffer is rejected", "[world][ecs][command_buffer]") {
   ecs::World world;
   ecs::CommandBuffer first;

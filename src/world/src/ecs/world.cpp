@@ -252,6 +252,30 @@ void World::forEachMatchingChunk(std::span<const schema::TypeId> types, detail::
   }
 }
 
+void World::forEachMatchingChunk(std::span<const schema::TypeId> types, detail::ConstChunkVisitor visitor,
+                                 void* context) const {
+  const QueryDepthGuard guard{queryDepth_};
+  std::vector<std::size_t> columnIndex(types.size());
+  std::vector<const std::byte*> columns(types.size());
+  for (const auto& archetypePtr : archetypes_) {
+    const Archetype& archetype = *archetypePtr;
+    bool matches = true;
+    for (std::size_t i = 0; i < types.size() && matches; ++i) {
+      const auto column = archetype.columnOf(types[i]);
+      matches = column.has_value();
+      if (matches) columnIndex[i] = *column;
+    }
+    if (!matches) continue;
+    for (std::uint32_t chunk = 0; chunk < archetype.chunks.size(); ++chunk) {
+      for (std::size_t i = 0; i < types.size(); ++i) {
+        columns[i] = archetype.chunks[chunk].memory.get() + archetype.columns[columnIndex[i]].offset;
+      }
+      const detail::ConstChunkView view{archetype.chunks[chunk].rows, archetype.entities(chunk), columns.data()};
+      visitor(context, view);
+    }
+  }
+}
+
 EntityId World::forceGenerationForTesting(EntityId id, std::uint64_t generation) {
   ATLANTIS_CHECK_MSG(validate(id).isOk(), "forceGenerationForTesting(): id does not name a live entity");
   detail::EntityRecord& record = entities_[id.index_];

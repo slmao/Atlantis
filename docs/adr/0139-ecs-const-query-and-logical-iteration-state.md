@@ -1,11 +1,12 @@
 # ADR 0139: Const ECS Query and Logical Iteration State
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-01
-- **Deciders:** slmao (pending)
-- **Acceptance:** Pending joint human review in [PR #314](https://github.com/slmao/Atlantis/pull/314).
-- **Related Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (In Review)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-01; [joint acceptance evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026), [PR #314](https://github.com/slmao/Atlantis/pull/314) manually merged.
+- **Related Spec:** [Spec 0075](../specs/0075-ecs-const-query.md) (Approved)
 - **Related ADR(s):** Extends [ADR-0101 D6](0101-runtime-ecs-core-storage-identity-and-placement.md); retains its storage/identity/single-thread rules and [ADR-0102](0102-authoring-runtime-world-separation-and-scene-bake.md). No accepted ADR is superseded or edited.
+- **Successor:** [ADR-0140](0140-distinct-const-query-entry-point.md) (Accepted) supersedes only the same-name public entry selection under approved Spec 0076; this decision's remaining scope and historical body are retained.
 
 ## Context
 

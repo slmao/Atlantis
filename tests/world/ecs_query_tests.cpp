@@ -3,7 +3,11 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <atlantis/assert.h>
@@ -42,7 +46,396 @@ struct RecordAssertions {
   RecordAssertions& operator=(const RecordAssertions&) = delete;
 };
 
+struct ReadTransform {
+  void operator()(ecs::EntityId, const Transform&) const;
+};
+struct WriteTransform {
+  void operator()(ecs::EntityId, Transform&) const;
+};
+struct ReadPair {
+  void operator()(ecs::EntityId, const Transform&, const Renderable&) const;
+};
+struct ReadId {
+  void operator()(ecs::EntityId) const;
+};
+struct WriteId {
+  void operator()(ecs::EntityId&) const;
+};
+struct RvalueOnlyRead {
+  void operator()(ecs::EntityId, const Transform&) &&;
+};
+
+template <typename W, typename Fn, typename... Ts>
+concept CanQuery = requires(W& world, Fn& fn) { world.template query<Ts...>(fn); };
+
+template <typename W, typename Fn, typename... Ts>
+concept CanReadOnlyQuery = requires(W& world, Fn& fn) { world.template queryReadOnly<Ts...>(fn); };
+
+static_assert(CanReadOnlyQuery<const ecs::World, ReadTransform, Transform>);
+static_assert(CanReadOnlyQuery<const ecs::World, ReadTransform, const Transform>);
+static_assert(CanReadOnlyQuery<const ecs::World, ReadPair, const Transform, Renderable>);
+static_assert(CanReadOnlyQuery<const ecs::World, ReadId>);
+static_assert(CanReadOnlyQuery<ecs::World, ReadTransform, Transform>);
+static_assert(!CanReadOnlyQuery<const ecs::World, WriteTransform, Transform>);
+static_assert(!CanReadOnlyQuery<const ecs::World, WriteTransform, const Transform>);
+static_assert(!CanReadOnlyQuery<const ecs::World, WriteId>);
+static_assert(!CanReadOnlyQuery<const ecs::World, RvalueOnlyRead, Transform>);
+static_assert(!CanReadOnlyQuery<const ecs::World, decltype(&ecs::EntityId::index)>);
+static_assert(!CanReadOnlyQuery<const ecs::World, ReadTransform, int>);
+static_assert(!CanReadOnlyQuery<const ecs::World, ReadTransform, Transform&>);
+static_assert(!CanReadOnlyQuery<const ecs::World, ReadTransform, volatile Transform>);
+static_assert(!CanQuery<const ecs::World, ReadTransform, Transform>);
+static_assert(!CanQuery<const ecs::World, ReadTransform, const Transform>);
+static_assert(!CanQuery<const ecs::World, ReadId>);
+static_assert(CanQuery<ecs::World, WriteTransform, Transform>);
+
+[[nodiscard]] ecs::World populatedWorld() {
+  ecs::World world;
+  for (float x : {1.0f, 2.0f}) {
+    const auto id = world.createEntity();
+    REQUIRE(world.add<Transform>(id, at(x)).isOk());
+  }
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(3.0f)).isOk());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  return world;
+}
+
 }  // namespace
+
+TEST_CASE("ecs const query: actually const populated worlds support const and mixed terms", "[world][ecs][query][const_query]") {
+  const ecs::World world = populatedWorld();
+  float sum = 0;
+  world.queryReadOnly<Transform>([&](ecs::EntityId id, const Transform& t) {
+    CHECK(world.isValid(id));
+    CHECK(world.has<Transform>(id).value());
+    CHECK(world.get<Transform>(id).value().localPosition.x == t.localPosition.x);
+    sum += t.localPosition.x;
+  });
+  CHECK(sum == 6.0f);
+  std::size_t pairs = 0;
+  world.queryReadOnly<Transform, const Renderable>([&](ecs::EntityId, auto& t, auto& r) {
+    static_assert(std::is_const_v<std::remove_reference_t<decltype(t)>>);
+    static_assert(std::is_const_v<std::remove_reference_t<decltype(r)>>);
+    CHECK(t.localPosition.x == 3.0f);
+    ++pairs;
+  });
+  CHECK(pairs == 1);
+  std::size_t entities = 0;
+  world.queryReadOnly<>([&](ecs::EntityId) { ++entities; });
+  CHECK(entities == 3);
+  std::size_t lights = 0;
+  world.queryReadOnly<const Light>([&](ecs::EntityId, const Light&) { ++lights; });
+  CHECK(lights == 0);
+  const ecs::World empty;
+  empty.queryReadOnly<>([](ecs::EntityId) { FAIL("empty World must not visit a row"); });
+  empty.queryReadOnly<Transform>([](ecs::EntityId, const Transform&) { FAIL("empty World must not match"); });
+}
+
+TEST_CASE("ecs const query: matching order and live addresses equal the mutable walk across chunks",
+          "[world][ecs][query][const_query]") {
+  ecs::World world;
+  const auto probe = world.createEntity();
+  REQUIRE(world.add<Transform>(probe, at(0)).isOk());
+  const auto capacity = ecs::EcsTestAccess::capacity(world, {ecs::componentTypeId<Transform>()});
+  for (std::uint32_t i = 1; i < capacity + 3; ++i) {
+    const auto id = world.createEntity();
+    REQUIRE(world.add<Transform>(id, at(static_cast<float>(i))).isOk());
+  }
+  const auto lit = world.createEntity();
+  REQUIRE(world.add<Transform>(lit, at(-1)).isOk());
+  REQUIRE(world.add<Light>(lit).isOk());
+  const auto drawn = world.createEntity();
+  REQUIRE(world.add<Transform>(drawn, at(-2)).isOk());
+  REQUIRE(world.add<Renderable>(drawn).isOk());
+  [[maybe_unused]] const auto noComponents = world.createEntity();
+  REQUIRE(ecs::EcsTestAccess::chunkCount(world, {ecs::componentTypeId<Transform>()}) == 2);
+
+  struct Sample {
+    ecs::EntityId id;
+    std::uintptr_t address;  // compare addresses as values, never retain borrowed references
+    float x;
+    bool operator==(const Sample&) const = default;
+  };
+  std::vector<Sample> expected;
+  world.query<Transform>([&](ecs::EntityId id, Transform& t) {
+    expected.push_back({id, reinterpret_cast<std::uintptr_t>(&t), t.localPosition.x});
+  });
+  const ecs::World& readOnly = world;
+  for (int repeat = 0; repeat < 2; ++repeat) {
+    std::vector<Sample> actual;
+    readOnly.queryReadOnly<Transform>([&](ecs::EntityId id, const Transform& t) {
+      actual.push_back({id, reinterpret_cast<std::uintptr_t>(&t), t.localPosition.x});
+    });
+    CHECK(actual == expected);
+  }
+  std::vector<Sample> explicitConst;
+  std::as_const(world).queryReadOnly<const Transform>([&](ecs::EntityId id, const Transform& t) {
+    explicitConst.push_back({id, reinterpret_cast<std::uintptr_t>(&t), t.localPosition.x});
+  });
+  CHECK(explicitConst == expected);
+  std::vector<ecs::EntityId> mutableIds, constIds;
+  world.query<>([&](ecs::EntityId id) { mutableIds.push_back(id); });
+  readOnly.queryReadOnly<>([&](ecs::EntityId id) { constIds.push_back(id); });
+  CHECK(constIds == mutableIds);
+  CHECK(constIds.size() == expected.size() + 1);
+  readOnly.queryReadOnly<Transform, const Light>([&](ecs::EntityId id, const Transform& t, const Light&) {
+    CHECK(id == lit);
+    CHECK(t.localPosition.x == -1);
+  });
+}
+
+TEST_CASE("ecs const query: invokes a move-only lvalue callable without moving or copying it",
+          "[world][ecs][query][const_query]") {
+  struct Reader {
+    std::unique_ptr<int> calls = std::make_unique<int>(0);
+    int operator()(ecs::EntityId, const Transform&) & { return ++*calls; }
+  } reader;
+  static_assert(!std::is_copy_constructible_v<Reader>);
+  static_assert(CanReadOnlyQuery<const ecs::World, Reader, Transform>);
+  const ecs::World world = populatedWorld();
+  const int* identity = reader.calls.get();
+  world.queryReadOnly<Transform>(reader);
+  world.queryReadOnly<const Transform>(std::move(reader));
+  REQUIRE(reader.calls.get() == identity);
+  CHECK(*reader.calls == 6);
+}
+
+TEST_CASE("ecs const query: shared guard refuses structural aliases and releases after all exits",
+          "[world][ecs][query][const_query]") {
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  const ecs::World& readOnly = world;
+  RecordAssertions recorded;
+  readOnly.queryReadOnly<Transform>([&](ecs::EntityId current, const Transform& t) {
+    CHECK(world.add<Renderable>(current).error() == ecs::EcsError::StructuralChangeDuringQuery);
+    CHECK(world.remove<Transform>(current).error() == ecs::EcsError::StructuralChangeDuringQuery);
+    CHECK(world.destroyEntity(current).error() == ecs::EcsError::StructuralChangeDuringQuery);
+    CHECK(world.createEntity() == ecs::kInvalidEntityId);
+    CHECK(t.localPosition.x == 1);
+    CHECK(world.has<Transform>(current).value());
+  });
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 4);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+  CHECK(world.isValid(id));
+  CHECK_FALSE(world.has<Renderable>(id).value());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  REQUIRE(world.remove<Renderable>(id).isOk());
+  readOnly.queryReadOnly<Light>([](ecs::EntityId, const Light&) { FAIL("no matching Light"); });
+  REQUIRE(world.add<Renderable>(id).isOk());  // no-match walk balanced the depth too
+  REQUIRE(world.remove<Renderable>(id).isOk());
+
+  struct Interrupted {};
+  // Keep both callback outcomes reachable to the compiler while exercising a
+  // real throw; an unconditionally throwing row makes MSVC flag the loop step.
+  CHECK_THROWS_AS(readOnly.queryReadOnly<Transform>([&](ecs::EntityId current, const Transform&) {
+    if (readOnly.isValid(current)) throw Interrupted{};
+  }), Interrupted);
+  REQUIRE(world.add<Renderable>(id).isOk());  // test-owned unwinding left no active query
+}
+
+TEST_CASE("ecs const query: nested paths share protection until the outermost exit and keep live aliases",
+          "[world][ecs][query][const_query]") {
+  bool mutableOuter = false;
+  bool mutableInner = false;
+  SECTION("read/read") {}
+  SECTION("read/mutable") { mutableInner = true; }
+  SECTION("mutable/read") { mutableOuter = true; }
+
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  const ecs::World& readOnly = world;
+  ecs::World other;
+  RecordAssertions recorded;
+  const auto checkProtected = [&] {
+    REQUIRE(world.createEntity() == ecs::kInvalidEntityId);
+    const auto destroyed = world.destroyEntity(id);
+    REQUIRE_FALSE(destroyed.isOk());
+    CHECK(destroyed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto added = world.add<Renderable>(id);
+    REQUIRE_FALSE(added.isOk());
+    CHECK(added.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto removed = world.remove<Transform>(id);
+    REQUIRE_FALSE(removed.isOk());
+    CHECK(removed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+  };
+
+  std::size_t outerCalls = 0;
+  std::size_t innerCalls = 0;
+  auto outer = [&](ecs::EntityId current, auto& value) {
+    ++outerCalls;
+    CHECK(current == id);
+    CHECK(world.has<Transform>(current).value());
+    REQUIRE(world.set<Transform>(current, at(2)).isOk());
+    CHECK(value.localPosition.x == 2);  // a const projection is live, not a copy
+    auto inner = [&](ecs::EntityId nested, auto& nestedValue) {
+      ++innerCalls;
+      CHECK(nested == current);
+      CHECK(&nestedValue == &value);
+      REQUIRE(world.set<Transform>(nested, at(3)).isOk());
+      CHECK(nestedValue.localPosition.x == 3);
+      CHECK(value.localPosition.x == 3);
+      checkProtected();
+
+      const auto foreign = other.createEntity();
+      REQUIRE(foreign != ecs::kInvalidEntityId);
+      REQUIRE(other.add<Transform>(foreign).isOk());
+      REQUIRE(other.remove<Transform>(foreign).isOk());
+      REQUIRE(other.destroyEntity(foreign).isOk());
+    };
+    if (mutableInner) world.query<Transform>(inner);
+    else readOnly.queryReadOnly<Transform>(inner);
+    checkProtected();  // the inner exit must not release the outer guard
+    CHECK(world.get<Transform>(current).value().localPosition.x == 3);
+    CHECK(value.localPosition.x == 3);
+
+    std::size_t noMatches = 0;
+    readOnly.queryReadOnly<Light>([&](ecs::EntityId, const Light&) { ++noMatches; });
+    CHECK(noMatches == 0);
+    checkProtected();  // a no-match nested walk must balance its own guard
+  };
+  if (mutableOuter) world.query<Transform>(outer);
+  else readOnly.queryReadOnly<Transform>(outer);
+
+  CHECK(outerCalls == 1);
+  CHECK(innerCalls == 1);
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 12);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+  CHECK(world.get<Transform>(id).value().localPosition.x == 3);
+  CHECK_FALSE(world.has<Renderable>(id).value());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  REQUIRE(world.remove<Transform>(id).isOk());
+  REQUIRE(world.destroyEntity(id).isOk());
+  CHECK(world.createEntity() != ecs::kInvalidEntityId);
+}
+
+TEST_CASE("ecs const query: nested unwinding keeps the outer guard and then releases both paths",
+          "[world][ecs][query][const_query]") {
+  bool mutableOuter = false;
+  bool mutableInner = false;
+  SECTION("read/read") {}
+  SECTION("read/mutable") { mutableInner = true; }
+  SECTION("mutable/read") { mutableOuter = true; }
+
+  ecs::World world;
+  const auto id = world.createEntity();
+  REQUIRE(world.add<Transform>(id, at(1)).isOk());
+  const ecs::World& readOnly = world;
+  RecordAssertions recorded;
+  struct Interrupted {};
+  auto outer = [&](ecs::EntityId current, auto&) {
+    auto inner = [&](ecs::EntityId nested, auto&) {
+      if (readOnly.isValid(nested)) throw Interrupted{};
+    };
+    const auto runInner = [&] {
+      if (mutableInner) world.query<Transform>(inner);
+      else readOnly.queryReadOnly<Transform>(inner);
+    };
+    CHECK_THROWS_AS(runInner(), Interrupted);
+    REQUIRE(world.createEntity() == ecs::kInvalidEntityId);
+    const auto added = world.add<Renderable>(current);
+    REQUIRE_FALSE(added.isOk());
+    CHECK(added.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto removed = world.remove<Transform>(current);
+    REQUIRE_FALSE(removed.isOk());
+    CHECK(removed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    const auto destroyed = world.destroyEntity(current);
+    REQUIRE_FALSE(destroyed.isOk());
+    CHECK(destroyed.error() == ecs::EcsError::StructuralChangeDuringQuery);
+    if (readOnly.isValid(current)) throw Interrupted{};
+  };
+  const auto runOuter = [&] {
+    if (mutableOuter) world.query<Transform>(outer);
+    else readOnly.queryReadOnly<Transform>(outer);
+  };
+  CHECK_THROWS_AS(runOuter(), Interrupted);
+#if !defined(NDEBUG)
+  CHECK(recorded.messages.size() == 4);
+#else
+  CHECK(recorded.messages.empty());
+#endif
+  CHECK(world.get<Transform>(id).value().localPosition.x == 1);
+  CHECK_FALSE(world.has<Renderable>(id).value());
+  REQUIRE(world.add<Renderable>(id).isOk());
+  REQUIRE(world.remove<Transform>(id).isOk());
+  REQUIRE(world.destroyEntity(id).isOk());
+  CHECK(world.createEntity() != ecs::kInvalidEntityId);
+}
+
+TEST_CASE("ecs const query: existing generic mutable callbacks keep writable references",
+          "[world][ecs][query][const_query]") {
+  ecs::World world = populatedWorld();
+  world.query<Transform>([](ecs::EntityId, auto& t) { t.localPosition.x *= 2.0f; });
+  float sum = 0;
+  world.query<const Transform>([&](ecs::EntityId, const auto& t) { sum += t.localPosition.x; });
+  CHECK(sum == 12.0f);
+}
+
+TEST_CASE("ecs query: legacy generic id categories survive all-const and empty queries",
+          "[world][ecs][query][const_query]") {
+  ecs::World world = populatedWorld();
+  std::size_t components = 0;
+  world.query<const Transform>([&](auto&& id, const auto& t) {
+    static_assert(std::is_same_v<decltype(id), const ecs::EntityId&>);
+    static_assert(std::is_same_v<decltype(t), const Transform&>);
+    CHECK(world.get<Transform>(id).value().localPosition.x == t.localPosition.x);
+    ++components;
+  });
+  std::size_t entities = 0;
+  world.query<>([&](auto&& id) {
+    static_assert(std::is_same_v<decltype(id), const ecs::EntityId&>);
+    CHECK(world.isValid(id));
+    ++entities;
+  });
+  CHECK(components == 3);
+  CHECK(entities == 3);
+}
+
+TEST_CASE("ecs query: legacy receivers and lvalue overloads remain independent of read-only access",
+          "[world][ecs][query][const_query]") {
+  struct Callback {
+    std::unique_ptr<int> writable = std::make_unique<int>(0);
+    int oldRead = 0;
+    int newRead = 0;
+    void operator()(const ecs::EntityId&, Transform& t) & {
+      ++*writable;
+      t.localPosition.x += 1;
+    }
+    void operator()(const ecs::EntityId&, const Transform&) & { ++oldRead; }
+    void operator()(ecs::EntityId&&, const Transform&) & { ++newRead; }
+  } callback;
+  static_assert(!std::is_copy_constructible_v<Callback>);
+  ecs::World world = populatedWorld();
+  const int* identity = callback.writable.get();
+  world.query<Transform>(callback);
+  world.query<const Transform>(std::move(callback));
+  std::move(world).query<Transform>(callback);  // original unqualified receiver accepts rvalues
+  world.queryReadOnly<Transform>(callback);
+  std::as_const(world).queryReadOnly<const Transform>(callback);
+  REQUIRE(callback.writable.get() == identity);
+  CHECK(*callback.writable == 6);
+  CHECK(callback.oldRead == 3);
+  CHECK(callback.newRead == 6);
+  float sum = 0;
+  world.query<const Transform>([&](ecs::EntityId, const auto& t) { sum += t.localPosition.x; });
+  CHECK(sum == 12.0f);
+  std::size_t mixed = 0;
+  world.query<Transform, const Renderable>([&](auto&& id, auto& t, auto& r) {
+    static_assert(std::is_same_v<decltype(id), const ecs::EntityId&>);
+    static_assert(std::is_same_v<decltype(t), Transform&>);
+    static_assert(std::is_same_v<decltype(r), const Renderable&>);
+    ++mixed;
+  });
+  CHECK(mixed == 1);
+}
 
 TEST_CASE("ecs query: matches every archetype that contains all requested types", "[world][ecs][query]") {
   ecs::World world;
