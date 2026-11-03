@@ -8,6 +8,7 @@
   recommended, and accepted ADR-0139 on 2026-11-01; [approval evidence](https://github.com/slmao/Atlantis/pull/314#issuecomment-6553843026).
   S2–S4 authorized on an independent latest-main branch after manual merge of
   [PR #314](https://github.com/slmao/Atlantis/pull/314), now merged; no Runtime consumer changes or #307 dependency.
+- **Implementation:** S2–S4 completed in [PR #315](https://github.com/slmao/Atlantis/pull/315#issuecomment-6610075384), including latest-main integration and its own compliant formal gate. Current owner authority under 0080 supersedes the earlier execution holds; history is retained and human review/merge remains pending.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
