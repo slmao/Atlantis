@@ -76,6 +76,7 @@ internal static partial class Program
             ArgumentChecks();
             RefusalChecks();
             await McpChecks();
+            await VersionChecks();
             int at = Array.IndexOf(args, "--repo");
             string repo = at >= 0 ? args[at + 1] : Directory.GetCurrentDirectory();
             CompositionChecks(repo);

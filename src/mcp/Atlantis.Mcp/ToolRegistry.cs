@@ -85,8 +85,20 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 };
                 return ValueTask.FromResult(result);
             },
-            CallToolHandler = (request, token) => ValueTask.FromResult(Invoke(request.Params, token)),
+            CallToolHandler = (request, token) => ValueTask.FromResult(
+                ForProtocol(Invoke(request.Params, token), request.Server.NegotiatedProtocolVersion)),
         };
+    }
+
+    // Before 2026-07-28, MCP requires an object here. Only the MCP envelope changes;
+    // the original Atlantis JSON text, error flag and any image content stay intact.
+    internal static CallToolResult ForProtocol(CallToolResult result, string? protocolVersion)
+    {
+        if (protocolVersion is not null && string.CompareOrdinal(protocolVersion, "2026-07-28") < 0
+            && result.StructuredContent is JsonElement structured && structured.ValueKind != JsonValueKind.Object)
+            result.StructuredContent = JsonSerializer.SerializeToElement(
+                new Dictionary<string, JsonElement> { ["result"] = structured });
+        return result;
     }
 
     internal CallToolResult Invoke(CallToolRequestParams? request, CancellationToken token = default)

@@ -1299,7 +1299,11 @@ command, policy, retry or privileged capability. Schema tools return the
 engine's descriptors; document edits reach the Runtime on explicit apply,
 whereas World writes are disposable runtime changes.
 
-Wire results are preserved as structured JSON and matching JSON text.
+Wire results retain their original JSON text. With MCP 2026-07-28 and later,
+structured content is the same JSON value; for older negotiated revisions,
+a non-object value is wrapped as `{"result": <wire value>}` to satisfy MCP's
+object-only structured-content shape. Object values, refusal flags and image
+blocks are unchanged; this compatibility envelope adds no Atlantis semantics.
 Refusals retain their reason strings as MCP tool errors. In particular,
 `authoring.drain_failures` forwards `authoring.drainFailures` with `{}`,
 returning the complete ordered ticket/error array: an empty array succeeds,
