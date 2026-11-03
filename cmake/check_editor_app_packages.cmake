@@ -17,9 +17,17 @@
 if(NOT ATLANTIS_SOURCE_DIR)
   message(FATAL_ERROR "pass -DATLANTIS_SOURCE_DIR=<repository root>")
 endif()
-if(NOT EDITOR_APP_DIR)
-  set(EDITOR_APP_DIR "${ATLANTIS_SOURCE_DIR}/src/editor_app")
+# Spec 0070 (Plan 0070 J5): one script over every managed area. AREA_DIR names
+# the area; EDITOR_APP_DIR is the original spelling (the editor app's negative
+# tests still use it) and wins only when AREA_DIR is absent.
+if(AREA_DIR)
+  set(_area_dir "${AREA_DIR}")
+elseif(EDITOR_APP_DIR)
+  set(_area_dir "${EDITOR_APP_DIR}")
+else()
+  set(_area_dir "${ATLANTIS_SOURCE_DIR}/src/editor_app")
 endif()
+set(EDITOR_APP_DIR "${_area_dir}")
 
 set(_failures "")
 

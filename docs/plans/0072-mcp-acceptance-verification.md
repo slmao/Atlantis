@@ -1,15 +1,18 @@
 # Plan: MCP Acceptance — Applicability, Pinning Test Capability and Bounded Investigation
 
-- **Spec:** [Spec 0072](../specs/0072-mcp-acceptance-verification.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0072](../specs/0072-mcp-acceptance-verification.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of this Plan and Spec 0072 together in
-  [PR #309](https://github.com/slmao/Atlantis/pull/309); no implementation authorization.
-  The current request ends after review submission even if a ruling arrives.
+- **Joint Human Review:** slmao, 2026-10-31 — this Plan and Spec 0072 reviewed together;
+  J1–J4 each approved as recommended. [Owner ruling and distinct authorization](https://github.com/slmao/Atlantis/pull/309#issuecomment-6539457400).
+  **Authorization:** S2–S4 on `feature/0070-agent-tool-layer` in PR #307 after the human merge
+  of PR #309 (satisfied 2026-10-31, 13:14:56 China Standard Time), within the approved scope,
+  budget and stops. Missing Windows 11 verification and unresolved performance stay blocking;
+  PR #307 stays Draft. Stop after this execution; no automatic merge.
 - **Related:** Approved [Plan 0070](0070-agent-tool-layer.md) M5 and
   [Plan 0071](0071-agent-tool-authoring-failures.md) S5;
   [PR #307 diagnosis](https://github.com/slmao/Atlantis/pull/307#issuecomment-6539088905).
-- **ADR disposition proposed:** retain Accepted ADR-0118/0119/0130/0138 unchanged; Spec Architectural Impact.
+- **ADR disposition:** J4 confirmed; Accepted ADR-0118/0119/0130/0138 retained unchanged.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 This is an additive review proposal; approved documents do not become execution journals.

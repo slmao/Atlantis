@@ -1,0 +1,8 @@
+# Atlantis MCP (Spec 0070; ADR-0138 D2): the direct NuGet packages a project
+# under src/mcp/ may reference. One package id per line; '#' starts a comment.
+# Adding a package is a reviewed change naming its licence. Checked by
+# cmake/check_editor_app_packages.cmake (parameterized over the managed areas).
+#
+# Plan 0070 J1: the official MCP C# SDK only (MIT,
+# https://github.com/modelcontextprotocol/csharp-sdk).
+ModelContextProtocol

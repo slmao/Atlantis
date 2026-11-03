@@ -1,11 +1,13 @@
 # Spec: Authoring Failure Drain for the Agent Tool Layer
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-10-30
-- **Related Plan(s):** [Plan 0071](../plans/0071-agent-tool-authoring-failures.md) (In Review)
-- **Approval:** Pending in [PR #308](https://github.com/slmao/Atlantis/pull/308);
-  this proposal does not authorize implementation.
+- **Related Plan(s):** [Plan 0071](../plans/0071-agent-tool-authoring-failures.md) (Approved;
+  joint review and conditional implementation authorization recorded in its header)
+- **Approval:** slmao, 2026-10-31 — J1–J4 each as recommended, existing ADRs retained;
+  [owner ruling](https://github.com/slmao/Atlantis/pull/308#issuecomment-6528146125) on
+  [PR #308](https://github.com/slmao/Atlantis/pull/308) (merged).
 - **Related ADR(s):** [ADR-0138](../adr/0138-agent-tool-layer-host.md) and
   [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md), both Accepted and
   proposed unchanged; see Architectural Impact.
@@ -159,8 +161,7 @@ be drafted and reach Accepted before implementation authorization; Accepted ADRs
   keeps consumption explicit and the live test must drain the submitting connection.
 - An ordinary valid overwrite can succeed after another client's write. R5 deliberately tests
   a stale structural address instead of asserting a nonexistent concurrency refusal.
-- The requested rulings and distinct implementation gate are recorded once in Plan 0071's
-  Joint Review section; all are pending.
+- The rulings and distinct implementation authorization are recorded once in Plan 0071's header.
 
 ## Out of Scope / Future Work
 

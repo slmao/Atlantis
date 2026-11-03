@@ -1,11 +1,12 @@
 # Spec: MCP Acceptance — Applicability, Pinning Test Capability and Bounded Investigation
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
 - **Created:** 2026-10-31
-- **Related Plan(s):** [Plan 0072](../plans/0072-mcp-acceptance-verification.md) (In Review)
-- **Approval:** Pending joint human review in [PR #309](https://github.com/slmao/Atlantis/pull/309);
-  no implementation authorization.
+- **Related Plan(s):** [Plan 0072](../plans/0072-mcp-acceptance-verification.md) (Approved)
+- **Approval:** slmao, 2026-10-31 — J1–J4 each as recommended; existing ADRs retained.
+  [Owner ruling](https://github.com/slmao/Atlantis/pull/309#issuecomment-6539457400) on
+  [PR #309](https://github.com/slmao/Atlantis/pull/309), human-merged 2026-10-31.
 - **Related ADR(s):** ADR-0118, ADR-0119, ADR-0130 and ADR-0138 retained; see Architectural Impact.
 - **Supplements:** [Spec 0070](0070-agent-tool-layer.md) / [Plan 0070](../plans/0070-agent-tool-layer.md)
   M5 and [Spec 0071](0071-agent-tool-authoring-failures.md) / [Plan 0071](../plans/0071-agent-tool-authoring-failures.md) S5.
