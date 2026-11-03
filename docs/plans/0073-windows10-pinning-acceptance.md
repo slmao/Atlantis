@@ -1,11 +1,12 @@
 # Plan: Windows 10 Acceptance Scope for the Pinning Test Repair
 
-- **Spec:** [Spec 0073](../specs/0073-windows10-pinning-acceptance.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0073](../specs/0073-windows10-pinning-acceptance.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of Spec 0073 and this Plan together in
-  [PR #310](https://github.com/slmao/Atlantis/pull/310). Owner direction is the proposal's basis,
-  not a completed joint gate.
+- **Joint Human Review:** slmao jointly approved Spec 0073 and this Plan on 2026-10-31,
+  J1–J3 each as recommended; [approval and distinct S2–S3 authorization](https://github.com/slmao/Atlantis/pull/310#issuecomment-6544807766).
+  Execution in PR #307 was conditional on the human merge of PR #310, satisfied by `447b03f`.
+  No new live observation or performance execution is authorized.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

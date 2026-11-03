@@ -1,11 +1,15 @@
 # Plan: Temporary Observer Environment Evidence and Identity Boundaries
 
-- **Spec:** [Spec 0078](../specs/0078-observer-environment-identity.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0078](../specs/0078-observer-environment-identity.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's explicit direction
-- **Joint Human Review:** Pending review of Spec 0078 and this Plan together in
-  [PR #318](https://github.com/slmao/Atlantis/pull/318);
-  no implementation or live execution is authorized by this proposal.
+- **Joint Human Review:** slmao jointly approved Spec 0078 and this Plan, J1–J4 as recommended,
+  2026-11-01, retaining existing ADRs; [owner ruling and distinct S2 authorization](https://github.com/slmao/Atlantis/pull/318#issuecomment-6560323466).
+  The human merge prerequisite is satisfied by `bb76829`. S2 is authorized under a new
+  independent 45-minute offline budget, including verification/reporting, now closed.
+  [Distinct S3 authorization](https://github.com/slmao/Atlantis/pull/307#issuecomment-6560793258),
+  slmao, 2026-11-02: new independent 150-minute execution under R5's fixed order/caps/stops.
+  #307 stays Draft; all old evidence is retained and no merge is authorized.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
