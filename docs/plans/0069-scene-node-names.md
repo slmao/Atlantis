@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0069](../specs/0069-scene-node-names.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's direction
-- **Joint Human Review:** Pending review of this Plan, Spec 0069 and proposed ADR-0141/0142 together; no implementation authorization yet
+- **Joint Human Review:** Pending in [PR #323](https://github.com/slmao/Atlantis/pull/323), reviewing this Plan, Spec 0069 and proposed ADR-0141/0142 together; no implementation authorization yet
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
