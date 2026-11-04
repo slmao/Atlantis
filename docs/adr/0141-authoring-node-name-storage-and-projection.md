@@ -1,9 +1,9 @@
 # ADR 0141: Authoring Node Name Storage and Runtime Projection
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-04
-- **Deciders:** slmao, pending joint review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-04; [joint ruling](https://github.com/slmao/Atlantis/pull/323#issuecomment-6634427244), J1–J4 as recommended; PR #323 manually merged.
 - **Related Spec:** [Spec 0069](../specs/0069-scene-node-names.md), R1–R3
 - **Related ADRs:** Extends [ADR-0100](0100-scene-semantic-schema-layering-model-and-versioning.md) and the scene format policy in [ADR-0045](0045-asset-system-data-format-versioning-and-dependency-policy.md)/[ADR-0053](0053-scene-artifact-format-versioning-and-node-identity.md). Accepted historical text is retained.
 

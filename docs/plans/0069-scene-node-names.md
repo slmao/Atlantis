@@ -1,9 +1,9 @@
 # Plan: Scene Node Display Names
 
-- **Spec:** [Spec 0069](../specs/0069-scene-node-names.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0069](../specs/0069-scene-node-names.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
-- **Joint Human Review:** Pending in [PR #323](https://github.com/slmao/Atlantis/pull/323), reviewing this Plan, Spec 0069 and proposed ADR-0141/0142 together; no implementation authorization yet
+- **Joint Human Review:** slmao jointly approved this Plan and Spec 0069, J1–J4 as recommended, and accepted ADR-0141/0142 on 2026-11-04; [ruling](https://github.com/slmao/Atlantis/pull/323#issuecomment-6634427244). PR #323 manually merged as `1e04452`; S2–S4 authorized on an independent latest-main branch under 0080 through a review-ready PR. Human final review/merge remains separate.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
