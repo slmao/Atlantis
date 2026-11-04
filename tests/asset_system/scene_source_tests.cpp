@@ -167,6 +167,20 @@ TEST_CASE("source8 names preserve exact text and source7 remains a strict unname
   const std::string valid = serializeSceneSource(source);
   const auto slot = valid.find("name=\"ok\"");
   REQUIRE(slot != std::string::npos);
+  auto explicitEmpty = valid;
+  explicitEmpty.replace(slot, std::string_view("name=\"ok\"").size(), "name=\"\"");
+  const auto emptyBack = parseSceneSource(explicitEmpty);
+  REQUIRE(emptyBack.isOk());
+  CHECK(emptyBack.value().nodes[0].name.empty());
+  CHECK(serializeSceneSource(emptyBack.value()).find("name=") == std::string::npos);
+
+  auto danglingEscape = valid;
+  const auto lineEnd = danglingEscape.find('\n', slot);
+  REQUIRE(lineEnd != std::string::npos);
+  danglingEscape.replace(slot, lineEnd - slot, std::string("name=\"dangling") + '\\');
+  const auto danglingBack = parseSceneSource(danglingEscape);
+  REQUIRE(danglingBack.isErr());
+  CHECK(danglingBack.error() == SceneSourceParseError::InvalidNodeName);
   for (const std::string replacement : {std::string("name=ok"), std::string("name=\"unterminated"),
                                         std::string("name=\"bad\\q\""), std::string("name=\"x\" name=\"y\""),
                                         std::string("name=\"x\"parent=none"), std::string("name=\"\xc0\xaf\""),
