@@ -27,13 +27,13 @@ public sealed record ComponentState(TypeId Type, IReadOnlyList<(SceneAddress Add
         Values.Zip(other.Values).All(p => p.First.Address == p.Second.Address && p.First.Value.Equals(p.Second.Value));
 }
 
-/// <summary>A node: its place in the order, its parent and children, and each component's state (sorted by type).</summary>
+/// <summary>A node's name, place in the order, parent and children, and each component's state (sorted by type).</summary>
 public sealed record NodeState(EntityGuid Node, ulong Position, EntityGuid? Parent, IReadOnlyList<EntityGuid> Children,
-                               IReadOnlyList<ComponentState> Components)
+                               IReadOnlyList<ComponentState> Components, string Name = "")
 {
     /// <summary>The same parent, children (as a set), components and values; the position is not compared (D3: it shifts).</summary>
     public bool SameAs(NodeState other) =>
-        Parent == other.Parent && Children.Count == other.Children.Count && !Children.Except(other.Children).Any() &&
+        Name == other.Name && Parent == other.Parent && Children.Count == other.Children.Count && !Children.Except(other.Children).Any() &&
         Components.Count == other.Components.Count && Components.Zip(other.Components).All(p => p.First.SameAs(p.Second));
 }
 
@@ -49,6 +49,8 @@ public sealed record ComponentLife(EntityGuid Node, ComponentState State, bool A
 public sealed record ActiveCameraEntry(EntityGuid? Before, EntityGuid? After) : EditEntry;
 
 public sealed record ParentEntry(EntityGuid Node, EntityGuid? Before, EntityGuid? After) : EditEntry;
+
+public sealed record NameEntry(EntityGuid Node, string Before, string After) : EditEntry;
 
 /// <summary>What a step needs to read of the document to compare it with a record (ADR-0136 D3).</summary>
 public interface IDocumentView
@@ -116,7 +118,7 @@ public sealed class DocumentView : IDocumentView
             }
             int count = _tree.ComponentsOf(node).Count;
             result.Add(new NodeState(node, (ulong)positions[node], _tree.ParentOf(node), _tree.ChildrenOf(node).ToList(),
-                                     states.Skip(next).Take(count).ToList()));
+                                     states.Skip(next).Take(count).ToList(), _tree.NameOf(node)));
             next += count;
         }
         return result;
@@ -200,6 +202,13 @@ public static class StructuralSteps
                 case ActiveCameraEntry camera:
                     if (view.ActiveCamera() != (forward ? camera.Before : camera.After)) return HistoryResult.ChangedElsewhere;
                     break;
+                case NameEntry name:
+                {
+                    NodeState? now = view.ReadNode(name.Node);
+                    if (now is null) return HistoryResult.Invalidated;
+                    if (now.Name != (forward ? name.Before : name.After)) return HistoryResult.ChangedElsewhere;
+                    break;
+                }
                 case ParentEntry parent:
                 {
                     if (!view.Exists(parent.Node)) return HistoryResult.Invalidated;
@@ -243,6 +252,7 @@ public static class StructuralSteps
                         commands.Add(new CreateNode(state.Node, state.Position,
                                                     state.Components.Where(c => c.Type != transform).Select(c => c.Type).ToList()));
                         foreach (ComponentState component in state.Components) AddValues(commands, component);
+                        if (state.Name.Length > 0) commands.Add(new SetNodeName(state.Node, state.Name));
                         if (state.Parent is EntityGuid parent) commands.Add(new SetParent(state.Node, parent));
                     }
                     break;
@@ -258,6 +268,9 @@ public static class StructuralSteps
                     break;
                 case ParentEntry parent:
                     commands.Add(new SetParent(parent.Node, forward ? parent.After : parent.Before));
+                    break;
+                case NameEntry name:
+                    commands.Add(new SetNodeName(name.Node, forward ? name.After : name.Before));
                     break;
             }
         }
@@ -291,6 +304,7 @@ public sealed class EditRecorder
     private sealed record RemoveDraft(EntityGuid Node, TypeId Type) : Draft;
     private sealed record CameraDraft(EntityGuid? Before, EntityGuid? After) : Draft;
     private sealed record ParentDraft(EntityGuid Node, EntityGuid? Before, EntityGuid? After) : Draft;
+    private sealed record NameDraft(EntityGuid Node, string Before, string After) : Draft;
 
     private readonly IAuthoringDocument _document;
     private readonly DocumentView _view;
@@ -316,6 +330,7 @@ public sealed class EditRecorder
         var createdAt = new Dictionary<EntityGuid, int>();
         EntityGuid? camera = null;
         bool cameraRead = false;
+        var nameAt = new Dictionary<EntityGuid, int>();
         foreach (Command command in plan.Commands)
         {
             switch (command)
@@ -324,6 +339,19 @@ public sealed class EditRecorder
                     if (!created.Contains(set.Address.Node) && !added.Contains((set.Address.Node, set.Address.Component)))
                     {
                         recorder._drafts.Add(new WriteDraft(set.Address, set.Value));
+                    }
+                    break;
+                case SetNodeName rename:
+                    if (!created.Contains(rename.Node))
+                    {
+                        if (!tree.Contains(rename.Node)) return null;
+                        if (nameAt.TryGetValue(rename.Node, out int nameIndex))
+                            recorder._drafts[nameIndex] = ((NameDraft)recorder._drafts[nameIndex]) with { After = rename.Name };
+                        else
+                        {
+                            nameAt[rename.Node] = recorder._drafts.Count;
+                            recorder._drafts.Add(new NameDraft(rename.Node, tree.NameOf(rename.Node), rename.Name));
+                        }
                     }
                     break;
                 case CreateNode { Node: EntityGuid node } create:
@@ -379,6 +407,8 @@ public sealed class EditRecorder
                                                                     .Select(type => (c.Node, type))).ToList();
         var additions = _drafts.OfType<AddDraft>().Select(a => (a.Node, a.Type)).ToList();
         IReadOnlyList<ComponentState> created = _view.ReadComponents(creations.Concat(additions).ToList());
+        var createdNames = _drafts.OfType<CreateDraft>().Any()
+            ? _document.ListNodes().ToDictionary(n => n.Node, n => n.Name) : new Dictionary<EntityGuid, string>();
         var writes = new List<PropertyWrite>();
         var entries = new List<EditEntry>();
         int write = 0, destroyed = 0, removed = 0, createdRead = 0, addedRead = creations.Count;
@@ -393,7 +423,8 @@ public sealed class EditRecorder
                 {
                     int count = (transform is null ? 0 : 1) + c.Extra.Count;
                     entries.Add(new NodeLife(new NodeState(c.Node, c.Position, c.Parent, Array.Empty<EntityGuid>(),
-                                                           created.Skip(createdRead).Take(count).ToList()), true));
+                                                           created.Skip(createdRead).Take(count).ToList(),
+                                                           createdNames[c.Node]), true));
                     createdRead += count;
                     break;
                 }
@@ -411,6 +442,9 @@ public sealed class EditRecorder
                     break;
                 case ParentDraft parent:
                     entries.Add(new ParentEntry(parent.Node, parent.Before, parent.After));
+                    break;
+                case NameDraft name:
+                    entries.Add(new NameEntry(name.Node, name.Before, name.After));
                     break;
             }
         }

@@ -42,6 +42,7 @@ public static class CodecSuite
 
         Edges(t, wires);
         AuthoringEdges(t, wires);
+        NodeNameEdges(t);
         OverlayEdges(t, wires);
         Refusals(t);
     }
@@ -243,6 +244,32 @@ public static class CodecSuite
     }
 
     // Plan 0065 P6: the authoring vectors' exact C# values.
+    private static void NodeNameEdges(TestContext t)
+    {
+        var node = EntityGuid.Parse("58005800-0000-4000-8000-0000000000b1");
+        string boundary = new string('a', 251) + "😀";
+        foreach (string name in new[] { "", "same", "  名 \"\\ ", boundary })
+        {
+            t.Check(A.NodeNames.IsValid(name), "valid exact name: " + name.Length);
+            var command = new A.SetNodeName(node, name);
+            t.Equal<A.Command?>(command, Codec.DecodeAuthoringCommand(Codec.Encode(command)), "rename command exact round trip");
+            var evt = new A.NodeNameChanged(node, name);
+            t.Equal<A.Event?>(evt, Codec.DecodeAuthoringEvent(Codec.Encode(evt)), "rename event exact round trip");
+            var summary = new A.NodeSummary(node, null, name);
+            t.Equal<A.NodeSummary?>(summary, Codec.DecodeNodeSummary(Codec.Encode(summary)), "named summary exact round trip");
+        }
+        foreach (string invalid in new[] { boundary + "a", "\0", "\n", "\u007f", "\u0085", "\u2028", "\u2029", "\ud800", "\udc00" })
+            t.Check(!A.NodeNames.IsValid(invalid), "reject invalid UTF-8 domain or unpaired UTF-16");
+        t.Throws<ArgumentException>(() => Codec.Encode(new A.SetNodeName(node, "\ud800")), "encoder refuses lone surrogate");
+        string legacy = "{\"node\":\"" + node + "\",\"parent\":null}";
+        t.Equal<A.NodeSummary?>(new A.NodeSummary(node, null), Codec.DecodeNodeSummary(Json.Parse(legacy)), "legacy missing name defaults empty");
+        foreach (string value in new[] { "null", "17", "\"\\n\"", "\"" + new string('x',256) + "\"" })
+            t.Check(Codec.DecodeNodeSummary(Json.Parse(legacy[..^1] + ",\"name\":" + value + "}")) is null,
+                "present invalid summary name refused");
+        t.Check((A.EventKind.All & A.EventKind.NodeNameChanged) != 0 && (int)A.EventKind.Applied == 256,
+            "name kind appended without renumbering; all includes it");
+    }
+
     private static void AuthoringEdges(TestContext t, Dictionary<string, JsonValue> wires)
     {
         var node = EntityGuid.Parse("52052052-0003-4052-8052-000000000003");
@@ -297,7 +324,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(24, index, "the AuthoringError set has the C++ set's 24 names");
+        t.Equal(25, index, "the AuthoringError set has the C++ set's 25 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);

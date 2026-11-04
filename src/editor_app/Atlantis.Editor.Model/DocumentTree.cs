@@ -1,8 +1,8 @@
 // Plan 0068 M2 (Spec 0068 R3, Fact 1, Fact 8; Q6): the Hierarchy's model --
 // the authoring document's nodes as a tree under their parents, in the
 // document's order, each labelled by its GUID's first eight hex digits and
-// its components' kinds (the scene grammar has no node names yet; Spec
-// 0069). Built from ListNodes()/ListComponents() and kept current by every
+// its components' kinds, prefixed by its name when present (Spec 0069).
+// Built from ListNodes()/ListComponents() and kept current by every
 // client's authoring events (no polling). A new C# model with no C++
 // reference: ADR-0137 D2, tested against a fake document. UI-free.
 using System;
@@ -18,6 +18,7 @@ public sealed class DocumentTree
     private sealed class Row
     {
         public EntityGuid? Parent;
+        public string Name = "";
         public List<TypeId> Components = new();
     }
 
@@ -37,6 +38,8 @@ public sealed class DocumentTree
     public bool Contains(EntityGuid node) => _rows.ContainsKey(node);
 
     public EntityGuid? ParentOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Parent : null;
+
+    public string NameOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Name : "";
 
     public IReadOnlyList<TypeId> ComponentsOf(EntityGuid node) =>
         _rows.TryGetValue(node, out Row? row) ? row.Components : Array.Empty<TypeId>();
@@ -92,13 +95,14 @@ public sealed class DocumentTree
         return false;
     }
 
-    /// <summary>"2c5aa0de · Transform Camera": the GUID's first eight hex digits and the components' kinds.</summary>
+    /// <summary>The name when present, then GUID prefix and component kinds; GUIDs still identify rows.</summary>
     public string Label(EntityGuid node, IReadOnlyList<SchemaType> schema)
     {
         string prefix = node.Value.ToString("N")[..8];
         IEnumerable<string> kinds = ComponentsOf(node).Select(c => SceneSchema.NameOf(schema, c))
                                                       .OrderBy(k => k == "Transform" ? 0 : 1).ThenBy(k => k, StringComparer.Ordinal);
-        return prefix + " · " + string.Join(" ", kinds);
+        string name = NameOf(node);
+        return (name.Length > 0 ? name + " · " : "") + prefix + " · " + string.Join(" ", kinds);
     }
 
     /// <summary>Re-reads the whole document (on open and on DocumentReopened).</summary>
@@ -111,7 +115,7 @@ public sealed class DocumentTree
         for (int i = 0; i < nodes.Count; ++i)
         {
             _order.Add(nodes[i].Node);
-            _rows[nodes[i].Node] = new Row { Parent = nodes[i].Parent, Components = components[i].ToList() };
+            _rows[nodes[i].Node] = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name, Components = components[i].ToList() };
         }
         Changed();
     }
@@ -145,6 +149,10 @@ public sealed class DocumentTree
             case ParentChanged moved:
                 if (!_rows.TryGetValue(moved.Node, out Row? row)) return false;
                 row.Parent = moved.Parent;
+                break;
+            case NodeNameChanged renamed:
+                if (!_rows.TryGetValue(renamed.Node, out Row? named)) return false;
+                named.Name = renamed.Name;
                 break;
             case ComponentAdded added:
                 if (!_rows.TryGetValue(added.Node, out Row? withAdded) || withAdded.Components.Contains(added.Component)) return false;

@@ -1,6 +1,7 @@
 #include <atlantis/asset_system/scene_source.h>
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/scene_semantic_schema.h>
 
 #include <array>
 #include <bit>
@@ -22,7 +23,8 @@ namespace {
 // dual-version reader.
 // Plan 0047 P9: version 7 adds guid=<entity guid> after node_id= and makes
 // mesh=/material= AssetGuids.
-constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 7";
+constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 8";
+constexpr std::string_view kLegacyVersionLine = "atlantis_scene_source_version: 7";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -176,9 +178,10 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
   const std::vector<std::string_view> lines = splitLines(text);
   std::size_t lineIndex = 0;
 
-  if (lineIndex >= lines.size() || lines[lineIndex] != kVersionLine) {
+  if (lineIndex >= lines.size() || (lines[lineIndex] != kVersionLine && lines[lineIndex] != kLegacyVersionLine)) {
     return ResultT::Err(SceneSourceParseError::UnknownSourceVersion);
   }
+  const bool legacy = lines[lineIndex] == kLegacyVersionLine;
   ++lineIndex;
 
   if (lineIndex >= lines.size()) return ResultT::Err(SceneSourceParseError::MissingField);
@@ -225,7 +228,39 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     if (line.substr(0, kNodePrefix.size()) != kNodePrefix) {
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
     }
-    auto tokens = splitOnSpace(line.substr(kNodePrefix.size()));
+    const std::string_view body = line.substr(kNodePrefix.size());
+    auto tokens = splitOnSpace(body);
+    std::string name;
+    std::string withoutName;
+    // Only source8's slot immediately after guid= is quoted. Strip it before
+    // the existing component-token grammar, keeping legacy fields unchanged.
+    if (tokens.size() >= 2) {
+      const std::size_t afterGuid = static_cast<std::size_t>(tokens[1].data() - body.data()) + tokens[1].size();
+      std::size_t at = afterGuid;
+      while (at < body.size() && body[at] == ' ') ++at;
+      if (body.substr(at).starts_with("name=")) {
+        if (legacy) return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+        at += 5;
+        if (at == body.size() || body[at++] != '"') return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+        bool closed = false;
+        while (at < body.size()) {
+          char c = body[at++];
+          if (c == '"') { closed = true; break; }
+          if (c == '\\') {
+            if (at == body.size()) return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+            c = body[at++];
+            if (c != '"' && c != '\\') return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+          }
+          name += c;
+          if (name.size() > scene::kMaxNodeNameBytes) return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+        }
+        if (!closed || (at < body.size() && body[at] != ' ') || !scene::isValidNodeName(name)) {
+          return ResultT::Err(SceneSourceParseError::InvalidNodeName);
+        }
+        withoutName = std::string(body.substr(0, afterGuid)) + std::string(body.substr(at));
+        tokens = splitOnSpace(withoutName);
+      }
+    }
 
     // Plan 0047 P9: guid= is the second token. It is taken out here so the
     // v6 token positions below are unchanged. A nil value is syntactically
@@ -286,6 +321,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
 
     ParsedSceneNode node;
     node.entityGuid = entityGuid;
+    node.name = std::move(name);
 
     if (tokens[0].substr(0, kNodeIdPrefix.size()) != kNodeIdPrefix) {
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
@@ -524,6 +560,14 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
     out += std::string(kNodeIdPrefix) + std::to_string(node.nodeId);
     out += ' ';
     out += std::string(kGuidPrefix) + toString(node.entityGuid);
+    if (!node.name.empty()) {
+      out += " name=\"";
+      for (const char c : node.name) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+      }
+      out += '"';
+    }
     out += ' ';
     out += std::string(kParentPrefix) +
            (node.parentNodeId.has_value() ? std::to_string(*node.parentNodeId) : std::string(kNoneToken));

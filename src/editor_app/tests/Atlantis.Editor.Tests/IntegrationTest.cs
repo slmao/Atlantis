@@ -13,6 +13,7 @@
 // passed.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -46,7 +47,9 @@ public static class IntegrationTest
             using (RemoteSession session = RemoteSession.Connect(info))
             {
                 session.Control.Resume();
-                Session(session, info, work, checks, Check);
+                string config = new DirectoryInfo(Path.GetDirectoryName(runtimePath)!).Name;
+                string cli = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runtimePath)!, "..", "..", "cli", config, "atlantis.exe"));
+                Session(session, info, work, runtime.SessionPath, cli, checks, Check);
             }
             runtime.CloseMainWindow();
             runtime.WaitForExit(TimeSpan.FromSeconds(30));
@@ -68,7 +71,8 @@ public static class IntegrationTest
         return failed == 0 && checks.Count > 0 ? 0 : 1;
     }
 
-    private static void Session(RemoteSession session, SessionInfo info, string work, List<(string, bool, string)> checks,
+    private static void Session(RemoteSession session, SessionInfo info, string work, string sessionPath, string cli,
+                                List<(string, bool, string)> checks,
                                 Action<string, bool, string> check)
     {
         void Check(string name, bool ok, string detail = "") => check(name, ok, detail);
@@ -95,6 +99,7 @@ public static class IntegrationTest
                 tree.Apply(e, document);
                 transforms.Apply(e);
                 apply.Apply(e);
+                if (e is DocumentReopened) history.Clear();
             }
         }
 
@@ -174,6 +179,41 @@ public static class IntegrationTest
             n => lightType is TypeId l && tree.ComponentsOf(n!.Value).Contains(l));
         if (leaf is not EntityGuid subject || lightNode is not EntityGuid lightId || lightType is not TypeId light)
             throw new InvalidOperationException("the scene has no leaf Renderable or no Light");
+
+        // Spec0069: name-only edits retain rendering, identity and placement, and the CLI sees the same document.
+        string originalName = tree.NameOf(subject);
+        LocalTransform nameTransform = TransformMath.LocalOf(document, subject);
+        string beforeNameCapture = Path.Combine(work, "name-before.png");
+        Check("name: baseline capture", session.Control.Step(new StepRequest(1, beforeNameCapture)).IsOk && File.Exists(beforeNameCapture));
+        Check("name: one editor rename", Commit(HierarchyCommands.Rename(tree, subject, originalName, "Named scene node 灯")) is null);
+        WaitApplied("name rename");
+        Check("name: label and identity", tree.Label(subject, schema).StartsWith("Named scene node 灯 · ", StringComparison.Ordinal) &&
+              tree.Order.SequenceEqual(originalNodes) && TransformMath.LocalOf(document, subject).Equals(nameTransform));
+        string afterNameCapture = Path.Combine(work, "name-after.png");
+        Check("name: unchanged capture", session.Control.Step(new StepRequest(1, afterNameCapture)).IsOk &&
+              File.Exists(afterNameCapture) && File.ReadAllBytes(beforeNameCapture).SequenceEqual(File.ReadAllBytes(afterNameCapture)));
+        Check("name: undo", Step(undo: true) == HistoryResult.Submitted);
+        WaitApplied("name undo");
+        Check("name: undo restored", tree.NameOf(subject) == originalName);
+        Check("name: redo", Step(undo: false) == HistoryResult.Submitted);
+        WaitApplied("name redo");
+        Check("name: redo restored", tree.NameOf(subject) == "Named scene node 灯");
+        Check("name: clear", Commit(HierarchyCommands.Rename(tree, subject, "Named scene node 灯", "")) is null);
+        WaitApplied("name clear");
+        Check("name: unnamed fallback", tree.NameOf(subject) == "" && tree.Label(subject, schema).StartsWith(subject.Value.ToString("N")[..8], StringComparison.Ordinal));
+        Check("name: undo clear", Step(undo: true) == HistoryResult.Submitted);
+        WaitApplied("name undo clear");
+        Check("name: clear undo restored", tree.NameOf(subject) == "Named scene node 灯");
+        int cliExit = Cli(cli, sessionPath, "scene", "name", subject.ToString(), QuoteName("outside CLI 灯"));
+        Check("name: CLI rename", cliExit == 0);
+        Settle();
+        Check("name: CLI event reaches editor", tree.NameOf(subject) == "outside CLI 灯");
+        Check("name: stale editor draft refused", HierarchyCommands.Rename(tree, subject, "Named scene node 灯", "stale").Refusal == "changed elsewhere");
+        Check("name: overwritten undo refused", Step(undo: true) == HistoryResult.ChangedElsewhere && tree.NameOf(subject) == "outside CLI 灯");
+        Check("name: CLI restore", Cli(cli, sessionPath, "scene", "name", subject.ToString(), QuoteName(originalName)) == 0);
+        Settle();
+        Check("name: original restored", tree.NameOf(subject) == originalName);
+        history.Clear();
         var drag = new GizmoDragController(document, tree, transforms, new RuntimeWorldPreview(() => session));
         LocalTransform before = TransformMath.LocalOf(document, subject);
         transforms.Apply(new PropertyChanged(new SceneAddress(subject, default, default), default));  // re-read the local
@@ -243,16 +283,32 @@ public static class IntegrationTest
 
         string? source = document.Info()?.SourcePath;
         byte[]? backup = source is not null && File.Exists(source) ? File.ReadAllBytes(source) : null;
-        SaveError? saveError = document.Save();
-        if (imported)
+        if (backup is not null) File.WriteAllBytes(Path.Combine(work, "source-before-save.txt"), backup);
+        try
         {
-            Check("save: an imported scene is refused with its reason", saveError == SaveError.ImportedSceneNotSavable,
-                  saveError?.ToString() ?? "saved " + source);
+            Check("save name: committed", Commit(HierarchyCommands.Rename(tree, subject, tree.NameOf(subject), "Persistent 灯")) is null);
+            WaitApplied("save name");
+            SaveError? saveError = document.Save();
+            if (imported)
+            {
+                Check("save: an imported scene is refused with its reason", saveError == SaveError.ImportedSceneNotSavable,
+                      saveError?.ToString() ?? "saved " + source);
+                Check("save: imported source unchanged", source is not null && backup is not null && File.ReadAllBytes(source).SequenceEqual(backup));
+            }
+            else
+            {
+                Check("save: the hand-authored source is written", saveError is null, saveError?.ToString() ?? source ?? "");
+            }
+            Check("name: source reopens", session.Authoring.Open() is null);
+            Settle();
+            Check("name: reopened provenance", tree.NameOf(subject) == (imported ? originalName : "Persistent 灯"));
+            Check("name: reopen clears history", !history.CanUndo && !history.CanRedo);
         }
-        else
+        finally
         {
-            Check("save: the hand-authored source is written", saveError is null, saveError?.ToString() ?? source ?? "");
-            if (source is not null && backup is not null) File.WriteAllBytes(source, backup);  // keep the tree as committed
+            if (!imported && source is not null && backup is not null) File.WriteAllBytes(source, backup);
+            if (session.Authoring.Open() is not null) throw new InvalidOperationException("restoring the source did not reopen");
+            Settle();
         }
         CheckFrame("save");
 
@@ -276,5 +332,28 @@ public static class IntegrationTest
                   refused == HistoryResult.ChangedElsewhere && history.Notice.Contains("changed elsewhere"), refused.ToString());
             CheckFrame("second client");
         }
+    }
+
+    // ASCII JSON escapes avoid depending on the Windows CRT argv code page.
+    private static string QuoteName(string name) => System.Text.Json.JsonSerializer.Serialize(name);
+
+    private static int Cli(string executable, string session, params string[] args)
+    {
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true };
+        start.ArgumentList.Add("--session");
+        start.ArgumentList.Add(session);
+        foreach (string arg in args) start.ArgumentList.Add(arg);
+        using Process process = Process.Start(start) ?? throw new InvalidOperationException("CLI did not start");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(30000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException("CLI rename timed out");
+        }
+        File.AppendAllText(Path.Combine(Path.GetDirectoryName(session)!, "name-cli.log"),
+                           string.Join(" ", args) + "\n" + stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
+        return process.ExitCode;
     }
 }

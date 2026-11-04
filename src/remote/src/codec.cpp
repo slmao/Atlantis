@@ -959,6 +959,7 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::ComponentExclusivity, authoring::Error::LightRangeMatchesKind,
     authoring::Error::MaxDirectionalLights, authoring::Error::MaxPointLights,
     authoring::Error::CookRefused,          authoring::Error::NotRepresentableInSource,
+    authoring::Error::InvalidNodeName,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -968,7 +969,7 @@ constexpr std::array kApplyErrors = {authoring::ApplyError::NoDocument, authorin
                                      authoring::ApplyError::CookFailed, authoring::ApplyError::DecodeFailed,
                                      authoring::ApplyError::ReloadRefused};
 
-constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 9> kAuthoringEventKinds = {{
+constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 10> kAuthoringEventKinds = {{
     {authoring::EventKind::PropertyChanged, "PropertyChanged"},
     {authoring::EventKind::NodeCreated, "NodeCreated"},
     {authoring::EventKind::NodeDestroyed, "NodeDestroyed"},
@@ -978,7 +979,32 @@ constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 9> kAuth
     {authoring::EventKind::ActiveCameraChanged, "ActiveCameraChanged"},
     {authoring::EventKind::DocumentReopened, "DocumentReopened"},
     {authoring::EventKind::Applied, "Applied"},
+    {authoring::EventKind::NodeNameChanged, "NodeNameChanged"},
 }};
+
+// Remote checks name values without depending on the scene schema module.
+[[nodiscard]] bool validNodeName(std::string_view text) {
+  if (text.size() > 255) return false;
+  for (std::size_t at = 0; at < text.size();) {
+    const auto first = static_cast<unsigned char>(text[at++]);
+    std::uint32_t cp = first;
+    std::uint32_t minimum = 0;
+    unsigned more = 0;
+    if (first >= 0xC2 && first <= 0xDF) { cp = first & 0x1F; minimum = 0x80; more = 1; }
+    else if (first >= 0xE0 && first <= 0xEF) { cp = first & 0x0F; minimum = 0x800; more = 2; }
+    else if (first >= 0xF0 && first <= 0xF4) { cp = first & 0x07; minimum = 0x10000; more = 3; }
+    else if (first >= 0x80) return false;
+    if (text.size() - at < more) return false;
+    for (unsigned i = 0; i < more; ++i) {
+      const auto byte = static_cast<unsigned char>(text[at++]);
+      if ((byte & 0xC0) != 0x80) return false;
+      cp = (cp << 6) | (byte & 0x3F);
+    }
+    if (cp < minimum || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) ||
+        cp <= 0x1F || (cp >= 0x7F && cp <= 0x9F) || cp == 0x2028 || cp == 0x2029) return false;
+  }
+  return true;
+}
 
 template <typename E, std::size_t N>
 [[nodiscard]] std::optional<E> enumeratorNamed(const Value& value, const std::array<E, N>& all) {
@@ -1071,6 +1097,10 @@ Value encode(const authoring::Command& command) {
           out.set("kind", Value::string("SetParent"));
           out.set("node", encodeEntity(c.node));
           out.set("parent", encodeOptionalEntity(c.parent));
+        } else if constexpr (std::is_same_v<C, authoring::SetNodeName>) {
+          out.set("kind", Value::string("SetNodeName"));
+          out.set("node", encodeEntity(c.node));
+          out.set("name", Value::string(c.name));
         } else {
           static_assert(std::is_same_v<C, authoring::SetActiveCamera>);
           out.set("kind", Value::string("SetActiveCamera"));
@@ -1122,6 +1152,13 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     if (!node || !parent) return std::nullopt;
     return authoring::Command(authoring::SetParent{*node, *parent});
   }
+  if (*kind == "SetNodeName") {
+    const auto node = nodeMember(value);
+    const Value* name = value.find("name");
+    if (!node || name == nullptr || !name->isString()) return std::nullopt;
+    // Domain errors keep the authoring transaction's ticket/refusal semantics.
+    return authoring::Command(authoring::SetNodeName{*node, name->asString()});
+  }
   if (*kind == "SetActiveCamera") {
     const auto camera = optionalEntityMember(value, "camera");
     if (!camera) return std::nullopt;
@@ -1162,6 +1199,10 @@ Value encode(const authoring::Event& event) {
         } else if constexpr (std::is_same_v<E, authoring::DocumentReopened>) {
           out.set("kind", Value::string("DocumentReopened"));
           out.set("scene", encodeAsset(e.scene));
+        } else if constexpr (std::is_same_v<E, authoring::NodeNameChanged>) {
+          out.set("kind", Value::string("NodeNameChanged"));
+          out.set("node", encodeEntity(e.node));
+          out.set("name", Value::string(e.name));
         } else {
           static_assert(std::is_same_v<E, authoring::Applied>);
           out.set("kind", Value::string("Applied"));
@@ -1217,6 +1258,12 @@ std::optional<authoring::Event> decodeAuthoringEvent(const Value& value) {
     const auto s = decodeAsset(*scene);
     if (!s) return std::nullopt;
     return authoring::Event(authoring::DocumentReopened{*s});
+  }
+  if (*kind == "NodeNameChanged") {
+    const auto node = nodeMember(value);
+    const Value* name = value.find("name");
+    if (!node || name == nullptr || !name->isString() || !validNodeName(name->asString())) return std::nullopt;
+    return authoring::Event(authoring::NodeNameChanged{*node, name->asString()});
   }
   if (*kind == "Applied") {
     const Value* generation = value.find("generation");
@@ -1319,6 +1366,7 @@ Value encode(const authoring::NodeSummary& node) {
   Value out = Value::object();
   out.set("node", encodeEntity(node.node));
   out.set("parent", encodeOptionalEntity(node.parent));
+  out.set("name", Value::string(node.name));
   return out;
 }
 
@@ -1326,7 +1374,9 @@ std::optional<authoring::NodeSummary> decodeNodeSummary(const Value& value) {
   const auto node = nodeMember(value);
   const auto parent = optionalEntityMember(value, "parent");
   if (!node || !parent) return std::nullopt;
-  return authoring::NodeSummary{*node, *parent};
+  const Value* name = value.find("name");
+  if (name != nullptr && (!name->isString() || !validNodeName(name->asString()))) return std::nullopt;
+  return authoring::NodeSummary{*node, *parent, name == nullptr ? std::string() : name->asString()};
 }
 
 Value encodeAuthoringError(authoring::Error error) { return Value::string(std::string(authoring::toString(error))); }

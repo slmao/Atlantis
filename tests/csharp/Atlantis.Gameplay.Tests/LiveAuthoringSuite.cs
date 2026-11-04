@@ -31,11 +31,33 @@ public static class LiveAuthoringSuite
             using RemoteSession second = server.Attach();
             Queries(t, first, server);
             Commands(t, first, second);
+            Names(t, first, second);
             ApplyUnderPause(t, first);
             Save(t, first);
         }
         Imported(t);
         NoAuthoring(t);
+    }
+
+    private static void Names(TestContext t, RemoteSession first, RemoteSession second)
+    {
+        var a = first.Authoring;
+        var b = second.Authoring;
+        var subscription = b.Subscribe(new A.EventFilter(A.EventKind.NodeNameChanged, Mesh));
+        const string name = "  名称 \"quoted\" \\ ";
+        a.Submit(new A.SetNodeName(Mesh, name));
+        t.Check(a.DrainFailures().Count == 0, "rename settles without refusal");
+        t.Equal(name, b.ListNodes().Value.First(n => n.Node == Mesh).Name, "second client reads exact name");
+        t.Check(b.DrainEvents(subscription).Value.Any(e => e is A.NodeNameChanged changed && changed.Name == name), "second client receives node-filtered rename");
+        t.Equal<A.SaveError?>(null, a.Save(), "save name");
+        t.Equal<A.OpenError?>(null, a.Open(), "reopen named source");
+        t.Equal(name, a.ListNodes().Value.First(n => n.Node == Mesh).Name, "name persisted through save and reopen");
+        a.Submit(new A.SetNodeName(Mesh, new string('x',256)));
+        t.Check(a.DrainFailures().Any(f => f.Error == A.AuthoringError.InvalidNodeName), "invalid name uses shared refusal");
+        t.Equal(name, a.ListNodes().Value.First(n => n.Node == Mesh).Name, "refusal changes no name");
+        a.Submit(new A.SetNodeName(Mesh, ""));
+        t.Check(a.DrainFailures().Count == 0, "clear name");
+        b.Unsubscribe(subscription);
     }
 
     private static void Queries(TestContext t, RemoteSession session, FixtureServer server)

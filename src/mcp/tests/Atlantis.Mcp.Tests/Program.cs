@@ -33,7 +33,7 @@ internal static partial class Program
         ("world.submit_transaction", "connection.submitTransaction", """{"commands":[]}""", """{"first":18446744073709551615,"count":0}"""),
         ("world.drain_failures", "connection.drainFailures", "{}", "[]"),
         ("world.schema", "connection.schema", "{}", """[{"id":"0x123456789abcdef0","name":"world::Light","kind":"Struct","version":1,"fields":[{"id":"0xfedcba9876543210","name":"intensity","kind":"Primitive","primitive":"Float32","type":"0x0000000000000000","flags":3,"offset":8}],"constants":[]}]"""),
-        ("authoring.list_nodes", "authoring.listNodes", "{}", $$$"""{"ok":[{"node":"{{{Entity}}}","parent":null}]}"""),
+        ("authoring.list_nodes", "authoring.listNodes", "{}", $$$"""{"ok":[{"node":"{{{Entity}}}","parent":null,"name":"名 quoted"}]}"""),
         ("authoring.get_property", "authoring.getProperty", "{\"address\":" + SceneAddress + "}", """{"ok":{"f32":-0}}"""),
         ("authoring.submit_transaction", "authoring.submitTransaction", """{"commands":[]}""", """{"first":1,"count":0}"""),
         ("authoring.drain_failures", "authoring.drainFailures", "{}", "[]"),

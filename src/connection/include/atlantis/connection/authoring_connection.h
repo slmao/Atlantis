@@ -54,6 +54,7 @@ struct DocumentInfo {
 struct NodeSummary {
   EntityGuid node;
   std::optional<EntityGuid> parent;
+  std::string name;  // Spec 0069: empty means unnamed; identity remains the GUID
   friend bool operator==(const NodeSummary&, const NodeSummary&) = default;
 };
 
@@ -94,8 +95,12 @@ struct SetParent {
 struct SetActiveCamera {
   std::optional<EntityGuid> camera;
 };
+struct SetNodeName {
+  EntityGuid node;
+  std::string name;
+};
 using Command =
-    std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera>;
+    std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera, SetNodeName>;
 
 // ---------------------------------------------------------------- events
 
@@ -144,8 +149,13 @@ struct Applied {
   std::uint64_t generation = 0;
   friend bool operator==(const Applied&, const Applied&) = default;
 };
+struct NodeNameChanged {
+  EntityGuid node;
+  std::string name;
+  friend bool operator==(const NodeNameChanged&, const NodeNameChanged&) = default;
+};
 using Event = std::variant<PropertyChanged, NodeCreated, NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-                           ActiveCameraChanged, DocumentReopened, Applied>;
+                           ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged>;
 
 enum class EventKind : std::uint8_t {
   PropertyChanged,
@@ -157,6 +167,7 @@ enum class EventKind : std::uint8_t {
   ActiveCameraChanged,
   DocumentReopened,
   Applied,
+  NodeNameChanged,
 };
 
 [[nodiscard]] EventKind kindOf(const Event& event) noexcept;
@@ -164,7 +175,7 @@ enum class EventKind : std::uint8_t {
 class EventKindSet {
  public:
   constexpr EventKindSet() noexcept = default;  // empty
-  [[nodiscard]] static constexpr EventKindSet all() noexcept { return EventKindSet(0x1FF); }
+  [[nodiscard]] static constexpr EventKindSet all() noexcept { return EventKindSet(0x3FF); }
   [[nodiscard]] static constexpr EventKindSet only(EventKind kind) noexcept { return EventKindSet().with(kind); }
   [[nodiscard]] constexpr EventKindSet with(EventKind kind) const noexcept {
     return EventKindSet(static_cast<std::uint16_t>(bits_ | bit(kind)));
@@ -229,6 +240,7 @@ enum class Error : std::uint8_t {
   // reason none of the above names, or the text cannot hold the document.
   CookRefused,
   NotRepresentableInSource,
+  InvalidNodeName,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;

@@ -365,6 +365,7 @@ AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
                   {"kind":"RemoveComponent","node":<N>,"component":<T>}
                   {"kind":"SetParent","node":<N>,"parent":<N>|null}
                   {"kind":"SetActiveCamera","camera":<N>|null}
+                  {"kind":"SetNodeName","node":<N>,"name":"<label>"}
 AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
                   {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
                   {"kind":"ComponentAdded","node":<N>,"component":<T>}
@@ -372,17 +373,18 @@ AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>
                   {"kind":"ParentChanged","node":<N>,"parent":<N>|null}
                   {"kind":"ActiveCameraChanged","camera":<N>|null}
                   {"kind":"DocumentReopened","scene":"<asset GUID>"}   {"kind":"Applied","generation":<n>}
+                  {"kind":"NodeNameChanged","node":<N>,"name":"<label>"}
 AuthoringFilter   {"kinds":["PropertyChanged",…],"node":<N>|null,"component":<T>|null}
 AuthoringFailure  {"ticket":<n>,"error":"<AuthoringError>"}
 Document          {"scene":"<asset GUID>","provenance":"HandAuthored"|"Imported","source":"<path>","nodeCount":<n>}
-NodeSummary       {"node":<N>,"parent":<N>|null}
+NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
 ```
 
 - **`CreateNode`** with a `null` node mints the node's GUID. Its event is
   followed by one `ComponentAdded` per listed component.
 - **Filter `kinds`** are listed in the order PropertyChanged, NodeCreated,
   NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-  ActiveCameraChanged, DocumentReopened, Applied. An event matches when its
+  ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged. An event matches when its
   kind is listed and its node and component equal the filter's when those
   are not `null`; `ActiveCameraChanged`, `DocumentReopened` and `Applied`
   carry no node, and only `PropertyChanged`, `ComponentAdded` and
@@ -395,9 +397,21 @@ NodeSummary       {"node":<N>,"parent":<N>|null}
     `NonEmptyDocument`, `NodeGuidNonNil`, `NodeGuidUnique`, `ParentExists`,
     `ParentAcyclic`, `ActiveCameraExists`, `ActiveCameraHasCamera`,
     `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
-    `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`;
+    `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`;
   - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
     `SourceInvalid`;
   - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
   - **`ApplyError`:** `NoDocument`, `NoSceneSink`, `CookFailed`,
     `DecodeFailed`, `ReloadRefused`.
+
+Spec 0069 / ADR-0142 adds authoring labels: empty means unnamed; duplicates are
+valid and identity remains the GUID. Names are valid UTF-8 up to 255 bytes,
+excluding U+0000–001F, U+007F–009F and U+2028/U+2029, without normalization.
+`SetNodeName` retains transaction/ticket/refusal semantics and emits one event
+per successful command, even for an unchanged name. The event has a node and no
+component. A missing legacy summary name decodes as empty; a present invalid
+name is refused. Old summary decoders tolerate the extra member, but rename
+commands/events require updated peers, including all-events subscribers.
+No RPC method or protocol version changes. CLI uses
+`scene name <node-guid> <json-string>` (also in `scene tx`; `""` clears), and MCP
+uses its existing `authoring.submit_transaction` tool with the command above.

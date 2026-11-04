@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/scene_semantic_schema.h>
 #include <atlantis/asset_system/scene_types.h>
 
 #include <bit>
@@ -140,6 +141,53 @@ TEST_CASE("parseSceneSource parses a parent reference", "[asset_system][scene]")
   CHECK(*result.value().nodes[1].parentNodeId == 1);
 }
 
+TEST_CASE("source8 names preserve exact text and source7 remains a strict unnamed reader",
+          "[asset_system][scene][node_name]") {
+  const auto legacy = parseSceneSource(kValidTwoNodeSource);
+  REQUIRE(legacy.isOk());
+  CHECK(legacy.value().nodes[0].name.empty());
+  for (const std::string value : {std::string{}, std::string("  same  "), std::string("say \"hi\" \\ path"),
+                                 std::string("parent=none name=literal"), std::string("\xe4\xb8\xad\xf0\x9f\x98\x80"),
+                                 std::string(255, 'x')}) {
+    auto source = legacy.value();
+    source.nodes[0].name = value;
+    source.nodes[1].name = value;
+    const auto text = serializeSceneSource(source);
+    CHECK(text.starts_with("atlantis_scene_source_version: 8\n"));
+    const auto back = parseSceneSource(text);
+    REQUIRE(back.isOk());
+    CHECK(back.value().nodes[0].name == value);
+    CHECK(back.value().nodes[1].name == value);
+    CHECK(back.value().nodes[0].entityGuid == source.nodes[0].entityGuid);
+    CHECK(back.value().nodes[0].transform.positionX == source.nodes[0].transform.positionX);
+    if (value.empty()) CHECK(text.find("name=") == std::string::npos);
+  }
+  auto source = legacy.value();
+  source.nodes[0].name = "ok";
+  const std::string valid = serializeSceneSource(source);
+  const auto slot = valid.find("name=\"ok\"");
+  REQUIRE(slot != std::string::npos);
+  for (const std::string replacement : {std::string("name=ok"), std::string("name=\"unterminated"),
+                                        std::string("name=\"bad\\q\""), std::string("name=\"x\" name=\"y\""),
+                                        std::string("name=\"x\"parent=none"), std::string("name=\"\xc0\xaf\""),
+                                        std::string("name=\"") + std::string(256, 'x') + '"'}) {
+    auto text = valid;
+    text.replace(slot, std::string_view("name=\"ok\"").size(), replacement);
+    CHECK(parseSceneSource(text).isErr());
+  }
+  auto misplaced = valid;
+  misplaced.erase(slot, std::string_view("name=\"ok\" ").size());
+  misplaced.insert(misplaced.find("position="), "name=\"ok\" ");
+  CHECK(parseSceneSource(misplaced).isErr());
+  auto wrongVersion = valid;
+  wrongVersion.replace(0, std::string_view("atlantis_scene_source_version: 8").size(),
+                       "atlantis_scene_source_version: 7");
+  CHECK(parseSceneSource(wrongVersion).isErr());
+  wrongVersion.replace(0, std::string_view("atlantis_scene_source_version: 7").size(),
+                       "atlantis_scene_source_version: 9");
+  CHECK(parseSceneSource(wrongVersion).isErr());
+}
+
 TEST_CASE("serializeSceneSource then parseSceneSource round-trips exactly-representable values",
           "[asset_system][scene]") {
   const auto reparsed = parseSceneSource(kValidTwoNodeSource);
@@ -194,10 +242,8 @@ TEST_CASE("parseSceneSource rejects the superseded version 2 outright, with no d
 }
 
 TEST_CASE("parseSceneSource rejects an unrecognized future version line", "[asset_system][scene]") {
-  // Plan 0047: this literal must name a value still genuinely
-  // unrecognized now that version 7 is the real, accepted version -- 8
-  // here (the Plan 0044/0043/0031/0020/0019 precedent).
-  const auto result = parseSceneSource("atlantis_scene_source_version: 8\n");
+  // Spec 0069: 7 and 8 are recognized; 9 is still a future version.
+  const auto result = parseSceneSource("atlantis_scene_source_version: 9\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }

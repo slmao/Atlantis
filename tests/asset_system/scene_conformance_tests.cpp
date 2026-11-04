@@ -133,7 +133,8 @@ struct Cooked {
 // ------------------------------------------- the expected artifact projection
 //
 // Spec 0049 R5: semantic -> artifact is a declared projection -- asset GUIDs
-// become assetKey()s, node references become indices, node order is kept.
+// become assetKey()s, node references become indices, node order is kept,
+// and semantic2's authoring names are deliberately absent (Spec 0069).
 // Implemented here independently of the library's own mapping.
 
 [[nodiscard]] as::DecodedSceneArtifact project(const scene::AuthoringScene& s) {
@@ -483,6 +484,24 @@ static_assert(as::kSceneArtifactSemanticVersion == scene::kSemanticVersion,
 
 // ============================================================ R5: projection
 
+TEST_CASE("conformance: named semantics remain lossless in source and name-blind in the runtime projection",
+          "[asset_system][scene][conformance][node_name]") {
+  const auto unnamed = baseScene();
+  auto named = unnamed;
+  named.nodes[0].name = "  \xe4\xb8\xad \"label\" \\ ";
+  REQUIRE_FALSE(named == unnamed);
+  CHECK(authoringOf(textOf(named)) == named);
+  CHECK(same(project(named), project(unnamed)));
+  const auto namedBytes = cook(textOf(named));
+  const auto unnamedBytes = cook(textOf(unnamed));
+  REQUIRE_FALSE(namedBytes.artifact.empty());
+  CHECK(namedBytes.artifact == unnamedBytes.artifact);
+  const auto decoded = as::decodeSceneArtifact(namedBytes.artifact);
+  REQUIRE(decoded.isOk());
+  CHECK(same(decoded.value(), project(named)));
+  CHECK(same(decoded.value(), project(unnamed)));
+}
+
 TEST_CASE("conformance: every cooked corpus scene equals the projection of its semantic model",
           "[asset_system][scene][conformance]") {
   const auto corpus = cookedCorpus();
@@ -657,6 +676,7 @@ struct ConstraintCase {
   SourceExpectation source;
   std::vector<std::byte> artifact;  // a valid artifact, patched
   as::SceneArtifactDecodeError decodeError = as::SceneArtifactDecodeError::NonFiniteValue;
+  bool authoringOnly = false;  // Spec 0069: no runtime name field to invalidate
 };
 
 [[nodiscard]] scene::AuthoringNode lightNode(std::uint8_t guid, scene::LightKind kind) {
@@ -786,6 +806,14 @@ struct ConstraintCase {
     c.decodeError = SceneArtifactDecodeError::TooManyLights;
     out.push_back(c);
   }
+  {
+    scene::AuthoringScene invalid = base;
+    invalid.nodes[0].name = std::string(256, 'x');
+    ConstraintCase c{Constraint::InvalidNodeName, textOf(invalid), parseFails(SceneSourceParseError::InvalidNodeName),
+                     baseArtifact};
+    c.authoringOnly = true;
+    out.push_back(c);
+  }
   return out;
 }
 
@@ -806,6 +834,10 @@ TEST_CASE("conformance: every scene constraint is enforced as today's code enfor
     expectRejected(c.sourceText, c.source);
     REQUIRE(c.artifact.size() > 0);
     const auto decoded = as::decodeSceneArtifact(c.artifact);
+    if (c.authoringOnly) {
+      CHECK(decoded.isOk());  // runtime projection has no authoring label
+      continue;
+    }
     REQUIRE(decoded.isErr());
     CHECK(decoded.error() == c.decodeError);
   }

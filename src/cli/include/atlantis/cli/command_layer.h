@@ -120,7 +120,7 @@ class CommandLayer {
   // `camera <guid>|none`, with or without a leading `scene`). `end` is the
   // node count a `create` without --at appends at; each create advances it.
   [[nodiscard]] atlantis::Result<std::vector<atlantis::connection::authoring::Command>, CliError> parseSceneWrite(
-      std::span<const std::string_view> tokens, std::uint64_t& end);
+      std::span<const std::string_view> tokens, std::uint64_t& end, std::string_view line = {});
   // The node count `create` appends at now; 0 without a document.
   [[nodiscard]] std::uint64_t sceneNodeCount();
   // Submits `commands` as one authoring transaction; its outcome is immediate.
@@ -150,7 +150,7 @@ class CommandLayer {
   std::unique_ptr<Pending> pending_;
   // Plan 0065 P6: the `scene` group.
   [[nodiscard]] atlantis::connection::AuthoringConnection* authoring();
-  Reply runScene(std::span<const std::string_view> tokens);
+  Reply runScene(std::span<const std::string_view> tokens, std::string_view line);
   // Drains the `scene` subscription, keeping a deferred apply's Applied.
   [[nodiscard]] std::vector<atlantis::connection::authoring::Event> drainSceneEvents();
   AuthoringProvider authoringProvider_;

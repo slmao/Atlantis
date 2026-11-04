@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <set>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -79,9 +80,9 @@ TEST_CASE("scene semantic schema: version and fingerprint pin", "[asset_system][
   // Ruling Q2: change only together. A semantic change alters the
   // fingerprint; bump kSemanticVersion, re-pin, and have both serializers
   // declare the new version in the same PR.
-  STATIC_REQUIRE(scene::kSemanticVersion == 1);
+  STATIC_REQUIRE(scene::kSemanticVersion == 2);
   CHECK(scene::sceneSchema().semanticVersion == scene::kSemanticVersion);
-  CHECK(scene::sceneSemanticFingerprint() == 0x1c957031a7d6f224ULL);
+  CHECK(scene::sceneSemanticFingerprint() == 0x14d83b5acca8c659ULL);
 }
 
 TEST_CASE("scene semantic schema: components (ruling J5)", "[asset_system][scene][schema]") {
@@ -178,7 +179,7 @@ TEST_CASE("scene semantic schema: v1 domains are R4's trace rows 11-19 and 23", 
   }
 }
 
-TEST_CASE("scene semantic schema: v1 constraints are R4's trace rows 1-8 and 20-22",
+TEST_CASE("scene semantic schema: v2 retains v1 constraints and adds the node name domain",
           "[asset_system][scene][schema]") {
   using C = scene::Constraint;
   const std::map<C, std::uint32_t> expected{
@@ -186,6 +187,7 @@ TEST_CASE("scene semantic schema: v1 constraints are R4's trace rows 1-8 and 20-
       {C::ParentExists, 0},          {C::ParentAcyclic, 0},         {C::ActiveCameraExists, 0},
       {C::ActiveCameraHasCamera, 0}, {C::ComponentExclusivity, 0},  {C::LightRangeMatchesKind, 0},
       {C::MaxDirectionalLights, 1},  {C::MaxPointLights, as::kMaxPointLightsPerScene},
+      {C::InvalidNodeName, scene::kMaxNodeNameBytes},
   };
   std::map<C, std::uint32_t> actual;
   for (const auto& rule : scene::sceneSchema().constraints) {
@@ -193,4 +195,17 @@ TEST_CASE("scene semantic schema: v1 constraints are R4's trace rows 1-8 and 20-
     CHECK(scene::toString(rule.id) != "Unknown");
   }
   CHECK(actual == expected);
+}
+
+TEST_CASE("scene node names validate encoded length and Unicode scalars without normalization",
+          "[asset_system][scene][node_name]") {
+  for (const std::string value : {std::string{}, std::string("  duplicate  "), std::string(255, 'a'),
+                                 std::string(252, 'a') + "\xe4\xb8\xad", std::string("\xf0\x9f\x98\x80")}) {
+    CHECK(scene::isValidNodeName(value));
+  }
+  const std::vector<std::string> invalid{
+      std::string(256, 'a'), std::string(253, 'a') + "\xe4\xb8\xad", std::string("\0", 1), "a\nb", "\x7f",
+      "\xc2\x80", "\xe2\x80\xa8", "\xe2\x80\xa9", "\x80", "\xc0\xaf", "\xe0\x80\xaf", "\xed\xa0\x80",
+      "\xf4\x90\x80\x80", "\xf0\x9f\x98", "\xe4\x41\xad"};
+  for (const auto& value : invalid) CHECK_FALSE(scene::isValidNodeName(value));
 }

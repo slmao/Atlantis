@@ -22,6 +22,7 @@ public static partial class Codec
         (A.EventKind.ActiveCameraChanged, "ActiveCameraChanged"),
         (A.EventKind.DocumentReopened, "DocumentReopened"),
         (A.EventKind.Applied, "Applied"),
+        (A.EventKind.NodeNameChanged, "NodeNameChanged"),
     };
 
     // An EntityGuid or null.
@@ -95,6 +96,10 @@ public static partial class Codec
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
+            case A.SetNodeName c:
+                if (!A.NodeNames.IsWellFormed(c.Name)) throw new System.ArgumentException("invalid UTF-16 node name", nameof(command));
+                output.Set("kind", JsonValue.String("SetNodeName")).Set("node", Encode(c.Node)).Set("name", JsonValue.String(c.Name));
+                break;
             default: throw new System.ArgumentException("an unrecognized authoring command", nameof(command));
         }
         return output;
@@ -104,6 +109,9 @@ public static partial class Codec
     {
         switch (KindOf(value))
         {
+            case "SetNodeName":
+                return NodeOf(value) is EntityGuid nn && value.Find("name") is { IsString: true } name && A.NodeNames.IsWellFormed(name.AsString)
+                    ? new A.SetNodeName(nn, name.AsString) : null;
             case "SetProperty": return SceneAddressValueOf(value) is var (address, v) ? new A.SetProperty(address, v) : null;
             case "CreateNode":
             {
@@ -174,6 +182,10 @@ public static partial class Codec
             case A.Applied e:
                 output.Set("kind", JsonValue.String("Applied")).Set("generation", JsonValue.Number(e.Generation));
                 break;
+            case A.NodeNameChanged e:
+                if (!A.NodeNames.IsValid(e.Name)) throw new System.ArgumentException("invalid node name", nameof(evt));
+                output.Set("kind", JsonValue.String("NodeNameChanged")).Set("node", Encode(e.Node)).Set("name", JsonValue.String(e.Name));
+                break;
             default: throw new System.ArgumentException("an unrecognized authoring event", nameof(evt));
         }
         return output;
@@ -183,6 +195,9 @@ public static partial class Codec
     {
         switch (KindOf(value))
         {
+            case "NodeNameChanged":
+                return NodeOf(value) is EntityGuid nn && value.Find("name") is { IsString: true } name && A.NodeNames.IsValid(name.AsString)
+                    ? new A.NodeNameChanged(nn, name.AsString) : null;
             case "PropertyChanged": return SceneAddressValueOf(value) is var (address, v) ? new A.PropertyChanged(address, v) : null;
             case "NodeCreated":
                 return NodeOf(value) is EntityGuid cn && value.Find("position") is JsonValue position &&
@@ -287,13 +302,18 @@ public static partial class Codec
         return p is A.Provenance known ? new A.DocumentInfo(s, known, source.AsString, n) : null;
     }
 
-    public static JsonValue Encode(A.NodeSummary node) =>
-        JsonValue.NewObject().Set("node", Encode(node.Node)).Set("parent", EncodeOptional(node.Parent));
+    public static JsonValue Encode(A.NodeSummary node)
+    {
+        if (!A.NodeNames.IsValid(node.Name)) throw new System.ArgumentException("invalid node name", nameof(node));
+        return JsonValue.NewObject().Set("node", Encode(node.Node)).Set("parent", EncodeOptional(node.Parent)).Set("name", JsonValue.String(node.Name));
+    }
 
     public static A.NodeSummary? DecodeNodeSummary(JsonValue value)
     {
         (bool ok, EntityGuid? parent) = OptionalEntityMember(value, "parent");
-        return NodeOf(value) is EntityGuid node && ok ? new A.NodeSummary(node, parent) : null;
+        JsonValue? member = value.Find("name");
+        if (member is not null && (!member.IsString || !A.NodeNames.IsValid(member.AsString))) return null;
+        return NodeOf(value) is EntityGuid node && ok ? new A.NodeSummary(node, parent, member?.AsString ?? "") : null;
     }
 
     // --- The error names.

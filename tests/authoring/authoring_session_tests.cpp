@@ -475,3 +475,64 @@ TEST_CASE("authoring: every committed scene opens from its catalog entry and val
   }
   CHECK(scenes == 27);  // 26 scenes and the CMake-declaration fixture
 }
+
+TEST_CASE("authoring: rename is atomic, ordered and shared without changing identity", "[authoring][session][name]") {
+  Fixture f;
+  auto& a = *f.connection;
+  auto b = f.session.connect();
+  const auto all = b->subscribe({});
+  const auto byNode = b->subscribe({ac::EventKindSet::all(), entity(2), std::nullopt});
+  const auto byComponent = b->subscribe({ac::EventKindSet::all(), entity(2), kRenderable});
+  const auto original = f.document();
+  const std::string label = "two  spaces \"quoted\" \\ 场景";
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), label}, ac::SetNodeName{entity(3), label}}) == std::nullopt);
+  CHECK(a.listNodes().value()[1] == ac::NodeSummary{entity(2), entity(1), label});
+  CHECK(b->listNodes().value()[2].name == label);
+  CHECK(f.document().nodes[1].guid == original.nodes[1].guid);
+  CHECK(f.document().nodes[1].transform == original.nodes[1].transform);
+  CHECK(drain(*b, all) == std::vector<ac::Event>{ac::NodeNameChanged{entity(2), label}, ac::NodeNameChanged{entity(3), label}});
+  CHECK(drain(*b, byNode) == std::vector<ac::Event>{ac::NodeNameChanged{entity(2), label}});
+  CHECK(drain(*b, byComponent).empty());
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), label}}) == std::nullopt);
+  CHECK(drain(*b, all) == std::vector<ac::Event>{ac::NodeNameChanged{entity(2), label}});
+  const auto before = f.document();
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), "would change"}, ac::DestroyNode{entity(99)}}) == ac::Error::UnknownNode);
+  CHECK(f.document() == before);
+  CHECK(drain(*b, all).empty());
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), std::string(256, 'x')}}) == ac::Error::InvalidNodeName);
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), "bad\nname"}}) == ac::Error::InvalidNodeName);
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(2), std::string("bad\0name", 8)}}) == ac::Error::InvalidNodeName);
+  CHECK(f.document() == before);
+  CHECK(drain(*b, all).empty());
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(99), ""}}) == ac::Error::UnknownNode);
+  CHECK(refusalOf(a, {ac::CreateNode{entity(20), 1, {}}, ac::SetNodeName{entity(20), "created"}}) == std::nullopt);
+  const auto events = drain(*b, all);
+  REQUIRE(events.size() == 2);
+  CHECK(events[0] == ac::Event{ac::NodeCreated{entity(20), 1}});
+  CHECK(events[1] == ac::Event{ac::NodeNameChanged{entity(20), "created"}});
+  CHECK(refusalOf(a, {ac::SetNodeName{entity(20), ""}}) == std::nullopt);
+  CHECK(a.listNodes().value()[1].name.empty());
+}
+
+TEST_CASE("authoring: names survive save reopen and apply; imported save stays refused", "[authoring][session][name]") {
+  Fixture f;
+  const std::string label = " camera  场景";
+  REQUIRE(refusalOf(*f.connection, {ac::SetNodeName{entity(1), label}}) == std::nullopt);
+  REQUIRE(f.connection->save().isOk());
+  CHECK(documentOf(readText(f.source)) == f.document());
+  REQUIRE(refusalOf(*f.connection, {ac::SetNodeName{entity(1), "temporary"}}) == std::nullopt);
+  REQUIRE(f.connection->open().isOk());
+  CHECK(f.document().nodes[0].name == label);
+  bool received = false;
+  f.session.setSceneSink([&](as::ValidatedSceneData) { received = true; return true; });
+  REQUIRE(f.connection->apply().isOk());
+  CHECK(received);
+  CHECK(f.document().nodes[0].name == label);
+  AuthoringSession imported(DocumentSource{sceneGuid(), Imported{f.source}});
+  auto c = imported.connect();
+  REQUIRE(c->open().isOk());
+  REQUIRE(refusalOf(*c, {ac::SetNodeName{entity(1), "import edit"}}) == std::nullopt);
+  CHECK(c->save().error() == ac::SaveError::ImportedSceneNotSavable);
+  REQUIRE(c->open().isOk());
+  CHECK(c->listNodes().value()[0].name == label);
+}

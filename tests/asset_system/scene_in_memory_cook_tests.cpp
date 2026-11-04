@@ -200,6 +200,28 @@ void checkInMemoryEqualsBuild(const BuildCookedScene& built) {
 
 }  // namespace
 
+TEST_CASE("node names survive authoring text and are explicitly projected out of runtime artifacts",
+          "[asset_system][scene][in_memory_cook][node_name]") {
+  auto document = oneCameraScene();
+  const auto unnamed = as::cookSceneToMemory(document, sceneGuid());
+  REQUIRE(unnamed.isOk());
+  document.nodes[0].name = " \xe4\xb8\xad \"camera\" \\ ";
+  const auto source = scene::toParsedSceneSource(document);
+  REQUIRE(source.isOk());
+  const auto parsed = as::parseSceneSource(as::serializeSceneSource(source.value()));
+  REQUIRE(parsed.isOk());
+  const auto back = scene::toAuthoringScene(parsed.value());
+  REQUIRE(back.isOk());
+  CHECK(back.value() == document);
+  const auto named = as::cookSceneToMemory(document, sceneGuid());
+  REQUIRE(named.isOk());
+  CHECK(named.value().artifactBytes == unnamed.value().artifactBytes);
+  CHECK(as::decodeScene(named.value()).isOk());
+  CHECK(scene::AuthoringNode{}.name.empty());
+  document.nodes[0].name = std::string(256, 'x');
+  CHECK(as::cookSceneToMemory(document, sceneGuid()).isErr());
+}
+
 TEST_CASE("codec 0074 text and document cooks enforce the inclusive artifact capacity",
           "[asset_system][scene][in_memory_cook][codec0074]") {
   scene::AuthoringScene document;

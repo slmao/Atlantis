@@ -38,7 +38,8 @@ inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 7;
 // Plan 0049 P5 (Spec 0049 R5/R6, ruling Q2): the scene semantic version this
 // artifact format projects -- see scene::kSemanticVersion. Independent of
 // the format version above: a layout-only change leaves it alone.
-inline constexpr std::uint32_t kSceneArtifactSemanticVersion = 1;
+// Spec 0069: semantic2 projects authoring names away; format7 bytes are unchanged.
+inline constexpr std::uint32_t kSceneArtifactSemanticVersion = 2;
 inline constexpr std::size_t kSceneArtifactHeaderSizeBytes = 24;
 // position(12) + rotation(12) + scale(12) + has_camera(4) +
 // fov_y/near_z/far_z(12) + exposure_compensation_ev(4) +

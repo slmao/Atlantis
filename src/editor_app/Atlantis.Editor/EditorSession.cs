@@ -245,7 +245,8 @@ public sealed class RuntimeWorldPreview : IWorldPreview
 
 /// <summary>The Inspector as the worker last read it: the subject's fields, its components and the ones it could add.</summary>
 public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<InspectorField> Fields,
-                                       IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable);
+                                       IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable,
+                                       string Name = "");
 
 public sealed class EditorWorker : IDisposable
 {
@@ -575,6 +576,12 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M3 (Spec 0068 R4): a field's text committed as one transaction (then an apply), or its refusal shown.</summary>
     public void CommitField(string path, string text) => Edit(document => (_inspector!.Commit(path, text), null));
 
+    /// <summary>A name draft commits only while its selection and last observed value are current.</summary>
+    public void CommitName(EntityGuid node, string before, string name) =>
+        Edit(document => (_selected == node
+            ? HierarchyCommands.Rename(_tree, node, before, name)
+            : EditPlan.Refused("rename node", "the selection changed"), null));
+
     /// <summary>Plan 0068 M3: an optional field cleared.</summary>
     public void ClearField(string path) => Edit(document => (_inspector!.Clear(path), null));
 
@@ -843,6 +850,7 @@ public sealed class EditorWorker : IDisposable
         // Another client's change to the selected node (or the node going) refreshes the Inspector.
         if (_selected is EntityGuid subject && events.Any(e => e is PropertyChanged { Address.Node: var n } && n == subject ||
                                                               e is ComponentAdded { Node: var a } && a == subject ||
+                                                              e is NodeNameChanged { Node: var renamed } && renamed == subject ||
                                                               e is ComponentRemoved { Node: var r } && r == subject || e is DocumentReopened) ||
             destroyed.Count > 0)
         {
@@ -901,7 +909,8 @@ public sealed class EditorWorker : IDisposable
         IReadOnlyList<SchemaType> schema = _document.Schema;
         var snapshot = new InspectorSnapshot(subject, _inspector.Fields,
                                              _inspector.Components.Select(c => (c, SceneSchema.NameOf(schema, c))).ToList(),
-                                             _inspector.Addable().Select(t => (t.Id, t.ShortName)).ToList());
+                                             _inspector.Addable().Select(t => (t.Id, t.ShortName)).ToList(),
+                                             subject is EntityGuid named ? _tree.NameOf(named) : "");
         _post(() => InspectorChanged?.Invoke(snapshot));
     }
 

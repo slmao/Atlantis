@@ -32,6 +32,9 @@ struct ConstraintCase {
 [[nodiscard]] std::vector<ConstraintCase> constraintCases() {
   using scene::Constraint;
   std::vector<ConstraintCase> out;
+  out.push_back({Constraint::InvalidNodeName,
+                 [] { return std::vector<ac::Command>{ac::SetNodeName{entity(1), std::string(256, 'a')}}; },
+                 ac::Error::InvalidNodeName});
   out.push_back({Constraint::NonEmptyDocument,
                  [] {
                    return std::vector<ac::Command>{ac::SetActiveCamera{std::nullopt}, ac::DestroyNode{entity(2)},

@@ -75,6 +75,8 @@
 {"case":"authoring.command.parent.root","type":"AuthoringCommand","wire":{"kind":"SetParent","node":"52052052-0003-4052-8052-000000000003","parent":null}}
 {"case":"authoring.command.camera","type":"AuthoringCommand","wire":{"kind":"SetActiveCamera","camera":"52052052-0002-4052-8052-000000000002"}}
 {"case":"authoring.command.camera.none","type":"AuthoringCommand","wire":{"kind":"SetActiveCamera","camera":null}}
+{"case":"authoring.command.name","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":"  名 \"quoted\" \\ "}}
+{"case":"authoring.command.name.empty","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":""}}
 {"case":"authoring.event.changed","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"f32":7}}}
 {"case":"authoring.event.changed.absent","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"absent":true}}}
 {"case":"authoring.event.created","type":"AuthoringEvent","wire":{"kind":"NodeCreated","node":"58005800-0000-4000-8000-0000000000b1","position":5}}
@@ -87,15 +89,17 @@
 {"case":"authoring.event.camera.none","type":"AuthoringEvent","wire":{"kind":"ActiveCameraChanged","camera":null}}
 {"case":"authoring.event.reopened","type":"AuthoringEvent","wire":{"kind":"DocumentReopened","scene":"52052052-00aa-4052-8052-0000000000aa"}}
 {"case":"authoring.event.applied","type":"AuthoringEvent","wire":{"kind":"Applied","generation":3}}
-{"case":"authoring.filter.all","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","NodeCreated","NodeDestroyed","ComponentAdded","ComponentRemoved","ParentChanged","ActiveCameraChanged","DocumentReopened","Applied"],"node":null,"component":null}}
+{"case":"authoring.event.name","type":"AuthoringEvent","wire":{"kind":"NodeNameChanged","node":"52052052-0003-4052-8052-000000000003","name":"  名 \"quoted\" \\ "}}
+{"case":"authoring.filter.all","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","NodeCreated","NodeDestroyed","ComponentAdded","ComponentRemoved","ParentChanged","ActiveCameraChanged","DocumentReopened","Applied","NodeNameChanged"],"node":null,"component":null}}
 {"case":"authoring.filter.none","type":"AuthoringFilter","wire":{"kinds":[],"node":null,"component":null}}
 {"case":"authoring.filter.applied","type":"AuthoringFilter","wire":{"kinds":["Applied"],"node":null,"component":null}}
 {"case":"authoring.filter.property","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","ComponentAdded"],"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d"}}
 {"case":"authoring.failure","type":"AuthoringFailure","wire":{"ticket":9,"error":"ParentAcyclic"}}
 {"case":"authoring.document","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"D:/Atlantis/assets/scenes/a \"b\" é.scene.txt","nodeCount":5}}
 {"case":"authoring.document.imported","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"Imported","source":"D:/build/bistro/bistro.scene.txt","nodeCount":5992}}
-{"case":"authoring.node","type":"NodeSummary","wire":{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001"}}
-{"case":"authoring.node.root","type":"NodeSummary","wire":{"node":"52052052-0001-4052-8052-000000000001","parent":null}}
+{"case":"authoring.node","type":"NodeSummary","wire":{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001","name":""}}
+{"case":"authoring.node.root","type":"NodeSummary","wire":{"node":"52052052-0001-4052-8052-000000000001","parent":null,"name":""}}
+{"case":"authoring.node.named","type":"NodeSummary","wire":{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001","name":"  名 \"quoted\" \\ "}}
 {"case":"authoring.error.NoDocument","type":"AuthoringError","wire":"NoDocument"}
 {"case":"authoring.error.UnknownNode","type":"AuthoringError","wire":"UnknownNode"}
 {"case":"authoring.error.UnknownComponentType","type":"AuthoringError","wire":"UnknownComponentType"}
@@ -120,6 +124,7 @@
 {"case":"authoring.error.MaxPointLights","type":"AuthoringError","wire":"MaxPointLights"}
 {"case":"authoring.error.CookRefused","type":"AuthoringError","wire":"CookRefused"}
 {"case":"authoring.error.NotRepresentableInSource","type":"AuthoringError","wire":"NotRepresentableInSource"}
+{"case":"authoring.error.InvalidNodeName","type":"AuthoringError","wire":"InvalidNodeName"}
 {"case":"authoring.open_error.SourceUnreadable","type":"OpenError","wire":"SourceUnreadable"}
 {"case":"authoring.open_error.SourceParseFailed","type":"OpenError","wire":"SourceParseFailed"}
 {"case":"authoring.open_error.SourceInvalid","type":"OpenError","wire":"SourceInvalid"}
@@ -139,7 +144,7 @@
 {"case":"authoring.result.save.refused","type":"AuthoringResult","wire":{"method":"authoring.save","result":{"err":"ImportedSceneNotSavable"}}}
 {"case":"authoring.result.document","type":"AuthoringResult","wire":{"method":"authoring.document","result":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"scene.scene.txt","nodeCount":5}}}
 {"case":"authoring.result.document.none","type":"AuthoringResult","wire":{"method":"authoring.document","result":null}}
-{"case":"authoring.result.list_nodes","type":"AuthoringResult","wire":{"method":"authoring.listNodes","result":{"ok":[{"node":"52052052-0001-4052-8052-000000000001","parent":null},{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001"}]}}}
+{"case":"authoring.result.list_nodes","type":"AuthoringResult","wire":{"method":"authoring.listNodes","result":{"ok":[{"node":"52052052-0001-4052-8052-000000000001","parent":null,"name":""},{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001","name":""}]}}}
 {"case":"authoring.result.list_nodes.refused","type":"AuthoringResult","wire":{"method":"authoring.listNodes","result":{"err":"NoDocument"}}}
 {"case":"authoring.result.list_components","type":"AuthoringResult","wire":{"method":"authoring.listComponents","result":{"ok":["0xb9843e7316ae7a5d"]}}}
 {"case":"authoring.result.get_property","type":"AuthoringResult","wire":{"method":"authoring.getProperty","result":{"ok":{"f32":3}}}}

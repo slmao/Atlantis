@@ -139,6 +139,11 @@ class GuidIndex {
 [[nodiscard]] std::optional<ac::Error> checkConstraint(const scene::ConstraintRule& rule,
                                                        const scene::AuthoringScene& document, const GuidIndex& index) {
   switch (rule.id) {
+    case scene::Constraint::InvalidNodeName:
+      for (const auto& node : document.nodes) {
+        if (!scene::isValidNodeName(node.name)) return ac::Error::InvalidNodeName;
+      }
+      return std::nullopt;
     case scene::Constraint::NonEmptyDocument:
       if (document.nodes.empty()) return ac::Error::NonEmptyDocument;
       return std::nullopt;

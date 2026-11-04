@@ -119,6 +119,17 @@ public static class TransformMath
 
 public static class HierarchyCommands
 {
+    /// <summary>A rename against the latest observed name; labels never identify the node.</summary>
+    public static EditPlan Rename(DocumentTree tree, EntityGuid node, string before, string name)
+    {
+        const string label = "rename node";
+        if (!tree.Contains(node)) return EditPlan.Refused(label, "the node is gone");
+        if (tree.NameOf(node) != before) return EditPlan.Refused(label, "changed elsewhere");
+        if (!NodeNames.IsValid(name)) return EditPlan.Refused(label, "InvalidNodeName");
+        if (before == name) return EditPlan.Refused(label, "unchanged");
+        return new EditPlan(label, new Command[] { new SetNodeName(node, name) });
+    }
+
     public const string NotRepresentable =
         "its world placement cannot be kept under that parent: the local transform would not be a translation, rotation " +
         "and scale (a non-uniformly scaled parent)";

@@ -4,6 +4,7 @@
 #include "scene_transform.h"
 
 #include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/scene_semantic_schema.h>
 #include <atlantis/asset_system/scene_types.h>
 #include <cgltf.h>
 
@@ -71,6 +72,69 @@ using CheckResult = atlantis::Result<std::monostate, GltfImportError>;
 
 [[nodiscard]] bool isUnit(float v) { return std::isfinite(v) && v >= 0.0f && v <= 1.0f; }
 
+// cgltf keeps the JSON string spelling in node.name. Decode only this label;
+// unlike cgltf_decode_string, preserve supplementary Unicode as one scalar.
+[[nodiscard]] std::optional<std::string> decodedNodeName(const char* spelling) {
+  std::string out;
+  const std::string_view text = spelling != nullptr ? spelling : "";
+  const auto unit = [&](std::size_t& at) -> std::optional<std::uint32_t> {
+    if (text.size() - at < 4) return std::nullopt;
+    std::uint32_t value = 0;
+    for (int i = 0; i < 4; ++i) {
+      const char c = text[at++];
+      const int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                                                                                 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+      if (digit < 0) return std::nullopt;
+      value = (value << 4) | static_cast<std::uint32_t>(digit);
+    }
+    return value;
+  };
+  for (std::size_t at = 0; at < text.size();) {
+    const char c = text[at++];
+    if (c != '\\') {
+      out += c;
+    } else {
+      if (at == text.size()) return std::nullopt;
+      const char escape = text[at++];
+      if (escape == '"' || escape == '\\' || escape == '/') {
+        out += escape;
+      } else if (escape == 'u') {
+        auto scalar = unit(at);
+        if (!scalar) return std::nullopt;
+        if (*scalar >= 0xd800 && *scalar <= 0xdbff) {
+          if (text.substr(at, 2) != "\\u") return std::nullopt;
+          at += 2;
+          const auto low = unit(at);
+          if (!low || *low < 0xdc00 || *low > 0xdfff) return std::nullopt;
+          *scalar = 0x10000 + ((*scalar - 0xd800) << 10) + (*low - 0xdc00);
+        } else if (*scalar >= 0xdc00 && *scalar <= 0xdfff) {
+          return std::nullopt;
+        }
+        if (*scalar < 0x80) out += static_cast<char>(*scalar);
+        else if (*scalar < 0x800) {
+          out += static_cast<char>(0xc0u | (*scalar >> 6));
+          out += static_cast<char>(0x80u | (*scalar & 0x3f));
+        } else if (*scalar < 0x10000) {
+          out += static_cast<char>(0xe0u | (*scalar >> 12));
+          out += static_cast<char>(0x80u | ((*scalar >> 6) & 0x3f));
+          out += static_cast<char>(0x80u | (*scalar & 0x3f));
+        } else {
+          out += static_cast<char>(0xf0u | (*scalar >> 18));
+          out += static_cast<char>(0x80u | ((*scalar >> 12) & 0x3f));
+          out += static_cast<char>(0x80u | ((*scalar >> 6) & 0x3f));
+          out += static_cast<char>(0x80u | (*scalar & 0x3f));
+        }
+      } else {
+        // JSON's remaining escapes all encode forbidden control characters.
+        return std::nullopt;
+      }
+    }
+    if (out.size() > atlantis::asset_system::scene::kMaxNodeNameBytes) return std::nullopt;
+  }
+  if (!atlantis::asset_system::scene::isValidNodeName(out)) return std::nullopt;
+  return out;
+}
+
 struct LightLine {
   bool directional = false;
   std::array<float, 3> color{1.0f, 1.0f, 1.0f};
@@ -86,6 +150,7 @@ struct SceneLine {
   std::optional<atlantis::asset_system::AssetGuid> mesh;
   std::optional<atlantis::asset_system::AssetGuid> material;
   std::optional<LightLine> light;
+  std::string name;
 };
 
 [[nodiscard]] std::string formatFloat(float value) {
@@ -107,12 +172,20 @@ struct SceneLine {
 // camera becomes the active one.
 [[nodiscard]] std::string serialize(const std::vector<SceneLine>& lines, const std::vector<std::string>& overlayLines,
                                     std::optional<std::uint32_t> activeCamera) {
-  std::string out = "atlantis_scene_source_version: 7\nnode_count: " +
+  std::string out = "atlantis_scene_source_version: 8\nnode_count: " +
                     std::to_string(lines.size() + overlayLines.size()) + "\nactive_camera: " +
                     (activeCamera ? std::to_string(*activeCamera) : std::string("none")) + "\n";
   for (const SceneLine& l : lines) {
-    out += "node: node_id=" + std::to_string(l.id) + " guid=" + atlantis::asset_system::toString(l.guid) +
-           " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +
+    out += "node: node_id=" + std::to_string(l.id) + " guid=" + atlantis::asset_system::toString(l.guid);
+    if (!l.name.empty()) {
+      out += " name=\"";
+      for (const char c : l.name) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+      }
+      out += '"';
+    }
+    out += " parent=" + (l.parent ? std::to_string(*l.parent) : "none") +
            " position=" + formatTriple(l.transform.translation) + " rotation=" + formatTriple(l.transform.eulerRadians) +
            " scale=" + formatTriple(l.transform.scale);
     if (l.mesh) {
@@ -207,6 +280,9 @@ atlantis::Result<std::monostate, GltfImportError> checkScene(const cgltf_data& d
     stack.pop_back();
     // A node reachable twice would become two node: lines with one id.
     if (!visited.insert(node).second) return CheckResult::Err(GltfImportError::MalformedGltf);
+    if (!decodedNodeName(node->name)) {
+      return CheckResult::Err(GltfImportError::InvalidNodeName);
+    }
     const auto transform = localTransform(*node);
     if (transform.isErr()) return CheckResult::Err(transform.error());
     if (const cgltf_light* light = node->light) {
@@ -276,6 +352,7 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
     const auto nodeGuid = deriveImportEntityGuid(sceneGuid.value(), nodeKey);
     if (nodeGuid.isErr()) return CheckResult::Err(nodeGuid.error());
     line.guid = nodeGuid.value();
+    line.name = *decodedNodeName(node.name);  // validated by checkScene()
     line.parent = frame.parent;
     line.transform = localTransform(node).value();  // checked by checkScene()
     const auto& s = line.transform.scale;

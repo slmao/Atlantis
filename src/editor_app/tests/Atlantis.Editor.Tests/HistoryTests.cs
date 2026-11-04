@@ -113,6 +113,53 @@ public static partial class Program
     {
         EntityGuid r = FakeDocument.Guid(1), a = FakeDocument.Guid(2), a1 = FakeDocument.Guid(3), b = FakeDocument.Guid(4), f = FakeDocument.Guid(5);
 
+        {
+            var h = Document5();
+            Check(h.Commit(HierarchyCommands.Rename(h.Tree, a1, "", "灯 one")) is null && h.Tree.NameOf(a1) == "灯 one" &&
+                  h.History.UndoDepth == 1, "name history: one rename is one entry");
+            h.Applied();
+            Check(h.Step(undo: true) == HistoryResult.Submitted && h.Tree.NameOf(a1) == "",
+                  "name history: undo restores empty through the shared command");
+            Check(h.Step(undo: false) == HistoryResult.Submitted && h.Tree.NameOf(a1) == "灯 one",
+                  "name history: redo restores exact text");
+            h.Outside(new SetNodeName(a1, "outside"));
+            int submissions = h.Document.Submissions;
+            Check(h.Step(undo: true) == HistoryResult.ChangedElsewhere && h.Tree.NameOf(a1) == "outside" && h.Document.Submissions == submissions,
+                  "name history: another client's rename refuses without a transaction");
+        }
+        {
+            var h = Document5();
+            h.Commit(HierarchyCommands.Rename(h.Tree, a1, "", "gone"));
+            h.Outside(new DestroyNode(a1));
+            Check(h.Step(undo: true) == HistoryResult.Invalidated, "name history: a deleted node refuses the step");
+        }
+        {
+            var h = Document5();
+            h.Outside(new SetNodeName(a, "parent"), new SetNodeName(a1, "child"));
+            Check(h.Commit(HierarchyCommands.DestroySubtree(h.Document, h.Tree, a)) is null && !h.Tree.Contains(a),
+                  "name history: a named subtree is destroyed");
+            Check(h.Step(undo: true) == HistoryResult.Submitted && h.Tree.NameOf(a) == "parent" && h.Tree.NameOf(a1) == "child",
+                  "name history: undo recreates exact names in the whole node state");
+            h.Outside(new SetNodeName(a1, "external child"));
+            int submissions = h.Document.Submissions;
+            Check(h.Step(undo: false) == HistoryResult.ChangedElsewhere && h.Tree.Contains(a1) && h.Document.Submissions == submissions,
+                  "name history: an external subtree rename prevents destructive replay");
+        }
+        {
+            var h = Document5();
+            var named = new EntityGuid(Guid.NewGuid());
+            Check(h.Commit(new EditPlan("create named", new Command[]
+                  { new CreateNode(named, (ulong)h.Tree.Count, Array.Empty<TypeId>()), new SetNodeName(named, "new name") })) is null &&
+                  h.History.UndoDepth == 1, "name history: create plus rename folds into one node-life state");
+            Check(h.Step(undo: true) == HistoryResult.Submitted && !h.Tree.Contains(named) &&
+                  h.Step(undo: false) == HistoryResult.Submitted && h.Tree.NameOf(named) == "new name",
+                  "name history: create redo preserves its folded name");
+            Check(h.Commit(new EditPlan("rename twice", new Command[] { new SetNodeName(named, "middle"), new SetNodeName(named, "last") })) is null &&
+                  h.Step(undo: true) == HistoryResult.Submitted && h.Tree.NameOf(named) == "new name" &&
+                  h.Step(undo: false) == HistoryResult.Submitted && h.Tree.NameOf(named) == "last",
+                  "name history: repeated renames in a single edit preserve its before/final pair");
+        }
+
         // A property record (an Inspector commit): undo and redo are one transaction each, then an apply.
         {
             var h = Document5();

@@ -153,6 +153,27 @@ internal sealed class IntegrationTest
         originalFov.Find("f32")!.TryGetFloat(out float fov);
         JsonValue editedFov = Object("f32", JsonValue.Number(fov * 0.9f));
         JsonValue before = await Capture(first, "before");
+        string originalName = nodes.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")!.AsString;
+        await Query(first, "authoring.drain_events");
+        await Query(second, "authoring.drain_events");
+        async Task Rename(string value)
+        {
+            await Query(first, "authoring.submit_transaction", Object("commands", JsonValue.NewArray().Push(
+                Object("kind", String("SetNodeName")).Set("node", String(camera)).Set("name", String(value)))));
+            Require("rename settled", (await Query(first, "authoring.drain_failures")).Items.Count == 0);
+        }
+        const string named = "  名 \"quoted\" \\ ";
+        await Rename(named);
+        JsonValue nameEvents = (await Query(second, "authoring.drain_events")).Find("ok")!;
+        Require("second client receives exact name event", nameEvents.Items.Any(e => e.Find("kind")?.AsString == "NodeNameChanged" && e.Find("node")?.AsString == camera && e.Find("name")?.AsString == named));
+        Require("second client reads name", (await Query(second, "authoring.list_nodes")).Find("ok")!.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")?.AsString == named);
+        await ApplyAndWait(first, second, "name-edit");
+        JsonValue nameCapture = await Capture(first, "name-edit");
+        Require("name-only apply leaves rendered frame data unchanged", Json.Write(nameCapture.Find("data")!) == Json.Write(before.Find("data")!));
+        await Rename("");
+        Require("empty name clears", (await Query(second, "authoring.list_nodes")).Find("ok")!.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")?.AsString == "");
+        await Rename(originalName);
+        Require("restored full original node summaries", Json.Write((await Query(second, "authoring.list_nodes")).Find("ok")!) == originalNodes);
         await Query(first, "authoring.drain_events");
         await Query(second, "authoring.drain_events");
 

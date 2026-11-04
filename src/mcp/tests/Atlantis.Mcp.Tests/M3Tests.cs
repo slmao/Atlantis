@@ -67,6 +67,17 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
+            if (kind == "SetNodeName")
+            {
+                FakeSession names = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };
+                string args = Json.Write(JsonValue.NewObject().Set("commands", JsonValue.NewArray().Push(command)));
+                CallToolResult named = new ToolRegistry(names).Invoke(Request("authoring.submit_transaction", args));
+                Check(named.IsError != true && names.Calls.Count == 1, "rename uses the existing exact transaction tool once");
+                Check(Json.Write(names.Calls.Single().Parameters.Find("commands")!.Items.Single()) == Json.Write(command), "rename data forwarded exactly");
+                Check(Codec.DecodeAuthoringCommand(command) is Atlantis.Gameplay.Authoring.SetNodeName, "SDK accepts rename fixture");
+                ++fixtureCount;
+                continue;
+            }
             string tool = kind switch
             {
                 "CreateNode" => "create_node", "DestroyNode" => "destroy_node", "SetProperty" => "set_properties",

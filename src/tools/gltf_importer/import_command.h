@@ -63,6 +63,7 @@ enum class GltfImportError {
   SourceNotInCatalog,       // no entry for content:<content-root name>/<glTF file name>
   CatalogTypeMismatch,      // that entry is not a gltf_import
   InvalidAssetSubKey,       // a derivation sub-key is empty or not ASCII after normalization
+  InvalidNodeName,          // Spec 0069: invalid UTF-8/domain or over 255 encoded bytes
 };
 
 struct GltfImportSummary {
