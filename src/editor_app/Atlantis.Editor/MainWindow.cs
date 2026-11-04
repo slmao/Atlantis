@@ -169,7 +169,7 @@ public sealed class MainWindow : Window
         _notes.PlaceholderText = "Type here (keyboard focus check)";
         _entities.SelectionMode = SelectionMode.Single;
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
-            new TextBlock { Text = row.Label, Margin = new Thickness(row.Depth * 14, 0, 0, 0) });
+            new TextBlock { Text = row?.Label ?? "", Margin = new Thickness((row?.Depth ?? 0) * 14, 0, 0, 0) });
         _entities.SelectionChanged += (_, _) => OnHierarchySelected();
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -774,7 +774,10 @@ public sealed class MainWindow : Window
         nameBox.LostFocus += (_, _) =>
         {
             nameBox.Text = snapshot.Name;
-            if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() => BuildInspector(waiting));
+            if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+            {
+                if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+            });
         };
         foreach (var (component, name) in snapshot.Components)
         {
@@ -840,7 +843,10 @@ public sealed class MainWindow : Window
             box.LostFocus += (_, _) =>
             {
                 Commit();
-                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() => BuildInspector(waiting));
+                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+                {
+                    if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+                });
             };
             editor = box;
         }

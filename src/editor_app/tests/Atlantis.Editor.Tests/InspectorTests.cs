@@ -5,11 +5,24 @@
 // outside changes, and add / remove component.
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using Atlantis.Editor;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
+using Atlantis.Gameplay.Remote;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Themes.Fluent;
+using Avalonia.Threading;
 using Command = Atlantis.Gameplay.Authoring.Command;
 using SetProperty = Atlantis.Gameplay.Authoring.SetProperty;
 using AddComponent = Atlantis.Gameplay.Authoring.AddComponent;
@@ -19,6 +32,254 @@ namespace Atlantis.Editor.Tests;
 
 public static partial class Program
 {
+    private sealed record NameUiCheck(string Name, bool Ok, string Detail = "");
+
+    /// <summary>
+    /// Runs the product MainWindow on Windows, with actual Avalonia controls,
+    /// focus and routed keys. It does not inject OS input or capture a screen.
+    /// A separate runner invokes this method so normal model tests stay headless.
+    /// </summary>
+    public static int RunNameUiSmoke(string runtimePath, string outputFile)
+    {
+        var checks = new List<NameUiCheck>();
+        int exit = 1;
+        string? work = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                exit = AppBuilder.Configure(() => new NameUiApplication(runtimePath, checks, path => work = path))
+                                 .UsePlatformDetect().StartWithClassicDesktopLifetime(Array.Empty<string>());
+            }
+            catch (Exception e)
+            {
+                checks.Add(new NameUiCheck("UI lifetime completed", false, e.ToString()));
+            }
+        }) { Name = "Atlantis name UI smoke", IsBackground = true };
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        if (!thread.Join(TimeSpan.FromMinutes(6)))
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (Application.Current?.ApplicationLifetime is IControlledApplicationLifetime desktop) desktop.Shutdown(1);
+            });
+            thread.Join(TimeSpan.FromSeconds(30));
+            checks.Add(new NameUiCheck("bounded UI lifetime", false, "exceeded six minutes"));
+            exit = 1;
+        }
+        if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
+        var report = new
+        {
+            kind = "product-name-ui-smoke",
+            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button events. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
+            runtime = Path.GetFullPath(runtimePath), workDirectory = work,
+            passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
+        };
+        string json = System.Text.Json.JsonSerializer.Serialize(report, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(outputFile))!);
+        File.WriteAllText(outputFile, json + "\n");
+        Console.WriteLine(json);
+        return exit;
+    }
+
+    private sealed class NameUiApplication : Application
+    {
+        private readonly string _runtime;
+        private readonly List<NameUiCheck> _checks;
+        private readonly Action<string> _work;
+
+        public NameUiApplication(string runtime, List<NameUiCheck> checks, Action<string> work)
+        {
+            _runtime = runtime;
+            _checks = checks;
+            _work = work;
+        }
+
+        public override void Initialize() => Styles.Add(new FluentTheme());
+
+        public override void OnFrameworkInitializationCompleted()
+        {
+            if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                var window = new MainWindow(new EditorOptions(_runtime, "integrated_showcase_demo"));
+                desktop.MainWindow = window;
+                window.Opened += async (_, _) =>
+                {
+                    try { await CheckNameUi(window, _checks, _work); }
+                    catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
+                    finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
+                };
+            }
+            base.OnFrameworkInitializationCompleted();
+        }
+    }
+
+    private static T? NameUiField<T>(MainWindow window, string field) where T : class =>
+        typeof(MainWindow).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window) as T;
+
+    private static void NameUiSnapshot(MainWindow window, InspectorSnapshot snapshot) =>
+        typeof(MainWindow).GetMethod("OnInspectorChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                          .Invoke(window, new object[] { snapshot });
+
+    private static async Task NameUiWait(Func<bool> ready, string purpose, int seconds = 30)
+    {
+        long deadline = Environment.TickCount64 + seconds * 1000L;
+        while (!ready())
+        {
+            if (Environment.TickCount64 >= deadline) throw new TimeoutException(purpose);
+            await Task.Delay(25);
+        }
+    }
+
+    private static bool NameUiKey(TextBox box, Key key)
+    {
+        var input = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Source = box, Key = key };
+        box.RaiseEvent(input);
+        return input.Handled;
+    }
+
+    private static async Task CheckNameUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        void Check(string name, bool ok, string detail = "") => checks.Add(new NameUiCheck(name, ok, detail));
+        await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0 &&
+                               NameUiField<EditorWorker>(window, "_worker") is not null, "the actual editor connects", 120);
+        RuntimeProcess runtime = NameUiField<RuntimeProcess>(window, "_runtime") ?? throw new InvalidOperationException("no hosted Runtime");
+        work(runtime.Launch.WorkDirectory);
+        Check("actual Windows MainWindow is visible", window.IsVisible && window.ClientSize.Width > 0 && window.ClientSize.Height > 0);
+        var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+        HierarchyRow row = rows[0];
+        NameUiField<ListBox>(window, "_entities")!.SelectedItem = row;
+        await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == row.Node &&
+                               NameUiField<TextBox>(window, "_nameBox") is not null, "the actual Name field appears");
+
+        using RemoteSession observer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        SubscriptionId names = observer.Authoring.Subscribe(new Atlantis.Gameplay.Authoring.EventFilter(
+            Atlantis.Gameplay.Authoring.EventKind.NodeNameChanged, row.Node));
+        string ReadName() => observer.Authoring.ListNodes().Value!.First(n => n.Node == row.Node).Name;
+        int DrainNames() => observer.Authoring.DrainEvents(names).Value!.Count;
+        TextBox NameBox() => NameUiField<TextBox>(window, "_nameBox") ?? throw new InvalidOperationException("no Name TextBox");
+        TextBox notes = NameUiField<TextBox>(window, "_notes")!;
+        string original = ReadName();
+        bool Applied() => NameUiField<TextBlock>(window, "_applyLine")?.Text?.StartsWith("apply: applied", StringComparison.Ordinal) == true;
+
+        async Task Enter(string name, string check)
+        {
+            ulong beforeGeneration = observer.Control.Status().SceneGeneration;
+            TextBox box = NameBox();
+            Check(check + ": focus", box.Focus() && box.IsFocused);
+            box.Text = name;
+            Check(check + ": routed Enter handled", NameUiKey(box, Key.Enter));
+            string prefix = name.Length > 0 ? name + " · " : row.Node.Value.ToString("N")[..8] + " · ";
+            await NameUiWait(() => ReadName() == name && NameBox().Text == name && Applied() &&
+                                   observer.Control.Status().SceneGeneration > beforeGeneration &&
+                                   NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!
+                                   .First(r => r.Node == row.Node).Label.StartsWith(prefix, StringComparison.Ordinal), check + " settles");
+            Check(check + ": backend and actual field", ReadName() == name && NameBox().Text == name);
+            Check(check + ": one name event", DrainNames() == 1);
+        }
+
+        async Task NoChange(string check, string expected, ulong generation)
+        {
+            // Ordinary functional settling, not a latency/performance threshold.
+            await Task.Delay(250);
+            Check(check + ": no mutation/event/apply", ReadName() == expected && DrainNames() == 0 &&
+                  observer.Control.Status().SceneGeneration == generation);
+        }
+
+        void Outside(string name)
+        {
+            observer.Authoring.SubmitTransaction(new Command[] { new SetNodeName(row.Node, name) });
+            if (observer.Authoring.DrainFailures().Count != 0) throw new InvalidOperationException("external rename refused");
+        }
+
+        try
+        {
+            Check("Name field starts at observed source value", NameBox().Text == original);
+            _ = DrainNames();
+            await Enter("UI smoke 灯", "Enter rename");
+            Check("actual Hierarchy label follows rename", NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!
+                  .First(r => r.Node == row.Node).Label.StartsWith("UI smoke 灯 · ", StringComparison.Ordinal));
+
+            ulong generation = observer.Control.Status().SceneGeneration;
+            TextBox same = NameBox();
+            same.Focus();
+            same.Text = "UI smoke 灯";
+            Check("same-value Enter handled", NameUiKey(same, Key.Enter));
+            await NoChange("same-value Enter", "UI smoke 灯", generation);
+
+            TextBox escape = NameBox();
+            Check("Escape focus", escape.Focus() && escape.IsFocused);
+            escape.Text = "cancel this draft";
+            Check("Escape routed key handled", NameUiKey(escape, Key.Escape));
+            Check("Escape restores actual text", escape.Text == "UI smoke 灯");
+            await NoChange("Escape", "UI smoke 灯", generation);
+
+            TextBox unfocus = NameBox();
+            Check("lost-focus draft focus", unfocus.Focus() && unfocus.IsFocused);
+            unfocus.Text = "leave this draft";
+            Check("focus moves to another real TextBox", notes.Focus() && notes.IsFocused);
+            Check("LostFocus restores actual text", unfocus.Text == "UI smoke 灯");
+            await NoChange("LostFocus", "UI smoke 灯", generation);
+
+            TextBox invalid = NameBox();
+            invalid.Focus();
+            invalid.Text = new string('x', 256);
+            NameUiKey(invalid, Key.Enter);
+            await NameUiWait(() => NameUiField<TextBlock>(window, "_editLine")?.Text?.Contains("InvalidNodeName", StringComparison.Ordinal) == true,
+                             "invalid name refusal is displayed");
+            Check("invalid name refusal is displayed", NameUiField<TextBlock>(window, "_editLine")!.Text!.Contains("InvalidNodeName", StringComparison.Ordinal));
+            await NoChange("invalid draft", "UI smoke 灯", generation);
+
+            await Enter("", "clear name");
+            Check("empty name uses actual fallback label", NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!
+                  .First(r => r.Node == row.Node).Label.StartsWith(row.Node.Value.ToString("N")[..8] + " · ", StringComparison.Ordinal));
+            generation = observer.Control.Status().SceneGeneration;
+            NameUiField<Button>(window, "_undo")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => ReadName() == "UI smoke 灯" && NameBox().Text == "UI smoke 灯" && Applied() &&
+                                   observer.Control.Status().SceneGeneration > generation, "actual Undo button settles");
+            Check("actual Undo button restores name", ReadName() == "UI smoke 灯" && DrainNames() == 1);
+            generation = observer.Control.Status().SceneGeneration;
+            NameUiField<Button>(window, "_redo")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => ReadName() == "" && NameBox().Text == "" && Applied() &&
+                                   observer.Control.Status().SceneGeneration > generation, "actual Redo button settles");
+            Check("actual Redo button clears name", ReadName() == "" && DrainNames() == 1);
+
+            TextBox old = NameBox();
+            old.Focus();
+            old.Text = "stale typed draft";
+            Outside("external UI smoke");
+            await NameUiWait(() => !ReferenceEquals(old, NameBox()) && NameBox().Text == "external UI smoke", "external rename cancels actual draft");
+            Check("observed external rename cancels actual draft", !ReferenceEquals(old, NameBox()) && NameBox().Text == "external UI smoke");
+            _ = DrainNames();
+            generation = observer.Control.Status().SceneGeneration;
+            TextBox external = NameBox();
+            external.Focus();
+            NameUiKey(external, Key.Enter);
+            await NoChange("Enter after external refresh", "external UI smoke", generation);
+
+            // Deterministic dispatcher ordering: an old deferred callback must
+            // not overwrite a newer snapshot that arrived before it was run.
+            InspectorSnapshot shown = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!;
+            TextBox queued = NameBox();
+            queued.Focus();
+            queued.Text = "queued draft";
+            NameUiSnapshot(window, shown with { });
+            Check("queued-race setup deferred a real snapshot", NameUiField<InspectorSnapshot>(window, "_inspectorDeferred") is not null);
+            notes.Focus();
+            NameUiSnapshot(window, shown with { Name = "newer queued snapshot" });
+            await Task.Delay(50);
+            Check("old deferred callback cannot overwrite newer actual field", NameBox().Text == "newer queued snapshot", NameBox().Text ?? "");
+            NameUiSnapshot(window, shown);
+        }
+        finally
+        {
+            Outside(original);
+            await NameUiWait(() => ReadName() == original && NameBox().Text == original, "original observed name restored");
+            Check("original name restored without Save", ReadName() == original);
+        }
+    }
+
     private static void InspectorChecks()
     {
         var document = new FakeDocument();
