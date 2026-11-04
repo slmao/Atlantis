@@ -4,6 +4,7 @@
 - **Status:** Approved
 - **Author:** Codex, at slmao's direction
 - **Joint Human Review:** slmao jointly approved this Plan and Spec 0069, J1–J4 as recommended, and accepted ADR-0141/0142 on 2026-11-04; [ruling](https://github.com/slmao/Atlantis/pull/323#issuecomment-6634427244). PR #323 manually merged as `1e04452`; S2–S4 authorized on an independent latest-main branch under 0080 through a review-ready PR. Human final review/merge remains separate.
+- **Implementation:** [PR #324](https://github.com/slmao/Atlantis/pull/324) owns S2–S4 results, evidence reuse and remaining acceptance status; human final review/merge is pending.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
