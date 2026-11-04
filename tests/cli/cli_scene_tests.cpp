@@ -246,8 +246,12 @@ TEST_CASE("cli scene: names preserve JSON strings through argv repl and transact
   REQUIRE(runName(label) == 0);
   CHECK(scene.session.document()->nodes[0].name == label);
   const auto renamed = scene.envelope();
-  REQUIRE(renamed.find("result")->find("events") != nullptr);
-  const auto& first = renamed.find("result")->find("events")->asArray().front();
+  const auto* outcome = renamed.find("result")->find("outcome");
+  REQUIRE(outcome != nullptr);
+  const auto* events = outcome->find("events");
+  REQUIRE(events != nullptr);
+  REQUIRE(events->asArray().size() == 1);
+  const auto& first = events->asArray().front();
   CHECK(member(first, "kind") == "\"NodeNameChanged\"");
   CHECK(member(first, "name") == json::write(json::Value::string(label)));
   REQUIRE(scene.run("scene nodes") == 0);

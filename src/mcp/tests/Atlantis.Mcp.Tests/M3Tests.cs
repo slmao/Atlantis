@@ -149,7 +149,7 @@ internal static partial class Program
             && session.Calls[1].Method == "authoring.subscribe", "one subscription per family at connect");
         Check(Json.Write(session.Calls[0].Parameters) == "{\"filter\":{\"kinds\":[\"EntityCreated\",\"EntityDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"PropertyChanged\"],\"entity\":null,\"component\":null}}",
             "World filter has no restrictions");
-        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\"],\"node\":null,\"component\":null}}",
+        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\"],\"node\":null,\"component\":null}}",
             "authoring filter includes every kind, with no node/component restriction");
         try { registry.InitializeSubscriptions(); throw new Exception("duplicate initialization accepted"); }
         catch (InvalidOperationException) { Check(session.Calls.Count == 2, "initialization cannot create duplicate subscriptions"); }
