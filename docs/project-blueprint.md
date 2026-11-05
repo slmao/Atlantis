@@ -972,10 +972,13 @@ milestone being listed does not authorize starting it — see Section 1.
   no-editor-only-channel rule, ADR-0125 D2, is the held invariant; "Editor SDK" means the C# SDK plus
   the editor's model library, not a second API). Phase 1 (the prototype) and Phase 2's two steps
   (Specs 0065 and 0068) have landed, as has the shared MCP agent tool layer
-  ([Spec 0070](specs/0070-agent-tool-layer.md)). Node names are approved in
-  [Spec 0069](specs/0069-scene-node-names.md), with implementation and acceptance in
-  [PR #324](https://github.com/slmao/Atlantis/pull/324) pending human final review/merge. Other future work, each its own
-  Spec when it starts: an asset browser and the asset pipeline's client surface; C#-authored gameplay
+  ([Spec 0070](specs/0070-agent-tool-layer.md)). Node names are delivered by
+  [Spec 0069](specs/0069-scene-node-names.md) / merged
+  [PR #324](https://github.com/slmao/Atlantis/pull/324). The first asset-browser/shared
+  asset-query slice is proposed in [Spec 0081](specs/0081-asset-browser-shared-interface.md)
+  and [Plan 0081](plans/0081-asset-browser-shared-interface.md), pending joint review;
+  broader asset-pipeline management remains future work. Other future work, each its own
+  Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
   prefabs; a C# plugin system; and the AI-native loop (headless scripted run/capture/evaluate over
   the same tools). Named only, not designed or scaffolded.
