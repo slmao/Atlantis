@@ -20,6 +20,8 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
+using Avalonia.VisualTree;
 using Avalonia.Interactivity;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
@@ -71,7 +73,7 @@ public static partial class Program
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = "product-name-ui-smoke",
+            kind = "product-name-and-asset-ui-smoke",
             boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button events. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
@@ -106,7 +108,7 @@ public static partial class Program
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
                 {
-                    try { await CheckNameUi(window, _checks, _work); }
+                    try { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
                     finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
                 };
@@ -278,6 +280,99 @@ public static partial class Program
             await NameUiWait(() => ReadName() == original && NameBox().Text == original, "original observed name restored");
             Check("original name restored without Save", ReadName() == original);
         }
+    }
+
+    private static async Task CheckAssetsUi(MainWindow window, List<NameUiCheck> checks)
+    {
+        void Check(string name, bool ok, string detail = "") => checks.Add(new NameUiCheck(name, ok, detail));
+        RuntimeProcess runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        using RemoteSession observer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        var tabs = NameUiField<TabControl>(window, "_assetTabs")!;
+        var browser = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
+        var selection = NameUiField<Selection>(window, "_selection")!;
+        var undo = NameUiField<Button>(window, "_undo")!;
+        var redo = NameUiField<Button>(window, "_redo")!;
+        EntityGuid? selected = selection.Node;
+        var history = (undo.Content, redo.Content, undo.IsEnabled, redo.IsEnabled);
+        ulong generation = observer.Control.Status().SceneGeneration;
+        tabs.SelectedIndex = 1;
+        await NameUiWait(() => browser.State == "Ready" && browser.Items.Count > 0, "Assets tab loads through actual worker");
+        Check("assets UI: full shared list", browser.Items.SequenceEqual(observer.Assets.ListAssets().Value));
+        long ListRequests() => (long)typeof(AssetBrowser).GetField("_listRequest", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(browser)!;
+        long listRequests = ListRequests();
+        var controls = window.GetVisualDescendants().OfType<Control>().ToArray();
+        Check("assets UI: fixed snapshot recovery note", controls.OfType<TextBlock>().Any(b => b.Text?.Contains("restart Runtime", StringComparison.Ordinal) == true && b.Text.Contains("does not reread disk", StringComparison.Ordinal)));
+        TextBox search = controls.OfType<TextBox>().Single(b => b.PlaceholderText == "Source or GUID");
+        ComboBox types = controls.OfType<ComboBox>().Single(b => b.Items.Cast<object>().Any(v => v?.ToString() == "All types"));
+        ListBox list = NameUiField<ListBox>(window, "_assetsList")!;
+        var material = browser.Items.First(v => v.Type == Atlantis.Gameplay.Assets.AssetType.Material && v.Source.StartsWith("assets:", StringComparison.Ordinal));
+        types.SelectedIndex = 3;
+        search.Text = "no-such-asset-0081";
+        await NameUiWait(() => browser.Search == "no-such-asset-0081", "text filter dispatches");
+        Check("assets UI: no matching state", browser.ViewState == "No matching assets");
+        search.Text = material.Guid.ToString();
+        await NameUiWait(() => browser.Search == material.Guid.ToString(), "GUID filter dispatches");
+        Check("assets UI: type and GUID filters are local", browser.Visible.Count == 1 && browser.Visible[0] == material);
+        search.Text = material.Source.ToUpperInvariant();
+        await NameUiWait(() => browser.Search == material.Source.ToUpperInvariant(), "source filter dispatches");
+        Check("assets UI: source filter", browser.Visible.Any(v => v.Guid == material.Guid));
+        list.SelectedItem = browser.Visible.First(v => v.Guid == material.Guid);
+        await NameUiWait(() => browser.Details?.Guid == material.Guid, "actual detail query");
+        Check("assets UI: displayed metadata", NameUiField<StackPanel>(window, "_assetDetails")!.Children.OfType<TextBlock>().Any(b => b.Text?.Contains("artifact schema:", StringComparison.Ordinal) == true));
+        var copy = controls.OfType<Button>().Single(b => b.Content?.ToString() == "Copy GUID");
+        copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => browser.DetailState == "Ready", "copy after detail");
+        string? copied = await window.Clipboard!.TryGetTextAsync();
+        Check("assets UI: actual clipboard GUID", copied == material.Guid.ToString(), copied ?? "");
+        Check("assets UI: filters selection and copy do not reload", ListRequests() == listRequests);
+        var reload = controls.OfType<Button>().Single(b => b.Content?.ToString() == "Reload view");
+        for (int i = 0; i < 3; ++i)
+        {
+            reload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => browser.State == "Ready", "actual Reload view");
+            Check("assets UI: Reload preserves selection " + i, browser.Selected == material.Guid);
+        }
+        Check("assets UI: browsing leaves Hierarchy history and generation intact", selection.Node == selected &&
+            history == (undo.Content, redo.Content, undo.IsEnabled, redo.IsEnabled) && observer.Control.Status().SceneGeneration == generation);
+        if (browser.Details!.Dependencies.Count > 0)
+        {
+            AssetGuid dependency = browser.Details.Dependencies[0];
+            var button = NameUiField<StackPanel>(window, "_assetDetails")!.Children.OfType<Button>().First();
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => browser.Details?.Guid == dependency, "actual dependency navigation");
+            Check("assets UI: dependency navigation", browser.Selected == dependency && selection.Node == selected);
+        }
+        tabs.SelectedIndex = 0;
+        var document = new RemoteAuthoringDocument(observer.Authoring, observer);
+        TypeId renderable = SceneSchema.TypeOf(document.Schema, "Renderable")!.Value;
+        EntityGuid node = observer.Authoring.ListNodes().Value.First(n => observer.Authoring.ListComponents(n.Node).Value.Contains(renderable)).Node;
+        var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+        NameUiField<ListBox>(window, "_entities")!.SelectedItem = rows.First(r => r.Node == node);
+        await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node, "actual Renderable Inspector");
+        TextBox MaterialBox() => NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
+            .Single(g => g.Children.OfType<TextBlock>().Any(b => b.Text == "materialAsset")).Children.OfType<TextBox>().Single();
+        SceneAddress address = SceneSchema.AddressOf(document.Schema, node, "Renderable", "materialAsset")!.Value;
+        AssetGuid original = document.GetProperty(address)!.Value.AsAsset();
+        var replacement = browser.Items.First(v => v.Type == Atlantis.Gameplay.Assets.AssetType.Material && v.Guid != original && v.Source.StartsWith("assets:", StringComparison.Ordinal));
+        tabs.SelectedIndex = 1; types.SelectedIndex = 0; search.Text = replacement.Guid.ToString();
+        await NameUiWait(() => browser.Search == replacement.Guid.ToString(), "replacement filter dispatches");
+        list.SelectedItem = browser.Visible.Single();
+        await NameUiWait(() => browser.Details?.Guid == replacement.Guid, "replacement selected");
+        copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        copied = await window.Clipboard!.TryGetTextAsync();
+        tabs.SelectedIndex = 0;
+        TextBox field = MaterialBox(); field.Focus(); field.Text = copied;
+        NameUiKey(field, Key.Enter); window.Focus();
+        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == replacement.Guid && observer.Control.Status().SceneGeneration > generation, "pasted GUID commits and applies");
+        Check("assets UI: clipboard pasted through existing Inspector", document.GetProperty(address)!.Value.AsAsset() == replacement.Guid);
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == original, "actual material Undo");
+        Check("assets UI: actual Undo restores GUID", document.GetProperty(address)!.Value.AsAsset() == original);
+        redo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == replacement.Guid, "actual material Redo");
+        Check("assets UI: actual Redo restores GUID", document.GetProperty(address)!.Value.AsAsset() == replacement.Guid);
+        undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == original, "restore original material");
     }
 
     private static void InspectorChecks()

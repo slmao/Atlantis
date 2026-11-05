@@ -342,6 +342,12 @@ public sealed class EditorWorker : IDisposable
         set => _measureLatency = value;
     }
 
+    // Query work stays on this worker; posted callbacks own their values.
+    public void LoadAssets(Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
+        Enqueue(session => { var result = session.Assets.ListAssets(); _post(() => done(result)); });
+    public void ReadAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> done) =>
+        Enqueue(session => { var result = session.Assets.GetAsset(guid); _post(() => done(result)); });
+
     public void Start() => _thread.Start();
 
     public void SetCamera(ViewportCamera? camera, long inputTicks)

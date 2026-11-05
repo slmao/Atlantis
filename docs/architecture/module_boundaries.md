@@ -959,6 +959,21 @@ Atlantis Remote (its payload), Atlantis Authoring (`AuthoringConnection`'s
 implementation, Spec 0065), and clients (Atlantis CLI; since Spec 0057,
 Atlantis Gameplay SDK).
 
+Since [Spec 0081](../specs/0081-asset-browser-shared-interface.md) /
+[ADR-0143](../adr/0143-shared-cooked-asset-catalog-queries.md), Connection also owns
+`AssetConnection` (`asset_connection.h`; values in `connection::assets`): two
+read-only cooked-catalog queries, `listAssets` and `getAsset`. It uses Core and the
+existing Asset System GUID value header only; no catalog loader or Tools include.
+The executable-private `src/runtime/asset_host.*` implements it with Asset System's
+existing loader, lazily retaining the first valid query's snapshot or failure for
+the Runtime lifetime. It is not part of RuntimeHost or the scene/frame path.
+Remote carries `assets.list/get` through an optional provider, the CLI exposes
+`asset list/get` (including `--exec`), and both SDKs expose the same facts. Native
+`gameplay::Assets` borrows this Connection interface only; managed
+`RemoteSession.Assets` is a lazy `AssetSession` with values in
+`Atlantis.Gameplay.Assets`. See the [wire contract](remote_protocol.md#52-cooked-asset-queries-spec-0081--adr-0143)
+for lifecycle, ownership and failure behavior.
+
 ---
 
 ## Atlantis Authoring
@@ -1387,6 +1402,15 @@ directory. Start the Runtime separately with `--listen` as for any client.
 **Extension points:** new capabilities require the shared wire/CLI/SDK Spec
 path of ADR-0125 D2; resources/prompts, push, multiplexing and non-stdio
 transports remain outside this host's approved scope.
+
+Spec 0081 adds exactly two read-only MCP tools, `assets.list` and `assets.get`,
+using the existing raw SDK request path. The product editor's Assets tab uses the
+same managed SDK on its existing worker: local type/source/GUID filters, details,
+dependency navigation and clipboard GUID copy, with a first-query snapshot/restart
+note and explicit Reload view. `Atlantis.Editor.Model.AssetBrowser` holds UI-free
+view state and rejects obsolete callbacks. Asset selection does not change the
+Hierarchy or history; reference edits retain the existing Inspector transaction
+and undo/redo path. No editor-only channel, asset writer, picker or new package.
 
 ---
 

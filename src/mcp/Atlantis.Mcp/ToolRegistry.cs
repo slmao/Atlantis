@@ -20,6 +20,7 @@ internal sealed record ToolMapping(Tool Tool, string Method, Func<JsonValue, Jso
 /// </summary>
 internal sealed partial class ToolRegistry(IAtlantisSession session)
 {
+    private const string AssetModel = " Read-only catalog facts; this does not edit the authoring document. A changed build requires Runtime restart.";
     private const string WorldModel = " Runtime World writes are disposable runtime-side tweaks; "
         + "persistent edits belong to the authoring document and land on explicit authoring.apply.";
     private const string AuthoringModel = " Edits change the authoring document; only explicit "
@@ -38,6 +39,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("commands", ToolSchemas.Array(ToolSchemas.WorldCommand)))),
         Declare("world.drain_failures", "connection.drainFailures", "Return and clear this client's deferred command failures.", WorldModel),
         Declare("world.schema", "connection.schema", "Read schema types, fields, IDs and constants in the wire's section 6.7 shape.", WorldModel),
+        Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
+        Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
+            ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("authoring.list_nodes", "authoring.listNodes", "List nodes in document order.", AuthoringModel),
         Declare("authoring.get_property", "authoring.getProperty", "Read a document property by its wire scene address.", AuthoringModel,
             ToolSchemas.Parameters(("address", ToolSchemas.SceneAddress))),

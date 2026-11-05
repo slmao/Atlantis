@@ -217,6 +217,16 @@ in a profiling build
 (`-DATLANTIS_PROFILING=ON`), `--benchmark <scene>` and `--gate`; see
 [docs/process/profiling.md](docs/process/profiling.md) and
 [docs/process/performance-contract.md](docs/process/performance-contract.md).
+Cooked asset discovery (Spec 0081) uses the same shared interface in every client:
+`atlantis --session <file> asset list` or `asset get <guid>` (`--json` for structured
+output); C++ `gameplay::Assets(session.assets())`; C#
+`session.Assets.ListAssets()` / `GetAsset(guid)`; MCP `assets.list` / `assets.get`.
+The product editor's Assets tab provides local filters, details, dependency
+navigation and Copy GUID; paste into an existing Inspector reference field to edit.
+The catalog is fixed at the first valid query, including an initial failure.
+Reload view and reconnect do not reread disk; restart Runtime after a changed
+build or a repaired initial failure. See the [shared contract](docs/architecture/remote_protocol.md#52-cooked-asset-queries-spec-0081--adr-0143).
+
 See [examples/](examples/) for smaller, single-purpose demo programs.
 
 ## Status

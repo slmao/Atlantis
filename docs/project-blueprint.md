@@ -975,8 +975,9 @@ milestone being listed does not authorize starting it — see Section 1.
   ([Spec 0070](specs/0070-agent-tool-layer.md)). Node names are delivered by
   [Spec 0069](specs/0069-scene-node-names.md) / merged
   [PR #324](https://github.com/slmao/Atlantis/pull/324). The first asset-browser/shared
-  asset-query slice is proposed in [Spec 0081](specs/0081-asset-browser-shared-interface.md)
-  and [Plan 0081](plans/0081-asset-browser-shared-interface.md), pending joint review;
+  asset-query slice is approved in [Spec 0081](specs/0081-asset-browser-shared-interface.md)
+  and [Plan 0081](plans/0081-asset-browser-shared-interface.md) (joint approval and
+  Accepted ADR-0143 in [PR #325](https://github.com/slmao/Atlantis/pull/325)); implementation is under review;
   broader asset-pipeline management remains future work. Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;

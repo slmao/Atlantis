@@ -24,6 +24,7 @@ internal sealed class IntegrationTest
     private readonly List<string> _captures = new();
     private readonly CancellationToken _token;
     private readonly string _work;
+    private Dictionary<string, string[]> _catalog = new();
 
     private IntegrationTest(string work, CancellationToken token) { _work = work; _token = token; }
 
@@ -36,6 +37,10 @@ internal sealed class IntegrationTest
         RuntimeProcess? runtime = null;
         try
         {
+            string catalog = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runtimePath)!, "..", "..", "..", "asset_catalog.txt"));
+            test._catalog = File.ReadLines(catalog).Where(line => line.StartsWith("record: ", StringComparison.Ordinal))
+                .Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                .ToDictionary(tokens => tokens[1]["guid=".Length..], StringComparer.Ordinal);
             runtime = new RuntimeProcess(Path.GetFullPath(runtimePath), scene, work);
             await runtime.WaitForSession(deadline.Token);
             Console.WriteLine("MCP live " + scene + ": Runtime listening; artifacts " + work);
@@ -129,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 32 tools", tools.Count == 32 && tools.Select(t => t.Name).Distinct().Count() == 32);
+            Require("real host discovers exactly 34 tools", tools.Count == 34 && tools.Select(t => t.Name).Distinct().Count() == 34);
         }
         await Query(first, "control.pause");
         Require("Runtime paused", (await Query(first, "control.status")).Find("paused")?.AsBool == true);
@@ -152,6 +157,27 @@ internal sealed class IntegrationTest
         Require("active camera FOV is finite", originalFov.Find("f32")?.TryGetFloat(out _) == true);
         originalFov.Find("f32")!.TryGetFloat(out float fov);
         JsonValue editedFov = Object("f32", JsonValue.Number(fov * 0.9f));
+        JsonValue assetList = (await Query(first, "assets.list")).Find("ok")!;
+        Require("both MCP clients observe complete catalog", assetList.IsArray && assetList.Items.Count > 0 &&
+            Json.Write((await Query(second, "assets.list")).Find("ok")!) == Json.Write(assetList), assetList.Items.Count.ToString());
+        Require("MCP GUID list equals the assembled catalog", assetList.Items.Select(v => v.Find("guid")!.AsString)
+            .SequenceEqual(_catalog.Keys.Order(StringComparer.Ordinal)));
+        bool assetFacts = true;
+        foreach (JsonValue asset in assetList.Items)
+        {
+            JsonValue d = (await Query(first, "assets.get", Object("guid", asset.Find("guid")!))).Find("ok")!;
+            string[] tokens = _catalog[asset.Find("guid")!.AsString];
+            string Field(string name) => tokens.Single(t => t.StartsWith(name + "=", StringComparison.Ordinal))[(name.Length + 1)..];
+            int depsAt = Array.FindIndex(tokens, t => t.StartsWith("deps=", StringComparison.Ordinal));
+            assetFacts &= Json.Write(d.Find("guid")!) == Json.Write(asset.Find("guid")!) &&
+                Json.Write(d.Find("type")!) == Json.Write(asset.Find("type")!) && Json.Write(d.Find("source")!) == Json.Write(asset.Find("source")!) &&
+                d.Find("type")!.AsString == Field("type") && d.Find("source")!.AsString == Field("source") &&
+                Json.Write(d.Find("artifactSchema")!) == Field("artifact_schema") &&
+                (d.Find("sourceSchema")!.IsNull ? "none" : Json.Write(d.Find("sourceSchema")!)) == Field("source_schema") &&
+                d.Find("tool")!.AsString == Field("tool") && d.Find("dependencies")!.Items.Select(g => g.AsString).SequenceEqual(tokens.Skip(depsAt + 1));
+        }
+        Require("every MCP detail and direct dependency agrees with the assembled catalog", assetFacts);
+        await Call(first, "assets.get", Object("guid", String("00810081-0081-4081-8081-008100810081")), error: true);
         JsonValue before = await Capture(first, "before");
         string originalName = nodes.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")!.AsString;
         await Query(first, "authoring.drain_events");
