@@ -5,7 +5,8 @@
 namespace atlantis::gameplay {
 // Spec 0081: transport-neutral read-only facade. Not thread-safe; caller's
 // connection thread. Borrows the connection, which must outlive it; owns no GPU
-// or file state. A Remote caller checks its session failure before any sentinel.
+// or file state. Results own their values; getAsset requires a non-nil GUID.
+// A Remote caller checks its session failure before interpreting any sentinel.
 class Assets {
  public:
   explicit Assets(connection::AssetConnection& connection) : connection_(connection) {}

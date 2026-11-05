@@ -977,7 +977,7 @@ milestone being listed does not authorize starting it — see Section 1.
   [PR #324](https://github.com/slmao/Atlantis/pull/324). The first asset-browser/shared
   asset-query slice is approved in [Spec 0081](specs/0081-asset-browser-shared-interface.md)
   and [Plan 0081](plans/0081-asset-browser-shared-interface.md) (joint approval and
-  Accepted ADR-0143 in [PR #325](https://github.com/slmao/Atlantis/pull/325)); implementation is under review;
+  Accepted ADR-0143 in [PR #325](https://github.com/slmao/Atlantis/pull/325)); implementation is in [PR #326](https://github.com/slmao/Atlantis/pull/326);
   broader asset-pipeline management remains future work. Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
