@@ -9,15 +9,21 @@
 namespace atlantis::asset_system::scene {
 
 // Spec 0049 R3/R4/R6 / ADR-0100 D4/D5/D8: the scene semantic schema -- the
-// one normative statement of what an authored scene means. v1 states exactly
-// what scene source v7 and artifact 7 accept today (Plan 0049's R4 trace).
+// one normative statement of what an authored scene means. v2 adds authoring
+// names to v1 (Plan 0049's R4 trace); source8 carries them, artifact7 projects
+// them away. Legacy source7 maps to unnamed nodes (Spec 0069 / ADR-0141).
 // The serializers (scene_source, scene_artifact) declare the semantic version
 // they encode and are held to this schema by conformance tests (ruling Q3).
 // Domains and constraints are scene-local data; Core's vocabulary is
 // unchanged (ruling Q7). Immutable static data, safe for concurrent reads.
 
 // Bumped, with the fingerprint pin, on any semantic change (ruling Q2).
-inline constexpr std::uint32_t kSemanticVersion = 1;
+inline constexpr std::uint32_t kSemanticVersion = 2;
+inline constexpr std::uint32_t kMaxNodeNameBytes = 255;
+
+// Spec 0069 R1: exact UTF-8, bounded encoded length, no control/line separator
+// scalars. Empty is unnamed; validation does not normalize or truncate.
+[[nodiscard]] bool isValidNodeName(std::string_view name) noexcept;
 
 enum class Cardinality : std::uint8_t { Required, Optional };
 
@@ -55,6 +61,7 @@ enum class Constraint : std::uint8_t {
   LightRangeMatchesKind,  // Point: range > 0; Directional: range == 0
   MaxDirectionalLights,   // limit
   MaxPointLights,         // limit
+  InvalidNodeName,        // UTF-8/domain validity, limit is encoded bytes
 };
 
 struct ConstraintRule {

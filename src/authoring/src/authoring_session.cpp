@@ -8,6 +8,7 @@
 #include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/scene_semantic_schema.h>
 #include <atlantis/authoring/document_validation.h>
 
 #include <algorithm>
@@ -225,6 +226,15 @@ struct AuthoringSession::State {
     return std::nullopt;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene& d, const ac::SetNodeName& c, std::vector<ac::Event>& events) {
+    const auto node = findNode(d, c.node);
+    if (!node) return ac::Error::UnknownNode;
+    if (!scene::isValidNodeName(c.name)) return ac::Error::InvalidNodeName;
+    d.nodes[*node].name = c.name;
+    events.push_back(ac::NodeNameChanged{c.node, c.name});
+    return std::nullopt;
+  }
+
   // A transaction (one command or several): applied to a copy, validated, and
   // swapped in, or refused whole.
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
@@ -315,7 +325,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     if (!state_.document.has_value()) return ResultT::Err(ac::Error::NoDocument);
     std::vector<ac::NodeSummary> out;
     out.reserve(state_.document->nodes.size());
-    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent});
+    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent, node.name});
     return ResultT::Ok(std::move(out));
   }
 

@@ -232,3 +232,59 @@ TEST_CASE("cli scene: apply while paused is pending at once; Applied follows the
   CHECK(member(applied.value(), "command") == "\"scene apply\"");
   CHECK(member(*applied.value().find("result"), "generation") == "1");
 }
+
+TEST_CASE("cli scene: names preserve JSON strings through argv repl and transaction lines", "[cli][scene][name]") {
+  SceneCli scene(/*json=*/true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto runName = [&](const std::string& name) {
+    scene.cli.out.str({});
+    scene.cli.err.str({});
+    const std::vector<std::string> argv{"scene", "name", std::string(kNode1), json::write(json::Value::string(name))};
+    return scene.invocation->run(argv);
+  };
+  const std::string label = " 场景  \"quoted\" \\ end ";
+  REQUIRE(runName(label) == 0);
+  CHECK(scene.session.document()->nodes[0].name == label);
+  const auto renamed = scene.envelope();
+  const auto* outcome = renamed.find("result")->find("outcome");
+  REQUIRE(outcome != nullptr);
+  const auto* events = outcome->find("events");
+  REQUIRE(events != nullptr);
+  REQUIRE(events->asArray().size() == 1);
+  const auto& first = events->asArray().front();
+  CHECK(member(first, "kind") == "\"NodeNameChanged\"");
+  CHECK(member(first, "name") == json::write(json::Value::string(label)));
+  REQUIRE(scene.run("scene nodes") == 0);
+  CHECK(scene.envelope().find("result")->find("nodes")->asArray()[0].find("name")->asString() == label);
+  CHECK(runName(std::string(256, 'x')) == 1);
+  CHECK(member(*scene.envelope().find("error"), "code") == "\"InvalidNodeName\"");
+  CHECK(scene.session.document()->nodes[0].name == label);
+  CHECK(scene.run("scene name " + std::string(kNode1) + " 42") == 2);
+  CHECK(scene.session.document()->nodes[0].name == label);
+
+  const std::string replLabel = "repl  exact   spaces \"quoted\"";
+  std::istringstream input("scene name " + std::string(kNode1) + " " +
+                           json::write(json::Value::string(replLabel)) + "\nquit\n");
+  CHECK(scene.invocation->repl(input) == 0);
+  CHECK(scene.session.document()->nodes[0].name == replLabel);
+
+  const fs::path script = scene.source.parent_path() / (scene.source.filename().string() + ".tx");
+  const std::string txLabel = "tx   exact spaces 场景";
+  std::ofstream(script, std::ios::binary) << "name " << kNode1 << " " << json::write(json::Value::string(txLabel))
+                                        << "\nscene name " << kNode3 << " \"\"\n";
+  REQUIRE(scene.run("scene tx " + script.string()) == 0);
+  CHECK(scene.session.document()->nodes[0].name == txLabel);
+  CHECK(scene.session.document()->nodes[2].name.empty());
+  std::ofstream(script, std::ios::binary | std::ios::trunc)
+      << "name " << kNode1 << " \"would change\"\nname " << kNode3 << " "
+      << json::write(json::Value::string(std::string(256, 'x'))) << "\n";
+  CHECK(scene.run("scene tx " + script.string()) == 1);
+  CHECK(scene.session.document()->nodes[0].name == txLabel);
+  REQUIRE(scene.run("scene save") == 0);
+  REQUIRE(scene.run("scene open") == 0);
+  CHECK(scene.session.document()->nodes[0].name == txLabel);
+  CHECK(runName("") == 0);
+  CHECK(scene.session.document()->nodes[0].name.empty());
+  std::error_code ec;
+  fs::remove(script, ec);
+}

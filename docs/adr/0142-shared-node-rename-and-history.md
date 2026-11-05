@@ -1,9 +1,9 @@
 # ADR 0142: Shared Authoring Node Rename and Client History
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-04
-- **Deciders:** slmao, pending joint review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-04; [joint ruling](https://github.com/slmao/Atlantis/pull/323#issuecomment-6634427244), J1–J4 as recommended; PR #323 manually merged.
 - **Related Spec:** [Spec 0069](../specs/0069-scene-node-names.md), R4–R6
 - **Related ADRs:** Extends [ADR-0130](0130-authoring-access-interface-and-module-boundary.md) and [ADR-0136](0136-structural-edit-records.md); retains [ADR-0125](0125-out-of-process-editor-platform-and-uniform-client-interface.md), [ADR-0135](0135-two-document-edit-and-apply.md) and [ADR-0138](0138-agent-tool-layer-host.md).
 

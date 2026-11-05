@@ -433,6 +433,15 @@ with its semantic version and fingerprint, and the property address. The scene
 source and artifact codecs are serializers below it, mapped to it on their side
 and held to it by conformance tests.
 
+Since Spec 0069 / [ADR-0141](../adr/0141-authoring-node-name-storage-and-projection.md),
+nodes also hold an owned, bounded UTF-8 display name, independent of GUID identity.
+Scene semantic version 2 includes its constraint/fingerprint. Source v8 preserves
+quoted names; the reader also accepts v7 as unnamed nodes. Artifact format 7 and
+ValidatedSceneData project names away, so a rename does not alter runtime artifact
+bytes or add Runtime/World storage. Source mappings remain lossless; no production
+artifact-to-authoring reverse API is introduced. Imported original nodes retain
+their glTF names; synthetic primitive nodes remain unnamed.
+
 Since Spec 0065 (its first and second Corrections; ADR-0129 and ADR-0131
 Accepted Amendments) the source serializer is lossless and there is an
 in-memory cook:
@@ -971,6 +980,13 @@ Atlantis Gameplay SDK).
   validated by `sceneSchema()` (domains, then constraints) and by the build's
   in-memory cook (`cookSceneToMemory()`), then kept whole or refused whole;
   every connection's subscriptions see every connection's changes;
+- Spec 0069 / [ADR-0142](../adr/0142-shared-node-rename-and-history.md) adds the
+  closed `SetNodeName`/`NodeNameChanged` operation and `NodeSummary.name` across
+  Connection, Remote, CLI and C# authoring clients. The MCP transaction tool
+  accepts it through the SDK. Editor App's one Name field and GUID-based labels
+  use this same operation; name history and full node-life snapshots restore
+  labels and retain existing conflict/lifetime rules. There is no string
+  PropertyValue, editor-only channel or in-process editor change;
 - apply — cooks and decodes the document in memory and hands the
   `ValidatedSceneData` to the sink its host set (`setSceneSink()`); the host
   reports the Runtime's swap back (`reportApplied(generation)`) and every

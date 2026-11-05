@@ -41,6 +41,7 @@ struct ParsedSceneNode {
                                         // co-present with camera/mesh on the
                                         // same node, a structural grammar
                                         // guarantee (P2)
+  std::string name;  // source8 label; legacy source7 maps to empty (Spec 0069)
 };
 
 struct ParsedSceneSource {
@@ -70,6 +71,7 @@ enum class SceneSourceParseError {
   // Plan 0047 P9: a guid=, mesh= or material= value that is not a
   // canonical GUID (a nil mesh/material reference included).
   MalformedGuid,
+  InvalidNodeName,
 };
 
 // Strict, fixed-field-order, plain-text grammar extending
@@ -88,10 +90,10 @@ enum class SceneSourceParseError {
 [[nodiscard]] atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std::string_view text);
 
 // Plan 0049 P5 (Spec 0049 R5/R6, ruling Q2): the scene semantic version this
-// serializer (source v7) encodes -- see scene::kSemanticVersion in
+// serializer (source v8, bounded legacy-v7 reader) encodes -- see scene::kSemanticVersion in
 // scene_semantic_schema.h. A semantic bump fails the conformance build until
 // this declaration (and the format, per ADR-0045) follows.
-inline constexpr std::uint32_t kSceneSourceSemanticVersion = 1;
+inline constexpr std::uint32_t kSceneSourceSemanticVersion = 2;
 
 // Serializes back to the exact grammar parseSceneSource() accepts. Lossless
 // since Plan 0065 P1 (Spec 0065 Correction 2026-10-22; fixes Plan 0049 F5):

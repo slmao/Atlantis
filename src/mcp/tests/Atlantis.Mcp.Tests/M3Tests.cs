@@ -67,6 +67,17 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
+            if (kind == "SetNodeName")
+            {
+                FakeSession names = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };
+                string args = Json.Write(JsonValue.NewObject().Set("commands", JsonValue.NewArray().Push(command)));
+                CallToolResult named = new ToolRegistry(names).Invoke(Request("authoring.submit_transaction", args));
+                Check(named.IsError != true && names.Calls.Count == 1, "rename uses the existing exact transaction tool once");
+                Check(Json.Write(names.Calls.Single().Parameters.Find("commands")!.Items.Single()) == Json.Write(command), "rename data forwarded exactly");
+                Check(Codec.DecodeAuthoringCommand(command) is Atlantis.Gameplay.Authoring.SetNodeName, "SDK accepts rename fixture");
+                ++fixtureCount;
+                continue;
+            }
             string tool = kind switch
             {
                 "CreateNode" => "create_node", "DestroyNode" => "destroy_node", "SetProperty" => "set_properties",
@@ -138,7 +149,7 @@ internal static partial class Program
             && session.Calls[1].Method == "authoring.subscribe", "one subscription per family at connect");
         Check(Json.Write(session.Calls[0].Parameters) == "{\"filter\":{\"kinds\":[\"EntityCreated\",\"EntityDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"PropertyChanged\"],\"entity\":null,\"component\":null}}",
             "World filter has no restrictions");
-        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\"],\"node\":null,\"component\":null}}",
+        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\"],\"node\":null,\"component\":null}}",
             "authoring filter includes every kind, with no node/component restriction");
         try { registry.InitializeSubscriptions(); throw new Exception("duplicate initialization accepted"); }
         catch (InvalidOperationException) { Check(session.Calls.Count == 2, "initialization cannot create duplicate subscriptions"); }

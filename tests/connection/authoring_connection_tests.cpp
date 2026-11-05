@@ -69,7 +69,7 @@ TEST_CASE("authoring connection: a filter matches kind, node and component", "[c
 
 TEST_CASE("authoring connection: every error has its own name", "[connection][authoring]") {
   std::set<std::string_view> names;
-  for (int e = 0; e <= static_cast<int>(ac::Error::NotRepresentableInSource); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidNodeName); ++e) {
     const std::string_view name = ac::toString(static_cast<ac::Error>(e));
     CHECK(name != "Unknown");
     CHECK(names.insert(name).second);
@@ -78,4 +78,19 @@ TEST_CASE("authoring connection: every error has its own name", "[connection][au
   CHECK(ac::toString(ac::OpenError::SourceInvalid) == "SourceInvalid");
   CHECK(ac::toString(ac::SaveError::ImportedSceneNotSavable) == "ImportedSceneNotSavable");
   CHECK(ac::toString(ac::ApplyError::NoSceneSink) == "NoSceneSink");
+}
+
+TEST_CASE("authoring connection: rename is appended and matches node but not component", "[connection][authoring][name]") {
+  static_assert(static_cast<unsigned>(ac::EventKind::Applied) == 8);
+  static_assert(static_cast<unsigned>(ac::EventKind::NodeNameChanged) == 9);
+  const ac::NodeSummary oldConstruction{node(1), std::nullopt};
+  CHECK(oldConstruction.name.empty());
+  const ac::Event renamed = ac::NodeNameChanged{node(1), "same label"};
+  CHECK(ac::kindOf(renamed) == ac::EventKind::NodeNameChanged);
+  CHECK(ac::EventFilter{}.matches(renamed));
+  CHECK(ac::EventFilter{ac::EventKindSet::all(), node(1), std::nullopt}.matches(renamed));
+  CHECK_FALSE(ac::EventFilter{ac::EventKindSet::all(), node(2), std::nullopt}.matches(renamed));
+  CHECK_FALSE(ac::EventFilter{ac::EventKindSet::all(), node(1), kCamera}.matches(renamed));
+  CHECK(ac::EventKindSet::only(ac::EventKind::NodeNameChanged).contains(ac::kindOf(renamed)));
+  CHECK(ac::toString(ac::Error::InvalidNodeName) == "InvalidNodeName");
 }

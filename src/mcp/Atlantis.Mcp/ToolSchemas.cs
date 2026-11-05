@@ -37,7 +37,8 @@ internal static class ToolSchemas
         Command("AddComponent", ("node", String), ("component", String)),
         Command("RemoveComponent", ("node", String), ("component", String)),
         Command("SetParent", ("node", String), ("parent", Nullable(String))),
-        Command("SetActiveCamera", ("camera", Nullable(String))));
+        Command("SetActiveCamera", ("camera", Nullable(String))),
+        Command("SetNodeName", ("node", String), ("name", String)));
 
     internal static readonly JsonNode StepRequest = ObjectWithOptionalOverlay();
     internal static readonly JsonNode Ray = Object(("origin", Vec3), ("direction", Vec3));

@@ -17,7 +17,8 @@ internal static partial class Program
         foreach (string version in new[] { "2025-11-25", "2026-07-28" })
         {
             bool legacy = version == "2025-11-25";
-            foreach (string json in new[] { "[]", "[-0,18446744073709551615,1e-05]", "null", "true", "17", "\"原样\"", "{\"ok\":null}" })
+            foreach (string json in new[] { "[]", "[-0,18446744073709551615,1e-05]", "null", "true", "17", "\"原样\"", "{\"ok\":null}",
+                "{\"ok\":[{\"kind\":\"NodeNameChanged\",\"node\":\"" + Entity + "\",\"name\":\"名称\"}]}" })
             {
                 var original = new CallToolResult
                 {
@@ -48,6 +49,10 @@ internal static partial class Program
             }
 
             await using McpClient queue = await VersionClient("--m3-host", version, deadline.Token);
+            CallToolResult renamed = await client.CallToolAsync("authoring.submit_transaction",
+                new Dictionary<string, object?> { ["commands"] = new[] { new Dictionary<string, object?>
+                    { ["kind"] = "SetNodeName", ["node"] = Entity, ["name"] = "名 \"quoted\" \\" } } }, cancellationToken: deadline.Token);
+            CheckVersionResult(renamed, Cases.Single(c => c.Tool == "authoring.submit_transaction").Result, legacy, version + " rename through existing tool");
             await queue.CallToolAsync("destroy_node", new Dictionary<string, object?> { ["node"] = Entity }, cancellationToken: deadline.Token);
             CallToolResult failures = await queue.CallToolAsync("authoring.drain_failures", cancellationToken: deadline.Token);
             Check(failures.IsError == true, version + " preserves deferred failure error flag");

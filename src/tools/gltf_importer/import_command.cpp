@@ -329,6 +329,8 @@ const char* gltfImportErrorMessage(GltfImportError error) noexcept {
       return "material factor non-finite or outside [0, 1]";
     case GltfImportError::InvalidNodeTransform:
       return "node transform non-finite or rotation quaternion zero";
+    case GltfImportError::InvalidNodeName:
+      return "node name is invalid UTF-8, contains a control/line separator, or exceeds 255 bytes";
     case GltfImportError::NonDecomposableMatrix:
       return "node matrix is non-finite, non-affine, zero-scale or sheared";
     case GltfImportError::NegativeDeterminant:

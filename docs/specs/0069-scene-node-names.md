@@ -1,11 +1,11 @@
 # Spec: Scene Node Display Names
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
 - **Created:** 2026-11-04
 - **Related Plan(s):** [Plan 0069](../plans/0069-scene-node-names.md)
-- **Approval:** Pending joint human review
-- **Related ADR(s):** [ADR-0141](../adr/0141-authoring-node-name-storage-and-projection.md), [ADR-0142](../adr/0142-shared-node-rename-and-history.md) (Proposed)
+- **Approval:** slmao, 2026-11-04; [joint ruling](https://github.com/slmao/Atlantis/pull/323#issuecomment-6634427244), J1–J4 as recommended; PR #323 manually merged as `1e04452`.
+- **Related ADR(s):** [ADR-0141](../adr/0141-authoring-node-name-storage-and-projection.md), [ADR-0142](../adr/0142-shared-node-rename-and-history.md) (Accepted)
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

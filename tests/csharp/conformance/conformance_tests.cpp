@@ -168,6 +168,8 @@ void authoringVectors(std::vector<Vector>& out) {
   command("parent.root", ac::SetParent{kNode, std::nullopt});
   command("camera", ac::SetActiveCamera{kOther});
   command("camera.none", ac::SetActiveCamera{std::nullopt});
+  command("name", ac::SetNodeName{kNode, "  \xe5\x90\x8d \"quoted\" \\ "});
+  command("name.empty", ac::SetNodeName{kNode, ""});
 
   const auto event = [&](std::string name, ac::Event e) {
     const json::Value wire = codec::encode(e);
@@ -188,6 +190,7 @@ void authoringVectors(std::vector<Vector>& out) {
   event("camera.none", ac::ActiveCameraChanged{std::nullopt});
   event("reopened", ac::DocumentReopened{kAsset});
   event("applied", ac::Applied{3});
+  event("name", ac::NodeNameChanged{kNode, "  \xe5\x90\x8d \"quoted\" \\ "});
 
   out.push_back({"authoring.filter.all", "AuthoringFilter", codec::encode(ac::EventFilter{})});
   out.push_back({"authoring.filter.none", "AuthoringFilter",
@@ -208,9 +211,10 @@ void authoringVectors(std::vector<Vector>& out) {
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::Imported, "D:/build/bistro/bistro.scene.txt", 5992})});
   out.push_back({"authoring.node", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent})});
   out.push_back({"authoring.node.root", "NodeSummary", codec::encode(ac::NodeSummary{kParent, std::nullopt})});
+  out.push_back({"authoring.node.named", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent, "  \xe5\x90\x8d \"quoted\" \\ "})});
 
   // The refusal set: every name of every error set, in declaration order.
-  for (int e = 0; e <= static_cast<int>(ac::Error::NotRepresentableInSource); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidNodeName); ++e) {
     const auto error = static_cast<ac::Error>(e);
     out.push_back(
         {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});

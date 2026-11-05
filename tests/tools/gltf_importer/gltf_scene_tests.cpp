@@ -119,6 +119,42 @@ DecomposedTransform fromParsed(const atlantis::asset_system::DecodedTransform& t
 
 }  // namespace
 
+TEST_CASE("Imported node names preserve JSON Unicode and escaping without changing cooked identity",
+          "[gltf_importer][scene][node_name]") {
+  auto spec = gltf_test::unitQuad();
+  const SceneRun unnamed = runSceneImport("scene_name_unnamed", spec);
+  REQUIRE(unnamed.result.isOk());
+  spec.nodesJson = R"([{"mesh":0,"name":"  \u4e2d \ud83d\ude00 \"quoted\" \\ "}])";
+  const SceneRun named = runSceneImport("scene_name_named", spec);
+  REQUIRE(named.result.isOk());
+  const auto a = parsedScene(unnamed.outputDir);
+  const auto b = parsedScene(named.outputDir);
+  REQUIRE(b.nodes.size() == 1);
+  CHECK(b.nodes[0].name == "  \xe4\xb8\xad \xf0\x9f\x98\x80 \"quoted\" \\ ");
+  CHECK(a.nodes[0].entityGuid == b.nodes[0].entityGuid);
+  CHECK(a.nodes[0].meshAsset == b.nodes[0].meshAsset);
+  const auto cookedA = atlantis::asset_system::cookSceneSource(atlantis::asset_system::serializeSceneSource(a), testAssetGuid("names"));
+  const auto cookedB = atlantis::asset_system::cookSceneSource(atlantis::asset_system::serializeSceneSource(b), testAssetGuid("names"));
+  REQUIRE(cookedA.isOk());
+  REQUIRE(cookedB.isOk());
+  CHECK(cookedA.value().artifactBytes == cookedB.value().artifactBytes);
+
+  for (const std::string name : {std::string(256, 'x'), std::string("bad\\u0000tail"), std::string("bad\\nname"),
+                                 std::string("\\ud800"), std::string("\\udc00"), std::string("\\u2028")}) {
+    spec.nodesJson = "[{\"mesh\":0,\"name\":\"" + name + "\"}]";
+    const SceneRun refused = runSceneImport("scene_name_invalid", spec);
+    REQUIRE(refused.result.isErr());
+    CHECK(refused.result.error() == GltfImportError::InvalidNodeName);
+    CHECK_FALSE(fs::exists(refused.outputDir));
+  }
+  spec.nodesJson = R"([{"name":"duplicate","children":[1]},{"mesh":0,"name":"duplicate"}])";
+  const SceneRun duplicate = runSceneImport("scene_name_duplicate", spec);
+  REQUIRE(duplicate.result.isOk());
+  const auto duplicates = parsedScene(duplicate.outputDir);
+  CHECK(duplicates.nodes[0].name == "duplicate");
+  CHECK(duplicates.nodes[1].name == "duplicate");
+}
+
 TEST_CASE("Quaternion to Euler matches hand-computed angles for the Ry*Rx*Rz convention",
           "[gltf_importer][scene]") {
   struct Case {
@@ -318,7 +354,7 @@ TEST_CASE("KHR_lights_punctual point and directional lights become light lines; 
   // Node 0 has a mesh AND the directional light: the light moves to a
   // synthetic child (one of mesh/camera/light per line).
   spec.nodesJson =
-      "[{\"mesh\":0,\"children\":[1],\"extensions\":{\"KHR_lights_punctual\":{\"light\":1}}},"
+      "[{\"mesh\":0,\"name\":\"mesh and light\",\"children\":[1],\"extensions\":{\"KHR_lights_punctual\":{\"light\":1}}},"
       "{\"translation\":[0,2,0],\"extensions\":{\"KHR_lights_punctual\":{\"light\":0}}}]";
   const SceneRun run = runSceneImport("scene_lights", spec);
   REQUIRE(run.result.isOk());
@@ -333,6 +369,8 @@ TEST_CASE("KHR_lights_punctual point and directional lights become light lines; 
   CHECK(scene.nodes[0].nodeId == 1);
   CHECK(scene.nodes[0].meshAsset.has_value());
   CHECK(scene.nodes[1].nodeId == 3);  // synthetic: numbered after the 2 glTF nodes
+  CHECK(scene.nodes[0].name == "mesh and light");
+  CHECK(scene.nodes[1].name.empty());
   CHECK(scene.nodes[1].parentNodeId == 1u);
   REQUIRE(scene.nodes[1].light.has_value());
   CHECK(scene.nodes[1].light->kind == atlantis::asset_system::DecodedLightKind::Directional);
@@ -452,8 +490,12 @@ TEST_CASE("The importer's overlay appends its camera and lights after every impo
           "[gltf_importer][scene][overlay]") {
   auto spec = gltf_test::unitQuad();
   spec.nodesJson = "[{\"mesh\":0,\"children\":[1]},{\"translation\":[0,1,0]}]";
-  const SceneRun run =
-      runSceneImport("scene_overlay_merge", spec, overlayScene({kCameraNode, kPointNode, kChildPointNode, kMoonNode}, "10"));
+  auto overlay = atlantis::asset_system::parseSceneSource(
+      overlayScene({kCameraNode, kPointNode, kChildPointNode, kMoonNode}, "10"));
+  REQUIRE(overlay.isOk());
+  overlay.value().nodes[0].name = "overlay camera";
+  const SceneRun run = runSceneImport("scene_overlay_merge", spec,
+      atlantis::asset_system::serializeSceneSource(overlay.value()));
   REQUIRE(run.result.isOk());
   CHECK(run.result.value().overlayNodeLines == 4);
   CHECK(run.result.value().sceneNodeLines == 6);
@@ -462,6 +504,7 @@ TEST_CASE("The importer's overlay appends its camera and lights after every impo
 
   const auto scene = parsedScene(run.outputDir);
   REQUIRE(scene.nodes.size() == 6);
+  CHECK(scene.nodes[2].name == "overlay camera");
   // Imported ids 1-2 untouched; overlay 10/20/21/30 -> 3/4/5/6 in order.
   CHECK(scene.nodes[0].nodeId == 1);
   CHECK(scene.nodes[1].nodeId == 2);

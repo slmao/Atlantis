@@ -90,6 +90,7 @@ constexpr std::array kConstraints{
     ConstraintRule{Constraint::LightRangeMatchesKind, 0},
     ConstraintRule{Constraint::MaxDirectionalLights, 1},
     ConstraintRule{Constraint::MaxPointLights, kMaxPointLightsPerScene},
+    ConstraintRule{Constraint::InvalidNodeName, kMaxNodeNameBytes},
 };
 
 constexpr SceneSchema kSceneSchema{kSemanticVersion, kComponents, kDomains, kConstraints};
@@ -125,6 +126,35 @@ class Canonical {
 }  // namespace
 
 const SceneSchema& sceneSchema() noexcept { return kSceneSchema; }
+
+bool isValidNodeName(std::string_view name) noexcept {
+  if (name.size() > kMaxNodeNameBytes) return false;
+  std::size_t at = 0;
+  while (at < name.size()) {
+    const auto first = static_cast<unsigned char>(name[at++]);
+    std::uint32_t scalar = first;
+    std::uint32_t minimum = 0;
+    std::size_t following = 0;
+    if (first >= 0xc2 && first <= 0xdf) {
+      scalar = first & 0x1fu; minimum = 0x80; following = 1;
+    } else if (first >= 0xe0 && first <= 0xef) {
+      scalar = first & 0x0fu; minimum = 0x800; following = 2;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+      scalar = first & 0x07u; minimum = 0x10000; following = 3;
+    } else if (first >= 0x80) {
+      return false;
+    }
+    if (following > name.size() - at) return false;
+    for (std::size_t i = 0; i < following; ++i) {
+      const auto byte = static_cast<unsigned char>(name[at++]);
+      if ((byte & 0xc0u) != 0x80u) return false;
+      scalar = (scalar << 6) | (byte & 0x3fu);
+    }
+    if (scalar < minimum || scalar > 0x10ffff || (scalar >= 0xd800 && scalar <= 0xdfff)) return false;
+    if (scalar <= 0x1f || (scalar >= 0x7f && scalar <= 0x9f) || scalar == 0x2028 || scalar == 0x2029) return false;
+  }
+  return true;
+}
 
 std::uint64_t sceneSemanticFingerprint() {
   // Every descriptor the components reach, sorted (and de-duplicated) by id.
@@ -211,6 +241,7 @@ std::string_view toString(Constraint constraint) noexcept {
     case Constraint::LightRangeMatchesKind: return "LightRangeMatchesKind";
     case Constraint::MaxDirectionalLights: return "MaxDirectionalLights";
     case Constraint::MaxPointLights: return "MaxPointLights";
+    case Constraint::InvalidNodeName: return "InvalidNodeName";
   }
   return "Unknown";
 }

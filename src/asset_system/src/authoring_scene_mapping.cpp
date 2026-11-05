@@ -115,6 +115,7 @@ atlantis::Result<AuthoringScene, SceneMappingError> toAuthoringScene(const Parse
   for (const ParsedSceneNode& parsed : source.nodes) {
     AuthoringNode node;
     node.guid = parsed.entityGuid;
+    node.name = parsed.name;
     if (parsed.parentNodeId.has_value()) {
       const auto parent = indexOfNodeId.find(*parsed.parentNodeId);
       if (parent == indexOfNodeId.end()) return ResultT::Err(SceneMappingError::UndeclaredParentReference);
@@ -155,6 +156,7 @@ atlantis::Result<ParsedSceneSource, SceneMappingError> toParsedSceneSource(const
     ParsedSceneNode parsed;
     parsed.nodeId = static_cast<std::uint32_t>(i + 1);
     parsed.entityGuid = node.guid;
+    parsed.name = node.name;
     if (node.parent.has_value()) {
       const auto parent = nodeIdOfGuid.find(*node.parent);
       if (parent == nodeIdOfGuid.end()) return ResultT::Err(SceneMappingError::DanglingParentReference);

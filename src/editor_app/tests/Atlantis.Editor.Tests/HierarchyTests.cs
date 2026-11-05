@@ -34,6 +34,7 @@ internal sealed class FakeDocument : IAuthoringDocument
     private sealed class Node
     {
         public EntityGuid? Parent;
+        public string Name = "";
         public SortedSet<ulong> Components = new();
     }
 
@@ -121,7 +122,7 @@ internal sealed class FakeDocument : IAuthoringDocument
 
     public DocumentInfo? Info() => new(default, Provenance.HandAuthored, "fake.scene.txt", (ulong)_nodes.Count);
 
-    public IReadOnlyList<NodeSummary> ListNodes() => _nodes.Select(n => new NodeSummary(n.Id, n.Node.Parent)).ToList();
+    public IReadOnlyList<NodeSummary> ListNodes() => _nodes.Select(n => new NodeSummary(n.Id, n.Node.Parent, n.Node.Name)).ToList();
 
     public IReadOnlyList<TypeId> ListComponents(EntityGuid node) =>
         _nodes.FirstOrDefault(n => n.Id == node).Node?.Components.Select(c => new TypeId(c)).ToList() ?? new List<TypeId>();
@@ -135,7 +136,7 @@ internal sealed class FakeDocument : IAuthoringDocument
         ++Submissions;
         var first = new CommandTicket(_nextTicket);
         _nextTicket += (ulong)commands.Count;
-        var nodes = _nodes.Select(n => (n.Id, new Node { Parent = n.Node.Parent, Components = new SortedSet<ulong>(n.Node.Components) })).ToList();
+        var nodes = _nodes.Select(n => (n.Id, new Node { Parent = n.Node.Parent, Name = n.Node.Name, Components = new SortedSet<ulong>(n.Node.Components) })).ToList();
         var values = new Dictionary<SceneAddress, PropertyValue>(_values);
         EntityGuid? camera = _camera;
         var events = new List<Event>();
@@ -173,6 +174,15 @@ internal sealed class FakeDocument : IAuthoringDocument
                     if (i < 0) { refusal ??= AuthoringError.UnknownNode; break; }
                     nodes[i].Item2.Parent = p.Parent;
                     events.Add(new ParentChanged(p.Node, p.Parent));
+                    break;
+                }
+                case SetNodeName named:
+                {
+                    int i = nodes.FindIndex(n => n.Id == named.Node);
+                    if (i < 0) { refusal ??= AuthoringError.UnknownNode; break; }
+                    if (!NodeNames.IsValid(named.Name)) { refusal ??= AuthoringError.InvalidNodeName; break; }
+                    nodes[i].Item2.Name = named.Name;
+                    events.Add(new NodeNameChanged(named.Node, named.Name));
                     break;
                 }
                 case SetProperty s:
@@ -313,6 +323,22 @@ public static partial class Program
               tree.DescendantsOf(r).SequenceEqual(new[] { a, a1, b }),
               "hierarchy: roots, children and descendants in the document's order");
         Check(tree.Label(a1, document.Schema) == "00000000 · Transform Light", "hierarchy: a GUID prefix and the component kinds, Transform first");
+
+        selection.Select(a1);
+        var order = tree.Order.ToList();
+        Check(Submit(document, tree, selection, HierarchyCommands.Rename(tree, a1, "", "灯 · \"one\" \\")) is null &&
+              tree.Label(a1, document.Schema) == "灯 · \"one\" \\ · 00000000 · Transform Light" && selection.Node == a1 && tree.Order.SequenceEqual(order),
+              "names: labels preserve exact Unicode/quotes/slashes and GUID selection/order");
+        string namedBefore = tree.NameOf(a1);
+        Check(HierarchyCommands.Rename(tree, a1, "", "stale").Refusal == "changed elsewhere" && tree.NameOf(a1) == namedBefore,
+              "names: an observed external rename refuses a stale draft");
+        Check(HierarchyCommands.Rename(tree, a1, namedBefore, namedBefore).Refusal == "unchanged" &&
+              HierarchyCommands.Rename(tree, a1, namedBefore, "bad\nname").Refusal == "InvalidNodeName",
+              "names: identical text submits nothing and invalid text is refused");
+        Check(Submit(document, tree, selection, HierarchyCommands.Rename(tree, a, "", namedBefore)) is null && tree.NameOf(a) == tree.NameOf(a1),
+              "names: duplicate display names remain separate GUID nodes");
+        Check(Submit(document, tree, selection, HierarchyCommands.Rename(tree, a1, namedBefore, "")) is null &&
+              tree.Label(a1, document.Schema) == "00000000 · Transform Light", "names: empty restores the existing fallback label");
 
         // A CreateNode listing Transform is refused, as the real session does (the node has it already).
         Check(Submit(document, tree, selection, new EditPlan("dup", new Command[] { new CreateNode(null, (ulong)tree.Count, new[] { FakeDocument.Transform }) })) ==

@@ -41,7 +41,7 @@ class Walk {
   }
 
   [[nodiscard]] ac::Command command(const scene::AuthoringScene& document) {
-    switch (pick(0, 9)) {
+    switch (pick(0, 10)) {
       case 0:
         return ac::CreateNode{entity(static_cast<std::uint32_t>(pick(20, 40))),
                               static_cast<std::uint64_t>(pick(0, static_cast<int>(document.nodes.size()))),
@@ -63,6 +63,8 @@ class Walk {
         return ac::SetProperty{ac::PropertyAddress{someNode(document), kCamera, field("CameraFog", "density")}, value()};
       case 8:
         return ac::SetProperty{ac::PropertyAddress{someNode(document), kLight, field("Light", "range")}, value()};
+      case 10:
+        return ac::SetNodeName{someNode(document), pick(0, 4) == 0 ? std::string(256, 'x') : std::string("node ") + std::to_string(pick(0, 2))};
       default:
         return ac::SetProperty{ac::PropertyAddress{someNode(document), kLight, field("Light", "kind")},
                                wa::EnumValue{pick(0, 1)}};

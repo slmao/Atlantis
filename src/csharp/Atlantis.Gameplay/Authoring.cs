@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 
 namespace Atlantis.Gameplay.Authoring;
 
@@ -22,7 +23,30 @@ public enum Provenance
 public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string SourcePath, ulong NodeCount);
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
-public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent);
+public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "");
+
+/// <summary>Spec 0069's authoring label domain; names never identify a node.</summary>
+public static class NodeNames
+{
+    public const int MaxUtf8Bytes = 255;
+    private static readonly UTF8Encoding Utf8 = new(false, true);
+
+    public static bool IsValid(string? name)
+    {
+        if (!IsWellFormed(name)) return false;
+        if (Utf8.GetByteCount(name!) > MaxUtf8Bytes) return false;
+        foreach (char c in name!)
+            if (c <= '\u001f' || c is >= '\u007f' and <= '\u009f' || c is '\u2028' or '\u2029') return false;
+        return true;
+    }
+
+    internal static bool IsWellFormed(string? name)
+    {
+        if (name is null) return false;
+        try { _ = Utf8.GetByteCount(name); return true; }
+        catch (EncoderFallbackException) { return false; }
+    }
+}
 
 /// <summary>One property of one node: the scene component and the leaf field (ids from the authoring schema).</summary>
 public readonly record struct SceneAddress(EntityGuid Node, TypeId Component, FieldId Field);
@@ -58,6 +82,9 @@ public sealed record SetParent(EntityGuid Node, EntityGuid? Parent) : Command;
 /// <summary>Sets the active camera; null clears it.</summary>
 public sealed record SetActiveCamera(EntityGuid? Camera) : Command;
 
+/// <summary>Sets an authoring label; empty clears it. The Runtime validates its domain.</summary>
+public sealed record SetNodeName(EntityGuid Node, string Name) : Command;
+
 /// <summary>Event kinds; a set of them is a filter's <see cref="EventFilter.Kinds"/>.</summary>
 [Flags]
 public enum EventKind
@@ -72,8 +99,9 @@ public enum EventKind
     ActiveCameraChanged = 64,
     DocumentReopened = 128,
     Applied = 256,
+    NodeNameChanged = 512,
     All = PropertyChanged | NodeCreated | NodeDestroyed | ComponentAdded | ComponentRemoved | ParentChanged |
-          ActiveCameraChanged | DocumentReopened | Applied,
+          ActiveCameraChanged | DocumentReopened | Applied | NodeNameChanged,
 }
 
 /// <summary>A change to the document, in the order applied (or the Runtime's reload of it: Applied).</summary>
@@ -132,6 +160,11 @@ public sealed record Applied(ulong Generation) : Event
     public override EventKind Kind => EventKind.Applied;
 }
 
+public sealed record NodeNameChanged(EntityGuid Node, string Name) : Event
+{
+    public override EventKind Kind => EventKind.NodeNameChanged;
+}
+
 /// <summary>
 /// Which events a subscription delivers: those of a listed kind, and -- when
 /// set -- of that node and that component. ActiveCameraChanged,
@@ -167,6 +200,7 @@ public enum AuthoringError
     MaxPointLights,
     CookRefused,
     NotRepresentableInSource,
+    InvalidNodeName,
 }
 
 /// <summary>

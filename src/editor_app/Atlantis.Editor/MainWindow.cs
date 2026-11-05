@@ -96,6 +96,7 @@ public sealed class MainWindow : Window
     private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
     private InspectorSnapshot? _inspectorShown;
     private InspectorSnapshot? _inspectorDeferred;
+    private TextBox? _nameBox;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
     private readonly TextBox _notes = new();
@@ -168,7 +169,7 @@ public sealed class MainWindow : Window
         _notes.PlaceholderText = "Type here (keyboard focus check)";
         _entities.SelectionMode = SelectionMode.Single;
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
-            new TextBlock { Text = row.Label, Margin = new Thickness(row.Depth * 14, 0, 0, 0) });
+            new TextBlock { Text = row?.Label ?? "", Margin = new Thickness((row?.Depth ?? 0) * 14, 0, 0, 0) });
         _entities.SelectionChanged += (_, _) => OnHierarchySelected();
 
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
@@ -717,6 +718,14 @@ public sealed class MainWindow : Window
     // and Add / Remove component. The panel is not rebuilt under a field being typed in: the snapshot waits.
     private void OnInspectorChanged(InspectorSnapshot snapshot)
     {
+        // An observed external rename cancels a name draft immediately. Other
+        // field refreshes retain the existing deferral while a user is typing.
+        if (_nameBox?.IsFocused == true && _inspectorShown is InspectorSnapshot shown &&
+            (snapshot.Subject != shown.Subject || snapshot.Name != shown.Name))
+        {
+            BuildInspector(snapshot);
+            return;
+        }
         if (_inspectorShown is not null && snapshot.Subject == _inspectorShown.Subject && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox focused &&
             _inspectorPanel.GetVisualDescendants().Contains(focused))
         {
@@ -730,6 +739,7 @@ public sealed class MainWindow : Window
     {
         _inspectorShown = snapshot;
         _inspectorDeferred = null;
+        _nameBox = null;
         _inspectorPanel.Children.Clear();
         if (snapshot.Subject is not EntityGuid subject)
         {
@@ -737,6 +747,38 @@ public sealed class MainWindow : Window
             return;
         }
         _inspectorPanel.Children.Add(new TextBlock { Text = "Node " + subject, FontWeight = Avalonia.Media.FontWeight.SemiBold, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var nameRow = new Grid { ColumnDefinitions = new ColumnDefinitions("90,*"), Margin = new Thickness(0, 2) };
+        nameRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
+        var nameBox = new TextBox { Text = snapshot.Name, PlaceholderText = "Unnamed", MinWidth = 80 };
+        _nameBox = nameBox;
+        Grid.SetColumn(nameBox, 1);
+        nameRow.Children.Add(nameBox);
+        _inspectorPanel.Children.Add(nameRow);
+        nameBox.KeyDown += (_, e) =>
+        {
+            if (e.Key == Key.Enter)
+            {
+                string name = nameBox.Text ?? "";
+                if (name != snapshot.Name) _worker?.CommitName(subject, snapshot.Name, name);
+                nameBox.Text = snapshot.Name;
+                Focus();
+                e.Handled = true;
+            }
+            else if (e.Key == Key.Escape)
+            {
+                nameBox.Text = snapshot.Name;
+                Focus();
+                e.Handled = true;
+            }
+        };
+        nameBox.LostFocus += (_, _) =>
+        {
+            nameBox.Text = snapshot.Name;
+            if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+            {
+                if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+            });
+        };
         foreach (var (component, name) in snapshot.Components)
         {
             var header = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -801,7 +843,10 @@ public sealed class MainWindow : Window
             box.LostFocus += (_, _) =>
             {
                 Commit();
-                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() => BuildInspector(waiting));
+                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+                {
+                    if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+                });
             };
             editor = box;
         }

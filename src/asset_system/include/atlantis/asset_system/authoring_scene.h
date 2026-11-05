@@ -4,6 +4,7 @@
 #include <atlantis/asset_system/scene_semantic_types.h>
 
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace atlantis::asset_system::scene {
@@ -23,6 +24,7 @@ struct AuthoringNode {
   std::optional<Camera> camera;
   std::optional<Renderable> renderable;
   std::optional<Light> light;
+  std::string name;  // authoring-only display label; empty means unnamed (Spec 0069)
   friend bool operator==(const AuthoringNode&, const AuthoringNode&) = default;
 };
 

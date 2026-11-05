@@ -15,7 +15,7 @@ namespace {
           return e.address.node;
         } else if constexpr (std::is_same_v<E, NodeCreated> || std::is_same_v<E, NodeDestroyed> ||
                              std::is_same_v<E, ComponentAdded> || std::is_same_v<E, ComponentRemoved> ||
-                             std::is_same_v<E, ParentChanged>) {
+                             std::is_same_v<E, ParentChanged> || std::is_same_v<E, NodeNameChanged>) {
           return e.node;
         } else {
           return std::nullopt;
@@ -44,7 +44,7 @@ namespace {
 
 EventKind kindOf(const Event& event) noexcept {
   // The variant's alternatives are declared in EventKind's order.
-  static_assert(std::variant_size_v<Event> == static_cast<std::size_t>(EventKind::Applied) + 1);
+  static_assert(std::variant_size_v<Event> == static_cast<std::size_t>(EventKind::NodeNameChanged) + 1);
   return static_cast<EventKind>(event.index());
 }
 
@@ -57,6 +57,7 @@ bool EventFilter::matches(const Event& event) const {
 
 std::string_view toString(Error error) noexcept {
   switch (error) {
+    case Error::InvalidNodeName: return "InvalidNodeName";
     case Error::NoDocument: return "NoDocument";
     case Error::UnknownNode: return "UnknownNode";
     case Error::UnknownComponentType: return "UnknownComponentType";

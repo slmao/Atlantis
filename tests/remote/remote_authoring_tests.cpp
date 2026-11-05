@@ -96,6 +96,8 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
       ac::SetParent{node(3), std::nullopt},
       ac::SetActiveCamera{node(4)},
       ac::SetActiveCamera{std::nullopt},
+      ac::SetNodeName{node(3), "same label"},
+      ac::SetNodeName{node(3), ""},
   };
   for (const auto& command : commands) roundTrips(command, &codec::decodeAuthoringCommand);
   const std::vector<ac::Event> events{
@@ -108,6 +110,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
       ac::ActiveCameraChanged{node(4)},
       ac::DocumentReopened{fixtureSceneGuid()},
       ac::Applied{12},
+      ac::NodeNameChanged{node(3), "same label"},
   };
   for (const auto& event : events) {
     roundTrips(event, &codec::decodeAuthoringEvent);
@@ -121,7 +124,8 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
   roundTrips(ac::DocumentInfo{fixtureSceneGuid(), ac::Provenance::Imported, "D:/x/y.scene.txt", 5992},
              &codec::decodeDocumentInfo);
   roundTrips(ac::NodeSummary{node(3), node(1)}, &codec::decodeNodeSummary);
-  for (int e = 0; e <= static_cast<int>(ac::Error::NotRepresentableInSource); ++e) {
+  roundTrips(ac::NodeSummary{node(3), node(1), "node label"}, &codec::decodeNodeSummary);
+  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidNodeName); ++e) {
     const auto error = static_cast<ac::Error>(e);
     CHECK(codec::decodeAuthoringError(codec::encodeAuthoringError(error)) == error);
   }
@@ -211,6 +215,66 @@ TEST_CASE("remote authoring: the document is reached, edited and observed over t
   CHECK(b.unsubscribe(light).error() == atlantis::connection::ConnectionError::UnknownSubscription);
   CHECK_FALSE(first->failure().has_value());
   CHECK_FALSE(second->failure().has_value());
+}
+
+TEST_CASE("remote authoring codec: names preserve legacy summaries and enforce received value domains",
+          "[remote][authoring][codec][name]") {
+  namespace json = atlantis::connection::json;
+  const auto legacy = json::parse(R"({"node":"52052052-0003-4052-8052-000000000003","parent":null})").value();
+  REQUIRE(codec::decodeNodeSummary(legacy).has_value());
+  CHECK(codec::decodeNodeSummary(legacy)->name.empty());
+  const std::vector<std::string> values{
+      "", "two  spaces \"quotes\" \\ 场景", std::string(255, 'a'), std::string(256, 'a'),
+      std::string("a\0b", 3), "a\nb", "\x7F", "\xC2\x80", "\xE2\x80\xA8", "\xE2\x80\xA9",
+      "\xC0\xAF", "\xED\xA0\x80", "\xF4\x90\x80\x80", "\xE5", "\x80", "场景"};
+  for (const std::string& name : values) {
+    const bool valid = atlantis::asset_system::scene::isValidNodeName(name);
+    const auto encoded = codec::encode(ac::NodeSummary{node(3), std::nullopt, name});
+    CHECK(codec::decodeNodeSummary(encoded).has_value() == valid);
+    CHECK(codec::decodeAuthoringEvent(codec::encode(ac::Event{ac::NodeNameChanged{node(3), name}})).has_value() == valid);
+    // A string's domain error belongs to the transaction, not the RPC shape.
+    const auto command = codec::decodeAuthoringCommand(codec::encode(ac::Command{ac::SetNodeName{node(3), name}}));
+    REQUIRE(command.has_value());
+    CHECK(std::get<ac::SetNodeName>(*command).name == name);
+  }
+  for (const json::Value& malformed : {json::Value(), json::Value::number(std::uint64_t{3}), json::Value::boolean(true)}) {
+    auto summary = legacy;
+    summary.set("name", malformed);
+    CHECK_FALSE(codec::decodeNodeSummary(summary));
+  }
+  auto noName = codec::encode(ac::Command{ac::SetNodeName{node(3), ""}});
+  noName.set("name", json::Value());
+  CHECK_FALSE(codec::decodeAuthoringCommand(noName));
+  auto named = codec::encode(ac::NodeSummary{node(3), std::nullopt, "label"});
+  // The old decoder's node/parent accesses still find their original values.
+  CHECK(codec::decodeEntity(*named.find("node")) == node(3));
+  CHECK(named.find("parent")->isNull());
+}
+
+TEST_CASE("remote authoring: two clients observe rename and atomic refusal under the same tickets",
+          "[remote][authoring][name]") {
+  ServedAuthoring served;
+  auto first = served.world.attach();
+  auto second = served.world.attach();
+  auto& a = first->authoring();
+  auto& b = second->authoring();
+  REQUIRE(a.open().isOk());
+  const auto all = b.subscribe({});
+  const auto named = b.subscribe({ac::EventKindSet::only(ac::EventKind::NodeNameChanged), node(3), std::nullopt});
+  a.submit(ac::SetNodeName{node(3), "shared 场景"});
+  CHECK(a.drainFailures().empty());
+  CHECK(b.listNodes().value()[2].name == "shared 场景");
+  const std::vector<ac::Event> expected{ac::NodeNameChanged{node(3), "shared 场景"}};
+  CHECK(b.drainEvents(all).value() == expected);
+  CHECK(b.drainEvents(named).value() == expected);
+  const auto tickets = a.submitTransaction({ac::SetNodeName{node(3), "would change"},
+                                           ac::SetNodeName{node(1), std::string(256, 'x')}});
+  const auto failures = a.drainFailures();
+  REQUIRE(failures.size() == 1);
+  CHECK(failures[0].ticket.value == tickets.first.value + 1);
+  CHECK(failures[0].error == ac::Error::InvalidNodeName);
+  CHECK(b.listNodes().value()[2].name == "shared 场景");
+  CHECK(b.drainEvents(all).value().empty());
 }
 
 TEST_CASE("remote authoring: a Runtime that serves no authoring session answers NoAuthoring", "[remote][authoring]") {

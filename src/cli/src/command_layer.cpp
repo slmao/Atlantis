@@ -626,7 +626,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
 
   // Plan 0065 P6: scene open | nodes | get | set | create | destroy | add |
   // remove | parent | camera | apply | save (scene tx is the invocation's).
-  if (t[0] == "scene") return runScene(t);
+  if (t[0] == "scene") return runScene(t, line);
 
   // schema list | schema inspect <Type>
   if (t.size() == 2 && is("schema", "list")) {
@@ -1334,6 +1334,8 @@ namespace ac = atlantis::connection::authoring;
           return "removed " + text::formatEntity(e.node) + " " + typeName(schema, e.component);
         } else if constexpr (std::is_same_v<E, ac::ParentChanged>) {
           return "parent " + text::formatEntity(e.node) + " " + optionalEntityText(e.parent);
+        } else if constexpr (std::is_same_v<E, ac::NodeNameChanged>) {
+          return "name " + text::formatEntity(e.node) + " " + json::write(Value::string(e.name));
         } else if constexpr (std::is_same_v<E, ac::ActiveCameraChanged>) {
           return "camera " + optionalEntityText(e.camera);
         } else if constexpr (std::is_same_v<E, ac::DocumentReopened>) {
@@ -1373,6 +1375,10 @@ namespace ac = atlantis::connection::authoring;
           out.set("kind", Value::string("ParentChanged"));
           out.set("guid", Value::string(text::formatEntity(e.node)));
           out.set("parent", optionalEntityJson(e.parent));
+        } else if constexpr (std::is_same_v<E, ac::NodeNameChanged>) {
+          out.set("kind", Value::string("NodeNameChanged"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+          out.set("name", Value::string(e.name));
         } else if constexpr (std::is_same_v<E, ac::ActiveCameraChanged>) {
           out.set("kind", Value::string("ActiveCameraChanged"));
           out.set("camera", optionalEntityJson(e.camera));
@@ -1437,7 +1443,7 @@ std::uint64_t CommandLayer::sceneNodeCount() {
 }
 
 atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWrite(std::span<const std::string_view> t,
-                                                                                   std::uint64_t& end) {
+                                                                                   std::uint64_t& end, std::string_view line) {
   using ResultT = atlantis::Result<std::vector<ac::Command>, CliError>;
   if (!t.empty() && t[0] == "scene") t = t.subspan(1);
   connection::AuthoringConnection* a = authoring();
@@ -1471,6 +1477,32 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (value.isErr()) return ResultT::Err(textError(value.error(), t[3]));
     return ResultT::Ok(std::vector<ac::Command>{
         ac::SetProperty{{node.value(), path.value().component, path.value().leaf->id}, value.value()}});
+  }
+  if (verb == "name") {
+    constexpr std::string_view usage = "scene name <guid> <json-string>";
+    if (t.size() < 3) return ResultT::Err(usageError(usage));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    std::string_view encoded;
+    if (line.empty()) {
+      if (t.size() != 3) return ResultT::Err(usageError(usage));
+      encoded = t[2];
+    } else {
+      // Only the fixed prefix is tokenized; JSON keeps its exact spaces/escapes.
+      const auto words = tokenize(line);
+      std::size_t at = 0;
+      const unsigned prefixWords = !words.empty() && words[0] == "scene" ? 3 : 2;
+      for (unsigned i = 0; i < prefixWords; ++i) {
+        at = line.find_first_not_of(" \t\r\n", at);
+        if (at == std::string_view::npos) return ResultT::Err(usageError(usage));
+        at = line.find_first_of(" \t\r\n", at);
+        if (at == std::string_view::npos) return ResultT::Err(usageError(usage));
+      }
+      encoded = line.substr(at);
+    }
+    const auto parsed = json::parse(encoded);
+    if (parsed.isErr() || !parsed.value().isString()) return ResultT::Err(usageError(usage));
+    return ResultT::Ok(std::vector<ac::Command>{ac::SetNodeName{node.value(), parsed.value().asString()}});
   }
   if (verb == "create") {
     const std::string_view usage = "scene create [<guid>] [--at <position>] [--component <Type>]...";
@@ -1532,7 +1564,7 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     return ResultT::Ok(std::vector<ac::Command>{ac::SetActiveCamera{camera.value()}});
   }
   return ResultT::Err(plainError("NotAWrite", ErrorCategory::Usage,
-                                 "not a scene write: set, create, destroy, add, remove, parent, camera <guid>|none"));
+                                 "not a scene write: set, name, create, destroy, add, remove, parent, camera <guid>|none"));
 }
 
 Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, std::string command) {
@@ -1608,7 +1640,7 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   return done(command, std::move(human), std::move(result));
 }
 
-Reply CommandLayer::runScene(std::span<const std::string_view> t) {
+Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_view line) {
   const std::string command = t.size() >= 2 ? "scene " + std::string(t[1]) : std::string("scene");
   connection::AuthoringConnection* a = authoring();
   if (a == nullptr) {
@@ -1643,10 +1675,12 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t) {
     std::string human;
     Value list = Value::array();
     for (const ac::NodeSummary& node : nodes.value()) {
-      human += text::formatEntity(node.node) + " parent=" + optionalEntityText(node.parent) + "\n";
+      human += text::formatEntity(node.node) + " parent=" + optionalEntityText(node.parent) +
+               " name=" + json::write(Value::string(node.name)) + "\n";
       Value item = Value::object();
       item.set("guid", Value::string(text::formatEntity(node.node)));
       item.set("parent", optionalEntityJson(node.parent));
+      item.set("name", Value::string(node.name));
       list.push(std::move(item));
     }
     Value result = Value::object();
@@ -1718,7 +1752,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t) {
     return failed(command, usageError("scene tx <file|-> (a command of its own, as tx is)"));
   }
   std::uint64_t end = sceneNodeCount();
-  auto commands = parseSceneWrite(t, end);
+  auto commands = parseSceneWrite(t, end, line);
   if (commands.isErr()) return failed(command, commands.error());
   return submitSceneTransaction(std::move(commands.value()), command);
 }
