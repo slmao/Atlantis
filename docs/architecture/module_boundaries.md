@@ -950,7 +950,8 @@ checks well-formedness only.
 
 **Depends on:** Atlantis Core and Atlantis World's public access
 (`world/access/*`) and schema (`world/world_schema.h`) headers only, and, since
-Spec 0065, one Asset System header, `asset_system/scene_property_address.h` —
+Spec 0065, the Asset System scene-address value header beside its existing GUID
+header (`asset_system/scene_property_address.h`, `asset_system/asset_guid.h`) —
 no ECS, Runtime, Platform, RHI or Renderer include (checked by
 `tests/cli/cli_boundary_tests.cpp`).
 
@@ -1157,8 +1158,8 @@ are the reference contracts a C# port keeps.
 [ADR-0110](../adr/0110-gameplay-sdk-client-library-and-execution-model.md),
 [ADR-0111](../adr/0111-schema-generated-typed-bindings.md)).
 
-**Responsibilities:** a C++ client library (`atlantis::gameplay`) over one
-borrowed `RuntimeConnection`, with two layers:
+**Responsibilities:** a C++ client library (`atlantis::gameplay`); its World
+facade uses one borrowed `RuntimeConnection`, with two layers:
 - reflective (`gameplay::World`, `Transaction`, `Subscription`,
   `FailureLog`): types and fields by name (Connection's `text` grammar) or
   id, component reads, the component filter, transactions resolved whole at
@@ -1168,7 +1169,7 @@ borrowed `RuntimeConnection`, with two layers:
   handles (`fields::Light.intensity`), and a per-type, recursive
   compatibility check against the connection's schema.
 
-Every operation is a sequence of `RuntimeConnection` calls in the client's
+Every World operation is a sequence of `RuntimeConnection` calls in the client's
 order; refusals stay the boundary's. An optional, transport-neutral
 `QueryBatch` serves component reads and the component filter (a Remote
 client adapts `RemoteSession`). A multi-leaf read is not a snapshot: it is
@@ -1186,6 +1187,10 @@ The generated headers are produced by Atlantis Tools' `atlantis_sdk_codegen`
 from the hand-authored descriptor tables and committed, with `eol=lf`
 (`.gitattributes`); a staleness test fails when they differ from the
 generator's output.
+
+Spec 0081 / ADR-0143 also adds `gameplay::Assets`, borrowing an explicit
+`AssetConnection&` for the two read-only catalog queries. It owns no transport,
+file or World state; [the shared asset boundary](#atlantis-connection) applies.
 
 **Depended on by:** clients — the `atlantis_gameplay_demo` example (with
 Atlantis Remote's client half) and tests. Runtime, Remote, the CLI and the
@@ -1217,6 +1222,10 @@ library (`src/csharp/Atlantis.Gameplay/`, namespace `Atlantis.Gameplay`):
   — scene components and fields by name or id through the authoring schema,
   values as `PropertyValue`; no typed bindings of the scene components, and
   `atlantis_sdk_codegen` is unchanged.
+
+Since Spec 0081 / ADR-0143, `RemoteSession.Assets` exposes the lazy
+`AssetSession`, with owned catalog values in `Atlantis.Gameplay.Assets` and the
+shared in-band/transport distinction described under [Connection](#atlantis-connection).
 
 Name, binding and query refusals are thrown; a command's refusal comes back
 by ticket. A multi-leaf read is not a snapshot (the C++ SDK's rule). Not
