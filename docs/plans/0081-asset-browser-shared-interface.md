@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0081](../specs/0081-asset-browser-shared-interface.md) (In Review)
 - **Status:** In Review
 - **Author:** Codex, at slmao's direction
-- **Joint Human Review:** Pending in [PR #325](https://github.com/slmao/Atlantis/pull/325); reviews this Plan, Spec 0081 and proposed ADR-0143 together. This round authorizes design submission only, not implementation.
+- **Joint Human Review:** Human ruling pending in [PR #325](https://github.com/slmao/Atlantis/pull/325); reviews this Plan, Spec 0081 and proposed ADR-0143 together. J1–J4 below are recommendations after draft review, not approvals. This round authorizes design review/revision only, not implementation.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 
@@ -77,10 +77,26 @@ Honor future explicit stops/budgets; ordinary in-scope repairs are not new gates
 
 | Ruling | Recommended decision |
 |---|---|
-| **J1 — Minimum product slice** | Approve R1/R5: cooked-build asset browsing/detail/filter/copy; existing GUID Inspector edits finish the workflow. No asset writes, direct picker, import manager, preview or scene switch. |
-| **J2 — Authority and lifecycle** | Approve R2/R3 and Accept ADR-0143: a sibling query interface, executable-private lazy immutable process snapshot, existing parser, typed owned values; restart after external build changes, no residency/loadability promise. |
-| **J3 — Uniform client contract** | Approve R4 and ADR-0143's native SDK charter extension: the two methods in native Connection/Remote, CLI, C++/C# SDKs and MCP together; list-all under current transport limits, no capability/paging/event system. |
-| **J4 — Delivery and acceptance** | Approve the bounded S2–S4 file scope and mapped checks below; after human proposal merge, one authorization carries implementation to a review-ready PR under 0080. Preserve actual full-PR gate selection, evidence/failure history and human final merge. Current instruction ends at S1. |
+| **J1 — Minimum product slice: approve as bounded** | Approve R1/R5's cooked-build browser/detail/filter/copy workflow; use existing GUID Inspector/authoring/history paths for edits. No new picker, asset writes, import manager, preview or scene switch. |
+| **J2 — Authority/lifecycle: approve the clarified first-query snapshot** | Approve R2/R3 and Accept ADR-0143: one executable-private host, Uninitialized → Ready or Unavailable at the first well-formed endpoint query, shared by all clients until shutdown. Empty is success; failed first load is retained; reconnect, scene apply and Reload view do not retry or reload. The view is not the startup/active-World catalog; externally changing a running build has no consistency promise and requires restart. Show that freshness/recovery limit in the panel. |
+| **J3 — Shared contract/list-all: approve with explicit failure semantics** | Approve R4 and the native SDK charter extension: two shared queries in Connection/Remote, CLI, both SDKs and MCP, complete GUID-ordered list-all for current default/Bistro content. Keep transport limits; overflow or a malformed typed reply fails its session, never partial/empty success. Distinguish in-band errors from native sentinels/C# exceptions; retain MCP's raw exact forwarding/error behavior and both versions. No paging, capability/event system, new size policy or private GUI access. |
+| **J4 — Delivery/authority: one continuous authorization** | Approve the bounded S2–S4 file scope and mapped checks; after manual merge of #325, one explicit authorization continues through implementation, relevant verification and a review-ready PR under 0080. Runtime/CMake applicability remains selected unless the actual final diff proves otherwise. Preserve failures, valid reuse, original formal gate and human final merge; no new milestone approval gates. The proposed authorization below is not yet granted. |
+
+### Recommended one-time authorization — for human adoption, not yet granted
+
+Jointly approve the revised Spec/Plan 0081 with J1–J4 as recommended and Accept
+ADR-0143. After a human merges PR #325, authorize S2–S4 on an independent branch
+from the then-latest main through implementation, verification and a review-ready
+implementation PR under 0080, without further milestone approvals. Allow ordinary
+in-scope code/test/fixture repairs and focused retesting, retaining failures and
+reuse provenance. Preserve every applicable gate, including the selected original
+Release profiling-ON/Tracy-OFF formal performance gate once; do not reset any
+explicit hold/budget or waive a non-pass. Stop dependent work and request a specific
+decision for a changed contract/architecture/acceptance requirement, and report a
+required acceptance blocker with evidence while continuing independent authorized
+work. Stop at the review-ready PR; human final review and merge remain separate.
+No other editor/asset-pipeline feature, dependency, baseline/policy/golden update
+or automatic merge is authorized.
 
 ## Verification Checklist
 
@@ -98,37 +114,61 @@ on relevant final inputs, reusing only unaffected evidence):**
   UnknownAsset, schema/tool/direct-dependency fidelity, summary/detail agreement,
   exact GUID ordering rather than AssetId order, and catalog closure/content gating.
   Use the existing assembled catalog and temporary copies, not new production
-  assets. All clients share the first loaded snapshot, even after disk changes,
-  reconnect, scene open/apply and UI Refresh; a new host sees the replacement.
-  An unavailable first load remains unavailable until restart. Copies outlive a
-  connection without aliasing host records; lazy construction and read-only calls
+  assets. Check both list-first and get-first, including an unknown valid first
+  lookup and a change between construction and the first query. Invalid wire
+  arguments/provider absence/connection creation must not initialize the host.
+  All clients share the first loaded snapshot, even after disk changes, reconnect,
+  scene open/apply and Reload view; a new host sees the replacement. Successful
+  empty catalogs stay distinct from load failure, and load failure precedes
+  lookup. An unavailable first load remains unavailable until restart, even after
+  the file is repaired. Copies outlive a connection without aliasing host records;
+  lazy construction and read-only calls
   produce no authoring/World mutation, event, failure drain or apply.
 - [ ] **R4 / transport, CLI and SDKs:** native Remote/CLI/native SDK and C# codec/
   live tests in Debug/Release; generated vectors include all types, schema-null/
   present, imported source strings, uint32 boundaries, both errors and malformed
-  shapes/unknown variants. Verify new calls on a provider and NoAssets without
+  shapes/unknown variants, list/dependency ordering/duplicates and a mismatched
+  get GUID. Unknown but well-typed schema versions remain displayable, and extra
+  object members remain tolerated. Verify new calls on a provider and NoAssets without
   one; existing methods and connect handshake remain usable with an actual old
-  peer from the baseline, with binary/source provenance. CLI human/JSON, one-shot,
-  REPL and `--exec` output agree with SDK values. No old-peer asset-call success
-  is promised. Do not hand-edit JSONL or regenerate World bindings.
+  peer from the baseline before calling a new asset capability, with binary/source
+  provenance. A new unsupported call may fail that session as R4 specifies.
+  CLI human/JSON, one-shot, REPL and `--exec` output agree with SDK values.
+  In-band errors leave the session
+  usable; disconnect/malformed/oversized replies set native sticky failure or
+  throw the C# RemoteException, never empty success or a genuine host error.
+  CLI connection exit 3 takes precedence over the native error sentinel, while
+  catalog refusals exit 1. Exercise output-budget overflow with the existing
+  configurable ServerLimits on a tiny test fixture, not changed production limits
+  or a huge new asset fixture; preserve existing client-line overflow coverage.
+  No old-peer asset-call success is promised. Do not hand-edit JSONL or regenerate
+  World bindings.
 - [ ] **R4 / MCP:** exactly two new tools and otherwise unchanged inventory;
-  parameter validation, exact forwarding/results, failures and source-schema null;
+  parameter validation, exact raw SDK forwarding/results, outer RPC and in-band
+  refusals plus transport exceptions marked as errors (no empty success), and
+  source-schema null. Preserve raw error-envelope behavior without requiring an
+  outer refusal to fail that SDK session or adding typed DTO/policy validation;
   explicit `2025-11-25` and `2026-07-28` sessions with their legacy/new result forms.
   Existing command failure settlement, subscriptions, apply and capture checks
   stay green. No direct native/file/Tools path or new package.
 - [ ] **R5 / editor model and actual Windows UI:** headless tests for type/text
   filters (including no match), independent GUID selection, detail/dependency
-  navigation, empty/unavailable/disconnected states, refresh preservation and
-  rejecting obsolete callbacks. Product UI smoke confirms opening/list/detail,
-  filters, clipboard GUID copy and repeated refresh without polling/history or
+  navigation, empty-catalog/no-match/unavailable/disconnected states, Reload view
+  preservation and rejecting obsolete session/selection/view callbacks. Product
+  UI smoke confirms opening/list/detail, the fixed-snapshot/restart note, filters,
+  clipboard GUID copy and repeated Reload view without polling/history or
   Hierarchy-selection changes. Use the actual Avalonia window/worker with real
   Runtime; routed focus/key/button events are acceptable, state the input boundary.
   No screenshot, OS-input or latency claim without evidence.
 - [ ] **R1/R4/R5 integration:** existing real Runtime + CLI/SDK/MCP/Editor harnesses
   on default and available actual Bistro builds. Compare every returned record
   and dependency to the same cooked catalog, including unreferenced and imported
-  assets; every client observes the same list/details. Read-only browse/refresh
-  leaves scene generation, GUIDs, names, selection/picking, frame data and PNG
+  assets; every client observes the same complete list/details under the unchanged
+  default limits. Record record-count agreement and actual encoded list/largest
+  detail reply sizes including the envelope, not only source-file size; no new
+  timing or size threshold. A failed reply must not publish partial data as a
+  successful view. Read-only browsing and Reload view leave scene generation,
+  GUIDs, names, selection/picking, frame data and PNG
   unchanged. Copy a known compatible catalog material GUID into the existing
   Inspector field, commit/apply, undo/redo and reject a later external conflict;
   the CLI/SDK reads the same authoring value. Save→reopen and save→rebuild→restart

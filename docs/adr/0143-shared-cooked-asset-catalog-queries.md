@@ -32,9 +32,14 @@ object for clients; pretending to borrow such an object would misstate ownership
    its Core-only dependency; Connection's link/dependency graph is unchanged.
 2. **An executable-private host.** `atlantis_runtime` composes the adapter from
    the configured cooked-catalog path, using the existing Asset System loader.
-   Its first query retains one process-lifetime snapshot or unavailable outcome,
-   shared by every connection. The adapter is frame-thread-only; its connections
-   borrow it and close first, and results are owned copies. It does not change
+   Its first well-formed endpoint query retains one process-lifetime snapshot or
+   unavailable outcome, shared by every connection. This freezes the catalog at
+   first use, not Runtime startup; R3's Uninitialized → Ready/Unavailable transition
+   is one-way, including an empty success or a failed load. Reconnect, apply and
+   Reload view do not change it; recovery after a failed initial load needs a
+   restart. The editor shows this freshness/recovery limit. The adapter is
+   frame-thread-only; its connections borrow it and close first, and results
+   are owned copies. It does not change
    RuntimeHost, RuntimeApplication, scene load/reload or `runFrame()`. R3 owns
    freshness and external-build limits. No new module, watcher or scheduler.
 3. **Every current client in one delivery.** Native Remote serves/implements the
@@ -45,6 +50,12 @@ object for clients; pretending to borrow such an object would misstate ownership
    Connection-only link, client-owned execution and no-Runtime/Remote rule.
    No typed World binding or schema generator changes. Existing calls and MCP
    version response behavior are preserved; new calls need an updated provider.
+   R4 distinguishes host refusals from the native Remote failure sentinel and
+   managed exceptions, so a failed query cannot be presented as an empty catalog.
+   A complete list-all reply is the bounded first delivery: existing queue/line
+   overflow remains a session failure, not truncation, implicit paging, a new
+   catalog error or a reason to raise transport limits. The current-content
+   acceptance verifies complete serialized replies under those limits.
 4. **Catalog browsing, ordinary document editing.** The editor holds a local view
    of returned facts and copies GUIDs. Existing Inspector/authoring/history paths
    perform reference edits. R5 adds no direct picker, asset-write operation,
@@ -67,8 +78,11 @@ object for clients; pretending to borrow such an object would misstate ownership
 - The host retains another CPU view of the catalog; it does not reuse a catalog
   instance that the existing Runtime does not retain. First-query parsing and
   list copies execute between frames, with no arbitrary-size latency promise.
-- A rebuilt catalog requires Runtime restart; list-all remains subject to existing
-  transport limits. There is no live-refresh, paging or loading-state contract.
+- An external rebuild after startup may differ from what Runtime loaded even
+  before this first query; modifying a running build has no consistency promise.
+  A rebuilt/repaired catalog requires Runtime restart. List-all is subject to
+  existing transport limits and can fail its connection when they are exceeded.
+  There is no live-refresh, paging or asset-residency contract.
 - The first UI uses copy/paste into existing GUID fields; direct assignment and
   file/import management remain later work.
 

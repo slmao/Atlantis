@@ -44,8 +44,9 @@ belong in the reviewing PR, not in this requirement list.
 No import/reimport/cook/build command, source-catalog editing, GUID minting, asset
 create/delete/rename/move, arbitrary file access, thumbnail/mesh/material preview,
 drag-and-drop, direct assignment picker, scene switching, material/texture editing,
-usage/reverse-dependency analysis, live filesystem watcher, hot reload, cache/database,
-packaging service, new package, new top-level module, or in-process ImGui editor work.
+usage/reverse-dependency analysis, live filesystem watcher, hot reload, derived-data
+cache/asset database, packaging service, new package, new top-level module, or
+in-process ImGui editor work.
 This is the first shared asset surface, not the entire asset-pipeline management API.
 
 ## Requirements
@@ -79,15 +80,24 @@ This is the first shared asset surface, not the entire asset-pipeline management
   remain unchanged. No query mutates a scene, creates a ticket/event, drains any
   existing queue, applies, saves or loads a GPU resource.
 - **R3 — Snapshot and hosting.** An executable-private `AssetHost`, following
-  `AuthoringHost`'s composition pattern, serves the interface. At the first asset
-  query in a Runtime process it loads the configured cooked catalog through
-  `loadAssetCatalog()` and retains one immutable snapshot, or one unavailable
-  outcome, until process shutdown. All asset connections share that outcome;
-  scene open/apply, client reconnect, browser reopening and refresh do not reload
-  it. A rebuild or external catalog/artifact edit requires restarting Runtime
-  before these queries describe the new build. No consistency or hot-reload
-  promise is made for an externally modified running build; the existing scene
-  loader/reloader still reads its configured catalog as before.
+  `AuthoringHost`'s composition pattern, serves the interface. At the first
+  well-formed asset query reaching the endpoint in a Runtime process it loads
+  the configured cooked catalog through `loadAssetCatalog()` and retains one
+  immutable snapshot, or one unavailable outcome, until process shutdown.
+  The state is initially Uninitialized and transitions once to Ready (an empty
+  catalog included) or Unavailable. Both list and get can cause that transition;
+  a get of an unknown valid GUID still fixes the successfully loaded snapshot.
+  Invalid wire arguments, a missing service provider, connection construction
+  and the handshake do not load it. Load failure takes precedence over lookup,
+  so UnknownAsset is possible only after a successful load. All asset connections
+  share that outcome; scene open/apply, client reconnect, browser reopening and
+  Reload view do not reload it. A rebuild or external catalog/artifact edit requires restarting Runtime
+  before these queries describe the new build. This is a first-query snapshot,
+  not a snapshot captured when Runtime started and not a snapshot of its active
+  World. External edits between startup and first query can therefore change
+  what is captured. No consistency or hot-reload promise is made for a running
+  build modified on disk; the existing scene loader/reloader still reads its
+  configured catalog as before. Do not change that loader to force consistency.
 
   Host construction is cheap; the first query pays the catalog read. Subsequent
   queries perform no filesystem I/O. Cache the GUID order once rather than sorting
@@ -108,34 +118,81 @@ This is the first shared asset surface, not the entire asset-pipeline management
   | MCP | Exactly two additional exact tools, `assets.list` and `assets.get`, with the same arguments/results through the C# SDK session. Existing authoring apply/failure settlement and every other tool stay unchanged. |
 
   A server without a provider returns the outer RPC error `NoAssets`; old servers
-  use their existing unknown-method refusal. Malformed GUIDs (nil included),
-  field types, enums, out-of-range schema integers or result shapes are rejected by the existing
-  protocol/codec error path. An unknown valid GUID is the in-band `UnknownAsset`.
+  use their existing unknown-method refusal. Invalid request arguments (malformed
+  or nil GUIDs and wrong field types) return the existing outer `BadRequest`
+  before invoking an asset query. Native/C# typed query decoders require the declared field
+  types, canonical non-nil GUIDs, known type/error spellings, uint32 schema
+  integers, unique strictly GUID-ordered summaries and dependency GUIDs, and a
+  get result whose GUID matches its request. Every declared DTO member is
+  required on the wire; `sourceSchema` is present with `null` when absent in
+  the native value. An in-band envelope has exactly one of `ok` or `err`.
+  Additional object members are tolerated, as in existing codecs. Source/tool
+  strings are display facts; clients do not acquire the Asset System's catalog
+  parser. A well-typed schema
+  integer is displayed even if this client cannot load that artifact version.
+  A malformed typed-query result fails the Remote session; it is never a successful empty
+  list. An unknown valid lookup GUID is the in-band `UnknownAsset`.
+
+  In-band `CatalogUnavailable` and `UnknownAsset` do not fail the Remote session
+  or stop its other capabilities. Transport/protocol failure is a different
+  outcome: the native Remote adapter sets the existing sticky
+  `RemoteSession::failure()` and returns `Err(CatalogUnavailable)` as its failure
+  sentinel, never `Ok([])`. Callers using Remote must check that failure before
+  interpreting the sentinel; the transport-neutral native SDK gains no second
+  transport-error channel. C# uses its existing `RemoteException`. CLI checks
+  native session failure before reporting an in-band refusal: connection failure
+  retains exit 3, genuine catalog refusals exit 1. MCP retains the existing exact
+  tier's raw SDK `AwaitResponse` path: preserve the result JSON without typed
+  decode/re-encode or new DTO/policy validation. It marks outer RPC and in-band
+  refusals as errors and catches transport exceptions; an outer RPC refusal
+  need not poison this raw SDK session, unlike the typed query path. The typed
+  decoder checks above do not add a promise that MCP diagnoses invalid DTOs in
+  otherwise valid JSON. No observed refusal/transport failure becomes empty
+  success. Neither sentinel nor exception changes the
+  host's retained catalog outcome.
   New native/managed clients ask for no asset data during their existing connect
   handshake, so using only existing capabilities against old servers is retained.
-  A failed call of a new capability on an old/unprovided peer follows existing
-  Remote session-failure behavior; no capability negotiation or fallback filesystem
+  A typed call of a new capability on an old/unprovided peer follows existing
+  Remote session-failure behavior; MCP preserves its raw error-envelope behavior.
+  No capability negotiation or fallback filesystem
   reader is added. MCP must preserve both supported `2025-11-25` and `2026-07-28`
   response forms, including the legacy array wrapper and error flag. C++-owned
   conformance vectors cover all new DTOs/errors and exact wire values.
 
-  List-all matches current query conventions and the current content size; no
-  pagination, subscription, revision token or server search API is introduced.
-  Existing transport limits remain binding: never silently truncate a successful
-  list. Catalogs beyond those limits require later reviewed query evolution.
+  List-all means one complete owned list and one JSON-lines reply, not an iterator
+  or automatically repeated requests. It is recommended for the current content
+  size, not unlimited catalogs. No pagination, subscription, revision token,
+  size-limit option or server search API is introduced. Existing transport limits
+  remain binding: the default server has a 64 MiB pending-output budget shared
+  by replies on that connection, while native/managed clients accept at most
+  256 MiB per response line. The 1 MiB server request-line limit is not a response
+  limit. Count the actual reply envelope, encoding and queued bytes, not the
+  cooked catalog file's length. If the server cannot queue a whole reply it
+  drops that client under the existing transport rule; a client line-limit
+  violation likewise fails its session. Neither case is CatalogUnavailable from
+  the host, UnknownAsset, truncation, or partial/empty success. No automatic
+  retry, fallback or limit increase. Catalogs needing larger replies require a
+  later reviewed query change; the default/Bistro acceptance must demonstrate
+  complete replies under unchanged default limits.
 - **R5 — Minimal Editor App.** Add one Assets panel, backed only by the C# SDK:
   a flat list with type, source and GUID, a type filter, an ordinal case-insensitive
   substring filter over source/GUID, and a detail area for R2's data. Selection is
   by GUID and independent of Hierarchy selection. Dependency GUIDs can select a
   record for inspection; a missing record reports the ordinary lookup failure.
   Copy GUID uses the editor's own clipboard; it does not open a file or edit a node.
-  Show loading, empty, unavailable and disconnected states distinctly. Load on
-  first panel use through the existing worker; a user Refresh re-queries the same
-  server snapshot and preserves a still-present asset selection. Filter/search
-  are local presentation over that snapshot; no background polling or automatic
+  Show loading, an empty catalog, no filter matches, catalog-unavailable and
+  disconnected states distinctly. Display a short freshness note that the catalog
+  is fixed at its first query and a changed build (or failed initial load) needs
+  Runtime restart. Load on first panel use through the existing worker; name the
+  action Reload view and explain that it re-queries this snapshot, not the disk.
+  It preserves a still-present asset selection. Publish list/detail data only
+  after a complete successful reply; show failures separately instead of
+  interpreting them as an empty catalog. Filter/search are local presentation
+  over that snapshot; no background polling or automatic
   request per keystroke. Keep UI work on the dispatcher and query work on the
-  existing session worker; discard callbacks belonging to an older session or
-  selection. Browsing, copy and refresh add no document history entry.
+  existing session worker; discard callbacks belonging to an older session,
+  selection or superseded view request using local UI state, not a wire revision
+  token. Browsing, copy and Reload view add no document history entry.
 
   To use a mesh/material, paste its GUID into the existing selected node's
   Inspector asset field; the existing authoring SetProperty, validation,
