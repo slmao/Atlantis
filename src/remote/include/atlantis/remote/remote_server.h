@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/authoring_connection.h>
+#include <atlantis/connection/asset_connection.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/remote/session_file.h>
@@ -91,6 +92,9 @@ class RemoteServer {
   // this call authoring.* is NoAuthoring.
   using OpenAuthoring = std::function<std::unique_ptr<atlantis::connection::AuthoringConnection>()>;
   void serveAuthoring(OpenAuthoring open);
+  using OpenAssets = std::function<std::unique_ptr<atlantis::connection::AssetConnection>()>;
+  // Borrowed provider state must outlive the server and its clients.
+  void serveAssets(OpenAssets open);
 
   void poll();
 

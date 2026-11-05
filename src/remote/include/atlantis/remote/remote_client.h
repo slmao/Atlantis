@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/authoring_connection.h>
+#include <atlantis/connection/asset_connection.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
 #include <atlantis/remote/session_file.h>
@@ -80,6 +81,8 @@ class RemoteSession {
   // against a Runtime that serves no authoring session that call fails the
   // session (NoAuthoring is a refused request).
   [[nodiscard]] atlantis::connection::AuthoringConnection& authoring() noexcept;
+  // Lazy query endpoint; no handshake query. Check failure() before a sentinel.
+  [[nodiscard]] atlantis::connection::AssetConnection& assets() noexcept;
   [[nodiscard]] const atlantis::asset_system::AssetGuid& scene() const noexcept;
   [[nodiscard]] std::optional<RemoteError> failure() const noexcept;
 

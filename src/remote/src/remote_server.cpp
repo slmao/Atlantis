@@ -87,7 +87,8 @@ struct Client {
   LineChannel channel;
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;  // after a good hello
   std::unique_ptr<atlantis::connection::AuthoringConnection> authoring;  // Plan 0065: at its first authoring.* request
-  bool closing = false;  // write what is queued, then drop
+  std::unique_ptr<atlantis::connection::AssetConnection> assets;
+    bool closing = false;  // write what is queued, then drop
   bool overran = false;  // exceeded the write limit: drop now
 };
 
@@ -353,6 +354,7 @@ struct RemoteServer::State {
   std::string token;
   atlantis::asset_system::AssetGuid scene;
   OpenConnection openConnection;
+  OpenAssets openAssets;
   OpenAuthoring openAuthoring;  // Plan 0065: serveAuthoring()
   atlantis::connection::RuntimeControl* control = nullptr;
   Limits limits;
@@ -520,6 +522,28 @@ struct RemoteServer::State {
       if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
       return response(requestId, std::move(outcome.value()));
     }
+    if (name.starts_with("assets.")) {
+      std::optional<asset_system::AssetGuid> guid;
+      if (!p.isObject() || (name != "assets.list" && name != "assets.get"))
+        return errorResponse(requestId, "BadRequest", "unknown or malformed asset query");
+      if (name == "assets.get") {
+        const auto* member = p.find("guid");
+        if (member) guid = codec::decodeAsset(*member);
+        if (!guid || *guid == asset_system::AssetGuid{}) return errorResponse(requestId, "BadRequest", "malformed or missing guid");
+      }
+      if (!client.assets && openAssets) client.assets = openAssets();
+      if (!client.assets) return errorResponse(requestId, "NoAssets", "this Runtime serves no asset catalog");
+      if (guid) {
+        auto result = client.assets->getAsset(*guid);
+        return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+            : codec::err(Value::string(std::string(connection::assets::toString(result.error())))));
+      }
+      auto result = client.assets->listAssets();
+      if (result.isErr()) return response(requestId, codec::err(Value::string(std::string(connection::assets::toString(result.error())))));
+      Value items = Value::array();
+      for (const auto& item : result.value()) items.push(codec::encode(item));
+      return response(requestId, codec::ok(std::move(items)));
+    }
     if (name.starts_with("authoring.")) {
       if (!client.authoring && openAuthoring) client.authoring = openAuthoring();
       if (!client.authoring) {
@@ -605,6 +629,8 @@ void RemoteServer::poll() {
 }
 
 std::size_t RemoteServer::clientCount() const noexcept { return state_->clients.size(); }
+
+void RemoteServer::serveAssets(OpenAssets open) { state_->openAssets = std::move(open); }
 
 void RemoteServer::serveAuthoring(OpenAuthoring open) { state_->openAuthoring = std::move(open); }
 

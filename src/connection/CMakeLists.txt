@@ -8,6 +8,7 @@
 # header, atlantis/asset_system/scene_property_address.h, which World already
 # depends on.
 add_library(atlantis_connection STATIC
+  src/asset_connection.cpp
   src/runtime_connection.cpp
   src/in_process_endpoint.cpp
   src/text.cpp

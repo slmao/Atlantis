@@ -100,7 +100,7 @@ if(WIN32)
 # Plan 0065 P5 (ADR-0129 D2, ADR-0130 D2): authoring_host.cpp hosts the
 # authoring session, executable-private like editor_attachment.cpp --
 # Atlantis::RuntimeHost does not link Atlantis Authoring.
-add_executable(atlantis_runtime main.cpp cli.cpp editor_attachment.cpp authoring_host.cpp
+add_executable(atlantis_runtime asset_host.cpp main.cpp cli.cpp editor_attachment.cpp authoring_host.cpp
   benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
   # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
   gate_canary.cpp canary_run.cpp gate_set.cpp gate_policy.cpp gate_evaluate.cpp gate_orchestrate.cpp gate_process_windows.cpp gate_store.cpp gate_applies.cpp gate_run.cpp)

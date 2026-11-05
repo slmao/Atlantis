@@ -3,6 +3,7 @@
 # module's boundary scan (no OS type in public headers; OS code only in
 # src/os/; nothing of Runtime, the ECS or the GPU stack).
 add_executable(atlantis_remote_tests
+  remote_asset_tests.cpp
   remote_json_tests.cpp
   remote_codec_tests.cpp
   remote_session_file_tests.cpp

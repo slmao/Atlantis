@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/authoring_connection.h>
+#include <atlantis/connection/asset_connection.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
@@ -30,6 +31,12 @@
 // Decoders return nullopt for anything malformed; the caller turns that into
 // a protocol error. Pure functions.
 namespace atlantis::remote::codec {
+
+[[nodiscard]] connection::json::Value encode(const connection::assets::AssetSummary& value);
+[[nodiscard]] connection::json::Value encode(const connection::assets::AssetDetails& value);
+[[nodiscard]] std::optional<connection::assets::AssetSummary> decodeAssetSummary(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::AssetDetails> decodeAssetDetails(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::AssetError> decodeAssetError(const connection::json::Value& value);
 
 using connection::json::Value;
 namespace access = atlantis::world::access;

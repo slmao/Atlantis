@@ -20,6 +20,7 @@ namespace atlantis::remote {
 namespace json = connection::json;
 namespace access = atlantis::world::access;
 using atlantis::asset_system::EntityGuid;
+using atlantis::asset_system::AssetGuid;
 using json::Value;
 
 std::filesystem::path resolveSessionPath(const std::optional<std::string>& explicitPath, const char* environmentValue) {
@@ -74,6 +75,7 @@ struct RemoteSession::State {
   std::unique_ptr<atlantis::connection::RuntimeConnection> connection;
   std::unique_ptr<atlantis::connection::RuntimeControl> control;
   std::unique_ptr<atlantis::connection::AuthoringConnection> authoring;  // Plan 0065
+  std::unique_ptr<connection::AssetConnection> assets;
   codec::OwnedSchema authoringSchema;                                     // fetched at its first use
   bool authoringSchemaFetched = false;
 
@@ -434,6 +436,45 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
   RemoteSession::State* state_;
 };
 
+namespace ca = connection::assets;
+class RemoteAssets final : public connection::AssetConnection {
+ public:
+  explicit RemoteAssets(RemoteSession::State& state) : state_(state) {}
+  Result<std::vector<ca::AssetSummary>, ca::AssetError> listAssets() const override {
+    return query<std::vector<ca::AssetSummary>>("assets.list", Value::object(), [](const Value& v) -> std::optional<std::vector<ca::AssetSummary>> {
+      if (!v.isArray()) return std::nullopt;
+      std::vector<ca::AssetSummary> list;
+      for (const auto& item : v.asArray()) {
+        auto d = codec::decodeAssetSummary(item);
+        if (!d || (!list.empty() && !(list.back().guid < d->guid))) return std::nullopt;
+        list.push_back(std::move(*d));
+      }
+      return list;
+    });
+  }
+  Result<ca::AssetDetails, ca::AssetError> getAsset(const AssetGuid& guid) const override {
+    ATLANTIS_CHECK(guid != AssetGuid{});
+    Value p = Value::object(); p.set("guid", codec::encodeAsset(guid));
+    return query<ca::AssetDetails>("assets.get", std::move(p), [&guid](const Value& v) {
+      auto d = codec::decodeAssetDetails(v);
+      return d && d->guid == guid ? d : std::nullopt;
+    });
+  }
+ private:
+  template<class T, class Decode> Result<T, ca::AssetError> query(std::string_view method, Value params, Decode decode) const {
+    using R = Result<T, ca::AssetError>;
+    const auto v = state_.call(method, std::move(params));
+    if (v) {
+      const auto* ok = v->find("ok"); const auto* err = v->find("err");
+      if (ok && !err) { if (auto d = decode(*ok)) return R::Ok(std::move(*d)); }
+      if (err && !ok) { if (auto e = codec::decodeAssetError(*err)) return R::Err(*e); }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(ca::AssetError::CatalogUnavailable);
+  }
+  RemoteSession::State& state_;
+};
+
 // Plan 0065 P6 (ADR-0130 D3): AuthoringConnection over the wire (authoring.*).
 // Each call is one request; refusals arrive in band.
 namespace ac = atlantis::connection::authoring;
@@ -641,6 +682,11 @@ atlantis::connection::RuntimeConnection& RemoteSession::connection() noexcept { 
 atlantis::connection::RuntimeControl& RemoteSession::control() noexcept { return *state_->control; }
 
 atlantis::connection::AuthoringConnection& RemoteSession::authoring() noexcept { return *state_->authoring; }
+
+connection::AssetConnection& RemoteSession::assets() noexcept {
+  if (!state_->assets) state_->assets = std::make_unique<RemoteAssets>(*state_);
+  return *state_->assets;
+}
 
 const atlantis::asset_system::AssetGuid& RemoteSession::scene() const noexcept { return state_->scene; }
 

@@ -15,6 +15,8 @@ add_compile_definitions(ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PA
 # no home library to link against). cli_tests.cpp is the new test file
 # exercising it. No change to atlantis_runtime_gpu_tests below.
 add_executable(atlantis_runtime_tests
+  asset_host_tests.cpp
+  ../../src/runtime/asset_host.cpp
   lifecycle_state_tests.cpp
   bootstrap_config_tests.cpp
   environment_realization_tests.cpp
