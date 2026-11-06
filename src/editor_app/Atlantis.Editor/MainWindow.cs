@@ -29,6 +29,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.Threading;
@@ -96,6 +97,12 @@ public sealed class MainWindow : Window
     private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
     private InspectorSnapshot? _inspectorShown;
     private InspectorSnapshot? _inspectorDeferred;
+    private readonly AssetBrowser _assetBrowser = new();
+    private readonly ListBox _assetsList = new() { Height = 230 };
+    private readonly TextBlock _assetsState = new();
+    private readonly StackPanel _assetDetails = new() { Spacing = 4 };
+    private bool _assetsSync;
+    private readonly TabControl _assetTabs = new();
     private TextBox? _nameBox;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
@@ -214,14 +221,23 @@ public sealed class MainWindow : Window
         var inspectorSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
         Grid.SetColumn(inspectorSplitter, 3);
         var inspectorScroll = new ScrollViewer { Content = _inspectorPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        Grid.SetColumn(inspectorScroll, 4);
+        _assetTabs.ItemsSource = new[] {
+            new TabItem { Header = "Inspector", Content = inspectorScroll },
+            new TabItem { Header = "Assets", Content = BuildAssetsPanel() } };
+        _assetTabs.SelectionChanged += (_, e) =>
+        {
+            // SelectionChanged also bubbles from the list and filter ComboBox.
+            if (ReferenceEquals(e.Source, _assetTabs) && _assetTabs.SelectedIndex == 1 &&
+                _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+        };
+        Grid.SetColumn(_assetTabs, 4);
         Grid.SetRow(_status, 1);
         Grid.SetColumnSpan(_status, 5);
         grid.Children.Add(left);
         grid.Children.Add(splitter);
         grid.Children.Add(_viewport);
         grid.Children.Add(inspectorSplitter);
-        grid.Children.Add(inspectorScroll);
+        grid.Children.Add(_assetTabs);
         grid.Children.Add(_status);
         Content = grid;
 
@@ -330,6 +346,8 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        _assetBrowser.Disconnect();
+        RenderAssets();
         ViewportWindow? window = _viewport.Window;
         if (runtime is not null && window is not null && session.Window is ulong child)
         {
@@ -351,9 +369,16 @@ public sealed class MainWindow : Window
             SessionPath = sessionPath,
             Recorder = _recorder,
         };
-        worker.Connected += OnConnected;
+        worker.Connected += snapshot =>
+        {
+            if (!ReferenceEquals(_worker, worker)) return;
+            OnConnected(snapshot);
+            if (_assetTabs.SelectedIndex == 1) LoadAssets();
+        };
         worker.Failed += message =>
         {
+            if (!ReferenceEquals(_worker, worker)) return;
+            _assetBrowser.Disconnect(); RenderAssets();
             _runtimeLine = "session failed: " + message;
             UpdateStatus();
         };
@@ -716,6 +741,62 @@ public sealed class MainWindow : Window
     // Plan 0068 M3 (Spec 0068 R4): one typed editor per field -- a text box committed on Enter or loss of focus (one
     // transaction each), a combo box for an enum, a clear button for an optional field, a note for a read-only one --
     // and Add / Remove component. The panel is not rebuilt under a field being typed in: the snapshot waits.
+    private Control BuildAssetsPanel()
+    {
+        var panel = new StackPanel { Spacing = 6, Margin = new Thickness(6) };
+        panel.Children.Add(new TextBlock { Text = "Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk.", TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var reload = new Button { Content = "Reload view" };
+        reload.Click += (_, _) => LoadAssets(); panel.Children.Add(reload);
+        var types = new ComboBox { ItemsSource = new[] { "All types", "Mesh", "Texture", "Material", "Scene", "Environment" }, SelectedIndex = 0 };
+        types.SelectionChanged += (_, _) => { _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (Atlantis.Gameplay.Assets.AssetType)(types.SelectedIndex - 1); RenderAssets(); };
+        panel.Children.Add(types);
+        var search = new TextBox { PlaceholderText = "Source or GUID" };
+        search.TextChanged += (_, _) => { _assetBrowser.Search = search.Text ?? ""; RenderAssets(); };
+        panel.Children.Add(search); panel.Children.Add(_assetsState);
+        _assetsList.ItemTemplate = new FuncDataTemplate<Atlantis.Gameplay.Assets.AssetSummary>((v, _) => new TextBlock {
+            Text = v is null ? "" : v.Type + " · " + v.Source + "\n" + v.Guid,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        _assetsList.SelectionChanged += (_, _) => { if (!_assetsSync && _assetsList.SelectedItem is Atlantis.Gameplay.Assets.AssetSummary v) ReadAsset(v.Guid); };
+        panel.Children.Add(_assetsList);
+        var copy = new Button { Content = "Copy GUID" };
+        copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
+        panel.Children.Add(copy); panel.Children.Add(_assetDetails);
+        return new ScrollViewer { Content = panel };
+    }
+    private void LoadAssets()
+    {
+        var worker = _worker; if (worker is null) return;
+        long request = _assetBrowser.BeginList(); RenderAssets();
+        worker.LoadAssets(result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || !_assetBrowser.CompleteList(request, result)) return;
+            RenderAssets();
+            // BeginList invalidated pending details. Selection is restored under
+            // _assetsSync, so its event cannot request the replacement for us.
+            if (result.IsOk && _assetBrowser.Selected is AssetGuid guid) ReadAsset(guid);
+        });
+    }
+    private void ReadAsset(AssetGuid guid)
+    {
+        var worker = _worker; if (worker is null) return;
+        long request = _assetBrowser.Select(guid); RenderAssets();
+        worker.ReadAsset(guid, result => { if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDetail(request, guid, result)) RenderAssets(); });
+    }
+    private void RenderAssets()
+    {
+        _assetsState.Text = _assetBrowser.ViewState;
+        var visible = _assetBrowser.Visible;
+        _assetsSync = true;
+        try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
+        finally { _assetsSync = false; }
+        _assetDetails.Children.Clear();
+        if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
+        { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
+        _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        foreach (AssetGuid guid in d.Dependencies)
+        { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
     private void OnInspectorChanged(InspectorSnapshot snapshot)
     {
         // An observed external rename cancels a name draft immediately. Other

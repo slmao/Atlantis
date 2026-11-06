@@ -627,6 +627,48 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   // Plan 0065 P6: scene open | nodes | get | set | create | destroy | add |
   // remove | parent | camera | apply | save (scene tx is the invocation's).
   if (t[0] == "scene") return runScene(t, line);
+  if (t[0] == "asset") {
+    const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
+    if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))
+      return failed(command, usageError("asset list | asset get <asset-guid>"));
+    std::optional<asset_system::AssetGuid> guid;
+    if (t[1] == "get") {
+      auto parsed = asset_system::parseAssetGuid(t[2]);
+      if (parsed.isErr()) return failed(command, usageError("asset get <non-nil canonical asset-guid>"));
+      guid = parsed.value();
+    }
+    auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+    if (!endpoint) return failed(command, plainError("NoAssets", ErrorCategory::Runtime, "this host serves no asset catalog"));
+    const auto summaryJson = [](const auto& v) {
+      Value out = Value::object();
+      out.set("guid", Value::string(asset_system::toString(v.guid)));
+      out.set("type", Value::string(std::string(connection::assets::toString(v.type))));
+      out.set("source", Value::string(v.source));
+      return out;
+    };
+    if (guid) {
+      const auto result = endpoint->getAsset(*guid);
+      if (result.isErr()) return failed(command, plainError(std::string(connection::assets::toString(result.error())), ErrorCategory::Refused, std::string(connection::assets::toString(result.error()))));
+      const auto& d = result.value();
+      Value out = summaryJson(d);
+      out.set("artifactSchema", Value::number(static_cast<std::uint64_t>(d.artifactSchema)));
+      out.set("sourceSchema", d.sourceSchema ? Value::number(static_cast<std::uint64_t>(*d.sourceSchema)) : Value());
+      out.set("tool", Value::string(d.tool));
+      Value deps = Value::array(); for (const auto& dep : d.dependencies) deps.push(Value::string(asset_system::toString(dep)));
+      out.set("dependencies", std::move(deps));
+      std::string human = json::write(out) + "\n";
+      return done(command, std::move(human), std::move(out));
+    }
+    const auto result = endpoint->listAssets();
+    if (result.isErr()) return failed(command, plainError(std::string(connection::assets::toString(result.error())), ErrorCategory::Refused, std::string(connection::assets::toString(result.error()))));
+    Value items = Value::array(); std::string human;
+    for (const auto& item : result.value()) {
+      items.push(summaryJson(item));
+      human += asset_system::toString(item.guid) + " " + std::string(connection::assets::toString(item.type)) + " " + item.source + "\n";
+    }
+    return done(command, std::move(human), std::move(items));
+  }
+
 
   // schema list | schema inspect <Type>
   if (t.size() == 2 && is("schema", "list")) {

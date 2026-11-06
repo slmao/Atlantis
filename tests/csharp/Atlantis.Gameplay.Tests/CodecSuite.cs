@@ -43,6 +43,7 @@ public static class CodecSuite
         Edges(t, wires);
         AuthoringEdges(t, wires);
         NodeNameEdges(t);
+        AssetCodecSuite.Run(t);
         OverlayEdges(t, wires);
         Refusals(t);
     }
@@ -152,6 +153,9 @@ public static class CodecSuite
             case "AuthoringFailure":
                 return Codec.DecodeAuthoringFailure(wire) is A.CommandFailure fail ? W(Codec.Encode(fail)) : null;
             case "Document": return Codec.DecodeDocumentInfo(wire) is A.DocumentInfo doc ? W(Codec.Encode(doc)) : null;
+            case "AssetSummary": return Codec.DecodeAssetSummary(wire) is {} summary ? W(Codec.Encode(summary)) : null;
+            case "AssetDetails": return Codec.DecodeAssetDetails(wire) is {} detail ? W(Codec.Encode(detail)) : null;
+            case "AssetError": return Codec.DecodeAssetError(wire) is {} error ? W(Codec.Encode(error)) : null;
             case "NodeSummary": return Codec.DecodeNodeSummary(wire) is A.NodeSummary ns ? W(Codec.Encode(ns)) : null;
             case "AuthoringError":
                 return Codec.DecodeAuthoringError(wire) is A.AuthoringError aerr ? W(Codec.Encode(aerr)) : null;

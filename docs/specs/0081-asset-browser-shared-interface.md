@@ -1,11 +1,11 @@
 # Spec: Asset Browser and Shared Asset Queries
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
 - **Created:** 2026-11-05
 - **Related Plan(s):** [Plan 0081](../plans/0081-asset-browser-shared-interface.md)
-- **Approval:** Pending joint human review; this round is design only
-- **Related ADR(s):** [ADR-0143](../adr/0143-shared-cooked-asset-catalog-queries.md) (Proposed)
+- **Approval:** slmao, 2026-11-05; [joint ruling](https://github.com/slmao/Atlantis/pull/325#issuecomment-6660593240), revised `5126f8f`, J1–J4 as recommended; #325 manually merged as `6718f7d`.
+- **Related ADR(s):** [ADR-0143](../adr/0143-shared-cooked-asset-catalog-queries.md) (Accepted)
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

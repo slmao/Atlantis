@@ -459,6 +459,19 @@ void authoringVectors(std::vector<Vector>& out) {
   REQUIRE(withWindow.isOk());
   out.push_back({"session_file.window", "SessionFile", withWindow.value()});
   authoringVectors(out);
+  // Spec 0081: C++ owns the exact asset DTO/error wire vectors.
+  const auto asset = atlantis::asset_system::parseAssetGuid("00810081-0081-4081-8081-008100810081").value();
+  for (auto type : {connection::assets::AssetType::Mesh, connection::assets::AssetType::Texture,
+                   connection::assets::AssetType::Material, connection::assets::AssetType::Scene,
+                   connection::assets::AssetType::Environment}) {
+    const std::string name(connection::assets::toString(type));
+    out.push_back({"assets.summary." + name, "AssetSummary", codec::encode(connection::assets::AssetSummary{asset, type, "content:scene.gltf#mesh/0"})});
+    out.push_back({"assets.detail." + name, "AssetDetails", codec::encode(connection::assets::AssetDetails{asset, type, "assets:mesh.txt", UINT32_MAX, std::nullopt, "test/1", {}})});
+  }
+  out.push_back({"assets.detail.source_schema", "AssetDetails", codec::encode(connection::assets::AssetDetails{asset, connection::assets::AssetType::Scene, "assets:scene.txt", 7, 8, "test/1", {kAsset}})});
+  for (auto error : {connection::assets::AssetError::CatalogUnavailable, connection::assets::AssetError::UnknownAsset})
+    out.push_back({"assets.error." + std::string(connection::assets::toString(error)), "AssetError", json::Value::string(std::string(connection::assets::toString(error)))});
+
   // Plan 0066 P2 (Spec 0066 R1, R5; ADR-0132 D1): the Viewport overlay (section 6.6) and the step's withOverlay.
   using connection::OverlayDepth;
   out.push_back({"overlay.empty", "ViewportOverlay", codec::encode(connection::ViewportOverlay{})});

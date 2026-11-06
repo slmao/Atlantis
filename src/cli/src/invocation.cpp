@@ -37,6 +37,7 @@ constexpr std::string_view kUsage =
     "  scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
+    "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"

@@ -24,6 +24,7 @@ using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
+using AssetType = Atlantis.Gameplay.Assets.AssetType;
 using Command = Atlantis.Gameplay.Authoring.Command;
 using CommandFailure = Atlantis.Gameplay.Authoring.CommandFailure;
 using Event = Atlantis.Gameplay.Authoring.Event;
@@ -179,6 +180,92 @@ public static class IntegrationTest
             n => lightType is TypeId l && tree.ComponentsOf(n!.Value).Contains(l));
         if (leaf is not EntityGuid subject || lightNode is not EntityGuid lightId || lightType is not TypeId light)
             throw new InvalidOperationException("the scene has no leaf Renderable or no Light");
+
+        // Spec 0081: complete cooked catalog, observed only through the shared surface.
+        var catalog = session.Assets.ListAssets();
+        Check("assets: complete list available", catalog.IsOk && catalog.Value.Count > 0);
+        var records = File.ReadLines(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(cli)!, "..", "..", "..", "asset_catalog.txt")))
+            .Where(line => line.StartsWith("record: ", StringComparison.Ordinal)).Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToList();
+        Check("assets: assembled record count agrees", catalog.Value.Count == records.Count, records.Count.ToString());
+        bool allFacts = true;
+        int largestReply = 0;
+        foreach (var tokens in records)
+        {
+            string Field(string name) => tokens.Single(t => t.StartsWith(name + "=", StringComparison.Ordinal))[(name.Length + 1)..];
+            AssetGuid guid = AssetGuid.Parse(Field("guid"));
+            var d = session.Assets.GetAsset(guid);
+            var summary = catalog.Value.Single(v => v.Guid == guid);
+            int depsAt = Array.FindIndex(tokens, t => t.StartsWith("deps=", StringComparison.Ordinal));
+            allFacts &= d.IsOk && d.Value.Source == Field("source") && d.Value.Type.ToString().ToLowerInvariant() == Field("type") &&
+                d.Value.ArtifactSchema.ToString(CultureInfo.InvariantCulture) == Field("artifact_schema") &&
+                (d.Value.SourceSchema?.ToString(CultureInfo.InvariantCulture) ?? "none") == Field("source_schema") && d.Value.Tool == Field("tool") &&
+                d.Value.Dependencies.Select(g => g.ToString()).SequenceEqual(tokens.Skip(depsAt + 1)) &&
+                summary.Source == d.Value.Source && summary.Type == d.Value.Type;
+            JsonValue raw = session.AwaitResponse(session.Send("assets.get", JsonValue.NewObject().Set("guid", Codec.Encode(guid))));
+            largestReply = Math.Max(largestReply, Encoding.UTF8.GetByteCount(Json.Write(raw)) + 1);
+        }
+        Check("assets: every summary detail and direct dependency agrees", allFacts);
+        JsonValue rawList = session.AwaitResponse(session.Send("assets.list"));
+        Check("assets: complete envelope sizes", true, "records=" + records.Count + "; listBytes=" + (Encoding.UTF8.GetByteCount(Json.Write(rawList)) + 1) + "; largestDetailBytes=" + largestReply);
+        using (RemoteSession reader = RemoteSession.Connect(info))
+            Check("assets: another client shares complete list", reader.Assets.ListAssets().Value.SequenceEqual(catalog.Value));
+        Check("assets: CLI list agrees", Cli(cli, sessionPath, "--json", "asset", "list") == 0);
+        string cliLog = File.ReadAllText(Path.Combine(Path.GetDirectoryName(sessionPath)!, "name-cli.log"));
+        Check("assets: CLI contains every GUID", catalog.Value.All(v => cliLog.Contains(v.Guid.ToString(), StringComparison.Ordinal)));
+        Check("assets: CLI detail", Cli(cli, sessionPath, "--json", "asset", "get", catalog.Value[0].Guid.ToString()) == 0);
+        ulong browseGeneration = session.Control.Status().SceneGeneration;
+        string browseBefore = Path.Combine(work, "assets-before.png"), browseAfter = Path.Combine(work, "assets-after.png");
+        var frameBefore = session.Control.Step(new StepRequest(1, browseBefore));
+        for (int reload = 0; reload < 3; ++reload) Check("assets: Reload view retains snapshot " + reload, session.Assets.ListAssets().Value.SequenceEqual(catalog.Value));
+        var frameAfter = session.Control.Step(new StepRequest(1, browseAfter));
+        Check("assets: read-only browsing retains frame PNG identity and generation", frameBefore.IsOk && frameAfter.IsOk &&
+            File.ReadAllBytes(browseBefore).SequenceEqual(File.ReadAllBytes(browseAfter)) &&
+            session.Control.Status().SceneGeneration == browseGeneration && tree.Order.SequenceEqual(originalNodes));
+
+        inspector.Refresh(subject);
+        InspectorField material = inspector.Find("Renderable.materialAsset") ?? throw new InvalidOperationException("no material GUID field");
+        AssetGuid originalMaterial = material.Value!.Value.AsAsset();
+        AssetGuid replacement = catalog.Value.First(v => v.Type == AssetType.Material && v.Guid != originalMaterial &&
+            v.Source.StartsWith("assets:", StringComparison.Ordinal)).Guid;
+        SceneAddress materialAddress = SceneSchema.AddressOf(schema, subject, "Renderable", "materialAsset")!.Value;
+        Check("assets: existing Inspector GUID commit", Commit(inspector.Commit("Renderable.materialAsset", replacement.ToString())) is null);
+        WaitApplied("asset reference");
+        Check("assets: CLI reads same committed GUID", Cli(cli, sessionPath, "--json", "scene", "get", subject.ToString(), "Renderable.materialAsset") == 0 &&
+            document.GetProperty(materialAddress)!.Value.AsAsset() == replacement);
+        Check("assets: undo reference", Step(true) == HistoryResult.Submitted); WaitApplied("asset reference undo");
+        Check("assets: undo restores GUID", document.GetProperty(materialAddress)!.Value.AsAsset() == originalMaterial);
+        Check("assets: redo reference", Step(false) == HistoryResult.Submitted); WaitApplied("asset reference redo");
+        Check("assets: redo restores GUID", document.GetProperty(materialAddress)!.Value.AsAsset() == replacement);
+        string? refSource = document.Info()?.SourcePath;
+        byte[]? refBackup = refSource is not null && File.Exists(refSource) ? File.ReadAllBytes(refSource) : null;
+        try
+        {
+            SaveError? saved = document.Save();
+            Check("assets: reference save contract", imported ? saved == SaveError.ImportedSceneNotSavable : saved is null);
+            Check("assets: source reopens", session.Authoring.Open() is null); Settle();
+            Check("assets: reference survives save reopen", document.GetProperty(materialAddress)!.Value.AsAsset() == (imported ? originalMaterial : replacement));
+        }
+        finally
+        {
+            if (!imported && refSource is not null && refBackup is not null) File.WriteAllBytes(refSource, refBackup);
+            if (session.Authoring.Open() is not null) throw new InvalidOperationException("reference source restore did not reopen");
+            Settle();
+        }
+        inspector.Refresh(subject);
+        Check("assets: reference edit before conflict", Commit(inspector.Commit("Renderable.materialAsset", replacement.ToString())) is null);
+        WaitApplied("asset reference conflict setup");
+        using (RemoteSession outside = RemoteSession.Connect(info))
+        {
+            outside.Authoring.Submit(new SetProperty(materialAddress, PropertyValue.FromAsset(originalMaterial)));
+            Check("assets: external overwrite accepted", outside.Authoring.DrainFailures().Count == 0);
+        }
+        Settle();
+        Check("assets: overwritten reference undo refused", Step(true) == HistoryResult.ChangedElsewhere);
+        Check("assets: restored reference apply", session.Authoring.Apply() is null);
+        Check("assets: restored reference frame", session.Control.Step(new StepRequest(1, browseAfter)).IsOk &&
+            File.ReadAllBytes(browseBefore).SequenceEqual(File.ReadAllBytes(browseAfter)));
+        Check("assets: open apply and reconnect retain catalog", session.Assets.ListAssets().Value.SequenceEqual(catalog.Value));
+        history.Clear();
 
         // Spec0069: name-only edits retain rendering, identity and placement, and the CLI sees the same document.
         string originalName = tree.NameOf(subject);

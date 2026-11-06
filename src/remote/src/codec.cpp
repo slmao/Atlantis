@@ -10,6 +10,68 @@
 
 namespace atlantis::remote::codec {
 
+Value encode(const connection::assets::AssetSummary& v) {
+  Value out = Value::object();
+  out.set("guid", encodeAsset(v.guid));
+  out.set("type", Value::string(std::string(connection::assets::toString(v.type))));
+  out.set("source", Value::string(v.source));
+  return out;
+}
+Value encode(const connection::assets::AssetDetails& v) {
+  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source});
+  out.set("artifactSchema", Value::number(static_cast<std::uint64_t>(v.artifactSchema)));
+  out.set("sourceSchema", v.sourceSchema ? Value::number(static_cast<std::uint64_t>(*v.sourceSchema)) : Value());
+  out.set("tool", Value::string(v.tool));
+  Value deps = Value::array();
+  for (const auto& guid : v.dependencies) deps.push(encodeAsset(guid));
+  out.set("dependencies", std::move(deps));
+  return out;
+}
+std::optional<connection::assets::AssetSummary> decodeAssetSummary(const Value& v) {
+  const auto* g = v.find("guid");
+  const auto* t = v.find("type");
+  const auto* s = v.find("source");
+  if (!g || !t || !t->isString() || !s || !s->isString()) return std::nullopt;
+  auto guid = decodeAsset(*g);
+  if (!guid || *guid == asset_system::AssetGuid{}) return std::nullopt;
+  for (const auto type : {connection::assets::AssetType::Mesh, connection::assets::AssetType::Texture,
+                          connection::assets::AssetType::Material, connection::assets::AssetType::Scene,
+                          connection::assets::AssetType::Environment}) {
+    if (t->asString() == connection::assets::toString(type)) return connection::assets::AssetSummary{*guid, type, s->asString()};
+  }
+  return std::nullopt;
+}
+std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& v) {
+  auto summary = decodeAssetSummary(v);
+  const auto* a = v.find("artifactSchema");
+  const auto* s = v.find("sourceSchema");
+  const auto* t = v.find("tool");
+  const auto* d = v.find("dependencies");
+  if (!summary || !a || !s || !t || !t->isString() || !d || !d->isArray()) return std::nullopt;
+  auto artifact = decodeUInt64(*a);
+  if (!artifact || *artifact > UINT32_MAX) return std::nullopt;
+  std::optional<std::uint32_t> source;
+  if (!s->isNull()) {
+    auto n = decodeUInt64(*s);
+    if (!n || *n > UINT32_MAX) return std::nullopt;
+    source = static_cast<std::uint32_t>(*n);
+  }
+  std::vector<asset_system::AssetGuid> deps;
+  for (const auto& item : d->asArray()) {
+    auto guid = decodeAsset(item);
+    if (!guid || *guid == asset_system::AssetGuid{} || (!deps.empty() && !(deps.back() < *guid))) return std::nullopt;
+    deps.push_back(*guid);
+  }
+  return connection::assets::AssetDetails{summary->guid, summary->type, summary->source,
+      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps)};
+}
+std::optional<connection::assets::AssetError> decodeAssetError(const Value& v) {
+  if (!v.isString()) return std::nullopt;
+  for (auto error : {connection::assets::AssetError::CatalogUnavailable, connection::assets::AssetError::UnknownAsset})
+    if (v.asString() == connection::assets::toString(error)) return error;
+  return std::nullopt;
+}
+
 using atlantis::asset_system::AssetGuid;
 using atlantis::asset_system::EntityGuid;
 using connection::EventFilter;

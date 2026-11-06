@@ -28,6 +28,8 @@ internal static partial class Program
     // the name, method, exact parameters, one round trip and both forms of MCP result content.
     private static readonly (string Tool, string Method, string Args, string Result)[] Cases =
     [
+        ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
+        ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
         ("world.list_entities", "connection.listEntities", "{}", $$$"""["{{{Entity}}}"]"""),
         ("world.get_property", "connection.getProperty", "{\"address\":" + WorldAddress + "}", """{"ok":{"u64":"18446744073709551615"}}"""),
         ("world.submit_transaction", "connection.submitTransaction", """{"commands":[]}""", """{"first":18446744073709551615,"count":0}"""),
@@ -121,7 +123,8 @@ internal static partial class Program
             Check(Json.Write(session.Calls[0].Parameters) == Json.Write(Json.Parse(c.Args)), c.Tool + " arguments unchanged");
             CheckForward(result, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
-            Check(description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
+            Check(c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
+                description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
                 ? description.Contains("document") : description.Contains("disposable")), c.Tool + " editing model stated");
         }
         CheckCall("authoring.document", "{}", "null");
@@ -173,9 +176,11 @@ internal static partial class Program
         CheckCall("control.set_viewport_camera", "{\"camera\":" + Camera.Replace("0.1", "0") + "}", "null");
         CheckCall("control.raycast", """{"ray":{"origin":["nan",0,0],"direction":[0,0,0]}}""", """{"ok":null}""");
         CheckCall("world.get_property", """{"address":{"entity":"not-a-guid","component":"unknown","field":"unknown"}}""", """{"ok":null}""");
+        CheckCall("assets.get", """{"guid":"not-a-guid"}""", """{"ok":{"future":"raw DTO, intentionally not typed here"}}""");
 
         (string Tool, string Args)[] invalid =
         [
+            ("assets.list", """{"extra":1}"""), ("assets.get", "{}"), ("assets.get", """{"guid":1}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),
             ("authoring.get_property", "{\"address\":" + WorldAddress + "}"),
@@ -211,6 +216,8 @@ internal static partial class Program
 
     private static void RefusalChecks()
     {
+        Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.list");
+        Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.get");
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
         foreach (string reason in Enum.GetNames<A.AuthoringError>())
@@ -233,7 +240,7 @@ internal static partial class Program
         CallToolResult overlay = new ToolRegistry(overlayRefusal).Invoke(Request("control.set_viewport_overlay", "{\"overlay\":null}"));
         Check(overlay.IsError == true && overlayRefusal.Calls.Count == 1, "overlay refusal is a tool error without retry");
         CheckForward(overlay, "{\"err\":\"InvalidRequest\"}", "overlay refusal");
-        foreach (string reason in new[] { "BadRequest", "NoControl", "NoAuthoring", "HelloRequired", "WrongProtocol", "BadToken" })
+        foreach (string reason in new[] { "BadRequest", "NoControl", "NoAuthoring", "NoAssets", "HelloRequired", "WrongProtocol", "BadToken" })
         {
             string error = "{\"code\":\"" + reason + "\",\"message\":\"原样 reason: <&>\"}";
             FakeSession session = new() { Response = "{\"id\":1,\"error\":" + error + "}" };
@@ -295,7 +302,7 @@ internal static partial class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 32 approved M3 tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 34 approved tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;

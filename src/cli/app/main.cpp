@@ -120,6 +120,7 @@ int main(int argc, char** argv) {
   };
   cli::Invocation invocation(runtime.connection(), &runtime.control(), &batch, std::cout, std::cerr, options);
   // Plan 0065 P6: the `scene` group, over authoring.*.
+  invocation.setAssets([&runtime] { return &runtime.assets(); });
   invocation.setAuthoring([&runtime] { return &runtime.authoring(); });
   if (args.command[0] == "repl") {
     if (args.command.size() != 1) {

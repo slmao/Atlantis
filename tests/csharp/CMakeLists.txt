@@ -30,7 +30,7 @@ if(ATLANTIS_CSHARP_ENABLED)
   endif()
 
   foreach(suite IN ITEMS codec session generated live.connection live.reflective live.typed live.compat live.isolation
-                        live.authoring)
+                        live.authoring live.assets)
     add_test(NAME "csharp: ${suite}"
       COMMAND "${ATLANTIS_DOTNET}" "${atlantis_csharp_tests_DLL}" ${suite}
               --repo "${CMAKE_SOURCE_DIR}"

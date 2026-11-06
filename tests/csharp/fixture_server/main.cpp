@@ -376,6 +376,32 @@ class FixtureControl final : public connection::RuntimeControl {
 
 }  // namespace
 
+class FixtureAssets final : public atlantis::connection::AssetConnection {
+  std::string mode_;
+ public:
+  explicit FixtureAssets(std::string mode) : mode_(std::move(mode)) {}
+  atlantis::Result<std::vector<atlantis::connection::assets::AssetSummary>, atlantis::connection::assets::AssetError> listAssets() const override {
+    namespace a = atlantis::connection::assets;
+    std::vector<a::AssetSummary> list;
+    for (auto type : {a::AssetType::Mesh, a::AssetType::Texture, a::AssetType::Material, a::AssetType::Scene, a::AssetType::Environment}) {
+      const auto root = atlantis::asset_system::parseAssetGuid("00810081-0081-4081-8081-008100810081").value();
+      list.push_back({atlantis::asset_system::deriveAssetGuid(root, a::toString(type)), type, "content:scene.gltf#" + std::string(a::toString(type))});
+    }
+    std::sort(list.begin(), list.end(), [](const auto& x, const auto& y) { return x.guid < y.guid; });
+    if (mode_ == "assets-duplicate") list.push_back(list.back());
+    if (mode_ == "assets-unavailable") return atlantis::Result<std::vector<a::AssetSummary>, a::AssetError>::Err(a::AssetError::CatalogUnavailable);
+    return atlantis::Result<std::vector<a::AssetSummary>, a::AssetError>::Ok(std::move(list));
+  }
+  atlantis::Result<atlantis::connection::assets::AssetDetails, atlantis::connection::assets::AssetError> getAsset(const atlantis::asset_system::AssetGuid& guid) const override {
+    namespace a = atlantis::connection::assets;
+    using R = atlantis::Result<a::AssetDetails, a::AssetError>;
+    const auto list = listAssets();
+    if (list.isErr()) return R::Err(list.error());
+    for (const auto& s : list.value()) if (s.guid == guid) return R::Ok({mode_ == "assets-wrong-guid" ? atlantis::asset_system::parseAssetGuid("00810081-0081-4081-8081-008100810081").value() : guid, s.type, s.source, 7, std::nullopt, "fixture/1", {}});
+    return R::Err(a::AssetError::UnknownAsset);
+  }
+};
+
 int main(int argc, char** argv) {
   std::optional<fs::path> sessionFile;
   std::optional<fs::path> recordFile;
@@ -402,7 +428,7 @@ int main(int argc, char** argv) {
   if (!sessionFile) die(kUsage);
 
   SchemaCopy served;
-  if (mutation) mutate(served, *mutation);
+  if (mutation && !mutation->starts_with("assets-")) mutate(served, *mutation);
   served.relink();
   const std::span<const schema::TypeDescriptor> schemaSpan(served.types);
 
@@ -436,6 +462,7 @@ int main(int argc, char** argv) {
       [&] { return std::make_unique<FixtureConnection>(endpoint.open(), recorder, schemaSpan); }, &control);
   if (listening.isErr()) die("cannot listen: " + std::string(atlantis::remote::toString(listening.error())));
   std::unique_ptr<atlantis::remote::RemoteServer> server = std::move(listening.value());
+  server->serveAssets([&] { return std::make_unique<FixtureAssets>(mutation.value_or("")); });
   if (authoringMode != "none") server->serveAuthoring([&authoring] { return authoring.connect(); });
   if (atlantis::remote::writeSessionFile(*sessionFile, server->session()).isErr()) {
     die("cannot write " + sessionFile->string());

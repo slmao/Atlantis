@@ -1,9 +1,9 @@
 # Plan: Asset Browser and Shared Asset Queries
 
-- **Spec:** [Spec 0081](../specs/0081-asset-browser-shared-interface.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0081](../specs/0081-asset-browser-shared-interface.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
-- **Joint Human Review:** Human ruling pending in [PR #325](https://github.com/slmao/Atlantis/pull/325); reviews this Plan, Spec 0081 and proposed ADR-0143 together. J1–J4 below are recommendations after draft review, not approvals. This round authorizes design review/revision only, not implementation.
+- **Joint Human Review:** slmao jointly approved Spec/Plan 0081 at `5126f8f`, J1–J4 as recommended, and Accepted ADR-0143 on 2026-11-05; [ruling](https://github.com/slmao/Atlantis/pull/325#issuecomment-6660593240). #325 manually merged as `6718f7d`; S2–S4 authorized continuously under 0080 through verification and a review-ready PR, with existing gates and human final merge retained.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

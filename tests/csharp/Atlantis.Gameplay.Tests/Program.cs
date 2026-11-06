@@ -19,6 +19,8 @@ public static class Program
         ["live.typed"] = LiveTypedSuite.Run,
         ["live.compat"] = LiveCompatSuite.Run,
         ["live.isolation"] = LiveIsolationSuite.Run,
+        ["live.assets"] = LiveAssetSuite.Run,
+        ["old.assets"] = LiveAssetSuite.RunOldPeer,
         ["live.authoring"] = LiveAuthoringSuite.Run,
     };
 

@@ -95,6 +95,28 @@ struct Received {
 
 }  // namespace
 
+TEST_CASE("assets: invalid wire arguments never open the lazy provider", "[remote][assets][protocol]") {
+  ServedWorld world(cookAndDecodeScene(kSceneSource));
+  int opens = 0;
+  world.server->serveAssets([&]() -> std::unique_ptr<atlantis::connection::AssetConnection> { ++opens; return nullptr; });
+  LineChannel client = rawClient(*world.server);
+  sendRaw(client, hello() + request(1, "assets.get", R"({"guid":"00000000-0000-0000-0000-000000000000"})") +
+      request(2, "assets.get", R"({"guid":123})") + request(3, "assets.get", "{}") + request(4, "assets.list", "[]"));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  world.server->poll();
+  auto replies = receive(client, 5);
+  REQUIRE(replies.responses.size() == 5);
+  for (std::size_t i = 1; i < replies.responses.size(); ++i) CHECK(errorCode(replies.responses[i]) == "BadRequest");
+  CHECK(opens == 0);
+  sendRaw(client, request(5, "assets.list"));
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  world.server->poll();
+  replies = receive(client, 1);
+  REQUIRE(replies.responses.size() == 1);
+  CHECK(errorCode(replies.responses[0]) == "NoAssets");
+  CHECK(opens == 1);
+}
+
 TEST_CASE("protocol: pipelined requests are all answered in one poll, in order", "[remote][protocol]") {
   const auto scene = cookAndDecodeScene(kSceneSource);
   ServedWorld world(scene);

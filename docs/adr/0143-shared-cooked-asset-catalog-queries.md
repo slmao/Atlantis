@@ -1,9 +1,9 @@
 # ADR 0143: Shared Cooked Asset Catalog Queries
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-05
-- **Deciders:** slmao, pending joint review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-05; [joint ruling](https://github.com/slmao/Atlantis/pull/325#issuecomment-6660593240), J1–J4 as recommended at `5126f8f`; #325 manually merged.
 - **Related Spec:** [Spec 0081](../specs/0081-asset-browser-shared-interface.md), R1–R5
 - **Related ADRs:** Extends [ADR-0098](0098-asset-catalog-and-catalog-based-resolution.md),
   [ADR-0125](0125-out-of-process-editor-platform-and-uniform-client-interface.md),

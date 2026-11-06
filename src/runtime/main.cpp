@@ -11,6 +11,7 @@
 #include "canary_run.h"
 #include "gate_run.h"
 #include "authoring_host.h"
+#include "asset_host.h"
 #include "cli.h"
 #include "editor_attachment.h"
 
@@ -379,6 +380,8 @@ int main(int argc, char** argv) {
   }
 #endif
   atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
+  atlantis::runtime::AssetHost assets(config.assetCatalogPath);
+  std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks
 
   // Spec 0054 R9 (ruling Q3, H-a; Plan 0054 P7): with --exec, a CLI client on
@@ -390,6 +393,10 @@ int main(int argc, char** argv) {
   if (execScript.has_value()) {
     connection = app.openConnection();
     runner.emplace(*connection, atlantis::cli::splitLines(*execScript), std::cout);
+    runner->setAssets([&assets, &execAssets]() {
+      if (!execAssets) execAssets = assets.connect();
+      return execAssets.get();
+    });
     runner->setAuthoring([&authoring, &execAuthoring]() -> atlantis::connection::AuthoringConnection* {
       if (!execAuthoring) execAuthoring = authoring.connect();
       return execAuthoring.get();
@@ -429,6 +436,7 @@ int main(int argc, char** argv) {
       return toProcessExitCode(RuntimeExitReason::InitializationFailed);
     }
     server = std::move(listening.value());
+    server->serveAssets([&assets] { return assets.connect(); });
     server->serveAuthoring([&authoring] { return authoring.connect(); });  // Plan 0065 P5
     sessionPath = cliResult.sessionFile.has_value() ? std::filesystem::path(*cliResult.sessionFile)
                                                     : atlantis::remote::defaultSessionPath();

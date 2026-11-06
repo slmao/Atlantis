@@ -75,8 +75,9 @@ object and a `\n` to its session file:
 
 - **Lines:** each request and each response is one JSON value on one
   line, ended by `\n`. A trailing `\r` before the `\n` is ignored.
-- **Line limit:** a line may be at most 1 MiB (1,048,576 bytes, excluding
-  the `\n`). A longer request line disconnects the client.
+- **Request line limit:** 1 MiB (1,048,576 bytes, excluding `\n`); a longer
+  request disconnects the client. Native and C# clients accept response lines
+  up to 256 MiB; that is separate from the server output budget.
 - **Write limit:** the server queues at most 64 MiB of output per client.
   Exceeding it disconnects the client.
 - **JSON** (`json.cpp`): RFC 8259, with no comments and no trailing
@@ -113,7 +114,8 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   - `WrongProtocol`, `BadToken`, `HelloRequired`;
   - `NoControl`: a `control.*` method on a server without a control;
   - `NoAuthoring`: an `authoring.*` method on a Runtime that serves no
-    authoring session (Spec 0065), or whose scene's source cannot be found.
+    authoring session (Spec 0065), or whose scene's source cannot be found;
+  - `NoAssets`: an `assets.*` query on a server without an asset provider (Spec 0081).
 - **In-band results.** A method that can be refused by the World or the
   connection answers `{"ok":<value>}` or `{"err":"<error name>"}` inside
   `result`.
@@ -228,6 +230,47 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   Runtime diagnostic);
 - `authoring.save` writes a hand-authored source atomically; an imported
   scene's save is refused.
+
+### 5.2 Cooked asset queries (Spec 0081 / ADR-0143)
+
+| Method | Params | Result |
+|---|---|---|
+| `assets.list` | `{}` | `{"ok":[<AssetSummary>…]}` in strictly increasing GUID order |
+| `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
+
+Both queries may return `{"err":"CatalogUnavailable"}`; get may also return
+`{"err":"UnknownAsset"}`. Exactly one result arm is present. Invalid parameters
+are outer `BadRequest`; provider absence is outer `NoAssets`. Neither initializes
+the catalog. Creating/connecting a session or accessing its lazy asset endpoint
+also performs no catalog query.
+
+The executable-private `AssetHost` reads the existing cooked catalog at the first
+valid query (including an unknown get), retaining a complete snapshot, empty
+success, or load failure for its lifetime. All connections share it. Reconnect,
+authoring open/apply and Reload view do not reload it; changed builds or a repaired
+initial failure require Runtime restart. This is neither the startup catalog nor
+an active-World/residency/loadability report.
+
+```
+AssetSummary {"guid":"<GUID>","type":"mesh|texture|material|scene|environment","source":"<catalog source key>"}
+AssetDetails {"guid":"<GUID>","type":"<same closed type>","source":"<source key>",
+              "artifactSchema":<uint32>,"sourceSchema":<uint32>|null,
+              "tool":"<catalog tool>","dependencies":["<GUID>"…]}
+```
+
+Dependencies are sorted unique non-nil GUIDs, direct only. No artifact path,
+internal AssetId or GPU state is exposed. Typed clients require all fields, known
+types/errors, non-nil canonical GUIDs, strict list/dependency order and a matching
+get GUID, while tolerating extra object members and future numeric schema values.
+In-band errors preserve the session. Malformed/oversized/failed typed transport
+sets native sticky `RemoteSession::failure()` (authoritative over the
+`CatalogUnavailable` sentinel) or throws C# `RemoteException`. The CLI prioritizes
+connection exit 3 over catalog exit 1. MCP forwards raw SDK responses, without
+adding typed validation, retries or a session-failure requirement for raw refusals.
+
+List-all sends one complete reply using existing limits (§3), including the shared
+64 MiB pending-output budget. Overflow disconnects, never truncates or succeeds
+empty. There is no pagination, streaming, new cap, event or capability handshake.
 
 ## 6. Values
 

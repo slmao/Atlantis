@@ -283,6 +283,16 @@ Runtime is paused returns its pending outcome at once. See
 [ADR-0105](docs/adr/0105-runtime-connection-and-cli-client.md) and
 [ADR-0130](docs/adr/0130-authoring-access-interface-and-module-boundary.md).
 
+Since Spec 0081 (ADR-0143), Connection also owns the read-only `AssetConnection`
+(`asset_connection.h`, `connection::assets` values), using the existing Asset GUID
+value header. The executable-private `AssetHost` projects the cooked catalog once
+at the first valid query and retains success/empty/failure until restart, outside
+RuntimeHost and the scene/frame path. Remote `assets.list/get`, CLI `asset list/get`
+(including `--exec`), native `gameplay::Assets`, managed `RemoteSession.Assets`, MCP's
+two exact tools and Editor App's Assets tab share it. No editor-only channel or
+asset writes; see [ADR-0143](docs/adr/0143-shared-cooked-asset-catalog-queries.md)
+and [module boundaries](docs/architecture/module_boundaries.md#atlantis-connection).
+
 Atlantis Authoring (Spec 0065, `Approved`; `src/authoring/`, namespace
 `atlantis::authoring`) owns the authoring document while it is edited: one
 `AuthoringSession` with at most one open document (a hand-authored scene's

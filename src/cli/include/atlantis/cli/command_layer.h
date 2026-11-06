@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/connection/authoring_connection.h>
+#include <atlantis/connection/asset_connection.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
@@ -114,6 +115,8 @@ class CommandLayer {
   // AuthoringConnection, asked for at the group's first command (the host may
   // create its session then); null, or no provider, answers NoAuthoring. The
   // connection must outlive this layer.
+  using AssetsProvider = std::function<atlantis::connection::AssetConnection*()>;
+  void setAssets(AssetsProvider provider) { assetsProvider_ = std::move(provider); }
   using AuthoringProvider = std::function<atlantis::connection::AuthoringConnection*()>;
   void setAuthoring(AuthoringProvider provider);
   // A scene write (`set`, `create`, `destroy`, `add`, `remove`, `parent`,
@@ -153,6 +156,7 @@ class CommandLayer {
   Reply runScene(std::span<const std::string_view> tokens, std::string_view line);
   // Drains the `scene` subscription, keeping a deferred apply's Applied.
   [[nodiscard]] std::vector<atlantis::connection::authoring::Event> drainSceneEvents();
+  AssetsProvider assetsProvider_;
   AuthoringProvider authoringProvider_;
   atlantis::connection::AuthoringConnection* authoring_ = nullptr;
   std::optional<atlantis::connection::SubscriptionId> authoringEvents_;

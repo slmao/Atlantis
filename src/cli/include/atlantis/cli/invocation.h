@@ -70,6 +70,7 @@ class Invocation {
 
   // Runs one command (`tx <file|->` included) and returns its exit code.
   int run(std::span<const std::string> command);
+  void setAssets(CommandLayer::AssetsProvider provider) { layer_.setAssets(std::move(provider)); }
   // Plan 0065 P6: the `scene` group's connection (CommandLayer::setAuthoring()).
   void setAuthoring(CommandLayer::AuthoringProvider provider) { layer_.setAuthoring(std::move(provider)); }
   // `atlantis repl`: one command per line from `in` (the prompt `atlantis> `

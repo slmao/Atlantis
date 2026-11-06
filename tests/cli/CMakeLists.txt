@@ -3,6 +3,7 @@
 # scripts/north_star.txt on the default scene from the build catalog), and the
 # CLI's and Connection's include/link boundary scans (Spec 0054 R8).
 add_executable(atlantis_cli_tests
+  cli_asset_tests.cpp
   cli_command_tests.cpp
   cli_script_tests.cpp
   cli_boundary_tests.cpp

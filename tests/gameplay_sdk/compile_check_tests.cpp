@@ -1,3 +1,4 @@
+#include <atlantis/gameplay/assets.h>
 // Plan 0057 M3 (Spec 0057 R3, R10; ADR-0111 D2, D3; J3): what the typed
 // layer refuses at compile time, checked as requires-expressions -- a set of
 // the wrong kind, a set through a ReadOnlyField, an add of a type with a
@@ -17,6 +18,27 @@
 #include <cstdint>
 #include <string_view>
 #include <type_traits>
+
+TEST_CASE("gameplay assets: the facade borrows Connection and returns independent query values", "[gameplay_sdk][assets]") {
+  namespace a = atlantis::connection::assets;
+  class Endpoint final : public atlantis::connection::AssetConnection {
+   public:
+    atlantis::asset_system::AssetGuid guid = atlantis::asset_system::parseAssetGuid("00810081-0081-4081-8081-008100810081").value();
+    atlantis::Result<std::vector<a::AssetSummary>, a::AssetError> listAssets() const override {
+      return atlantis::Result<std::vector<a::AssetSummary>, a::AssetError>::Ok({{guid, a::AssetType::Mesh, "assets:mesh.txt"}});
+    }
+    atlantis::Result<a::AssetDetails, a::AssetError> getAsset(const atlantis::asset_system::AssetGuid& id) const override {
+      using R = atlantis::Result<a::AssetDetails, a::AssetError>;
+      return id == guid ? R::Ok({guid, a::AssetType::Mesh, "assets:mesh.txt", 7, std::nullopt, "test/1", {}})
+                        : R::Err(a::AssetError::UnknownAsset);
+    }
+  } endpoint;
+  atlantis::gameplay::Assets sdk(endpoint);
+  auto list = sdk.listAssets(); REQUIRE(list.isOk());
+  CHECK(sdk.getAsset(list.value()[0].guid).value().source == list.value()[0].source);
+  list.value()[0].source = "client copy";
+  CHECK(sdk.listAssets().value()[0].source == "assets:mesh.txt");
+}
 
 namespace {
 
