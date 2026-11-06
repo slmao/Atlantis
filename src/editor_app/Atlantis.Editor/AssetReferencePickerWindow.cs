@@ -50,15 +50,20 @@ public sealed class AssetReferencePickerWindow : Window
         back.Click += (_, _) => Close();
         _confirm.Click += (_, _) =>
         {
-            if (!_confirm.IsEnabled || _submitted || _browser.Selected is not AssetGuid guid) return;
+            if (!_confirm.IsEnabled || _closed || _invalid || _submitted || _browser.State != "Ready" ||
+                _list.SelectedItem is not AssetSummary candidate || _browser.Selected != candidate.Guid) return;
             _submitted = true; _confirm.IsEnabled = false;
-            confirm(guid); Close();
+            confirm(candidate.Guid); Close();
         };
         buttons.Children.Add(_confirm); buttons.Children.Add(back);
         DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
         _list.ItemTemplate = new FuncDataTemplate<AssetSummary>((a, _) => new TextBlock { Text = a is null ? "" : a.Type + "  " + a.Source + "\n" + a.Guid });
         _list.SelectionChanged += (_, e) =>
-        { if (ReferenceEquals(e.Source, _list) && !_sync && !_invalid && _list.SelectedItem is AssetSummary a) Read(a.Guid); };
+        {
+            if (!ReferenceEquals(e.Source, _list) || _sync || _invalid) return;
+            if (_list.SelectedItem is AssetSummary a) Read(a.Guid);
+            else { _browser.ClearSelection(); Render(); }
+        };
         var body = new Grid { RowDefinitions = new RowDefinitions("*,Auto") };
         body.Children.Add(_list);
         var detailScroll = new ScrollViewer { Content = _details, MaxHeight = 180 };
@@ -110,7 +115,8 @@ public sealed class AssetReferencePickerWindow : Window
         _sync = true;
         try { _list.ItemsSource = visible; _list.SelectedItem = visible.FirstOrDefault(a => a.Guid == _browser.Selected); }
         finally { _sync = false; }
-        _confirm.IsEnabled = !_submitted && _browser.State == "Ready" && visible.Any(a => a.Guid == _browser.Selected);
+        _confirm.IsEnabled = !_submitted && _browser.State == "Ready" &&
+            _list.SelectedItem is AssetSummary candidate && candidate.Guid == _browser.Selected;
         _details.Children.Clear();
         if (_browser.Details is not AssetDetails d) { _details.Children.Add(new TextBlock { Text = _browser.DetailState }); return; }
         _details.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool });

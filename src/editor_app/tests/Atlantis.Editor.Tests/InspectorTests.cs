@@ -201,6 +201,46 @@ public static partial class Program
             Box().Focus(); Box().Text = replacement.ToString();
             chooser = await Open();
             Check("F4 launch discards draft", chooser.Target.Before.Equals(original));
+            var deselectBrowser = PickerField<AssetBrowser>(chooser, "_browser");
+            var deselectList = PickerField<ListBox>(chooser, "_list");
+            var cancelledCandidate = deselectBrowser.Visible.First(a => a.Guid != original.AsAsset());
+            await Select(chooser, cancelledCandidate.Guid);
+            var cancelledDetails = deselectBrowser.Details!;
+            // No dispatcher yield between starting a real pending request and Ctrl-deselect.
+            deselectList.SelectedItem = null;
+            deselectList.SelectedItem = deselectBrowser.Visible.First(a => a.Guid == cancelledCandidate.Guid);
+            long cancelledRequest = (long)typeof(AssetBrowser).GetField("_detailRequest", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(deselectBrowser)!;
+            Check("different candidate detail pending before Ctrl-deselect", cancelledCandidate.Guid != original.AsAsset() && deselectBrowser.DetailState == "Loading");
+            chooser.UpdateLayout();
+            var selectedRow = (ListBoxItem)deselectList.ContainerFromIndex(deselectList.SelectedIndex)!;
+            Point rowPoint = selectedRow.TranslatePoint(new Point(5, 5), chooser)!.Value;
+            var ctrlPointer = new Avalonia.Input.Pointer(328, PointerType.Mouse, true);
+            selectedRow.RaiseEvent(new PointerPressedEventArgs(selectedRow, ctrlPointer, chooser, rowPoint, 1,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton | RawInputModifiers.Control, PointerUpdateKind.LeftButtonPressed), KeyModifiers.Control, 1));
+            selectedRow.RaiseEvent(new PointerReleasedEventArgs(selectedRow, ctrlPointer, chooser, rowPoint, 2,
+                new PointerPointProperties(RawInputModifiers.Control, PointerUpdateKind.LeftButtonReleased), KeyModifiers.Control, MouseButton.Left));
+            var deselectConfirm = PickerField<Button>(chooser, "_confirm");
+            Check("Ctrl-deselect clears control/model/details and disables Confirm", deselectList.SelectedItem is null &&
+                deselectBrowser.Selected is null && deselectBrowser.Details is null && !deselectConfirm.IsEnabled);
+            deselectConfirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check("Confirm after deselection cannot submit or close", chooser.IsVisible && ReferenceEquals(Picker(), chooser) && (await ReadValue()).Equals(original));
+            bool priorCallbackDrained = false;
+            NameUiField<EditorWorker>(window, "_worker")!.ReadAsset(cancelledCandidate.Guid, _ => priorCallbackDrained = true);
+            await NameUiWait(() => priorCallbackDrained, "actual earlier detail callback drained after deselection");
+            bool? cancelledAccepted = null;
+            Dispatcher.UIThread.Post(() =>
+            {
+                cancelledAccepted = deselectBrowser.CompleteDetail(cancelledRequest, cancelledCandidate.Guid,
+                    Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>.Ok(cancelledDetails with { Tool = "late cancelled detail" }));
+                typeof(AssetReferencePickerWindow).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(chooser, null);
+            });
+            await NameUiWait(() => cancelledAccepted is not null, "controlled old detail arrives after deselection");
+            Check("late real/controlled detail cannot revive candidate or Confirm", cancelledAccepted == false &&
+                deselectList.SelectedItem is null && deselectBrowser.Selected is null && deselectBrowser.Details is null && !deselectConfirm.IsEnabled &&
+                PickerField<StackPanel>(chooser, "_details").Children.OfType<TextBlock>().All(b => b.Text?.Contains("late cancelled detail", StringComparison.Ordinal) != true));
+            deselectConfirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check("Confirm after old callback leaves target and generation unchanged", chooser.IsVisible &&
+                (await ReadValue()).Equals(original) && (await Task.Run(() => observer.Control.Status())).SceneGeneration == generation);
             var search = chooser.GetVisualDescendants().OfType<TextBox>().Single(b => b.PlaceholderText == "Source or GUID");
             search.Text = "no-match-0082";
             await NameUiWait(() => PickerField<AssetBrowser>(chooser, "_browser").ViewState == "No matching assets", "picker local filter");

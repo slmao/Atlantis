@@ -34,6 +34,8 @@ public sealed class AssetBrowser
     }
     public long Select(AssetGuid guid)
     { Selected = guid; Details = null; DetailState = "Loading"; return ++_detailRequest; }
+    public void ClearSelection()
+    { ++_detailRequest; Selected = null; Details = null; DetailState = ""; }
     public bool CompleteDetail(long request, AssetGuid guid, Outcome<AssetDetails, AssetError> result)
     {
         if (request != _detailRequest || Selected != guid) return false;

@@ -4,6 +4,7 @@ using System.Linq;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
+using Atlantis.Gameplay.Assets;
 using Command = Atlantis.Gameplay.Authoring.Command;
 using CommandFailure = Atlantis.Gameplay.Authoring.CommandFailure;
 using Event = Atlantis.Gameplay.Authoring.Event;
@@ -109,5 +110,28 @@ public static partial class Program
         failedApply.ApplyFailure = null;
         Check(history.Undo() == HistoryResult.Submitted && failedApply.Value!.Value.AsAsset() == a,
               "picker: committed edit remains undoable after apply refusal");
+
+        var browser = new AssetBrowser();
+        var list = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(new[]
+        { new AssetSummary(a, AssetType.Mesh, "assets:a"), new AssetSummary(b, AssetType.Material, "assets:b") });
+        browser.CompleteList(browser.BeginList(), list);
+        browser.Select(a);
+        long cancelledDetail = browser.Select(b);
+        var cancelled = new AssetDetails(b, AssetType.Material, "assets:b", 1, null, "cancelled detail", Array.Empty<AssetGuid>());
+        browser.ClearSelection();
+        Check(browser.Selected is null && browser.Details is null && browser.DetailState == "" && browser.State == "Ready",
+              "picker: deselection clears candidate/details without discarding catalog");
+        Check(!browser.CompleteDetail(cancelledDetail, b, Outcome<AssetDetails, AssetError>.Ok(cancelled)) && browser.Selected is null && browser.Details is null,
+              "picker: old pending detail cannot restore a deselected candidate");
+        browser.CompleteList(browser.BeginList(), list);
+        Check(browser.Selected is null, "picker: reload does not revive a cancelled candidate");
+        long replacementDetail = browser.Select(b);
+        Check(!browser.CompleteDetail(cancelledDetail, b, Outcome<AssetDetails, AssetError>.Ok(cancelled)),
+              "picker: cancelled reply remains obsolete after explicit reselection of the same GUID");
+        Check(browser.CompleteDetail(replacementDetail, b, Outcome<AssetDetails, AssetError>.Ok(cancelled)),
+              "picker: explicit new selection can load its own details");
+        browser.ClearSelection();
+        Check(browser.Selected is null && browser.Details is null && browser.DetailState == "",
+              "picker: deselection also clears already completed details");
     }
 }
