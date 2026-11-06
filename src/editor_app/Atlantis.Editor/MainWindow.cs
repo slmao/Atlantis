@@ -992,7 +992,7 @@ public sealed class MainWindow : Window
                 choose.Click += (_, _) => BeginAssetReference(field, choose, sourceSubject);
                 Grid.SetColumn(choose, 2); row.Children.Add(choose);
                 box.KeyDown += (_, e) =>
-                { if (e.Key == Key.F4) { e.Handled = true; ReplaceDraft(); BeginAssetReference(field, choose, sourceSubject); } };
+                { if (e.Key == Key.F4 && e.KeyModifiers == KeyModifiers.None) { e.Handled = true; ReplaceDraft(); BeginAssetReference(field, choose, sourceSubject); } };
             }
             void Commit()
             {

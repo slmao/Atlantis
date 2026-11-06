@@ -174,7 +174,11 @@ public static partial class Program
             var history = (undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled);
             var assetTab = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
             var tabState = (assetTab.Selected, assetTab.Search, assetTab.Type);
-            TextBox box = Box(); Button button = Choose(); box.Focus(); box.Text = replacement.ToString();
+            TextBox box = Box(); Button button = Choose(); box.Focus();
+            var modifiedF4 = new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Source = box, Key = Key.F4, KeyModifiers = KeyModifiers.Control };
+            box.RaiseEvent(modifiedF4);
+            Check("modified F4 is not captured by chooser", !modifiedF4.Handled && !Busy() && Picker() is null);
+            box.Text = replacement.ToString();
             var order = new List<string>();
             box.LostFocus += (_, _) => order.Add("lost-focus"); button.Click += (_, _) => order.Add("click");
             var pointer = new Avalonia.Input.Pointer(82, PointerType.Mouse, true);
