@@ -67,18 +67,26 @@ proposed composition. A new engine/metadata/concurrency requirement reopens desi
 
 | Ruling | Recommended conclusion |
 |---|---|
-| **J1 — Minimum interaction** | Approve R1–R3: generic schema-marked reference fields, single modal chooser, explicit Confirm, local filters/details and the existing fixed snapshot. No target-type inference/metadata or compatibility promise. |
-| **J2 — Target and edit semantics** | Approve R4–R5's captured target, worker pre-submit recheck, stale-request refusal, no-op and one-shot confirmation. Retain ordinary apply/history behavior and explicitly accept the existing non-atomic cross-client edit boundary. |
+| **J1 — Minimum interaction** | Approve R1–R3 and Proposed Design: existing Inspector editability plus schema-marked AssetGuid fields; single modal chooser; visible-candidate explicit Confirm; fixed-snapshot local browsing. Pointer/F4 launch discards only the target draft before focus moves; a prior Tab focus-loss commit remains ordinary editing. No target-type inference/metadata or compatibility promise. |
+| **J2 — Target and edit semantics** | Approve R4–R5: worker capture/event drain, sticky target invalidation and fresh guarded planning in the same Edit turn; separate browser cancellation from Submitted/Settled confirmation. Failed field read is not optional absence; transport failure invalidates even a cached list. Preserve no-op, one-shot submission and ordinary apply/history, accepting the stated non-atomic cross-client boundary. |
 | **J3 — Architecture** | Approve R6 and the no-new-ADR assessment: UI composition under current ADRs, no shared operation, dependency or schema change; CLI/SDK/MCP retain the same discovery/edit capabilities. |
 | **J4 — Delivery and verification** | Approve S2–S4's narrow files and checklist, valid-evidence reuse and retained applicable gates. Human final merge remains required. This proposal grants no current implementation authorization. |
 
 Suggested later authorization, **pending human adoption**: jointly approve
-Spec/Plan 0082 with J1–J4 as recommended; after manual design-PR merge, authorize
-continuous S2–S4 execution from latest main through applicable verification and a
-review-ready implementation PR under 0080. Permit ordinary in-scope fixes and
-focused reruns, preserving failures and provenance. Retain original gates and any
-explicit budgets/holds; changed contracts or acceptance require a specific reviewed
-revision. No automatic merge. The current design-only instruction remains binding.
+Spec/Plan 0082 with J1–J4 as recommended, including the no-new-ADR assessment;
+after confirming manual merge of this design PR, authorize continuous S2–S4
+execution from then-latest main through implementation, applicable verification
+and a review-ready implementation PR under 0080. Permit ordinary in-scope
+code/test/disposable-fixture repairs and focused reruns without further stage
+approval, preserving failures and exact reuse provenance. Report necessary
+nonsemantic file-list adjustments in that PR for one explicit human approval;
+no new Spec/Plan for those alone. Retain every applicable gate and any explicit
+budgets/holds; do not reset measurements, weaken acceptance or merge automatically.
+For changed contracts, architecture, dependencies or acceptance, stop dependent
+work for a specific reviewed revision while independent authorized work continues.
+Stop at the review-ready implementation PR for human final review/merge. This
+authorization text is a recommendation only; the current design-only instruction
+remains binding until the human explicitly adopts it.
 
 ## Verification Checklist
 
@@ -94,7 +102,10 @@ revision. No automatic merge. The current design-only instruction remains bindin
 
 - [ ] **R1/R2 models:** schema-marked AssetGuid eligibility with arbitrary
   component/field names, negative primitive/flag/read-only cases; optional absent
-  and clear behavior; current GUID listed/missing, explicit filters, dependency
+  and clear behavior. Include actual authoring-style Serializable + AssetReference
+  with Editable unset; failed read (`null`) must differ from PropertyValue.Absent.
+  Check current GUID listed/missing, explicit filters (hidden candidate cannot
+  Confirm and no first-row auto-selection), dependency
   selection, Cancel/no-op/Confirm-once. Picker state does not alter Assets tab or
   Hierarchy/history. A pending list or failed/partial reply cannot enable Confirm.
 - [ ] **R3 lifecycle models/UI:** empty/no-match/unavailable/UnknownAsset detail/
@@ -102,16 +113,27 @@ revision. No automatic merge. The current design-only instruction remains bindin
   callback, selection→pending detail→Reload→old callback after new result, old
   session and superseded list replies rejected. Check same Runtime snapshot,
   candidate preservation and replacement detail request, not a disk reload.
+  Distinguish an in-band detail refusal from transport/session failure after a
+  successful cached list; the latter disables Confirm and invalidates the request.
 - [ ] **R4 guard:** selection switches (including away/back), document reopen
   with identical GUID/value, target/component removal, eligibility or value/presence
   changes, disconnect and queued Confirm after invalidation refuse with no edit,
-  apply or history entry. Worker query sees external target changes before submit;
-  unrelated Applied generation alone is not reopen. Do not assert atomic CAS.
+  apply or history entry. Include observed target change→restore and component
+  remove→re-add with identical values before a single event-drain completes;
+  invalidation remains sticky. Drain available events at capture and in the final
+  Edit turn, refresh the actual target and check before constructing that plan;
+  no guard-then-enqueue-path gap. Unrelated Applied generation alone is not reopen.
+  Do not assert atomic CAS or detection of an unobserved remote change-and-restore.
 - [ ] **R2/R5 actual Windows UI:** use actual MainWindow, chooser, worker and real
   Runtime with Avalonia focus/routed button/key events (declare this boundary).
-  Launch with an uncommitted text draft must not trigger LostFocus commit;
-  current observed value is captured. Check modal ownership, Escape/close/Cancel,
-  explicit Confirm, double input, same-value no-op, optional absent assignment,
+  Pointer launch with focus in a drafted field must exercise pre-focus input→
+  LostFocus→Click, not just RaiseEvent(Click); F4 must use the same early suppression.
+  Neither submits the replaced draft. Also test Tab away's ordinary commit then
+  keyboard activation from Choose, launch failure, and normal text editing after
+  Cancel so suppression cannot leak. Capture current worker values and reject old
+  deferred Inspector rows. Check modal ownership, Escape/close/Cancel,
+  explicit Confirm→window close→worker submission/settlement, duplicate input,
+  blocked reopen while Submitted, owner notice once, same-value no-op, optional absent assignment,
   existing text/clear controls and visible stale-target/refusal/apply messages.
   No screenshot, physical-keyboard or latency claim without evidence.
 - [ ] **R5 shared-client integration:** default and available Bistro real Runtime
@@ -155,7 +177,7 @@ remain the fallback. No asset migration, wire downgrade or persisted picker data
 
 ## Definition of Done
 
-See [Definition of Done](../process/definition-of-done.md). S1 delivers reviewed
+See [Definition of Done](../process/definition-of-done.md). S1 delivers reviewable
 documents only; no implementation result is implied. Future completion requires
 the mapped applicable checks with explicit valid reuse, a review-ready PR and
 human final merge. No additional gates beyond the approved checklist and repository

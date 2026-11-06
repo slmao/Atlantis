@@ -49,6 +49,11 @@ frozen in-process editor are excluded. No new transaction, history or apply poli
   names, numeric IDs or a mesh/material allow-list. Ordinary GUID text entry and
   existing optional-field clear remain available. Choosing for an absent optional
   field sets a value; Cancel never clears it. Other fields keep their current UI.
+  Eligibility uses `InspectorModel.IsEditable` (Editable **or Serializable**),
+  not the schema Editable bit alone: authoring fields are Serializable without
+  that live-World flag. The target must have a successfully read PropertyValue;
+  `PropertyValue.Absent` is valid optional absence, while a failed read (`null`)
+  is not absence and must not allow capture or confirmation.
 - **R2 — Bounded chooser interaction.** One owner-modal chooser may be open per
   editor window. Show the target field label and its current GUID or absent
   state, and a flat single-selection list with type, source and GUID. Reuse
@@ -58,7 +63,10 @@ frozen in-process editor are excluded. No new transaction, history or apply poli
   candidate but never commits it. Preselect the current GUID if listed; otherwise
   show that it is outside this snapshot without erasing or inventing a record.
   Confirm is an explicit button enabled only for a selected record in a complete
-  successful current list, not merely text entered into search. Double-click,
+  successful current list that is visible under the current filters, not merely
+  text entered into search. A filter hiding the candidate disables Confirm until
+  it is visible or another visible candidate is selected; it does not edit the
+  target or silently choose the first row. Double-click,
   opening, filtering, selection and detail completion do not commit. Cancel,
   Escape and window close discard the candidate. Browsing does not change the
   Assets tab's filters/selection, Hierarchy, authoring document or history.
@@ -71,9 +79,12 @@ frozen in-process editor are excluded. No new transaction, history or apply poli
   detail even if the prior detail was pending. Loading, empty catalog, no match,
   CatalogUnavailable, UnknownAsset detail and disconnect remain distinguishable;
   errors are never a successful empty/partial list. A failed/pending list disables
-  Confirm. Detail failure is displayed separately and does not itself disqualify
-  a GUID still present in the successful list: detail is inspection, not an asset
-  validator. Session, chooser-instance, list and detail request guards reject old
+  Confirm. An in-band detail refusal is displayed separately and does not itself
+  disqualify a GUID still present in the successful list: detail is inspection,
+  not an asset validator. Transport/protocol failure (including RemoteException)
+  fails the session and invalidates the chooser even if an old successful list is
+  still visible; it must never leave Confirm usable. Session, chooser-instance,
+  list and detail request guards reject old
   replies, including after cancel/reopen or Reload. Reload never rereads disk,
   retries failed catalog initialization or changes Spec 0081's transport limits.
 - **R4 — Target binding and stale choices.** Opening captures the worker/session,
@@ -82,17 +93,31 @@ frozen in-process editor are excluded. No new transaction, history or apply poli
   the then-current selection. Invalidate the chooser on session end/disconnect,
   document reopen, target selection change, target deletion/component removal,
   lost eligibility, or an observed target-value/presence change; display the reason
-  and require reopening. Before editing, the same worker checks that captured
-  identity/lifetime is still valid, refreshes the target through existing document
-  queries and compares value/presence. A failed check refuses with no edit/apply or
+  and require reopening. Invalidation is sticky for that request: switching away
+  and back, or observing a target change/removal followed by restoration to the
+  same value/GUID, must not revive it. Use worker-local lifetime/request state and
+  the existing ordered event stream; final value equality alone is insufficient.
+  Capture and confirmation process available document events on the worker. The
+  final guard, fresh target/Inspector read and edit-plan construction run in the
+  same queued Edit operation after its event drain; do not validate then enqueue
+  an unguarded path-only CommitField for later. Compare identity, eligibility and
+  successfully read value/presence there. A failed check refuses with no edit/apply or
   history entry. Do not add a wire revision, lock or compare-and-set operation:
   this protects against stale local work and changes observed before submission,
   not a new atomic guarantee against another client writing between the final
   query and transaction. Existing server ordering and conflict/history contracts
   continue to govern that race. Applied scene-generation changes alone are not a
   document reopen.
-- **R5 — Ordinary edit and settlement.** A valid Confirm consumes the chooser
-  request once, disables duplicate submission and closes the chooser. Selecting
+- **R5 — Ordinary edit and settlement.** Confirm moves a current browsing request
+  to Submitted once, disables duplicate submission and closes the chooser.
+  Closing after Confirm invalidates its browser callbacks, not the worker's
+  pending confirmation token. Cancel/Escape/window close before Confirm cancels
+  browsing and cannot enqueue an edit. Keep new chooser launch disabled until the
+  worker reports document submission/refusal/no-op (Settled), not until Runtime
+  apply finishes. A later target/session invalidation still refuses unsubmitted
+  work; a transaction already sent is not cancellable or rolled back by closing
+  UI. Route its settlement to the owner and consume it once, never to a newly
+  opened chooser. Selecting
   the unchanged value produces no transaction, apply or history entry. A changed
   GUID goes through the existing Inspector planning and worker Edit path: one
   SetProperty in one authoring transaction, its normal history record, and the
@@ -125,10 +150,22 @@ unlimited-size or new performance threshold is promised.
 A small chooser window composes AssetBrowser and a UI-free target/candidate state
 model. MainWindow passes immutable target values at launch; EditorSession handles
 the guarded confirmation on its existing queue and feeds the existing Inspector
-plan to Edit. Request tokens are local lifecycle guards only. Opening the modal
-from a reference field must not accidentally commit a pending text draft through
-LostFocus: discard that field's uncommitted draft and capture its authoritative
-observed value for the chooser. Other text-edit behavior remains unchanged.
+plan to Edit. Request tokens are local lifecycle guards only. Browsing, Submitted
+and Settled are local request states, not new SDK or authoring states.
+
+For pointer launch from the field's Choose button, establish the launch intent
+before focus changes (on the pre-focus input route), discard that field's
+uncommitted draft and suppress only the resulting LostFocus commit. Handle F4
+while the eligible field has keyboard focus by the same launch path before moving
+focus. A Click-only handler is too late to establish this suppression. If the
+user first tabs away to the focusable Choose button, that earlier ordinary
+LostFocus retains its existing commit behavior; button Enter/Space then captures
+the worker's current field, without retroactively cancelling a submitted edit.
+Unrelated focus loss/Enter keeps existing text behavior. Launch suppression ends
+on completion, cancellation or launch failure and cannot suppress later text
+edits. A failed launch still discards the draft it explicitly replaced; it must
+not revive or silently submit it. Do not capture a stale displayed Inspector row
+or let a deferred Inspector callback overwrite the newer target/request.
 
 ## Architectural Impact
 
@@ -168,8 +205,10 @@ design-only PR runs documentation checks; it claims no new implementation result
 
 Generic candidates can include the wrong asset kind; display this limitation and
 retain existing refusals rather than imply compatibility. The pre-submit check
-does not provide atomic cross-client conditional editing. Modal focus can trigger
-existing LostFocus handlers; the launch regression is required. Joint review must
+does not provide atomic cross-client conditional editing, including an unobserved
+change-and-restore between remote operations. Pointer/F4 launch and prior Tab
+focus loss have different draft outcomes as specified above; both require tests.
+Joint review must
 rule on the interaction, stale-target boundary and proportional acceptance in the
 Plan; implementation authorization remains pending.
 
