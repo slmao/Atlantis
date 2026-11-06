@@ -975,10 +975,15 @@ milestone being listed does not authorize starting it — see Section 1.
   ([Spec 0070](specs/0070-agent-tool-layer.md)). Node names are delivered by
   [Spec 0069](specs/0069-scene-node-names.md) / merged
   [PR #324](https://github.com/slmao/Atlantis/pull/324). The first asset-browser/shared
-  asset-query slice is approved in [Spec 0081](specs/0081-asset-browser-shared-interface.md)
-  and [Plan 0081](plans/0081-asset-browser-shared-interface.md) (joint approval and
-  Accepted ADR-0143 in [PR #325](https://github.com/slmao/Atlantis/pull/325)); implementation is in [PR #326](https://github.com/slmao/Atlantis/pull/326);
-  broader asset-pipeline management remains future work. Other future work, each its own
+  asset-query slice is delivered by [Spec 0081](specs/0081-asset-browser-shared-interface.md)
+  / [Plan 0081](plans/0081-asset-browser-shared-interface.md), Accepted ADR-0143,
+  and merged [PR #326](https://github.com/slmao/Atlantis/pull/326) (2026-11-06).
+  The next bounded proposal, [Spec 0082](specs/0082-generic-asset-reference-picker.md)
+  / [Plan 0082](plans/0082-generic-asset-reference-picker.md), is In Review:
+  a generic Inspector reference chooser over existing shared queries and editing,
+  with no implementation authorization or new engine interface. Target-type
+  metadata, preview and broader asset-pipeline management remain future work.
+  Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
   prefabs; a C# plugin system; and the AI-native loop (headless scripted run/capture/evaluate over

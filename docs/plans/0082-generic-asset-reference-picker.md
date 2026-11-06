@@ -1,0 +1,162 @@
+# Plan: Generic Asset Reference Picker
+
+- **Spec:** [Spec 0082](../specs/0082-generic-asset-reference-picker.md) (In Review)
+- **Status:** In Review
+- **Author:** Codex, at slmao's direction
+- **Joint Human Review:** Pending. The owner accepted this minimum design direction;
+  this round authorizes documents and a joint reviewing PR only, not implementation.
+
+Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
+
+## Objective
+
+Deliver Spec 0082's generic reference chooser using existing shared discovery and
+ordinary document editing, with no new engine contract. This round drafts and
+submits the design only, based on main `882c691e` after #326's human merge.
+
+## Milestones / Task Breakdown
+
+1. **S1 — Joint design (this PR).** Inspect the shared schema, AssetBrowser,
+   Inspector/worker/history and #326 closure. Submit this pair; update Spec 0081's
+   merged navigation and add 0082's proposal entry. Check documents and stop.
+2. **S2 — Headless chooser and guarded edit.** Only after joint approval and human
+   design merge, add the target/candidate lifecycle model, eligibility and
+   stale-target/no-op checks. Compose existing Inspector edit plans and retain
+   worker-local document-open lifetime; no wire generation. Add focused models.
+3. **S3 — Product UI.** Add the owner-modal chooser on the existing worker and
+   dispatcher, using independent AssetBrowser state. Implement launch/focus,
+   reload/error and one-shot confirmation behavior; retain the Assets tab and
+   existing Inspector text/clear behavior. Add actual UI regressions.
+4. **S4 — Verify and submit implementation.** Complete the mapped applicable
+   checks, audit evidence reuse and actual whole-PR performance applicability,
+   update narrow usage/as-built navigation and submit a review-ready implementation
+   PR. Preserve failures and human final merge; no additional milestone gates
+   unless explicitly imposed by the owner.
+
+## Files / Modules Touched (expected)
+
+**S1, exactly four documentation files:** this Plan; the new Spec;
+`docs/specs/README.md`; the existing editor direction paragraph in
+`docs/project-blueprint.md`. No new ADR or approved-document semantic rewrite.
+
+**Future implementation scope, new files marked new:**
+
+| Responsibility | Expected files |
+|---|---|
+| UI-free chooser state | New `src/editor_app/Atlantis.Editor.Model/AssetReferencePicker.cs`; `Inspector.cs` for schema-based eligibility and guarded composition of an existing edit plan. Reuse `AssetBrowser.cs` as-is unless a required local lifecycle correction is demonstrated. |
+| Worker and UI | `src/editor_app/Atlantis.Editor/EditorSession.cs` for capture/recheck/confirmation over its existing queue; `MainWindow.cs` for eligible-field launch and focus handling; new `AssetReferencePickerWindow.cs` for the owner-modal UI and callback guards. No general Inspector or browser framework refactor. |
+| Focused tests | New `src/editor_app/tests/Atlantis.Editor.Tests/AssetReferencePickerTests.cs`; existing `Program.cs` registration, `InspectorTests.cs` actual Windows UI checks, `IntegrationTest.cs` reference-edit integration and `HistoryTests.cs` only for relevant replay/conflict regression. Existing fake document and runtime helpers suffice. |
+| Usage/as-built/closure | Narrow picker usage in `README.md`, editor paragraph in `docs/architecture/module_boundaries.md`, `docs/specs/README.md` and `docs/project-blueprint.md`. This Spec/Plan approval metadata only once authorized; no accepted ADR rewrite. |
+
+No native, Core/schema, Connection, Remote, CLI/SDK/MCP production, Runtime,
+Renderer, asset, generated/vector or package/build files are expected to change.
+The SDK-style C# projects include source files without new registrations/targets.
+Necessary nonsemantic file-list changes follow AGENTS/0080's PR approval rule;
+contracts, architecture, acceptance changes require design review before dependent
+implementation. Do not broaden this plan to fix unrelated Inspector behavior.
+
+## Sequencing & Dependencies
+
+Spec 0081 / ADR-0143 and the existing authoring editor are merged prerequisites;
+there is no dependency on an unmerged feature. S1 ends at the joint design PR.
+Review must explicitly approve both documents and authorize implementation; a
+human must merge the design PR before S2 begins. No new ADR is needed for the
+proposed composition. A new engine/metadata/concurrency requirement reopens design.
+
+### Joint review — recommendations for human ruling
+
+| Ruling | Recommended conclusion |
+|---|---|
+| **J1 — Minimum interaction** | Approve R1–R3: generic schema-marked reference fields, single modal chooser, explicit Confirm, local filters/details and the existing fixed snapshot. No target-type inference/metadata or compatibility promise. |
+| **J2 — Target and edit semantics** | Approve R4–R5's captured target, worker pre-submit recheck, stale-request refusal, no-op and one-shot confirmation. Retain ordinary apply/history behavior and explicitly accept the existing non-atomic cross-client edit boundary. |
+| **J3 — Architecture** | Approve R6 and the no-new-ADR assessment: UI composition under current ADRs, no shared operation, dependency or schema change; CLI/SDK/MCP retain the same discovery/edit capabilities. |
+| **J4 — Delivery and verification** | Approve S2–S4's narrow files and checklist, valid-evidence reuse and retained applicable gates. Human final merge remains required. This proposal grants no current implementation authorization. |
+
+Suggested later authorization, **pending human adoption**: jointly approve
+Spec/Plan 0082 with J1–J4 as recommended; after manual design-PR merge, authorize
+continuous S2–S4 execution from latest main through applicable verification and a
+review-ready implementation PR under 0080. Permit ordinary in-scope fixes and
+focused reruns, preserving failures and provenance. Retain original gates and any
+explicit budgets/holds; changed contracts or acceptance require a specific reviewed
+revision. No automatic merge. The current design-only instruction remains binding.
+
+## Verification Checklist
+
+**S1 only:**
+
+- [ ] Confirm immutable main/#326 merge and available numbering in PR; status
+  In Review, joint approval pending; exactly four planned documentation files.
+- [ ] `git diff --check`; local Markdown file links resolve; templates, R1–R6
+  mapping, current 0081 merged navigation and no-new-ADR justification checked.
+  Engine build, UI/GPU tests and performance measurements N/A for documents.
+
+**Future final candidate (focused checks during work; reuse only unchanged inputs):**
+
+- [ ] **R1/R2 models:** schema-marked AssetGuid eligibility with arbitrary
+  component/field names, negative primitive/flag/read-only cases; optional absent
+  and clear behavior; current GUID listed/missing, explicit filters, dependency
+  selection, Cancel/no-op/Confirm-once. Picker state does not alter Assets tab or
+  Hierarchy/history. A pending list or failed/partial reply cannot enable Confirm.
+- [ ] **R3 lifecycle models/UI:** empty/no-match/unavailable/UnknownAsset detail/
+  disconnect distinct; detail error remains non-validating; cancel→reopen→old
+  callback, selection→pending detail→Reload→old callback after new result, old
+  session and superseded list replies rejected. Check same Runtime snapshot,
+  candidate preservation and replacement detail request, not a disk reload.
+- [ ] **R4 guard:** selection switches (including away/back), document reopen
+  with identical GUID/value, target/component removal, eligibility or value/presence
+  changes, disconnect and queued Confirm after invalidation refuse with no edit,
+  apply or history entry. Worker query sees external target changes before submit;
+  unrelated Applied generation alone is not reopen. Do not assert atomic CAS.
+- [ ] **R2/R5 actual Windows UI:** use actual MainWindow, chooser, worker and real
+  Runtime with Avalonia focus/routed button/key events (declare this boundary).
+  Launch with an uncommitted text draft must not trigger LostFocus commit;
+  current observed value is captured. Check modal ownership, Escape/close/Cancel,
+  explicit Confirm, double input, same-value no-op, optional absent assignment,
+  existing text/clear controls and visible stale-target/refusal/apply messages.
+  No screenshot, physical-keyboard or latency claim without evidence.
+- [ ] **R5 shared-client integration:** default and available Bistro real Runtime
+  in managed Debug/Release. Pick a known compatible material GUID from the same
+  cooked snapshot, commit via actual chooser, read the identical property with a
+  second SDK/CLI client, observe apply, one history step and Undo/Redo. External
+  overwrite refuses replay; cancelled/stale requests do not edit. Verify pause
+  holds apply until Step/Resume; transaction refusal creates no success record and
+  an apply failure is not misreported as a reverted document. Use existing small
+  fixtures for distinct failure stages; no production test seam or asset edits.
+- [ ] **R5 persistence:** hand-authored disposable fixture save→reopen plus
+  save→rebuild→restart preserves the chosen reference and matching catalog
+  dependency; imported save remains refused. Restore fixture inputs and compare
+  the baseline frame/capture after restoration; preserve tracked assets/goldens.
+  Reuse #326's unchanged backend/persistence portions with exact provenance, but
+  rerun changed chooser/worker behavior and its actual UI-to-reference integration.
+- [ ] **R6 builds/boundaries:** affected Editor Model/App/tests Debug/Release,
+  model/vector/history and editor/package boundary checks, existing pinned locked
+  restore. Native/CLI/SDK/MCP/Android builds and protocol tests may reuse #326 only
+  if relevant source/tests/dependencies/build inputs/assets/environment remain
+  unchanged; report revision/configuration and evidence, not a fresh full matrix.
+- [ ] **R6 GPU/gates:** live Runtime checks with clean Vulkan Validation on the
+  reference environment; reuse unchanged renderer/golden cases with provenance.
+  Evaluate performance applicability over the complete implementation PR using
+  the unchanged selector. UI-only planned paths are expected unselected: record
+  actual result/reason, no timing pass. If selected, honor the original native
+  Release profiling-ON/Tracy-OFF gate protocol and explicit budgets; do not inherit
+  #326's measured verdict for changed native inputs or reset budgets/retry-to-pass.
+  No new latency benchmark, threshold, baseline/policy/golden change.
+- [ ] **Closure:** full diff within scope, approvals/deviations/results/failures/
+  evidence reuse and limits in implementation PR; usage/as-built/navigation current.
+  All required gates settled before ready; otherwise Draft with concrete blocker.
+  Human review and merge, never agent merge.
+
+## Rollback Plan
+
+Before implementation, revise/reject this draft without runtime effect. After a
+future implementation merge, revert the picker UI/model/worker additions and
+their tests/docs in a reviewed PR; existing GUID text editing and Assets browser
+remain the fallback. No asset migration, wire downgrade or persisted picker data.
+
+## Definition of Done
+
+See [Definition of Done](../process/definition-of-done.md). S1 delivers reviewed
+documents only; no implementation result is implied. Future completion requires
+the mapped applicable checks with explicit valid reuse, a review-ready PR and
+human final merge. No additional gates beyond the approved checklist and repository
+rules; no implementation is authorized by merely opening this proposal.
