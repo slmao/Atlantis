@@ -33,5 +33,18 @@ public static partial class Program
         Check(model.ViewState == "CatalogUnavailable", "assets: unavailable differs from empty");
         current = model.BeginList(); model.CompleteList(current, Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(Array.Empty<AssetSummary>()));
         Check(model.ViewState == "Catalog empty" && model.Selected is null, "assets: successful empty clears missing selection");
+
+        var reloadModel = new AssetBrowser();
+        reloadModel.CompleteList(reloadModel.BeginList(), ok);
+        long pendingDetail = reloadModel.Select(a);
+        long reload = reloadModel.BeginList();
+        Check(reloadModel.CompleteList(reload, ok) && reloadModel.Selected == a,
+              "assets: pending-detail reload preserves the selected GUID");
+        long refreshedDetail = reloadModel.Select(reloadModel.Selected!.Value);
+        var refreshed = detail with { Tool = "reload result" };
+        Check(reloadModel.CompleteDetail(refreshedDetail, a, Outcome<AssetDetails, AssetError>.Ok(refreshed)) &&
+              reloadModel.DetailState == "Ready", "assets: replacement detail settles after reload");
+        Check(!reloadModel.CompleteDetail(pendingDetail, a, Outcome<AssetDetails, AssetError>.Ok(detail)) &&
+              ReferenceEquals(reloadModel.Details, refreshed), "assets: late old reply for the same GUID cannot overwrite reload result");
     }
 }

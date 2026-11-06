@@ -767,7 +767,14 @@ public sealed class MainWindow : Window
     {
         var worker = _worker; if (worker is null) return;
         long request = _assetBrowser.BeginList(); RenderAssets();
-        worker.LoadAssets(result => { if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteList(request, result)) RenderAssets(); });
+        worker.LoadAssets(result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || !_assetBrowser.CompleteList(request, result)) return;
+            RenderAssets();
+            // BeginList invalidated pending details. Selection is restored under
+            // _assetsSync, so its event cannot request the replacement for us.
+            if (result.IsOk && _assetBrowser.Selected is AssetGuid guid) ReadAsset(guid);
+        });
     }
     private void ReadAsset(AssetGuid guid)
     {

@@ -74,7 +74,7 @@ public static partial class Program
         var report = new
         {
             kind = "product-name-and-asset-ui-smoke",
-            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button events. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
+            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button events, plus controlled stale-snapshot/detail callbacks on the UI dispatcher. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
         };
@@ -326,10 +326,36 @@ public static partial class Program
         Check("assets UI: actual clipboard GUID", copied == material.Guid.ToString(), copied ?? "");
         Check("assets UI: filters selection and copy do not reload", ListRequests() == listRequests);
         var reload = controls.OfType<Button>().Single(b => b.Content?.ToString() == "Reload view");
+        // No dispatcher yield between selection and Reload: the real worker's
+        // old completion cannot be consumed before the view invalidates it.
+        var oldDetails = browser.Details!;
+        list.SelectedItem = null;
+        list.SelectedItem = browser.Visible.First(v => v.Guid == material.Guid);
+        long pendingDetail = (long)typeof(AssetBrowser).GetField("_detailRequest", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(browser)!;
+        Check("assets UI: detail is pending before Reload", browser.Details is null && browser.DetailState == "Loading");
+        reload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => browser.State == "Ready" && browser.Details?.Guid == material.Guid && browser.DetailState == "Ready",
+                         "pending detail is requested again after Reload");
+        var reloadedDetails = browser.Details!;
+        Check("assets UI: pending-detail Reload resolves from current Runtime snapshot",
+              Json.Write(Codec.Encode(reloadedDetails)) == Json.Write(Codec.Encode(observer.Assets.GetAsset(material.Guid).Value)));
+        bool? lateAccepted = null;
+        Dispatcher.UIThread.Post(() =>
+        {
+            lateAccepted = browser.CompleteDetail(pendingDetail, material.Guid,
+                Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>.Ok(oldDetails with { Tool = "late stale callback" }));
+            if (lateAccepted == true)
+                typeof(MainWindow).GetMethod("RenderAssets", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+        });
+        await NameUiWait(() => lateAccepted is not null, "old detail callback arrives after refreshed result");
+        Check("assets UI: late old callback cannot overwrite refreshed model or panel", lateAccepted == false &&
+              ReferenceEquals(browser.Details, reloadedDetails) && NameUiField<StackPanel>(window, "_assetDetails")!.Children.OfType<TextBlock>()
+                  .Any(b => b.Text?.Contains("tool: " + reloadedDetails.Tool, StringComparison.Ordinal) == true && !b.Text.Contains("late stale callback", StringComparison.Ordinal)));
         for (int i = 0; i < 3; ++i)
         {
             reload.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            await NameUiWait(() => browser.State == "Ready", "actual Reload view");
+            await NameUiWait(() => browser.State == "Ready" && browser.Details?.Guid == material.Guid && browser.DetailState == "Ready",
+                             "actual Reload view and selected detail");
             Check("assets UI: Reload preserves selection " + i, browser.Selected == material.Guid);
         }
         Check("assets UI: browsing leaves Hierarchy history and generation intact", selection.Node == selected &&
