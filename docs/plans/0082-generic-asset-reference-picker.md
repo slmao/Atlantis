@@ -1,10 +1,9 @@
 # Plan: Generic Asset Reference Picker
 
-- **Spec:** [Spec 0082](../specs/0082-generic-asset-reference-picker.md) (In Review)
-- **Status:** In Review
+- **Spec:** [Spec 0082](../specs/0082-generic-asset-reference-picker.md) (Approved)
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
-- **Joint Human Review:** Pending. The owner accepted this minimum design direction;
-  this round authorizes documents and a joint reviewing PR only, not implementation.
+- **Joint Human Review:** slmao, 2026-11-07; [joint ruling](https://github.com/slmao/Atlantis/pull/327#issuecomment-6689535730) approves Spec/Plan 0082, J1–J4 at `00b6674`, and the no-new-ADR assessment. #327 manually merged as `6b8b568`; S2–S4 continuously authorized from latest main through implementation, applicable verification and a review-ready PR under 0080. Existing gates, evidence provenance and human final merge retained; the proposal wording below is historical and does not override this ruling.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).
 

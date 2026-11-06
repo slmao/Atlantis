@@ -1419,7 +1419,16 @@ dependency navigation and clipboard GUID copy, with a first-query snapshot/resta
 note and explicit Reload view. `Atlantis.Editor.Model.AssetBrowser` holds UI-free
 view state and rejects obsolete callbacks. Asset selection does not change the
 Hierarchy or history; reference edits retain the existing Inspector transaction
-and undo/redo path. No editor-only channel, asset writer, picker or new package.
+and undo/redo path. No editor-only channel, asset writer or new package.
+
+Spec 0082 adds an owner-modal generic reference chooser for editable, successfully
+read schema-marked AssetGuid fields. It has its own AssetBrowser state on the UI
+dispatcher; the existing session worker captures and rechecks the immutable target
+before one ordinary Inspector transaction/apply/history operation. Ordered document
+events make target invalidation sticky; local request tokens distinguish closed
+browser callbacks from an already submitted confirmation. No new wire/SDK call,
+metadata, compatibility check, native dependency, worker or history model.
+See [Spec 0082](../specs/0082-generic-asset-reference-picker.md).
 
 ---
 

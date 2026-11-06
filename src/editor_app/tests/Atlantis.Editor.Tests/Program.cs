@@ -79,6 +79,7 @@ public static partial class Program
             // Plan 0068 M3: the Inspector's model.
             InspectorChecks();
             AssetBrowserChecks();
+            AssetReferencePickerChecks();
             // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
             GizmoDragChecks();
             // Plan 0068 M5: the history over the authoring document, structural records included.

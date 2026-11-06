@@ -143,6 +143,11 @@ public sealed class InspectorModel
     /// </summary>
     public static bool IsEditable(SchemaField field) => field.IsEditable || (field.Flags & FieldFlags.Serializable) != 0;
 
+    public static bool CanChooseAsset(InspectorField field) => field.Editable &&
+        field.Field.Kind == TypeKind.Primitive && field.Field.Primitive == PrimitiveKind.AssetGuid &&
+        (field.Field.Flags & FieldFlags.AssetReference) != 0 && field.Value is PropertyValue value &&
+        (value.IsAbsent ? field.Optional : value.TryGetAsset(out _));
+
     public static FieldControl ControlOf(SchemaField field) => field.Kind == TypeKind.Enum ? FieldControl.Enum : field.Primitive switch
     {
         PrimitiveKind.UInt64 => FieldControl.Integer,

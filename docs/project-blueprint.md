@@ -978,10 +978,12 @@ milestone being listed does not authorize starting it — see Section 1.
   asset-query slice is delivered by [Spec 0081](specs/0081-asset-browser-shared-interface.md)
   / [Plan 0081](plans/0081-asset-browser-shared-interface.md), Accepted ADR-0143,
   and merged [PR #326](https://github.com/slmao/Atlantis/pull/326) (2026-11-06).
-  The next bounded proposal, [Spec 0082](specs/0082-generic-asset-reference-picker.md)
-  / [Plan 0082](plans/0082-generic-asset-reference-picker.md), is In Review:
-  a generic Inspector reference chooser over existing shared queries and editing,
-  with no implementation authorization or new engine interface. Target-type
+  [Spec 0082](specs/0082-generic-asset-reference-picker.md)
+  / [Plan 0082](plans/0082-generic-asset-reference-picker.md) are jointly Approved
+  ([#327 ruling](https://github.com/slmao/Atlantis/pull/327#issuecomment-6689535730),
+  design manually merged): a generic Inspector reference chooser over existing
+  shared queries and editing, with S2–S4 authorized and no new engine interface.
+  Target-type
   metadata, preview and broader asset-pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay

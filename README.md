@@ -227,6 +227,13 @@ The catalog is fixed at the first valid query, including an initial failure.
 Reload view and reconnect do not reread disk; restart Runtime after a changed
 build or a repaired initial failure. See the [shared contract](docs/architecture/remote_protocol.md#52-cooked-asset-queries-spec-0081--adr-0143).
 
+Inspector asset-reference fields also offer **Choose…** (F4 while editing the
+field). Choose a catalog GUID and Confirm to make one ordinary undoable edit;
+Cancel discards the choice. Pointer/F4 launch discards that field's uncommitted
+text draft; tabbing away keeps normal text-commit behavior. Type filters are
+explicit choices, not a compatibility guarantee. The chooser uses the same fixed
+Runtime snapshot; it does not import, build or preview assets (Spec 0082).
+
 See [examples/](examples/) for smaller, single-purpose demo programs.
 
 ## Status

@@ -41,7 +41,7 @@ public static partial class Program
     /// focus and routed keys. It does not inject OS input or capture a screen.
     /// A separate runner invokes this method so normal model tests stay headless.
     /// </summary>
-    public static int RunNameUiSmoke(string runtimePath, string outputFile)
+    public static int RunNameUiSmoke(string runtimePath, string outputFile, string scene = "integrated_showcase_demo")
     {
         var checks = new List<NameUiCheck>();
         int exit = 1;
@@ -50,7 +50,7 @@ public static partial class Program
         {
             try
             {
-                exit = AppBuilder.Configure(() => new NameUiApplication(runtimePath, checks, path => work = path))
+                exit = AppBuilder.Configure(() => new NameUiApplication(runtimePath, scene, checks, path => work = path))
                                  .UsePlatformDetect().StartWithClassicDesktopLifetime(Array.Empty<string>());
             }
             catch (Exception e)
@@ -74,7 +74,7 @@ public static partial class Program
         var report = new
         {
             kind = "product-name-and-asset-ui-smoke",
-            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button events, plus controlled stale-snapshot/detail callbacks on the UI dispatcher. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
+            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events (including pre-focus pointer press and release), plus controlled stale-snapshot/detail callbacks on the UI dispatcher. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
         };
@@ -88,12 +88,13 @@ public static partial class Program
     private sealed class NameUiApplication : Application
     {
         private readonly string _runtime;
+        private readonly string _scene;
         private readonly List<NameUiCheck> _checks;
         private readonly Action<string> _work;
 
-        public NameUiApplication(string runtime, List<NameUiCheck> checks, Action<string> work)
+        public NameUiApplication(string runtime, string scene, List<NameUiCheck> checks, Action<string> work)
         {
-            _runtime = runtime;
+            _runtime = runtime; _scene = scene;
             _checks = checks;
             _work = work;
         }
@@ -104,11 +105,11 @@ public static partial class Program
         {
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
-                var window = new MainWindow(new EditorOptions(_runtime, "integrated_showcase_demo"));
+                var window = new MainWindow(new EditorOptions(_runtime, _scene));
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
                 {
-                    try { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); }
+                    try { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
                     finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
                 };
@@ -117,12 +118,269 @@ public static partial class Program
         }
     }
 
+    private static T PickerField<T>(AssetReferencePickerWindow window, string name) where T : class =>
+        (T)typeof(AssetReferencePickerWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+
+    private static async Task CheckAssetPickerUi(MainWindow window, List<NameUiCheck> checks)
+    {
+        void Check(string name, bool ok, string detail = "") => checks.Add(new NameUiCheck("picker UI: " + name, ok, detail));
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var document = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
+        NameUiField<TextBox>(window, "_notes")!.Focus();
+        await Task.Delay(100);
+        var snapshot = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!;
+        EntityGuid node = snapshot.Subject!.Value;
+        SceneAddress address = SceneSchema.AddressOf(document.Schema, node, "Renderable", "materialAsset")!.Value;
+        async Task<PropertyValue> ReadValue() => await Task.Run(() => document.GetProperty(address)!.Value);
+        PropertyValue original = await ReadValue();
+        DocumentInfo info = (await Task.Run(() => observer.Authoring.Document()))!;
+        byte[]? sourceBefore = info.Provenance == Provenance.HandAuthored ? File.ReadAllBytes(info.SourcePath) : null;
+        AssetGuid replacement = (await Task.Run(() => observer.Assets.ListAssets())).Value.First(a => a.Type == Atlantis.Gameplay.Assets.AssetType.Material &&
+            a.Source.StartsWith("assets:", StringComparison.Ordinal) && a.Guid != original.AsAsset()).Guid;
+        var undo = NameUiField<Button>(window, "_undo")!;
+        var redo = NameUiField<Button>(window, "_redo")!;
+        Grid Row() => NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
+            .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "materialAsset"));
+        TextBox Box() => Row().Children.OfType<TextBox>().Single();
+        Button Choose() => Row().Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…");
+        AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
+        bool Busy() => (bool)typeof(MainWindow).GetField("_referenceBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+        bool Applied() => NameUiField<TextBlock>(window, "_applyLine")!.Text!.StartsWith("apply: applied", StringComparison.Ordinal);
+        async Task Refreshed() => await NameUiWait(async () => !Busy() && window.IsEffectivelyEnabled && Box().Text ==
+            ((await ReadValue()).IsAbsent ? "" : (await ReadValue()).AsAsset().ToString()), "picker target Inspector refreshed");
+        async Task<AssetReferencePickerWindow> Open()
+        {
+            Box().Focus();
+            Check("F4 handled", NameUiKey(Box(), Key.F4));
+            await NameUiWait(() => Picker() is not null && PickerField<AssetBrowser>(Picker()!, "_browser").State == "Ready", "chooser opens and lists", 60);
+            return Picker()!;
+        }
+        async Task Cancel(AssetReferencePickerWindow p)
+        { p.Close(); await Refreshed(); }
+        async Task Select(AssetReferencePickerWindow p, AssetGuid guid)
+        {
+            var browser = PickerField<AssetBrowser>(p, "_browser");
+            PickerField<ListBox>(p, "_list").SelectedItem = browser.Visible.First(a => a.Guid == guid);
+            await NameUiWait(() => browser.Details?.Guid == guid && browser.DetailState == "Ready", "chooser selected detail");
+        }
+        async Task Confirm(AssetReferencePickerWindow p)
+        { PickerField<Button>(p, "_confirm").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Refreshed(); }
+        try
+        {
+            await Refreshed();
+            await NameUiWait(Applied, "previous Assets UI apply settles before picker baseline");
+            ulong generation = (await Task.Run(() => observer.Control.Status())).SceneGeneration;
+            var history = (undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled);
+            var assetTab = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
+            var tabState = (assetTab.Selected, assetTab.Search, assetTab.Type);
+            TextBox box = Box(); Button button = Choose(); box.Focus(); box.Text = replacement.ToString();
+            var order = new List<string>();
+            box.LostFocus += (_, _) => order.Add("lost-focus"); button.Click += (_, _) => order.Add("click");
+            var pointer = new Avalonia.Input.Pointer(82, PointerType.Mouse, true);
+            Point point = button.TranslatePoint(new Point(3, 3), window)!.Value;
+            button.RaiseEvent(new PointerPressedEventArgs(button, pointer, window, point, 1,
+                new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed), KeyModifiers.None, 1) { Source = button });
+            button.RaiseEvent(new PointerReleasedEventArgs(button, pointer, window, point, 2,
+                new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased), KeyModifiers.None, MouseButton.Left) { Source = button });
+            await NameUiWait(() => Picker() is not null && PickerField<AssetBrowser>(Picker()!, "_browser").State == "Ready", "pointer chooser launch");
+            var chooser = Picker()!;
+            Check("pointer LostFocus precedes actual Click", order.SequenceEqual(new[] { "lost-focus", "click" }), string.Join(",", order));
+            Check("pointer launch discarded uncommitted draft", chooser.Target.Before.Equals(original) && (await ReadValue()).Equals(original));
+            Check("single owner-modal window", chooser.Owner == window && chooser.IsVisible);
+            await Cancel(chooser);
+            Check("cancel adds no edit/history/apply", (await ReadValue()).Equals(original) && (await Task.Run(() => observer.Control.Status())).SceneGeneration == generation &&
+                history == (undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled),
+                $"generation {generation}/{(await Task.Run(() => observer.Control.Status())).SceneGeneration}; history {history}/{(undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled)}");
+            Check("Assets tab state independent", tabState == (assetTab.Selected, assetTab.Search, assetTab.Type));
+
+            Box().Focus(); Box().Text = replacement.ToString();
+            chooser = await Open();
+            Check("F4 launch discards draft", chooser.Target.Before.Equals(original));
+            var search = chooser.GetVisualDescendants().OfType<TextBox>().Single(b => b.PlaceholderText == "Source or GUID");
+            search.Text = "no-match-0082";
+            await NameUiWait(() => PickerField<AssetBrowser>(chooser, "_browser").ViewState == "No matching assets", "picker local filter");
+            Check("hidden candidate cannot confirm", !PickerField<Button>(chooser, "_confirm").IsEnabled);
+            search.Text = "";
+            await NameUiWait(() => PickerField<AssetBrowser>(chooser, "_browser").Search == "", "picker reset filter");
+            await Select(chooser, original.AsAsset());
+            await Confirm(chooser);
+            Check("same-value Confirm is no-op", (await Task.Run(() => observer.Control.Status())).SceneGeneration == generation && history == (undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled),
+                $"generation {generation}/{(await Task.Run(() => observer.Control.Status())).SceneGeneration}; history {history}/{(undo.Content?.ToString(), redo.Content?.ToString(), undo.IsEnabled, redo.IsEnabled)}");
+
+            // The button gained keyboard focus only after ordinary field LostFocus.
+            Box().Focus(); Box().Text = replacement.ToString(); Choose().Focus(NavigationMethod.Tab);
+            await NameUiWait(async () => (await ReadValue()).AsAsset() == replacement && Applied(), "ordinary Tab commit");
+            Check("prior Tab commit remains ordinary edit", (await ReadValue()).AsAsset() == replacement);
+            Choose().RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => Picker() is not null, "keyboard button activation after Tab");
+            chooser = Picker()!;
+            Check("button activation captures post-Tab worker value", chooser.Target.Before.AsAsset() == replacement);
+            await Cancel(chooser);
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "undo prior Tab commit"); await Refreshed();
+
+            chooser = await Open();
+            var browser = PickerField<AssetBrowser>(chooser, "_browser");
+            var list = PickerField<ListBox>(chooser, "_list");
+            list.SelectedItem = null; list.SelectedItem = browser.Visible.First(a => a.Guid == replacement);
+            long oldDetail = (long)typeof(AssetBrowser).GetField("_detailRequest", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(browser)!;
+            chooser.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Reload view").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => browser.State == "Ready" && browser.Details?.Guid == replacement && browser.DetailState == "Ready", "chooser pending-detail Reload");
+            Check("Reload queries same snapshot and settles selected detail", browser.Details == (await Task.Run(() => observer.Assets.GetAsset(replacement))).Value ||
+                Json.Write(Codec.Encode(browser.Details!)) == Json.Write(Codec.Encode((await Task.Run(() => observer.Assets.GetAsset(replacement))).Value)));
+            Check("late detail refused after Reload", !browser.CompleteDetail(oldDetail, replacement,
+                Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>.Ok(browser.Details! with { Tool = "late" })));
+            long staleList = browser.BeginList(); await Cancel(chooser);
+            chooser = await Open();
+            Check("closed chooser callbacks rejected after reopen", !browser.CompleteList(staleList, (await Task.Run(() => observer.Assets.ListAssets()))));
+            await Select(chooser, replacement);
+            // Close on Confirm must not cancel the worker request; duplicate button input cannot submit twice.
+            var confirm = PickerField<Button>(chooser, "_confirm");
+            generation = (await Task.Run(() => observer.Control.Status())).SceneGeneration;
+            confirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); confirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check("Confirm closes while request is pending", !chooser.IsVisible && Busy() && !Choose().IsEnabled);
+            await NameUiWait(async () => !Busy() && (await ReadValue()).AsAsset() == replacement && Applied() && (await Task.Run(() => observer.Control.Status())).SceneGeneration > generation, "chooser transaction and apply settle");
+            Check("shared SDK observes actual chooser edit", (await ReadValue()).AsAsset() == replacement);
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "picker Undo");
+            Check("one Undo restores original", (await ReadValue()).Equals(original));
+            redo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).AsAsset() == replacement && Applied(), "picker Redo");
+            Check("Redo restores chosen GUID", (await ReadValue()).AsAsset() == replacement);
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "picker restore"); await Refreshed();
+
+            chooser = await Open();
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, PropertyValue.FromAsset(replacement)) }); });
+            _ = observer.Authoring.DrainFailures();
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); });
+            await NameUiWait(() => !PickerField<Button>(chooser, "_confirm").IsEnabled, "change-and-restore invalidates target");
+            Check("observed target restoration cannot revive chooser", !PickerField<Button>(chooser, "_confirm").IsEnabled);
+            await Cancel(chooser);
+            chooser = await Open();
+            EntityGuid other = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!.First(r => r.Node != node).Node;
+            var worker = NameUiField<EditorWorker>(window, "_worker")!;
+            worker.ShowSelection(other); worker.ShowSelection(node);
+            await NameUiWait(() => !PickerField<Button>(chooser, "_confirm").IsEnabled, "worker selection changes invalidate");
+            Check("selection away and back remains stale", !PickerField<Button>(chooser, "_confirm").IsEnabled);
+            await Cancel(chooser);
+            chooser = await Open(); await Select(chooser, replacement); await Confirm(chooser);
+            await NameUiWait(Applied, "chooser edit before persistence check");
+            if (sourceBefore is not null)
+            {
+                Check("chosen reference Save accepted", (await Task.Run(() => observer.Authoring.Save())) is null);
+                Check("chosen reference reopen accepted", (await Task.Run(() => observer.Authoring.Open())) is null);
+                await NameUiWait(async () => (await ReadValue()).AsAsset() == replacement, "saved chooser reference reopened");
+                Check("Save and reopen preserve chosen GUID", (await ReadValue()).AsAsset() == replacement);
+                File.WriteAllBytes(info.SourcePath, sourceBefore);
+                await Task.Run(() => { observer.Authoring.Open(); observer.Authoring.Apply(); });
+            }
+            else
+            {
+                Check("imported Save retains refusal", (await Task.Run(() => observer.Authoring.Save())) == SaveError.ImportedSceneNotSavable);
+                await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); observer.Authoring.Apply(); });
+            }
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "persistence fixture restored"); await Refreshed();
+
+            // A removed Inspector row cannot redirect its launch to the new node.
+            var entities = NameUiField<ListBox>(window, "_entities")!;
+            Button staleChoose = Choose();
+            var rowsNow = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+            entities.SelectedItem = rowsNow.First(r => r.Node != node);
+            staleChoose.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Check("stale Inspector row cannot launch on another node", !Busy() && Picker() is null);
+            entities.SelectedItem = rowsNow.First(r => r.Node == node);
+            await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node, "selection restored for launch failure");
+            worker.ShowSelection(other);
+            Box().Focus(); Box().Text = replacement.ToString(); NameUiKey(Box(), Key.F4);
+            await NameUiWait(() => !Busy(), "worker refuses outdated capture");
+            Check("launch failure cannot submit replaced draft", Picker() is null && (await ReadValue()).Equals(original));
+            worker.ShowSelection(node);
+            await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node, "worker selection restored after refusal");
+
+            // Optional absence is a value state, not a failed read.
+            Row().Children.OfType<Button>().Single(b => b.Content?.ToString() == "×").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).IsAbsent && Applied(), "clear optional material"); await Refreshed();
+            chooser = await Open();
+            Check("optional absent target captured", chooser.Target.Before.IsAbsent);
+            await Select(chooser, original.AsAsset()); await Confirm(chooser);
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "assign absent material");
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).IsAbsent && Applied(), "undo absent assignment");
+            Check("Undo preserves optional absence", (await ReadValue()).IsAbsent);
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "undo optional clear"); await Refreshed();
+
+            NameUiField<Button>(window, "_pause")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => NameUiField<Button>(window, "_play")!.IsEnabled, "Runtime paused");
+            chooser = await Open(); await Select(chooser, replacement); await Confirm(chooser);
+            await NameUiWait(() => NameUiField<TextBlock>(window, "_applyLine")!.Text!.Contains("paused", StringComparison.Ordinal), "chooser apply held while paused");
+            Check("paused confirmation commits document and holds apply", (await ReadValue()).AsAsset() == replacement);
+            NameUiField<Button>(window, "_step")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(Applied, "Step applies chooser edit");
+            Check("Step releases held apply", Applied());
+            NameUiField<Button>(window, "_play")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => NameUiField<Button>(window, "_pause")!.IsEnabled, "Runtime resumed");
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "restore paused choice"); await Refreshed();
+
+            chooser = await Open(); await Select(chooser, replacement); await Confirm(chooser);
+            await NameUiWait(Applied, "edit before outside overwrite");
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); observer.Authoring.Apply(); });
+            await NameUiWait(() => Box().Text == original.AsAsset().ToString(), "outside overwrite observed");
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => NameUiField<TextBlock>(window, "_editLine")!.Text!.Contains("changed elsewhere", StringComparison.Ordinal), "conflicting Undo refused");
+            Check("outside overwrite refuses picker history replay", (await ReadValue()).Equals(original));
+            await NameUiWait(Applied, "outside apply settles"); await Refreshed();
+
+            chooser = await Open();
+            Check("document reopen accepted", (await Task.Run(() => observer.Authoring.Open())) is null);
+            await NameUiWait(() => !PickerField<Button>(chooser, "_confirm").IsEnabled, "identical-value document reopen invalidates");
+            Check("reopen with same GUID invalidates chooser", !PickerField<Button>(chooser, "_confirm").IsEnabled);
+            await Cancel(chooser);
+
+            // Normal text editing after chooser cancellation must still commit.
+            Box().Focus(); Box().Text = replacement.ToString(); NameUiKey(Box(), Key.Enter); window.Focus();
+            await NameUiWait(async () => (await ReadValue()).AsAsset() == replacement && Applied(), "normal text edit after cancel");
+            Check("launch suppression does not leak into text editing", (await ReadValue()).AsAsset() == replacement);
+            undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "normal edit restored");
+        }
+        finally
+        {
+            Picker()?.Close();
+            if (sourceBefore is not null) File.WriteAllBytes(info.SourcePath, sourceBefore);
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); observer.Authoring.Apply(); });
+        }
+        var disconnectedChooser = await Open();
+        using (var process = System.Diagnostics.Process.GetProcessById(runtime.Pid))
+        { process.Kill(entireProcessTree: true); process.WaitForExit(); }
+        await NameUiWait(() => !PickerField<Button>(disconnectedChooser, "_confirm").IsEnabled, "cached-list chooser invalidates on real session failure");
+        Check("real transport failure disables cached-list Confirm", !PickerField<Button>(disconnectedChooser, "_confirm").IsEnabled);
+        disconnectedChooser.Close();
+    }
+
+
+
     private static T? NameUiField<T>(MainWindow window, string field) where T : class =>
         typeof(MainWindow).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window) as T;
 
     private static void NameUiSnapshot(MainWindow window, InspectorSnapshot snapshot) =>
         typeof(MainWindow).GetMethod("OnInspectorChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
                           .Invoke(window, new object[] { snapshot });
+
+    // Wire calls of the independent observer must not block the Windows dispatcher,
+    // particularly while a dialog disables the owner of the native child window.
+    private static async Task NameUiWait(Func<Task<bool>> ready, string purpose, int seconds = 30)
+    {
+        long deadline = Environment.TickCount64 + seconds * 1000L;
+        while (!await ready())
+        {
+            if (Environment.TickCount64 >= deadline) throw new TimeoutException(purpose);
+            await Task.Delay(25);
+        }
+    }
 
     private static async Task NameUiWait(Func<bool> ready, string purpose, int seconds = 30)
     {
@@ -398,7 +656,9 @@ public static partial class Program
         await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == replacement.Guid, "actual material Redo");
         Check("assets UI: actual Redo restores GUID", document.GetProperty(address)!.Value.AsAsset() == replacement.Guid);
         undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == original, "restore original material");
+        await NameUiWait(() => document.GetProperty(address)!.Value.AsAsset() == original && redo.IsEnabled &&
+            redo.Content?.ToString() == "Redo edit Renderable.materialAsset" &&
+            NameUiField<TextBlock>(window, "_applyLine")!.Text!.StartsWith("apply: applied", StringComparison.Ordinal), "restore original material and settle history/apply");
     }
 
     private static void InspectorChecks()
