@@ -39,7 +39,7 @@ constexpr std::string_view kUsage =
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
-    "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
@@ -275,6 +275,7 @@ int Invocation::runSceneTransaction(std::span<const std::string_view> tokens) {
 
 Reply Invocation::awaitOutcome(Reply reply) {
   if (reply.outcome != Outcome::Submitted) return reply;
+  if (reply.command == "scene apply" && options_.transportFailure && options_.transportFailure()) return reply;
   const bool isStep = reply.command == "runtime step";
   // Plan 0065 P6 (Spec 0065 third Correction): an apply while the Runtime is
   // paused reloads only at a step or on resume, like a write: it is not
@@ -284,7 +285,7 @@ Reply Invocation::awaitOutcome(Reply reply) {
     layer_.deferApply();
     Reply pending = std::move(reply);
     pending.outcome = Outcome::Done;
-    pending.text = "pending apply (the Runtime is paused; it reloads at the next step)\n";
+    pending.text = "pending apply " + pending.result.find("id")->asString() + ", revision " + json::write(*pending.result.find("documentRevision")) + " (the Runtime is paused; it reloads at the next step)\n";
     Value outcome = Value::object();
     outcome.set("pending", Value::boolean(true));
     pending.result.set("outcome", std::move(outcome));
@@ -315,6 +316,10 @@ Reply Invocation::awaitOutcome(Reply reply) {
       error.category = ErrorCategory::Runtime;
       error.message = "no outcome within " + std::to_string(options_.outcomeTimeout.count()) + " ms";
       error.subject = reply.result.isNull() ? Value::object() : reply.result;
+      if (command == "scene apply") {
+        if (const auto* id = reply.result.find("id"); id && id->isString())
+          error.message = "apply " + id->asString() + " completion unknown: " + error.message;
+      }
       error.text = "error: " + error.message;
       return errorReply(command, std::move(error));
     }
@@ -325,12 +330,37 @@ Reply Invocation::awaitOutcome(Reply reply) {
 }
 
 int Invocation::finish(Reply reply) {
-  if (options_.transportFailure) {
-    if (std::optional<CliError> failure = options_.transportFailure()) {
-      layer_.abandon();
-      return reportError(*failure, reply.command, options_, out_, err_);
+  const auto transportFailure = [&](const Reply& checked) -> std::optional<int> {
+    if (!options_.transportFailure) return std::nullopt;
+    auto failure = options_.transportFailure();
+    if (!failure) return std::nullopt;
+    layer_.abandon();
+    if (checked.command.starts_with("scene apply")) {
+      failure->subject = checked.result;
+      const auto* id = checked.result.find("id");
+      if (checked.command == "scene apply" && id && id->isString()) {
+        failure->subject = Value::object();
+        failure->subject.set("id", *id);
+        if (const auto* revision = checked.result.find("documentRevision"))
+          failure->subject.set("documentRevision", *revision);
+      }
+      failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
+      failure->text = "error: " + failure->message;
     }
-  }
+    if (const auto deferred = layer_.takeDeferredApply()) {
+      const std::string id = connection::authoring::toString(deferred->id);
+      if (!failure->subject.isObject()) failure->subject = Value::object();
+      Value receipt = Value::object();
+      receipt.set("id", Value::string(id));
+      receipt.set("documentRevision", Value::number(deferred->documentRevision));
+      failure->subject.set("deferredApply", std::move(receipt));
+      failure->message += "; deferred apply " + id + " completion unknown";
+      failure->text = "error: " + failure->message;
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, exitCode(failure->category));
+    }
+    return reportError(*failure, checked.command, options_, out_, err_);
+  };
+  if (const auto transport = transportFailure(reply)) return *transport;
   std::vector<connection::Diagnostic> diagnostics;
   if (control_ != nullptr) {
     connection::DiagnosticBatch batch = control_->diagnostics(diagnosticCursor_, kDiagnosticsPerCommand);
@@ -339,11 +369,24 @@ int Invocation::finish(Reply reply) {
   }
   print(reply, diagnostics, options_, out_, err_);
   // Plan 0065 P6: a deferred apply's outcome, once its reload has swapped.
-  if (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) print(*applied, {}, options_, out_, err_);
-  return reply.error ? exitCode(reply.error->category) : 0;
+  int code = reply.error ? exitCode(reply.error->category) : 0;
+  while (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) {
+    if (const auto transport = transportFailure(*applied)) {
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, *transport);
+      return *transport;
+    }
+    print(*applied, {}, options_, out_, err_);
+    if (applied->error) {
+      const int deferredCode = exitCode(applied->error->category);
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, deferredCode);
+      code = std::max(code, deferredCode);
+    }
+  }
+  return code;
 }
 
 int Invocation::repl(std::istream& in) {
+  deferredApplyExitCode_ = 0;
   std::string line;
   while (true) {
     err_ << "atlantis> " << std::flush;
@@ -354,7 +397,7 @@ int Invocation::repl(std::istream& in) {
     (void)runTokens(tokens, line);
   }
   err_ << '\n' << std::flush;
-  return 0;
+  return deferredApplyExitCode_;
 }
 
 }  // namespace atlantis::cli

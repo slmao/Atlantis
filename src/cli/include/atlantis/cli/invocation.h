@@ -75,7 +75,8 @@ class Invocation {
   void setAuthoring(CommandLayer::AuthoringProvider provider) { layer_.setAuthoring(std::move(provider)); }
   // `atlantis repl`: one command per line from `in` (the prompt `atlantis> `
   // goes to stderr, so stdout carries only output) until `exit`, `quit` or
-  // end of input; a command's error does not end the session. Returns 0.
+  // end of input. Command errors do not end the session. A reported deferred
+  // apply failure contributes to the process exit code.
   int repl(std::istream& in);
 
   // Prints `error` as the outcome of `command` (a failure before any
@@ -98,6 +99,7 @@ class Invocation {
   std::ostream& err_;
   InvocationOptions options_;
   std::uint64_t diagnosticCursor_ = 0;
+  int deferredApplyExitCode_ = 0;
 };
 
 }  // namespace atlantis::cli

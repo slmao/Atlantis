@@ -4,7 +4,6 @@
 #include <atlantis/connection/authoring_connection.h>
 #include <atlantis/runtime/runtime_application.h>
 
-#include <cstdint>
 #include <filesystem>
 #include <memory>
 
@@ -26,7 +25,7 @@ struct AuthoringSources {
 // The session is created lazily, on the first connect() -- an atlantis_runtime
 // that is never edited pays nothing (Plan 0065 J4). Its document is the
 // Runtime's own scene; its sink is RuntimeApplication::requestSceneReload();
-// afterFrame() turns a swapped reload into Applied{generation}. Frame thread
+// afterFrame() publishes the correlated reload outcome. Frame thread
 // only. Borrows the application: declared after it, destroyed before it, and
 // every connection it handed out must be closed first.
 class AuthoringHost {
@@ -40,7 +39,7 @@ class AuthoringHost {
   // scene's source cannot be located.
   [[nodiscard]] std::unique_ptr<atlantis::connection::AuthoringConnection> connect();
 
-  // After each runFrame(): reports a reload that swapped.
+  // After each runFrame(), or before orderly teardown: publishes the outcome.
   void afterFrame();
 
   // The session, once created; null before the first connect().
@@ -51,7 +50,6 @@ class AuthoringHost {
   AuthoringSources sources_;
   std::unique_ptr<atlantis::authoring::AuthoringSession> session_;
   bool unavailable_ = false;
-  std::uint64_t generation_ = 0;
 };
 
 }  // namespace atlantis::runtime

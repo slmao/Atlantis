@@ -189,6 +189,12 @@ public sealed class GizmoDragController
         return new EditPlan(label, commands);
     }
 
+    /// <summary>Recovery invalidation: abandon uncommitted input without writing a stale World snapshot.</summary>
+    public void Abandon()
+    {
+        _node = null; _latest = null; _descendants = new List<(EntityGuid, float[])>();
+    }
+
     /// <summary>Writes the start matrices back (a refused release, or a cancelled drag) and ends the drag.</summary>
     public void Revert()
     {

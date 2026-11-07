@@ -73,8 +73,8 @@ public static partial class Program
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = "product-name-and-asset-ui-smoke",
-            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events (including pre-focus pointer press and release), plus controlled stale-snapshot/detail callbacks on the UI dispatcher. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
+            kind = "product-name-asset-and-apply-ui-smoke",
+            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events, plus controlled callback and Gizmo inputs. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
         };
@@ -105,17 +105,36 @@ public static partial class Program
         {
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
-                var window = new MainWindow(new EditorOptions(_runtime, _scene));
+                bool legacyReadiness = _scene == "--legacy-readiness";
+                var window = new MainWindow(new EditorOptions(_runtime, legacyReadiness ? "integrated_showcase_demo" : _scene));
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
                 {
-                    try { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
+                    try
+                    {
+                        if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
+                    }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
                     finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
                 };
             }
             base.OnFrameworkInitializationCompleted();
         }
+    }
+
+    private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        var edit = NameUiField<TextBlock>(window, "_editLine")!;
+        await NameUiWait(() => edit.Text?.Contains("BadRequest", StringComparison.Ordinal) == true,
+            "legacy Runtime refusal at read-only readiness");
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        work(Path.GetDirectoryName(runtime.SessionPath)!);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        bool unopened = await Task.Run(() => observer.Authoring.Document() is null);
+        checks.Add(new NameUiCheck("legacy Runtime refused before open or history", unopened &&
+            !NameUiField<Button>(window, "_undo")!.IsEnabled &&
+            !NameUiField<Button>(window, "_retryApply")!.IsEnabled, edit.Text!));
     }
 
     private static T PickerField<T>(AssetReferencePickerWindow window, string name) where T : class =>
@@ -147,6 +166,15 @@ public static partial class Program
         AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
         bool Busy() => (bool)typeof(MainWindow).GetField("_referenceBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
         bool Applied() => NameUiField<TextBlock>(window, "_applyLine")!.Text!.StartsWith("apply: applied", StringComparison.Ordinal);
+        string ApplyText() => NameUiField<TextBlock>(window, "_applyLine")!.Text ?? "";
+        Button Retry() => NameUiField<Button>(window, "_retryApply")!;
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        async Task ApplyCurrent(string stage)
+        {
+            ulong before = (await Task.Run(() => observer.Control.Status())).SceneGeneration;
+            await NameUiWait(() => Retry().IsEnabled, stage + " Retry enabled"); Click(Retry());
+            await NameUiWait(async () => Applied() && (await Task.Run(() => observer.Control.Status())).SceneGeneration > before, stage, 60);
+        }
         async Task Refreshed() => await NameUiWait(async () => !Busy() && window.IsEffectivelyEnabled && Box().Text ==
             ((await ReadValue()).IsAbsent ? "" : (await ReadValue()).AsAsset().ToString()), "picker target Inspector refreshed");
         async Task<AssetReferencePickerWindow> Open()
@@ -318,7 +346,9 @@ public static partial class Program
                 await NameUiWait(async () => (await ReadValue()).AsAsset() == replacement, "saved chooser reference reopened");
                 Check("Save and reopen preserve chosen GUID", (await ReadValue()).AsAsset() == replacement);
                 File.WriteAllBytes(info.SourcePath, sourceBefore);
-                await Task.Run(() => { observer.Authoring.Open(); observer.Authoring.Apply(); });
+                await Task.Run(() => observer.Authoring.Open());
+                await NameUiWait(() => ApplyText().Contains("reopened", StringComparison.Ordinal), "source restore reopen observed");
+                await ApplyCurrent("explicit apply after restoring source");
             }
             else
             {
@@ -383,6 +413,8 @@ public static partial class Program
             await NameUiWait(() => !PickerField<Button>(chooser, "_confirm").IsEnabled, "identical-value document reopen invalidates");
             Check("reopen with same GUID invalidates chooser", !PickerField<Button>(chooser, "_confirm").IsEnabled);
             await Cancel(chooser);
+            await NameUiWait(() => ApplyText().Contains("reopened", StringComparison.Ordinal), "same-value reopen suspends automatic apply");
+            await ApplyCurrent("apply current document after same-value reopen");
 
             // Normal text editing after chooser cancellation must still commit.
             Box().Focus(); Box().Text = replacement.ToString(); NameUiKey(Box(), Key.Enter); window.Focus();
@@ -390,6 +422,139 @@ public static partial class Program
             Check("launch suppression does not leak into text editing", (await ReadValue()).AsAsset() == replacement);
             undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "normal edit restored");
+
+            // Real post-acceptance failure: Material references accept a GUID in
+            // Authoring, but a Mesh cannot resolve as a Runtime material.
+            AssetGuid incompatible = (await Task.Run(() => observer.Assets.ListAssets())).Value
+                .First(x => x.Type == Atlantis.Gameplay.Assets.AssetType.Mesh).Guid;
+            Click(NameUiField<Button>(window, "_pause")!);
+            var stepButton = NameUiField<Button>(window, "_step")!;
+            await NameUiWait(() => stepButton.IsEnabled, "pause before incompatible apply");
+            ulong oldGeneration = (await Task.Run(() => observer.Control.Status())).SceneGeneration;
+            chooser = await Open(); await Select(chooser, incompatible); await Confirm(chooser);
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "incompatible edit accepted and held");
+            var pending = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Check("incompatible document edit accepted before Runtime result", pending.State == ApplyState.Pending &&
+                (await ReadValue()).AsAsset() == incompatible && undo.IsEnabled);
+
+            worker.BeginGizmoDrag(GizmoAxis.X);
+            var drag = typeof(EditorWorker).GetField("_gizmo", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker) as GizmoDragController;
+            await NameUiWait(() => drag?.Dragging == true, "uncommitted gesture active before failed Step");
+            SceneAddress position = SceneSchema.AddressOf(document.Schema, node, "Transform", "localPosition")!.Value;
+            var oldPosition = await Task.Run(() => document.GetProperty(position));
+            Click(stepButton); worker.EndGizmoDrag(1, System.Diagnostics.Stopwatch.GetTimestamp());
+            await NameUiWait(() => ApplyText().Contains("ScenePreparationFailed", StringComparison.Ordinal) && Retry().IsEnabled,
+                "failure reaches UI even with no Applied event", 60);
+            var failed = (await Task.Run(() => observer.Authoring.ApplyStatus(pending.Receipt.Id))).Value!;
+            Check("typed failure retains document, history and old World generation", failed.Request?.State == ApplyState.Failed &&
+                failed.Request.Error == ReloadError.ScenePreparationFailed && (await ReadValue()).AsAsset() == incompatible && undo.IsEnabled &&
+                (await Task.Run(() => observer.Control.Status())).SceneGeneration == oldGeneration);
+            bool drained = false; worker.ReadAsset(incompatible, _ => drained = true);
+            await NameUiWait(() => drained, "late release drained after recovery invalidation");
+            Check("recovery abandons gesture and its late release without a document edit", drag?.Dragging == false &&
+                !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && (await Task.Run(() => document.GetProperty(position))).Equals(oldPosition) &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.CurrentDocumentRevision == failed.CurrentDocumentRevision);
+
+            string runtimeDir = Path.GetDirectoryName(runtime.Launch.RuntimePath)!;
+            string cli = Path.GetFullPath(Path.Combine(runtimeDir, "..", "..", "cli", Path.GetFileName(runtimeDir), "atlantis.exe"));
+            int cliExit = await Task.Run(() => IntegrationTest.Cli(cli, runtime.SessionPath, "--json", "scene", "apply-status", pending.Receipt.Id.ToString()));
+            string cliLog = File.ReadAllText(Path.Combine(Path.GetDirectoryName(runtime.SessionPath)!, "name-cli.log"));
+            Check("CLI sees the same failed receipt with nonzero exit", cliExit != 0 && cliLog.Contains(pending.Receipt.Id.ToString(), StringComparison.Ordinal) &&
+                cliLog.Contains("ScenePreparationFailed", StringComparison.Ordinal));
+
+            Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "Undo repair while suspended");
+            Check("suspended Undo sends no apply", (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt.Id == pending.Receipt.Id);
+            Click(redo); await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "Redo while suspended");
+            Check("suspended Redo sends no apply", (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt.Id == pending.Receipt.Id);
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "retry of still-invalid document");
+            var repeated = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Click(stepButton);
+            await NameUiWait(() => ApplyText().Contains("ScenePreparationFailed", StringComparison.Ordinal) && Retry().IsEnabled,
+                "repeated failure returns to recovery", 60);
+            Check("repeated failure is correlated and retains history", repeated.Receipt.Id != pending.Receipt.Id &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus(repeated.Receipt.Id))).Value!.Request!.State == ApplyState.Failed && undo.IsEnabled);
+            Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "repair again before retry");
+            var beforeSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
+            Click(NameUiField<Button>(window, "_save")!);
+            var saveNotice = NameUiField<TextBlock>(window, "_editLine")!;
+            await NameUiWait(() => saveNotice.Text?.StartsWith(
+                info.Provenance == Provenance.Imported ? "save refused" : "saved ", StringComparison.Ordinal) == true,
+                "save during recovery");
+            var afterSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
+            Check("Save during recovery keeps revision, receipt and Runtime projection",
+                afterSave == beforeSave && (await Task.Run(() => observer.Control.Status())).SceneGeneration == oldGeneration);
+            Click(Retry()); Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal) && !Retry().IsEnabled, "one explicit retry held");
+            var repair = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Check("retry has a new receipt for the repaired revision", repair.Receipt.Id != pending.Receipt.Id && repair.State == ApplyState.Pending &&
+                repair.Receipt.DocumentRevision > pending.Receipt.DocumentRevision);
+            Click(redo); await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "local Redo during pending recovery");
+            Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "local Undo during pending recovery");
+            Check("local commits do not replace a pending recovery attempt",
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt == repair.Receipt);
+            Click(stepButton);
+            await NameUiWait(async () => (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request is
+                { State: ApplyState.Pending } next && next.Receipt.Id != repair.Receipt.Id, "one coalesced latest recovery after Step", 60);
+            var coalesced = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Check("coalesced recovery waits for its own Step and leaves previews blocked",
+                coalesced.Receipt.DocumentRevision > repair.Receipt.DocumentRevision &&
+                !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && !Retry().IsEnabled);
+            Click(stepButton); await NameUiWait(Applied, "second Step settles coalesced recovery", 60);
+            var repaired = (await Task.Run(() => observer.Authoring.ApplyStatus(coalesced.Receipt.Id))).Value!;
+            Check("repair succeeds, restores preview and retains redo history", repaired.Request?.State == ApplyState.Applied &&
+                repaired.Projection?.Receipt == coalesced.Receipt && repaired.CurrentDocumentRevision == coalesced.Receipt.DocumentRevision &&
+                NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && redo.IsEnabled);
+
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "local request before external replacement");
+            var displaced = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            var outsideApply = (await Task.Run(() => observer.Authoring.ApplyTracked())).Value!;
+            await NameUiWait(() => ApplyText().Contains("superseded", StringComparison.OrdinalIgnoreCase) && Retry().IsEnabled, "external replacement observed");
+            Check("external replacement is reported for the local receipt",
+                (await Task.Run(() => observer.Authoring.ApplyStatus(displaced.Receipt.Id))).Value!.Request!.SupersededBy == outsideApply.Id);
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "recovery request before external edit");
+            var staleRevision = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Click(redo);
+            await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "queue local Redo before external edit");
+            Click(undo);
+            await NameUiWait(async () => (await ReadValue()).Equals(original), "queue local Undo before external edit");
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); });
+            Check("external equal-value edit still advances revision", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0 &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.CurrentDocumentRevision > staleRevision.Receipt.DocumentRevision);
+            Click(stepButton);
+            await NameUiWait(() => ApplyText().Contains("document/projection changed", StringComparison.Ordinal) && Retry().IsEnabled,
+                "historical success keeps recovery suspended", 60);
+            Check("external edit prevents queued recovery apply and keeps previews blocked",
+                (await Task.Run(() => observer.Authoring.ApplyStatus(staleRevision.Receipt.Id))).Value!.Request!.State == ApplyState.Applied &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt == staleRevision.Receipt &&
+                !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled);
+
+            Click(Retry()); await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "old snapshot held before shared reopen");
+            var oldRequest = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            byte[] reopenBackup = File.ReadAllBytes(info.SourcePath);
+            try
+            {
+                File.WriteAllText(info.SourcePath, "invalid disposable scene source");
+                Check("refused shared reopen preserves document, history and recovery",
+                    (await Task.Run(() => observer.Authoring.Open())) == OpenError.SourceParseFailed &&
+                    (await Task.Run(() => observer.Authoring.ApplyStatus(oldRequest.Receipt.Id))).Value!.Request!.State == ApplyState.Pending &&
+                    (await ReadValue()).Equals(original) && redo.IsEnabled && !Retry().IsEnabled);
+            }
+            finally { File.WriteAllBytes(info.SourcePath, reopenBackup); }
+            Check("shared reopen succeeds with older request pending", (await Task.Run(() => observer.Authoring.Open())) is null);
+            await NameUiWait(() => ApplyText().Contains("reopened", StringComparison.Ordinal) && !undo.IsEnabled && !redo.IsEnabled,
+                "reopen clears history and invalidates local waiter");
+            Check("shared reopen does not cancel the accepted snapshot", (await Task.Run(() => observer.Authoring.ApplyStatus(oldRequest.Receipt.Id))).Value!.Request!.State == ApplyState.Pending);
+            Click(stepButton);
+            await NameUiWait(async () => (await Task.Run(() => observer.Authoring.ApplyStatus(oldRequest.Receipt.Id))).Value!.Request!.State == ApplyState.Applied,
+                "older snapshot can still swap after shared reopen", 60);
+            Check("old successful snapshot cannot settle reopened document", !Applied() && !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled &&
+                ApplyText().Contains("reopened", StringComparison.Ordinal) && !undo.IsEnabled);
+            Click(NameUiField<Button>(window, "_play")!);
+            await NameUiWait(() => !stepButton.IsEnabled, "resume before final explicit apply");
+            await ApplyCurrent("reopened document explicitly projected"); await Refreshed();
         }
         finally
         {

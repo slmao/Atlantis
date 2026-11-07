@@ -276,6 +276,44 @@ enum class ApplyError : std::uint8_t {
 [[nodiscard]] std::string_view toString(SaveError error) noexcept;
 [[nodiscard]] std::string_view toString(ApplyError error) noexcept;
 
+// Spec 0083 / ADR-0144. Owned observation values; no Runtime or asset identity.
+struct ApplyId {
+  asset_system::GuidBytes bytes{};
+  friend auto operator<=>(const ApplyId&, const ApplyId&) = default;
+};
+[[nodiscard]] Result<ApplyId, asset_system::GuidParseError> parseApplyId(std::string_view text);
+[[nodiscard]] std::string toString(const ApplyId& id);
+struct ApplyReceipt {
+  ApplyId id;
+  std::uint64_t documentRevision = 0;
+  friend bool operator==(const ApplyReceipt&, const ApplyReceipt&) = default;
+};
+enum class ApplyState : std::uint8_t { Pending, Applied, Failed, Superseded };
+enum class ReloadError : std::uint8_t { ScenePreparationFailed, RenderPreparationFailed, RuntimeStopped };
+enum class ApplyLookupError : std::uint8_t { UnknownApply };
+[[nodiscard]] std::string_view toString(ApplyState state) noexcept;
+[[nodiscard]] std::string_view toString(ReloadError error) noexcept;
+[[nodiscard]] std::string_view toString(ApplyLookupError error) noexcept;
+struct ApplyRecord {
+  ApplyReceipt receipt;
+  ApplyState state = ApplyState::Pending;
+  std::optional<std::uint64_t> generation;
+  std::optional<ReloadError> error;
+  std::optional<ApplyId> supersededBy;
+  friend bool operator==(const ApplyRecord&, const ApplyRecord&) = default;
+};
+struct ApplyProjection {
+  ApplyReceipt receipt;
+  std::uint64_t generation = 0;
+  friend bool operator==(const ApplyProjection&, const ApplyProjection&) = default;
+};
+struct ApplySnapshot {
+  std::optional<std::uint64_t> currentDocumentRevision;
+  std::optional<ApplyRecord> request;
+  std::optional<ApplyProjection> projection;
+  friend bool operator==(const ApplySnapshot&, const ApplySnapshot&) = default;
+};
+
 }  // namespace authoring
 
 // Not thread-safe (ADR-0004): every call on the host's frame thread, between
@@ -321,6 +359,13 @@ class AuthoringConnection {
   // hand-authored source atomically (ADR-0129 D4).
   virtual atlantis::Result<std::monostate, authoring::OpenError> open() = 0;
   virtual atlantis::Result<std::monostate, authoring::ApplyError> apply() = 0;
+  // Acceptance only; the immutable snapshot has an identity. Query until terminal,
+  // not until a different client's Applied event. No implicit retry/cancellation.
+  virtual Result<authoring::ApplyReceipt, authoring::ApplyError> applyTracked() = 0;
+  // Non-destructive, shared, bounded metadata (64 terminals + pending + projection).
+  // No id means global newest, not this connection's last apply. Unknown is not failure.
+  [[nodiscard]] virtual Result<authoring::ApplySnapshot, authoring::ApplyLookupError> applyStatus(
+      std::optional<authoring::ApplyId> id = std::nullopt) const = 0;
   virtual atlantis::Result<std::monostate, authoring::SaveError> save() = 0;
 };
 

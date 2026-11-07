@@ -226,8 +226,8 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   its next frame that applies commands — while the Runtime is paused, at the
   next step or on resume, after the held commands (Spec 0065 third
   Correction); subscribers then receive `Applied` with the new
-  `control.status` `sceneGeneration` (a failed reload emits nothing and is a
-  Runtime diagnostic);
+  `control.status` `sceneGeneration`. A failed reload still emits no legacy
+  event; use the correlated status below for its outcome;
 - `authoring.save` writes a hand-authored source atomically; an imported
   scene's save is refused.
 
@@ -271,6 +271,45 @@ adding typed validation, retries or a session-failure requirement for raw refusa
 List-all sends one complete reply using existing limits (§3), including the shared
 64 MiB pending-output budget. Overflow disconnects, never truncates or succeeds
 empty. There is no pagination, streaming, new cap, event or capability handshake.
+
+### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
+
+| Method | Params | Result |
+|---|---|---|
+| `authoring.applyTracked` | `{}` | `{"ok":<Receipt>}` or `{"err":"<ApplyError>"}` |
+| `authoring.applyStatus` | `{}` or `{"id":null}` or `{"id":"<ApplyId>"}` | `{"ok":<Snapshot>}` or `{"err":"UnknownApply"}` for an unavailable explicit id |
+
+```
+Receipt  {"id":"<ApplyId>","documentRevision":<uint64>}
+Snapshot {"currentDocumentRevision":<uint64>|null,"request":<Record>|null,
+          "projection":{"receipt":<Receipt>,"generation":<uint64>}|null}
+Record   {"receipt":<Receipt>,"state":"Pending"}
+       | {"receipt":<Receipt>,"state":"Applied","generation":<uint64>}
+       | {"receipt":<Receipt>,"state":"Failed","error":"<ReloadError>"}
+       | {"receipt":<Receipt>,"state":"Superseded","supersededBy":"<ApplyId>"}
+```
+
+IDs are opaque non-nil canonical GUID strings. Revisions and generations in
+receipts/outcomes are positive. Reload errors are `ScenePreparationFailed`,
+`RenderPreparationFailed`, or `RuntimeStopped`. Invalid ids are outer
+`BadRequest`; absence of the provider is `NoAuthoring`. An old Runtime may
+return `BadRequest` for the new methods; typed clients treat that as a protocol
+failure. They do not fall back to a mutating legacy call.
+
+Acceptance captures the document at that revision. Revisions advance on
+successful open or nonempty accepted transactions; save and apply do not
+advance them. The newest acceptance replaces any pending snapshot immediately,
+including during pause; rejection leaves the earlier snapshot pending. Applied
+is queryable before the legacy event is delivered. Failure leaves the accepted
+document intact; a recoverable failure keeps the existing World and generation.
+Neither a save nor a reopen is a Runtime swap.
+
+Status is non-destructive and shared across clients. Without an id it observes
+the newest accepted request. Explicit lookup works for the pending request,
+64 most recent terminal records, and the last successful projection even after
+its record is evicted. Reconnection to the same Runtime preserves those
+records; restart does not. An unavailable id or lost reply gives no proof of
+failure or success. Do not infer ownership from the newest record or retry blindly.
 
 ## 6. Values
 

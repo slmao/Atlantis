@@ -496,6 +496,8 @@ int main(int argc, char** argv) {
     if (editor) editor->update();
   }
 
+  app.stopSceneReloads();
+  authoring.afterFrame();
   if (editor) {
     app.detachOverlay();
     editor.reset();  // its connection closes before the application shuts down

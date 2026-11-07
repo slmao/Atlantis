@@ -42,6 +42,8 @@ internal static partial class Program
         ("authoring.open", "authoring.open", "{}", """{"ok":null}"""),
         ("authoring.document", "authoring.document", "{}", $$$"""{"scene":"{{{Entity}}}","provenance":"Imported","source":"C:\\源\\scene.txt","nodeCount":3}"""),
         ("authoring.apply", "authoring.apply", "{}", """{"ok":null}"""),
+        ("authoring.apply_tracked", "authoring.applyTracked", "{}", $$$"""{"ok":{"id":"{{{Entity}}}","documentRevision":3}}"""),
+        ("authoring.apply_status", "authoring.applyStatus", "{}", $$$"""{"ok":{"currentDocumentRevision":3,"request":{"receipt":{"id":"{{{Entity}}}","documentRevision":3},"state":"Failed","error":"ScenePreparationFailed"},"projection":null}}"""),
         ("authoring.save", "authoring.save", "{}", """{"ok":null}"""),
         ("authoring.active_camera", "authoring.activeCamera", "{}", """{"ok":null}"""),
         ("authoring.schema", "authoring.schema", "{}", """[{"id":"0x123456789abcdef0","name":"scene::Light","kind":"Enum","version":2,"fields":[],"constants":[{"name":"Point","value":-1}]}]"""),
@@ -112,7 +114,7 @@ internal static partial class Program
     private static void MappingChecks()
     {
         Check(ToolRegistry.Mappings.Select(m => m.Tool.Name).Order().SequenceEqual(Cases.Select(c => c.Tool).Order()),
-            "exactly the 23 approved exact-tier names, without subscription management");
+            "exactly the approved exact-tier names, without subscription management");
         Check(ToolRegistry.Mappings.Select(m => m.Method).Distinct().Count() == Cases.Length, "one distinct wire method per tool");
         foreach (var c in Cases)
         {
@@ -233,6 +235,8 @@ internal static partial class Program
         }
         Refusals<A.OpenError>("authoring.open");
         Refusals<A.ApplyError>("authoring.apply");
+        Refusals<A.ApplyError>("authoring.apply_tracked");
+        Refusals<A.ApplyLookupError>("authoring.apply_status");
         Refusals<A.SaveError>("authoring.save");
         Refusals<ControlError>("control.step");
         Refusals<ControlError>("control.raycast");
@@ -302,7 +306,7 @@ internal static partial class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 34 approved tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 36 approved tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;

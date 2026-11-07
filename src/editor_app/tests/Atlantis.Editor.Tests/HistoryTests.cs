@@ -83,6 +83,7 @@ public static partial class Program
                 reopened |= e is DocumentReopened;
             }
             if (reopened) History.Clear();
+            Apply.Poll();
         }
 
         /// <summary>The Runtime's reload answer: Applied for the next generation, settling an in-flight apply.</summary>

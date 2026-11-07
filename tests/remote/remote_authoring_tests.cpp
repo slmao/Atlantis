@@ -203,10 +203,13 @@ TEST_CASE("remote authoring: the document is reached, edited and observed over t
   // Apply needs the host's sink; the host's Applied reaches every subscriber.
   CHECK(a.apply().error() == ac::ApplyError::NoSceneSink);
   int reloads = 0;
-  served.session.setSceneSink([&](atlantis::asset_system::ValidatedSceneData) { return ++reloads > 0; });
+  served.session.setSceneSink([&](ac::ApplyId, atlantis::asset_system::ValidatedSceneData) {
+    ++reloads; return atlantis::Result<std::optional<ac::ApplyId>, std::monostate>::Ok({});
+  });
   REQUIRE(a.apply().isOk());
   CHECK(reloads == 1);
-  served.session.reportApplied(5);
+  const auto receipt = a.applyStatus().value().request->receipt;
+  served.session.reportReload(receipt.id, atlantis::Result<std::uint64_t, ac::ReloadError>::Ok(5));
   CHECK(b.drainEvents(everything).value() == std::vector<ac::Event>{ac::Applied{5}});
 
   // Save writes the source; unsubscribe; nothing failed on the wire.

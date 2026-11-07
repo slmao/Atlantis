@@ -1629,6 +1629,18 @@ and its amendments) Runtime can replace its scene:
 - `RuntimeStatus.sceneGeneration` counts the swaps (E2's history clears on its
   change).
 
+Spec 0083 / [ADR-0144](../adr/0144-correlated-authoring-apply-outcomes.md)
+tags the same single pending slot with an apply id. Runtime produces the
+post-frame outcome; the executable-private bridge publishes it to Authoring
+before clients poll. Authoring owns document revisions and bounded result
+metadata, with the last successful projection retained separately. Connection
+defines the shared receipt/status values; Remote carries them unchanged, and
+CLI, the SDKs and MCP expose them. Editor App observes its own receipt over the
+C# SDK and suspends automatic apply on failure or uncertain completion.
+Document edits and undo/redo remain available; Retry applies the latest document
+without replaying a transaction. No new World operation or Editor-only channel
+is involved. See [the wire contract](remote_protocol.md#53-correlated-authoring-apply-spec-0083--adr-0144).
+
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
 the clients' Viewport overlay:

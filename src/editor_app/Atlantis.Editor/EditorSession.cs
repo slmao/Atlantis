@@ -299,6 +299,9 @@ public sealed class EditorWorker : IDisposable
     private GizmoSpace _gizmoSpace = GizmoSpace.World;
     private bool _gizmoSnap;
     private (float Amount, long Ticks, int Count)? _pendingGizmo;
+    private bool _gizmoBlocked;
+    private long _gizmoRecoveryEpoch;
+    private (bool Apply, bool Preview)? _applyControls;
     private bool _gizmoActive;  // set and cleared by the worker, read under _lock
     private long? _commitTicks;  // the last commit's start, until its Applied dates it
     private int _previewBatches;
@@ -321,6 +324,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<DocumentInfo?>? DocumentOpened;
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
     public event Action<string>? ApplyStateChanged;
+    public event Action<bool, bool>? ApplyControlsChanged;
     // Plan 0068 M6: whether the Runtime is playing (false: paused).
     public event Action<bool>? PlayStateChanged;
     public event Action<IReadOnlyList<EntityGuid>>? NodesDestroyed;
@@ -549,6 +553,8 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M4: the press grabbed <paramref name="axis"/> of the selected node's Gizmo.</summary>
     public void BeginGizmoDrag(GizmoAxis axis) => Enqueue(session =>
     {
+        PollDocument(session);
+        if (_apply?.CanPreview != true) return;
         if (_gizmo is null || _selected is not EntityGuid node) return;
         GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
         GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
@@ -564,6 +570,7 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
+            if (_gizmoBlocked) return;
             int count = _pendingGizmo is { } pending ? pending.Count + 1 : 1;
             long first = _pendingGizmo is { } p ? p.Ticks : inputTicks;
             _pendingGizmo = (amount, first, count);
@@ -574,10 +581,12 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M4: the release -- the last batch is written, then the final matrix commits as one authoring transaction.</summary>
     public void EndGizmoDrag(float amount, long inputTicks)
     {
+        long epoch;
+        lock (_lock) epoch = _gizmoRecoveryEpoch;
         GizmoDragTo(amount, inputTicks);
         Enqueue(session =>
         {
-            lock (_lock) _gizmoActive = false;
+            lock (_lock) { if (epoch != _gizmoRecoveryEpoch) return; _gizmoActive = false; }
             ReleaseGizmo(session);
         });
     }
@@ -662,7 +671,7 @@ public sealed class EditorWorker : IDisposable
     // The release: one authoring transaction from the final matrix, then an apply; a refusal reverts the preview.
     private void ReleaseGizmo(RemoteSession session)
     {
-        if (_document is null || _apply is null || _gizmo is null) return;
+        if (_document is null || _apply is null || _gizmo is null || !_apply.CanPreview) return;
         EntityGuid? node = _selected;
         EditPlan plan = _gizmo.Release();
         if (plan.Refusal is string reason)
@@ -701,7 +710,7 @@ public sealed class EditorWorker : IDisposable
     // One batch of the drag: the node (and its descendants) previewed on the Runtime World, the overlay following.
     private void PreviewGizmo(RemoteSession session, float amount, long inputTicks, int coalesced)
     {
-        if (_gizmo is null) return;
+        if (_gizmo is null || _apply?.CanPreview != true) return;
         _gizmo.Preview(amount);
         ++_previewBatches;
         SendOverlay(session);
@@ -822,6 +831,14 @@ public sealed class EditorWorker : IDisposable
     });
 
     /// <summary>Writes the document to its source; an imported scene is refused with the reason (Spec 0068 R9).</summary>
+    public void RetryApply() => Enqueue(session =>
+    {
+        PollDocument(session);
+        _apply?.Retry();
+        _applyControls = null; // settle the button even when a retry is refused identically
+        PostApplyState();
+    });
+
     public void Save() => Enqueue(session =>
     {
         if (_document is null) return;
@@ -848,6 +865,10 @@ public sealed class EditorWorker : IDisposable
     {
         try
         {
+            // A read-only probe precedes automatic open and editable UI. An old
+            // Runtime fails through the existing protocol rules without a document write.
+            var readiness = session.Authoring.ApplyStatus();
+            if (!readiness.IsOk) throw new InvalidOperationException("authoring apply tracking unavailable");
             if (session.Authoring.Document() is null && session.Authoring.Open() is OpenError error)
             {
                 _log.Write("authoring: open refused: " + error);
@@ -859,11 +880,13 @@ public sealed class EditorWorker : IDisposable
             _tree.Rebuild(document);
             _document = document;
             _apply = new ApplyController(document);
+            _apply.Initialize(readiness.Value!);
             _inspector = new InspectorModel(document);
             _historyTarget = new AuthoringEditTarget(document, _tree, _apply);
             _history = new EditHistory(_historyTarget);
             _gizmo = new GizmoDragController(document, _tree, _transforms, new RuntimeWorldPreview(() => _previewSession));
             _previewSession = session;
+            PostApplyState();
             DocumentInfo? info = document.Info();
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
@@ -883,7 +906,6 @@ public sealed class EditorWorker : IDisposable
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
         IReadOnlyList<Event> events = _document.DrainEvents();
-        if (events.Count == 0) return;
         var destroyed = new List<EntityGuid>();
         foreach (Event e in events)
         {
@@ -916,7 +938,9 @@ public sealed class EditorWorker : IDisposable
             PostInspector();
         }
         if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
-        if (_commitTicks is long committed && events.Any(e => e is Applied))
+        _apply.Poll();
+        if (_apply.Status is ApplyStatus.Failed or ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply) _commitTicks = null;
+        if (_commitTicks is long committed && _apply.Status == ApplyStatus.Applied)
         {
             double applied = Stopwatch.GetElapsedTime(committed).TotalMilliseconds;
             _commitTicks = null;
@@ -952,6 +976,19 @@ public sealed class EditorWorker : IDisposable
     private void PostApplyState()
     {
         if (_apply is null) return;
+        bool canApply = _apply.CanApply, canPreview = _apply.CanPreview;
+        if (_applyControls != (canApply, canPreview))
+        {
+            lock (_lock)
+            {
+                if (!canPreview && !_gizmoBlocked)
+                { ++_gizmoRecoveryEpoch; _pendingGizmo = null; _gizmoActive = false; _gizmo?.Abandon(); }
+                _gizmoBlocked = !canPreview;
+            }
+            _applyControls = (canApply, canPreview);
+            _post(() => ApplyControlsChanged?.Invoke(canApply, canPreview));
+            if (_previewSession is RemoteSession session) SendOverlay(session);
+        }
         string text = _apply.Text + (_playing ? PlayNote : "");
         if (text == _applyText) return;
         _applyText = text;
@@ -989,7 +1026,7 @@ public sealed class EditorWorker : IDisposable
     {
         OverlayGroup? gizmo = null;
         GizmoSnapshot snapshot = new(null, null, null);
-        if (_document is not null && _gizmo is not null && _selected is EntityGuid node && _tree.Contains(node))
+        if (_document is not null && _gizmo is not null && _apply?.CanPreview == true && _selected is EntityGuid node && _tree.Contains(node))
         {
             float[] world = _gizmo.Dragging && _gizmo.LatestWorld is { } latest ? latest : _transforms.WorldOf(_document, _tree, node);
             GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);

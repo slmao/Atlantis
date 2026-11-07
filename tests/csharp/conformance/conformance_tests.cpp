@@ -472,6 +472,23 @@ void authoringVectors(std::vector<Vector>& out) {
   for (auto error : {connection::assets::AssetError::CatalogUnavailable, connection::assets::AssetError::UnknownAsset})
     out.push_back({"assets.error." + std::string(connection::assets::toString(error)), "AssetError", json::Value::string(std::string(connection::assets::toString(error)))});
 
+  // Spec 0083: all outcome alternatives, bounded observation shape and exact u64 literals.
+  const ac::ApplyReceipt receipt{ac::ApplyId{kAsset.bytes}, UINT64_MAX};
+  const ac::ApplyReceipt older{ac::ApplyId{kOther.bytes}, 1};
+  out.push_back({"apply.receipt", "ApplyReceipt", codec::encode(receipt)});
+  out.push_back({"apply.status.empty", "ApplySnapshot", codec::encode(ac::ApplySnapshot{})});
+  out.push_back({"apply.status.pending", "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
+      ac::ApplyRecord{receipt, ac::ApplyState::Pending, {}, {}, {}}, ac::ApplyProjection{older, 8}})});
+  out.push_back({"apply.status.applied", "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
+      ac::ApplyRecord{receipt, ac::ApplyState::Applied, UINT64_MAX, {}, {}}, ac::ApplyProjection{receipt, UINT64_MAX}})});
+  out.push_back({"apply.status.superseded", "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
+      ac::ApplyRecord{older, ac::ApplyState::Superseded, {}, {}, receipt.id}, {}})});
+  for (const auto error : {ac::ReloadError::ScenePreparationFailed, ac::ReloadError::RenderPreparationFailed,
+                           ac::ReloadError::RuntimeStopped})
+    out.push_back({"apply.status." + std::string(ac::toString(error)), "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
+        ac::ApplyRecord{receipt, ac::ApplyState::Failed, {}, error, {}}, ac::ApplyProjection{older, 8}})});
+  out.push_back({"apply.lookup.unknown", "ApplyLookupError", codec::encodeApplyLookupError(ac::ApplyLookupError::UnknownApply)});
+
   // Plan 0066 P2 (Spec 0066 R1, R5; ADR-0132 D1): the Viewport overlay (section 6.6) and the step's withOverlay.
   using connection::OverlayDepth;
   out.push_back({"overlay.empty", "ViewportOverlay", codec::encode(connection::ViewportOverlay{})});

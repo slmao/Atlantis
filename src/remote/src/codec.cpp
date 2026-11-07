@@ -1454,4 +1454,89 @@ std::optional<authoring::ApplyError> decodeApplyError(const Value& value) {
   return enumeratorNamed(value, kApplyErrors);
 }
 
+Value encode(const authoring::ApplyReceipt& receipt) {
+  Value out = Value::object();
+  out.set("id", Value::string(authoring::toString(receipt.id)));
+  out.set("documentRevision", Value::number(receipt.documentRevision));
+  return out;
+}
+std::optional<authoring::ApplyReceipt> decodeApplyReceipt(const Value& value) {
+  const auto* id = value.find("id"); const auto* revision = value.find("documentRevision");
+  if (!id || !id->isString() || !revision) return std::nullopt;
+  auto parsed = authoring::parseApplyId(id->asString()); auto number = decodeUInt64(*revision);
+  if (parsed.isErr() || !number || *number == 0) return std::nullopt;
+  return authoring::ApplyReceipt{parsed.value(), *number};
+}
+Value encode(const authoring::ApplyRecord& record) {
+  Value out = Value::object(); out.set("receipt", encode(record.receipt));
+  out.set("state", Value::string(std::string(authoring::toString(record.state))));
+  if (record.generation) out.set("generation", Value::number(*record.generation));
+  if (record.error) out.set("error", Value::string(std::string(authoring::toString(*record.error))));
+  if (record.supersededBy) out.set("supersededBy", Value::string(authoring::toString(*record.supersededBy)));
+  return out;
+}
+std::optional<authoring::ApplyRecord> decodeApplyRecord(const Value& value) {
+  const auto* receipt = value.find("receipt"); const auto* state = value.find("state");
+  if (!receipt || !state) return std::nullopt;
+  auto decoded = decodeApplyReceipt(*receipt);
+  auto named = enumeratorNamed(*state, std::array{authoring::ApplyState::Pending, authoring::ApplyState::Applied,
+      authoring::ApplyState::Failed, authoring::ApplyState::Superseded});
+  if (!decoded || !named) return std::nullopt;
+  authoring::ApplyRecord out{*decoded, *named, {}, {}, {}};
+  const auto* gen = value.find("generation"); const auto* error = value.find("error"); const auto* by = value.find("supersededBy");
+  if ((*named != authoring::ApplyState::Applied && gen) || (*named != authoring::ApplyState::Failed && error) ||
+      (*named != authoring::ApplyState::Superseded && by)) return std::nullopt;
+  if (*named == authoring::ApplyState::Applied) {
+    out.generation = gen ? decodeUInt64(*gen) : std::nullopt;
+    if (!out.generation || *out.generation == 0) return std::nullopt;
+  } else if (*named == authoring::ApplyState::Failed) {
+    if (!error) return std::nullopt;
+    out.error = enumeratorNamed(*error, std::array{authoring::ReloadError::ScenePreparationFailed,
+        authoring::ReloadError::RenderPreparationFailed, authoring::ReloadError::RuntimeStopped});
+    if (!out.error) return std::nullopt;
+  } else if (*named == authoring::ApplyState::Superseded) {
+    if (!by || !by->isString()) return std::nullopt;
+    const auto id = authoring::parseApplyId(by->asString());
+    if (id.isErr() || id.value() == out.receipt.id) return std::nullopt;
+    out.supersededBy = id.value();
+  }
+  return out;
+}
+Value encode(const authoring::ApplySnapshot& snapshot) {
+  Value out = Value::object();
+  out.set("currentDocumentRevision", snapshot.currentDocumentRevision ? Value::number(*snapshot.currentDocumentRevision) : Value());
+  out.set("request", snapshot.request ? encode(*snapshot.request) : Value());
+  Value projection;
+  if (snapshot.projection) {
+    projection = Value::object(); projection.set("receipt", encode(snapshot.projection->receipt));
+    projection.set("generation", Value::number(snapshot.projection->generation));
+  }
+  out.set("projection", std::move(projection)); return out;
+}
+std::optional<authoring::ApplySnapshot> decodeApplySnapshot(const Value& value) {
+  const auto* rev = value.find("currentDocumentRevision"); const auto* request = value.find("request");
+  const auto* projection = value.find("projection");
+  if (!rev || !request || !projection) return std::nullopt;
+  authoring::ApplySnapshot out;
+  if (!rev->isNull()) { out.currentDocumentRevision = decodeUInt64(*rev); if (!out.currentDocumentRevision || *out.currentDocumentRevision == 0) return std::nullopt; }
+  if (!request->isNull()) { out.request = decodeApplyRecord(*request); if (!out.request) return std::nullopt; }
+  if (!projection->isNull()) {
+    const auto* receipt = projection->find("receipt"); const auto* gen = projection->find("generation");
+    auto decoded = receipt ? decodeApplyReceipt(*receipt) : std::nullopt; auto number = gen ? decodeUInt64(*gen) : std::nullopt;
+    if (!decoded || !number || *number == 0) return std::nullopt;
+    out.projection = authoring::ApplyProjection{*decoded, *number};
+  }
+  if ((!out.currentDocumentRevision && (out.request || out.projection)) || (!out.request && out.projection)) return std::nullopt;
+  if (out.request && out.request->receipt.documentRevision > *out.currentDocumentRevision) return std::nullopt;
+  if (out.projection && out.projection->receipt.documentRevision > *out.currentDocumentRevision) return std::nullopt;
+  if (out.request && out.projection && out.request->receipt.id == out.projection->receipt.id &&
+      (out.request->state != authoring::ApplyState::Applied || out.request->receipt != out.projection->receipt ||
+       out.request->generation != out.projection->generation)) return std::nullopt;
+  return out;
+}
+Value encodeApplyLookupError(authoring::ApplyLookupError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::ApplyLookupError> decodeApplyLookupError(const Value& value) {
+  return enumeratorNamed(value, std::array{authoring::ApplyLookupError::UnknownApply});
+}
+
 }  // namespace atlantis::remote::codec

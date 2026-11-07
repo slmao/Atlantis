@@ -174,6 +174,7 @@ public static class Smoke
                 transforms.Apply(e);
                 apply.Apply(e);
             }
+            apply.Poll();
         }
         // A request is answered at the Runtime's next frame boundary: step until Applied settles.
         bool WaitApplied()

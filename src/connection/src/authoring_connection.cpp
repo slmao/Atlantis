@@ -115,4 +115,29 @@ std::string_view toString(ApplyError error) noexcept {
   return "Unknown";
 }
 
+Result<ApplyId, asset_system::GuidParseError> parseApplyId(std::string_view text) {
+  const auto parsed = asset_system::parseAssetGuid(text);
+  if (parsed.isErr()) return Result<ApplyId, asset_system::GuidParseError>::Err(parsed.error());
+  return Result<ApplyId, asset_system::GuidParseError>::Ok(ApplyId{parsed.value().bytes});
+}
+std::string toString(const ApplyId& id) { return asset_system::toString(AssetGuid{id.bytes}); }
+std::string_view toString(ApplyState state) noexcept {
+  switch (state) {
+    case ApplyState::Pending: return "Pending";
+    case ApplyState::Applied: return "Applied";
+    case ApplyState::Failed: return "Failed";
+    case ApplyState::Superseded: return "Superseded";
+  }
+  return "Unknown";
+}
+std::string_view toString(ReloadError error) noexcept {
+  switch (error) {
+    case ReloadError::ScenePreparationFailed: return "ScenePreparationFailed";
+    case ReloadError::RenderPreparationFailed: return "RenderPreparationFailed";
+    case ReloadError::RuntimeStopped: return "RuntimeStopped";
+  }
+  return "Unknown";
+}
+std::string_view toString(ApplyLookupError) noexcept { return "UnknownApply"; }
+
 }  // namespace atlantis::connection::authoring

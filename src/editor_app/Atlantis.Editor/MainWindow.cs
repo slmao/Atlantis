@@ -78,6 +78,8 @@ public sealed class MainWindow : Window
     // Plan 0068 M6 (Spec 0068 R9): the document's save and the Runtime's transport. The Runtime starts playing, so
     // Pause is the enabled action until the first play state says otherwise.
     private readonly Button _save = new() { Content = "Save" };
+    private readonly Button _retryApply = new() { Content = "Apply current document / Retry", IsEnabled = false };
+    private bool _allowGizmoPreview;
     private readonly Button _play = new() { Content = "Play", IsEnabled = false };
     private readonly Button _pause = new() { Content = "Pause" };
     private readonly Button _step = new() { Content = "Step", IsEnabled = false };
@@ -200,7 +202,7 @@ public sealed class MainWindow : Window
         DockPanel.SetDock(heading, Dock.Top);
         DockPanel.SetDock(tools, Dock.Bottom);
         var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _play, _pause, _step })
+        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _retryApply, _play, _pause, _step })
         { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
         foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
@@ -262,6 +264,12 @@ public sealed class MainWindow : Window
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
         _save.Click += (_, _) => _worker?.Save();
+        _retryApply.Click += (_, _) =>
+        {
+            if (!_retryApply.IsEnabled || _worker is not EditorWorker worker) return;
+            _retryApply.IsEnabled = false;
+            worker.RetryApply();
+        };
         _play.Click += (_, _) => _worker?.Play();
         _pause.Click += (_, _) => _worker?.Pause();
         _step.Click += (_, _) => _worker?.StepFrame();
@@ -387,6 +395,7 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
             _referenceWindow?.Invalidate("the session failed");
             _referenceBusy = false; ++_referenceLaunch; UpdateReferenceButtons();
             _assetBrowser.Disconnect(); RenderAssets();
@@ -411,6 +420,12 @@ public sealed class MainWindow : Window
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
         worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        worker.ApplyControlsChanged += (canApply, canPreview) =>
+        {
+            _retryApply.IsEnabled = canApply; _allowGizmoPreview = canPreview;
+            _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
+            if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }
+        };
         // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
         worker.PlayStateChanged += playing =>
         {
@@ -585,6 +600,7 @@ public sealed class MainWindow : Window
     // coalesced batch per worker turn), the release commits. Returns whether it took the event.
     private bool GizmoPointer(ViewportPointerEvent e)
     {
+        if (!_allowGizmoPreview) return false;
         ViewportWindow? window = _viewport.Window;
         switch (e.Kind)
         {

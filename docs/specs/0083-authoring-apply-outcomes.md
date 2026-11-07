@@ -1,10 +1,10 @@
 # Spec: Authoring Apply Outcomes and Recovery
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-07
 - **Related Plan(s):** [Plan 0083](../plans/0083-authoring-apply-outcomes.md)
-- **Approval:** Pending [joint human review in PR #329](https://github.com/slmao/Atlantis/pull/329); design only
+- **Approval:** slmao, 2026-11-07; [joint ruling](https://github.com/slmao/Atlantis/pull/329#issuecomment-6702522226) on `1a65902`; #329 manually merged
 - **Related ADR(s):** [ADR-0144 — Proposed](../adr/0144-correlated-authoring-apply-outcomes.md)
 
 ## Summary

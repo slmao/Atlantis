@@ -199,123 +199,171 @@ public sealed class Selection
     }
 }
 
-public enum ApplyStatus
-{
-    Idle,
-    Applying,
-    Applied,
-    PendingPaused,
-    Failed,
-}
+public enum ApplyStatus { Idle, Applying, Applied, PendingPaused, Failed, Superseded, Unknown, NeedsApply }
 
-/// <summary>
-/// ADR-0135 D3: every settled commit requests an apply, coalesced -- while one is in flight a further request waits and
-/// is issued at its Applied (the newest document wins; each apply cooks the whole document). The state is always
-/// shown.
-/// </summary>
+/// <summary>Caller-thread apply observation (0083). Document commits settle independently;
+/// only this receipt's typed result settles projection. Recovery never resubmits itself.</summary>
 public sealed class ApplyController
 {
     private readonly IAuthoringDocument _document;
-    private bool _inFlight;
-    private bool _again;
-    private bool _paused;
-
+    private bool _inFlight, _again, _paused, _suspended, _recovering, _stopped, _needGlobalStatus;
+    private ApplyReceipt? _receipt;
+    private ApplySnapshot? _snapshot;
+    private ulong _localRecoveryCommits;
+    private string _notice = "";
     public ApplyController(IAuthoringDocument document) => _document = document;
-
     public ApplyStatus Status { get; private set; } = ApplyStatus.Idle;
     public ulong Generation { get; private set; }
     public ApplyError? LastError { get; private set; }
-
-    /// <summary>The number of applies issued (for measurements and tests).</summary>
+    public ReloadError? LastReloadError { get; private set; }
     public int Issued { get; private set; }
-
-    public string Text => Status switch
+    public ApplyReceipt? Receipt => _receipt;
+    public bool Suspended => _suspended;
+    public bool CanPreview => !_recovering && !_suspended && !_stopped;
+    public bool CanApply => !_inFlight && !_stopped;
+    public ApplySnapshot? Snapshot => _snapshot;
+    public string Text
     {
-        ApplyStatus.Applying => "applying",
-        ApplyStatus.Applied => "applied · generation " + Generation,
-        ApplyStatus.PendingPaused => "pending: paused (applies on Step or Resume)",
-        ApplyStatus.Failed => "failed: " + LastError + " (the document is unchanged; the next edit retries)",
-        _ => "",
-    };
-
+        get
+        {
+            string text = Status switch
+            {
+                ApplyStatus.Applying => "applying",
+                ApplyStatus.PendingPaused => "pending: paused (applies on Step or Resume)",
+                ApplyStatus.Applied => "applied · generation " + Generation,
+                ApplyStatus.Failed => "failed: " + (LastError?.ToString() ?? LastReloadError?.ToString() ?? _notice) + "; document/history kept; edit then Retry",
+                ApplyStatus.Superseded => "superseded: " + _notice + "; document/history kept; explicit Retry",
+                ApplyStatus.Unknown => "unknown completion: " + _notice + "; inspect before explicitly applying; an older request may still take effect",
+                ApplyStatus.NeedsApply => _notice + "; apply current document",
+                _ => "",
+            };
+            if (_receipt is ApplyReceipt r) text += " · apply " + r.Id + " · revision " + r.DocumentRevision;
+            if (_snapshot is ApplySnapshot view && Status != ApplyStatus.Idle)
+                text += " · document revision " + (view.CurrentDocumentRevision?.ToString() ?? "none") +
+                    (view.Projection is ApplyProjection p ? " · Runtime origin generation " + p.Generation + "/revision " + p.Receipt.DocumentRevision : " · Runtime startup projection");
+            return text;
+        }
+    }
+    // Readiness is observation, never ownership of another client's latest receipt.
+    public void Initialize(ApplySnapshot snapshot)
+    {
+        _snapshot = snapshot;
+        if (snapshot.Request is { State: ApplyState.Failed } failed)
+        { LastReloadError = failed.Error; _stopped = failed.Error == ReloadError.RuntimeStopped; Suspend(ApplyStatus.Failed, "observed apply " + failed.Receipt.Id); }
+        else if (snapshot.Request is { State: ApplyState.Superseded } replaced)
+            Suspend(ApplyStatus.Superseded, "observed apply " + replaced.Receipt.Id);
+    }
+    /// <summary>An explicit request; normal local requests while in flight coalesce.</summary>
     public void Request()
     {
+        if (_stopped) return;
         if (_inFlight)
         {
-            _again = true;
+            if (!_recovering) _again = true;
             return;
         }
+        _recovering |= _suspended;
         Issue();
     }
-
-    /// <summary>Records an apply the caller already sent (pipelined with its commit): in flight, as if Request() had issued it.</summary>
-    public void NoteRequested()
-    {
-        ++Issued;
-        _inFlight = true;
-        Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
-    }
-
-    /// <summary>
-    /// A commit with its apply (J8): pipelined when no apply is in flight, else the commit then a coalesced request.
-    /// Returns the refusals; a refused apply is the controller's Failed state, as for Request().
-    /// </summary>
+    /// <summary>User recovery: duplicate clicks cannot queue an additional apply.</summary>
+    public void Retry() { if (CanApply) Request(); }
     public IReadOnlyList<CommandFailure> Commit(IReadOnlyList<Command> commands)
     {
-        if (_inFlight)
+        if (_suspended || _inFlight)
         {
             _document.SubmitTransaction(commands);
-            IReadOnlyList<CommandFailure> refused = _document.DrainFailures();
-            if (refused.Count == 0) Request();
-            return refused;
+            var failures = _document.DrainFailures();
+            if (failures.Count == 0 && _inFlight && !_suspended)
+            {
+                if (!_recovering || commands.Count != 0) _again = true;
+                if (_recovering && commands.Count != 0) ++_localRecoveryCommits;
+            }
+            if (failures.Count == 0) _needGlobalStatus = true;
+            return failures;
         }
         CommitOutcome outcome = _document.CommitAndApply(commands);
-        if (!outcome.ApplySent) return outcome.Failures;
-        if (outcome.ApplyError is ApplyError error)
+        if (outcome.ApplySent)
         {
             ++Issued;
-            LastError = error;
-            Status = ApplyStatus.Failed;
-        }
-        else
-        {
-            NoteRequested();
+            if (outcome.ApplyError is ApplyError error) { _receipt = null; LastError = error; Suspend(ApplyStatus.Failed, error.ToString()); }
+            else if (outcome.Receipt is ApplyReceipt receipt) Accepted(receipt);
+            else Suspend(ApplyStatus.Unknown, "acceptance reply had no receipt");
         }
         return outcome.Failures;
     }
-
-    /// <summary>The Runtime's pause state: a pause holds the reload (ADR-0131, amended 2026-10-23).</summary>
     public void SetPaused(bool paused)
     {
         _paused = paused;
         if (_inFlight) Status = paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
     }
-
-    /// <summary>Follows one authoring event: Applied settles the apply in flight and issues a waiting one.</summary>
     public void Apply(Event e)
     {
-        if (e is not Applied applied) return;
-        Generation = applied.Generation;
-        _inFlight = false;
-        Status = ApplyStatus.Applied;
-        if (_again)
+        if (e is DocumentReopened)
         {
-            _again = false;
-            Issue();
+            _receipt = null; _needGlobalStatus = true;
+            Suspend(ApplyStatus.NeedsApply, "document reopened; a previously accepted snapshot may still swap");
         }
+        // Events are hints only. The caller processes the whole batch (including
+        // any later Reopen) before Poll can settle/issue a coalesced request.
+        else _needGlobalStatus = true;
     }
-
-    private void Issue()
+    /// <summary>Run even when drainEvents is empty. Owned synchronous result; no UI-thread wait.</summary>
+    public void Poll()
     {
-        ++Issued;
-        ApplyError? error = _document.Apply();
-        if (error is not null)
+        if (!_inFlight || _receipt is not ApplyReceipt expected)
         {
-            LastError = error;
-            Status = ApplyStatus.Failed;
+            if (_needGlobalStatus) { var global = _document.ApplyStatus(); if (global.IsOk) _snapshot = global.Value; _needGlobalStatus = false; }
             return;
         }
-        _inFlight = true;
+        var queried = _document.ApplyStatus(expected.Id);
+        if (!queried.IsOk) { Suspend(ApplyStatus.Unknown, "UnknownApply " + expected.Id); return; }
+        ApplySnapshot view = queried.Value!; _snapshot = view; _needGlobalStatus = false;
+        if (view.Request is not ApplyRecord record || record.Receipt != expected)
+        { Suspend(ApplyStatus.Unknown, "mismatched receipt"); return; }
+        if (record.State == ApplyState.Pending) return;
+        _inFlight = false;
+        if (record.State == ApplyState.Failed)
+        {
+            LastReloadError = record.Error; _stopped = record.Error == ReloadError.RuntimeStopped;
+            Suspend(ApplyStatus.Failed, record.Error.ToString()!); return;
+        }
+        if (record.State == ApplyState.Superseded)
+        { Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy); return; }
+        Generation = record.Generation!.Value; Status = ApplyStatus.Applied;
+        if (_recovering &&
+            (view.Projection is not ApplyProjection projection || projection.Receipt != expected ||
+             projection.Generation != Generation ||
+             view.CurrentDocumentRevision != expected.DocumentRevision + _localRecoveryCommits))
+        {
+            Suspend(ApplyStatus.NeedsApply, "document/projection changed");
+            return;
+        }
+        if (_again) { _again = false; Issue(); return; }
+        if (_recovering)
+        {
+            _recovering = false;
+            _suspended = false;
+        }
+    }
+    private void Suspend(ApplyStatus status, string notice)
+    {
+        _inFlight = false; _again = false; _suspended = true; _recovering = true;
+        _localRecoveryCommits = 0;
+        _notice = notice; Status = status;
+    }
+    private void Accepted(ApplyReceipt receipt)
+    {
+        _receipt = receipt; _inFlight = true; _suspended = false; _needGlobalStatus = false;
+        _localRecoveryCommits = 0;
+        _snapshot = new ApplySnapshot(receipt.DocumentRevision, new ApplyRecord(receipt, ApplyState.Pending), _snapshot?.Projection);
+        LastError = null; LastReloadError = null; _notice = "";
         Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
+    }
+    private void Issue()
+    {
+        ++Issued; _receipt = null;
+        var accepted = _document.ApplyTracked();
+        if (!accepted.IsOk) { LastError = accepted.Error; Suspend(ApplyStatus.Failed, accepted.Error.ToString()); return; }
+        Accepted(accepted.Value!);
     }
 }

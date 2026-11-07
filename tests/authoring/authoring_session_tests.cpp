@@ -341,9 +341,10 @@ TEST_CASE("authoring: apply() cooks the document in memory and hands the decoded
 
   std::vector<as::ValidatedSceneData> received;
   bool accept = true;
-  f.session.setSceneSink([&](as::ValidatedSceneData scene) {
+  f.session.setSceneSink([&](ac::ApplyId, as::ValidatedSceneData scene) {
     received.push_back(std::move(scene));
-    return accept;
+    using Ack = atlantis::Result<std::optional<ac::ApplyId>, std::monostate>;
+    return accept ? Ack::Ok({}) : Ack::Err({});
   });
   f.connection->submit(ac::SetProperty{address(kLightNode, kLight, field("Light", "intensity")), 7.0f});
   REQUIRE(f.connection->apply().isOk());
@@ -524,7 +525,9 @@ TEST_CASE("authoring: names survive save reopen and apply; imported save stays r
   REQUIRE(f.connection->open().isOk());
   CHECK(f.document().nodes[0].name == label);
   bool received = false;
-  f.session.setSceneSink([&](as::ValidatedSceneData) { received = true; return true; });
+  f.session.setSceneSink([&](ac::ApplyId, as::ValidatedSceneData) {
+    received = true; return atlantis::Result<std::optional<ac::ApplyId>, std::monostate>::Ok({});
+  });
   REQUIRE(f.connection->apply().isOk());
   CHECK(received);
   CHECK(f.document().nodes[0].name == label);
@@ -535,4 +538,129 @@ TEST_CASE("authoring: names survive save reopen and apply; imported save stays r
   CHECK(c->save().error() == ac::SaveError::ImportedSceneNotSavable);
   REQUIRE(c->open().isOk());
   CHECK(c->listNodes().value()[0].name == label);
+}
+
+namespace {
+using ApplyAck = atlantis::Result<std::optional<ac::ApplyId>, std::monostate>;
+using ReloadOutcome = atlantis::Result<std::uint64_t, ac::ReloadError>;
+struct ApplySink {
+  std::optional<ac::ApplyId> pending;
+  std::optional<as::ValidatedSceneData> snapshot;
+  bool accepts = true;
+  void install(AuthoringSession& session) {
+    session.setSceneSink([this](ac::ApplyId id, as::ValidatedSceneData scene) {
+      if (!accepts) return ApplyAck::Err({});
+      const auto old = pending; pending = id; snapshot.emplace(std::move(scene));
+      return ApplyAck::Ok(old);
+    });
+  }
+  void complete(AuthoringSession& session, ReloadOutcome outcome) {
+    REQUIRE(pending);
+    const auto id = *pending; pending.reset(); snapshot.reset();
+    session.reportReload(id, std::move(outcome));
+  }
+};
+}
+
+TEST_CASE("authoring outcomes: receipt captures immutable scene and observational revision", "[authoring][apply_outcomes]") {
+  Fixture f(baseScene(), false); auto& c = *f.connection;
+  CHECK_FALSE(c.applyStatus().value().currentDocumentRevision);
+  CHECK_FALSE(c.applyStatus().value().request);
+  CHECK(c.applyTracked().error() == ac::ApplyError::NoDocument);
+  REQUIRE(c.open().isOk());
+  CHECK(c.applyStatus().value().currentDocumentRevision == 1);
+  CHECK(c.applyTracked().error() == ac::ApplyError::NoSceneSink);
+  ApplySink sink; sink.install(f.session);
+  const auto first = c.applyTracked().value();
+  CHECK(first.documentRevision == 1);
+  CHECK(ac::parseApplyId(ac::toString(first.id)).value() == first.id);
+  auto second = f.session.connect();
+  CHECK(second->applyStatus(first.id).value() == c.applyStatus(first.id).value());
+  const float original = sink.snapshot->node(kLightNode).light->intensity;
+  c.submit(ac::SetProperty{address(kLightNode, kLight, field("Light", "intensity")), 7.0f});
+  REQUIRE(c.drainFailures().empty());
+  CHECK(c.applyStatus().value().currentDocumentRevision == 2);
+  CHECK(sink.snapshot->node(kLightNode).light->intensity == original);
+  CHECK(c.applyStatus(first.id).value().request->receipt == first);
+  REQUIRE(c.save().isOk()); CHECK(c.applyStatus().value().currentDocumentRevision == 2);
+  REQUIRE(c.open().isOk()); CHECK(c.applyStatus().value().currentDocumentRevision == 3);
+  CHECK(c.applyStatus(first.id).value().request->state == ac::ApplyState::Pending);
+  second.reset();
+  sink.complete(f.session, ReloadOutcome::Err(ac::ReloadError::ScenePreparationFailed));
+  auto reconnected = f.session.connect();
+  CHECK(reconnected->applyStatus(first.id).value().request->state == ac::ApplyState::Failed);
+  CHECK(reconnected->getProperty(address(kLightNode, kLight, field("Light", "intensity"))).value() == ac::PropertyValue{7.0f});
+  CHECK_FALSE(reconnected->applyStatus().value().projection);
+}
+
+TEST_CASE("authoring outcomes: same-batch latest wins, refused replacement and stale reports", "[authoring][apply_outcomes]") {
+  Fixture f; auto& c = *f.connection; ApplySink sink; sink.install(f.session);
+  const auto sub = c.subscribe({});
+  const auto a = c.applyTracked().value(); const auto b = c.applyTracked().value(); const auto d = c.applyTracked().value();
+  const auto ar = *c.applyStatus(a.id).value().request; const auto br = *c.applyStatus(b.id).value().request;
+  CHECK(ar.state == ac::ApplyState::Superseded); CHECK(ar.supersededBy == b.id);
+  CHECK(br.state == ac::ApplyState::Superseded); CHECK(br.supersededBy == d.id);
+  CHECK(a.documentRevision == d.documentRevision); CHECK(a.id != d.id);
+  sink.accepts = false;
+  CHECK(c.applyTracked().error() == ac::ApplyError::ReloadRefused);
+  CHECK(c.applyStatus().value().request->receipt == d); CHECK(sink.pending == d.id);
+  f.session.reportReload(a.id, ReloadOutcome::Ok(77));
+  CHECK(c.applyStatus().value().request->state == ac::ApplyState::Pending);
+  sink.complete(f.session, ReloadOutcome::Err(ac::ReloadError::RenderPreparationFailed));
+  f.session.reportReload(d.id, ReloadOutcome::Ok(88));
+  CHECK(c.applyStatus(d.id).value().request->error == ac::ReloadError::RenderPreparationFailed);
+  CHECK(c.drainEvents(sub).value().empty());
+  sink.accepts = true; const auto recovery = c.applyTracked().value();
+  sink.complete(f.session, ReloadOutcome::Ok(9));
+  CHECK(c.applyStatus(recovery.id).value().projection == ac::ApplyProjection{recovery, 9});
+  CHECK(c.drainEvents(sub).value() == std::vector<ac::Event>{ac::Applied{9}});
+  CHECK(c.applyStatus(recovery.id).value().request->generation == 9);
+  CHECK(c.applyStatus(recovery.id).value() == c.applyStatus(recovery.id).value());
+}
+
+TEST_CASE("authoring outcomes: bounded history, independent projection and unknown identity", "[authoring][apply_outcomes]") {
+  Fixture f; auto& c = *f.connection; ApplySink sink; sink.install(f.session);
+  const auto projected = c.applyTracked().value(); sink.complete(f.session, ReloadOutcome::Ok(1));
+  std::vector<ac::ApplyReceipt> failures;
+  for (int i = 0; i < 66; ++i) {
+    failures.push_back(c.applyTracked().value());
+    sink.complete(f.session, ReloadOutcome::Err(ac::ReloadError::ScenePreparationFailed));
+  }
+  CHECK(c.applyStatus(projected.id).value().request->state == ac::ApplyState::Applied);
+  CHECK(c.applyStatus(projected.id).value().request->generation == 1);
+  CHECK(c.applyStatus(failures[0].id).error() == ac::ApplyLookupError::UnknownApply);
+  CHECK(c.applyStatus(failures[1].id).error() == ac::ApplyLookupError::UnknownApply);
+  CHECK(c.applyStatus(failures[2].id).value().request->state == ac::ApplyState::Failed);
+  const auto held = c.applyTracked().value();
+  CHECK(c.applyStatus(failures[2].id).isOk()); CHECK(c.applyStatus(held.id).value().request->state == ac::ApplyState::Pending);
+  const auto replacement = c.applyTracked().value();
+  CHECK(c.applyStatus(failures[2].id).error() == ac::ApplyLookupError::UnknownApply);
+  CHECK(c.applyStatus(held.id).value().request->supersededBy == replacement.id);
+  // A second session cannot reinterpret a previous endpoint's receipt.
+  AuthoringSession restarted(DocumentSource{sceneGuid(), HandAuthored{f.source}});
+  auto fresh = restarted.connect();
+  CHECK(fresh->applyStatus(projected.id).error() == ac::ApplyLookupError::UnknownApply);
+  CHECK_FALSE(fresh->applyStatus().value().request);
+}
+
+TEST_CASE("authoring outcomes: refused and empty mutations preserve revision, equal writes advance it", "[authoring][apply_outcomes]") {
+  Fixture f; auto& c = *f.connection;
+  CHECK(c.applyStatus().value().currentDocumentRevision == 1);
+  c.submitTransaction({}); CHECK(c.applyStatus().value().currentDocumentRevision == 1);
+  c.submit(ac::DestroyNode{entity(99)}); REQUIRE_FALSE(c.drainFailures().empty());
+  CHECK(c.applyStatus().value().currentDocumentRevision == 1);
+  const auto addr = address(kLightNode, kLight, field("Light", "intensity"));
+  c.submit(ac::SetProperty{addr, c.getProperty(addr).value()}); REQUIRE(c.drainFailures().empty());
+  CHECK(c.applyStatus().value().currentDocumentRevision == 2);
+  writeText(f.source, "invalid source"); CHECK(c.open().isErr());
+  CHECK(c.applyStatus().value().currentDocumentRevision == 2);
+  CHECK(c.getProperty(addr).isOk());
+}
+
+TEST_CASE("authoring outcomes: legacy acceptance shares records and RuntimeStopped is terminal", "[authoring][apply_outcomes]") {
+  Fixture f; auto& c = *f.connection; ApplySink sink; sink.install(f.session);
+  REQUIRE(c.apply().isOk()); const auto receipt = c.applyStatus().value().request->receipt;
+  sink.complete(f.session, ReloadOutcome::Err(ac::ReloadError::RuntimeStopped));
+  CHECK(c.applyStatus(receipt.id).value().request->error == ac::ReloadError::RuntimeStopped);
+  CHECK_FALSE(c.applyStatus().value().projection);
 }

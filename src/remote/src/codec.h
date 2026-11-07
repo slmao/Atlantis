@@ -154,4 +154,13 @@ namespace authoring = atlantis::connection::authoring;
 [[nodiscard]] Value encodeApplyError(authoring::ApplyError error);
 [[nodiscard]] std::optional<authoring::ApplyError> decodeApplyError(const Value& value);
 
+[[nodiscard]] Value encode(const authoring::ApplyReceipt& receipt);
+[[nodiscard]] std::optional<authoring::ApplyReceipt> decodeApplyReceipt(const Value& value);
+[[nodiscard]] Value encode(const authoring::ApplyRecord& record);
+[[nodiscard]] std::optional<authoring::ApplyRecord> decodeApplyRecord(const Value& value);
+[[nodiscard]] Value encode(const authoring::ApplySnapshot& snapshot);
+[[nodiscard]] std::optional<authoring::ApplySnapshot> decodeApplySnapshot(const Value& value);
+[[nodiscard]] Value encodeApplyLookupError(authoring::ApplyLookupError error);
+[[nodiscard]] std::optional<authoring::ApplyLookupError> decodeApplyLookupError(const Value& value);
+
 }  // namespace atlantis::remote::codec

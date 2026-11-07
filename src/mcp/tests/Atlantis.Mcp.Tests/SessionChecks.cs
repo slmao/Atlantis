@@ -86,7 +86,7 @@ internal static class SessionChecks
             }), cancellationToken: deadline.Token))
             {
                 var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-                check(tools.Count == 34, "production host discovers all 34 tools after connecting");
+                check(tools.Count == 36, "production host discovers all 36 tools after connecting");
                 CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
                 check(status.IsError != true, "production host forwards control through the SDK");
                 foreach (string name in new[] { "world.drain_events", "authoring.drain_events" })

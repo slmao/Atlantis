@@ -47,6 +47,36 @@ public sealed class AuthoringSession
     /// <summary>Hands the document to the Runtime for reload; null when accepted (Applied follows).</summary>
     public A.ApplyError? Apply() => Unit("authoring.apply", Codec.DecodeApplyError);
 
+    /// <summary>Acceptance receipt only. Query its id for completion; never blindly replay a lost reply.</summary>
+    public Outcome<A.ApplyReceipt, A.ApplyError> ApplyTracked()
+    {
+        const string method = "authoring.applyTracked";
+        JsonValue result = _session.Call(method);
+        if (result.Find("ok") is JsonValue ok)
+            return Outcome<A.ApplyReceipt, A.ApplyError>.Ok(Codec.DecodeApplyReceipt(ok) ?? throw _session.Malformed(method));
+        if (result.Find("err") is JsonValue err && Codec.DecodeApplyError(err) is A.ApplyError error)
+            return Outcome<A.ApplyReceipt, A.ApplyError>.Err(error);
+        throw _session.Malformed(method);
+    }
+
+    /// <summary>Non-destructive shared status. Null id means global newest, not this caller's receipt.
+    /// Transport/protocol failures throw as usual; UnknownApply is no terminal verdict.</summary>
+    public Outcome<A.ApplySnapshot, A.ApplyLookupError> ApplyStatus(A.ApplyId? id = null)
+    {
+        const string method = "authoring.applyStatus";
+        JsonValue args = JsonValue.NewObject(); if (id is A.ApplyId known) args.Set("id", JsonValue.String(known.ToString()));
+        JsonValue result = _session.Call(method, args);
+        if (result.Find("ok") is JsonValue ok)
+        {
+            A.ApplySnapshot snapshot = Codec.DecodeApplySnapshot(ok) ?? throw _session.Malformed(method);
+            if (id is A.ApplyId wanted && (snapshot.Request is null || snapshot.Request.Receipt.Id != wanted)) throw _session.Malformed(method);
+            return Outcome<A.ApplySnapshot, A.ApplyLookupError>.Ok(snapshot);
+        }
+        if (result.Find("err") is JsonValue err && Codec.DecodeApplyLookupError(err) is A.ApplyLookupError error)
+            return Outcome<A.ApplySnapshot, A.ApplyLookupError>.Err(error);
+        throw _session.Malformed(method);
+    }
+
     /// <summary>Writes a hand-authored document to its source; null on success.</summary>
     public A.SaveError? Save() => Unit("authoring.save", Codec.DecodeSaveError);
 
