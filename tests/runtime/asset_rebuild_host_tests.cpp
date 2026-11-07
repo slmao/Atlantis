@@ -175,6 +175,16 @@ TEST_CASE("asset rebuild: one canonical writer, explicit publication and activat
   CHECK(activated.value()->catalogPath().parent_path().filename().string() == as::toString(result.generation->value));
   CHECK_FALSE(activated.value()->admissionError());
   CHECK(activated.value()->status(result.id).error() == ca::RebuildError::UnknownJob);
+  const auto foreignRoot = f.base / "foreign";
+  const auto relative = fs::path(as::toString(result.generation->value)) / "generation.json";
+  REQUIRE(fs::create_directories((foreignRoot / relative).parent_path()));
+  REQUIRE(fs::copy_file(f.published / relative, foreignRoot / relative));
+  auto foreign = selected;
+  foreign.profile = f.base / "foreign.json";
+  Fixture::writeProfile(foreign.profile, f.staging, foreignRoot);
+  const auto refused = AssetRebuildHost::open(foreign);
+  REQUIRE(refused.isErr());
+  CHECK(refused.error() == "Unknown, incomplete or foreign asset generation.");
   selected.generation = ca::GenerationId{f.unknown};
   CHECK(AssetRebuildHost::open(selected).isErr());
   const auto partial = f.published / as::toString(f.unknown);

@@ -490,6 +490,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
   auto binding = json::Value::object();
   binding.set("seed", json::Value::string(utf8(seed)));
   binding.set("staging", json::Value::string(utf8(*stage)));
+  binding.set("publication", json::Value::string(utf8(*publication)));
   binding.set("configuration", json::Value::string(state->config.configuration));
   binding.set("build", json::Value::string(buildIdentity));
   state->owner = json::write(binding);
@@ -506,10 +507,12 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     const auto recorded = readJson(ownerPath);
     const auto oldSeed = recorded ? canonicalDirectory(recorded->find("seed")) : std::nullopt;
     const auto oldStage = recorded ? canonicalDirectory(recorded->find("staging")) : std::nullopt;
+    const auto oldPublication = recorded ? canonicalDirectory(recorded->find("publication")) : std::nullopt;
     const auto* configuration = recorded ? recorded->find("configuration") : nullptr;
     const auto* build = recorded ? recorded->find("build") : nullptr;
-    if (!oldSeed || !oldStage || !fs::equivalent(seed, *oldSeed, ec) || ec ||
-        !fs::equivalent(*stage, *oldStage, ec) || ec || !configuration || !configuration->isString() ||
+    if (!oldSeed || !oldStage || !oldPublication || !fs::equivalent(seed, *oldSeed, ec) || ec ||
+        !fs::equivalent(*stage, *oldStage, ec) || ec || !fs::equivalent(*publication, *oldPublication, ec) || ec ||
+        !configuration || !configuration->isString() ||
         configuration->asString() != state->config.configuration || !build || !build->isString() ||
         build->asString() != buildIdentity)
       return R::Err("Publication root belongs to a different profile.");
