@@ -317,7 +317,7 @@ internal static partial class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 36 approved tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 38 approved tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
