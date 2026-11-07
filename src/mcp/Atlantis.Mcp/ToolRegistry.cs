@@ -21,6 +21,7 @@ internal sealed record ToolMapping(Tool Tool, string Method, Func<JsonValue, Jso
 internal sealed partial class ToolRegistry(IAtlantisSession session)
 {
     private const string AssetModel = " Read-only catalog facts; this does not edit the authoring document. A changed build requires Runtime restart.";
+    private const string RebuildModel = " The authoring document and running projection stay independent. Activation requires an explicit local Runtime restart.";
     private const string WorldModel = " Runtime World writes are disposable runtime-side tweaks; "
         + "persistent edits belong to the authoring document and land on explicit authoring.apply.";
     private const string AuthoringModel = " Edits change the authoring document; only explicit "
@@ -42,9 +43,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
-        Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", "",
+        Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String))),
-        Declare("assets.rebuild_status", "assets.rebuildStatus", "Read an asset rebuild result or the latest admitted job. Activation requires explicit local restart.", "",
+        Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
             ToolSchemas.RebuildStatusParameters()),
         Declare("authoring.list_nodes", "authoring.listNodes", "List nodes in document order.", AuthoringModel),
         Declare("authoring.get_property", "authoring.getProperty", "Read a document property by its wire scene address.", AuthoringModel,
