@@ -10,6 +10,18 @@
 
 namespace atlantis::remote::codec {
 
+namespace {
+std::optional<connection::assets::AssetType> decodeAssetType(const Value& value) {
+  if (!value.isString()) return std::nullopt;
+  using connection::assets::AssetType;
+  for (const auto type : {AssetType::Mesh, AssetType::Texture, AssetType::Material,
+                          AssetType::Scene, AssetType::Environment}) {
+    if (value.asString() == connection::assets::toString(type)) return type;
+  }
+  return std::nullopt;
+}
+}  // namespace
+
 Value encode(const connection::assets::AssetSummary& v) {
   Value out = Value::object();
   out.set("guid", encodeAsset(v.guid));
@@ -31,15 +43,12 @@ std::optional<connection::assets::AssetSummary> decodeAssetSummary(const Value& 
   const auto* g = v.find("guid");
   const auto* t = v.find("type");
   const auto* s = v.find("source");
-  if (!g || !t || !t->isString() || !s || !s->isString()) return std::nullopt;
+  if (!g || !t || !s || !s->isString()) return std::nullopt;
   auto guid = decodeAsset(*g);
   if (!guid || *guid == asset_system::AssetGuid{}) return std::nullopt;
-  for (const auto type : {connection::assets::AssetType::Mesh, connection::assets::AssetType::Texture,
-                          connection::assets::AssetType::Material, connection::assets::AssetType::Scene,
-                          connection::assets::AssetType::Environment}) {
-    if (t->asString() == connection::assets::toString(type)) return connection::assets::AssetSummary{*guid, type, s->asString()};
-  }
-  return std::nullopt;
+  const auto type = decodeAssetType(*t);
+  if (!type) return std::nullopt;
+  return connection::assets::AssetSummary{*guid, *type, s->asString()};
 }
 std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& v) {
   auto summary = decodeAssetSummary(v);
@@ -603,6 +612,7 @@ Value encodeSchema(std::span<const schema::TypeDescriptor> types) {
       f.set("type", encodeTypeId(field.type));
       f.set("flags", Value::number(static_cast<std::uint64_t>(field.flags)));
       f.set("offset", Value::number(static_cast<std::uint64_t>(field.byteOffset)));
+      if (!field.targetAssetType.empty()) f.set("targetAssetType", Value::string(std::string(field.targetAssetType)));
       fields.push(std::move(f));
     }
     Value constants = Value::array();
@@ -676,6 +686,11 @@ bool OwnedSchema::decode(const Value& value) {
       field.type = *fieldType;
       field.flags = static_cast<schema::FieldFlags>(*flags);
       field.byteOffset = static_cast<std::uint32_t>(*offset);
+      if (const Value* target = member(f, "targetAssetType")) {
+        const auto assetType = decodeAssetType(*target);
+        if (!assetType || !schema::canDeclareAssetTarget(field)) return false;
+        field.targetAssetType = connection::assets::toString(*assetType);
+      }
       fieldTable.push_back(field);
     }
     std::vector<schema::EnumConstantDescriptor>& constantTable = constants_.emplace_back();

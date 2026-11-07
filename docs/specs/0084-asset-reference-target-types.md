@@ -1,11 +1,11 @@
 # Spec: Shared Asset Reference Target Types
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-07
 - **Related Plan:** [Plan 0084](../plans/0084-asset-reference-target-types.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0145](../adr/0145-authoring-asset-reference-target-types.md) (Proposed)
+- **Approval:** slmao, 2026-11-07, [joint ruling](https://github.com/slmao/Atlantis/pull/331#issuecomment-6708205947) on `d58ea8d`. Design #331 manually merged as `065cdf0`.
+- **Related ADR:** [ADR-0145](../adr/0145-authoring-asset-reference-target-types.md) (Accepted)
 
 ## Summary
 

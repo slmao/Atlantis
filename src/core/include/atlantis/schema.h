@@ -97,7 +97,13 @@ struct FieldDescriptor {
   TypeId type;                                      // meaningful otherwise; {0} for primitives
   FieldFlags flags = FieldFlags::None;
   std::uint32_t byteOffset = 0;  // offsetof the member in its standard-layout type
+  std::string_view targetAssetType{};  // advisory cooked type, empty when unspecified
 };
+
+[[nodiscard]] constexpr bool canDeclareAssetTarget(const FieldDescriptor& field) noexcept {
+  return field.kind == TypeKind::Primitive && field.primitive == PrimitiveKind::AssetGuid &&
+         hasFlags(field.flags, FieldFlags::AssetReference) && !hasFlags(field.flags, FieldFlags::EntityReference);
+}
 
 struct EnumConstantDescriptor {
   std::string_view name;
@@ -176,6 +182,7 @@ namespace detail {
                                                const FieldDescriptor& field) noexcept {
   if (!isIdentifier(field.name) || field.id != fieldId(owner.name, field.name)) return false;
   if (hasFlags(field.flags, FieldFlags::AssetReference | FieldFlags::EntityReference)) return false;
+  if (!field.targetAssetType.empty() && !canDeclareAssetTarget(field)) return false;
   if (field.kind == TypeKind::Primitive) return field.type == TypeId{};
   const TypeDescriptor* referenced = findType(table, field.type);
   return referenced != nullptr && referenced->kind == field.kind;

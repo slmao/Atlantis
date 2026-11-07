@@ -1,10 +1,9 @@
 # Plan: Shared Asset Reference Target Types
 
 - **Spec:** [Spec 0084](../specs/0084-asset-reference-target-types.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. This PR requests approval of the Spec,
-  Plan and [proposed ADR-0145](../adr/0145-authoring-asset-reference-target-types.md).
+- **Joint Human Review:** slmao, 2026-11-07, [joint ruling](https://github.com/slmao/Atlantis/pull/331#issuecomment-6708205947) on `d58ea8d`. J1–J4 and Spec/Plan 0084 approved, [ADR-0145](../adr/0145-authoring-asset-reference-target-types.md) accepted, and S2–S4 authorized after the manual design merge `065cdf0`. Existing gates and human final merge apply. The proposal below records what was reviewed.
 
 ## Objective
 

@@ -944,10 +944,10 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(worker, _worker) || launch != _referenceLaunch)
             { if (target is not null) worker.CancelAssetReference(target.Request); return; }
             if (target is null) { _editLine.Text = error; FinishAssetReference(); return; }
-            var chooser = new AssetReferencePickerWindow(worker, target, guid =>
+            var chooser = new AssetReferencePickerWindow(worker, target, (listRequest, guid) =>
             {
                 _referenceWindow = null;
-                worker.ConfirmAssetReference(target.Request, guid, () =>
+                worker.ConfirmAssetReference(target.Request, listRequest, guid, () =>
                 { if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch) FinishAssetReference(); });
             }, () =>
             {

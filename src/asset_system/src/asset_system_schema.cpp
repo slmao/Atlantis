@@ -39,9 +39,9 @@ constexpr FieldFlags kData = FieldFlags::Serializable;
 constexpr FieldFlags kAssetRef = FieldFlags::Serializable | FieldFlags::AssetReference;
 
 constexpr FieldDescriptor primitive(std::string_view owner, std::string_view name, PrimitiveKind kind,
-                                    FieldFlags flags, std::size_t offset) {
+                                    FieldFlags flags, std::size_t offset, std::string_view targetAssetType = {}) {
   return {schema::fieldId(owner, name), name,  TypeKind::Primitive, kind,
-          schema::TypeId{},             flags, static_cast<std::uint32_t>(offset)};
+          schema::TypeId{},             flags, static_cast<std::uint32_t>(offset), targetAssetType};
 }
 
 constexpr FieldDescriptor enumField(std::string_view owner, std::string_view name, std::string_view enumType,
@@ -173,9 +173,9 @@ constexpr std::array kSceneCameraBloomFields{
 
 constexpr std::array kSceneRenderableFields{
     primitive(kSceneRenderable, "meshAsset", PrimitiveKind::AssetGuid, kAssetRef,
-              offsetof(scene::Renderable, meshAsset)),
+              offsetof(scene::Renderable, meshAsset), "mesh"),
     primitive(kSceneRenderable, "materialAsset", PrimitiveKind::AssetGuid, kAssetRef | FieldFlags::Optional,
-              offsetof(scene::Renderable, materialAsset)),
+              offsetof(scene::Renderable, materialAsset), "material"),
 };
 
 constexpr std::array kSceneLightFields{

@@ -34,7 +34,7 @@ constexpr std::string_view kUsage =
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
     "  runtime overlay set <file|-> | runtime overlay select <guid>... | runtime overlay clear\n"
     "  tx <file|->       write commands, one per line, submitted as one transaction\n"
-    "  scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
+    "  scene schema <Type> | scene open | scene nodes | scene get <guid> <Type>.<field> | scene camera [<guid>|none]\n"
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"

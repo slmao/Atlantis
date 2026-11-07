@@ -409,6 +409,57 @@ class SequentialQueries final : public QueryBatch {
       commands.front());
 }
 
+[[nodiscard]] Reply inspectSchemaType(std::string command, std::span<const TypeDescriptor> schema,
+                                      const TypeDescriptor* type) {
+  std::string human = std::string(text::shortName(type->name)) + " " + std::string(kindName(type->kind)) + " (" +
+                      std::string(type->name) + ") v" + std::to_string(type->schemaVersion) + "\n";
+  Value result = typeIdentity(*type);
+  result.set("kind", Value::string(std::string(kindName(type->kind))));
+  result.set("version", Value::number(static_cast<std::uint64_t>(type->schemaVersion)));
+  Value fields = Value::array();
+  for (const FieldDescriptor& field : type->fields) {
+    human += "  " + std::string(field.name) + " ";
+    Value f = Value::object();
+    f.set("name", Value::string(std::string(field.name)));
+    if (field.kind == TypeKind::Primitive) {
+      human += std::string(primitiveName(field.primitive));
+      f.set("kind", Value::string(std::string(primitiveName(field.primitive))));
+    } else {
+      const TypeDescriptor* referenced = text::findType(schema, field.type);
+      human += std::string(kindName(field.kind)) + " " +
+               std::string(referenced ? text::shortName(referenced->name) : "?");
+      f.set("kind", Value::string(std::string(kindName(field.kind))));
+      f.set("type", referenced ? typeIdentity(*referenced) : Value());
+    }
+    human += " " + flagNames(field.flags);
+    if (!field.targetAssetType.empty()) {
+      human += " target=" + std::string(field.targetAssetType);
+      f.set("targetAssetType", Value::string(std::string(field.targetAssetType)));
+    }
+    human += "\n";
+    Value flags = Value::array();
+    for (const auto& [flag, name] : kFlagNames) {
+      if (schema::hasFlags(field.flags, flag)) flags.push(Value::string(std::string(name)));
+    }
+    f.set("flags", std::move(flags));
+    fields.push(std::move(f));
+  }
+  Value constants = Value::array();
+  for (const auto& constant : type->constants) {
+    human += "  " + std::string(constant.name) + " = " + std::to_string(constant.value) + "\n";
+    Value c = Value::object();
+    c.set("name", Value::string(std::string(constant.name)));
+    c.set("value", Value::number(constant.value));
+    constants.push(std::move(c));
+  }
+  if (type->kind == TypeKind::Enum) {
+    result.set("constants", std::move(constants));
+  } else {
+    result.set("fields", std::move(fields));
+  }
+  return done(std::move(command), std::move(human), std::move(result));
+}
+
 }  // namespace
 
 // --- The pending write or step --------------------------------------------------
@@ -739,48 +790,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     if (t.size() != 3) return failed("schema inspect", usageError("schema inspect <Type>"));
     const TypeDescriptor* type = text::findType(schema, t[2]);
     if (type == nullptr) return failed("schema inspect", textError(text::TextError::UnknownType, t[2]));
-    std::string human = std::string(text::shortName(type->name)) + " " + std::string(kindName(type->kind)) + " (" +
-                        std::string(type->name) + ") v" + std::to_string(type->schemaVersion) + "\n";
-    Value result = typeIdentity(*type);
-    result.set("kind", Value::string(std::string(kindName(type->kind))));
-    result.set("version", Value::number(static_cast<std::uint64_t>(type->schemaVersion)));
-    Value fields = Value::array();
-    for (const FieldDescriptor& field : type->fields) {
-      human += "  " + std::string(field.name) + " ";
-      Value f = Value::object();
-      f.set("name", Value::string(std::string(field.name)));
-      if (field.kind == TypeKind::Primitive) {
-        human += std::string(primitiveName(field.primitive));
-        f.set("kind", Value::string(std::string(primitiveName(field.primitive))));
-      } else {
-        const TypeDescriptor* referenced = text::findType(schema, field.type);
-        human += std::string(kindName(field.kind)) + " " +
-                 std::string(referenced ? text::shortName(referenced->name) : "?");
-        f.set("kind", Value::string(std::string(kindName(field.kind))));
-        f.set("type", referenced ? typeIdentity(*referenced) : Value());
-      }
-      human += " " + flagNames(field.flags) + "\n";
-      Value flags = Value::array();
-      for (const auto& [flag, name] : kFlagNames) {
-        if (schema::hasFlags(field.flags, flag)) flags.push(Value::string(std::string(name)));
-      }
-      f.set("flags", std::move(flags));
-      fields.push(std::move(f));
-    }
-    Value constants = Value::array();
-    for (const auto& constant : type->constants) {
-      human += "  " + std::string(constant.name) + " = " + std::to_string(constant.value) + "\n";
-      Value c = Value::object();
-      c.set("name", Value::string(std::string(constant.name)));
-      c.set("value", Value::number(constant.value));
-      constants.push(std::move(c));
-    }
-    if (type->kind == TypeKind::Enum) {
-      result.set("constants", std::move(constants));
-    } else {
-      result.set("fields", std::move(fields));
-    }
-    return done("schema inspect", std::move(human), std::move(result));
+    return inspectSchemaType("schema inspect", schema, type);
   }
 
   // world list | world inspect
@@ -1722,10 +1732,17 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
   if (t.size() < 2) {
-    return failed(command, usageError("scene open|nodes|get|set|create|destroy|add|remove|parent|camera|apply|save|tx"));
+    return failed(command, usageError("scene schema|open|nodes|get|set|create|destroy|add|remove|parent|camera|apply|save|tx"));
   }
   const std::span<const TypeDescriptor> schema = a->schema();
   const std::string_view verb = t[1];
+
+  if (verb == "schema") {
+    if (t.size() != 3) return failed(command, usageError("scene schema <Type>"));
+    const TypeDescriptor* type = text::findType(schema, t[2]);
+    if (!type) return failed(command, textError(text::TextError::UnknownType, t[2]));
+    return inspectSchemaType(command, schema, type);
+  }
 
   if (verb == "open") {
     if (t.size() != 2) return failed(command, usageError("scene open"));

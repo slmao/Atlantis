@@ -352,6 +352,16 @@ public sealed class EditorWorker : IDisposable
     // Query work stays on this worker; posted callbacks own their values.
     public void LoadAssets(Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session => { var result = session.Assets.ListAssets(); _post(() => done(result)); });
+    public void LoadReferenceAssets(long request, long listRequest,
+        Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
+        Enqueue(session =>
+        {
+            if (_referencePicker is not { } picker || picker.Target.Request != request ||
+                !picker.BeginList(listRequest)) return;
+            var result = session.Assets.ListAssets();
+            picker.CompleteList(listRequest, result);
+            _post(() => done(result));
+        });
     public void ReadAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session => { var result = session.Assets.GetAsset(guid); _post(() => done(result)); });
 
@@ -611,12 +621,12 @@ public sealed class EditorWorker : IDisposable
         { _referencePicker.Invalidate("the choice was cancelled"); _referencePicker = null; }
     });
 
-    public void ConfirmAssetReference(long request, AssetGuid candidate, Action settled) => Edit(document =>
+    public void ConfirmAssetReference(long request, long listRequest, AssetGuid candidate, Action settled) => Edit(document =>
     {
         if (_referencePicker?.Target.Request != request || _inspector is null)
             return (EditPlan.Refused("choose asset", "the choice expired"), null);
         _inspector.Refresh(_selected);
-        return (_referencePicker.Confirm(_inspector, _selected, candidate), null);
+        return (_referencePicker.Confirm(_inspector, _selected, candidate, listRequest), null);
     }, () =>
     {
         if (_referencePicker?.Target.Request == request) _referencePicker = null;

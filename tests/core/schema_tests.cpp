@@ -140,6 +140,8 @@ TEST_CASE("schema: isWellFormed rejects each rule violated alone", "[core][schem
     f.outerFields[2].flags = f.outerFields[2].flags | FieldFlags::EntityReference;
   }
   SECTION("primitive field naming a type") { f.innerFields[0].type = typeId(kMode); }
+  SECTION("target type on an unrelated primitive") { f.innerFields[0].targetAssetType = "mesh"; }
+  SECTION("target type on a struct reference") { f.outerFields[0].targetAssetType = "mesh"; }
   SECTION("reference to a type missing from the table") { f.outerFields[0].type = typeId("test::Missing"); }
   SECTION("reference to a type of the other kind") { f.outerFields[1].type = typeId(kInner); }
 

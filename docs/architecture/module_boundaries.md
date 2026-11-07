@@ -1641,6 +1641,13 @@ Document edits and undo/redo remain available; Retry applies the latest document
 without replaying a transaction. No new World operation or Editor-only channel
 is involved. See [the wire contract](remote_protocol.md#53-correlated-authoring-apply-spec-0083--adr-0144).
 
+Spec 0084 and [ADR-0145](../adr/0145-authoring-asset-reference-target-types.md)
+put the expected cooked type on the Asset System's authoring field
+descriptors. Core carries the optional token and Authoring publishes the
+same descriptors to Remote, CLI, SDKs and MCP. Editor App uses the token
+against its existing catalog snapshot to filter candidates. Runtime still
+validates the full scene and its dependencies at reload.
+
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
 the clients' Viewport overlay:

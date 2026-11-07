@@ -177,8 +177,15 @@ TEST_CASE("remote authoring: the document is reached, edited and observed over t
   CHECK(b.activeCamera().value() == node(4));
   CHECK(b.getProperty({node(3), kLight, kIntensity}).value() == access::PropertyValue{3.0f});
   std::vector<std::string_view> names;
-  for (const auto& type : b.schema()) names.push_back(type.name);
+  for (const auto& type : b.schema()) {
+    names.push_back(type.name);
+    if (type.name != "asset_system::scene::Renderable") continue;
+    REQUIRE(type.fields.size() == 2);
+    CHECK(type.fields[0].targetAssetType == "mesh");
+    CHECK(type.fields[1].targetAssetType == "material");
+  }
   CHECK(std::find(names.begin(), names.end(), "asset_system::scene::Light") != names.end());
+  CHECK(std::find(names.begin(), names.end(), "asset_system::scene::Renderable") != names.end());
 
   // A write from one client, seen by the other's subscriptions.
   const auto ticket = a.submit(ac::SetProperty{{node(3), kLight, kIntensity}, 7.0f});
