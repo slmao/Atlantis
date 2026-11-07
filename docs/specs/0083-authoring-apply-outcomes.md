@@ -4,7 +4,7 @@
 - **Author:** Codex
 - **Created:** 2026-11-07
 - **Related Plan(s):** [Plan 0083](../plans/0083-authoring-apply-outcomes.md)
-- **Approval:** Pending joint human review; design only
+- **Approval:** Pending [joint human review in PR #329](https://github.com/slmao/Atlantis/pull/329); design only
 - **Related ADR(s):** [ADR-0144 — Proposed](../adr/0144-correlated-authoring-apply-outcomes.md)
 
 ## Summary
@@ -206,7 +206,9 @@ recovery request keep that preview restriction until a matching successful
 current projection (including any coalesced follow-up); another client's result
 may be displayed but cannot clear the local recovery latch. Do not relabel a newer revision
 as rendered on an older result. Normal play/pause/Step/Resume remain explicit
-controls. Fixing an asset reference or retrying is not recooking assets or
+controls. One Step executes the currently accepted snapshot; if its completion
+issues a coalesced follow-up while still paused, that request needs another
+Step or Resume. Fixing an asset reference or retrying is not recooking assets or
 refreshing Spec 0081's fixed discovery snapshot.
 
 RuntimeStopped requires a new usable Runtime/session before retry; the editor

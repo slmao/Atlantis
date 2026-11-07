@@ -3,7 +3,7 @@
 - **Spec:** [Spec 0083](../specs/0083-authoring-apply-outcomes.md)
 - **Status:** In Review
 - **Author:** Codex
-- **Joint Human Review:** Pending; this PR authorizes no implementation
+- **Joint Human Review:** Pending in [PR #329](https://github.com/slmao/Atlantis/pull/329); this PR authorizes no implementation
 - **Related ADR:** [ADR-0144 — Proposed](../adr/0144-correlated-authoring-apply-outcomes.md)
 
 ## Objective

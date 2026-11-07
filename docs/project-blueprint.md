@@ -985,7 +985,8 @@ milestone being listed does not authorize starting it — see Section 1.
   [PR #328](https://github.com/slmao/Atlantis/pull/328) (2026-11-07).
   [Spec 0083](specs/0083-authoring-apply-outcomes.md) /
   [Plan 0083](plans/0083-authoring-apply-outcomes.md) and Proposed
-  [ADR-0144](adr/0144-correlated-authoring-apply-outcomes.md) are in joint review
+  [ADR-0144](adr/0144-correlated-authoring-apply-outcomes.md) are in
+  [joint review #329](https://github.com/slmao/Atlantis/pull/329)
   for correlated shared apply/reload outcomes and explicit editor recovery;
   design only, implementation not authorized. Target-type
   metadata, preview and broader asset-pipeline management remain future work.
