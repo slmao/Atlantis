@@ -471,6 +471,18 @@ void authoringVectors(std::vector<Vector>& out) {
   out.push_back({"assets.detail.source_schema", "AssetDetails", codec::encode(connection::assets::AssetDetails{asset, connection::assets::AssetType::Scene, "assets:scene.txt", 7, 8, "test/1", {kAsset}})});
   for (auto error : {connection::assets::AssetError::CatalogUnavailable, connection::assets::AssetError::UnknownAsset})
     out.push_back({"assets.error." + std::string(connection::assets::toString(error)), "AssetError", json::Value::string(std::string(connection::assets::toString(error)))});
+  namespace ca = connection::assets;
+  const ca::RebuildJob rebuilding{{kAsset}, asset, ca::RebuildState::Running, {}, {}};
+  out.push_back({"assets.rebuild.running", "RebuildJob", codec::encode(rebuilding)});
+  out.push_back({"assets.rebuild.empty", "RebuildStatus", codec::encode(ca::RebuildStatus{})});
+  auto rebuilt = rebuilding;
+  rebuilt.state = ca::RebuildState::Succeeded;
+  rebuilt.generation = ca::GenerationId{atlantis::asset_system::AssetGuid{kOther.bytes}};
+  out.push_back({"assets.rebuild.succeeded", "RebuildStatus", codec::encode(ca::RebuildStatus{ca::GenerationId{kAsset}, rebuilt})});
+  auto failedBuild = rebuilding;
+  failedBuild.state = ca::RebuildState::Failed;
+  failedBuild.failure = ca::RebuildFailure{ca::RebuildStage::Pipeline, ca::RebuildFailureCode::BuildFailed, "tool refused", UINT32_MAX};
+  out.push_back({"assets.rebuild.failed", "RebuildStatus", codec::encode(ca::RebuildStatus{{}, failedBuild})});
 
   // Spec 0083: all outcome alternatives, bounded observation shape and exact u64 literals.
   const ac::ApplyReceipt receipt{ac::ApplyId{kAsset.bytes}, UINT64_MAX};

@@ -12,6 +12,7 @@
 #include "gate_run.h"
 #include "authoring_host.h"
 #include "asset_host.h"
+#include "asset_rebuild_host.h"
 #include "cli.h"
 #include "editor_attachment.h"
 
@@ -172,6 +173,21 @@ int main(int argc, char** argv) {
   // Plan 0032 M2: the scene is the only field the CLI selection above
   // varies -- every other assignment in this function is unchanged.
   config.assetCatalogPath = ATLANTIS_RUNTIME_ASSET_CATALOG_PATH;
+  std::unique_ptr<atlantis::runtime::AssetRebuildHost> rebuild;
+  if (cliResult.assetBuildProfile) {
+    namespace ca = atlantis::connection::assets;
+    const auto& profile = *cliResult.assetBuildProfile;
+    auto opened = atlantis::runtime::AssetRebuildHost::open({
+        std::filesystem::path(std::u8string(profile.begin(), profile.end())), ATLANTIS_RUNTIME_ASSET_CATALOG_PATH,
+        ATLANTIS_ASSET_BUILD_CMAKE, ATLANTIS_BUILD_TYPE,
+        cliResult.assetGeneration ? std::optional{ca::GenerationId{*cliResult.assetGeneration}} : std::nullopt});
+    if (opened.isErr()) {
+      ATLANTIS_LOG_ERROR("assets: {}", opened.error());
+      return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+    }
+    rebuild = std::move(opened.value());
+    config.assetCatalogPath = rebuild->catalogPath().generic_string();
+  }
   config.sceneAsset = selection.sceneAsset;
   config.unlitTexturedVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_UNLIT_TEXTURED_SHADER_DIR) + "/textured_quad.vert.spv";
   config.unlitTexturedVertexShaderReflectionPath =
@@ -376,11 +392,12 @@ int main(int argc, char** argv) {
       bistroImport.isOk()) {
     authoringSources.roots.imports.push_back(
         {bistroImport.value(), atlantis::asset_system::deriveAssetGuid(bistroImport.value(), "scene"),
-         std::filesystem::path(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)});
+         cliResult.assetGeneration ? rebuild->importedSource(bistroImport.value())
+                                   : std::filesystem::path(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)});
   }
 #endif
   atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
-  atlantis::runtime::AssetHost assets(config.assetCatalogPath);
+  atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get());
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks
 
@@ -496,6 +513,7 @@ int main(int argc, char** argv) {
     if (editor) editor->update();
   }
 
+  if (rebuild) rebuild->stop();
   app.stopSceneReloads();
   authoring.afterFrame();
   if (editor) {

@@ -1,11 +1,11 @@
 # Spec: Shared Rebuild of Existing Assets
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-07
 - **Related Plan:** [Plan 0085](../plans/0085-shared-asset-rebuild.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0146](../adr/0146-managed-asset-rebuild-and-generation-publication.md) (Proposed)
+- **Approval:** slmao, 2026-11-08, [joint ruling](https://github.com/slmao/Atlantis/pull/333#issuecomment-6709726017) on `9e91e96`. Design #333 manually merged as `a35224d`.
+- **Related ADR:** [ADR-0146](../adr/0146-managed-asset-rebuild-and-generation-publication.md) (Accepted)
 
 ## Summary
 

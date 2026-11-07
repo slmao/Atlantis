@@ -12,7 +12,11 @@ using Atlantis.Gameplay.Remote;
 
 namespace Atlantis.Editor;
 
-public sealed record RuntimeLaunch(string RuntimePath, string Scene, ulong? ParentWindow, string WorkDirectory);
+public sealed record RuntimeLaunch(string RuntimePath, string Scene, ulong? ParentWindow, string WorkDirectory)
+{
+    public string? AssetBuildProfile { get; init; }
+    public string? AssetGeneration { get; init; }
+}
 
 public sealed class RuntimeProcess : IDisposable
 {
@@ -63,6 +67,16 @@ public sealed class RuntimeProcess : IDisposable
         start.ArgumentList.Add("0");
         start.ArgumentList.Add("--session-file");
         start.ArgumentList.Add(sessionPath);
+        if (launch.AssetBuildProfile is string profile)
+        {
+            start.ArgumentList.Add("--asset-build-profile");
+            start.ArgumentList.Add(profile);
+        }
+        if (launch.AssetGeneration is string generation)
+        {
+            start.ArgumentList.Add("--asset-generation");
+            start.ArgumentList.Add(generation);
+        }
         if (launch.ParentWindow is ulong parent)
         {
             start.ArgumentList.Add("--parent-window");

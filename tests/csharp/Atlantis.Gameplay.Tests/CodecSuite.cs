@@ -175,6 +175,8 @@ public static class CodecSuite
             case "ApplyLookupError": return Codec.DecodeApplyLookupError(wire) is {} unknown ? W(Codec.Encode(unknown)) : null;
             case "AssetDetails": return Codec.DecodeAssetDetails(wire) is {} detail ? W(Codec.Encode(detail)) : null;
             case "AssetError": return Codec.DecodeAssetError(wire) is {} error ? W(Codec.Encode(error)) : null;
+            case "RebuildJob": return Codec.DecodeRebuildJob(wire) is {} rebuild ? W(Codec.Encode(rebuild)) : null;
+            case "RebuildStatus": return Codec.DecodeRebuildStatus(wire) is {} buildStatus ? W(Codec.Encode(buildStatus)) : null;
             case "NodeSummary": return Codec.DecodeNodeSummary(wire) is A.NodeSummary ns ? W(Codec.Encode(ns)) : null;
             case "AuthoringError":
                 return Codec.DecodeAuthoringError(wire) is A.AuthoringError aerr ? W(Codec.Encode(aerr)) : null;

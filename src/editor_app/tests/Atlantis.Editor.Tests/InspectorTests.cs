@@ -14,6 +14,7 @@ using System.Threading.Tasks;
 using Atlantis.Editor;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
+using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using Avalonia;
@@ -106,13 +107,20 @@ public static partial class Program
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
                 bool legacyReadiness = _scene == "--legacy-readiness";
-                var window = new MainWindow(new EditorOptions(_runtime, legacyReadiness ? "integrated_showcase_demo" : _scene));
+                bool rebuild = _scene == "--asset-rebuild";
+                var window = new MainWindow(new EditorOptions(_runtime,
+                    legacyReadiness || rebuild ? "integrated_showcase_demo" : _scene)
+                {
+                    AssetBuildProfile = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
+                    AssetGeneration = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
+                });
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
                 {
                     try
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
                     }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
@@ -121,6 +129,40 @@ public static partial class Program
             }
             base.OnFrameworkInitializationCompleted();
         }
+    }
+
+    private static async Task CheckAssetRebuildUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
+            File.Exists(process.SessionPath), "managed Runtime session");
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        work(Path.GetDirectoryName(runtime.SessionPath)!);
+        var tabs = NameUiField<TabControl>(window, "_assetTabs")!;
+        tabs.SelectedIndex = 1;
+        var browser = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
+        await NameUiWait(() => browser.State == "Ready", "managed asset catalog", 60);
+        var row = browser.Visible.First(a => a.Source == "assets:materials/pbr_dielectric_rough.material.txt");
+        NameUiField<ListBox>(window, "_assetsList")!.SelectedItem = row;
+        var start = NameUiField<Button>(window, "_rebuildStart")!;
+        var state = NameUiField<TextBlock>(window, "_rebuildState")!;
+        await NameUiWait(() => start.IsEnabled, "selected producer is actionable");
+        start.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        checks.Add(new("pending request disables duplicate rebuild", !start.IsEnabled));
+        await NameUiWait(() => state.Text?.Contains(" · Running", StringComparison.Ordinal) == true, "running receipt", 30);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var running = await Task.Run(() => observer.Assets.RebuildStatus());
+        checks.Add(new("SDK observes the same admitted job as Assets",
+            running.IsOk && running.Value?.Job is { } known && known.Asset == row.Guid &&
+            state.Text!.Contains(known.Id.ToString(), StringComparison.Ordinal)));
+        await NameUiWait(() => state.Text?.Contains(" · Succeeded", StringComparison.Ordinal) == true,
+            "Assets observes published generation", 180);
+        var terminal = await Task.Run(() => observer.Assets.RebuildStatus(running.Value!.Job!.Id));
+        checks.Add(new("publication includes explicit restart guidance",
+            terminal.Value?.Job?.Generation is GenerationId generation &&
+            state.Text!.Contains("--asset-generation " + generation, StringComparison.Ordinal)));
+        checks.Add(new("publication does not select active generation or replace Assets selection",
+            terminal.IsOk && terminal.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration &&
+            browser.Selected == row.Guid));
     }
 
     private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)

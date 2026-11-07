@@ -81,6 +81,96 @@ std::optional<connection::assets::AssetError> decodeAssetError(const Value& v) {
   return std::nullopt;
 }
 
+namespace {
+namespace ca = connection::assets;
+template<class Enum>
+std::optional<Enum> rebuildToken(const Value* value, Enum last) {
+  if (!value || !value->isString()) return std::nullopt;
+  for (unsigned i = 0; i <= static_cast<unsigned>(last); ++i) {
+    auto token = static_cast<Enum>(i);
+    if (value->asString() == ca::toString(token)) return token;
+  }
+  return std::nullopt;
+}
+std::optional<asset_system::AssetGuid> nonNilAsset(const Value* value) {
+  if (!value) return std::nullopt;
+  const auto guid = decodeAsset(*value);
+  return guid && *guid != asset_system::AssetGuid{} ? guid : std::nullopt;
+}
+std::optional<ca::RebuildFailure> decodeRebuildFailure(const Value& value) {
+  const auto stage = rebuildToken(value.find("stage"), ca::RebuildStage::Publication);
+  const auto code = rebuildToken(value.find("code"), ca::RebuildFailureCode::TimedOut);
+  const auto* diagnostic = value.find("diagnostic");
+  if (!stage || !code || !ca::validFailure(*stage, *code) || !diagnostic ||
+      !diagnostic->isString() || diagnostic->asString().size() > 4096) return std::nullopt;
+  std::optional<std::uint32_t> exit;
+  if (const auto* item = value.find("exitCode")) {
+    const auto number = decodeUInt64(*item);
+    if (!number || *number > UINT32_MAX) return std::nullopt;
+    exit = static_cast<std::uint32_t>(*number);
+  }
+  return ca::RebuildFailure{*stage, *code, diagnostic->asString(), exit};
+}
+}  // namespace
+
+Value encode(const ca::RebuildJob& job) {
+  Value out = Value::object();
+  out.set("id", encodeAsset(job.id.value));
+  out.set("asset", encodeAsset(job.asset));
+  out.set("state", Value::string(std::string(ca::toString(job.state))));
+  if (job.generation) out.set("generation", encodeAsset(job.generation->value));
+  if (job.failure) {
+    Value f = Value::object();
+    f.set("stage", Value::string(std::string(ca::toString(job.failure->stage))));
+    f.set("code", Value::string(std::string(ca::toString(job.failure->code))));
+    f.set("diagnostic", Value::string(job.failure->diagnostic));
+    if (job.failure->exitCode) f.set("exitCode", Value::number(static_cast<std::uint64_t>(*job.failure->exitCode)));
+    out.set("failure", std::move(f));
+  }
+  return out;
+}
+Value encode(const ca::RebuildStatus& status) {
+  Value out = Value::object();
+  out.set("activeGeneration", status.activeGeneration ? encodeAsset(status.activeGeneration->value) : Value());
+  out.set("job", status.job ? encode(*status.job) : Value());
+  return out;
+}
+std::optional<ca::RebuildJob> decodeRebuildJob(const Value& value) {
+  const auto id = nonNilAsset(value.find("id"));
+  const auto asset = nonNilAsset(value.find("asset"));
+  const auto state = rebuildToken(value.find("state"), ca::RebuildState::Failed);
+  const auto* generation = value.find("generation");
+  const auto* failure = value.find("failure");
+  if (!id || !asset || !state || (generation != nullptr) != (*state == ca::RebuildState::Succeeded) ||
+      (failure != nullptr) != (*state == ca::RebuildState::Failed)) return std::nullopt;
+  ca::RebuildJob job{{*id}, *asset, *state, {}, {}};
+  if (generation) {
+    const auto guid = nonNilAsset(generation);
+    if (!guid) return std::nullopt;
+    job.generation = ca::GenerationId{*guid};
+  }
+  if (failure && !(job.failure = decodeRebuildFailure(*failure))) return std::nullopt;
+  return job;
+}
+std::optional<ca::RebuildStatus> decodeRebuildStatus(const Value& value) {
+  const auto* active = value.find("activeGeneration");
+  const auto* job = value.find("job");
+  if (!active || !job) return std::nullopt;
+  ca::RebuildStatus out;
+  if (!active->isNull()) {
+    const auto guid = nonNilAsset(active);
+    if (!guid) return std::nullopt;
+    out.activeGeneration = ca::GenerationId{*guid};
+  }
+  if (!job->isNull() && !(out.job = decodeRebuildJob(*job))) return std::nullopt;
+  return out;
+}
+std::optional<ca::RebuildError> decodeRebuildError(const Value& value, bool start) {
+  const auto error = rebuildToken(&value, ca::RebuildError::UnknownJob);
+  if (!error || *error == ca::RebuildError::Unavailable) return error;
+  return (*error == ca::RebuildError::UnknownJob) != start ? error : std::nullopt;
+}
+
 using atlantis::asset_system::AssetGuid;
 using atlantis::asset_system::EntityGuid;
 using connection::EventFilter;

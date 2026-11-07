@@ -1,0 +1,277 @@
+#include "../../src/runtime/asset_rebuild_host.h"
+
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <atomic>
+#include <fstream>
+#include <iterator>
+#include <thread>
+
+namespace {
+namespace fs = std::filesystem;
+namespace as = atlantis::asset_system;
+namespace ca = atlantis::connection::assets;
+using atlantis::runtime::AssetRebuildHost;
+using namespace std::chrono_literals;
+
+void write(const fs::path& path, std::string_view text) {
+  std::ofstream out(path, std::ios::binary);
+  out << text;
+  out.close();
+  REQUIRE(out.good());
+}
+std::string read(const fs::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  return {std::istreambuf_iterator<char>(in), {}};
+}
+std::wstring quoted(const fs::path& path) { return L"\"" + path.wstring() + L"\""; }
+
+struct Fixture {
+  static inline std::atomic<unsigned> next = 0;
+  fs::path base = fs::temp_directory_path() / ("atlantis-rebuild-test-" + std::to_string(GetCurrentProcessId()) +
+                                               "-" + std::to_string(next++));
+  fs::path seed = base / "seed", staging = base / "staging", published = base / "published";
+  fs::path cmake = ATLANTIS_REBUILD_TEST_CMAKE;
+  as::AssetGuid guid = as::parseAssetGuid("00850085-0085-4085-8085-008500850085").value();
+  as::AssetGuid unknown = as::deriveAssetGuid(guid, "unknown");
+  std::shared_ptr<const as::AssetCatalog> snapshot;
+  fs::path profile = base / "profile.json";
+  fs::path marker = staging / ".atlantis-rebuild-dirty";
+
+  Fixture() {
+    REQUIRE(fs::create_directories(seed / "assets"));
+    REQUIRE(fs::create_directories(staging / "assets"));
+    REQUIRE(fs::create_directories(published));
+    const std::string inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tassets\ta.material.txt\t" +
+        as::toString(guid) + "\tassets/material.stamp\t-\n";
+    for (const auto& dir : {seed, staging}) {
+      write(dir / "assets/producers-Debug.txt", inventory);
+      write(dir / "artifact", "old");
+      write(dir / "metadata", "fixture");
+      catalog(dir, guid);
+    }
+    writeProfile(profile, staging, published);
+    auto loaded = as::loadAssetCatalog((seed / "asset_catalog.txt").generic_string());
+    REQUIRE(loaded.isOk());
+    snapshot = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
+    write(base / "CMakeLists.txt", R"(cmake_minimum_required(VERSION 3.28)
+project(rebuild_fixture LANGUAGES NONE)
+add_custom_target(atlantis_asset_catalog
+  COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_SOURCE_DIR}/producer.cmake"
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" VERBATIM)
+)");
+    write(base / "producer.cmake", R"(file(READ "mode" mode)
+if(EXISTS "assets/material.stamp")
+  message(FATAL_ERROR "producer was not forced")
+endif()
+if(mode STREQUAL "fail")
+  message(FATAL_ERROR "intentional tool failure")
+elseif(mode STREQUAL "slow")
+  execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 8)
+endif()
+file(WRITE "artifact" "new")
+file(WRITE "assets/material.stamp" "fixture stamp")
+)");
+    mode("ok");
+    auto cmd = quoted(cmake) + L" -S " + quoted(base) + L" -B " + quoted(staging);
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    REQUIRE(CreateProcessW(cmake.c_str(), cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                           nullptr, base.c_str(), &startup, &process));
+    CloseHandle(process.hThread);
+    const auto waited = WaitForSingleObject(process.hProcess, 20000);
+    DWORD exit = 1;
+    if (waited == WAIT_TIMEOUT) {
+      TerminateProcess(process.hProcess, 1);
+      WaitForSingleObject(process.hProcess, INFINITE);
+    } else {
+      GetExitCodeProcess(process.hProcess, &exit);
+    }
+    CloseHandle(process.hProcess);
+    REQUIRE(waited == WAIT_OBJECT_0);
+    REQUIRE(exit == 0);
+  }
+
+  ~Fixture() {
+    std::error_code ec;
+    const auto root = fs::weakly_canonical(base, ec);
+    if (!ec && root.parent_path() == fs::weakly_canonical(fs::temp_directory_path(), ec) &&
+        root.filename().string().starts_with("atlantis-rebuild-test-")) fs::remove_all(root, ec);
+  }
+  static void writeProfile(const fs::path& path, const fs::path& stage, const fs::path& publication) {
+    write(path, "{\"stagingBuild\":\"" + stage.generic_string() + "\",\"publicationRoot\":\"" +
+                 publication.generic_string() + "\"}");
+  }
+  void catalog(const fs::path& root, as::AssetGuid id) const {
+    as::AssetCatalogRecord record;
+    record.guid = id;
+    record.assetId = as::assetKey(id);
+    record.type = as::CatalogAssetType::Material;
+    record.source = {as::CatalogRoot::Assets, "a.material.txt", {}};
+    record.artifact = "artifact";
+    record.metadata = "metadata";
+    record.artifactSchema = 1;
+    record.tool = "fixture/1";
+    write(root / "asset_catalog.txt", as::serializeAssetCatalog({record}));
+  }
+  void mode(std::string_view name) const { write(staging / "mode", name); }
+  AssetRebuildHost::Config config() const { return {profile, seed / "asset_catalog.txt", cmake, "Debug", {}, 15s}; }
+  std::unique_ptr<AssetRebuildHost> host() const {
+    auto opened = AssetRebuildHost::open(config());
+    if (opened.isErr()) INFO(opened.error());
+    REQUIRE(opened.isOk());
+    return std::move(opened.value());
+  }
+  ca::RebuildJob complete(const AssetRebuildHost& host, ca::RebuildId id) const {
+    const auto limit = std::chrono::steady_clock::now() + 20s;
+    while (std::chrono::steady_clock::now() < limit) {
+      const auto status = host.status(id);
+      REQUIRE(status.isOk());
+      REQUIRE(status.value().job);
+      if (status.value().job->state != ca::RebuildState::Running) return *status.value().job;
+      std::this_thread::sleep_for(20ms);
+    }
+    FAIL("asset job did not settle");
+    return {};
+  }
+};
+}
+
+TEST_CASE("asset rebuild: one canonical writer, explicit publication and activation", "[runtime][asset-rebuild]") {
+  Fixture f;
+  auto host = f.host();
+  auto alias = f.config();
+  alias.profile = f.base / "alias.json";
+  Fixture::writeProfile(alias.profile, f.staging / ".." / "staging", f.published);
+  auto reader = AssetRebuildHost::open(alias);
+  REQUIRE(reader.isOk());
+  CHECK(reader.value()->start(f.guid, f.snapshot).error() == ca::RebuildError::Busy);
+  CHECK(host->start(f.unknown, f.snapshot).error() == ca::RebuildError::UnknownAsset);
+  CHECK(host->status(ca::RebuildId{f.unknown}).error() == ca::RebuildError::UnknownJob);
+  write(f.staging / "assets/material.stamp", "already current");
+  auto accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  CHECK(accepted.value().state == ca::RebuildState::Running);
+  CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::Busy);
+  const auto result = f.complete(*host, accepted.value().id);
+  REQUIRE(result.generation);
+  CHECK(result.state == ca::RebuildState::Succeeded);
+  CHECK_FALSE(host->status({}).value().activeGeneration);
+  CHECK(host->status({}).value().job == result);
+  CHECK(read(f.seed / "artifact") == "old");
+  CHECK(read(f.published / as::toString(result.generation->value) / "artifact") == "new");
+  host.reset();
+  auto selected = f.config();
+  selected.generation = result.generation;
+  auto activated = AssetRebuildHost::open(selected);
+  REQUIRE(activated.isOk());
+  CHECK(activated.value()->status({}).value().activeGeneration == result.generation);
+  CHECK(activated.value()->catalogPath().parent_path().filename().string() == as::toString(result.generation->value));
+  CHECK_FALSE(activated.value()->admissionError());
+  CHECK(activated.value()->status(result.id).error() == ca::RebuildError::UnknownJob);
+  selected.generation = ca::GenerationId{f.unknown};
+  CHECK(AssetRebuildHost::open(selected).isErr());
+  const auto partial = f.published / as::toString(f.unknown);
+  REQUIRE(fs::create_directory(partial));
+  CHECK(AssetRebuildHost::open(selected).isErr());
+}
+
+TEST_CASE("asset rebuild: ordinary failure and identity change preserve the seed and permit retry", "[runtime][asset-rebuild]") {
+  Fixture f;
+  auto host = f.host();
+  f.mode("fail");
+  auto accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto failed = f.complete(*host, accepted.value().id);
+  REQUIRE(failed.failure);
+  CHECK(failed.failure->code == ca::RebuildFailureCode::BuildFailed);
+  CHECK(failed.failure->exitCode.has_value());
+  CHECK_FALSE(fs::exists(f.marker));
+  f.mode("ok");
+  f.catalog(f.staging, f.unknown);
+  accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto changed = f.complete(*host, accepted.value().id);
+  REQUIRE(changed.failure);
+  CHECK(changed.failure->code == ca::RebuildFailureCode::IdentityChanged);
+  CHECK_FALSE(fs::exists(f.marker));
+  CHECK(read(f.seed / "artifact") == "old");
+  CHECK(host->status(failed.id).value().job == failed);
+  f.catalog(f.staging, f.guid);
+  accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  CHECK(f.complete(*host, accepted.value().id).state == ca::RebuildState::Succeeded);
+}
+
+TEST_CASE("asset rebuild: timeout and invalid staging require offline repair", "[runtime][asset-rebuild]") {
+  Fixture f;
+  auto config = f.config();
+  SECTION("timeout terminates the contained process tree") {
+    config.timeout = 400ms;
+    f.mode("slow");
+  }
+  SECTION("missing output after assembly") {
+    REQUIRE(fs::remove(f.staging / "metadata"));
+  }
+  auto opened = AssetRebuildHost::open(config);
+  REQUIRE(opened.isOk());
+  auto host = std::move(opened.value());
+  const auto accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto failed = f.complete(*host, accepted.value().id);
+  REQUIRE(failed.failure);
+  CHECK(failed.failure->code == (config.timeout == 400ms ? ca::RebuildFailureCode::TimedOut
+                                                        : ca::RebuildFailureCode::InvalidOutput));
+  CHECK(fs::exists(f.marker));
+  CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::WorkspaceNeedsRepair);
+  host.reset();
+  host = f.host();
+  CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::WorkspaceNeedsRepair);
+  CHECK(read(f.seed / "artifact") == "old");
+}
+
+TEST_CASE("asset rebuild: launch refusals are bounded and retain the newest 16 job records",
+          "[runtime][asset-rebuild]") {
+  Fixture f;
+  auto config = f.config();
+  config.cmake = f.base / "missing-cmake.exe";
+  auto opened = AssetRebuildHost::open(config);
+  REQUIRE(opened.isOk());
+  auto host = std::move(opened.value());
+  std::vector<ca::RebuildId> ids;
+  for (int i = 0; i != 17; ++i) {
+    const auto accepted = host->start(f.guid, f.snapshot);
+    REQUIRE(accepted.isOk());
+    REQUIRE(std::find(ids.begin(), ids.end(), accepted.value().id) == ids.end());
+    ids.push_back(accepted.value().id);
+    const auto failed = f.complete(*host, ids.back());
+    REQUIRE(failed.failure);
+    CHECK(failed.failure->code == ca::RebuildFailureCode::LaunchFailed);
+    CHECK_FALSE(fs::exists(f.marker));
+  }
+  CHECK(host->status(ids.front()).error() == ca::RebuildError::UnknownJob);
+  CHECK(host->status(ids[1]).isOk());
+  CHECK(host->status({}).value().job->id == ids.back());
+}
+
+TEST_CASE("asset rebuild: an escaping producer stamp cannot touch the seed", "[runtime][asset-rebuild]") {
+  Fixture f;
+  const std::string inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tassets\ta.material.txt\t" +
+      as::toString(f.guid) + "\t../seed/artifact\t-\n";
+  for (const auto& path : {f.seed, f.staging}) write(path / "assets/producers-Debug.txt", inventory);
+  auto host = f.host();
+  const auto accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto failed = f.complete(*host, accepted.value().id);
+  REQUIRE(failed.failure);
+  CHECK(failed.failure->code == ca::RebuildFailureCode::LaunchFailed);
+  CHECK(read(f.seed / "artifact") == "old");
+  CHECK(fs::is_regular_file(f.marker));
+  CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::WorkspaceNeedsRepair);
+}

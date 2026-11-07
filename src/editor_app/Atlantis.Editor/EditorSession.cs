@@ -364,6 +364,11 @@ public sealed class EditorWorker : IDisposable
         });
     public void ReadAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session => { var result = session.Assets.GetAsset(guid); _post(() => done(result)); });
+    public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
+        Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
+    public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,
+        Action<Outcome<Atlantis.Gameplay.Assets.RebuildStatus, Atlantis.Gameplay.Assets.RebuildError>> done) =>
+        Enqueue(session => { var result = session.Assets.RebuildStatus(id); _post(() => done(result)); });
 
     public void Start() => _thread.Start();
 

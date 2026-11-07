@@ -37,6 +37,12 @@ namespace atlantis::remote::codec {
 [[nodiscard]] std::optional<connection::assets::AssetSummary> decodeAssetSummary(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::AssetDetails> decodeAssetDetails(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::AssetError> decodeAssetError(const connection::json::Value& value);
+[[nodiscard]] connection::json::Value encode(const connection::assets::RebuildJob& value);
+[[nodiscard]] connection::json::Value encode(const connection::assets::RebuildStatus& value);
+[[nodiscard]] std::optional<connection::assets::RebuildJob> decodeRebuildJob(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::RebuildStatus> decodeRebuildStatus(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::RebuildError> decodeRebuildError(const connection::json::Value& value,
+                                                                                 bool start);
 
 using connection::json::Value;
 namespace access = atlantis::world::access;

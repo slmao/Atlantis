@@ -13,6 +13,7 @@ struct Assets final : atlantis::connection::AssetConnection {
   ca::AssetDetails detail{guid(), ca::AssetType::Mesh, "content:test/file.gltf#mesh/0", UINT32_MAX, std::nullopt, "unit/1", {}};
   bool unavailable = false;
   bool unordered = false;
+  std::optional<ca::RebuildJob> job;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
@@ -25,11 +26,23 @@ struct Assets final : atlantis::connection::AssetConnection {
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
     return id == detail.guid ? R::Ok(detail) : R::Err(ca::AssetError::UnknownAsset);
   }
+  ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override {
+    if (job) return ca::RebuildStartResult::Err(ca::RebuildError::Busy);
+    if (asset != guid()) return ca::RebuildStartResult::Err(ca::RebuildError::UnknownAsset);
+    job = ca::RebuildJob{{as::deriveAssetGuid(asset, "job")}, asset, ca::RebuildState::Running, {}, {}};
+    return ca::RebuildStartResult::Ok(*job);
+  }
+  ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override {
+    if (id && (!job || job->id != *id)) return ca::RebuildStatusResult::Err(ca::RebuildError::UnknownJob);
+    return ca::RebuildStatusResult::Ok({{}, job});
+  }
 };
 struct Borrow final : atlantis::connection::AssetConnection {
   explicit Borrow(Assets& a) : a_(a) {}
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override { return a_.listAssets(); }
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
+  ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override { return a_.rebuild(asset); }
+  ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
   Assets& a_;
 };
 }
@@ -81,4 +94,30 @@ TEST_CASE("assets: absent provider and output overflow fail without empty succes
   CHECK(a->assets().listAssets().isErr()); CHECK(a->failure().has_value());
   assets.detail.source = "assets:mesh.txt"; auto b = served.attach();
   CHECK(b->assets().listAssets().isOk());
+}
+
+TEST_CASE("asset rebuild: typed receipts and status use the same shared provider", "[remote][assets][asset-rebuild]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto a = served.attach(), b = served.attach();
+  REQUIRE(a->assets().rebuildStatus({}).isOk());
+  CHECK_FALSE(a->assets().rebuildStatus({}).value().job);
+  CHECK(a->assets().rebuild(fixtureSceneGuid()).error() == ca::RebuildError::UnknownAsset);
+  auto started = a->assets().rebuild(guid());
+  REQUIRE(started.isOk());
+  CHECK(b->assets().rebuild(guid()).error() == ca::RebuildError::Busy);
+  CHECK(b->assets().rebuildStatus(started.value().id).value().job == started.value());
+  assets.job->state = ca::RebuildState::Failed;
+  assets.job->failure = ca::RebuildFailure{ca::RebuildStage::Pipeline, ca::RebuildFailureCode::BuildFailed, "test", 19};
+  const auto terminal = b->assets().rebuildStatus(started.value().id);
+  REQUIRE(terminal.isOk());
+  CHECK(terminal.value().job == assets.job);
+  CHECK_FALSE(b->failure());
+  CHECK(b->assets().listAssets().isOk());
+  auto encoded = codec::encode(*assets.job);
+  encoded.set("generation", codec::encodeAsset(guid()));
+  CHECK_FALSE(codec::decodeRebuildJob(encoded));
+  CHECK_FALSE(codec::decodeRebuildError(Value::string("UnknownJob"), true));
 }

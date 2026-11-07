@@ -42,6 +42,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", "",
+            ToolSchemas.Parameters(("asset", ToolSchemas.String))),
+        Declare("assets.rebuild_status", "assets.rebuildStatus", "Read an asset rebuild result or the latest admitted job. Activation requires explicit local restart.", "",
+            ToolSchemas.RebuildStatusParameters()),
         Declare("authoring.list_nodes", "authoring.listNodes", "List nodes in document order.", AuthoringModel),
         Declare("authoring.get_property", "authoring.getProperty", "Read a document property by its wire scene address.", AuthoringModel,
             ToolSchemas.Parameters(("address", ToolSchemas.SceneAddress))),
@@ -120,6 +124,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
+            AssetGuid? requested = null;
+            if ((rebuild || rebuildStatus) && wireParameters.Find(rebuild ? "asset" : "jobId") is JsonValue key)
+            {
+                if (!key.IsString || !AssetGuid.TryParse(key.AsString, out AssetGuid guid) || guid.IsNil)
+                    return Error("InvalidArguments: expected a non-nil canonical GUID");
+                requested = guid;
+            }
             if (mapping.Method is "connection.drainEvents" or "authoring.drainEvents")
             {
                 JsonValue subscription = SubscriptionFor(mapping.Method);
@@ -127,8 +139,25 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 wireParameters = JsonValue.NewObject().Set("subscription", subscription.Find("result")!);
             }
             JsonValue response = session.Request(mapping.Method, wireParameters);
+            if ((rebuild || rebuildStatus) && Codec.IsLegacyAssetRebuildRefusal(response))
+                return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
             if (response.Find("error") is JsonValue error) return Forward(error, true);
             if (response.Find("result") is not JsonValue result) return Error("ProtocolError: response has no result or error");
+            if (rebuild || rebuildStatus)
+            {
+                JsonValue? ok = result.Find("ok"), err = result.Find("err");
+                if ((ok is null) == (err is null)) return Error("ProtocolError: malformed rebuild outcome");
+                if (err is not null)
+                    return Codec.DecodeRebuildError(err, rebuild) is not null ? Forward(result, true)
+                        : Error("ProtocolError: malformed rebuild refusal");
+                if (rebuild)
+                    return Codec.DecodeRebuildJob(ok!) is { State: Gameplay.Assets.RebuildState.Running } job && job.Asset == requested
+                        ? Forward(result, false) : Error("ProtocolError: malformed rebuild receipt");
+                var status = Codec.DecodeRebuildStatus(ok!);
+                return status is not null && (requested is null || status.Job?.Id.Value == requested)
+                    ? Forward(result, status.Job?.State == Gameplay.Assets.RebuildState.Failed)
+                    : Error("ProtocolError: malformed rebuild status");
+            }
             bool refused = result.Find("err") is not null
                 || (mapping.Method is "connection.drainFailures" or "authoring.drainFailures"
                     && result.IsArray && result.Items.Count > 0);

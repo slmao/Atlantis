@@ -1,0 +1,45 @@
+#pragma once
+
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/connection/asset_connection.h>
+
+#include <chrono>
+#include <filesystem>
+#include <memory>
+
+namespace atlantis::runtime {
+
+// Executable-private Windows coordinator. Admission and status are called
+// on the frame thread. Only the worker mutates staging or publishes outputs.
+class AssetRebuildHost {
+ public:
+  struct Config {
+    std::filesystem::path profile;
+    std::filesystem::path seedCatalog;
+    std::filesystem::path cmake;
+    std::string configuration;
+    std::optional<connection::assets::GenerationId> generation;
+    std::chrono::steady_clock::duration timeout = std::chrono::minutes(30);
+  };
+
+  [[nodiscard]] static Result<std::unique_ptr<AssetRebuildHost>, std::string> open(Config config);
+  ~AssetRebuildHost();
+  AssetRebuildHost(const AssetRebuildHost&) = delete;
+  AssetRebuildHost& operator=(const AssetRebuildHost&) = delete;
+
+  [[nodiscard]] const std::filesystem::path& catalogPath() const noexcept;
+  [[nodiscard]] std::filesystem::path importedSource(asset_system::AssetGuid importRoot) const;
+  [[nodiscard]] std::optional<connection::assets::RebuildError> admissionError() const;
+  [[nodiscard]] connection::assets::RebuildStartResult start(
+      asset_system::AssetGuid asset, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::RebuildStatusResult status(
+      std::optional<connection::assets::RebuildId> id) const;
+  void stop();
+
+ private:
+  struct State;
+  explicit AssetRebuildHost(std::unique_ptr<State> state);
+  std::unique_ptr<State> state_;
+};
+
+}  // namespace atlantis::runtime

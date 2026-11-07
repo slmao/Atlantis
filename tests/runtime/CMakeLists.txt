@@ -16,7 +16,9 @@ add_compile_definitions(ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PA
 # exercising it. No change to atlantis_runtime_gpu_tests below.
 add_executable(atlantis_runtime_tests
   asset_host_tests.cpp
+  asset_rebuild_host_tests.cpp
   ../../src/runtime/asset_host.cpp
+  ../../src/runtime/asset_rebuild_host.cpp
   lifecycle_state_tests.cpp
   bootstrap_config_tests.cpp
   environment_realization_tests.cpp
@@ -68,6 +70,7 @@ add_executable(atlantis_runtime_tests
   # Plan 0062 M3 (ADR-0123 D2): the pick services, GPU-free.
   scene_picking_tests.cpp
 )
+target_compile_definitions(atlantis_runtime_tests PRIVATE ATLANTIS_REBUILD_TEST_CMAKE="${CMAKE_COMMAND}")
 
 # Plan 0062 M1: Atlantis::Editor is linked by this test executable only, for
 # the camera convention cross-check; atlantis_runtime_host never links it.
@@ -76,6 +79,7 @@ target_link_libraries(atlantis_runtime_tests
     Atlantis::RuntimeHost
     Atlantis::Editor
     Catch2::Catch2WithMain
+    ole32
     atlantis_compiler_warnings
 )
 

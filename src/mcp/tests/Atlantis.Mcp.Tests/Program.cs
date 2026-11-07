@@ -30,6 +30,9 @@ internal static partial class Program
     [
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
+        ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.rebuild_status", "assets.rebuildStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
         ("world.list_entities", "connection.listEntities", "{}", $$$"""["{{{Entity}}}"]"""),
         ("world.get_property", "connection.getProperty", "{\"address\":" + WorldAddress + "}", """{"ok":{"u64":"18446744073709551615"}}"""),
         ("world.submit_transaction", "connection.submitTransaction", """{"commands":[]}""", """{"first":18446744073709551615,"count":0}"""),
@@ -183,6 +186,7 @@ internal static partial class Program
         (string Tool, string Args)[] invalid =
         [
             ("assets.list", """{"extra":1}"""), ("assets.get", "{}"), ("assets.get", """{"guid":1}"""),
+            ("assets.rebuild", "{}"), ("assets.rebuild_status", """{"jobId":null}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),
             ("authoring.get_property", "{\"address\":" + WorldAddress + "}"),

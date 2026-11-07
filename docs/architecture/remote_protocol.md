@@ -272,6 +272,27 @@ List-all sends one complete reply using existing limits (§3), including the sha
 64 MiB pending-output budget. Overflow disconnects, never truncates or succeeds
 empty. There is no pagination, streaming, new cap, event or capability handshake.
 
+### 5.2.1 Managed asset rebuild (Spec 0085 / ADR-0146)
+
+| Method | Parameters | Result |
+|---|---|---|
+| `assets.rebuild` | `{"asset":"<AssetGuid>"}` | `{"ok":<Job>}` with `Running`, or `{"err":"<StartRefusal>"}` |
+| `assets.rebuildStatus` | `{}` for latest, or `{"jobId":"<RebuildId>"}` | `{"ok":{"activeGeneration":<GenerationId or null>,"job":<Job or null>}}`, or `{"err":"<StatusRefusal>"}` |
+
+The two ID domains use canonical non-nil GUID strings. A job carries
+`id`, `asset` and `state`. `Succeeded` adds `generation`. `Failed` adds
+`failure` with `stage`, `code`, `diagnostic` and an optional unsigned
+32-bit `exitCode`. See [Spec 0085](../specs/0085-shared-asset-rebuild.md)
+for the closed alternatives, timeout, retention and workspace recovery.
+
+An opted-in Runtime can publish a generation while remaining on its
+original catalog. A local restart selects the published generation.
+Neither status nor discovery changes which catalog is active. For the
+new methods only, typed clients recognize the pinned legacy
+`BadRequest` / `unknown or malformed asset query` as client-local
+`Unsupported` and keep the shared session usable. Unexpected responses
+follow existing protocol-error handling.
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

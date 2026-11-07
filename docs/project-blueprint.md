@@ -994,7 +994,7 @@ milestone being listed does not authorize starting it — see Section 1.
   [joint design](https://github.com/slmao/Atlantis/pull/331) is approved and
   the [implementation](https://github.com/slmao/Atlantis/pull/332) is merged.
   [Spec 0085](specs/0085-shared-asset-rebuild.md) and
-  [Plan 0085](plans/0085-shared-asset-rebuild.md) propose shared rebuild of
+  [Plan 0085](plans/0085-shared-asset-rebuild.md) cover shared rebuild of
   existing producers with isolated publication and explicit Runtime restart.
   Preview, new asset registration and broader pipeline management remain future work.
   Other future work, each its own

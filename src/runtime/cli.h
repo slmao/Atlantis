@@ -178,6 +178,8 @@ struct CommandLineResult {
   // Spec 0064 / ADR-0128 D2: --no-pick-geometry -- keep no pick geometry even
   // when listening (raycast then answers NoGeometry).
   bool noPickGeometry = false;
+  std::optional<std::string> assetBuildProfile;
+  std::optional<atlantis::asset_system::AssetGuid> assetGeneration;
   // Spec 0059 / ADR-0117 D1: populated only when outcome == RunScene and
   // --benchmark was given; then selectedScene is empty and execScript, listenPort,
   // sessionFile and editor are unset.

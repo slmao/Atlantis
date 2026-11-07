@@ -1648,6 +1648,14 @@ same descriptors to Remote, CLI, SDKs and MCP. Editor App uses the token
 against its existing catalog snapshot to filter candidates. Runtime still
 validates the full scene and its dependencies at reload.
 
+Spec 0085 and [ADR-0146](../adr/0146-managed-asset-rebuild-and-generation-publication.md)
+add managed rebuild to Connection's asset interface. The Windows Runtime
+executable owns the opt-in coordinator and worker. It drives the configured
+Tools pipeline in an exclusive staging workspace and publishes complete
+generations for explicit startup selection. Remote carries the two
+operations to the same CLI, SDK, Editor and MCP clients. RuntimeHost,
+Authoring and the frame loop acquire no build or process ownership.
+
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
 the clients' Viewport overlay:

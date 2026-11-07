@@ -100,7 +100,7 @@ if(WIN32)
 # Plan 0065 P5 (ADR-0129 D2, ADR-0130 D2): authoring_host.cpp hosts the
 # authoring session, executable-private like editor_attachment.cpp --
 # Atlantis::RuntimeHost does not link Atlantis Authoring.
-add_executable(atlantis_runtime asset_host.cpp main.cpp cli.cpp editor_attachment.cpp authoring_host.cpp
+add_executable(atlantis_runtime asset_host.cpp asset_rebuild_host.cpp main.cpp cli.cpp editor_attachment.cpp authoring_host.cpp
   benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
   # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
   gate_canary.cpp canary_run.cpp gate_set.cpp gate_policy.cpp gate_evaluate.cpp gate_orchestrate.cpp gate_process_windows.cpp gate_store.cpp gate_applies.cpp gate_run.cpp)
@@ -130,6 +130,7 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # Plan 0060 M5: where the gate finds gate_policy.json and baselines/ unless told otherwise.
   ATLANTIS_PERFORMANCE_DIR="${CMAKE_SOURCE_DIR}/tests/performance"
   ATLANTIS_BUILD_TYPE="$<CONFIG>"
+  ATLANTIS_ASSET_BUILD_CMAKE="${CMAKE_COMMAND}"
   ATLANTIS_GIT_REVISION="${ATLANTIS_GIT_REVISION_TEXT}"
   ATLANTIS_GIT_DIRTY=${ATLANTIS_GIT_DIRTY_VALUE}
   ATLANTIS_BISTRO_CONTENT_PIN="${ATLANTIS_BISTRO_CONTENT_PIN_TEXT}"
@@ -150,6 +151,7 @@ target_link_libraries(atlantis_runtime
     Atlantis::Editor
     # Plan 0065 P5 (ADR-0130 D2): the executable hosts Atlantis Authoring.
     Atlantis::Authoring
+    ole32
     atlantis_compiler_warnings
 )
 
