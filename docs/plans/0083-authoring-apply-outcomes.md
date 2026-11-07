@@ -21,14 +21,16 @@ only; S2–S4 require explicit joint approval, ADR acceptance and human design m
 2. **S2 — Shared lifecycle and native clients.** Add Connection values/operations;
    implement Authoring revisions, bounded observation and sink identity. Report
    every Runtime reload result and replaced pending request through AuthoringHost,
-   preserving swap/resource/pause/fatal behavior. Add the exact Remote methods,
+   with acceptance-time supersession and one bounded post-frame result handoff;
+   preserve snapshot cleanup, swap/resource/pause/fatal behavior. Add the exact Remote methods,
    CLI matching wait/status output and narrow native SDK facade. Verify lifecycle,
    host mapping, native codecs, client isolation and legacy compatibility.
 3. **S3 — Managed clients and editor recovery.** Expose SDK values/operations and
    exact MCP tools, keeping explicit transaction settlement. Replace the editor's
-   generation-only waiter with id/query settlement on its existing worker.
+   generation-only waiter with event-independent id/query settlement on its existing worker.
    Implement the Spec's failure/reopen/unknown recovery and Gizmo restrictions;
-   preserve successful edit/history settlement, pipelining and one coalesced
+   probe readiness before editing, bypass pipelined apply while suspended, and
+   preserve successful edit/history settlement, normal pipelining and one coalesced
    successful follow-up. Add focused model/real UI regressions.
 4. **S4 — Applicable verification and review-ready PR.** Run affected checks and
    the final-candidate gates below, audit any reuse, restore disposable fixtures,
@@ -55,7 +57,7 @@ build, dependency, asset, policy, baseline or Accepted ADR edits in this PR.
 | Native SDK | New inline `src/gameplay_sdk/include/atlantis/gameplay/authoring_apply.h` over injected AuthoringConnection. Keep the existing Connection-only link and include allow-list; no typed authoring CRUD or generated binding edits. |
 | Managed SDK | `src/csharp/Atlantis.Gameplay/Authoring.cs`, `src/csharp/Atlantis.Gameplay/Remote/{AuthoringSession.cs,AuthoringCodec.cs}`. Existing error/transport dispatch helpers in `Remote/Codec.cs` only if needed for the two methods. No package, new assembly or codegen changes. |
 | MCP | `src/mcp/Atlantis.Mcp/{ToolRegistry.cs,ToolSchemas.cs}` and existing session forwarding in `IAtlantisSession.cs` only if needed. Exactly two additive tools; legacy apply and explicit failure-drain contract preserved. |
-| Editor model | `src/editor_app/Atlantis.Editor.Model/{AuthoringDocument.cs,DocumentTree.cs,AuthoringAliases.cs}` for receipt/status, pipelined adapter and ApplyController; existing `GizmoDrag.cs` / `EditHistory.cs` only if a demonstrated local recovery guard is required. Preserve record semantics and conflict checks. |
+| Editor model | `src/editor_app/Atlantis.Editor.Model/{AuthoringDocument.cs,DocumentTree.cs,AuthoringAliases.cs}` for receipt/status, separate submit-only and normal pipelined paths, ApplyController; existing `GizmoDrag.cs` for recovery's local gesture invalidation without a World rollback. `EditHistory.cs` only if a demonstrated local recovery guard is required. Preserve record semantics and conflict checks. |
 | Editor view/worker | `src/editor_app/Atlantis.Editor/{EditorSession.cs,MainWindow.cs}` for worker queries, owned callbacks, notices, Apply current document/Retry and preview gating. Picker/Assets UI uses ordinary edit paths; no new discovery or assignment operation. |
 | Native tests | Existing `tests/connection/authoring_connection_tests.cpp`, `tests/authoring/{authoring_session_tests.cpp,authoring_fixture.h,authoring_edit_target_tests.cpp}`, `tests/remote/remote_authoring_tests.cpp`, `tests/cli/{cli_scene_tests.cpp,cli_e2e_tests.cpp,cli_script_tests.cpp}`, `tests/gameplay_sdk/{compile_check_tests.cpp,reflective_tests.cpp,gameplay_e2e_tests.cpp}`, `tests/runtime/scene_reload_gpu_tests.cpp`. New `tests/runtime/authoring_apply_outcome_tests.cpp` for private adapter mapping/lifetime only if existing fixtures cannot cover it; no general diagnostic framework. |
 | Managed tests/vectors | `tests/csharp/conformance/{conformance_tests.cpp,codec_vectors.jsonl}` (generate JSONL, never hand edit); `tests/csharp/fixture_server/main.cpp`; existing `tests/csharp/Atlantis.Gameplay.Tests/{CodecSuite.cs,LiveAuthoringSuite.cs}` and new `ApplyOutcomeSuite.cs` with `Program.cs` registration if separated. Editor `Program.cs`, `HistoryTests.cs`, `GizmoDragTests.cs`, `HierarchyTests.cs`, `AssetReferencePickerTests.cs`, `InspectorTests.cs`, `IntegrationTest.cs` and new `ApplyOutcomeTests.cs`, including existing IAuthoringDocument test doubles; MCP existing `Program.cs`, `M3Tests.cs`, `IntegrationTest.cs`, `SessionChecks.cs`, `VersionTests.cs` as applicable. |
@@ -84,10 +86,10 @@ even if the existing pipeline also applies the unchanged document.
 
 | Decision | Recommendation for human ruling |
 |---|---|
-| **J1 — Minimum shared contract** | Approve R1/R3/R4: additive applyTracked + non-destructive applyStatus, opaque identity and observational document revision, unchanged legacy apply/Applied, no new event. Both SDKs, CLI, MCP and editor use the same semantics. Accept old-server unsupported behavior and no blind replay after a lost reply. |
-| **J2 — Lifecycle and bounds** | Approve R2/R3 and ADR-0144: latest pending wins with explicit Superseded, one terminal result, 64 terminal metadata records plus pending/projection, volatile/UnknownApply boundary, typed coarse reload errors and existing fatal lifecycle. No FIFO/cancel/persistence/timeout verdict. |
-| **J3 — Recovery and ownership** | Approve R5: preserve committed document/history and old World, suspend auto-apply on failure/supersession/unknown, explicit latest-document retry, guarded Undo/Redo and Save, destructive Reopen with old accepted snapshot still independent, preview restriction until a current successful projection. No automatic rollback or repeated retry. |
-| **J4 — Delivery and gates** | Approve S2–S4 file scope and mapped checks, with ADR-0144 Accepted at joint review; retain native/managed/Android/shared-client and actual UI/GPU obligations, selected final-candidate performance protocol, evidence provenance and human final merge. |
+| **J1 — Minimum shared contract** | Recommend approving revised R1/R3/R4: the same two additive operations across all clients, opaque receipt/observational revision, legacy bytes/events retained. Editor performs a read-only readiness probe before edits; generic clients keep existing protocol failure rules. An id-less global latest/revision cannot recover ownership of a lost receipt; no silent fallback or blind replay. |
+| **J2 — Lifecycle and bounds** | Recommend approving revised R2/R3 and ADR-0144: acceptance/supersession is one serialized operation even for same-batch A→B→C; one terminal result and prompt snapshot release. Keep 64 terminal entries plus one pending and independent last-projection metadata, whose exact id remains queryable after ring eviction. Unknown/expired successors do not pin chains or imply failure; keep coarse typed errors/fatal boundaries, no queue/cancel/persistence/timeout verdict. |
+| **J3 — Recovery and ownership** | Recommend approving revised R5: event-independent polling, preserve committed document/history and old World, submit-only edits/history while suspended, explicit current-document retry. Success must match current projection/revision before recovery ends; external changes/reopen/old callbacks cannot do so. Abandon uncommitted active Gizmo input locally without stale-World rollback; retain existing Save/Reopen/history rules. No automatic rollback/retry. |
+| **J4 — Delivery and gates** | Recommend approving the revised S2–S4 file scope/checks and accepting ADR-0144 jointly. Verify empty-event failure, same-batch replacement, projection retention, CLI deferred failures, old-server readiness and history/gesture regressions alongside the existing native/managed/Android/shared-client/UI/GPU and selected final-candidate performance obligations. Retain evidence provenance and human final merge. |
 
 ### Suggested single implementation authorization
 
@@ -123,46 +125,69 @@ recommendation for a future ruling, not permission granted by this draft.
   exact document edit retained and usable old World. Cover each other recoverable
   reload exit/error mapping in existing unit/fake fixtures; fatal waitIdle keeps
   fatal lifecycle/RuntimeStopped, not a claim of usable-device recovery. Check
-  temporary resource cleanup and no changed all-or-nothing behavior.
+  temporary resource cleanup, prompt displaced-snapshot release and no changed
+  all-or-nothing behavior. Terminal metadata must own no scene copies. Applied
+  must be queryable before its legacy event is observable; orderly stop reports
+  a pending RuntimeStopped before teardown when possible, without crash guarantees.
 - [ ] **R2 continuous/pause:** two clients accept A then B before swap while
   paused; A is Superseded by B, only B executes on Step/Resume. Refused B leaves A
   pending. Cover equal-revision repeats, A success/failure then a later B, three
-  replacements, duplicate/stale/mismatched reports, and unrelated successful
+  replacements in one request batch without a frame (query A→B and B→C before
+  C executes), acceptance-time refused-B preservation, no reentrant report on
+  unregistered B, duplicate/stale/mismatched reports, and unrelated successful
   generations never settling a client's other receipt. No auto-step or timeout
   failure while paused.
 - [ ] **R3 observation/lifetime:** queries are non-destructive and identical
   across clients/subscription drains. Check no-id empty/latest view, pending and
   all terminal payloads, exact 64-terminal eviction with pending/projection
-  retained, UnknownApply for unknown/evicted/foreign ids, reopen with old pending
+  retained. After more than 64 failed/replaced requests, the last projection's
+  exact id still returns Applied; otherwise-evicted/foreign ids return UnknownApply.
+  Evicted supersededBy successors must not pin chains. Include reopen with old pending
   snapshot, disconnect/reconnect to the same Runtime, and old ids after restart.
   A dropped acceptance reply, transport loss or unknown id produces unknown
-  completion and no automatic duplicate request.
+  completion and no automatic duplicate request. A newer global request with the
+  same revision is not adopted as a lost receipt's identity.
 - [ ] **R4 shared compatibility:** C++/C# codec conformance includes valid and
   malformed ids, every state/error, optional fields, large revisions/generations
   and legacy bytes. Native Connection/Remote/SDK and C# SDK query the same real
   request; CLI normal/deferred/status text+JSON and exit behavior match it. MCP
   exact mapping/tool-schema/discovery/live tests cover both new tools and the
   unchanged explicit failure drain. Old method results/event filters remain
-  byte-compatible; old Runtime returns unsupported tracking, not false success
-  or silent fallback. No native/OS/GPU type leaks.
+  byte-compatible; old Runtime's BadRequest remains a protocol failure with no
+  false success/fallback. The editor's read-only probe precedes automatic open
+  and all local transactions; a refused/malformed probe cannot mutate the document
+  or create history. Generic clients send no hidden probe. CLI repeated paused
+  applies report the displaced local id instead of dropping it; refused B keeps
+  A's waiter. Deferred Failed/Superseded is nonzero, pending ack stays explicitly
+  nonterminal, and timeout/disconnect output retains the id and unknown completion.
+  No native/OS/GPU type leaks.
 - [ ] **R5 models/history:** matching success releases one coalesced latest apply;
   failure/supersession/refusal releases in-flight, clears the queued auto retry
-  and latches explicit recovery. Several later edits/Undo/Redo are ordinary
-  guarded history operations and send no automatic apply while suspended. An
+  and latches explicit recovery even with no authoring events. Several later
+  edits/Undo/Redo/reference confirmations are ordinary guarded history operations
+  and use the submit-only path: no CommitAndApply or automatic apply while suspended. An
   explicit retry sends exactly one newest-document receipt, keeps history,
   ignores old results and returns to suspension on another failure. Include
   no-op/refused transaction and pipelined unchanged-document apply behavior.
+  An external edit or newer projection between acceptance and observation keeps
+  recovery suspended; only queued local commits trigger a successful coalesced
+  follow-up. Historical Applied/late Pending cannot end recovery. Invalidate an
+  active uncommitted gesture on recovery; late preview/release cannot commit or
+  add history, and no stale start-matrix rollback is sent. Existing committed
+  history survives; session-end clearing stays separate from reload failure.
 - [ ] **R5 actual Windows UI:** actual MainWindow, worker, SDK and native Runtime
   on default and available Bistro in managed Debug/Release. Select a known
   incompatible reference, observe accepted receipt then visible terminal reload
-  failure (not authoring ApplyError), usable old viewport, disabled new Gizmo
+  failure even after events have drained (not authoring ApplyError), usable old viewport, disabled new Gizmo
   previews and retained edit/history. Correct/Undo it without auto-retry; click
   Retry once, see current projection, normal editing and guarded Undo/Redo resume.
   Compare SDK/CLI observation with UI status. Test paused retry→Step/Resume,
   duplicate Retry, repeated failure, coalesced edits during recovery, external
-  supersession, unknown/late callbacks, Save and imported-save refusal, Reopen
-  clearing history while old pending completion cannot settle the reopened
-  document. Declare routed input/controlled-callback boundaries; no unperformed
+  supersession, current-revision/projection mismatch, active-gesture invalidation,
+  unknown/late callbacks, Save and imported-save refusal, shared Reopen from a
+  second SDK/CLI client (no new editor Reopen button): success clears history but
+  old pending completion cannot settle the reopened document; refusal preserves
+  document/history/recovery state. Declare routed input/controlled-callback boundaries; no unperformed
   physical-keyboard, screenshot or latency claim.
 - [ ] **R5 persistence/state:** disposable hand-authored Save→reopen retains the
   repaired document without implying a reload; existing unchanged cook/restart
@@ -191,8 +216,10 @@ recommendation for a future ruling, not permission granted by this draft.
 - [ ] **Closure:** full diff/scope/approvals/deviations checked; as-built and usage
   descriptions distinguish acceptance, result and document/history state;
   evidence reuse and preserved failures documented in the implementation PR.
-  Submit review-ready only when applicable gates pass or a human has explicitly
-  decided a required unresolved item. Never infer approval from an empty CI rollup.
+  Submit review-ready only with applicable verification complete and no unresolved
+  blockers. Report an unresolved gate with its concrete next decision; design
+  approval is not a gate waiver or a passing result. Never infer approval from
+  an empty CI rollup.
 
 ## Rollback Plan
 

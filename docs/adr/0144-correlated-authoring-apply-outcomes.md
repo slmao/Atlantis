@@ -31,21 +31,33 @@ useful bounds and should not become a durable job queue merely to report failure
    pending request via the executable-private AuthoringHost. Generation alone
    is insufficient. Retain one pending plus 64 terminal metadata records and
    the last successful projection metadata, across open/disconnect, in memory.
-   Query is non-destructive. IDs are never reused; unknown/expired results and
+   That projection's exact id remains queryable as Applied after leaving the
+   terminal window; otherwise its retained positive evidence and UnknownApply
+   would contradict one another. No successor-chain pinning. An id-less latest
+   is global discovery, not recovery of a caller's lost receipt. Query is
+   non-destructive. IDs are never reused; otherwise unknown/expired results and
    transport loss remain unknown, not failures manufactured by timeout.
 3. **Keep latest-pending-wins and transactional reload.** An accepted replacement
    settles the old identity as Superseded; a refusal cannot replace it. Applied
    means swap committed, not that a frame was presented. Failed recoverable
    preparation keeps the old World and generation. Fatal device/lifecycle
    failures keep their existing fatal behavior and no crash-delivery guarantee.
-   No background queue, automatic retry, cancellation or retained scene copies.
+   Accept and record replacement in one serialized operation, not a next-frame
+   completion queue: multiple accepts in one batch cannot lose supersessions.
+   Release displaced/finished snapshots; keep at most one unforwarded executed
+   result before the next request batch. No background queue, automatic retry,
+   cancellation or retained historical scene copies.
 4. **Recovery changes projection, not successful document history.** On matched
    failure/refusal/supersession the editor releases its waiter, suspends automatic
    applies and lets the user repair/Undo/Redo, then explicitly apply the latest
    document. Reopen retains its existing destructive-document/history semantics
    and does not cancel an already accepted snapshot. Revision and request guards
-   prevent its older outcome from settling the new document. Disable new Gizmo
-   previews while recovery leaves their World basis stale; do not restore an
+   prevent its older outcome from settling the new document. Poll pending results
+   independently of authoring events, and bypass unconditional pipelined apply
+   for suspended document/history edits. Ending recovery requires the current
+   projection as well as a matching successful result, not historical success.
+   Disable new Gizmo previews and invalidate active uncommitted gestures locally
+   while recovery leaves their World basis stale; do not restore an
    invented last-good document or World snapshot. Spec 0083 R5 owns the action
    rules. Normal successful coalescing and document/history ownership remain.
 
@@ -72,8 +84,11 @@ approval. Do not edit the earlier Accepted ADRs in place.
 ### Negative / Trade-offs
 
 - Upgraded clients poll; existing clients retain their failure limitation.
-- The bounded volatile store cannot reconstruct an evicted result or survive
-  process loss. An unreceived acceptance reply cannot be replayed idempotently.
+  Editor App uses the read-only status query as a readiness check before editing;
+  older servers fail via the existing protocol rules before new local mutations.
+- The store cannot survive process loss. Evicted results are unavailable outside
+  the independent last projection. An unreceived acceptance reply cannot be
+  replayed idempotently.
 - Explicit recovery adds a user step after failure and temporarily limits Gizmo
   previews. Reopening does not itself prevent a previously accepted snapshot
   from becoming the Runtime scene; the UI must state that boundary.

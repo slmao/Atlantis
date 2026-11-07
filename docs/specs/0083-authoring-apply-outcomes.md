@@ -69,11 +69,15 @@ operations and empty transactions do not advance it. It does not advance for
 save, apply or Runtime World commands. Reopen advances it even for identical
 source bytes. Revision identity is session-local; ApplyId disambiguates restarts.
 The accepted immutable scene snapshot is independent of subsequent document
-edits/open/save. Acceptance does not promise a swap or a rendered/presented frame.
+edits/open/save. Neither another client's edits nor the caller disconnecting
+changes/cancels it. Acceptance does not promise a swap or a rendered/presented frame.
 
 **R2 — One pending reload, explicit terminal results.** Keep the frame-thread
 and existing swap point, after old World commands and held by pause. Each
-accepted request starts Pending and reaches exactly one of:
+accepted request starts Pending; when swapped, refused, replaced or orderly
+stopped, it reaches exactly one of the following terminal states. A pause may
+hold Pending indefinitely; a crash/undeliverable outcome remains externally
+unknown, not a synthetic terminal result.
 
 | State | Required result | Effect on Runtime |
 |---|---|---|
@@ -92,6 +96,23 @@ a refused newer apply leaves it pending. A paused request may remain Pending
 until Step/Resume or replacement; no elapsed-time failure is inferred. Serial
 frame execution introduces no parallel executing queue or automatic retry.
 
+Acceptance is one serialized operation: only after B's cook/decode/sink
+acceptance succeeds, register B Pending and terminalize displaced A as
+Superseded by B, before any caller can observe B's acceptance. Do not defer
+those supersessions to afterFrame or overwrite them in a single last-outcome
+slot: A→B→C in one request batch must preserve both A→B and B→C records, even
+without another frame. The sink returns displaced identity as acceptance
+metadata; it must not re-enter Authoring with a completion before B is registered.
+The frame-thread bridge then needs at most one unforwarded executed-reload
+outcome, consumed before another request batch. Update Applied/projection before
+publishing legacy Applied. This adds neither an unbounded report queue nor a
+reporting dependency from RuntimeHost to Authoring.
+
+Keep only the newest pending scene snapshot. Release a displaced snapshot on
+successful replacement; after failure/swap release its pending input and
+temporary preparation state through the existing cleanup path. Result records
+own metadata only; queries, reopen and disconnect do not pin old scene copies.
+
 `ReloadError` is Connection-owned: `ScenePreparationFailed` (every existing
 loadSceneForReload error, including catalog/dependency/schema/type/color-space
 and mesh upload), `RenderPreparationFailed` (required bloom configuration/targets),
@@ -108,7 +129,8 @@ a continuing usable World/device or delivery after a crash/disconnect.
 **R3 — Non-destructive, bounded observation.** Add
 `applyStatus(optional<ApplyId>)`, returning a value snapshot or `UnknownApply`.
 No id selects the newest accepted record, or none before any acceptance; an
-explicit id selects that retained record. The snapshot contains:
+explicit id selects that retained record (including the projection exception
+below). The snapshot contains:
 
 - `currentDocumentRevision`, null before a successful open;
 - `request`, null only for an id-less query before any accepted apply; otherwise
@@ -121,12 +143,23 @@ Records are shared across connections, not private failure queues. Retain the
 one pending record and the latest **64 terminal records in terminalization
 order**, across document opens and client disconnects, for the AuthoringSession's
 lifetime. Evict the oldest terminal record only; preserve projection metadata.
-Unknown/evicted/foreign ids return UnknownApply, never Pending or inferred failure.
+If the explicit id is the last successful projection's id, return its immutable
+Applied record even after it leaves the 64-record window; the independently
+retained receipt/generation already supplies that result. This is one bounded
+exception, not a second history. Unknown/otherwise-evicted/foreign ids return
+UnknownApply, never Pending or an invented historical result. The maximum is
+one pending record, 64 terminal entries and one projection metadata entry;
+entries may refer to the same id.
 Restart loses the volatile records; old ids cannot match new work. Transport
 loss, a lost acceptance reply, unsupported method and UnknownApply mean the
 client lacks a known result, not that the Runtime failed or succeeded. No blind
 resubmission or idempotent replay guarantee; re-query a known id on reconnection
 to the same Runtime, otherwise require an explicit new apply after inspection.
+An id-less query is global discovery, not "my last request": after a lost reply,
+do not adopt its newest id or a matching revision as the caller's receipt.
+Revisions/generations alone cannot reconstruct request ownership. Superseded's
+successor id remains informational if that successor is later evicted; do not
+pin an unbounded successor chain. Following it does not change the old terminal.
 
 Projection identifies the origin of the current World, not byte equality with
 the current document: gameplay writes/previews may have changed that World.
@@ -169,10 +202,29 @@ refusal. Managed callers retain the existing transport/protocol exception rules.
 
 An unpaused CLI wait may still encounter transport loss or an operator deadline;
 report unknown completion with the receipt, never success or ReloadError by
-timeout. An upgraded client against an old Runtime reports unsupported tracking
-under the existing BadRequest/protocol-session failure behavior, preserves any
-committed document edits and does not silently fall back to generation-only
-completion; session-end history rules still apply. Existing binaries' legacy RPCs remain compatible;
+timeout. Retain the id in timeout/transport error output. A continuing invocation
+polls its deferred receipt at existing per-command/finish opportunities, without
+relying on events or a Step command; no idle-stdin notification loop is added. Before
+replacing its local deferred waiter with a new accepted apply, query/report the
+old receipt's state (including UnknownApply) rather than silently dropping it.
+Keep only that local waiter; the shared bounded store supplies older inspection.
+A pending acknowledgement from an exited process has no retrospective exit code;
+a continuing invocation emits observed deferred failure/supersession and
+aggregates it into a nonzero exit result, rather than printing an error but
+returning success. Each emitted reply keeps its own command/id; an older failure
+must not be attributed to the newly accepted request.
+
+An upgraded client against an old Runtime receives the existing BadRequest /
+protocol-session failure. Without negotiation BadRequest may also mean malformed
+params: report method/detail, not a proven "unsupported" or ReloadError verdict.
+Preserve any committed document edits and do not silently fall back to
+generation-only completion; session-end history rules still apply. Editor App
+first probes the read-only id-less applyStatus on the existing session before
+enabling document-changing operations or issuing its automatic initial open.
+Failure prevents new local edits/history, not a trial apply or a new handshake;
+repeat readiness for each new session, not on every edit. Generic SDK/CLI/MCP
+calls retain their existing failure semantics and perform no hidden probe/mutation.
+Existing binaries' legacy RPCs remain compatible;
 no native ABI compatibility promise is introduced for rebuilt C++ interfaces.
 
 **R5 — Editor settlement and recovery.** A matching Applied result releases the
@@ -180,11 +232,37 @@ local in-flight receipt and may issue one coalesced apply of the newest document
 for already queued local commits. Another id's result/generation must not do so.
 Guard worker callbacks by session, document-open lifetime, receipt and poll
 sequence; a late Pending response cannot replace an observed terminal result.
+While a known receipt is Pending, query its status in ordinary worker polls
+even if authoring drainEvents is empty or Runtime is paused; failure has no new
+event. Process available reopen/edit events first so the query result cannot
+settle an older document-open lifetime. No extra scheduler or wait on the UI thread.
 Failed, Superseded or synchronous refusal releases the waiter, discards the
 automatic coalesced retry latch and suspends automatic applies; show the reason,
 document revision and last projection explicitly. Unobservable completion
 likewise suspends automatic submission while retaining the unresolved receipt.
 Do not loop automatically on new edits, an event, a timer or reconnection.
+
+During suspension all document mutations, including history replay and reference
+confirmation, use submit/transaction plus explicit failure settlement only; they
+must not call the unconditional CommitAndApply pipeline. Normal unsuspended
+editing may keep its existing pipelined submit/drain/tracked-apply optimization,
+including its unchanged-document apply after a refused transaction. Track such
+a receipt separately: an accepted apply never turns a refused transaction into
+a successful edit/history record. Conversely, synchronous apply refusal or later
+reload failure cannot erase a successfully settled transaction's history. No
+edit/history step waits for Runtime completion.
+
+Ending recovery needs more than historical request success. Clear its preview
+restriction only when the last projection has the matching Applied receipt's id
+and generation, and its revision equals the observed current document revision.
+If local commits
+already queued a coalesced follow-up, keep the restriction through that follow-up;
+if an external edit/new open made the document newer, or another request moved
+the projection, show that the document/projection changed and remain suspended
+until Apply current document instead of auto-applying another client's work.
+A historical Applied record alone cannot label the current World
+or document as that result. These checks cover observed state, not a new atomic
+CAS guarantee against changes after the query.
 
 The recovery rules are:
 
@@ -194,13 +272,23 @@ The recovery rules are:
 | Edit, choose a corrected reference, Undo/Redo while suspended | Ordinary guarded transactions/history/conflict rules continue. Refused transactions remain refused; a failed reload does not undo a successful transaction. | No automatic apply until explicit recovery. |
 | **Apply current document / Retry** | Snapshot the latest document once; no new history entry. | New receipt, never replay of a failed cooked snapshot. Acceptance resumes ordinary pending/coalescing; another failure suspends again. Disable duplicate recovery while this local receipt is Pending. Explicit recovery may replace another client's pending apply under R2. |
 | Save | Existing atomic hand-authored save; imported save refused. Does not prove Runtime compatibility. | No apply, no result reset or retry. |
-| **Reopen from source** | Existing unsaved-discard warning/rules, DocumentReopened, history clear and fresh revision. No last-known-good-document rollback feature. | No automatic apply or cancellation of an already accepted snapshot. Explain any old pending apply may still swap; remain suspended until Apply current document. Old-revision callbacks cannot clear this recovery state/history or claim the reopened document was applied. |
+| **Reopen from source (shared open)** | On success explicitly discards unsaved state, emits DocumentReopened, clears history and advances revision. A refused open leaves document/revision/history and recovery mode unchanged. | No automatic apply or cancellation of an already accepted snapshot. Explain any old pending apply may still swap; remain suspended after successful reopen until Apply current document. Old-revision callbacks cannot clear this recovery state/history or claim the reopened document was applied. |
 | Disconnect / restart / unknown result | Retain no false success; existing session-end history clearing and unsaved-document lifetime rules apply. | Explicit status refresh if the same live Runtime/known id is available. Otherwise inspect and explicitly apply the current opened document; no durable job recovery promise. |
+
+The new editor control is Apply current document / Retry with its result display.
+Reopen remains the existing shared open operation (for example through CLI/SDK/MCP),
+which the editor observes; no new Reopen button, file picker or confirmation
+workflow is required in this slice.
 
 Until a successful projection for the current document is observed, a suspended
 editor disables new Gizmo previews, whose World/document basis may differ;
 ordinary document Inspector/Hierarchy/reference editing and viewport viewing
-remain available. Already queued previews/World writes are not retroactively
+remain available. Entering recovery also invalidates any uncommitted active
+gesture and its unsent preview/release intents, so a late pointer release cannot
+commit it. Do not invoke the normal cancel's start-matrix rollback against a
+possibly replaced World; abandon this local gesture without extra World writes.
+Already committed gestures retain their history. Already queued previews/World
+writes that were sent before invalidation are not retroactively
 cancelled, and no new World rollback channel is added. On acceptance of a
 recovery request keep that preview restriction until a matching successful
 current projection (including any coalesced follow-up); another client's result
@@ -232,9 +320,9 @@ must still compile for Android, which continues to host no authoring session.
 ## Proposed Design
 
 Use the existing scene-sink handoff with ApplyId carried alongside its immutable
-scene. AuthoringSession records acceptance only after the sink accepts. Replacing
-the pending slot reports the old identity to settle Superseded; the executing
-reload reports a typed success/failure with that same identity. AuthoringHost
+scene. AuthoringSession commits acceptance and any supersession from the sink's
+acceptance metadata in R2's one serialized operation; the executing reload
+reports a typed success/failure with that same identity. AuthoringHost
 forwards the outcome, rather than inferring completion solely from generation.
 Existing legacy success publication remains. Polling a retained record supplies
 completion even without a subscription or after another client drained events.
@@ -276,14 +364,15 @@ implementation behavior is claimed implemented or tested in this PR.
 
 Joint review must decide the Plan's J1–J4 recommendations: additive polling and
 identity, retention/latest-wins, explicit editor recovery (including reopen and
-preview limits), and cross-client delivery/verification. A query made after
-eviction cannot reconstruct an old terminal result. Old binaries retain their
+preview limits), and cross-client delivery/verification. Outside the independently
+retained projection, a query after eviction cannot reconstruct an old terminal
+result. Old binaries retain their
 diagnostic-only failure limitation. Polling has the existing worker cadence,
 not a promised real-time notification latency. Fatal process/device failure
 can prevent any reply; this design must not turn that uncertainty into a verdict.
 
 ## Out of Scope / Future Work
 
-Capability negotiation beyond method-not-found, durable/replayable operations,
+General capability negotiation beyond R4's readiness check, durable/replayable operations,
 last-good document restore, asset compatibility metadata and incremental scene
 projection require separate scope. This proposal does not close those gaps.
