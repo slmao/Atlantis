@@ -43,6 +43,7 @@ public static class CodecSuite
         Edges(t, wires);
         AuthoringEdges(t, wires);
         NodeNameEdges(t);
+        ApplyOutcomeEdges(t, wires);
         AssetCodecSuite.Run(t);
         OverlayEdges(t, wires);
         Refusals(t);
@@ -114,6 +115,21 @@ public static class CodecSuite
     }
 
     // Decodes `wire` as `type` and re-encodes it; null if it does not decode.
+    private static void ApplyOutcomeEdges(TestContext t, Dictionary<string, JsonValue> wires)
+    {
+        A.ApplyReceipt receipt = Codec.DecodeApplyReceipt(wires["apply.receipt"])!;
+        t.Equal(ulong.MaxValue, receipt.DocumentRevision, "apply receipt revision preserves UInt64");
+        A.ApplySnapshot applied = Codec.DecodeApplySnapshot(wires["apply.status.applied"])!;
+        t.Check(applied.Request?.Generation == ulong.MaxValue && applied.Projection?.Receipt == receipt, "applied snapshot preserves identity and full generation");
+        t.Check(Codec.DecodeApplySnapshot(wires["apply.status.empty"])?.CurrentDocumentRevision is null, "before open/acceptance fields are null");
+        var malformed = Codec.Encode(new A.ApplyRecord(receipt, A.ApplyState.Pending, Generation: 1));
+        t.Check(Codec.DecodeApplyRecord(malformed) is null, "pending rejects a terminal payload");
+        t.Check(Codec.DecodeApplyRecord(Codec.Encode(new A.ApplyRecord(receipt, A.ApplyState.Failed))) is null, "failed requires a closed error");
+        t.Check(Codec.DecodeApplyReceipt(Json.Parse("{\"id\":\"00000000-0000-0000-0000-000000000000\",\"documentRevision\":1}")) is null, "nil apply id refused");
+        t.Check(!A.ApplyId.TryParse("AAAAAAAA-0000-4000-8000-000000000001", out _), "uppercase apply id refused");
+        t.Check(Codec.DecodeApplyLookupError(JsonValue.String("NotAnError")) is null, "closed lookup error names");
+    }
+
     private static string? RoundTrip(string type, JsonValue wire)
     {
         switch (type)
@@ -154,6 +170,9 @@ public static class CodecSuite
                 return Codec.DecodeAuthoringFailure(wire) is A.CommandFailure fail ? W(Codec.Encode(fail)) : null;
             case "Document": return Codec.DecodeDocumentInfo(wire) is A.DocumentInfo doc ? W(Codec.Encode(doc)) : null;
             case "AssetSummary": return Codec.DecodeAssetSummary(wire) is {} summary ? W(Codec.Encode(summary)) : null;
+            case "ApplyReceipt": return Codec.DecodeApplyReceipt(wire) is {} receipt ? W(Codec.Encode(receipt)) : null;
+            case "ApplySnapshot": return Codec.DecodeApplySnapshot(wire) is {} snapshot ? W(Codec.Encode(snapshot)) : null;
+            case "ApplyLookupError": return Codec.DecodeApplyLookupError(wire) is {} unknown ? W(Codec.Encode(unknown)) : null;
             case "AssetDetails": return Codec.DecodeAssetDetails(wire) is {} detail ? W(Codec.Encode(detail)) : null;
             case "AssetError": return Codec.DecodeAssetError(wire) is {} error ? W(Codec.Encode(error)) : null;
             case "NodeSummary": return Codec.DecodeNodeSummary(wire) is A.NodeSummary ns ? W(Codec.Encode(ns)) : null;

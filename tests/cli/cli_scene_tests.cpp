@@ -51,9 +51,11 @@ struct SceneCli {
             atlantis::authoring::HandAuthored{source}}),
         authoring(session.connect()),
         cli(json) {
-    session.setSceneSink([this](atlantis::asset_system::ValidatedSceneData) {
-      reloadRequested = true;
-      return true;
+    session.setSceneSink([this](atlantis::connection::authoring::ApplyId id, atlantis::asset_system::ValidatedSceneData) {
+      if (std::exchange(refuseNextApply, false)) return atlantis::Result<std::optional<atlantis::connection::authoring::ApplyId>, std::monostate>::Err({});
+      const auto previous = pendingApply;
+      pendingApply = id; reloadRequested = true;
+      return atlantis::Result<std::optional<atlantis::connection::authoring::ApplyId>, std::monostate>::Ok(previous);
     });
     InvocationOptions options;
     options.json = json;
@@ -63,7 +65,9 @@ struct SceneCli {
       cli.runtime.frame();
       if (reloadRequested && applies) {
         reloadRequested = false;
-        session.reportApplied(++generation);
+        using R = atlantis::Result<std::uint64_t, atlantis::connection::authoring::ReloadError>;
+        session.reportReload(*pendingApply, reloadError ? R::Err(*std::exchange(reloadError, std::nullopt)) : R::Ok(++generation));
+        pendingApply.reset();
       }
     };
     invocation = std::make_unique<Invocation>(*cli.connection, &cli.runtime, nullptr, cli.out, cli.err, options);
@@ -97,7 +101,10 @@ struct SceneCli {
   std::unique_ptr<atlantis::connection::AuthoringConnection> authoring;
   Cli cli;
   std::unique_ptr<Invocation> invocation;
+  std::optional<atlantis::connection::authoring::ApplyId> pendingApply;
   bool reloadRequested = false;
+  bool refuseNextApply = false;
+  std::optional<atlantis::connection::authoring::ReloadError> reloadError;
   std::uint64_t generation = 0;
 };
 
@@ -203,7 +210,10 @@ TEST_CASE("cli scene: apply while paused is pending at once; Applied follows the
   REQUIRE(scene.run("scene set " + std::string(kNode3) + " Light.intensity 9") == 0);
   REQUIRE(scene.run("runtime pause") == 0);
   CHECK(scene.run("scene apply") == 0);
-  CHECK(scene.cli.out.str() == "pending apply (the Runtime is paused; it reloads at the next step)\n");
+  REQUIRE(scene.pendingApply);
+  const std::string id = atlantis::connection::authoring::toString(*scene.pendingApply);
+  CHECK(scene.cli.out.str().starts_with("pending apply " + id + ", revision "));
+  CHECK(scene.cli.out.str().ends_with("(the Runtime is paused; it reloads at the next step)\n"));
   CHECK(scene.reloadRequested);  // accepted by the sink, waiting
   CHECK(scene.generation == 0);
 
@@ -212,7 +222,7 @@ TEST_CASE("cli scene: apply while paused is pending at once; Applied follows the
 
   CHECK(scene.run("runtime step") == 0);
   CHECK(scene.generation == 1);
-  CHECK(scene.cli.out.str().ends_with("applied generation 1\n"));
+  CHECK(scene.cli.out.str().find("applied generation 1 (apply " + id) != std::string::npos);
   CHECK(scene.run("scene camera") == 0);
   CHECK(scene.cli.out.str().find("applied") == std::string::npos);  // reported once
 
@@ -287,4 +297,34 @@ TEST_CASE("cli scene: names preserve JSON strings through argv repl and transact
   CHECK(scene.session.document()->nodes[0].name.empty());
   std::error_code ec;
   fs::remove(script, ec);
+}
+
+TEST_CASE("cli scene: matched deferred replacement/failure preserves receipts and exit result", "[cli][scene][apply_outcomes]") {
+  namespace a = atlantis::connection::authoring;
+  SceneCli scene;
+  REQUIRE(scene.run("scene open") == 0);
+  REQUIRE(scene.run("runtime pause") == 0);
+  REQUIRE(scene.run("scene apply") == 0);
+  const auto first = *scene.pendingApply;
+  const auto id = a::toString(first);
+  CHECK(scene.run("scene apply-status " + id) == 0);
+  CHECK(scene.cli.out.str().starts_with("Pending apply " + id));
+  scene.refuseNextApply = true;
+  CHECK(scene.run("scene apply") != 0);
+  CHECK(scene.pendingApply == first);
+  CHECK(scene.authoring->applyStatus(first).value().request->state == a::ApplyState::Pending);
+  CHECK(scene.run("scene apply") != 0);  // B pending plus A's deferred Superseded, independently reported.
+  const auto second = *scene.pendingApply;
+  CHECK(first != second);
+  CHECK(scene.cli.out.str().find("pending apply " + a::toString(second)) != std::string::npos);
+  CHECK(scene.cli.err.str().find(id) != std::string::npos);
+  CHECK(scene.run("scene apply-status " + id) != 0);
+  CHECK(scene.cli.err.str().find("Superseded") != std::string::npos);
+  scene.reloadError = a::ReloadError::ScenePreparationFailed;
+  CHECK(scene.run("runtime step") != 0);
+  CHECK(scene.generation == 0);
+  CHECK(scene.cli.err.str().find(a::toString(second)) != std::string::npos);
+  CHECK(scene.cli.err.str().find("ScenePreparationFailed") != std::string::npos);
+  CHECK(scene.run("scene apply-status " + a::toString(second)) != 0);
+  CHECK(scene.cli.err.str().find("Failed") != std::string::npos);
 }

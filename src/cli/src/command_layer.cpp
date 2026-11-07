@@ -21,6 +21,7 @@
 
 namespace atlantis::cli {
 
+namespace ac = atlantis::connection::authoring;
 namespace access = atlantis::world::access;
 namespace connection = atlantis::connection;
 namespace json = atlantis::connection::json;
@@ -260,6 +261,29 @@ struct Leaf {
   return reply;
 }
 
+Value receiptJson(const ac::ApplyReceipt& receipt) {
+  Value out = Value::object(); out.set("id", Value::string(ac::toString(receipt.id)));
+  out.set("documentRevision", Value::number(receipt.documentRevision)); return out;
+}
+Value applyRecordJson(const ac::ApplyRecord& record, bool flat = false) {
+  Value out = flat ? receiptJson(record.receipt) : Value::object();
+  if (!flat) out.set("receipt", receiptJson(record.receipt));
+  out.set("state", Value::string(std::string(ac::toString(record.state))));
+  if (record.generation) out.set("generation", Value::number(*record.generation));
+  if (record.error) out.set("error", Value::string(std::string(ac::toString(*record.error))));
+  if (record.supersededBy) out.set("supersededBy", Value::string(ac::toString(*record.supersededBy)));
+  return out;
+}
+Value applySnapshotJson(const ac::ApplySnapshot& snapshot) {
+  Value out = Value::object();
+  out.set("currentDocumentRevision", snapshot.currentDocumentRevision ? Value::number(*snapshot.currentDocumentRevision) : Value());
+  out.set("request", snapshot.request ? applyRecordJson(*snapshot.request) : Value());
+  Value projected;
+  if (snapshot.projection) { projected = Value::object(); projected.set("receipt", receiptJson(snapshot.projection->receipt));
+    projected.set("generation", Value::number(snapshot.projection->generation)); }
+  out.set("projection", std::move(projected)); return out;
+}
+
 class SequentialQueries final : public QueryBatch {
  public:
   explicit SequentialQueries(connection::RuntimeConnection& connection) : connection_(connection) {}
@@ -401,6 +425,7 @@ struct CommandLayer::Pending {
   // Steps: filled by the control's completion
   std::shared_ptr<std::optional<atlantis::Result<connection::FrameReport, connection::ControlError>>> step;
   bool capture = false;
+  std::optional<ac::ApplyReceipt> receipt;
 };
 
 namespace {
@@ -532,17 +557,38 @@ void CommandLayer::abandon() {
 
 void CommandLayer::deferApply() {
   if (!pending_ || pending_->kind != Pending::Kind::Apply) return;
+  deferredApply_ = pending_->receipt;
   pending_.reset();
-  applyDeferred_ = true;
 }
 
+Reply CommandLayer::applyOutcome(const ac::ApplyReceipt& receipt) {
+  const auto status = authoring_->applyStatus(receipt.id);
+  const std::string id = ac::toString(receipt.id);
+  if (status.isErr()) {
+    auto reply = failed("scene apply", plainError("UnknownApply", ErrorCategory::Runtime,
+        "apply " + id + " completion unknown", receiptJson(receipt)));
+    reply.result = receiptJson(receipt); return reply;
+  }
+  const auto& record = *status.value().request;
+  auto result = applyRecordJson(record, true);
+  if (record.state == ac::ApplyState::Pending) {
+    Reply reply; reply.command = "scene apply"; reply.outcome = Outcome::Submitted;
+    reply.result = std::move(result); return reply;
+  }
+  if (record.state == ac::ApplyState::Applied)
+    return done("scene apply", "applied generation " + std::to_string(*record.generation) + " (apply " + id + ", revision " + std::to_string(receipt.documentRevision) + ")\n", std::move(result));
+  const std::string why = record.state == ac::ApplyState::Failed ? std::string(ac::toString(*record.error))
+      : "Superseded by " + ac::toString(*record.supersededBy);
+  auto reply = failed("scene apply", plainError("Apply" + std::string(ac::toString(record.state)),
+      ErrorCategory::Runtime, "apply " + id + " " + why, result));
+  reply.result = std::move(result); return reply;
+}
 std::optional<Reply> CommandLayer::deferredApplyOutcome() {
-  if (applyDeferred_ && authoring_ != nullptr && authoringEvents_) (void)drainSceneEvents();
-  if (!deferredApplied_) return std::nullopt;
-  const std::uint64_t generation = *std::exchange(deferredApplied_, std::nullopt);
-  Value result = Value::object();
-  result.set("generation", Value::number(generation));
-  return done("scene apply", "applied generation " + std::to_string(generation) + "\n", std::move(result));
+  if (deferredOutcome_) return std::exchange(deferredOutcome_, std::nullopt);
+  if (!deferredApply_ || !authoring_) return std::nullopt;
+  Reply outcome = applyOutcome(*deferredApply_);
+  if (outcome.outcome == Outcome::Submitted) return std::nullopt;
+  deferredApply_.reset(); return outcome;
 }
 
 void CommandLayer::setGuidSource(std::function<EntityGuid()> source) { guidSource_ = std::move(source); }
@@ -1215,21 +1261,8 @@ Reply CommandLayer::poll() {
   // Plan 0065 P6 (ADR-0131 D3, D5): an apply's outcome is the Runtime's swap,
   // reported as Applied{generation}.
   if (pending.kind == Pending::Kind::Apply) {
-    auto events = authoring_->drainEvents(*authoringEvents_);
-    if (events.isOk()) {
-      for (const auto& event : events.value()) {
-        const auto* applied = std::get_if<connection::authoring::Applied>(&event);
-        if (applied == nullptr) continue;
-        pending_.reset();
-        Value result = Value::object();
-        result.set("generation", Value::number(applied->generation));
-        return done("scene apply", "applied generation " + std::to_string(applied->generation) + "\n",
-                    std::move(result));
-      }
-    }
-    Reply reply;
-    reply.command = pending.command;
-    reply.outcome = Outcome::Submitted;
+    Reply reply = applyOutcome(*pending.receipt);
+    if (reply.outcome != Outcome::Submitted) pending_.reset();
     return reply;
   }
 
@@ -1342,7 +1375,6 @@ Reply CommandLayer::poll() {
 
 namespace {
 
-namespace ac = atlantis::connection::authoring;
 
 [[nodiscard]] CliError refusedAuthoring(ac::Error why, Value facts) {
   return CliError{std::string(ac::toString(why)), ErrorCategory::Refused,
@@ -1458,14 +1490,6 @@ void CommandLayer::setAuthoring(AuthoringProvider provider) {
 std::vector<ac::Event> CommandLayer::drainSceneEvents() {
   auto events = authoring_->drainEvents(*authoringEvents_);
   if (events.isErr()) return {};
-  if (applyDeferred_) {
-    for (const ac::Event& event : events.value()) {
-      if (const auto* applied = std::get_if<ac::Applied>(&event)) {
-        applyDeferred_ = false;
-        deferredApplied_ = applied->generation;
-      }
-    }
-  }
   return std::move(events.value());
 }
 
@@ -1758,8 +1782,8 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
   if (verb == "apply") {
     if (t.size() != 2) return failed(command, usageError("scene apply"));
     (void)drainSceneEvents();
-    applyDeferred_ = false;  // Plan 0065 J5: this apply replaces a deferred one
-    const auto applied = a->apply();
+    if (deferredOutcome_) return failed(command, plainError("PendingApplyOutcome", ErrorCategory::Runtime, "report the previous deferred outcome first"));
+    const auto applied = a->applyTracked();
     if (applied.isErr()) {
       const std::string code(ac::toString(applied.error()));
       const ErrorCategory category =
@@ -1769,12 +1793,48 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     auto pending = std::make_unique<Pending>();
     pending->kind = Pending::Kind::Apply;
     pending->command = command;
+    pending->receipt = applied.value();
+    if (deferredApply_) {
+      // New acceptance displaced the old request, or it already completed. Query
+      // its exact id before dropping the local waiter; never infer from generation.
+      deferredOutcome_ = applyOutcome(*deferredApply_);
+      deferredApply_.reset();
+    }
     pending_ = std::move(pending);
     Reply reply;
     reply.command = command;
     reply.outcome = Outcome::Submitted;
-    reply.result = Value::object();
+    reply.result = receiptJson(applied.value());
+    reply.result.set("state", Value::string("Pending"));
     return reply;
+  }
+  if (verb == "apply-status") {
+    if (t.size() > 3) return failed(command, usageError("scene apply-status [id]"));
+    std::optional<ac::ApplyId> id;
+    if (t.size() == 3) {
+      const auto parsed = ac::parseApplyId(t[2]);
+      if (parsed.isErr()) return failed(command, usageError("scene apply-status [canonical non-nil id]"));
+      id = parsed.value();
+    }
+    const auto view = a->applyStatus(id);
+    if (view.isErr()) {
+      Value facts = Value::object(); if (id) facts.set("id", Value::string(ac::toString(*id)));
+      auto reply = failed(command, plainError("UnknownApply", ErrorCategory::Runtime, "apply completion unknown", facts));
+      reply.result = std::move(facts); return reply;
+    }
+    const auto& snapshot = view.value(); Value result = applySnapshotJson(snapshot);
+    if (!snapshot.request) return done(command, "No accepted apply\n", std::move(result));
+    const auto& record = *snapshot.request;
+    const std::string state(ac::toString(record.state));
+    std::string human = state + " apply " + ac::toString(record.receipt.id) + ", revision " + std::to_string(record.receipt.documentRevision);
+    if (record.generation) human += ", generation " + std::to_string(*record.generation);
+    if (record.error) human += ": " + std::string(ac::toString(*record.error));
+    if (record.supersededBy) human += " by " + ac::toString(*record.supersededBy);
+    if (record.state == ac::ApplyState::Failed || record.state == ac::ApplyState::Superseded) {
+      auto reply = failed(command, plainError("Apply" + state, ErrorCategory::Runtime, human, result));
+      reply.result = std::move(result); return reply;
+    }
+    return done(command, human + "\n", std::move(result));
   }
   if (verb == "save") {
     if (t.size() != 2) return failed(command, usageError("scene save"));

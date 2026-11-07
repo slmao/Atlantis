@@ -282,6 +282,13 @@ allow-list). The CLI's `scene` group is a client of it; `scene apply` while the
 Runtime is paused returns its pending outcome at once. See
 [ADR-0105](docs/adr/0105-runtime-connection-and-cli-client.md) and
 [ADR-0130](docs/adr/0130-authoring-access-interface-and-module-boundary.md).
+Spec 0083 / [ADR-0144](docs/adr/0144-correlated-authoring-apply-outcomes.md)
+adds tracked apply and read-only outcome lookup to AuthoringConnection.
+Authoring owns document revisions and bounded outcome metadata; Runtime
+reports the correlated swap result at the existing frame boundary. The same
+receipt/status values serve CLI, both SDKs, MCP and Editor App; legacy apply
+and Applied events retain their shape. Editor App keeps document history
+after a reload failure and lets the user retry the latest document explicitly.
 
 Since Spec 0081 (ADR-0143), Connection also owns the read-only `AssetConnection`
 (`asset_connection.h`, `connection::assets` values), using the existing Asset GUID

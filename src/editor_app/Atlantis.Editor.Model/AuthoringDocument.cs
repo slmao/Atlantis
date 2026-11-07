@@ -55,7 +55,8 @@ public interface IAuthoringDocument
         SubmitTransaction(commands);
         IReadOnlyList<CommandFailure> failures = DrainFailures();
         if (failures.Count > 0) return new CommitOutcome(failures, false, null);
-        return new CommitOutcome(failures, true, Apply());
+        var accepted = ApplyTracked();
+        return new CommitOutcome(failures, true, accepted.IsOk ? null : accepted.Error, accepted.IsOk ? accepted.Value : null);
     }
 
     /// <summary>Every authoring event since the last drain, every client's, in the order applied.</summary>
@@ -63,13 +64,15 @@ public interface IAuthoringDocument
 
     /// <summary>Hands the document to the Runtime for reload; null when accepted (Applied follows).</summary>
     ApplyError? Apply();
+    Outcome<ApplyReceipt, ApplyError> ApplyTracked();
+    Outcome<ApplySnapshot, ApplyLookupError> ApplyStatus(ApplyId? id = null);
 
     /// <summary>Writes a hand-authored document to its source; null on success.</summary>
     SaveError? Save();
 }
 
 /// <summary>A commit's refusals, whether an apply was sent with it, and that apply's refusal.</summary>
-public sealed record CommitOutcome(IReadOnlyList<CommandFailure> Failures, bool ApplySent, ApplyError? ApplyError);
+public sealed record CommitOutcome(IReadOnlyList<CommandFailure> Failures, bool ApplySent, ApplyError? ApplyError, ApplyReceipt? Receipt = null);
 
 /// <summary>The real document: the SDK's AuthoringSession over atlantis.remote/1.</summary>
 public sealed class RemoteAuthoringDocument : IAuthoringDocument
@@ -177,14 +180,16 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
         {
             SubmitTransaction(commands);
             IReadOnlyList<CommandFailure> failures = DrainFailures();
-            return failures.Count > 0 ? new CommitOutcome(failures, false, null) : new CommitOutcome(failures, true, Apply());
+            if (failures.Count > 0) return new CommitOutcome(failures, false, null);
+            var accepted = ApplyTracked();
+            return new CommitOutcome(failures, true, accepted.IsOk ? null : accepted.Error, accepted.IsOk ? accepted.Value : null);
         }
         // A refused submit still gets its apply: the document is then unchanged, so the reload is the same scene again.
         JsonValue list = JsonValue.NewArray();
         foreach (Command command in commands) list.Push(Codec.Encode(command));
         ulong submit = _wire.Send("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
         ulong drain = _wire.Send("authoring.drainFailures");
-        ulong apply = _wire.Send("authoring.apply");
+        ulong apply = _wire.Send("authoring.applyTracked");
         _wire.AwaitResult(submit);
         var refused = new List<CommandFailure>();
         foreach (JsonValue item in _wire.AwaitResult(drain).Items)
@@ -192,8 +197,12 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
             if (Codec.DecodeAuthoringFailure(item) is CommandFailure failure) refused.Add(failure);
         }
         JsonValue applied = _wire.AwaitResult(apply);
-        ApplyError? error = applied.Find("err") is JsonValue err ? Codec.DecodeApplyError(err) : null;
-        return new CommitOutcome(refused, true, error);
+        if (applied.Find("ok") is JsonValue ok && Codec.DecodeApplyReceipt(ok) is ApplyReceipt receipt)
+            return new CommitOutcome(refused, true, null, receipt);
+        if (applied.Find("err") is JsonValue err && Codec.DecodeApplyError(err) is ApplyError error)
+            return new CommitOutcome(refused, true, error);
+        _wire.Dispose();
+        throw new RemoteException(RemoteError.ProtocolError, "a malformed authoring.applyTracked result");
     }
 
     public IReadOnlyList<Event> DrainEvents()
@@ -203,6 +212,8 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
     }
 
     public ApplyError? Apply() => _session.Apply();
+    public Outcome<ApplyReceipt, ApplyError> ApplyTracked() => _session.ApplyTracked();
+    public Outcome<ApplySnapshot, ApplyLookupError> ApplyStatus(ApplyId? id = null) => _session.ApplyStatus(id);
 
     public SaveError? Save() => _session.Save();
 }

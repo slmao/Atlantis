@@ -39,7 +39,7 @@ constexpr std::string_view kUsage =
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
-    "  scene apply | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
@@ -284,7 +284,7 @@ Reply Invocation::awaitOutcome(Reply reply) {
     layer_.deferApply();
     Reply pending = std::move(reply);
     pending.outcome = Outcome::Done;
-    pending.text = "pending apply (the Runtime is paused; it reloads at the next step)\n";
+    pending.text = "pending apply " + pending.result.find("id")->asString() + ", revision " + json::write(*pending.result.find("documentRevision")) + " (the Runtime is paused; it reloads at the next step)\n";
     Value outcome = Value::object();
     outcome.set("pending", Value::boolean(true));
     pending.result.set("outcome", std::move(outcome));
@@ -315,6 +315,10 @@ Reply Invocation::awaitOutcome(Reply reply) {
       error.category = ErrorCategory::Runtime;
       error.message = "no outcome within " + std::to_string(options_.outcomeTimeout.count()) + " ms";
       error.subject = reply.result.isNull() ? Value::object() : reply.result;
+      if (command == "scene apply") {
+        if (const auto* id = reply.result.find("id"); id && id->isString())
+          error.message = "apply " + id->asString() + " completion unknown: " + error.message;
+      }
       error.text = "error: " + error.message;
       return errorReply(command, std::move(error));
     }
@@ -325,12 +329,20 @@ Reply Invocation::awaitOutcome(Reply reply) {
 }
 
 int Invocation::finish(Reply reply) {
-  if (options_.transportFailure) {
-    if (std::optional<CliError> failure = options_.transportFailure()) {
-      layer_.abandon();
-      return reportError(*failure, reply.command, options_, out_, err_);
+  const auto transportFailure = [&](const Reply& checked) -> std::optional<int> {
+    if (!options_.transportFailure) return std::nullopt;
+    auto failure = options_.transportFailure();
+    if (!failure) return std::nullopt;
+    layer_.abandon();
+    if (checked.command.starts_with("scene apply")) {
+      failure->subject = checked.result;
+      const auto* id = checked.result.find("id");
+      failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
+      failure->text = "error: " + failure->message;
     }
-  }
+    return reportError(*failure, checked.command, options_, out_, err_);
+  };
+  if (const auto transport = transportFailure(reply)) return *transport;
   std::vector<connection::Diagnostic> diagnostics;
   if (control_ != nullptr) {
     connection::DiagnosticBatch batch = control_->diagnostics(diagnosticCursor_, kDiagnosticsPerCommand);
@@ -339,8 +351,13 @@ int Invocation::finish(Reply reply) {
   }
   print(reply, diagnostics, options_, out_, err_);
   // Plan 0065 P6: a deferred apply's outcome, once its reload has swapped.
-  if (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) print(*applied, {}, options_, out_, err_);
-  return reply.error ? exitCode(reply.error->category) : 0;
+  int code = reply.error ? exitCode(reply.error->category) : 0;
+  while (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) {
+    if (const auto transport = transportFailure(*applied)) return *transport;
+    print(*applied, {}, options_, out_, err_);
+    if (applied->error) code = std::max(code, exitCode(applied->error->category));
+  }
+  return code;
 }
 
 int Invocation::repl(std::istream& in) {

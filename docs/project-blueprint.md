@@ -984,11 +984,11 @@ milestone being listed does not authorize starting it — see Section 1.
   engine interface; implementation, P2 fix and evidence are in manually merged
   [PR #328](https://github.com/slmao/Atlantis/pull/328) (2026-11-07).
   [Spec 0083](specs/0083-authoring-apply-outcomes.md) /
-  [Plan 0083](plans/0083-authoring-apply-outcomes.md) and Proposed
-  [ADR-0144](adr/0144-correlated-authoring-apply-outcomes.md) are in
-  [joint review #329](https://github.com/slmao/Atlantis/pull/329)
-  for correlated shared apply/reload outcomes and explicit editor recovery;
-  design only, implementation not authorized. Target-type
+  [Plan 0083](plans/0083-authoring-apply-outcomes.md) and Accepted
+  [ADR-0144](adr/0144-correlated-authoring-apply-outcomes.md) cover correlated
+  shared apply/reload outcomes and explicit editor recovery. The
+  [joint design PR #329](https://github.com/slmao/Atlantis/pull/329) was
+  approved and manually merged; S2–S4 were authorized. Target-type
   metadata, preview and broader asset-pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay

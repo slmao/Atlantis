@@ -64,10 +64,9 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
       return nullptr;
     }
     session_ = std::make_unique<atlantis::authoring::AuthoringSession>(std::move(*source));
-    session_->setSceneSink([this](as::ValidatedSceneData scene) {
-      return application_.requestSceneReload(std::move(scene));
+    session_->setSceneSink([this](connection::authoring::ApplyId id, as::ValidatedSceneData scene) {
+      return application_.requestSceneReload(id, std::move(scene));
     });
-    generation_ = application_.sceneGeneration();
     ATLANTIS_LOG_INFO("authoring: session created for scene {}", as::toString(application_.sceneGuid()));
   }
   if (!session_) return nullptr;
@@ -75,9 +74,8 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
 }
 
 void AuthoringHost::afterFrame() {
-  if (!session_ || application_.sceneGeneration() == generation_) return;
-  generation_ = application_.sceneGeneration();
-  session_->reportApplied(generation_);
+  if (auto result = application_.takeSceneReloadResult(); result && session_)
+    session_->reportReload(result->first, std::move(result->second));
 }
 
 }  // namespace atlantis::runtime

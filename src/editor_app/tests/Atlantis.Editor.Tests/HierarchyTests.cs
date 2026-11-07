@@ -44,7 +44,13 @@ internal sealed class FakeDocument : IAuthoringDocument
     private readonly List<Event> _events = new();
     private readonly List<CommandFailure> _failures = new();
     private ulong _nextTicket = 1;
-    private ulong _generation;
+    private ulong _generation, _revision = 1;
+    private ApplyReceipt? _pendingApply;
+    private readonly Dictionary<ApplyId, ApplyRecord> _applies = new();
+    private ApplyRecord? _newestApply;
+    private ApplyProjection? _projection;
+    public int StatusReads;
+    public bool UnknownStatus;
 
     public ApplyError? NextApplyError;
     public int Applies;
@@ -237,6 +243,7 @@ internal sealed class FakeDocument : IAuthoringDocument
         }
         else
         {
+            if (commands.Count != 0) ++_revision;
             _nodes = nodes;
             _values = values;
             _camera = camera;
@@ -271,10 +278,44 @@ internal sealed class FakeDocument : IAuthoringDocument
     }
 
     /// <summary>The Runtime's reload: Applied for the next generation.</summary>
-    public void Reload() => _events.Add(new Applied(++_generation));
+    public void Reload()
+    {
+        ++_generation;
+        if (_pendingApply is ApplyReceipt receipt)
+        {
+            var record = new ApplyRecord(receipt, ApplyState.Applied, _generation);
+            _applies[receipt.Id] = record; _newestApply = record;
+            _projection = new ApplyProjection(receipt, _generation); _pendingApply = null;
+        }
+        _events.Add(new Applied(_generation));
+    }
+    public void FailReload(ReloadError error)
+    {
+        if (_pendingApply is not ApplyReceipt receipt) throw new InvalidOperationException("no pending apply");
+        var record = new ApplyRecord(receipt, ApplyState.Failed, Error: error);
+        _applies[receipt.Id] = record; _newestApply = record; _pendingApply = null;
+        // Deliberately no event: the product must poll.
+    }
+    public Outcome<ApplyReceipt, ApplyError> ApplyTracked()
+    {
+        ApplyError? error = Apply();
+        if (error is ApplyError refused) return Outcome<ApplyReceipt, ApplyError>.Err(refused);
+        var receipt = new ApplyReceipt(new ApplyId(System.Guid.NewGuid()), _revision);
+        if (_pendingApply is ApplyReceipt old) _applies[old.Id] = new ApplyRecord(old, ApplyState.Superseded, SupersededBy: receipt.Id);
+        _pendingApply = receipt; _newestApply = new ApplyRecord(receipt, ApplyState.Pending); _applies[receipt.Id] = _newestApply;
+        return Outcome<ApplyReceipt, ApplyError>.Ok(receipt);
+    }
+    public Outcome<ApplySnapshot, ApplyLookupError> ApplyStatus(ApplyId? id = null)
+    {
+        ++StatusReads;
+        if (UnknownStatus) return Outcome<ApplySnapshot, ApplyLookupError>.Err(ApplyLookupError.UnknownApply);
+        ApplyRecord? record = id is ApplyId wanted ? _applies.GetValueOrDefault(wanted) : _newestApply;
+        return id is not null && record is null ? Outcome<ApplySnapshot, ApplyLookupError>.Err(ApplyLookupError.UnknownApply)
+            : Outcome<ApplySnapshot, ApplyLookupError>.Ok(new ApplySnapshot(_revision, record, _projection));
+    }
 
     /// <summary>Another client's Open of the same source: the document is reread (ADR-0135 D4).</summary>
-    public void Reopen() => _events.Add(new DocumentReopened(default));
+    public void Reopen() { ++_revision; _events.Add(new DocumentReopened(default)); }
 
     public SaveError? Save() => null;
 }
@@ -416,19 +457,22 @@ public static partial class Program
         apply.Request();
         apply.Request();  // while one is in flight: waits
         apply.Request();
-        Check(document.Applies == 1 && apply.Status == ApplyStatus.Applying && apply.Text == "applying", "apply: one in flight, later requests wait");
+        Check(document.Applies == 1 && apply.Status == ApplyStatus.Applying && apply.Text.StartsWith("applying", StringComparison.Ordinal), "apply: one in flight, later requests wait");
         document.Reload();
         foreach (Event e in document.DrainEvents()) apply.Apply(e);
+        apply.Poll();
         Check(document.Applies == 2 && apply.Status == ApplyStatus.Applying, "apply: at Applied, the waiting requests coalesce into one more");
         document.Reload();
         foreach (Event e in document.DrainEvents()) apply.Apply(e);
-        Check(document.Applies == 2 && apply.Status == ApplyStatus.Applied && apply.Text == "applied · generation 2", "apply: settled, generation shown");
+        apply.Poll();
+        Check(document.Applies == 2 && apply.Status == ApplyStatus.Applied && apply.Text.StartsWith("applied · generation 2", StringComparison.Ordinal), "apply: settled, generation shown");
         apply.SetPaused(true);
         apply.Request();
         Check(apply.Status == ApplyStatus.PendingPaused && apply.Text.StartsWith("pending: paused"), "apply: under a pause the reload is pending");
         apply.SetPaused(false);
         document.Reload();
         foreach (Event e in document.DrainEvents()) apply.Apply(e);
+        apply.Poll();
         document.NextApplyError = ApplyError.CookFailed;
         apply.Request();
         Check(apply.Status == ApplyStatus.Failed && apply.Text.StartsWith("failed: CookFailed"), "apply: a refused apply is shown with its reason");
@@ -447,9 +491,11 @@ public static partial class Program
         Check(doc2.Applies == 1, "commit: while an apply is in flight the next one waits");
         doc2.Reload();
         foreach (Event e in doc2.DrainEvents()) apply2.Apply(e);
+        apply2.Poll();
         Check(doc2.Applies == 2 && apply2.Status == ApplyStatus.Applying, "commit: the waiting apply is issued at Applied");
         doc2.Reload();
         foreach (Event e in doc2.DrainEvents()) apply2.Apply(e);
+        apply2.Poll();
         doc2.NextApplyError = ApplyError.CookFailed;
         apply2.Commit(new Command[] { new CreateNode(null, 0UL, Array.Empty<TypeId>()) });
         Check(apply2.Status == ApplyStatus.Failed, "commit: a refused apply is shown as Failed");

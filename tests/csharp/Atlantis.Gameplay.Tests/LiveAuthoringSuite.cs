@@ -33,6 +33,7 @@ public static class LiveAuthoringSuite
             Commands(t, first, second);
             Names(t, first, second);
             ApplyUnderPause(t, first);
+            TrackedApplyUnderPause(t, first, second);
             Save(t, first);
         }
         Imported(t);
@@ -175,6 +176,24 @@ public static class LiveAuthoringSuite
         while (events.Count == 0 && Environment.TickCount64 < deadline) events = a.DrainEvents(applied).Value;
         t.Check(events.SequenceEqual(new A.Event[] { new A.Applied(2) }), "... Applied{2} at the next frame");
         a.Unsubscribe(applied);
+    }
+
+    private static void TrackedApplyUnderPause(TestContext t, RemoteSession first, RemoteSession second)
+    {
+        first.Control.Pause(); ulong generation = first.Control.Status().SceneGeneration;
+        A.ApplyReceipt a = first.Authoring.ApplyTracked().Value!;
+        A.ApplyReceipt b = second.Authoring.ApplyTracked().Value!;
+        t.Check(a.Id != b.Id && a.DocumentRevision == b.DocumentRevision, "tracked equal revision requests have distinct identities");
+        var old = first.Authoring.ApplyStatus(a.Id).Value!;
+        t.Check(old.Request?.State == A.ApplyState.Superseded && old.Request.SupersededBy == b.Id, "SDK sees precise replacement while paused");
+        t.Check(second.Authoring.ApplyStatus(b.Id).Value!.Request?.State == A.ApplyState.Pending, "SDK newest accepted receipt is held");
+        first.Control.Step(new StepRequest(1));
+        var after = first.Authoring.ApplyStatus(b.Id).Value!;
+        t.Check(after.Request?.State == A.ApplyState.Applied && after.Request.Generation == generation + 1 && after.Projection?.Receipt == b,
+                "SDK matching applied result agrees with projection and one Step");
+        t.Equal(after, second.Authoring.ApplyStatus(b.Id).Value!, "second SDK client sees identical retained status");
+        t.Check(first.Authoring.ApplyStatus(new A.ApplyId(Guid.NewGuid())).Error == A.ApplyLookupError.UnknownApply, "unknown is an in-band lookup refusal");
+        first.Control.Resume();
     }
 
     private static void Save(TestContext t, RemoteSession session)

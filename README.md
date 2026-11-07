@@ -234,6 +234,14 @@ text draft; tabbing away keeps normal text-commit behavior. Type filters are
 explicit choices, not a compatibility guarantee. The chooser uses the same fixed
 Runtime snapshot; it does not import, build or preview assets (Spec 0082).
 
+Authoring apply has two stages: the document snapshot is accepted, then the
+Runtime attempts to load it. Use `scene apply` for a receipt and
+`scene apply-status [id]` to inspect its outcome. Both SDKs and MCP expose
+the same tracked apply and read-only status. A paused Runtime can keep the
+receipt pending until Step or Resume. In Editor App, a failed reload keeps
+the document and its undo/redo history; repair or undo the edit, then choose
+**Retry apply**. Save still writes only the document, where supported.
+
 See [examples/](examples/) for smaller, single-purpose demo programs.
 
 ## Status

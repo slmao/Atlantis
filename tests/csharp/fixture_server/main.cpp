@@ -451,11 +451,17 @@ int main(int argc, char** argv) {
   atlantis::authoring::DocumentSource documentSource{sceneGuid(), atlantis::authoring::HandAuthored{authoringSource}};
   if (authoringMode == "imported") documentSource.provenance = atlantis::authoring::Imported{authoringSource};
   atlantis::authoring::AuthoringSession authoring(std::move(documentSource));
-  authoring.setSceneSink([&control](atlantis::asset_system::ValidatedSceneData) {
+  std::optional<atlantis::connection::authoring::ApplyId> pendingApply;
+  authoring.setSceneSink([&](atlantis::connection::authoring::ApplyId id, atlantis::asset_system::ValidatedSceneData) {
+    const auto previous = pendingApply; pendingApply = id;
     control.requestReload();
-    return true;
+    return atlantis::Result<std::optional<atlantis::connection::authoring::ApplyId>, std::monostate>::Ok(previous);
   });
-  control.onReloaded([&authoring](std::uint64_t generation) { authoring.reportApplied(generation); });
+  control.onReloaded([&](std::uint64_t generation) {
+    if (pendingApply) authoring.reportReload(*pendingApply,
+        atlantis::Result<std::uint64_t, atlantis::connection::authoring::ReloadError>::Ok(generation));
+    pendingApply.reset();
+  });
 
   auto listening = atlantis::remote::RemoteServer::listen(
       0, atlantis::remote::generateToken(), sceneGuid(),

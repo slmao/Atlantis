@@ -42,6 +42,14 @@ public static partial class Program
         public IReadOnlyList<CommandFailure> DrainFailures() { var result = _failures.ToArray(); _failures.Clear(); return result; }
         public IReadOnlyList<Event> DrainEvents() => Array.Empty<Event>();
         public ApplyError? Apply() { ++Applies; return ApplyFailure; }
+        public Outcome<ApplyReceipt, ApplyError> ApplyTracked()
+        {
+            var error = Apply();
+            return error is ApplyError e ? Outcome<ApplyReceipt, ApplyError>.Err(e) :
+                Outcome<ApplyReceipt, ApplyError>.Ok(new ApplyReceipt(new ApplyId(System.Guid.NewGuid()), 1));
+        }
+        public Outcome<ApplySnapshot, ApplyLookupError> ApplyStatus(ApplyId? id = null) =>
+            Outcome<ApplySnapshot, ApplyLookupError>.Err(ApplyLookupError.UnknownApply);
         public SaveError? Save() => null;
     }
 

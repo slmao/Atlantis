@@ -1,9 +1,9 @@
 # Plan: Authoring Apply Outcomes and Recovery
 
 - **Spec:** [Spec 0083](../specs/0083-authoring-apply-outcomes.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending in [PR #329](https://github.com/slmao/Atlantis/pull/329); this PR authorizes no implementation
+- **Joint Human Review:** slmao, 2026-11-07; [joint ruling](https://github.com/slmao/Atlantis/pull/329#issuecomment-6702522226) jointly approves Spec/Plan 0083 and J1–J4 at `1a65902`, accepts ADR-0144, and authorizes continuous S2–S4 after manual #329 merge (verified `53e9e0d`), through applicable verification and a review-ready PR. Existing gates and human final merge retained. Proposal wording below is historical, not a new gate.
 - **Related ADR:** [ADR-0144 — Proposed](../adr/0144-correlated-authoring-apply-outcomes.md)
 
 ## Objective

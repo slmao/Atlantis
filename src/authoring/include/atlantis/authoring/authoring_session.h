@@ -77,10 +77,11 @@ enum class LocateError : std::uint8_t {
 
 // ADR-0131 D3: where apply() hands the applied document, cooked in memory and
 // decoded -- in atlantis_runtime, RuntimeApplication::requestSceneReload().
-// Returns whether the request was accepted; the reload itself happens at the
-// host's next frame boundary, and the host reports a swap with
-// reportApplied(). It names no Runtime type, so the module does not either.
-using SceneSink = std::function<bool(asset_system::ValidatedSceneData scene)>;
+// Spec 0083: returns Err on refusal, or the displaced pending identity on acceptance.
+// No reentrant report: the caller registers the new receipt and supersession together.
+// The host later reports the executed result by id. Frame thread only; owned input.
+using SceneSink = std::function<Result<std::optional<connection::authoring::ApplyId>, std::monostate>(
+    connection::authoring::ApplyId id, asset_system::ValidatedSceneData scene)>;
 
 // At most one open document (ADR-0129 D1): the scene `source` names, read by
 // open(). Every client reaches it through a connection(); commands apply to a
@@ -117,6 +118,10 @@ class AuthoringSession {
   // The host reports that the Runtime swapped in an applied document (Plan
   // 0065 P4, ADR-0131 D5): every subscription receives Applied{generation}.
   void reportApplied(std::uint64_t generation);
+  // One terminal report for this accepted identity. Stale/duplicate ids are ignored.
+  // An Applied record/projection is updated before publishing its legacy event.
+  void reportReload(connection::authoring::ApplyId id,
+                    Result<std::uint64_t, connection::authoring::ReloadError> result);
 
   struct State;  // private to authoring_session.cpp
 

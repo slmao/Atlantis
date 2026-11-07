@@ -225,6 +225,21 @@ namespace ac = atlantis::connection::authoring;
   if (method == "authoring.open") {
     return Outcome::Ok(inBand(authoring.open(), &encodeNull, &codec::encodeOpenError));
   }
+  if (method == "authoring.applyTracked") {
+    return Outcome::Ok(inBand(authoring.applyTracked(),
+        [](const auto& receipt) { return codec::encode(receipt); }, &codec::encodeApplyError));
+  }
+  if (method == "authoring.applyStatus") {
+    std::optional<connection::authoring::ApplyId> id;
+    if (const auto* v = p.find("id"); v && !v->isNull()) {
+      if (!v->isString()) return bad("id");
+      const auto parsed = connection::authoring::parseApplyId(v->asString());
+      if (parsed.isErr()) return bad("id");
+      id = parsed.value();
+    }
+    return Outcome::Ok(inBand(authoring.applyStatus(id),
+        [](const auto& status) { return codec::encode(status); }, &codec::encodeApplyLookupError));
+  }
   if (method == "authoring.apply") {
     return Outcome::Ok(inBand(authoring.apply(), &encodeNull, &codec::encodeApplyError));
   }

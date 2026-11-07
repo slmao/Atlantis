@@ -5,6 +5,7 @@
 #include <atlantis/asset_system/environment_types.h>
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
@@ -42,6 +43,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -216,6 +218,17 @@ class RuntimeApplication {
   // (the request refused) only when no scene is loaded. Frame thread only,
   // between frames.
   bool requestSceneReload(atlantis::asset_system::ValidatedSceneData scene);
+  // ADR-0144: authoring's tracked handoff; Ok names the displaced pending id.
+  // Owns the scene, not the document. Frame thread only; no reentrant callback.
+  [[nodiscard]] Result<std::optional<connection::authoring::ApplyId>, std::monostate> requestSceneReload(
+      connection::authoring::ApplyId id, atlantis::asset_system::ValidatedSceneData scene);
+  using ReloadResult = std::pair<connection::authoring::ApplyId,
+                                Result<std::uint64_t, connection::authoring::ReloadError>>;
+  // Consumed by the executable host after each frame, before the next request batch.
+  [[nodiscard]] std::optional<ReloadResult> takeSceneReloadResult();
+  // Orderly composition-root stop, not a client cancellation operation. Refuses
+  // later reloads and terminalizes any pending tracked request before teardown.
+  void stopSceneReloads();
   // Incremented by every reload that swapped (ADR-0131 D5); 0 for the World
   // this application started with.
   [[nodiscard]] std::uint64_t sceneGeneration() const noexcept { return sceneGeneration_; }
@@ -559,6 +572,9 @@ class RuntimeApplication {
   // through (the configured one); and the World's generation.
   void performPendingSceneReload();
   std::optional<atlantis::asset_system::ValidatedSceneData> pendingSceneReload_;
+  std::optional<connection::authoring::ApplyId> pendingReloadId_;
+  std::optional<ReloadResult> reloadResult_;
+  bool reloadsStopped_ = false;
   std::string assetCatalogPath_;
   std::uint64_t sceneGeneration_ = 0;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth

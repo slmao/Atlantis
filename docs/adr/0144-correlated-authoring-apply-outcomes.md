@@ -1,9 +1,9 @@
 # ADR 0144: Correlated Authoring Apply Outcomes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-07
-- **Deciders:** Pending human joint review
-- **Acceptance:** Pending [PR #329 joint review](https://github.com/slmao/Atlantis/pull/329)
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-07; [joint ruling](https://github.com/slmao/Atlantis/pull/329#issuecomment-6702522226) at `1a65902`; #329 manually merged
 - **Related Spec:** [Spec 0083](../specs/0083-authoring-apply-outcomes.md)
 - **Related ADR(s):** Partially supersedes [ADR-0130 D1/D3](0130-authoring-access-interface-and-module-boundary.md), [ADR-0131 D3](0131-authoring-apply-and-runtime-scene-reload.md), [ADR-0106 D3](0106-attachable-runtime-transport-and-control.md) as extended by ADR-0130, and [ADR-0135 D3/D5](0135-two-document-edit-and-apply.md). Keeps [ADR-0129](0129-authoring-document-ownership.md), [ADR-0125 D2](0125-out-of-process-editor-platform-and-uniform-client-interface.md) and [ADR-0136](0136-structural-edit-records.md).
 

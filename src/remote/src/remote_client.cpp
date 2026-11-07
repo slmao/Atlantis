@@ -627,6 +627,23 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return sessionCall<ac::ApplyError>("authoring.apply", &codec::decodeApplyError,
                                        ResultT::Err(ac::ApplyError::NoDocument));
   }
+  Result<ac::ApplyReceipt, ac::ApplyError> applyTracked() override {
+    const auto result = state_->call("authoring.applyTracked");
+    const auto decoded = result ? decodeInBand<ac::ApplyReceipt, ac::ApplyError>(*result,
+        &codec::decodeApplyReceipt, &codec::decodeApplyError) : std::nullopt;
+    if (!decoded) return failed(Result<ac::ApplyReceipt, ac::ApplyError>::Err(ac::ApplyError::ReloadRefused));
+    return *decoded;
+  }
+  Result<ac::ApplySnapshot, ac::ApplyLookupError> applyStatus(std::optional<ac::ApplyId> id) const override {
+    Value params = Value::object(); if (id) params.set("id", Value::string(ac::toString(*id)));
+    const auto result = state_->call("authoring.applyStatus", std::move(params));
+    const auto decoded = result ? decodeInBand<ac::ApplySnapshot, ac::ApplyLookupError>(*result,
+        &codec::decodeApplySnapshot, &codec::decodeApplyLookupError) : std::nullopt;
+    if (!decoded) return failed(Result<ac::ApplySnapshot, ac::ApplyLookupError>::Err(ac::ApplyLookupError::UnknownApply));
+    if (decoded->isOk() && id && (!decoded->value().request || decoded->value().request->receipt.id != *id))
+      return failed(Result<ac::ApplySnapshot, ac::ApplyLookupError>::Err(ac::ApplyLookupError::UnknownApply));
+    return *decoded;
+  }
   atlantis::Result<std::monostate, ac::SaveError> save() override {
     using ResultT = atlantis::Result<std::monostate, ac::SaveError>;
     return sessionCall<ac::SaveError>("authoring.save", &codec::decodeSaveError,

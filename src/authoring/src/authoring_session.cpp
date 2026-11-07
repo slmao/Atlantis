@@ -133,6 +133,39 @@ struct AuthoringSession::State {
   DocumentSource source;
   std::optional<scene::AuthoringScene> document;
   SceneSink sink;
+  std::uint64_t documentRevision = 0;
+  std::optional<ac::ApplyRecord> pendingApply;
+  std::vector<ac::ApplyRecord> terminalApplies;
+  std::optional<ac::ApplyProjection> projection;
+  std::optional<ac::ApplyId> newestApply;
+
+  void retain(ac::ApplyRecord record) {
+    if (terminalApplies.size() == 64) terminalApplies.erase(terminalApplies.begin());
+    terminalApplies.push_back(std::move(record));
+  }
+  Result<ac::ApplySnapshot, ac::ApplyLookupError> applyStatus(std::optional<ac::ApplyId> id) const {
+    ac::ApplySnapshot view{document ? std::optional(documentRevision) : std::nullopt, std::nullopt, projection};
+    const auto wanted = id ? id : newestApply;
+    if (!wanted) return Result<ac::ApplySnapshot, ac::ApplyLookupError>::Ok(std::move(view));
+    if (pendingApply && pendingApply->receipt.id == *wanted) view.request = pendingApply;
+    else {
+      for (const auto& record : terminalApplies) if (record.receipt.id == *wanted) { view.request = record; break; }
+      if (!view.request && projection && projection->receipt.id == *wanted)
+        view.request = ac::ApplyRecord{projection->receipt, ac::ApplyState::Applied, projection->generation, {}, {}};
+    }
+    if (!view.request) return Result<ac::ApplySnapshot, ac::ApplyLookupError>::Err(ac::ApplyLookupError::UnknownApply);
+    return Result<ac::ApplySnapshot, ac::ApplyLookupError>::Ok(std::move(view));
+  }
+  void reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {
+    if (!pendingApply || pendingApply->receipt.id != id) return;
+    auto record = std::move(*pendingApply); pendingApply.reset();
+    if (result.isOk()) {
+      record.state = ac::ApplyState::Applied; record.generation = result.value();
+      projection = ac::ApplyProjection{record.receipt, result.value()};
+    } else { record.state = ac::ApplyState::Failed; record.error = result.error(); }
+    retain(std::move(record));
+    if (result.isOk()) publish({ac::Applied{result.value()}});
+  }
   std::uint64_t nextTicket = 1;
   std::uint64_t nextSubscription = 1;
   std::vector<ConnectionState*> connections;  // the live ones
@@ -249,6 +282,7 @@ struct AuthoringSession::State {
     }
     if (const auto refusal = validateDocument(candidate, source.scene)) return ac::CommandFailure{first, *refusal};
     document = std::move(candidate);
+    ++documentRevision;
     publish(events);
     return std::nullopt;
   }
@@ -266,22 +300,34 @@ struct AuthoringSession::State {
     if (mapped.isErr()) return ResultT::Err(ac::OpenError::SourceInvalid);
     if (validateDocument(mapped.value(), source.scene).has_value()) return ResultT::Err(ac::OpenError::SourceInvalid);
     document = std::move(mapped.value());
+    ++documentRevision;
     publish({ac::DocumentReopened{source.scene}});
     return ResultT::Ok({});
   }
 
   // ADR-0131 D2, D3: the document cooked in memory exactly as the build cooks
   // its saved text, decoded, and handed to the host's sink.
-  [[nodiscard]] atlantis::Result<std::monostate, ac::ApplyError> apply() {
-    using ResultT = atlantis::Result<std::monostate, ac::ApplyError>;
+  [[nodiscard]] Result<ac::ApplyReceipt, ac::ApplyError> applyTracked() {
+    using ResultT = Result<ac::ApplyReceipt, ac::ApplyError>;
     if (!document.has_value()) return ResultT::Err(ac::ApplyError::NoDocument);
     if (!sink) return ResultT::Err(ac::ApplyError::NoSceneSink);
     const auto cooked = asset_system::cookSceneToMemory(*document, source.scene);
     if (cooked.isErr()) return ResultT::Err(ac::ApplyError::CookFailed);
     auto decoded = asset_system::decodeScene(cooked.value());
     if (decoded.isErr()) return ResultT::Err(ac::ApplyError::DecodeFailed);
-    if (!sink(std::move(decoded.value()))) return ResultT::Err(ac::ApplyError::ReloadRefused);
-    return ResultT::Ok({});
+    const ac::ApplyReceipt receipt{ac::ApplyId{asset_system::mintEntityGuid().bytes}, documentRevision};
+    const auto accepted = sink(receipt.id, std::move(decoded.value()));
+    if (accepted.isErr()) return ResultT::Err(ac::ApplyError::ReloadRefused);
+    // No query or frame can interleave this acceptance-time metadata commit.
+    if (pendingApply) {
+      ATLANTIS_CHECK_MSG(accepted.value() == pendingApply->receipt.id, "sink must name the displaced pending apply");
+      auto old = std::move(*pendingApply);
+      old.state = ac::ApplyState::Superseded; old.supersededBy = receipt.id;
+      retain(std::move(old));
+    } else ATLANTIS_CHECK_MSG(!accepted.value(), "sink displaced an unknown apply");
+    pendingApply = ac::ApplyRecord{receipt, ac::ApplyState::Pending, {}, {}, {}};
+    newestApply = receipt.id;
+    return ResultT::Ok(receipt);
   }
 
   [[nodiscard]] atlantis::Result<std::monostate, ac::SaveError> save() const {
@@ -396,7 +442,15 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
 
   atlantis::Result<std::monostate, ac::OpenError> open() override { return state_.open(); }
 
-  atlantis::Result<std::monostate, ac::ApplyError> apply() override { return state_.apply(); }
+  Result<std::monostate, ac::ApplyError> apply() override {
+    auto result = state_.applyTracked();
+    return result.isOk() ? Result<std::monostate, ac::ApplyError>::Ok({})
+                         : Result<std::monostate, ac::ApplyError>::Err(result.error());
+  }
+  Result<ac::ApplyReceipt, ac::ApplyError> applyTracked() override { return state_.applyTracked(); }
+  Result<ac::ApplySnapshot, ac::ApplyLookupError> applyStatus(std::optional<ac::ApplyId> id) const override {
+    return state_.applyStatus(id);
+  }
 
   atlantis::Result<std::monostate, ac::SaveError> save() override { return state_.save(); }
 
@@ -430,5 +484,8 @@ const scene::AuthoringScene* AuthoringSession::document() const noexcept {
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
+void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {
+  state_->reportReload(id, std::move(result));
+}
 
 }  // namespace atlantis::authoring

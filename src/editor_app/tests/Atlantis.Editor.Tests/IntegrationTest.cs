@@ -102,6 +102,7 @@ public static class IntegrationTest
                 apply.Apply(e);
                 if (e is DocumentReopened) history.Clear();
             }
+            apply.Poll();
         }
 
         void WaitApplied(string step)
@@ -424,7 +425,7 @@ public static class IntegrationTest
     // ASCII JSON escapes avoid depending on the Windows CRT argv code page.
     private static string QuoteName(string name) => System.Text.Json.JsonSerializer.Serialize(name);
 
-    private static int Cli(string executable, string session, params string[] args)
+    internal static int Cli(string executable, string session, params string[] args)
     {
         var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true };
@@ -437,7 +438,7 @@ public static class IntegrationTest
         if (!process.WaitForExit(30000))
         {
             process.Kill(entireProcessTree: true);
-            throw new TimeoutException("CLI rename timed out");
+            throw new TimeoutException("CLI command timed out");
         }
         File.AppendAllText(Path.Combine(Path.GetDirectoryName(session)!, "name-cli.log"),
                            string.Join(" ", args) + "\n" + stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());

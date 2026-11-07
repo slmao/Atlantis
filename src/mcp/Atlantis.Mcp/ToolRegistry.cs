@@ -24,8 +24,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
     private const string WorldModel = " Runtime World writes are disposable runtime-side tweaks; "
         + "persistent edits belong to the authoring document and land on explicit authoring.apply.";
     private const string AuthoringModel = " Edits change the authoring document; only explicit "
-        + "authoring.apply makes it the running scene. After submission, explicitly call authoring.drain_failures "
-        + "and correlate tickets before applying: a ticket alone is not edit success. Apply may be held while paused; Applied events follow the reload.";
+        + "authoring.apply_tracked accepts a snapshot; only its Applied result proves the Runtime swap. After submission, explicitly call authoring.drain_failures "
+        + "and correlate tickets before applying: a ticket alone is not edit success. Apply may be held while paused; use apply_tracked/apply_status for matched terminal results, including failure and supersession.";
     private const string ControlModel = " Runtime control does not edit the authoring document; "
         + "document edits land on explicit authoring.apply, while Runtime World writes are disposable tweaks.";
 
@@ -52,7 +52,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             "Return and clear all this connection's outstanding document command failures, in order, not only the last transaction's.", AuthoringModel),
         Declare("authoring.open", "authoring.open", "Open or reopen the running scene's source document.", AuthoringModel),
         Declare("authoring.document", "authoring.document", "Read document identity, provenance, source and node count; null before open.", AuthoringModel),
-        Declare("authoring.apply", "authoring.apply", "Explicitly hand the document to the Runtime for reload.", AuthoringModel),
+        Declare("authoring.apply", "authoring.apply", "Legacy acceptance only, not reload success. Prefer apply_tracked then apply_status.", AuthoringModel),
+        Declare("authoring.apply_tracked", "authoring.applyTracked", "Accept the current document snapshot and return its receipt; no implicit wait or retry. Inspect apply_status for that id.", AuthoringModel),
+        Declare("authoring.apply_status", "authoring.applyStatus", "Read a retained request and current projection non-destructively; absent/null id is global newest, never proof of a lost caller receipt. Inspect state, not tool success.", AuthoringModel,
+            ToolSchemas.ApplyStatusParameters()),
         Declare("authoring.save", "authoring.save", "Save a hand-authored source; imported sources are refused.", AuthoringModel),
         Declare("authoring.active_camera", "authoring.activeCamera", "Read the document's active camera node or null.", AuthoringModel),
         Declare("authoring.schema", "authoring.schema", "Read scene schema types, fields, IDs and constants in the wire's section 6.7 shape.", AuthoringModel),

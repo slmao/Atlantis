@@ -61,6 +61,12 @@ internal static class ToolSchemas
 
     internal static JsonNode ParametersNode(params (string Name, JsonNode Shape)[] fields) => Object(fields);
 
+    internal static JsonElement ApplyStatusParameters()
+    {
+        JsonObject shape = Object(("id", Nullable(String))); shape["required"] = new JsonArray();
+        return JsonSerializer.SerializeToElement(shape);
+    }
+
     private static JsonObject Object(params (string Name, JsonNode Shape)[] fields)
     {
         JsonObject properties = new();

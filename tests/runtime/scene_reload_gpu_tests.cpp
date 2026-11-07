@@ -23,6 +23,7 @@
 #include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
+#include <atlantis/gameplay/authoring_apply.h>
 #include <atlantis/runtime/bootstrap_config.h>
 #include <atlantis/runtime/exit_reason.h>
 #include <atlantis/runtime/runtime_application.h>
@@ -390,7 +391,7 @@ struct AuthoringHost {
         copy(copied(source)),
         session(DocumentSource{sceneGuid, HandAuthored{copy}}),
         connection(session.connect()) {
-    session.setSceneSink([this](as::ValidatedSceneData scene) { return app.requestSceneReload(std::move(scene)); });
+    session.setSceneSink([this](ac::ApplyId id, as::ValidatedSceneData scene) { return app.requestSceneReload(id, std::move(scene)); });
     REQUIRE(connection->open().isOk());
   }
   ~AuthoringHost() {
@@ -420,10 +421,8 @@ struct AuthoringHost {
     for (int i = 0; i < count; ++i) {
       REQUIRE(app.shouldContinue());
       app.runFrame();
-      if (app.sceneGeneration() != generation) {
-        generation = app.sceneGeneration();
-        session.reportApplied(generation);
-      }
+      if (auto outcome = app.takeSceneReloadResult()) session.reportReload(outcome->first, std::move(outcome->second));
+      generation = app.sceneGeneration();
     }
     REQUIRE(app.shouldContinue());
   }
@@ -562,6 +561,14 @@ TEST_CASE("scene reload: a reload that cannot resolve its assets leaves the curr
     host.frames(2);
     const auto before = app.captureFrameData();
     REQUIRE(before.isOk());
+    REQUIRE(app.captureImage((AuthoringHost::dir() / "compatible.png").string()).isOk());
+    auto runtime = app.openConnection();
+    (void)runtime->submit(access::SetProperty{sunIntensity(), 6.0f});
+    host.frames(2);
+    const auto tweaked = app.captureFrameData();
+    REQUIRE(tweaked.isOk());
+    REQUIRE(tweaked.value().directionalLights.at(0).intensity == 6.0f);
+    REQUIRE(app.captureImage((AuthoringHost::dir() / "tweaked.png").string()).isOk());
     const auto all = host.connection->subscribe({});
 
     // A renderable whose mesh no catalog record names: the document is valid
@@ -574,13 +581,75 @@ TEST_CASE("scene reload: a reload that cannot resolve its assets leaves the curr
                          as::deriveAssetGuid(kSeed, "reload/no_such_mesh")}});
     REQUIRE(host.connection->drainFailures().empty());
     (void)host.connection->drainEvents(all);
-    REQUIRE(host.connection->apply().isOk());  // accepted: the reload happens at the boundary
+    atlantis::gameplay::AuthoringApply sdk(*host.connection);
+    const auto failed = sdk.applyTracked().value();
+    CHECK(sdk.applyStatus(failed.id).value().request->state == ac::ApplyState::Pending);
     host.frames(2);
     CHECK(app.sceneGeneration() == 0);
     CHECK(drain(*host.connection, all).empty());  // no Applied
+    CHECK(sdk.applyStatus(failed.id).value().request->error == ac::ReloadError::ScenePreparationFailed);
+    CHECK(host.connection->listComponents(guid).isOk());  // accepted edit survives failed projection
     const auto after = app.captureFrameData();
     REQUIRE(after.isOk());
-    CHECK(after.value() == before.value());
+    CHECK(after.value() == tweaked.value());
+    REQUIRE(app.captureImage((AuthoringHost::dir() / "failed.png").string()).isOk());
+    CHECK(readText(AuthoringHost::dir() / "failed.png") == readText(AuthoringHost::dir() / "tweaked.png"));
+    host.connection->submit(ac::DestroyNode{guid});
+    REQUIRE(host.connection->drainFailures().empty());
+    const auto retry = sdk.applyTracked().value();
+    host.frames(2);
+    CHECK(sdk.applyStatus(retry.id).value().projection == ac::ApplyProjection{retry, 1});
+    CHECK(app.captureFrameData().value() == before.value());
+    REQUIRE(app.captureImage((AuthoringHost::dir() / "recovered.png").string()).isOk());
+    CHECK(readText(AuthoringHost::dir() / "recovered.png") == readText(AuthoringHost::dir() / "compatible.png"));
+    CHECK(sdk.applyStatus(failed.id).value().request->state == ac::ApplyState::Failed);
+    const auto stopped = sdk.applyTracked().value();
+    app.stopSceneReloads();
+    auto outcome = app.takeSceneReloadResult(); REQUIRE(outcome);
+    host.session.reportReload(outcome->first, std::move(outcome->second));
+    CHECK(sdk.applyStatus(stopped.id).value().request->error == ac::ReloadError::RuntimeStopped);
+    CHECK(sdk.applyTracked().error() == ac::ApplyError::ReloadRefused);
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("scene reload: unavailable bloom shaders refuse the projection but keep the document",
+          "[runtime][gpu][reload]") {
+  auto config = buildSmokeConfig();
+  config.bloomDownsampleVertexShaderSpirvPath.clear();
+  config.bloomDownsampleVertexShaderReflectionPath.clear();
+  config.bloomDownsampleFragmentShaderSpirvPath.clear();
+  config.bloomDownsampleFragmentShaderReflectionPath.clear();
+  config.bloomUpsampleVertexShaderSpirvPath.clear();
+  config.bloomUpsampleVertexShaderReflectionPath.clear();
+  config.bloomUpsampleFragmentShaderSpirvPath.clear();
+  config.bloomUpsampleFragmentShaderReflectionPath.clear();
+  config.bloomCompositeVertexShaderSpirvPath.clear();
+  config.bloomCompositeVertexShaderReflectionPath.clear();
+  config.bloomCompositeFragmentShaderSpirvPath.clear();
+  config.bloomCompositeFragmentShaderReflectionPath.clear();
+  auto created = createRuntimeApplication(config);
+  REQUIRE(created.isOk());
+  auto app = std::move(created.value());
+  {
+    AuthoringHost host(app, committedScene("integrated_showcase_demo"), defaultScene());
+    host.frames(2);
+    const auto camera = host.connection->activeCamera();
+    REQUIRE(camera.isOk());
+    REQUIRE(camera.value());
+    const scene::PropertyAddress strength{*camera.value(), atlantis::schema::typeId("asset_system::scene::Camera"),
+        atlantis::schema::fieldId("asset_system::scene::CameraBloom", "strength")};
+    (void)host.connection->submit(ac::SetProperty{strength, 0.5f});
+    REQUIRE(host.connection->drainFailures().empty());
+    const auto receipt = host.connection->applyTracked();
+    REQUIRE(receipt.isOk());
+    host.frames(2);
+    const auto failed = host.connection->applyStatus(receipt.value().id).value().request;
+    REQUIRE(failed);
+    CHECK(failed->state == ac::ApplyState::Failed);
+    CHECK(failed->error == ac::ReloadError::RenderPreparationFailed);
+    CHECK(app.sceneGeneration() == 0);
+    CHECK(host.connection->getProperty(strength).value() == ac::PropertyValue{0.5f});
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
@@ -673,10 +742,8 @@ TEST_CASE("scene reload: under pause the reload waits with the held commands and
       control.beforeFrame();
       app.runFrame();
       control.afterFrame();
-      if (app.sceneGeneration() != host.generation) {
-        host.generation = app.sceneGeneration();
-        host.session.reportApplied(host.generation);
-      }
+      if (auto outcome = app.takeSceneReloadResult()) host.session.reportReload(outcome->first, std::move(outcome->second));
+      host.generation = app.sceneGeneration();
     };
     frame();
     frame();
@@ -737,7 +804,7 @@ TEST_CASE("J3: apply on Bistro's generated document", "[.j3][runtime][gpu][reloa
   RuntimeApplication app = std::move(appResult.value());
   {
     AuthoringSession session(DocumentSource{bistro, Imported{fs::path{ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE}}});
-    session.setSceneSink([&app](as::ValidatedSceneData scene) { return app.requestSceneReload(std::move(scene)); });
+    session.setSceneSink([&app](ac::ApplyId id, as::ValidatedSceneData scene) { return app.requestSceneReload(id, std::move(scene)); });
     auto connection = session.connect();
     REQUIRE(connection->open().isOk());
     const auto lamp = as::parseEntityGuid("6b63b12c-9cde-4ae2-8391-c0b4cefadb7d").value();
@@ -758,6 +825,7 @@ TEST_CASE("J3: apply on Bistro's generated document", "[.j3][runtime][gpu][reloa
       const auto t1 = Clock::now();
       app.runFrame();
       const auto t2 = Clock::now();
+      if (auto outcome = app.takeSceneReloadResult()) session.reportReload(outcome->first, std::move(outcome->second));
       apply.push_back(ms(t0, t1));
       reloadFrame.push_back(ms(t1, t2));
       REQUIRE(app.sceneGeneration() == static_cast<std::uint64_t>(run + 1));

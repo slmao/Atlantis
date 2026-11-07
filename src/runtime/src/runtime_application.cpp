@@ -1215,15 +1215,49 @@ std::unique_ptr<atlantis::connection::RuntimeConnection> RuntimeApplication::ope
 }
 
 bool RuntimeApplication::requestSceneReload(atlantis::asset_system::ValidatedSceneData scene) {
-  if (!worldAccess_.has_value()) return false;
-  pendingSceneReload_.emplace(std::move(scene));  // Plan 0065 J5: the newest request wins
+  // The untracked library entry must never silently displace a tracked client.
+  if (!worldAccess_ || reloadsStopped_ || pendingReloadId_ || lifecycle_.state() == RuntimeLifecycleState::Failed) return false;
+  pendingSceneReload_.emplace(std::move(scene));
   return true;
+}
+
+Result<std::optional<connection::authoring::ApplyId>, std::monostate> RuntimeApplication::requestSceneReload(
+    connection::authoring::ApplyId id, atlantis::asset_system::ValidatedSceneData scene) {
+  using R = Result<std::optional<connection::authoring::ApplyId>, std::monostate>;
+  if (!worldAccess_ || reloadsStopped_ || lifecycle_.state() == RuntimeLifecycleState::Failed) return R::Err({});
+  ATLANTIS_CHECK_MSG(!reloadResult_, "host consumes the executed result before the next request batch");
+  const auto displaced = pendingReloadId_;
+  pendingSceneReload_.emplace(std::move(scene));
+  pendingReloadId_ = id;
+  return R::Ok(displaced);
+}
+std::optional<RuntimeApplication::ReloadResult> RuntimeApplication::takeSceneReloadResult() {
+  return std::exchange(reloadResult_, std::nullopt);
+}
+void RuntimeApplication::stopSceneReloads() {
+  reloadsStopped_ = true;
+  if (pendingReloadId_) {
+    ATLANTIS_CHECK_MSG(!reloadResult_, "consume executed result before orderly stop");
+    reloadResult_.emplace(*pendingReloadId_, Result<std::uint64_t, connection::authoring::ReloadError>::Err(
+        connection::authoring::ReloadError::RuntimeStopped));
+  }
+  pendingReloadId_.reset(); pendingSceneReload_.reset();
 }
 
 void RuntimeApplication::performPendingSceneReload() {
   ATL_PROFILE_SCOPE("SceneReload");
   const atlantis::asset_system::ValidatedSceneData scene = std::move(*pendingSceneReload_);
   pendingSceneReload_.reset();
+  const auto applyId = std::exchange(pendingReloadId_, std::nullopt);
+  const auto failed = [&](connection::authoring::ReloadError error, std::string_view detail) {
+    if (applyId) {
+      reloadResult_.emplace(*applyId, Result<std::uint64_t, connection::authoring::ReloadError>::Err(error));
+      ATLANTIS_LOG_ERROR("apply {} failed ({}): {}", connection::authoring::toString(*applyId),
+                         connection::authoring::toString(error), detail);
+    } else {
+      ATLANTIS_LOG_ERROR("scene reload failed: {}", detail);
+    }
+  };
 
   // Resolve, load what is missing and bake -- nothing of this application is
   // touched yet, so any failure leaves the current World as it was.
@@ -1231,7 +1265,7 @@ void RuntimeApplication::performPendingSceneReload() {
   auto loadResult = loadSceneForReload(assetCatalogPath_, scene, loaded, device_.get(), vertexInputLayout_,
                                        pickGeometryRetained_);
   if (loadResult.isErr()) {
-    ATLANTIS_LOG_ERROR("scene reload refused ({}); the current scene continues", toString(loadResult.error()));
+    failed(connection::authoring::ReloadError::ScenePreparationFailed, toString(loadResult.error()));
     return;
   }
   SceneReloadOutcome& outcome = loadResult.value();
@@ -1244,14 +1278,15 @@ void RuntimeApplication::performPendingSceneReload() {
     wantsBloom = activeCamera->camera.bloom.strength > 0.0f;
   }
   if (wantsBloom && !bloomPipelines_[0]) {
-    ATLANTIS_LOG_ERROR("scene reload refused: its camera turns bloom on, but no bloom shader paths are configured");
+    failed(connection::authoring::ReloadError::RenderPreparationFailed,
+           "its camera turns bloom on, but no bloom shader paths are configured");
     return;
   }
   std::optional<atlantis::renderer::BloomTargets> newBloomTargets;
   if (wantsBloom && !bloomTargets_.has_value() && lastSeenExtent_.has_value()) {
     auto created = atlantis::renderer::createBloomTargets(*device_, *lastSeenExtent_);
     if (created.isErr()) {
-      ATLANTIS_LOG_ERROR("scene reload refused: createBloomTargets() failed; the current scene continues");
+      failed(connection::authoring::ReloadError::RenderPreparationFailed, "createBloomTargets() failed");
       return;
     }
     newBloomTargets.emplace(std::move(created.value()));
@@ -1263,7 +1298,8 @@ void RuntimeApplication::performPendingSceneReload() {
   // The GPU finishes every frame that used what is about to be released (the
   // SurfaceDestroyed teardown's pattern).
   if (device_->waitIdle().isErr()) {
-    ATLANTIS_LOG_ERROR("waitIdle() failed at the scene reload swap -- treated as fatal");
+    failed(connection::authoring::ReloadError::RuntimeStopped,
+           "waitIdle() failed at the scene reload swap -- treated as fatal");
     lifecycle_.markFailed();
     return;
   }
@@ -1304,6 +1340,10 @@ void RuntimeApplication::performPendingSceneReload() {
     bloomTargets_.reset();  // a fresh start on a scene without bloom builds none
   }
   ++sceneGeneration_;
+  if (applyId) {
+    reloadResult_.emplace(*applyId, Result<std::uint64_t, connection::authoring::ReloadError>::Ok(sceneGeneration_));
+    ATLANTIS_LOG_INFO("apply {} applied generation {}", connection::authoring::toString(*applyId), sceneGeneration_);
+  }
   ATLANTIS_LOG_INFO("scene reload swapped in: generation {}", sceneGeneration_);
 }
 

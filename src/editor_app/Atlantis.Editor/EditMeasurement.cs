@@ -117,6 +117,7 @@ public static class EditMeasurement
                 transforms.Apply(e);
                 apply.Apply(e);
             }
+            apply.Poll();
         }
         // Submits a plan and waits, the Runtime running free, for its Applied; milliseconds from the submit.
         double CommitAndWait(EditPlan plan)

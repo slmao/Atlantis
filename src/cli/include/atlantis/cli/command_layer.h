@@ -160,8 +160,9 @@ class CommandLayer {
   AuthoringProvider authoringProvider_;
   atlantis::connection::AuthoringConnection* authoring_ = nullptr;
   std::optional<atlantis::connection::SubscriptionId> authoringEvents_;
-  bool applyDeferred_ = false;
-  std::optional<std::uint64_t> deferredApplied_;  // the generation, until reported
+  Reply applyOutcome(const atlantis::connection::authoring::ApplyReceipt& receipt);
+  std::optional<atlantis::connection::authoring::ApplyReceipt> deferredApply_;
+  std::optional<Reply> deferredOutcome_;
 };
 
 }  // namespace atlantis::cli

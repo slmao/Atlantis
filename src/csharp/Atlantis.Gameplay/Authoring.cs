@@ -235,3 +235,26 @@ public enum ApplyError
     DecodeFailed,
     ReloadRefused,
 }
+
+/// <summary>Opaque apply identity; distinct from an asset/entity GUID. Default is invalid nil.</summary>
+public readonly record struct ApplyId(Guid Value)
+{
+    public bool IsNil => Value == Guid.Empty;
+    public static ApplyId Parse(string text) => TryParse(text, out ApplyId id) ? id : throw new FormatException("invalid apply id");
+    public static bool TryParse(string? text, out ApplyId id)
+    {
+        bool ok = AssetGuid.TryParse(text, out AssetGuid guid) && guid.Value != Guid.Empty;
+        id = ok ? new ApplyId(guid.Value) : default;
+        return ok;
+    }
+    public override string ToString() => new AssetGuid(Value).ToString();
+}
+public sealed record ApplyReceipt(ApplyId Id, ulong DocumentRevision);
+public enum ApplyState { Pending, Applied, Failed, Superseded }
+public enum ReloadError { ScenePreparationFailed, RenderPreparationFailed, RuntimeStopped }
+public enum ApplyLookupError { UnknownApply }
+public sealed record ApplyRecord(ApplyReceipt Receipt, ApplyState State, ulong? Generation = null,
+    ReloadError? Error = null, ApplyId? SupersededBy = null);
+public sealed record ApplyProjection(ApplyReceipt Receipt, ulong Generation);
+/// <summary>Owned bounded observation. Projection is origin, not equality with disposable World writes.</summary>
+public sealed record ApplySnapshot(ulong? CurrentDocumentRevision, ApplyRecord? Request, ApplyProjection? Projection);

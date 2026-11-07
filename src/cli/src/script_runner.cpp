@@ -37,6 +37,7 @@ void ScriptRunner::step() {
     const Outcome outcome = commands_.reportPending();
     if (outcome == Outcome::Submitted) return;  // not applied yet
     if (outcome == Outcome::Refused) ++refusedCount_;
+    else if (outcome == Outcome::Error) ++errorCount_;
   }
   while (next_ < lines_.size() && isSkipped(lines_[next_])) ++next_;
   if (next_ < lines_.size()) {

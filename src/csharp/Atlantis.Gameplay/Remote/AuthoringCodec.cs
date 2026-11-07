@@ -326,4 +326,73 @@ public static partial class Codec
     public static A.SaveError? DecodeSaveError(JsonValue value) => DecodeName<A.SaveError>(value);
     public static JsonValue Encode(A.ApplyError error) => JsonValue.String(error.ToString());
     public static A.ApplyError? DecodeApplyError(JsonValue value) => DecodeName<A.ApplyError>(value);
+
+    public static JsonValue Encode(A.ApplyReceipt receipt) => JsonValue.NewObject()
+        .Set("id", JsonValue.String(receipt.Id.ToString())).Set("documentRevision", JsonValue.Number(receipt.DocumentRevision));
+    public static A.ApplyReceipt? DecodeApplyReceipt(JsonValue value)
+    {
+        if (value.Find("id") is not { IsString: true } id || value.Find("documentRevision") is not JsonValue revision ||
+            !A.ApplyId.TryParse(id.AsString, out A.ApplyId parsed) || DecodeUInt64(revision) is not ulong number || number == 0) return null;
+        return new A.ApplyReceipt(parsed, number);
+    }
+    public static JsonValue Encode(A.ApplyRecord record)
+    {
+        JsonValue value = JsonValue.NewObject().Set("receipt", Encode(record.Receipt)).Set("state", JsonValue.String(record.State.ToString()));
+        if (record.Generation is ulong gen) value.Set("generation", JsonValue.Number(gen));
+        if (record.Error is A.ReloadError error) value.Set("error", JsonValue.String(error.ToString()));
+        if (record.SupersededBy is A.ApplyId id) value.Set("supersededBy", JsonValue.String(id.ToString()));
+        return value;
+    }
+    public static A.ApplyRecord? DecodeApplyRecord(JsonValue value)
+    {
+        if (value.Find("receipt") is not JsonValue receipt || DecodeApplyReceipt(receipt) is not A.ApplyReceipt decoded ||
+            value.Find("state") is not JsonValue state || DecodeName<A.ApplyState>(state) is not A.ApplyState named) return null;
+        JsonValue? gen = value.Find("generation"), error = value.Find("error"), by = value.Find("supersededBy");
+        if ((named != A.ApplyState.Applied && gen is not null) || (named != A.ApplyState.Failed && error is not null) ||
+            (named != A.ApplyState.Superseded && by is not null)) return null;
+        ulong? generation = null; A.ReloadError? refusal = null; A.ApplyId? successor = null;
+        if (named == A.ApplyState.Applied)
+        {
+            generation = gen is null ? null : DecodeUInt64(gen); if (generation is null or 0) return null;
+        }
+        else if (named == A.ApplyState.Failed)
+        {
+            refusal = error is null ? null : DecodeName<A.ReloadError>(error); if (refusal is null) return null;
+        }
+        else if (named == A.ApplyState.Superseded)
+        {
+            if (by is not { IsString: true } || !A.ApplyId.TryParse(by.AsString, out A.ApplyId id) || id == decoded.Id) return null;
+            successor = id;
+        }
+        return new A.ApplyRecord(decoded, named, generation, refusal, successor);
+    }
+    public static JsonValue Encode(A.ApplySnapshot snapshot) => JsonValue.NewObject()
+        .Set("currentDocumentRevision", snapshot.CurrentDocumentRevision is ulong revision ? JsonValue.Number(revision) : JsonValue.Null())
+        .Set("request", snapshot.Request is A.ApplyRecord request ? Encode(request) : JsonValue.Null())
+        .Set("projection", snapshot.Projection is A.ApplyProjection projection ? JsonValue.NewObject()
+            .Set("receipt", Encode(projection.Receipt)).Set("generation", JsonValue.Number(projection.Generation)) : JsonValue.Null());
+    public static A.ApplySnapshot? DecodeApplySnapshot(JsonValue value)
+    {
+        if (value.Find("currentDocumentRevision") is not JsonValue revision || value.Find("request") is not JsonValue request ||
+            value.Find("projection") is not JsonValue projected) return null;
+        ulong? current = revision.IsNull ? null : DecodeUInt64(revision);
+        if (!revision.IsNull && current is null or 0) return null;
+        A.ApplyRecord? record = request.IsNull ? null : DecodeApplyRecord(request);
+        if (!request.IsNull && record is null) return null;
+        A.ApplyProjection? projection = null;
+        if (!projected.IsNull)
+        {
+            if (projected.Find("receipt") is not JsonValue receipt || DecodeApplyReceipt(receipt) is not A.ApplyReceipt decoded ||
+                projected.Find("generation") is not JsonValue gen || DecodeUInt64(gen) is not ulong number || number == 0) return null;
+            projection = new A.ApplyProjection(decoded, number);
+        }
+        if ((current is null && (record is not null || projection is not null)) || (record is null && projection is not null)) return null;
+        if (current is ulong c && ((record is not null && record.Receipt.DocumentRevision > c) ||
+            (projection is not null && projection.Receipt.DocumentRevision > c))) return null;
+        if (record is not null && projection is not null && record.Receipt.Id == projection.Receipt.Id &&
+            (record.State != A.ApplyState.Applied || record.Receipt != projection.Receipt || record.Generation != projection.Generation)) return null;
+        return new A.ApplySnapshot(current, record, projection);
+    }
+    public static JsonValue Encode(A.ApplyLookupError error) => JsonValue.String(error.ToString());
+    public static A.ApplyLookupError? DecodeApplyLookupError(JsonValue value) => DecodeName<A.ApplyLookupError>(value);
 }

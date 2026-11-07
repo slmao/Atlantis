@@ -12,7 +12,7 @@ namespace atlantis::asset_system {
 // Plan 0047 P4 / ADR-0097 D1: the only place a GUID is minted. Plan 0065 J8
 // (ADR-0130 D1) moved it here from the asset cooker tool so the authoring
 // session's CreateNode shares it; it is still the only minting code. Its
-// callers are explicit authoring acts only -- the cooker's --kind=mint-guid
+// callers are explicit authoring acts only (including Spec 0083 apply identities) -- the cooker's --kind=mint-guid
 // and an authoring CreateNode that names no EntityGuid. No cook, import,
 // decode, bake or Runtime path calls it.
 //

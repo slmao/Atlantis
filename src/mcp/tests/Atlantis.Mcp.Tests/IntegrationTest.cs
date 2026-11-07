@@ -134,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 34 tools", tools.Count == 34 && tools.Select(t => t.Name).Distinct().Count() == 34);
+            Require("real host discovers exactly 36 tools", tools.Count == 36 && tools.Select(t => t.Name).Distinct().Count() == 36);
         }
         await Query(first, "control.pause");
         Require("Runtime paused", (await Query(first, "control.status")).Find("paused")?.AsBool == true);
@@ -274,7 +274,10 @@ internal sealed class IntegrationTest
         ulong old = StatusGeneration(await Query(first, "control.status"));
         await Query(first, "authoring.drain_events");
         await Query(second, "authoring.drain_events");
-        await Query(first, "authoring.apply");
+        JsonValue receipt = (await Query(first, "authoring.apply_tracked")).Find("ok")!;
+        JsonValue applyArgs = Object("id", receipt.Find("id")!);
+        JsonValue pending = (await Query(first, "authoring.apply_status", applyArgs)).Find("ok")!;
+        Require(stage + ": tracked receipt is pending while paused", pending.Find("request")?.Find("state")?.AsString == "Pending");
         await Query(first, "control.step", Object("request", Object("frames", JsonValue.Number(1L)).Set("image", JsonValue.Null())));
         var seen = new ulong?[2];
         long until = Environment.TickCount64 + 60000;
@@ -293,6 +296,10 @@ internal sealed class IntegrationTest
         }
         ulong current = StatusGeneration(await Query(first, "control.status"));
         Require(stage + ": Applied observed on both connections and matches status", current == old + 1 && seen[0] == current && seen[1] == current);
+        JsonValue a = (await Query(first, "authoring.apply_status", applyArgs)).Find("ok")!;
+        JsonValue b = (await Query(second, "authoring.apply_status", applyArgs)).Find("ok")!;
+        Require(stage + ": both MCP clients observe the exact retained Applied receipt", Json.Write(a) == Json.Write(b) &&
+            a.Find("request")?.Find("state")?.AsString == "Applied" && Json.Write(a.Find("request")!.Find("receipt")!) == Json.Write(receipt));
     }
 
     private static ulong StatusGeneration(JsonValue status)
