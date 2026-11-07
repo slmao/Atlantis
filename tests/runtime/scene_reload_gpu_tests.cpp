@@ -69,6 +69,15 @@ struct SceneReloadTestAccess {
             keys(app.materialResourceMap_), keys(app.samplerResourceMap_), keys(app.textureDataMap_),
             keys(app.sampledTextureResourceMap_)};
   }
+  // Exercise the same private reload path with an invalid target extent. The
+  // allocator rejects it before Vulkan; no device loss or production seam.
+  static void reloadWithZeroExtent(RuntimeApplication& app) {
+    REQUIRE(app.pendingSceneReload_);
+    REQUIRE_FALSE(app.bloomTargets_);
+    const auto before = std::exchange(app.lastSeenExtent_, atlantis::rhi::Extent2D{});
+    app.performPendingSceneReload();
+    app.lastSeenExtent_ = before;
+  }
 };
 
 }  // namespace atlantis::runtime
@@ -650,6 +659,36 @@ TEST_CASE("scene reload: unavailable bloom shaders refuse the projection but kee
     CHECK(failed->error == ac::ReloadError::RenderPreparationFailed);
     CHECK(app.sceneGeneration() == 0);
     CHECK(host.connection->getProperty(strength).value() == ac::PropertyValue{0.5f});
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
+}
+
+TEST_CASE("scene reload: bloom target preparation failure leaves the old frame and resources",
+          "[runtime][gpu][reload]") {
+  auto created = createRuntimeApplication(buildSmokeConfig());
+  REQUIRE(created.isOk());
+  auto app = std::move(created.value());
+  {
+    AuthoringHost host(app, committedScene("integrated_showcase_demo"), defaultScene());
+    host.frames(2);
+    const auto before = app.captureFrameData().value();
+    const auto resources = atlantis::runtime::SceneReloadTestAccess::resourceKeys(app);
+    const auto camera = host.connection->activeCamera().value();
+    REQUIRE(camera);
+    const scene::PropertyAddress strength{*camera, atlantis::schema::typeId("asset_system::scene::Camera"),
+        atlantis::schema::fieldId("asset_system::scene::CameraBloom", "strength")};
+    (void)host.connection->submit(ac::SetProperty{strength, 0.5f});
+    REQUIRE(host.connection->drainFailures().empty());
+    const auto receipt = host.connection->applyTracked().value();
+    atlantis::runtime::SceneReloadTestAccess::reloadWithZeroExtent(app);
+    host.frames(2);
+    const auto status = host.connection->applyStatus(receipt.id).value().request;
+    REQUIRE(status);
+    CHECK(status->state == ac::ApplyState::Failed);
+    CHECK(status->error == ac::ReloadError::RenderPreparationFailed);
+    CHECK(app.sceneGeneration() == 0);
+    CHECK(app.captureFrameData().value() == before);
+    CHECK(atlantis::runtime::SceneReloadTestAccess::resourceKeys(app) == resources);
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }
