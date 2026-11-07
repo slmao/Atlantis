@@ -209,6 +209,7 @@ public sealed class ApplyController
     private bool _inFlight, _again, _paused, _suspended, _recovering, _stopped, _needGlobalStatus;
     private ApplyReceipt? _receipt;
     private ApplySnapshot? _snapshot;
+    private ulong _localRecoveryCommits;
     private string _notice = "";
     public ApplyController(IAuthoringDocument document) => _document = document;
     public ApplyStatus Status { get; private set; } = ApplyStatus.Idle;
@@ -256,7 +257,11 @@ public sealed class ApplyController
     public void Request()
     {
         if (_stopped) return;
-        if (_inFlight) { _again = true; return; }
+        if (_inFlight)
+        {
+            if (!_recovering) _again = true;
+            return;
+        }
         _recovering |= _suspended;
         Issue();
     }
@@ -268,7 +273,11 @@ public sealed class ApplyController
         {
             _document.SubmitTransaction(commands);
             var failures = _document.DrainFailures();
-            if (failures.Count == 0 && _inFlight && !_suspended) _again = true;
+            if (failures.Count == 0 && _inFlight && !_suspended)
+            {
+                if (!_recovering || commands.Count != 0) _again = true;
+                if (_recovering && commands.Count != 0) ++_localRecoveryCommits;
+            }
             if (failures.Count == 0) _needGlobalStatus = true;
             return failures;
         }
@@ -321,23 +330,31 @@ public sealed class ApplyController
         if (record.State == ApplyState.Superseded)
         { Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy); return; }
         Generation = record.Generation!.Value; Status = ApplyStatus.Applied;
+        if (_recovering &&
+            (view.Projection is not ApplyProjection projection || projection.Receipt != expected ||
+             projection.Generation != Generation ||
+             view.CurrentDocumentRevision != expected.DocumentRevision + _localRecoveryCommits))
+        {
+            Suspend(ApplyStatus.NeedsApply, "document/projection changed");
+            return;
+        }
         if (_again) { _again = false; Issue(); return; }
         if (_recovering)
         {
-            if (view.Projection is ApplyProjection p && p.Receipt == expected && p.Generation == Generation &&
-                view.CurrentDocumentRevision == expected.DocumentRevision)
-            { _recovering = false; _suspended = false; }
-            else Suspend(ApplyStatus.NeedsApply, "document/projection changed");
+            _recovering = false;
+            _suspended = false;
         }
     }
     private void Suspend(ApplyStatus status, string notice)
     {
         _inFlight = false; _again = false; _suspended = true; _recovering = true;
+        _localRecoveryCommits = 0;
         _notice = notice; Status = status;
     }
     private void Accepted(ApplyReceipt receipt)
     {
         _receipt = receipt; _inFlight = true; _suspended = false; _needGlobalStatus = false;
+        _localRecoveryCommits = 0;
         _snapshot = new ApplySnapshot(receipt.DocumentRevision, new ApplyRecord(receipt, ApplyState.Pending), _snapshot?.Projection);
         LastError = null; LastReloadError = null; _notice = "";
         Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;

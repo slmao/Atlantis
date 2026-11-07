@@ -275,6 +275,7 @@ int Invocation::runSceneTransaction(std::span<const std::string_view> tokens) {
 
 Reply Invocation::awaitOutcome(Reply reply) {
   if (reply.outcome != Outcome::Submitted) return reply;
+  if (reply.command == "scene apply" && options_.transportFailure && options_.transportFailure()) return reply;
   const bool isStep = reply.command == "runtime step";
   // Plan 0065 P6 (Spec 0065 third Correction): an apply while the Runtime is
   // paused reloads only at a step or on resume, like a write: it is not
@@ -337,6 +338,12 @@ int Invocation::finish(Reply reply) {
     if (checked.command.starts_with("scene apply")) {
       failure->subject = checked.result;
       const auto* id = checked.result.find("id");
+      if (checked.command == "scene apply" && id && id->isString()) {
+        failure->subject = Value::object();
+        failure->subject.set("id", *id);
+        if (const auto* revision = checked.result.find("documentRevision"))
+          failure->subject.set("documentRevision", *revision);
+      }
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
       failure->text = "error: " + failure->message;
     }
@@ -349,6 +356,7 @@ int Invocation::finish(Reply reply) {
       failure->subject.set("deferredApply", std::move(receipt));
       failure->message += "; deferred apply " + id + " completion unknown";
       failure->text = "error: " + failure->message;
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, exitCode(failure->category));
     }
     return reportError(*failure, checked.command, options_, out_, err_);
   };
@@ -363,14 +371,22 @@ int Invocation::finish(Reply reply) {
   // Plan 0065 P6: a deferred apply's outcome, once its reload has swapped.
   int code = reply.error ? exitCode(reply.error->category) : 0;
   while (const std::optional<Reply> applied = layer_.deferredApplyOutcome()) {
-    if (const auto transport = transportFailure(*applied)) return *transport;
+    if (const auto transport = transportFailure(*applied)) {
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, *transport);
+      return *transport;
+    }
     print(*applied, {}, options_, out_, err_);
-    if (applied->error) code = std::max(code, exitCode(applied->error->category));
+    if (applied->error) {
+      const int deferredCode = exitCode(applied->error->category);
+      deferredApplyExitCode_ = std::max(deferredApplyExitCode_, deferredCode);
+      code = std::max(code, deferredCode);
+    }
   }
   return code;
 }
 
 int Invocation::repl(std::istream& in) {
+  deferredApplyExitCode_ = 0;
   std::string line;
   while (true) {
     err_ << "atlantis> " << std::flush;
@@ -381,7 +397,7 @@ int Invocation::repl(std::istream& in) {
     (void)runTokens(tokens, line);
   }
   err_ << '\n' << std::flush;
-  return 0;
+  return deferredApplyExitCode_;
 }
 
 }  // namespace atlantis::cli

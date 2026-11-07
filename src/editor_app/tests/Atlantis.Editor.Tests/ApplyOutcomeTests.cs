@@ -70,6 +70,38 @@ public static partial class Program
             "outcome: historical Applied cannot end recovery after external projection/revision moved");
         Check(d3.ApplyStatus(owned.Id).Value!.Request!.State == ApplyState.Applied, "outcome: historical success remains immutable");
 
+        foreach (bool externalProjection in new[] { false, true })
+        {
+            var (shared, recovery, address) = Setup();
+            recovery.Request();
+            shared.FailReload(ReloadError.ScenePreparationFailed);
+            recovery.Poll();
+            recovery.SetPaused(true);
+            recovery.Retry();
+            recovery.Commit(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(4)) });
+            shared.Reload();
+            if (externalProjection)
+            {
+                shared.ApplyTracked();
+                shared.Reload();
+            }
+            else
+            {
+                shared.SubmitTransaction(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(5)) });
+                shared.DrainFailures();
+            }
+            foreach (var change in shared.DrainEvents()) recovery.Apply(change);
+            int issued = recovery.Issued;
+            recovery.Poll();
+            Check(recovery.Status == ApplyStatus.NeedsApply && recovery.Suspended &&
+                !recovery.CanPreview && recovery.CanApply && recovery.Issued == issued,
+                "outcome: queued local recovery does not auto-apply after an external " +
+                (externalProjection ? "projection change" : "revision advance"));
+            recovery.Retry();
+            Check(recovery.Issued == issued + 1 && recovery.Status == ApplyStatus.PendingPaused,
+                "outcome: explicit retry is available after rejecting the stale follow-up");
+        }
+
         var (d4, a4, _) = Setup(); a4.Request(); var old = a4.Receipt!; var other = d4.ApplyTracked().Value!; a4.Poll();
         Check(a4.Status == ApplyStatus.Superseded && a4.Receipt == old && a4.Suspended,
             "outcome: another client's same-revision apply supersedes, never becomes this caller's receipt");

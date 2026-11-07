@@ -516,14 +516,19 @@ public static partial class Program
             Click(Retry());
             await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "recovery request before external edit");
             var staleRevision = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Click(redo);
+            await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "queue local Redo before external edit");
+            Click(undo);
+            await NameUiWait(async () => (await ReadValue()).Equals(original), "queue local Undo before external edit");
             await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); });
             Check("external equal-value edit still advances revision", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0 &&
                 (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.CurrentDocumentRevision > staleRevision.Receipt.DocumentRevision);
             Click(stepButton);
             await NameUiWait(() => ApplyText().Contains("document/projection changed", StringComparison.Ordinal) && Retry().IsEnabled,
                 "historical success keeps recovery suspended", 60);
-            Check("historical success cannot resume previews",
+            Check("external edit prevents queued recovery apply and keeps previews blocked",
                 (await Task.Run(() => observer.Authoring.ApplyStatus(staleRevision.Receipt.Id))).Value!.Request!.State == ApplyState.Applied &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt == staleRevision.Receipt &&
                 !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled);
 
             Click(Retry()); await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "old snapshot held before shared reopen");

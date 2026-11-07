@@ -163,7 +163,11 @@ class CommandLayer {
   std::optional<atlantis::connection::SubscriptionId> authoringEvents_;
   Reply applyOutcome(const atlantis::connection::authoring::ApplyReceipt& receipt);
   std::optional<atlantis::connection::authoring::ApplyReceipt> deferredApply_;
-  std::optional<Reply> deferredOutcome_;
+  struct ReplacedApply {
+    atlantis::connection::authoring::ApplyReceipt receipt;
+    Reply outcome;
+  };
+  std::optional<ReplacedApply> replacedApply_;
 };
 
 }  // namespace atlantis::cli

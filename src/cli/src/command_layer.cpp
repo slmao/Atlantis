@@ -562,6 +562,11 @@ void CommandLayer::deferApply() {
 }
 
 std::optional<ac::ApplyReceipt> CommandLayer::takeDeferredApply() {
+  if (auto replaced = std::exchange(replacedApply_, std::nullopt)) {
+    // The command being reported already carries the newer acceptance.
+    deferredApply_.reset();
+    return replaced->receipt;
+  }
   return std::exchange(deferredApply_, std::nullopt);
 }
 
@@ -588,7 +593,7 @@ Reply CommandLayer::applyOutcome(const ac::ApplyReceipt& receipt) {
   reply.result = std::move(result); return reply;
 }
 std::optional<Reply> CommandLayer::deferredApplyOutcome() {
-  if (deferredOutcome_) return std::exchange(deferredOutcome_, std::nullopt);
+  if (auto replaced = std::exchange(replacedApply_, std::nullopt)) return std::move(replaced->outcome);
   if (!deferredApply_ || !authoring_) return std::nullopt;
   Reply outcome = applyOutcome(*deferredApply_);
   if (outcome.outcome == Outcome::Submitted) return std::nullopt;
@@ -1786,7 +1791,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
   if (verb == "apply") {
     if (t.size() != 2) return failed(command, usageError("scene apply"));
     (void)drainSceneEvents();
-    if (deferredOutcome_) return failed(command, plainError("PendingApplyOutcome", ErrorCategory::Runtime, "report the previous deferred outcome first"));
+    if (replacedApply_) return failed(command, plainError("PendingApplyOutcome", ErrorCategory::Runtime, "report the previous deferred outcome first"));
     const auto applied = a->applyTracked();
     if (applied.isErr()) {
       const std::string code(ac::toString(applied.error()));
@@ -1801,7 +1806,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     if (deferredApply_) {
       // New acceptance displaced the old request, or it already completed. Query
       // its exact id before dropping the local waiter; never infer from generation.
-      deferredOutcome_ = applyOutcome(*deferredApply_);
+      replacedApply_ = ReplacedApply{*deferredApply_, applyOutcome(*deferredApply_)};
       deferredApply_.reset();
     }
     pending_ = std::move(pending);
