@@ -991,9 +991,12 @@ milestone being listed does not authorize starting it — see Section 1.
   [Spec 0084](specs/0084-asset-reference-target-types.md) /
   [Plan 0084](plans/0084-asset-reference-target-types.md) cover shared
   authoring field target types and Inspector candidate filtering. The
-  [joint design](https://github.com/slmao/Atlantis/pull/331) is approved
-  and merged.
-  Preview and broader asset-pipeline management remain future work.
+  [joint design](https://github.com/slmao/Atlantis/pull/331) is approved and
+  the [implementation](https://github.com/slmao/Atlantis/pull/332) is merged.
+  [Spec 0085](specs/0085-shared-asset-rebuild.md) and
+  [Plan 0085](plans/0085-shared-asset-rebuild.md) propose shared rebuild of
+  existing producers with isolated publication and explicit Runtime restart.
+  Preview, new asset registration and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
