@@ -252,6 +252,9 @@ public static class IntegrationTest
             if (session.Authoring.Open() is not null) throw new InvalidOperationException("reference source restore did not reopen");
             Settle();
         }
+        Check("assets: reopen requires explicit projection", apply.Status == ApplyStatus.NeedsApply);
+        apply.Retry();
+        WaitApplied("asset source restore");
         inspector.Refresh(subject);
         Check("assets: reference edit before conflict", Commit(inspector.Commit("Renderable.materialAsset", replacement.ToString())) is null);
         WaitApplied("asset reference conflict setup");
@@ -398,6 +401,9 @@ public static class IntegrationTest
             if (session.Authoring.Open() is not null) throw new InvalidOperationException("restoring the source did not reopen");
             Settle();
         }
+        Check("save: reopen requires explicit projection", apply.Status == ApplyStatus.NeedsApply);
+        apply.Retry();
+        WaitApplied("name source restore");
         CheckFrame("save");
 
         // Another client (the CLI is one too): it edits the field the editor edited; the Inspector follows, the undo is refused.
