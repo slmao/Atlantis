@@ -19,17 +19,19 @@ prepares a reload.
 
 1. The module that owns the authoring scene field descriptor declares its
    target type. Append a default-empty `std::string_view targetAssetType` to
-   Core's descriptive field record. Core enforces structural applicability
-   without owning an asset taxonomy. Asset System declares the closed cooked
-   catalog tokens on its semantic scene descriptors. Clients use the
-   declaration carried by the descriptor, with owned native remote schema
-   storage or canonical static tokens for decoded views.
+   Core's descriptive field record. Core checks whether a declaration can
+   appear on the field's shape. Asset System supplies the canonical cooked
+   token on its semantic scene descriptors. Reuse the catalog vocabulary
+   when decoding the annotation in each typed client. Native decoded token
+   views follow the existing schema lifetime through owned schema storage
+   or canonical static storage.
 2. Carry the optional token in the existing authoring schema field object
    with additive member compatibility. An omitted member represents
    unspecified metadata. A present invalid declaration follows normal
-   malformed-schema handling. Keep the semantic scene hash and field/type
-   identity stable because the annotation describes selection intent and
-   does not change the serialized value or its authoring domain.
+   malformed-schema handling. Only omission permits fallback. Keep the
+   semantic scene hash and field/type identity stable because the annotation
+   describes selection intent without changing the serialized value or its
+   authoring domain.
 3. Apply the metadata to candidate selection, with no new catalog validation
    in document transactions. Runtime's existing resolution rules govern
    the complete scene and remain independently testable. Spec 0084 owns the

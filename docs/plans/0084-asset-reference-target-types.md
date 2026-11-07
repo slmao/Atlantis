@@ -54,10 +54,19 @@ deliverable of S1.
 
 | Joint decision | Recommendation |
 |---|---|
-| **J1 — Authority and scope** | Put one optional declaration on the Asset System authoring descriptor. Annotate the mesh and optional material slots only. Verify agreement with existing Runtime expectations. |
-| **J2 — Client compatibility** | Extend the existing field JSON with an omitted-when-unspecified member. Validate present values strictly, keep versions and persisted hash stable, and expose it through reflective SDKs, `scene schema <Type>` and existing MCP schema. |
-| **J3 — Chooser behavior** | Fix the chooser to the declared type and guard confirmation against its typed list. Keep the 0082 generic fallback for absent metadata. Treat type matching as advisory for loadability and retain 0083 recovery. |
-| **J4 — Delivery** | Approve the R1–R5 checks and the scope above. If the owner chooses to authorize implementation, one joint approval can cover S2–S4 after the design PR is manually merged. Existing gates and human final merge apply. |
+| **J1 — Authority and scope** | Approve the Asset System descriptor as the field authority for the mesh and optional material slots. The catalog supplies actual record types and loader fixtures check agreement with both Runtime expectations. |
+| **J2 — Client compatibility** | Approve the optional existing-schema member and strict present-value validation. Preserve the old field shape when absent, field identities, type versions, the persisted hash and existing protocol. Use existing reflective connections and MCP schema plus `scene schema <Type>`. |
+| **J3 — Chooser behavior** | Approve the fixed type restriction and confirmation bound to the displayed list request. Keep the 0082 fallback for omission. Preserve ordinary writes and 0083 recovery, including the case where a matching asset fails at reload. |
+| **J4 — Delivery** | Approve the scoped files and R1–R5 checks. Use one joint authorization for S2–S4 after human design merge and retain all applicable gates and human final merge. |
+
+### Suggested joint authorization
+
+> I approve J1–J4 and jointly approve Spec/Plan 0084 at the reviewed
+> revision. I accept ADR-0145. After the design PR is manually merged,
+> proceed through S2–S4 from current main, including implementation,
+> applicable verification and submission of a review-ready implementation PR.
+> Ordinary fixes within scope and reuse of verified unchanged inputs are
+> authorized. Existing gates and human final merge apply.
 
 ## Verification Checklist
 
@@ -67,46 +76,58 @@ deliverable of S1.
 - [ ] **R1 descriptor consistency.** Assert the exact mesh/material slot
   pair, material optionality, and absence on unrelated and ineligible
   descriptors. Exercise structural validation for metadata on the wrong
-  shape. Verify both expected types against the current Runtime resolver
-  using the loader's existing fixtures. Retain authoring field IDs, flags,
+  shape. Read the declared types and compare them with observed outcomes of
+  the existing loader fixture for both slots, using valid references and a
+  wrong-type reference for each slot. Retain authoring field IDs, flags,
   type versions and the scene semantic hash. Read a pre-change cooked scene
   and verify existing World binding generation is still current.
 - [ ] **R2 shared schema.** Use C++/C# codec vectors and real authoring
   responses to verify omission, valid canonical values and rejection of
-  invalid values. Exercise unknown member tolerance separately. Compare
+  present null, bad spelling, unknown token, wrong JSON kind and ineligible
+  placement. Exercise unknown member tolerance separately. Compare
   native reflection, C# reflection, CLI text/JSON and raw MCP output for
   the same field identities and types. Verify World inspection keeps its
   existing shape and the MCP tool set remains unchanged.
-- [ ] **R2 mixed versions.** Run pinned pre-change native and managed
-  clients against the updated host and exercise authoring schema, edit and apply. Run an
-  updated client against the pinned 0083 host and verify absent metadata
-  decodes and the chooser retains 0082 behavior. Record both directions
-  and the revisions used. An intentionally malformed declaration produces
-  the existing protocol error, with no edit dispatched by the chooser.
+- [ ] **R2 mixed versions.** Use actual pinned pre-change native and managed
+  clients against the updated host. Read the annotated authoring schema
+  through the old decoders and exercise an existing edit and apply.
+  Against the pinned 0083 host, verify updated native/C# decoders and CLI
+  inspection see no declaration. Verify the updated Editor App still
+  chooses and edits through 0082 behavior. Record host/client revisions in
+  both directions. A deliberately malformed declaration produces the
+  existing protocol failure and no chooser edit, even if preceding fields
+  decoded successfully.
 - [ ] **R3 list behavior.** Use mixed mesh, material and unrelated entries
   to prove exact filtering in both slots and ordinary search within the
   allowed type. Use a synthetic field with different names and IDs to prove
-  filtering follows its leaf declaration. Exercise optional absence, valid
-  current preselection,
-  unlisted and wrong-type current GUID display, empty typed matches,
-  catalog error, dependency navigation, deselection, Reload view with
-  pending detail and stale callbacks. Confirm neither list/detail arrival
-  nor filter state writes the document or alters the Assets panel.
+  filtering follows its leaf declaration. Exercise optional absence,
+  valid preselection, unlisted and wrong-type current GUID display, empty
+  typed matches, catalog error, dependency navigation, deselection, Reload
+  view with pending detail and stale callbacks. A detail refusal leaves an
+  otherwise valid visible selection eligible. Browsing leaves the document
+  and Assets panel unchanged.
 - [ ] **R4 edit and recovery.** Cover wrong-type, stale and duplicate
-  confirmations, Cancel, unchanged choice and optional Clear. Exercise
+  confirmations, including a stale list identity for a GUID that appears
+  in both lists and an unlisted GUID submitted directly to the worker.
+  Exercise Cancel, unchanged choice and optional Clear. Exercise
   real Windows Inspector/worker/Runtime with default and available Bistro
   in managed Debug/Release. A changed valid choice makes one ordinary
   edit and history entry. Verify Undo/Redo, Pause/Step, shared Reopen,
-  Save and imported refusal through their existing paths. Retain the 0083
-  wrong-type manual/shared write failure path. Also exercise an in-type
-  candidate whose load fails. A disposable fixture can use a cataloged
-  material with a dependency that is unused by the initial scene and fails
-  a loader check when selected. Its failure must appear through the
-  typed apply outcome with the old projection and committed history
-  retained. Repair through the filtered chooser while suspended, then
-  explicitly Retry. Verify history replay while suspended and the 0083
-  external revision/projection guard. The fixture may use existing
-  controlled worker inputs where required and must document that boundary.
+  Save and imported refusal through their existing paths. Move any existing
+  0083 wrong-type chooser setup to a manual or shared write when retaining
+  that check. The typed chooser must now refuse that wrong-type selection.
+  Separately, run one default-scene recovery case with a type-matching
+  choice. In a disposable fixture, select a cataloged material that the
+  initial World has not loaded and make its artifact unreadable after the
+  chooser's snapshot succeeds. Confirm list/detail still show `material`.
+  Verify the edit is accepted and reload reports `ScenePreparationFailed`
+  for that receipt, with old generation/projection and committed history
+  retained. Repair through the filtered chooser while suspended and verify
+  no apply is sent. Exercise guarded history replay, then explicitly Retry
+  and verify the matching latest projection resumes normal editing. Retain
+  the 0083 external revision/projection guard evidence with input audit.
+  Restore disposable artifacts and record routed or controlled worker
+  input boundaries.
 - [ ] **R5 builds and gates.** Build affected native Debug/Release and
   Android targets and managed SDK, Editor and MCP with existing pins.
   Run affected schema, transport, CLI/SDK/MCP and Editor suites and

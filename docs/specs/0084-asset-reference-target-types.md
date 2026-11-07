@@ -46,14 +46,17 @@ non-authoring descriptors.
 
 **R1 — Authoritative declaration.** The Asset System owns target-type
 annotations on the semantic scene field descriptors it already publishes
-through Authoring. Use the declaring type and field identity, including the leaf
+through Authoring. Publish the existing descriptor's declaration directly.
+Use the declaring type and field identity, including the leaf
 descriptor for a nested field. Only a primitive `AssetGuid` with
 `AssetReference` may carry this optional declaration. The first release
 annotates exactly `asset_system::scene::Renderable.meshAsset` as `mesh` and
 `asset_system::scene::Renderable.materialAsset` as `material`. The material
 field remains optional. Match these declarations to the existing Runtime
-dependency expectations and verify that agreement in tests. Editor App, CLI,
-SDK and MCP must derive metadata from the published descriptor.
+dependency expectations and verify that agreement in tests. The declaration
+is authoritative for the field's expected type. The catalog is authoritative
+for the listed type of a candidate. Editor App, CLI, SDK and MCP read the
+published descriptor and do not maintain separate field-to-type mappings.
 
 **R2 — Shared contract and compatibility.** Append an optional
 `targetAssetType` member to the existing authoring schema field JSON object
@@ -62,10 +65,16 @@ on `atlantis.remote/1`. A declaration uses the exact cooked catalog token
 when unspecified. Absence means the server supplies no target constraint.
 Reject a present null, wrong kind, empty, unknown or noncanonical token, and
 a declaration on an ineligible field as malformed schema through the
-existing typed-client error path. Older readers continue ignoring the extra
-member. New readers accept the old shape. On an old Runtime that already
-supports 0083, this allows the 0082 generic chooser. Earlier Runtime readiness
-still follows 0083.
+existing typed-client error path. Native clients check the session failure
+before using decoded values and C# reports the existing protocol error.
+Neither treats malformed or partial schema as an omitted member. Unrelated
+unknown JSON members keep their existing tolerance.
+
+| Host and client | Compatibility |
+|---|---|
+| Updated host, pre-0084 client | Existing readers ignore the extra member. Existing schema, edit and apply calls retain their semantics. |
+| 0083 host, updated client | A missing member decodes as unspecified. Inspector retains the 0082 chooser with manual type filtering. |
+| Earlier host, updated Editor App | The existing 0083 readiness requirement still applies. Metadata omission does not override it. |
 
 Expose an optional canonical token on native reflective
 `schema::FieldDescriptor` (empty view means absent and normal schema lifetime
@@ -75,8 +84,8 @@ their existing `AuthoringConnection::schema()`. Add `scene schema <Type>`
 to the CLI for authoring descriptor inspection, with existing qualified and
 short name resolution and the token in text and the same optional key in
 JSON. Inspection is available before document open. MCP's existing
-`authoring.schema` tool forwards the member. Keep World schema responses and
-CLI World inspection unchanged.
+`authoring.schema` tool forwards the schema as a raw response. Keep World
+schema responses and CLI World inspection unchanged.
 There is no new RPC or MCP tool. Keep field IDs, flags, value layouts and
 type versions stable. This advisory member is outside the persisted semantic
 scene hash. Preserve old cooked scene readability and World binding output.
@@ -93,23 +102,27 @@ metadata, retain the generic chooser and label the type as unspecified.
 Display the field's original value and distinguish absence, a GUID outside the
 snapshot and a listed GUID of another type. Preselect only an eligible,
 visible current record. Leave the field value and the choice of any
-replacement to the user. A dependency may
-become a candidate only if it satisfies the same typed list and visibility
-rules. Keep out-of-type dependency GUIDs readable in details. Detail responses
-cannot introduce a candidate or reenable Confirm. Retain the existing
-list/detail request guards and catalog error semantics.
+replacement to the user. A dependency may become a candidate only if it
+satisfies the same typed list and visibility rules. Keep out-of-type
+dependency GUIDs readable in details. Detail success and in-band detail
+refusal do not change candidate eligibility. Transport failure invalidates
+the chooser. Retain the existing list/detail request guards.
 
 **R4 — Confirmation and recovery.** An annotated choice must pass the
 visible-list check in the view and the worker's current typed membership check.
 Use the complete list result already obtained by the chooser on the worker
 and bind its eligible GUIDs to the active chooser and latest list request.
-Clear that membership when loading, on failure and on invalidation. Reuse that
-membership at confirmation without another catalog RPC. Recheck the field
-annotation and existing target guards in the queued
-Edit operation before submitting. A stale or wrong-type choice yields a refusal
-with no transaction, history or apply. A valid changed choice uses the existing
-SetProperty, history and apply flow. Unchanged choices, optional Clear, manual
-GUID editing, Save and Reopen follow their existing rules.
+Confirm carries the chooser and displayed list identities and the selected
+GUID. Clear membership on a new load, on failure and on invalidation. An old
+confirmation cannot use a newer list's membership even if the GUID is still
+listed. Reuse the recorded membership without another catalog RPC. Search
+visibility is checked by the view, while the worker verifies typed membership
+and rechecks the field annotation and the 0082 target guards after draining
+events in the queued Edit operation. This is a local guard with the existing
+non-atomic submission boundary. A stale or wrong-type choice yields a
+refusal with no transaction, history or apply. A valid changed choice uses
+the existing SetProperty, history and apply flow. Unchanged choices, optional
+Clear, manual GUID editing, Save and Reopen follow their existing rules.
 
 Type matching compares the declared field type and the catalog record type.
 It says nothing about the selected mesh/material pairing, texture color
@@ -143,8 +156,8 @@ The native reflective descriptor, C# schema value and shared wire schema gain
 an optional advisory member. CLI gains a read-only command over the existing
 authoring connection. [ADR-0145](../adr/0145-authoring-asset-reference-target-types.md)
 records the authority, encoding, versioning and validation boundary. Native
-consumers rebuild with the descriptor change. There is no module dependency
-edge between Core and Asset System or Connection.
+consumers rebuild with the descriptor change. Existing module dependency
+edges suffice.
 
 ## Alternatives Considered
 
