@@ -39,6 +39,9 @@ public sealed record SchemaField(FieldId Id, string Name, TypeKind Kind, Primiti
     /// <summary>The wire's "offset": internal layout, never interpreted.</summary>
     internal ulong WireOffset { get; init; }
 
+    /// <summary>The declared cooked asset type, if the authoring schema supplies one.</summary>
+    public Assets.AssetType? TargetAssetType { get; init; }
+
     public bool IsEditable => (Flags & FieldFlags.Editable) != 0;
     public bool IsOptional => (Flags & FieldFlags.Optional) != 0;
 }

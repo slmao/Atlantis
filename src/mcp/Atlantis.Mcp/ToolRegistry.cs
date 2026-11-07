@@ -58,7 +58,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.ApplyStatusParameters()),
         Declare("authoring.save", "authoring.save", "Save a hand-authored source; imported sources are refused.", AuthoringModel),
         Declare("authoring.active_camera", "authoring.activeCamera", "Read the document's active camera node or null.", AuthoringModel),
-        Declare("authoring.schema", "authoring.schema", "Read scene schema types, fields, IDs and constants in the wire's section 6.7 shape.", AuthoringModel),
+        Declare("authoring.schema", "authoring.schema", "Read scene schema types, fields, IDs, constants and declared target asset types in the wire's section 6.7 shape.", AuthoringModel),
         Declare("control.status", "control.status", "Read pause state, frame, scene and sceneGeneration.", ControlModel),
         Declare("control.pause", "control.pause", "Hold Runtime commands and pending scene reloads.", ControlModel),
         Declare("control.resume", "control.resume", "Resume Runtime command application and pending scene reloads.", ControlModel),

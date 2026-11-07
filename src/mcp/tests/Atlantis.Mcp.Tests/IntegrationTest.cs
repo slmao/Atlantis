@@ -147,6 +147,11 @@ internal sealed class IntegrationTest
         string originalNodes = Json.Write(nodes);
         JsonValue schema = await Query(first, "authoring.schema");
         Require("authoring schema available in-band", schema.IsArray && schema.Items.Count > 0);
+        var renderableFields = schema.Items.Single(type => type.Find("name")?.AsString == "asset_system::scene::Renderable")
+            .Find("fields")!.Items;
+        Require("raw MCP schema carries shared authoring target types",
+            renderableFields.Single(field => field.Find("name")?.AsString == "meshAsset").Find("targetAssetType")?.AsString == "mesh" &&
+            renderableFields.Single(field => field.Find("name")?.AsString == "materialAsset").Find("targetAssetType")?.AsString == "material");
         JsonValue worldSchema = await Query(first, "world.schema");
         Require("World schema available in-band", worldSchema.IsArray && worldSchema.Items.Count > 0);
         var cameraField = Resolve(schema, "Camera", "fovYRadians");

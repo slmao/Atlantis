@@ -989,8 +989,10 @@ milestone being listed does not authorize starting it — see Section 1.
   shared apply/reload outcomes and explicit editor recovery, delivered in
   [PR #330](https://github.com/slmao/Atlantis/pull/330).
   [Spec 0084](specs/0084-asset-reference-target-types.md) /
-  [Plan 0084](plans/0084-asset-reference-target-types.md) propose shared
-  authoring field target types and Inspector candidate filtering.
+  [Plan 0084](plans/0084-asset-reference-target-types.md) cover shared
+  authoring field target types and Inspector candidate filtering. The
+  [joint design](https://github.com/slmao/Atlantis/pull/331) is approved
+  and merged.
   Preview and broader asset-pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay

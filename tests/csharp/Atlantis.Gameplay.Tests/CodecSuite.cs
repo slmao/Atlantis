@@ -299,6 +299,23 @@ public static class CodecSuite
         var parent = EntityGuid.Parse("52052052-0001-4052-8052-000000000001");
         var other = EntityGuid.Parse("52052052-0002-4052-8052-000000000002");
         List<SchemaType> scene = Codec.DecodeSchema(wires["schema.scene"])!;
+        SchemaType renderable = SchemaText.FindType(scene, "Renderable")!;
+        t.Check(renderable.Fields[0].TargetAssetType == Atlantis.Gameplay.Assets.AssetType.Mesh &&
+                renderable.Fields[1].TargetAssetType == Atlantis.Gameplay.Assets.AssetType.Material &&
+                renderable.Fields[1].IsOptional, "authoring target declarations and material optionality");
+        string encoded = Json.Write(wires["schema.scene"]);
+        string legacy = encoded.Replace(",\"targetAssetType\":\"mesh\"", "")
+                               .Replace(",\"targetAssetType\":\"material\"", "");
+        t.Check(SchemaText.FindType(Codec.DecodeSchema(Json.Parse(legacy))!, "Renderable")!.Fields[0].TargetAssetType is null,
+                "legacy schema omission remains unspecified");
+        foreach (string invalid in new[] { "null", "7", "\"\"", "\"Mesh\"", "\"gltf_import\"" })
+            t.Check(Codec.DecodeSchema(Json.Parse(encoded.Replace("\"targetAssetType\":\"mesh\"", "\"targetAssetType\":" + invalid))) is null,
+                    "present invalid target type rejected " + invalid);
+        var extra = Json.Parse(encoded);
+        extra.Items[0].Find("fields")!.Items[0].Set("otherFutureMember", JsonValue.Bool(true));
+        t.Check(Codec.DecodeSchema(extra) is not null, "unrelated member remains tolerated");
+        extra.Items[0].Find("fields")!.Items[0].Set("targetAssetType", JsonValue.String("mesh"));
+        t.Check(Codec.DecodeSchema(extra) is null, "annotation on unrelated field rejected");
         SchemaType light = SchemaText.FindType(scene, "Light")!;
         t.Check(light.Name == "asset_system::scene::Light", "the scene schema: Light is asset_system::scene::Light");
         t.Require(SchemaText.TryParsePath(scene, "Light.intensity", out TypeId lightId, out SchemaField? intensity, out _),

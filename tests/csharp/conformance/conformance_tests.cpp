@@ -1359,6 +1359,35 @@ TEST_CASE("codec_vectors.jsonl is what the C++ codec writes now", "[csharp][conf
   checkCurrent(codecVectorsText(), "codec_vectors.jsonl");
 }
 
+TEST_CASE("native schema codec distinguishes absence from invalid target metadata", "[csharp][conformance]") {
+  atlantis::authoring::AuthoringSession session(
+      atlantis::authoring::DocumentSource{kAsset, atlantis::authoring::HandAuthored{"unread.scene.txt"}});
+  const auto authoring = session.connect();
+  const auto wire = codec::encodeSchema(authoring->schema());
+  codec::OwnedSchema schema;
+  REQUIRE(schema.decode(wire));
+  for (const auto& target : {json::Value(), json::Value::number(std::uint64_t{7}), json::Value::string(""),
+                            json::Value::string("Mesh"), json::Value::string("gltf_import")}) {
+    auto malformed = wire;
+    for (auto& type : malformed.asArray()) {
+      if (type.find("name")->asString() != "asset_system::scene::Renderable") continue;
+      auto fields = *type.find("fields");
+      fields.asArray()[0].set("targetAssetType", target);
+      type.set("fields", std::move(fields));
+    }
+    CHECK_FALSE(schema.decode(malformed));
+  }
+  auto extra = wire;
+  auto& type = extra.asArray().front();
+  auto fields = *type.find("fields");
+  fields.asArray().front().set("otherFutureMember", json::Value::boolean(true));
+  type.set("fields", fields);
+  CHECK(schema.decode(extra));
+  fields.asArray().front().set("targetAssetType", json::Value::string("mesh"));
+  type.set("fields", std::move(fields));
+  CHECK_FALSE(schema.decode(extra));
+}
+
 TEST_CASE("sdk_transcripts.jsonl is what the C++ Gameplay SDK submits now", "[csharp][conformance]") {
   checkCurrent(transcriptsText(), "sdk_transcripts.jsonl");
 }

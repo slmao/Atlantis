@@ -416,14 +416,17 @@ public static partial class Codec
             JsonValue fields = JsonValue.NewArray();
             foreach (SchemaField field in type.Fields)
             {
-                fields.Push(JsonValue.NewObject()
+                JsonValue encoded = JsonValue.NewObject()
                     .Set("id", Encode(field.Id))
                     .Set("name", JsonValue.String(field.Name))
                     .Set("kind", JsonValue.String(field.Kind.ToString()))
                     .Set("primitive", JsonValue.String(field.Primitive.ToString()))
                     .Set("type", Encode(field.Type))
                     .Set("flags", JsonValue.Number((ulong)field.Flags))
-                    .Set("offset", JsonValue.Number(field.WireOffset)));
+                    .Set("offset", JsonValue.Number(field.WireOffset));
+                if (field.TargetAssetType is Assets.AssetType target)
+                    encoded.Set("targetAssetType", JsonValue.String(AssetTypeText(target)));
+                fields.Push(encoded);
             }
             JsonValue constants = JsonValue.NewArray();
             foreach (SchemaConstant constant in type.Constants)
@@ -486,9 +489,19 @@ public static partial class Codec
                 {
                     return null;
                 }
-                fieldTable.Add(new SchemaField(fieldId, fname.AsString, fieldKind, primitive, fieldType, (FieldFlags)flags)
+                var fieldFlags = (FieldFlags)flags;
+                Assets.AssetType? targetAssetType = null;
+                if (f.Find("targetAssetType") is JsonValue target)
+                {
+                    targetAssetType = DecodeAssetType(target);
+                    if (targetAssetType is null || fieldKind != TypeKind.Primitive || primitive != PrimitiveKind.AssetGuid ||
+                        (fieldFlags & (FieldFlags.AssetReference | FieldFlags.EntityReference)) != FieldFlags.AssetReference)
+                        return null;
+                }
+                fieldTable.Add(new SchemaField(fieldId, fname.AsString, fieldKind, primitive, fieldType, fieldFlags)
                 {
                     WireOffset = offset,
+                    TargetAssetType = targetAssetType,
                 });
             }
             var constantTable = new List<SchemaConstant>();

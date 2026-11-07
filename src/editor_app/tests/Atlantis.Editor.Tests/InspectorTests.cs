@@ -155,6 +155,8 @@ public static partial class Program
         PropertyValue original = await ReadValue();
         DocumentInfo info = (await Task.Run(() => observer.Authoring.Document()))!;
         byte[]? sourceBefore = info.Provenance == Provenance.HandAuthored ? File.ReadAllBytes(info.SourcePath) : null;
+        string? brokenArtifact = null;
+        byte[]? artifactBefore = null;
         AssetGuid replacement = (await Task.Run(() => observer.Assets.ListAssets())).Value.First(a => a.Type == Atlantis.Gameplay.Assets.AssetType.Material &&
             a.Source.StartsWith("assets:", StringComparison.Ordinal) && a.Guid != original.AsAsset()).Guid;
         var undo = NameUiField<Button>(window, "_undo")!;
@@ -423,15 +425,118 @@ public static partial class Program
             undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "normal edit restored");
 
-            // Real post-acceptance failure: Material references accept a GUID in
-            // Authoring, but a Mesh cannot resolve as a Runtime material.
-            AssetGuid incompatible = (await Task.Run(() => observer.Assets.ListAssets())).Value
+            AssetGuid wrongType = (await Task.Run(() => observer.Assets.ListAssets())).Value
                 .First(x => x.Type == Atlantis.Gameplay.Assets.AssetType.Mesh).Guid;
+            AssetGuid incompatible = wrongType;
             Click(NameUiField<Button>(window, "_pause")!);
             var stepButton = NameUiField<Button>(window, "_step")!;
             await NameUiWait(() => stepButton.IsEnabled, "pause before incompatible apply");
             ulong oldGeneration = (await Task.Run(() => observer.Control.Status())).SceneGeneration;
-            chooser = await Open(); await Select(chooser, incompatible); await Confirm(chooser);
+            chooser = await Open();
+            if (chooser.Target.TargetAssetType is Atlantis.Gameplay.Assets.AssetType.Material)
+            {
+                var typed = PickerField<AssetBrowser>(chooser, "_browser");
+                Check("material picker excludes meshes without losing the fixed catalog", typed.Items.Any(a => a.Guid == wrongType) &&
+                    typed.Visible.Count != 0 && typed.Visible.All(a => a.Type == Atlantis.Gameplay.Assets.AssetType.Material));
+                Check("eligible current GUID is preselected", typed.Selected == original.AsAsset());
+                await Select(chooser, replacement);
+                var typedDetail = typed.Details!;
+                var render = typeof(AssetReferencePickerWindow).GetMethod("Render", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var details = PickerField<StackPanel>(chooser, "_details");
+                var typedConfirm = PickerField<Button>(chooser, "_confirm");
+                // Drive the view's existing response boundary with synthetic facts to cover
+                // states the immutable, populated catalog cannot return during this run.
+                typed.CompleteDetail(typed.Select(replacement), replacement,
+                    Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>.Ok(
+                        typedDetail with { Dependencies = new[] { wrongType, original.AsAsset() } }));
+                render.Invoke(chooser, null);
+                var sameType = details.Children.OfType<Button>().Single(b => b.Content?.ToString() == original.AsAsset().ToString());
+                Check("out-of-type dependency is readable without navigation", details.Children.OfType<TextBlock>().Any(t => t.Text == wrongType.ToString()));
+                Click(sameType);
+                await NameUiWait(() => typed.Details?.Guid == original.AsAsset(), "same-type dependency opens detail");
+                Check("visible matching dependency becomes the candidate", typed.Selected == original.AsAsset() && typedConfirm.IsEnabled);
+                typed.CompleteDetail(typed.Select(original.AsAsset()), original.AsAsset(),
+                    Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>.Err(Atlantis.Gameplay.Assets.AssetError.UnknownAsset));
+                render.Invoke(chooser, null);
+                Check("detail refusal preserves eligible selection", typed.DetailState == "UnknownAsset" && typedConfirm.IsEnabled);
+                typed.CompleteList(typed.BeginList(), Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>.Ok(
+                    typed.Items.Where(a => a.Guid == wrongType).ToArray()));
+                render.Invoke(chooser, null);
+                var listState = PickerField<TextBlock>(chooser, "_state");
+                Check("populated catalog with no typed match is distinct", listState.Text == "No assets of type Material" && !typedConfirm.IsEnabled);
+                typed.CompleteList(typed.BeginList(), Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>.Ok(
+                    Array.Empty<Atlantis.Gameplay.Assets.AssetSummary>()));
+                render.Invoke(chooser, null);
+                Check("empty catalog is distinct from no typed match", listState.Text == "Catalog empty" && !typedConfirm.IsEnabled);
+                typed.CompleteList(typed.BeginList(), Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>.Err(
+                    Atlantis.Gameplay.Assets.AssetError.CatalogUnavailable));
+                render.Invoke(chooser, null);
+                Check("catalog refusal disables confirmation", listState.Text == "CatalogUnavailable" && !typedConfirm.IsEnabled);
+                await Cancel(chooser);
+                var meshRow = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
+                    .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
+                var meshBox = meshRow.Children.OfType<TextBox>().Single();
+                meshBox.Focus();
+                Check("mesh field opens chooser", NameUiKey(meshBox, Key.F4));
+                await NameUiWait(() => Picker() is not null && PickerField<AssetBrowser>(Picker()!, "_browser").State == "Ready", "mesh chooser lists");
+                var meshPicker = Picker()!;
+                var meshBrowser = PickerField<AssetBrowser>(meshPicker, "_browser");
+                Check("mesh picker excludes materials", meshPicker.Target.TargetAssetType == Atlantis.Gameplay.Assets.AssetType.Mesh &&
+                    meshBrowser.Visible.Count != 0 && meshBrowser.Visible.All(a => a.Type == Atlantis.Gameplay.Assets.AssetType.Mesh));
+                await Cancel(meshPicker);
+
+                var unlisted = AssetGuid.Parse("00840084-0084-4084-8084-008400840001");
+                await Task.Run(() => observer.Authoring.Submit(new SetProperty(address, PropertyValue.FromAsset(unlisted))));
+                Check("shared unlisted GUID remains authorable", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0);
+                await Refreshed();
+                chooser = await Open();
+                Check("unlisted current GUID stays visible without preselection",
+                    PickerField<TextBlock>(chooser, "_current").Text == "Current: " + unlisted + " (outside this snapshot)" &&
+                    !PickerField<Button>(chooser, "_confirm").IsEnabled);
+                await Cancel(chooser);
+
+                await Task.Run(() => observer.Authoring.Submit(new SetProperty(address, PropertyValue.FromAsset(wrongType))));
+                Check("manual/shared wrong-type value remains authorable", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0);
+                await Refreshed();
+                chooser = await Open();
+                Check("wrong-type current GUID stays visible as text but is not preselected",
+                    PickerField<TextBlock>(chooser, "_current").Text!.Contains("listed as Mesh", StringComparison.Ordinal) &&
+                    !PickerField<Button>(chooser, "_confirm").IsEnabled && (await ReadValue()).AsAsset() == wrongType);
+                await Cancel(chooser);
+                await Task.Run(() => observer.Authoring.Submit(new SetProperty(address, original)));
+                Check("shared setup restores the original reference", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0);
+                await Refreshed();
+
+                // Only the explicitly supplied disposable build catalog may be used for mutation.
+                string? catalog = Environment.GetEnvironmentVariable("ATLANTIS_0084_DISPOSABLE_CATALOG");
+                string buildRoot = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runtime.Launch.RuntimePath)!, "..", "..", ".."));
+                string expectedCatalog = Path.Combine(buildRoot, "asset_catalog.txt");
+                if (catalog is null || !StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(catalog), expectedCatalog))
+                    throw new InvalidOperationException("typed UI recovery requires the disposable Runtime catalog");
+                chooser = await Open();
+                typed = PickerField<AssetBrowser>(chooser, "_browser");
+                var initialDependencies = (await Task.Run(() => observer.Assets.GetAsset(info.Scene))).Value.Dependencies;
+                incompatible = typed.Visible.First(a => a.Guid != replacement && a.Guid != original.AsAsset() &&
+                    !initialDependencies.Contains(a.Guid)).Guid;
+                await Select(chooser, incompatible);
+                string record = File.ReadLines(expectedCatalog).Single(line =>
+                    line.StartsWith("record: guid=" + incompatible + " ", StringComparison.Ordinal));
+                string relative = record.Split(' ').Single(part => part.StartsWith("artifact=", StringComparison.Ordinal))[9..];
+                brokenArtifact = Path.GetFullPath(Path.Combine(buildRoot, relative));
+                if (!brokenArtifact.StartsWith(buildRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("fixture artifact is outside the disposable build");
+                artifactBefore = File.ReadAllBytes(brokenArtifact);
+                File.WriteAllBytes(brokenArtifact, Array.Empty<byte>());
+                Check("type-matching broken artifact remains a valid catalog candidate",
+                    typed.Details?.Type == Atlantis.Gameplay.Assets.AssetType.Material && PickerField<Button>(chooser, "_confirm").IsEnabled);
+            }
+            else
+            {
+                Check("0083 host retains generic picker without target metadata", chooser.Target.TargetAssetType is null &&
+                    PickerField<AssetBrowser>(chooser, "_browser").Visible.Any(a => a.Guid == wrongType));
+                await Select(chooser, incompatible);
+            }
+            await Confirm(chooser);
             await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "incompatible edit accepted and held");
             var pending = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
             Check("incompatible document edit accepted before Runtime result", pending.State == ApplyState.Pending &&
@@ -474,6 +579,16 @@ public static partial class Program
                 "repeated failure returns to recovery", 60);
             Check("repeated failure is correlated and retains history", repeated.Receipt.Id != pending.Receipt.Id &&
                 (await Task.Run(() => observer.Authoring.ApplyStatus(repeated.Receipt.Id))).Value!.Request!.State == ApplyState.Failed && undo.IsEnabled);
+            if (artifactBefore is not null)
+            {
+                chooser = await Open();
+                await Select(chooser, replacement);
+                await Confirm(chooser);
+                Check("filtered repair submits the document only while suspended", (await ReadValue()).AsAsset() == replacement &&
+                    (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt == repeated.Receipt);
+                Click(undo);
+                await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "Undo of suspended chooser repair");
+            }
             Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "repair again before retry");
             var beforeSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
             Click(NameUiField<Button>(window, "_save")!);
@@ -559,6 +674,11 @@ public static partial class Program
         finally
         {
             Picker()?.Close();
+            if (brokenArtifact is not null && artifactBefore is not null)
+            {
+                File.WriteAllBytes(brokenArtifact, artifactBefore);
+                Check("disposable artifact bytes restored", File.ReadAllBytes(brokenArtifact).SequenceEqual(artifactBefore));
+            }
             if (sourceBefore is not null) File.WriteAllBytes(info.SourcePath, sourceBefore);
             await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); observer.Authoring.Apply(); });
         }

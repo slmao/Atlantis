@@ -21,9 +21,11 @@ public sealed class AssetReferencePickerWindow : Window
     private readonly TextBlock _current = new();
     private readonly Button _confirm = new() { Content = "Confirm", IsEnabled = false };
     private bool _sync, _closed, _invalid, _submitted, _initial = true;
+    private long _displayedListRequest;
     public AssetReferenceTarget Target { get; }
 
-    public AssetReferencePickerWindow(EditorWorker worker, AssetReferenceTarget target, Action<AssetGuid> confirm, Action cancel)
+    public AssetReferencePickerWindow(EditorWorker worker, AssetReferenceTarget target,
+                                      Action<long, AssetGuid> confirm, Action cancel)
     {
         _worker = worker; Target = target;
         Title = "Choose asset — " + target.Label; Width = 760; Height = 620;
@@ -34,15 +36,26 @@ public sealed class AssetReferencePickerWindow : Window
         _current.Text = "Current: " + (target.Before.IsAbsent ? "(absent)" : target.Before.AsAsset().ToString());
         top.Children.Add(_current);
         top.Children.Add(new TextBlock { Text = "Catalog fixed at first query; restart Runtime after a changed build or failed initial load. Reload view does not reread disk.", TextWrapping = Avalonia.Media.TextWrapping.Wrap });
-        top.Children.Add(new TextBlock { Text = "Choose a GUID; catalog presence and type do not guarantee compatibility." });
+        top.Children.Add(new TextBlock { Text = target.TargetAssetType is AssetType required
+            ? "Target type: " + required + ". Type matches can still fail during Runtime apply."
+            : "Target type unspecified. Catalog presence does not guarantee compatibility." });
         var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var types = new ComboBox { ItemsSource = new[] { "All types" }.Concat(Enum.GetNames<AssetType>()).ToList(), SelectedIndex = 0 };
         var search = new TextBox { PlaceholderText = "Source or GUID", Width = 300 };
         var reload = new Button { Content = "Reload view" };
-        types.SelectionChanged += (_, _) => { _browser.Type = types.SelectedIndex <= 0 ? null : Enum.GetValues<AssetType>()[types.SelectedIndex - 1]; Render(); };
+        _browser.Type = target.TargetAssetType;
+        if (target.TargetAssetType is null)
+        {
+            var types = new ComboBox { ItemsSource = new[] { "All types" }.Concat(Enum.GetNames<AssetType>()).ToList(), SelectedIndex = 0 };
+            types.SelectionChanged += (_, _) =>
+            {
+                _browser.Type = types.SelectedIndex <= 0 ? null : Enum.GetValues<AssetType>()[types.SelectedIndex - 1];
+                Render();
+            };
+            filters.Children.Add(types);
+        }
         search.TextChanged += (_, _) => { _browser.Search = search.Text ?? ""; Render(); };
         reload.Click += (_, _) => { if (!_invalid) Load(); };
-        filters.Children.Add(types); filters.Children.Add(search); filters.Children.Add(reload);
+        filters.Children.Add(search); filters.Children.Add(reload);
         top.Children.Add(filters); top.Children.Add(_state);
         DockPanel.SetDock(top, Dock.Top); root.Children.Add(top);
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Spacing = 8 };
@@ -53,7 +66,7 @@ public sealed class AssetReferencePickerWindow : Window
             if (!_confirm.IsEnabled || _closed || _invalid || _submitted || _browser.State != "Ready" ||
                 _list.SelectedItem is not AssetSummary candidate || _browser.Selected != candidate.Guid) return;
             _submitted = true; _confirm.IsEnabled = false;
-            confirm(candidate.Guid); Close();
+            confirm(_displayedListRequest, candidate.Guid); Close();
         };
         buttons.Children.Add(_confirm); buttons.Children.Add(back);
         DockPanel.SetDock(buttons, Dock.Bottom); root.Children.Add(buttons);
@@ -83,16 +96,20 @@ public sealed class AssetReferencePickerWindow : Window
     private void Load()
     {
         long request = _browser.BeginList(); Render();
-        _worker.LoadAssets(result =>
+        _worker.LoadReferenceAssets(Target.Request, request, result =>
         {
             if (_closed || _invalid || !_browser.CompleteList(request, result)) return;
+            if (result.IsOk) _displayedListRequest = request;
             if (result.IsOk && _initial)
             {
                 _initial = false;
                 if (Target.Before.TryGetAsset(out AssetGuid current))
                 {
-                    if (_browser.Items.Any(a => a.Guid == current)) _browser.Select(current);
-                    else _current.Text += " (outside this snapshot)";
+                    AssetSummary? listed = _browser.Items.FirstOrDefault(a => a.Guid == current);
+                    if (listed is null) _current.Text += " (outside this snapshot)";
+                    else if (Target.TargetAssetType is AssetType type && listed.Type != type)
+                        _current.Text += " (listed as " + listed.Type + ")";
+                    else if (_browser.Visible.Any(a => a.Guid == current)) _browser.Select(current);
                 }
             }
             Render();
@@ -102,6 +119,7 @@ public sealed class AssetReferencePickerWindow : Window
 
     private void Read(AssetGuid guid)
     {
+        if (Target.TargetAssetType is not null && !_browser.Visible.Any(a => a.Guid == guid)) return;
         long request = _browser.Select(guid); Render();
         _worker.ReadAsset(guid, result =>
         { if (!_closed && !_invalid && _browser.CompleteDetail(request, guid, result)) Render(); });
@@ -110,7 +128,9 @@ public sealed class AssetReferencePickerWindow : Window
     private void Render()
     {
         if (_closed || _invalid) return;
-        _state.Text = _browser.ViewState;
+        _state.Text = _browser.State == "Ready" && Target.TargetAssetType is AssetType type &&
+            _browser.Items.Count != 0 && !_browser.Items.Any(a => a.Type == type)
+            ? "No assets of type " + type : _browser.ViewState;
         var visible = _browser.Visible;
         _sync = true;
         try { _list.ItemsSource = visible; _list.SelectedItem = visible.FirstOrDefault(a => a.Guid == _browser.Selected); }
@@ -121,6 +141,15 @@ public sealed class AssetReferencePickerWindow : Window
         if (_browser.Details is not AssetDetails d) { _details.Children.Add(new TextBlock { Text = _browser.DetailState }); return; }
         _details.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool });
         foreach (AssetGuid dependency in d.Dependencies)
-        { var b = new Button { Content = dependency.ToString() }; b.Click += (_, _) => Read(dependency); _details.Children.Add(b); }
+        {
+            if (Target.TargetAssetType is not null && !visible.Any(a => a.Guid == dependency))
+                _details.Children.Add(new TextBlock { Text = dependency.ToString() });
+            else
+            {
+                var button = new Button { Content = dependency.ToString() };
+                button.Click += (_, _) => Read(dependency);
+                _details.Children.Add(button);
+            }
+        }
     }
 }

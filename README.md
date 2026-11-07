@@ -230,9 +230,11 @@ build or a repaired initial failure. See the [shared contract](docs/architecture
 Inspector asset-reference fields also offer **Choose…** (F4 while editing the
 field). Choose a catalog GUID and Confirm to make one ordinary undoable edit;
 Cancel discards the choice. Pointer/F4 launch discards that field's uncommitted
-text draft; tabbing away keeps normal text-commit behavior. Type filters are
-explicit choices, not a compatibility guarantee. The chooser uses the same fixed
-Runtime snapshot; it does not import, build or preview assets (Spec 0082).
+text draft. Tabbing away keeps normal text-commit behavior. When the authoring
+schema declares a target type, the chooser offers that type from the fixed
+Runtime catalog. Use `scene schema Renderable` to inspect the declarations.
+On a host without this metadata the chooser keeps its manual type filters.
+A type match can still fail during Runtime apply (Specs 0082 and 0084).
 
 Authoring apply has two stages: the document snapshot is accepted, then the
 Runtime attempts to load it. Use `scene apply` for a receipt and

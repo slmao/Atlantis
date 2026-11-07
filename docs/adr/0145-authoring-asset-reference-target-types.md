@@ -1,9 +1,9 @@
 # ADR 0145: Authoring Asset Reference Target Types
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-07
-- **Deciders:** Pending joint human review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** 2026-11-07, [joint ruling](https://github.com/slmao/Atlantis/pull/331#issuecomment-6708205947) on `d58ea8d`. Design #331 manually merged as `065cdf0`.
 - **Related Spec:** [Spec 0084](../specs/0084-asset-reference-target-types.md)
 - **Related ADRs:** Extends [ADR-0099](0099-engine-schema-core-and-descriptor-vocabulary.md) and the authoring schema projection in [ADR-0130 D3](0130-authoring-access-interface-and-module-boundary.md). Reuses the cooked asset vocabulary in [ADR-0143](0143-shared-cooked-asset-catalog-queries.md) and the recovery boundary in [ADR-0144](0144-correlated-authoring-apply-outcomes.md).
 

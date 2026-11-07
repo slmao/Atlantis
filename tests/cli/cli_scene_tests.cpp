@@ -129,6 +129,26 @@ struct SceneCli {
 
 }  // namespace
 
+TEST_CASE("cli scene: inspect shared target types without opening the document", "[cli][scene][schema]") {
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene schema Renderable") == 0);
+  const auto response = scene.envelope();
+  const auto* result = response.find("result");
+  REQUIRE(result);
+  const auto* fields = result->find("fields");
+  REQUIRE(fields);
+  REQUIRE(fields->asArray().size() == 2);
+  CHECK(member(fields->asArray()[0], "targetAssetType") == "\"mesh\"");
+  CHECK(member(fields->asArray()[1], "targetAssetType") == "\"material\"");
+  CHECK(scene.session.document() == nullptr);
+  REQUIRE(scene.run("scene schema Transform") == 0);
+  CHECK(scene.cli.out.str().find("targetAssetType") == std::string::npos);
+  SceneCli text;
+  REQUIRE(text.run("scene schema asset_system::scene::Renderable") == 0);
+  CHECK(text.cli.out.str().find("target=mesh") != std::string::npos);
+  CHECK(text.cli.out.str().find("target=material") != std::string::npos);
+}
+
 TEST_CASE("cli scene: open, nodes, get and camera read the document", "[cli][scene]") {
   SceneCli scene(/*json=*/true);
   REQUIRE(scene.run("scene open") == 0);

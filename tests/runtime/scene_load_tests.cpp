@@ -5,6 +5,7 @@
 
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/asset_system_schema.h>
 #include <atlantis/asset_system/cook.h>
 #include <atlantis/asset_system/cook_material.h>
 #include <atlantis/asset_system/cook_scene.h>
@@ -17,6 +18,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -324,6 +326,30 @@ TEST_CASE("loadAndBakeScene: a mesh reference whose record is another asset type
                                .write();
 
   const auto result = loadAndBakeScene(makeConfig(catalog), /*device=*/nullptr, VertexInputLayout{});
+  REQUIRE(result.isErr());
+  CHECK(result.error() == RuntimeInitError::DependencyTypeMismatch);
+}
+
+TEST_CASE("authoring Renderable declarations agree with Runtime dependency type expectations", "[runtime][scene]") {
+  using namespace atlantis::asset_system;
+  const auto types = assetSystemSchema();
+  const auto type = std::find_if(types.begin(), types.end(), [](const auto& t) {
+    return t.name == "asset_system::scene::Renderable";
+  });
+  REQUIRE(type != types.end());
+  const auto meshTarget = parseCatalogAssetType(type->fields[0].targetAssetType);
+  const auto materialTarget = parseCatalogAssetType(type->fields[1].targetAssetType);
+  REQUIRE(meshTarget == CatalogAssetType::Mesh);
+  REQUIRE(materialTarget == CatalogAssetType::Material);
+  TempDirGuard dir("authoring_target_types");
+  const auto mesh = cookFixtureMesh(dir.path, "meshes/a.mesh.txt");
+  const auto scene = cookFixtureSceneWithMaterials(dir.path, {"meshes/a.mesh.txt"}, {"materials/a.material.txt"});
+  const auto catalog = CatalogBuilder(dir.path)
+                           .addScene("scene", scene, {testAssetGuid("meshes/a.mesh.txt"), testAssetGuid("materials/a.material.txt")})
+                           .add(*meshTarget, "meshes/a.mesh.txt", mesh.artifactPath, mesh.metadataPath, kMeshArtifactSchemaVersion)
+                           .add(*meshTarget, "materials/a.material.txt", mesh.artifactPath, mesh.metadataPath, kMeshArtifactSchemaVersion)
+                           .write();
+  const auto result = loadAndBakeScene(makeConfig(catalog), nullptr, VertexInputLayout{});
   REQUIRE(result.isErr());
   CHECK(result.error() == RuntimeInitError::DependencyTypeMismatch);
 }

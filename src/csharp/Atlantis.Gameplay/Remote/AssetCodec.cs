@@ -11,6 +11,11 @@ public static partial class Codec
         A.AssetType.Mesh => "mesh", A.AssetType.Texture => "texture", A.AssetType.Material => "material",
         A.AssetType.Scene => "scene", A.AssetType.Environment => "environment", _ => throw new ArgumentOutOfRangeException(nameof(type)),
     };
+    private static A.AssetType? DecodeAssetType(JsonValue value) => value.IsString ? value.AsString switch
+    {
+        "mesh" => A.AssetType.Mesh, "texture" => A.AssetType.Texture, "material" => A.AssetType.Material,
+        "scene" => A.AssetType.Scene, "environment" => A.AssetType.Environment, _ => null,
+    } : null;
     public static JsonValue Encode(A.AssetSummary v) => JsonValue.NewObject().Set("guid", Encode(v.Guid))
         .Set("type", JsonValue.String(AssetTypeText(v.Type))).Set("source", JsonValue.String(v.Source));
     public static JsonValue Encode(A.AssetDetails v)
@@ -26,8 +31,7 @@ public static partial class Codec
     {
         if (v.Find("guid") is not JsonValue g || DecodeAsset(g) is not AssetGuid guid || guid.IsNil ||
             v.Find("type") is not { IsString: true } t || v.Find("source") is not { IsString: true } s) return null;
-        A.AssetType? type = t.AsString switch { "mesh" => A.AssetType.Mesh, "texture" => A.AssetType.Texture,
-            "material" => A.AssetType.Material, "scene" => A.AssetType.Scene, "environment" => A.AssetType.Environment, _ => null };
+        A.AssetType? type = DecodeAssetType(t);
         return type is A.AssetType known ? new A.AssetSummary(guid, known, s.AsString) : null;
     }
     public static A.AssetDetails? DecodeAssetDetails(JsonValue v)

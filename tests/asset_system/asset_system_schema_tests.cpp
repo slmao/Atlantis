@@ -234,3 +234,21 @@ TEST_CASE("asset system schema: EntityRef", "[asset_system][schema]") {
   expectField(type, ATLANTIS_SCHEMA_PROBE(EntityRef, scene), kAssetRef);
   expectField(type, ATLANTIS_SCHEMA_PROBE(EntityRef, entity), FieldFlags::Serializable | FieldFlags::EntityReference);
 }
+
+TEST_CASE("asset system schema: authoring target types are scoped to the two Renderable slots",
+          "[asset_system][schema]") {
+  constexpr auto renderable = "asset_system::scene::Renderable";
+  for (const auto& type : assetSystemSchema()) {
+    for (const auto& field : type.fields) {
+      std::string_view expected;
+      if (type.name == renderable && field.name == "meshAsset") expected = "mesh";
+      if (type.name == renderable && field.name == "materialAsset") expected = "material";
+      CHECK(field.targetAssetType == expected);
+    }
+  }
+  const auto& type = requireType(renderable);
+  REQUIRE(type.fields.size() == 2);
+  CHECK(type.fields[0].targetAssetType == "mesh");
+  CHECK(type.fields[1].targetAssetType == "material");
+  CHECK(type.fields[1].flags == (kAssetRef | FieldFlags::Optional));
+}

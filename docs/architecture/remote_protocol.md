@@ -436,6 +436,14 @@ Depth     "Tested" | "OnTop"
   transmitted, but it is **internal layout (ADR-0034)**: clients ignore it,
   and the Gameplay SDKs never use it.
 
+In `authoring.schema`, Spec 0084 optionally appends `targetAssetType` to a
+primitive AssetGuid field marked AssetReference. Its value is the exact
+lowercase cooked catalog type token from §5.2. The server omits it when
+unspecified. Typed clients reject a present invalid token or an annotation on
+an ineligible field as malformed schema. Old readers ignore this additional
+member. It is advisory selection metadata and is outside the persisted
+semantic scene hash.
+
 ### 6.8 Authoring values (§5.1)
 
 ```

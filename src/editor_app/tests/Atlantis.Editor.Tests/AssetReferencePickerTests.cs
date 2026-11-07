@@ -21,12 +21,13 @@ public static partial class Program
         public readonly FieldId Field = new(8201);
         public PropertyValue? Value;
         public bool Refuse;
+        public AssetType? TargetType;
         public ApplyError? ApplyFailure;
         public int Submissions, Applies;
         private readonly List<CommandFailure> _failures = new();
         public IReadOnlyList<SchemaType> Schema => new[] { new SchemaType(Component, "test::UnexpectedComponent", TypeKind.Struct, 1,
             new[] { new SchemaField(Field, "unexpectedReference", TypeKind.Primitive, PrimitiveKind.AssetGuid, default,
-                FieldFlags.Serializable | FieldFlags.AssetReference | FieldFlags.Optional) }, Array.Empty<SchemaConstant>()) };
+                FieldFlags.Serializable | FieldFlags.AssetReference | FieldFlags.Optional) { TargetAssetType = TargetType } }, Array.Empty<SchemaConstant>()) };
         public DocumentInfo? Info() => new(default, Provenance.HandAuthored, "fixture", 1);
         public IReadOnlyList<NodeSummary> ListNodes() => new[] { new NodeSummary(Node, null) };
         public IReadOnlyList<TypeId> ListComponents(EntityGuid node) => node == Node ? new[] { Component } : Array.Empty<TypeId>();
@@ -141,5 +142,41 @@ public static partial class Program
         browser.ClearSelection();
         Check(browser.Selected is null && browser.Details is null && browser.DetailState == "",
               "picker: deselection also clears already completed details");
+
+        doc.TargetType = AssetType.Material;
+        doc.Value = PropertyValue.Absent;
+        var mixed = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(new AssetSummary[]
+            { new(a, AssetType.Mesh, "fixture:mesh"), new(b, AssetType.Material, "fixture:material") });
+        picker = Capture();
+        Check(picker.Target.TargetAssetType == AssetType.Material, "picker: arbitrary field name uses its declared type");
+        picker.BeginList(1);
+        picker.CompleteList(1, mixed);
+        Check(picker.Confirm(inspector, doc.Node, a, 1).Refusal is not null, "picker: worker rejects wrong-type listed GUID");
+        picker = Capture();
+        picker.BeginList(1);
+        picker.CompleteList(1, mixed);
+        picker.BeginList(2);
+        picker.CompleteList(2, mixed);
+        Check(picker.Confirm(inspector, doc.Node, b, 1).Refusal is not null, "picker: old confirmation cannot use new membership");
+        picker = Capture();
+        picker.BeginList(2);
+        picker.CompleteList(1, mixed);
+        Check(picker.Confirm(inspector, doc.Node, b, 2).Refusal is not null, "picker: late list cannot authorize pending confirmation");
+        picker = Capture();
+        picker.BeginList(1);
+        picker.CompleteList(1, mixed);
+        picker.BeginList(2);
+        picker.CompleteList(2, Outcome<IReadOnlyList<AssetSummary>, AssetError>.Err(AssetError.CatalogUnavailable));
+        Check(picker.Confirm(inspector, doc.Node, b, 2).Refusal is not null, "picker: failed list cannot reuse previous typed membership");
+        picker = Capture();
+        picker.BeginList(1);
+        picker.CompleteList(1, mixed);
+        Check(picker.Confirm(inspector, doc.Node, AssetGuid.Parse("00820082-0082-4082-8082-008200820003"), 1).Refusal is not null,
+              "picker: worker rejects an unlisted GUID");
+        picker = Capture();
+        picker.BeginList(1);
+        picker.CompleteList(1, mixed);
+        Check(picker.Confirm(inspector, doc.Node, b, 1).Commands.Single() is SetProperty typed && typed.Value.AsAsset() == b,
+              "picker: typed choice sets an absent optional field");
     }
 }
