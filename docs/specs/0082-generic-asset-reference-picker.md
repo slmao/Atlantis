@@ -1,10 +1,10 @@
 # Spec: Generic Asset Reference Picker
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex, at slmao's direction
 - **Created:** 2026-11-07
 - **Related Plan(s):** [Plan 0082](../plans/0082-generic-asset-reference-picker.md)
-- **Approval:** Pending joint Spec/Plan review; scope direction is not implementation authorization.
+- **Approval:** slmao, 2026-11-07; [joint ruling](https://github.com/slmao/Atlantis/pull/327#issuecomment-6689535730), J1–J4 as recommended at `00b6674`; #327 manually merged.
 - **Related ADR(s):** None new — see Architectural Impact; reuses ADR-0125, ADR-0135/0136 and ADR-0143.
 
 Authoring/lifecycle rules: [AGENTS.md](../../AGENTS.md#documentation-and-code-comments).

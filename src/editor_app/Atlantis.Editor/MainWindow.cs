@@ -32,6 +32,7 @@ using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.VisualTree;
 using Avalonia.Layout;
+using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
 using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
@@ -104,6 +105,10 @@ public sealed class MainWindow : Window
     private bool _assetsSync;
     private readonly TabControl _assetTabs = new();
     private TextBox? _nameBox;
+    private AssetReferencePickerWindow? _referenceWindow;
+    private bool _referenceBusy, _referenceSessionFailed;
+    private long _referenceLaunch;
+    private Button? _referenceFocus;
     private readonly ViewportHost _viewport = new();
     private readonly TextBox _status = new();
     private readonly TextBox _notes = new();
@@ -346,6 +351,9 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        ++_referenceLaunch;
+        _referenceWindow?.Close(); _referenceWindow = null;
+        _referenceBusy = false; _referenceSessionFailed = false;
         _assetBrowser.Disconnect();
         RenderAssets();
         ViewportWindow? window = _viewport.Window;
@@ -378,6 +386,9 @@ public sealed class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _referenceSessionFailed = true;
+            _referenceWindow?.Invalidate("the session failed");
+            _referenceBusy = false; ++_referenceLaunch; UpdateReferenceButtons();
             _assetBrowser.Disconnect(); RenderAssets();
             _runtimeLine = "session failed: " + message;
             UpdateStatus();
@@ -385,6 +396,11 @@ public sealed class MainWindow : Window
         worker.Picked += OnPicked;
         worker.HierarchyChanged += OnHierarchyChanged;
         worker.InspectorChanged += OnInspectorChanged;
+        worker.AssetReferenceInvalidated += (request, reason) =>
+        {
+            if (ReferenceEquals(_worker, worker) && _referenceWindow?.Target.Request == request)
+                _referenceWindow.Invalidate(reason);
+        };
         worker.HistoryChanged += history =>
         {
             _undo.IsEnabled = history.CanUndo;
@@ -799,6 +815,7 @@ public sealed class MainWindow : Window
 
     private void OnInspectorChanged(InspectorSnapshot snapshot)
     {
+        if (_referenceBusy) return; // the worker owns the captured target; refresh after settlement/cancel
         // An observed external rename cancels a name draft immediately. Other
         // field refreshes retain the existing deferral while a user is typing.
         if (_nameBox?.IsFocused == true && _inspectorShown is InspectorSnapshot shown &&
@@ -891,8 +908,59 @@ public sealed class MainWindow : Window
         }
     }
 
+    private void UpdateReferenceButtons()
+    {
+        foreach (Button b in _inspectorPanel.GetVisualDescendants().OfType<Button>().Where(b => b.Tag as string == "asset chooser"))
+            b.IsEnabled = !_referenceBusy && !_referenceSessionFailed;
+    }
+
+    private void BeginAssetReference(InspectorField field, Button launchControl, EntityGuid? sourceSubject)
+    {
+        var worker = _worker;
+        if (_referenceBusy || _referenceSessionFailed || worker is null || _selection.Node is not EntityGuid node) return;
+        if (sourceSubject != node || _inspectorShown?.Subject != node)
+        { _editLine.Text = "choose asset refused: the Inspector target changed"; return; }
+        _referenceBusy = true; _referenceFocus = launchControl; long launch = ++_referenceLaunch;
+        _inspectorDeferred = null;
+        UpdateReferenceButtons();
+        worker.CaptureAssetReference(node, field.Component, field.Field.Id, (target, error) =>
+        {
+            if (!ReferenceEquals(worker, _worker) || launch != _referenceLaunch)
+            { if (target is not null) worker.CancelAssetReference(target.Request); return; }
+            if (target is null) { _editLine.Text = error; FinishAssetReference(); return; }
+            var chooser = new AssetReferencePickerWindow(worker, target, guid =>
+            {
+                _referenceWindow = null;
+                worker.ConfirmAssetReference(target.Request, guid, () =>
+                { if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch) FinishAssetReference(); });
+            }, () =>
+            {
+                worker.CancelAssetReference(target.Request);
+                if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch)
+                { _referenceWindow = null; FinishAssetReference(); }
+            });
+            _referenceWindow = chooser;
+            _ = chooser.ShowDialog(this);
+        });
+    }
+
+    private void FinishAssetReference()
+    {
+        _referenceBusy = false; _inspectorDeferred = null;
+        UpdateReferenceButtons();
+        var worker = _worker; long launch = _referenceLaunch; var focus = _referenceFocus;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (worker is null || !ReferenceEquals(worker, _worker) || launch != _referenceLaunch || _referenceSessionFailed) return;
+            focus?.Focus(); // return to the launcher, so an obsolete focused TextBox cannot defer the fresh snapshot
+            _inspectorDeferred = null;
+            worker.RefreshInspector();
+        });
+    }
+
     private Control FieldRow(InspectorField field)
     {
+        EntityGuid? sourceSubject = _inspectorShown?.Subject;
         var row = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*,Auto") };
         row.Children.Add(new TextBlock { Text = field.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
         Control editor;
@@ -910,6 +978,22 @@ public sealed class MainWindow : Window
             var box = new TextBox { Text = field.Text, IsReadOnly = !field.Editable, Opacity = field.Editable ? 1.0 : 0.6 };
             if (field.Optional && !field.Present) box.PlaceholderText = "(absent)";
             string original = field.Text;
+            void ReplaceDraft() { box.Text = field.Text; original = field.Text; }
+            if (InspectorModel.CanChooseAsset(field))
+            {
+                row.ColumnDefinitions = new ColumnDefinitions("110,*,Auto,Auto");
+                var choose = new Button { Content = "Choose…", Tag = "asset chooser", IsEnabled = !_referenceBusy && !_referenceSessionFailed };
+                // The ancestor tunnel runs before Button's class focus handler.
+                row.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
+                {
+                    if (e.Source is Visual source && (ReferenceEquals(source, choose) || source.GetVisualAncestors().Contains(choose)) &&
+                        e.GetCurrentPoint(choose).Properties.IsLeftButtonPressed) ReplaceDraft();
+                }, RoutingStrategies.Tunnel);
+                choose.Click += (_, _) => BeginAssetReference(field, choose, sourceSubject);
+                Grid.SetColumn(choose, 2); row.Children.Add(choose);
+                box.KeyDown += (_, e) =>
+                { if (e.Key == Key.F4 && e.KeyModifiers == KeyModifiers.None) { e.Handled = true; ReplaceDraft(); BeginAssetReference(field, choose, sourceSubject); } };
+            }
             void Commit()
             {
                 if (!field.Editable || (box.Text ?? "") == original) return;
@@ -937,7 +1021,7 @@ public sealed class MainWindow : Window
         {
             var clear = new Button { Content = "×", Padding = new Thickness(6, 0), Margin = new Thickness(4, 0, 0, 0) };
             clear.Click += (_, _) => _worker?.ClearField(field.Path);
-            Grid.SetColumn(clear, 2);
+            Grid.SetColumn(clear, InspectorModel.CanChooseAsset(field) ? 3 : 2);
             row.Children.Add(clear);
         }
         return row;
@@ -986,6 +1070,7 @@ public sealed class MainWindow : Window
     private void Shutdown()
     {
         _uiTicker.Stop();
+        ++_referenceLaunch; _referenceWindow?.Close(); _referenceWindow = null;
         if (!_driving) WriteDragReport();  // a manual run's report (a driven run writes its own)
         _worker?.Dispose();
         _worker = null;

@@ -290,6 +290,8 @@ public sealed class EditorWorker : IDisposable
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _selected;
     private InspectorModel? _inspector;
+    private AssetReferencePicker? _referencePicker;
+    private long _referenceRequest;
     // Plan 0068 M4: the Gizmo (worker-thread state, except the pending batch under _lock).
     private GizmoDragController? _gizmo;
     private RemoteSession? _previewSession;
@@ -325,6 +327,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<string>? EditNotice;
     public event Action<EntityGuid>? NodeCreatedByEditor;
     public event Action<InspectorSnapshot>? InspectorChanged;
+    public event Action<long, string>? AssetReferenceInvalidated;
     public event Action<GizmoSnapshot>? GizmoChanged;
     public event Action<HistorySnapshot>? HistoryChanged;
     public event Action<double, string>? CommitApplied;
@@ -579,6 +582,46 @@ public sealed class EditorWorker : IDisposable
         });
     }
 
+    public void CaptureAssetReference(EntityGuid node, TypeId component, FieldId field,
+                                      Action<AssetReferenceTarget?, string?> done) => Enqueue(session =>
+    {
+        PollDocument(session);
+        if (_referencePicker is not null || _document is null || _inspector is null || _selected != node || !_tree.Contains(node))
+        { _post(() => done(null, "the target is no longer available")); return; }
+        _inspector.Refresh(node);
+        InspectorField? current = _inspector.Fields.FirstOrDefault(f => f.Component == component && f.Field.Id == field);
+        var picker = current is null ? null : AssetReferencePicker.Capture(++_referenceRequest, node, current);
+        if (picker is null) { _post(() => done(null, "the reference cannot be read or edited")); return; }
+        _referencePicker = picker;
+        _post(() => done(picker.Target, null));
+    });
+
+    public void CancelAssetReference(long request) => Enqueue(_ =>
+    {
+        if (_referencePicker?.Target.Request == request)
+        { _referencePicker.Invalidate("the choice was cancelled"); _referencePicker = null; }
+    });
+
+    public void ConfirmAssetReference(long request, AssetGuid candidate, Action settled) => Edit(document =>
+    {
+        if (_referencePicker?.Target.Request != request || _inspector is null)
+            return (EditPlan.Refused("choose asset", "the choice expired"), null);
+        _inspector.Refresh(_selected);
+        return (_referencePicker.Confirm(_inspector, _selected, candidate), null);
+    }, () =>
+    {
+        if (_referencePicker?.Target.Request == request) _referencePicker = null;
+        _post(settled);
+    });
+
+    public void RefreshInspector() => Enqueue(_ => PostInspector());
+
+    private void ReferenceInvalidated(string? before)
+    {
+        if (before is null && _referencePicker is { Refusal: string reason } picker)
+            _post(() => AssetReferenceInvalidated?.Invoke(picker.Target.Request, reason));
+    }
+
     /// <summary>Plan 0068 M3 (Spec 0068 R4): a field's text committed as one transaction (then an apply), or its refusal shown.</summary>
     public void CommitField(string path, string text) => Edit(document => (_inspector!.Commit(path, text), null));
 
@@ -608,6 +651,9 @@ public sealed class EditorWorker : IDisposable
     /// </summary>
     public void ShowSelection(EntityGuid? node) => Enqueue(session =>
     {
+        string? refusal = _referencePicker?.Refusal;
+        _referencePicker?.SelectionChanged(node);
+        ReferenceInvalidated(refusal);
         _selected = node;
         SendOverlay(session);
         PostInspector();
@@ -664,43 +710,47 @@ public sealed class EditorWorker : IDisposable
     }
 
     // One edit: planned on this thread against the tree as of now, submitted as one transaction, then an apply.
-    private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan) => Enqueue(session =>
+    private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan, Action? settled = null) => Enqueue(session =>
     {
-        if (_document is null || _apply is null)
+        try
         {
-            _post(() => EditNotice?.Invoke("no authoring document"));
-            return;
-        }
-        PollDocument(session);
-        var (edit, created) = plan(_document);
-        if (edit.Refusal is string reason)
-        {
-            _log.Write("edit " + edit.Label + " refused: " + reason);
-            _post(() => EditNotice?.Invoke(edit.Label + " refused: " + reason));
-            PostInspector();  // the field reverts to the document's value
-            return;
-        }
-        long start = Stopwatch.GetTimestamp();
-        EditRecorder? recorder = EditRecorder.Begin(_document, _tree, edit);
-        IReadOnlyList<CommandFailure> failures = _apply.Commit(edit.Commands);
-        double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        if (failures.Count == 0) _commitTicks = start;
-        if (failures.Count > 0)
-        {
-            string why = edit.Label + " refused by the document: " + failures[0].Error;
-            _log.Write("edit " + why);
-            _post(() => EditNotice?.Invoke(why));
+            if (_document is null || _apply is null)
+            {
+                _post(() => EditNotice?.Invoke("no authoring document"));
+                return;
+            }
+            PollDocument(session);
+            var (edit, created) = plan(_document);
+            if (edit.Refusal is string reason)
+            {
+                _log.Write("edit " + edit.Label + " refused: " + reason);
+                _post(() => EditNotice?.Invoke(edit.Label + " refused: " + reason));
+                PostInspector();  // the field reverts to the document's value
+                return;
+            }
+            long start = Stopwatch.GetTimestamp();
+            EditRecorder? recorder = EditRecorder.Begin(_document, _tree, edit);
+            IReadOnlyList<CommandFailure> failures = _apply.Commit(edit.Commands);
+            double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+            if (failures.Count == 0) _commitTicks = start;
+            if (failures.Count > 0)
+            {
+                string why = edit.Label + " refused by the document: " + failures[0].Error;
+                _log.Write("edit " + why);
+                _post(() => EditNotice?.Invoke(why));
+                PollDocument(session);
+                PostInspector();
+                return;
+            }
+            _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
+                                     edit.Commands.Count, ms));
+            RecordEdit(recorder, failures);
             PollDocument(session);
             PostInspector();
-            return;
+            _post(() => EditNotice?.Invoke(edit.Label));
+            if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
         }
-        _log.Write(string.Format(CultureInfo.InvariantCulture, "edit {0}: {1} command(s) committed in {2:F1} ms", edit.Label,
-                                 edit.Commands.Count, ms));
-        RecordEdit(recorder, failures);
-        PollDocument(session);
-        PostInspector();
-        _post(() => EditNotice?.Invoke(edit.Label));
-        if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
+        finally { settled?.Invoke(); }
     });
 
     // A committed edit joins the history (settled at once: the commit was applied, or refused, when submitted).
@@ -837,6 +887,9 @@ public sealed class EditorWorker : IDisposable
         var destroyed = new List<EntityGuid>();
         foreach (Event e in events)
         {
+            string? refusal = _referencePicker?.Refusal;
+            _referencePicker?.Observe(e);
+            ReferenceInvalidated(refusal);
             _tree.Apply(e, _document);
             _transforms.Apply(e);
             _apply.Apply(e);
