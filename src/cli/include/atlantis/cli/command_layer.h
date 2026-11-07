@@ -102,10 +102,11 @@ class CommandLayer {
   void abandon();
   // Plan 0065 P6 (Spec 0065 third Correction): a pending `scene apply` the
   // Runtime holds (it is paused) stops being the pending command, so other
-  // commands -- the step that releases it -- can run; its Applied{generation}
-  // is then reported by deferredApplyOutcome(), once, whenever it has arrived.
+  // commands -- the step that releases it -- can run; its matching terminal
+  // result is reported once, without using unrelated Applied events.
   void deferApply();
   [[nodiscard]] std::optional<Reply> deferredApplyOutcome();
+  [[nodiscard]] std::optional<atlantis::connection::authoring::ApplyReceipt> takeDeferredApply();
 
   // Where `entity create` without a GUID gets one (RFC 9562 v4 from
   // std::random_device unless replaced -- tests make it deterministic).

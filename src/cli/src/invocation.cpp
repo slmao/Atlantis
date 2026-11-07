@@ -340,6 +340,16 @@ int Invocation::finish(Reply reply) {
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
       failure->text = "error: " + failure->message;
     }
+    if (const auto deferred = layer_.takeDeferredApply()) {
+      const std::string id = connection::authoring::toString(deferred->id);
+      if (!failure->subject.isObject()) failure->subject = Value::object();
+      Value receipt = Value::object();
+      receipt.set("id", Value::string(id));
+      receipt.set("documentRevision", Value::number(deferred->documentRevision));
+      failure->subject.set("deferredApply", std::move(receipt));
+      failure->message += "; deferred apply " + id + " completion unknown";
+      failure->text = "error: " + failure->message;
+    }
     return reportError(*failure, checked.command, options_, out_, err_);
   };
   if (const auto transport = transportFailure(reply)) return *transport;

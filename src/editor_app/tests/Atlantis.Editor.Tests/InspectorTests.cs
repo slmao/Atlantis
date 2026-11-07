@@ -466,6 +466,14 @@ public static partial class Program
             Check("suspended Undo sends no apply", (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt.Id == pending.Receipt.Id);
             Click(redo); await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "Redo while suspended");
             Check("suspended Redo sends no apply", (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt.Id == pending.Receipt.Id);
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "retry of still-invalid document");
+            var repeated = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Click(stepButton);
+            await NameUiWait(() => ApplyText().Contains("ScenePreparationFailed", StringComparison.Ordinal) && Retry().IsEnabled,
+                "repeated failure returns to recovery", 60);
+            Check("repeated failure is correlated and retains history", repeated.Receipt.Id != pending.Receipt.Id &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus(repeated.Receipt.Id))).Value!.Request!.State == ApplyState.Failed && undo.IsEnabled);
             Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "repair again before retry");
             Click(Retry()); Click(Retry());
             await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal) && !Retry().IsEnabled, "one explicit retry held");
@@ -478,8 +486,38 @@ public static partial class Program
                 repaired.Projection?.Receipt == repair.Receipt && repaired.CurrentDocumentRevision == repair.Receipt.DocumentRevision &&
                 NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && redo.IsEnabled);
 
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "local request before external replacement");
+            var displaced = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            var outsideApply = (await Task.Run(() => observer.Authoring.ApplyTracked())).Value!;
+            await NameUiWait(() => ApplyText().Contains("superseded", StringComparison.OrdinalIgnoreCase) && Retry().IsEnabled, "external replacement observed");
+            Check("external replacement is reported for the local receipt",
+                (await Task.Run(() => observer.Authoring.ApplyStatus(displaced.Receipt.Id))).Value!.Request!.SupersededBy == outsideApply.Id);
+            Click(Retry());
+            await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "recovery request before external edit");
+            var staleRevision = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); });
+            Check("external equal-value edit still advances revision", (await Task.Run(() => observer.Authoring.DrainFailures())).Count == 0 &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.CurrentDocumentRevision > staleRevision.Receipt.DocumentRevision);
+            Click(stepButton);
+            await NameUiWait(() => ApplyText().Contains("document/projection changed", StringComparison.Ordinal) && Retry().IsEnabled,
+                "historical success keeps recovery suspended", 60);
+            Check("historical success cannot resume previews",
+                (await Task.Run(() => observer.Authoring.ApplyStatus(staleRevision.Receipt.Id))).Value!.Request!.State == ApplyState.Applied &&
+                !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled);
+
             Click(Retry()); await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal), "old snapshot held before shared reopen");
             var oldRequest = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            byte[] reopenBackup = File.ReadAllBytes(info.SourcePath);
+            try
+            {
+                File.WriteAllText(info.SourcePath, "invalid disposable scene source");
+                Check("refused shared reopen preserves document, history and recovery",
+                    (await Task.Run(() => observer.Authoring.Open())) == OpenError.SourceParseFailed &&
+                    (await Task.Run(() => observer.Authoring.ApplyStatus(oldRequest.Receipt.Id))).Value!.Request!.State == ApplyState.Pending &&
+                    (await ReadValue()).Equals(original) && redo.IsEnabled && !Retry().IsEnabled);
+            }
+            finally { File.WriteAllBytes(info.SourcePath, reopenBackup); }
             Check("shared reopen succeeds with older request pending", (await Task.Run(() => observer.Authoring.Open())) is null);
             await NameUiWait(() => ApplyText().Contains("reopened", StringComparison.Ordinal) && !undo.IsEnabled && !redo.IsEnabled,
                 "reopen clears history and invalidates local waiter");

@@ -561,6 +561,10 @@ void CommandLayer::deferApply() {
   pending_.reset();
 }
 
+std::optional<ac::ApplyReceipt> CommandLayer::takeDeferredApply() {
+  return std::exchange(deferredApply_, std::nullopt);
+}
+
 Reply CommandLayer::applyOutcome(const ac::ApplyReceipt& receipt) {
   const auto status = authoring_->applyStatus(receipt.id);
   const std::string id = ac::toString(receipt.id);

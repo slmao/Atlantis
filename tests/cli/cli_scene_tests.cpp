@@ -60,6 +60,14 @@ struct SceneCli {
     InvocationOptions options;
     options.json = json;
     options.outcomeTimeout = std::chrono::milliseconds(2000);
+    options.transportFailure = [this]() -> std::optional<atlantis::cli::CliError> {
+      if (!disconnected) return std::nullopt;
+      atlantis::cli::CliError error;
+      error.code = "ConnectionLost";
+      error.category = atlantis::cli::ErrorCategory::Connection;
+      error.message = "connection lost";
+      return error;
+    };
     options.awaitFrame = [this] {
       const bool applies = cli.runtime.appliesNextFrame();
       cli.runtime.frame();
@@ -104,6 +112,7 @@ struct SceneCli {
   std::optional<atlantis::connection::authoring::ApplyId> pendingApply;
   bool reloadRequested = false;
   bool refuseNextApply = false;
+  bool disconnected = false;
   std::optional<atlantis::connection::authoring::ReloadError> reloadError;
   std::uint64_t generation = 0;
 };
@@ -327,4 +336,19 @@ TEST_CASE("cli scene: matched deferred replacement/failure preserves receipts an
   CHECK(scene.cli.err.str().find("ScenePreparationFailed") != std::string::npos);
   CHECK(scene.run("scene apply-status " + a::toString(second)) != 0);
   CHECK(scene.cli.err.str().find("Failed") != std::string::npos);
+}
+
+TEST_CASE("cli scene: transport loss while stepping preserves deferred apply identity", "[cli][scene][apply_outcomes]") {
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  REQUIRE(scene.run("runtime pause") == 0);
+  REQUIRE(scene.run("scene apply") == 0);
+  const std::string id = atlantis::connection::authoring::toString(*scene.pendingApply);
+  scene.disconnected = true;
+  CHECK(scene.run("runtime step") == 3);
+  const auto envelope = scene.envelope();
+  const auto* error = envelope.find("error");
+  REQUIRE(error);
+  CHECK(json::write(*error).find(id) != std::string::npos);
+  CHECK(json::write(*error).find("completion unknown") != std::string::npos);
 }
