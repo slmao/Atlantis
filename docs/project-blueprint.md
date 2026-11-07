@@ -986,10 +986,12 @@ milestone being listed does not authorize starting it — see Section 1.
   [Spec 0083](specs/0083-authoring-apply-outcomes.md) /
   [Plan 0083](plans/0083-authoring-apply-outcomes.md) and Accepted
   [ADR-0144](adr/0144-correlated-authoring-apply-outcomes.md) cover correlated
-  shared apply/reload outcomes and explicit editor recovery. The
-  [joint design PR #329](https://github.com/slmao/Atlantis/pull/329) was
-  approved and manually merged; S2–S4 were authorized. Target-type
-  metadata, preview and broader asset-pipeline management remain future work.
+  shared apply/reload outcomes and explicit editor recovery, delivered in
+  [PR #330](https://github.com/slmao/Atlantis/pull/330).
+  [Spec 0084](specs/0084-asset-reference-target-types.md) /
+  [Plan 0084](plans/0084-asset-reference-target-types.md) propose shared
+  authoring field target types and Inspector candidate filtering.
+  Preview and broader asset-pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
