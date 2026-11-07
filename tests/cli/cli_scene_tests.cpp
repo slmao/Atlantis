@@ -44,7 +44,8 @@ constexpr std::string_view kNode4 = "52052052-0004-4052-8052-000000000004";
 // atlantis_runtime's host does (a paused frame holds the reload: Spec 0065
 // third Correction).
 struct SceneCli {
-  explicit SceneCli(bool json = false, bool serve = true)
+  explicit SceneCli(bool json = false, bool serve = true,
+                    std::chrono::milliseconds timeout = std::chrono::milliseconds(2000))
       : source(writtenSource()),
         session(atlantis::authoring::DocumentSource{
             atlantis::asset_system::parseAssetGuid(atlantis::cli::test::kScene).value(),
@@ -59,7 +60,7 @@ struct SceneCli {
     });
     InvocationOptions options;
     options.json = json;
-    options.outcomeTimeout = std::chrono::milliseconds(2000);
+    options.outcomeTimeout = timeout;
     options.transportFailure = [this]() -> std::optional<atlantis::cli::CliError> {
       if (!disconnected) return std::nullopt;
       atlantis::cli::CliError error;
@@ -71,7 +72,7 @@ struct SceneCli {
     options.awaitFrame = [this] {
       const bool applies = cli.runtime.appliesNextFrame();
       cli.runtime.frame();
-      if (reloadRequested && applies) {
+      if (reloadRequested && applies && !holdReload) {
         reloadRequested = false;
         using R = atlantis::Result<std::uint64_t, atlantis::connection::authoring::ReloadError>;
         session.reportReload(*pendingApply, reloadError ? R::Err(*std::exchange(reloadError, std::nullopt)) : R::Ok(++generation));
@@ -113,6 +114,7 @@ struct SceneCli {
   bool reloadRequested = false;
   bool refuseNextApply = false;
   bool disconnected = false;
+  bool holdReload = false;
   std::optional<atlantis::connection::authoring::ReloadError> reloadError;
   std::uint64_t generation = 0;
 };
@@ -351,4 +353,22 @@ TEST_CASE("cli scene: transport loss while stepping preserves deferred apply ide
   REQUIRE(error);
   CHECK(json::write(*error).find(id) != std::string::npos);
   CHECK(json::write(*error).find("completion unknown") != std::string::npos);
+}
+
+TEST_CASE("cli scene: timing out preserves the receipt without retrying or failing the request",
+          "[cli][scene][apply_outcomes]") {
+  SceneCli scene(true, true, std::chrono::milliseconds(2));
+  REQUIRE(scene.run("scene open") == 0);
+  scene.holdReload = true;
+  CHECK(scene.run("scene apply") != 0);
+  REQUIRE(scene.pendingApply);
+  const auto id = *scene.pendingApply;
+  const auto errorEnvelope = scene.envelope();
+  const auto* error = errorEnvelope.find("error");
+  REQUIRE(error);
+  CHECK(member(*error, "code") == "\"OutcomeTimeout\"");
+  CHECK(json::write(*error).find(atlantis::connection::authoring::toString(id)) != std::string::npos);
+  CHECK(json::write(*error).find("completion unknown") != std::string::npos);
+  CHECK(scene.authoring->applyStatus(id).value().request->state ==
+        atlantis::connection::authoring::ApplyState::Pending);
 }
