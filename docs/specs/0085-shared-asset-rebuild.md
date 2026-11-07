@@ -43,43 +43,56 @@ remote restart, deployment and automatic generation cleanup.
 ### Functional
 
 **R1 — Existing asset and producer.** A request names one non-nil cooked
-AssetGuid from the active ADR-0143 snapshot. Resolve its existing source
-catalog root and configured producer through data generated from the same
-CMake declarations as the build. A derived asset selects its registered glTF
-import as a unit, including generated scene source and sibling outputs.
+AssetGuid from the active ADR-0143 snapshot. Resolve the record's structured
+source root and logical path against a unique producer entry emitted from the
+existing CMake declarations, and verify the selected record's GUID against
+the registered root GUID or the existing derivation from that root and the
+record's subkey. A derived asset selects the whole glTF import, including
+generated scene source and sibling outputs. A missing or ambiguous match is
+unsupported. Client-supplied values never become stamp or output paths.
 No wire input names a filesystem path, tool, build target, option or command.
 Unknown GUIDs and records without a supported configured producer are explicit
 refusals. A cooked catalog that failed its initial load keeps the existing
 restart requirement and cannot authorize a rebuild. A first start uses the
-same one-time snapshot initialization as discovery. The worker owns its
-immutable inputs and does not borrow session objects or mutable catalog state.
+same one-time snapshot initialization as discovery. The worker retains an
+owned immutable snapshot reference for identity comparison off the frame
+thread. It never borrows session objects or mutable catalog state.
 
 Execute the selected producer even when its normal incremental target is
-current. Invalidate only its declared completion stamp in the isolated build
-tree, then invoke the existing `atlantis_asset_catalog` target. Its existing
+current. Validate its declared completion stamp location against the
+configured staging root before invalidating it. An absent stamp already
+forces its producer. Refuse invalidation errors before launching the
+existing `atlantis_asset_catalog` target. Its existing
 dependency rules decide other work and its assembly checks the full output.
 A job can include other graph changes picked up by that build. It has no
 single-file isolation promise. Compare the staged catalog's full
 `(GUID, type, source)` identity set with the active snapshot and refuse
 publication on any difference. Dependencies and artifact bytes may change
-subject to the existing build validation. Changes to an import that add or
-remove derived outputs require a later workflow.
+subject to the existing build validation. glTF index-based subkeys can be
+reused by reorder or replacement without changing the identity set. The
+operator must preserve the meaning of the existing subkeys. This slice
+detects changes to published keys and does not infer source-level remapping.
 
 **R2 — Ownership and job outcome.** Opt in locally with a trusted Windows
 development launch profile. It selects a preconfigured, dedicated staging
 build tree and its configuration, and a separate publication directory. The
 host verifies the canonical checkout, generator configuration and content
-roots against the Runtime's launch build. It launches the pinned CMake
+roots against the Runtime's launch build. The compiled-in build tree,
+staging tree and publication root must be disjoint after canonical resolution.
+A selected generation must be a direct child of the publication root.
+Reject aliases or reparse points that cross these boundaries. The publication
+root is bound to one profile identity before use. Launch the pinned CMake
 executable with fixed arguments and no shell. The ordinary launch keeps
 discovery and serves rebuild management as unavailable. Android exposes
 no build host.
 
 A single executable-private worker owns one in-flight job. All clients of
-that Runtime share it. The host claims the workspace writer lock at bootstrap
-and releases it after orderly shutdown and child settlement. A second host
-can read its selected generation, but its rebuild starts return `Busy` until
-it is restarted and can claim the workspace. A start request returns a unique,
-non-reused job ID and `Running` immediately after admission, or refuses
+that Runtime share it. At bootstrap the host attempts an OS-owned exclusive
+lock on a fixed file in the canonical staging workspace. It holds the lock
+until shutdown and worker settlement. A second host can read its selected
+generation, and its starts return `Busy` until restarted with the lock.
+A start request returns a unique, non-reused job ID and `Running` immediately
+after admission, or refuses
 without creating a job. A competing start, including a duplicate request,
 returns `Busy`. No queue or implicit retry. An admitted job reaches exactly
 one of `Succeeded { generation }` or
@@ -87,10 +100,13 @@ one of `Succeeded { generation }` or
 Failure stages distinguish launch, pipeline, validation and publication.
 Use host-generated diagnostic text (at most 4 KiB of UTF-8) and the child
 exit code when available. Raw tool output stays in a local log. A 30-minute
-elapsed deadline covers the child and publication
-preparation. Report timeout only after stopping the child tree. Publication
-commit settles success once the directory is renamed. The host owns child
-and descendant lifetime, including termination on host loss.
+elapsed deadline covers the child and publication preparation. Verify
+kill-on-close process-tree containment before allowing the child to run,
+and settle descendants before a terminal result releases the job slot.
+Timeout and orderly shutdown bar publication if they win before the final
+rename begins. A successful rename is the commit point. Once the rename
+starts, its result settles the job, even if the deadline elapses during
+that filesystem call. A failed rename reports `PublishFailed`.
 
 A status request with an ID returns that job or `UnknownJob`. Without an ID
 it returns the latest admitted job or none. A successful status also reports
@@ -101,9 +117,20 @@ start response, query latest status before any explicit retry. Without an ID,
 another client's matching request cannot establish ownership of the lost
 receipt. After host loss or eviction an unavailable result is unknown,
 with no inferred success or failure. Shutdown stops the child tree and
-never promotes unfinished output. An abandoned workspace lock after host
-loss requires local recovery after verifying the owner and children have
-exited. The next attempt reruns the producer and whole catalog validation.
+never promotes unfinished output. Record a persistent dirty marker before
+the first staging mutation. The marker outlives abrupt host loss, even
+though the OS releases the writer lock. An idle shutdown leaves no dirty
+marker. Clear it after settlement for a successful job, a launch refusal
+before any child could run, an orderly tool refusal, an identity-set refusal,
+or an isolated publication failure with validated staging. These outcomes
+allow explicit retry after correction.
+An interruption or invalid staging output leaves `WorkspaceNeedsRepair`.
+Only the local operator may clear that state. Stop all hosts using the
+workspace, verify descendants have exited and keep the workspace offline
+until the staging build has been recreated or validated and the marker
+removed. Uncertainty about cleanup leaves the marker in place. A marker
+cleanup failure after a successful rename blocks later builds while the
+completed generation remains usable.
 
 **R3 — Publication and activation.** Build only in the dedicated tree,
 which is neither the active catalog's tree nor a published generation.
@@ -117,8 +144,8 @@ Write a private completion manifest in staging with the profile identity,
 generation ID and relative imported scene source locations. Publish the
 complete directory by a same-volume rename to the generation ID. Failed or
 interrupted preparation leaves all previously published generations and
-active files intact. Incomplete directories are never
-selectable. After a crash following publication, a complete generation can
+active files intact. Incomplete directories are never selectable. After a
+crash following publication, a complete generation can
 exist without a retained job result. Local operator recovery may inspect
 complete generations and select one explicitly. Filesystem failure, including
 space exhaustion, is reported. Retention is operator-managed offline after
@@ -126,11 +153,14 @@ all consumers of the affected generations have stopped.
 
 Successful publication never selects an active generation. A local operator
 restarts the Runtime with the same trusted profile (`--asset-build-profile`)
-and explicit generation ID (`--asset-generation`). A profile without a
-generation uses the existing compiled-in catalog to seed the first rebuild.
+and explicit generation ID (`--asset-generation`). A generation requires a
+profile. A profile without a generation uses the existing compiled-in
+catalog to seed the first rebuild.
 This initial tree is kept separate from the staging build and must not be
 rebuilt in place while the Runtime is using it. Runtime rejects an unknown,
-incomplete or foreign generation before serving its session and uses
+incomplete or foreign generation before publishing a session. Validate
+the completion manifest, catalog and referenced file locations, including
+the selected imported authoring source. Runtime uses
 that one catalog path for initial scene load, authoring reload resolution
 and discovery. Imported authoring scene sources come from that same
 generation. Hand-authored source still opens and saves through its existing
@@ -150,18 +180,26 @@ A save after a build does not revise the published cooked scene.
 CLI `assets rebuild <GUID>` / `assets rebuild-status [<JobId>]`, and two
 closed MCP tools (`assets.rebuild`, `assets.rebuild_status`) through the C#
 SDK. Keep old `assets.list/get` and existing
-wire shapes unchanged. A new operation on an old host follows the existing
-unsupported-method path. Distinguish host refusals and failed job outcomes
-from protocol/disconnect failures. CLI start success means admission.
+wire shapes unchanged. For the two new operations only, clients recognize
+the pinned 0081–0084 host's `BadRequest` / `unknown or malformed asset query`
+response to a well-formed request as client-local `Unsupported`. This keeps
+the same session usable for discovery and editing. Other malformed or
+unexpected replies keep existing protocol failure semantics. Distinguish
+host refusals and failed job outcomes from protocol/disconnect failures.
+CLI start success means admission.
 A queried terminal failure returns nonzero even though status was obtained.
-MCP reports the same job facts without tool-side execution or polling.
+CLI JSON retains the job details on terminal failure. MCP keeps the job
+payload and marks terminal failure as a tool error, with one RPC per tool
+call. The managed client and MCP share the legacy response classification.
 
 The new typed replies follow existing `ok`/`err` envelopes. Job and
 generation IDs are canonical non-nil GUID strings in their own domains.
 Start returns a job value with `id`, requested `asset` and `state`. Status
 returns `activeGeneration` and `job`, each nullable. A job carries `generation`
 only on success and `failure` only on failure. Start refusals are `Unavailable`,
-`Busy`, `CatalogUnavailable`, `UnknownAsset` and `UnsupportedProducer`.
+`Busy`, `WorkspaceNeedsRepair`, `CatalogUnavailable`, `UnknownAsset` and
+`UnsupportedProducer`. Discovery-only in-process providers default the two
+new operations to `Unavailable` after recompilation.
 Status refusals are `Unavailable` and `UnknownJob`. Malformed parameters
 use existing `BadRequest`. Failure carries `stage`, `code`, `diagnostic`
 and optional `exitCode`. The closed failure pairs are launch/`LaunchFailed`,
@@ -169,12 +207,14 @@ pipeline/`BuildFailed`, validation/`InvalidOutput` or `IdentityChanged`,
 publication/`PublishFailed`, and `TimedOut` in the interrupted stage. Stage
 tokens are `Launch`, `Pipeline`, `Validation` and `Publication`.
 
-The Assets panel starts rebuilds for its selection, displays job/stage or
+The Assets panel starts rebuilds for its selection, displays job state or
 terminal diagnostics and the restart-required generation, and tracks a known
 job by explicit shared status polling while relevant. It uses the existing
-worker and discards late results after session replacement. Busy, unsupported
-and transport failures are visible. A trusted local Editor launch can pass
-the same Runtime profile and generation options when opening a new process.
+worker and discards late results after session replacement. It surfaces
+unknown outcomes after connection loss and never resubmits automatically.
+Busy, unsupported and transport failures are visible. A trusted local
+Editor launch can pass the same Runtime profile and generation options
+when opening a new process.
 There is no editor-only build or activation endpoint.
 
 ### Non-functional

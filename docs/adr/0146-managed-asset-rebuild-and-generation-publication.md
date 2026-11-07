@@ -24,17 +24,21 @@ editor is an ordinary shared client.
 
 1. The Windows Runtime executable hosts one opt-in build coordinator,
    with one worker and exclusive writer ownership of a configured staging
-   workspace from bootstrap to shutdown. The existing Tools and CMake graph perform
-   all importing, cooking and assembly. Producer lookup comes from
+   workspace from bootstrap through worker settlement. An OS-owned lock
+   arbitrates live writers and a durable staging marker protects recovery
+   after interruption. The existing Tools and CMake graph perform all
+   importing, cooking and assembly. Producer lookup comes from
    the existing declarations. Only fixed launch inputs and admitted
    GUIDs enter the coordinator. Asset System, Authoring, RuntimeHost
    and the frame loop do not acquire tool execution or worker ownership.
-2. Connection's asset surface gains the two operations in Spec 0085.
-   Remote projects those values. Native and managed SDKs, CLI, Editor App
-   and MCP use the same operations. The Runtime process owns job IDs and
-   bounded outcome retention. The workspace lock arbitrates writers across
-   processes. Job observation survives a client disconnect within that
-   process. Activation authority stays with the trusted local launcher.
+2. Connection's asset surface gains the two operations in Spec 0085. This
+   extends the discovery-only scope of ADR-0143 D1 and D3. Remote projects
+   those values. Native and managed SDKs, CLI, Editor App and MCP use the
+   same operations. The Runtime process owns job IDs and bounded outcome
+   retention. Job observation survives a client disconnect within that
+   process. Only the two new calls recognize the pinned legacy unknown
+   asset query response without invalidating the shared session. Activation
+   authority stays with the trusted local launcher.
 3. The managed pipeline publishes by copying an assembled catalog and
    its outputs to a self-contained immutable generation. A new directory
    becomes visible only after successful validation and a same-volume

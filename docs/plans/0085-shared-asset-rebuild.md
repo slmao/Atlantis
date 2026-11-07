@@ -32,8 +32,8 @@ job reporting and explicit selection of a complete published generation.
 |---|---|
 | Pipeline declarations | `src/asset_system/CMakeLists.txt` for declaration-derived producer/stamp and imported-source locations. Reuse `atlantis_asset_catalog`, cooker and glTF importer without changing their formats or dependency rules. |
 | Shared native surface | `src/connection/include/atlantis/connection/asset_connection.h` and asset value files in that module. Existing Remote asset sections in `src/remote/src/{codec.h,codec.cpp,remote_client.cpp,remote_server.cpp}`. Existing CLI asset commands in `src/cli/src/{command_layer.cpp,invocation.cpp}` and native SDK asset facade under `src/gameplay_sdk/`. |
-| Windows composition | `src/runtime/{main.cpp,cli.h,cli.cpp,CMakeLists.txt,asset_host.h,asset_host.cpp}` plus private `asset_rebuild_host.{h,cpp}` for staging, process lifetime and publication. Pass the selected path through existing bootstrap and authoring composition. Keep `src/runtime/src/` and the frame loop outside this change. |
-| Managed clients | Existing Assets values and `Remote/{AssetCodec.cs,AssetSession.cs}` in `src/csharp/Atlantis.Gameplay/`. MCP asset entries and closed schemas in `src/mcp/Atlantis.Mcp/`. Assets UI and worker in `src/editor_app/Atlantis.Editor/{MainWindow.cs,EditorSession.cs,RuntimeProcess.cs,Program.cs}` and existing `Atlantis.Editor.Model/AssetBrowser.cs` if needed. |
+| Windows composition | `src/runtime/{main.cpp,cli.h,cli.cpp,CMakeLists.txt,asset_host.h,asset_host.cpp}` plus private `asset_rebuild_host.{h,cpp}` for workspace ownership, process containment and publication. Pass the selected paths through existing bootstrap and authoring composition. Keep `src/runtime/src/`, the frame loop and the existing performance runner outside this change. |
+| Managed clients | Existing Assets values and `Remote/{AssetCodec.cs,AssetSession.cs}` in `src/csharp/Atlantis.Gameplay/`. MCP asset entries and closed schemas in `src/mcp/Atlantis.Mcp/`. Assets UI and worker in `src/editor_app/Atlantis.Editor/{MainWindow.cs,EditorSession.cs,RuntimeProcess.cs,Program.cs}` and existing `Atlantis.Editor.Model/AssetBrowser.cs` if needed. Reuse response-envelope access for legacy classification. |
 | Verification | Focused existing suites under `tests/{asset_system,connection,remote,cli,gameplay_sdk,runtime,csharp}`, `src/mcp/tests/` and `src/editor_app/tests/`. A private coordinator test file and its existing Runtime test CMake registration are in scope. Use disposable Windows build/publication trees and a copy of the enabled Bistro inputs where needed. |
 | Documentation | This Spec/Plan and ADR, spec index and blueprint navigation, `README.md`, `docs/architecture/{module_boundaries.md,remote_protocol.md}` and approval metadata. |
 
@@ -50,10 +50,19 @@ and both startup sources before treating a status-only test as complete.
 
 | Joint decision | Recommendation |
 |---|---|
-| **J1 — Producer scope** | Use cooked GUIDs, force one existing producer or whole registered glTF import, run the ordinary catalog graph, and require the full GUID/type/source identity set to stay stable. |
-| **J2 — Ownership and recovery** | Opt-in trusted Windows workspace, one worker, one writer, immediate Busy, bounded process-local outcomes, a 30-minute deadline and explicit recovery for abandoned locks or unknown receipts. |
-| **J3 — Publication and activation** | Publish complete isolated copies including generated imported scene sources. Require explicit local restart by generation ID. Retain prior generations with offline operator cleanup. |
-| **J4 — Delivery** | Approve the two shared operations, client parity and the verification list. Authorize S2–S4 in one joint decision after the design PR is manually merged. Keep performance, Vulkan, golden and human merge gates. |
+| **J1 — Producer scope** | Approve forcing one registered producer or whole glTF import by existing cooked GUID. Require full catalog identity-set equality and preserve the meaning of index-derived subkeys as an operator precondition. |
+| **J2 — Ownership and recovery** | Approve one opt-in Windows worker, exclusive writer ownership and a persistent dirty marker during staging changes. Keep immediate Busy, 16 terminal outcomes per process, the 30-minute deadline and offline repair after interruption or invalid staging. |
+| **J3 — Publication and activation** | Approve complete, isolated generations including generated imported scene sources. Serialize the final rename against shutdown and timeout. Use explicit local restart and offline retention management. |
+| **J4 — Shared delivery** | Approve the two shared operations and the narrow pinned legacy fallback. Authorize S2–S4 together after the manual design merge, with applicable Vulkan, golden and performance gates and human final merge. |
+
+### Suggested joint authorization
+
+> I approve J1–J4 and jointly approve Spec/Plan 0085 at the reviewed revision.
+> I accept ADR-0146. After this design PR is manually merged, proceed from
+> current main through S2–S4, including implementation, applicable verification
+> and submission of a review-ready implementation PR. Ordinary in-scope fixes
+> and reuse of verified unchanged-input evidence are authorized. Existing gates,
+> deviation rules and human final merge apply.
 
 ## Verification Checklist
 
@@ -65,21 +74,25 @@ and both startup sources before treating a status-only test as complete.
   request with no timestamp change. Change valid source content and verify
   artifact bytes can change while the entire identity set stays stable.
   Verify the imported generated source comes from that rebuild. Refuse an
-  unknown GUID, an unsupported producer and an import output-set change.
+  unknown GUID, an unsupported or ambiguous producer and an import output-set
+  change. Refuse a stamp outside staging without changing either tree.
 - [ ] **R2 job and failure.** Run success, two competing clients and a
   second managed Runtime sharing the workspace. Observe one admission and
-  immediate Busy, including duplicate start. After orderly writer shutdown,
-  verify restarting the other Runtime can claim the workspace. Observe the
-  same ID after disconnect/reconnect and check latest, eviction and unknown status. Use
-  controlled worker/process failures for launch, timeout, disk/publication
-  and abandoned-lock cases. Exercise one real cooker/import failure, then
-  correct the input and explicitly retry. Verify diagnostics are bounded,
-  the failed job stays terminal, the child tree stops and the next attempt
-  reruns validation. Check polling remains responsive while the child runs.
+  immediate Busy, including duplicate start and two path spellings of the
+  same workspace. Restart the other Runtime after the writer exits idle and
+  verify it can claim the workspace. Observe a known ID after reconnect and
+  check latest, eviction and unknown status. Simulate a lost start response
+  and verify no automatic retry. Inject failed process containment, timeout,
+  abrupt host loss and invalid staging. Check descendants stop and a later
+  writer refuses dirty staging until local repair. Exercise one real tool
+  failure, correct the input and explicitly retry without workspace repair.
+  Verify bounded diagnostics, terminal stability and responsive polling.
 - [ ] **R3 publication and restart.** Hash the old catalog, artifacts and
   generated sources before and after both failure and success. Include
-  missing output and a reparse/path-escape fixture. Verify no partial
-  generation is selectable and the old Runtime's discovery is stable,
+  missing output, a reparse/path escape and a publication failure. Exercise
+  the timeout/shutdown boundary before rename and a completed rename after
+  loss of the job record. Verify unknown, partial and foreign generations
+  cannot start and the old Runtime's discovery is stable,
   including its first query after publication on a separate instance.
   Verify reconnect, Reload view and existing apply stay on the old
   generation. Start a new Runtime explicitly with the published generation
@@ -92,10 +105,13 @@ and both startup sources before treating a status-only test as complete.
   restart starts a new session with no carried-over undo.
 - [ ] **R4 shared clients.** Native/C# codec conformance for start, status,
   refusal and terminal outcomes. Test new and legacy hosts/clients,
-  unknown or malformed replies and unchanged list/get behavior. Observe
+  unknown or malformed replies and unchanged list/get behavior. After a
+  new method's pinned legacy refusal, verify discovery and authoring still
+  work on the same native/managed sessions. Observe
   the same admitted job and outcome across CLI, both SDKs, Editor and MCP.
-  Check CLI terminal failure exit, MCP closed input, Editor status and
-  restart guidance, and rejection of late callbacks after reconnect.
+  Check CLI terminal failure exit with its job payload, MCP closed input
+  and failure payload, Editor status and restart guidance, and rejection
+  of late callbacks after reconnect.
 - [ ] **R5 builds and gates.** Build affected Windows Debug/Release and
   applicable Android native targets. Run focused SDK, Remote, CLI, MCP,
   Editor, Runtime and asset pipeline checks with existing pins. Use real
