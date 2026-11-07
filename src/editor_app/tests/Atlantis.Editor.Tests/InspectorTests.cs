@@ -475,15 +475,35 @@ public static partial class Program
             Check("repeated failure is correlated and retains history", repeated.Receipt.Id != pending.Receipt.Id &&
                 (await Task.Run(() => observer.Authoring.ApplyStatus(repeated.Receipt.Id))).Value!.Request!.State == ApplyState.Failed && undo.IsEnabled);
             Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "repair again before retry");
+            var beforeSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
+            Click(NameUiField<Button>(window, "_save")!);
+            var saveNotice = NameUiField<TextBlock>(window, "_editLine")!;
+            await NameUiWait(() => saveNotice.Text?.StartsWith(
+                info.Provenance == Provenance.Imported ? "save refused" : "saved ", StringComparison.Ordinal) == true,
+                "save during recovery");
+            var afterSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
+            Check("Save during recovery keeps revision, receipt and Runtime projection",
+                afterSave == beforeSave && (await Task.Run(() => observer.Control.Status())).SceneGeneration == oldGeneration);
             Click(Retry()); Click(Retry());
             await NameUiWait(() => ApplyText().Contains("pending: paused", StringComparison.Ordinal) && !Retry().IsEnabled, "one explicit retry held");
             var repair = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
             Check("retry has a new receipt for the repaired revision", repair.Receipt.Id != pending.Receipt.Id && repair.State == ApplyState.Pending &&
                 repair.Receipt.DocumentRevision > pending.Receipt.DocumentRevision);
-            Click(stepButton); await NameUiWait(Applied, "Step settles matched repair", 60);
-            var repaired = (await Task.Run(() => observer.Authoring.ApplyStatus(repair.Receipt.Id))).Value!;
+            Click(redo); await NameUiWait(async () => (await ReadValue()).AsAsset() == incompatible, "local Redo during pending recovery");
+            Click(undo); await NameUiWait(async () => (await ReadValue()).Equals(original), "local Undo during pending recovery");
+            Check("local commits do not replace a pending recovery attempt",
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!.Receipt == repair.Receipt);
+            Click(stepButton);
+            await NameUiWait(async () => (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request is
+                { State: ApplyState.Pending } next && next.Receipt.Id != repair.Receipt.Id, "one coalesced latest recovery after Step", 60);
+            var coalesced = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!.Request!;
+            Check("coalesced recovery waits for its own Step and leaves previews blocked",
+                coalesced.Receipt.DocumentRevision > repair.Receipt.DocumentRevision &&
+                !NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && !Retry().IsEnabled);
+            Click(stepButton); await NameUiWait(Applied, "second Step settles coalesced recovery", 60);
+            var repaired = (await Task.Run(() => observer.Authoring.ApplyStatus(coalesced.Receipt.Id))).Value!;
             Check("repair succeeds, restores preview and retains redo history", repaired.Request?.State == ApplyState.Applied &&
-                repaired.Projection?.Receipt == repair.Receipt && repaired.CurrentDocumentRevision == repair.Receipt.DocumentRevision &&
+                repaired.Projection?.Receipt == coalesced.Receipt && repaired.CurrentDocumentRevision == coalesced.Receipt.DocumentRevision &&
                 NameUiField<ComboBox>(window, "_gizmoMode")!.IsEnabled && redo.IsEnabled);
 
             Click(Retry());
