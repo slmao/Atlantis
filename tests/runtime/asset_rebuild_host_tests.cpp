@@ -43,14 +43,15 @@ struct Fixture {
   fs::path profile = base / "profile.json";
   fs::path marker = staging / ".atlantis-rebuild-dirty";
 
-  Fixture() {
+  explicit Fixture(bool seedStaging = true) {
     REQUIRE(fs::create_directories(seed / "assets"));
     REQUIRE(fs::create_directories(staging / "assets"));
     REQUIRE(fs::create_directories(published));
     const std::string inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tassets\ta.material.txt\t" +
-        as::toString(guid) + "\tassets/material.stamp\t-\n";
+        as::toString(guid) + "\tassets/materials/material.stamp\t-\n";
     for (const auto& dir : {seed, staging}) {
       write(dir / "assets/producers-Debug.txt", inventory);
+      if (dir == staging && !seedStaging) continue;
       write(dir / "artifact", "old");
       write(dir / "metadata", "fixture");
       catalog(dir, guid);
@@ -66,7 +67,7 @@ add_custom_target(atlantis_asset_catalog
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}" VERBATIM)
 )");
     write(base / "producer.cmake", R"(file(READ "mode" mode)
-if(EXISTS "assets/material.stamp")
+if(EXISTS "assets/materials/material.stamp")
   message(FATAL_ERROR "producer was not forced")
 endif()
 if(mode STREQUAL "fail")
@@ -74,8 +75,13 @@ if(mode STREQUAL "fail")
 elseif(mode STREQUAL "slow")
   execute_process(COMMAND "${CMAKE_COMMAND}" -E sleep 8)
 endif()
+if(NOT EXISTS "asset_catalog.txt")
+  file(COPY_FILE "${CMAKE_CURRENT_LIST_DIR}/seed/asset_catalog.txt" "asset_catalog.txt")
+  file(WRITE "metadata" "fixture")
+endif()
 file(WRITE "artifact" "new")
-file(WRITE "assets/material.stamp" "fixture stamp")
+file(MAKE_DIRECTORY "assets/materials")
+file(WRITE "assets/materials/material.stamp" "fixture stamp")
 )");
     mode("ok");
     auto cmd = quoted(cmake) + L" -S " + quoted(base) + L" -B " + quoted(staging);
@@ -154,7 +160,8 @@ TEST_CASE("asset rebuild: one canonical writer, explicit publication and activat
   CHECK(reader.value()->start(f.guid, f.snapshot).error() == ca::RebuildError::Busy);
   CHECK(host->start(f.unknown, f.snapshot).error() == ca::RebuildError::UnknownAsset);
   CHECK(host->status(ca::RebuildId{f.unknown}).error() == ca::RebuildError::UnknownJob);
-  write(f.staging / "assets/material.stamp", "already current");
+  REQUIRE(fs::create_directory(f.staging / "assets/materials"));
+  write(f.staging / "assets/materials/material.stamp", "already current");
   auto accepted = host->start(f.guid, f.snapshot);
   REQUIRE(accepted.isOk());
   CHECK(accepted.value().state == ca::RebuildState::Running);
@@ -190,6 +197,26 @@ TEST_CASE("asset rebuild: one canonical writer, explicit publication and activat
   const auto partial = f.published / as::toString(f.unknown);
   REQUIRE(fs::create_directory(partial));
   CHECK(AssetRebuildHost::open(selected).isErr());
+}
+
+TEST_CASE("asset rebuild: first material build in a configure-only workspace", "[runtime][asset-rebuild]") {
+  Fixture f(false);
+  REQUIRE(fs::is_regular_file(f.staging / "CMakeCache.txt"));
+  REQUIRE_FALSE(fs::exists(f.staging / "assets/materials"));
+  REQUIRE_FALSE(fs::exists(f.staging / "asset_catalog.txt"));
+  REQUIRE_FALSE(fs::exists(f.staging / "artifact"));
+  auto host = f.host();
+  const auto accepted = host->start(f.guid, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto result = f.complete(*host, accepted.value().id);
+  INFO((result.failure ? result.failure->diagnostic : "no failure"));
+  REQUIRE(result.state == ca::RebuildState::Succeeded);
+  REQUIRE(result.generation);
+  CHECK(fs::is_regular_file(f.staging / "assets/materials/material.stamp"));
+  CHECK_FALSE(fs::exists(f.marker));
+  CHECK_FALSE(host->status({}).value().activeGeneration);
+  CHECK(read(f.seed / "artifact") == "old");
+  CHECK(read(f.published / as::toString(result.generation->value) / "artifact") == "new");
 }
 
 TEST_CASE("asset rebuild: ordinary failure and identity change preserve the seed and permit retry", "[runtime][asset-rebuild]") {
@@ -272,8 +299,11 @@ TEST_CASE("asset rebuild: launch refusals are bounded and retain the newest 16 j
 
 TEST_CASE("asset rebuild: an escaping producer stamp cannot touch the seed", "[runtime][asset-rebuild]") {
   Fixture f;
+  std::string_view stamp;
+  SECTION("escape at the start of the path") { stamp = "../seed/artifact"; }
+  SECTION("escape after a missing directory") { stamp = "missing/../../seed/artifact"; }
   const std::string inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tassets\ta.material.txt\t" +
-      as::toString(f.guid) + "\t../seed/artifact\t-\n";
+      as::toString(f.guid) + "\t" + std::string(stamp) + "\t-\n";
   for (const auto& path : {f.seed, f.staging}) write(path / "assets/producers-Debug.txt", inventory);
   auto host = f.host();
   const auto accepted = host->start(f.guid, f.snapshot);

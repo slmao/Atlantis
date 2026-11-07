@@ -17,6 +17,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <system_error>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -89,20 +90,25 @@ bool contains(const fs::path& root, const fs::path& path) {
 }
 bool overlap(const fs::path& a, const fs::path& b) { return contains(a, b) || contains(b, a); }
 
-// Validate components before using the path. A missing last component is
-// allowed for a stamp that has already been invalidated.
-bool safeRelative(const fs::path& root, const fs::path& relative, bool missingLast = false) {
+// Validate every component, including a missing suffix for paths that have
+// yet to be generated.
+bool safeRelative(const fs::path& root, const fs::path& relative, bool allowMissing = false) {
   if (relative.empty() || relative.has_root_path()) return false;
   auto path = root;
+  bool missing = false;
   for (auto i = relative.begin(); i != relative.end(); ++i) {
     const auto& name = i->native();
     if (name.empty() || name.back() == L'.' || name.back() == L' ' || name.find(L':') != std::wstring::npos)
       return false;
+    if (missing) continue;
     path /= *i;
     const bool last = std::next(i) == relative.end();
     const DWORD attributes = GetFileAttributesW(path.c_str());
-    if (attributes == INVALID_FILE_ATTRIBUTES)
-      return last && missingLast && GetLastError() == ERROR_FILE_NOT_FOUND;
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+      if (!allowMissing || GetLastError() != ERROR_FILE_NOT_FOUND) return false;
+      missing = true;
+      continue;
+    }
     if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) return false;
     if (last == ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)) return false;
   }
@@ -384,7 +390,8 @@ struct AssetRebuildHost::State {
       return fail(Stage::Launch, Code::LaunchFailed, "Configured producer stamp is outside safe staging.", true);
     std::error_code ec;
     fs::remove(staging / work.producer->stamp, ec);
-    if (ec) return fail(Stage::Launch, Code::LaunchFailed, "Cannot invalidate the producer stamp.");
+    if (ec && ec != std::errc::no_such_file_or_directory)
+      return fail(Stage::Launch, Code::LaunchFailed, "Cannot invalidate the producer stamp.");
     if (interrupted()) return timedOut(Stage::Launch);
     if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) return *error;
     if (interrupted()) return timedOut(Stage::Validation);
