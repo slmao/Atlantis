@@ -856,13 +856,21 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
   const auto inventory = fs::path("assets") / ("producers-" + state->config.configuration + ".txt");
   state->inventoryRelative = inventory;
   state->inventoryPath = *stage / inventory;
+  bool readDuringRepair = false;
   if (const auto* optIn = profile->find("importProject")) {
     const auto project = canonicalDirectory(optIn);
     if (!project || !safeProjectRoot(fromUtf8(optIn->asString()), *project) ||
         overlap(*project, seed) || overlap(*project, *stage) || overlap(*project, *publication))
       return R::Err("Import project must be an existing disjoint directory.");
     state->project = *project;
+    const auto markerExists = [](const fs::path& root, std::string_view name) {
+      const auto attributes = GetFileAttributesW((root / name).c_str());
+      return attributes != INVALID_FILE_ATTRIBUTES;
+    };
+    readDuringRepair = state->config.generation &&
+        (markerExists(*stage, kDirty) || markerExists(*project, kProjectDirty));
     for (const auto& tree : {seed, *stage}) {
+      if (tree == *stage && readDuringRepair) continue;
       if (!safeRelative(tree, fs::path(kManagedProject)))
         return R::Err("Both builds must be configured with the import project.");
       const auto configured = readText(tree / kManagedProject);
@@ -870,28 +878,28 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
         return R::Err("Both builds must use the configured import project.");
     }
   }
-  if (!safeRelative(seed, inventory) || !safeRelative(*stage, inventory))
-    return R::Err("The configured asset producer inventory is missing or unsafe.");
+  if (!safeRelative(seed, inventory))
+    return R::Err("The configured seed producer inventory is missing or unsafe.");
   const auto seedInventory = readText(seed / inventory);
-  auto stageInventory = readText(state->inventoryPath);
-  if (!seedInventory || !stageInventory)
+  const auto stageInventory = safeRelative(*stage, inventory) ? readText(state->inventoryPath) : std::nullopt;
+  if (!seedInventory || (!stageInventory && !readDuringRepair))
     return R::Err("Cannot read the configured producer inventories.");
-  auto producers = readProducers(*stageInventory);
-  if (!producers) return R::Err("Invalid configured asset producer inventory.");
+  auto producers = stageInventory ? readProducers(*stageInventory) : std::nullopt;
   if (state->project.empty()) {
-    if (*seedInventory != *stageInventory || !managedRegistrations(*producers).empty())
+    if (!producers || *seedInventory != *stageInventory || !managedRegistrations(*producers).empty())
       return R::Err("Staging must use the same checkout, generator, configuration and asset declarations.");
   } else {
     const auto seedHeader = columns(std::string(inventoryHeader(*seedInventory)));
     if (seedHeader.size() < 2 || overlap(state->project, fromUtf8(seedHeader[1])))
       return R::Err("Import project must be disjoint from the checkout.");
     auto seedView = readManagedView(seed, inventory);
-    if (!seedView || inventoryHeader(*seedInventory) != inventoryHeader(*stageInventory) ||
-        baseProducers(*seedView) != baseProducers(*producers))
+    if (!seedView || (!readDuringRepair && (!producers ||
+        inventoryHeader(*seedInventory) != inventoryHeader(*stageInventory) ||
+        baseProducers(*seedView) != baseProducers(*producers))))
       return R::Err("Managed staging must match the seed's base producers and build configuration.");
     producers = std::move(seedView);
   }
-  state->inventory = std::move(*stageInventory);
+  state->inventory = *seedInventory;
   state->producers = std::move(*producers);
   const std::string buildIdentity = state->inventory.substr(0, state->inventory.find('\n'));
   auto binding = json::Value::object();
@@ -978,7 +986,8 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     }
   }
   if (state->writer && (state->project.empty() || state->projectWriter)) {
-    state->dirty = !safeRelative(*stage, fs::path(kDirty), true) || fs::exists(*stage / kDirty, ec) || static_cast<bool>(ec);
+    state->dirty = readDuringRepair || !safeRelative(*stage, fs::path(kDirty), true) ||
+        fs::exists(*stage / kDirty, ec) || static_cast<bool>(ec);
     if (!state->project.empty()) {
       auto registered = readRegistrations(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
