@@ -395,6 +395,7 @@ std::optional<bool> descendantsStopped(const Handle& job) {
 template<class Interrupted>
 std::optional<End> runBuild(const fs::path& cmake, const fs::path& staging, const std::string& configuration,
                             Interrupted interrupted, bool configure = false) {
+  if (interrupted()) return timedOut(Stage::Pipeline);
   const auto launchFailed = [] { return fail(Stage::Launch, Code::LaunchFailed, "Cannot start contained CMake asset build."); };
   Handle job(CreateJobObjectW(nullptr, nullptr));
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -703,12 +704,12 @@ struct AssetRebuildHost::State {
     fs::remove(staging / stamp, ec);
     if (ec && ec != std::errc::no_such_file_or_directory)
       return failed(IS::Pipeline, IC::LaunchFailed, "Cannot invalidate the managed stamp.", true);
-    auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true);
-    if (!error) error = runBuild(config.cmake, staging, config.configuration, interrupted);
-    if (error) {
-      const auto code = error->failure.code == Code::TimedOut ? IC::TimedOut :
-                        error->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
-      return failed(IS::Pipeline, code, error->failure.diagnostic, error->repair, error->failure.exitCode);
+    auto pipelineError = runBuild(config.cmake, staging, config.configuration, interrupted, true);
+    if (!pipelineError) pipelineError = runBuild(config.cmake, staging, config.configuration, interrupted);
+    if (pipelineError) {
+      const auto code = pipelineError->failure.code == Code::TimedOut ? IC::TimedOut :
+                        pipelineError->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
+      return failed(IS::Pipeline, code, pipelineError->failure.diagnostic, pipelineError->repair, pipelineError->failure.exitCode);
     }
     const auto catalog = readCatalog(staging);
     const auto view = readManagedView(staging, inventoryRelative);
