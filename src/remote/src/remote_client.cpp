@@ -460,7 +460,48 @@ class RemoteAssets final : public connection::AssetConnection {
       return d && d->guid == guid ? d : std::nullopt;
     });
   }
+  ca::RebuildStartResult rebuild(const AssetGuid& guid) override {
+    ATLANTIS_CHECK(guid != AssetGuid{});
+    Value params = Value::object();
+    params.set("asset", codec::encodeAsset(guid));
+    return rebuildRequest<ca::RebuildJob>("assets.rebuild", std::move(params), true, [&guid](const Value& value) {
+      auto job = codec::decodeRebuildJob(value);
+      return job && job->asset == guid && job->state == ca::RebuildState::Running ? job : std::nullopt;
+    });
+  }
+  ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override {
+    ATLANTIS_CHECK(!id || id->value != AssetGuid{});
+    Value params = Value::object();
+    if (id) params.set("jobId", codec::encodeAsset(id->value));
+    return rebuildRequest<ca::RebuildStatus>("assets.rebuildStatus", std::move(params), false, [id](const Value& value) {
+      auto status = codec::decodeRebuildStatus(value);
+      return status && (!id || (status->job && status->job->id == *id)) ? status : std::nullopt;
+    });
+  }
  private:
+  template<class T, class Decode>
+  Result<T, ca::RebuildError> rebuildRequest(std::string_view method, Value params, bool start, Decode decode) const {
+    using R = Result<T, ca::RebuildError>;
+    const auto envelope = state_.awaitResponse(state_.send(method, std::move(params)));
+    if (envelope) {
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error) {
+        const auto* ok = result->find("ok");
+        const auto* err = result->find("err");
+        if (ok && !err) { if (auto v = decode(*ok)) return R::Ok(std::move(*v)); }
+        if (err && !ok) { if (auto e = codec::decodeRebuildError(*err, start)) return R::Err(*e); }
+      } else if (error && !result) {
+        const auto* code = error->find("code");
+        const auto* message = error->find("message");
+        if (code && code->isString() && code->asString() == "BadRequest" &&
+            message && message->isString() && message->asString() == "unknown or malformed asset query")
+          return R::Err(ca::RebuildError::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(ca::RebuildError::Unavailable);
+  }
   template<class T, class Decode> Result<T, ca::AssetError> query(std::string_view method, Value params, Decode decode) const {
     using R = Result<T, ca::AssetError>;
     const auto v = state_.call(method, std::move(params));

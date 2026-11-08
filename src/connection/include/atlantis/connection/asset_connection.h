@@ -31,6 +31,52 @@ struct AssetDetails {
   std::vector<asset_system::AssetGuid> dependencies;
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
+
+// Canonical GUID values in separate domains from an asset identity.
+struct RebuildId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const RebuildId&, const RebuildId&) = default;
+};
+struct GenerationId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const GenerationId&, const GenerationId&) = default;
+};
+enum class RebuildError : std::uint8_t {
+  Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset, UnsupportedProducer,
+  UnknownJob, Unsupported,
+};
+enum class RebuildState : std::uint8_t { Running, Succeeded, Failed };
+enum class RebuildStage : std::uint8_t { Launch, Pipeline, Validation, Publication };
+enum class RebuildFailureCode : std::uint8_t {
+  LaunchFailed, BuildFailed, InvalidOutput, IdentityChanged, PublishFailed, TimedOut,
+};
+[[nodiscard]] std::string_view toString(RebuildError value) noexcept;
+[[nodiscard]] std::string_view toString(RebuildState value) noexcept;
+[[nodiscard]] std::string_view toString(RebuildStage value) noexcept;
+[[nodiscard]] std::string_view toString(RebuildFailureCode value) noexcept;
+[[nodiscard]] bool validFailure(RebuildStage stage, RebuildFailureCode code) noexcept;
+struct RebuildFailure {
+  RebuildStage stage;
+  RebuildFailureCode code;
+  std::string diagnostic;
+  std::optional<std::uint32_t> exitCode;
+  friend bool operator==(const RebuildFailure&, const RebuildFailure&) = default;
+};
+struct RebuildJob {
+  RebuildId id;
+  asset_system::AssetGuid asset;
+  RebuildState state = RebuildState::Running;
+  std::optional<GenerationId> generation;
+  std::optional<RebuildFailure> failure;
+  friend bool operator==(const RebuildJob&, const RebuildJob&) = default;
+};
+struct RebuildStatus {
+  std::optional<GenerationId> activeGeneration;
+  std::optional<RebuildJob> job;
+  friend bool operator==(const RebuildStatus&, const RebuildStatus&) = default;
+};
+using RebuildStartResult = Result<RebuildJob, RebuildError>;
+using RebuildStatusResult = Result<RebuildStatus, RebuildError>;
 }  // namespace assets
 
 // Spec 0081 / ADR-0143: read-only cooked-catalog facts, not GPU residency.
@@ -46,5 +92,13 @@ class AssetConnection {
   // Precondition: guid is non-nil.
   [[nodiscard]] virtual Result<assets::AssetDetails, assets::AssetError> getAsset(
       const asset_system::AssetGuid& guid) const = 0;
+  // Spec 0085. Accepts a non-nil catalog GUID and returns an admission receipt.
+  // Remote failures use Unavailable as a sentinel; check the session first.
+  [[nodiscard]] virtual assets::RebuildStartResult rebuild(const asset_system::AssetGuid&) {
+    return assets::RebuildStartResult::Err(assets::RebuildError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::RebuildStatusResult rebuildStatus(std::optional<assets::RebuildId>) const {
+    return assets::RebuildStatusResult::Err(assets::RebuildError::Unavailable);
+  }
 };
 }  // namespace atlantis::connection

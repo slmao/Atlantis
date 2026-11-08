@@ -27,5 +27,17 @@ public static class AssetCodecSuite
         t.Check(Codec.DecodeAssetDetails(missingSchema) is null, "sourceSchema is required even when absent natively");
         t.Check(Codec.DecodeAssetDetails(missingSchema.Set("sourceSchema", JsonValue.Number((ulong)uint.MaxValue))) is { ArtifactSchema: 0, SourceSchema: uint.MaxValue }, "both uint32 boundaries");
         t.Check(Codec.DecodeAssetDetails(missingSchema.Set("sourceSchema", JsonValue.Number(-1L))) is null, "negative schema refused");
+        var running = new A.RebuildJob(new(guid), guid, A.RebuildState.Running);
+        t.Equal<A.RebuildJob?>(running, Codec.DecodeRebuildJob(Codec.Encode(running)), "rebuild running receipt");
+        t.Check(Codec.DecodeRebuildJob(Codec.Encode(running).Set("failure", JsonValue.Null())) is null,
+                "running does not carry failure, including explicit null");
+        var failed = running with { State = A.RebuildState.Failed,
+            Failure = new(A.RebuildStage.Pipeline, A.RebuildFailureCode.BuildFailed, "bad input", uint.MaxValue) };
+        var status = new A.RebuildStatus(null, failed);
+        t.Equal<A.RebuildStatus?>(status, Codec.DecodeRebuildStatus(Codec.Encode(status)), "rebuild status with full exit code");
+        t.Check(Codec.DecodeRebuildJob(Codec.Encode(failed with { Failure = failed.Failure! with { Stage = A.RebuildStage.Validation } })) is null,
+                "closed failure stage/code pair");
+        t.Check(Codec.DecodeRebuildError(JsonValue.String("UnknownJob"), true) is null &&
+                Codec.DecodeRebuildError(JsonValue.String("Busy"), false) is null, "closed operation refusal sets");
     }
 }

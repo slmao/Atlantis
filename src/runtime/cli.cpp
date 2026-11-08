@@ -15,6 +15,7 @@ constexpr std::string_view kUsageText =
     "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]] "
     "[--editor]\n"
     "                        [--parent-window <handle>] [--no-pick-geometry]\n"
+    "                        [--asset-build-profile <file> [--asset-generation <guid>]]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
@@ -118,6 +119,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   std::string_view execScript;
   std::string_view listenPort;
   std::string_view sessionFile;
+  std::optional<std::string> assetBuildProfile;
+  std::optional<atlantis::asset_system::AssetGuid> assetGeneration;
   // Spec 0059 / ADR-0117 D1: --benchmark and its options.
   int benchmarkCount = 0, warmupCount = 0, framesCount = 0, resolutionCount = 0, variantCount = 0;
   int jsonCount = 0, outputCount = 0, baselineCount = 0, seriesCount = 0, gpuTimingCount = 0;
@@ -138,6 +141,15 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++sceneCount > 1) return makeError("--scene supplied more than once");
       if (i + 1 >= argc) return makeError("--scene requires a value");
       requestedSceneName = argv[++i];
+    } else if (arg == "--asset-build-profile") {
+      if (assetBuildProfile || i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
+        return makeError("--asset-build-profile requires one file");
+      assetBuildProfile = argv[++i];
+    } else if (arg == "--asset-generation") {
+      if (assetGeneration || i + 1 >= argc) return makeError("--asset-generation requires one GUID");
+      const auto parsed = atlantis::asset_system::parseAssetGuid(argv[++i]);
+      if (parsed.isErr()) return makeError("--asset-generation requires a non-nil canonical GUID");
+      assetGeneration = parsed.value();
     } else if (arg == "--exec") {
       if (++execCount > 1) return makeError("--exec supplied more than once");
       if (i + 1 >= argc) return makeError("--exec requires a value");
@@ -297,6 +309,9 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   if (editorCount > 0 && execCount > 0) return makeError("--editor and --exec may not be combined");
   // Spec 0064 / ADR-0126 D2: the child window is a host's Viewport; the
   // in-process editor has its own window and layout.
+  if (assetGeneration && !assetBuildProfile) return makeError("--asset-generation requires --asset-build-profile");
+  if (assetBuildProfile && (benchmarkCount || gateCount || canaryCount || helpCount || listScenesCount))
+    return makeError("--asset-build-profile is only available when running a scene");
   if (parentWindowCount > 0 && editorCount > 0) return makeError("--parent-window and --editor may not be combined");
   if ((parentWindowCount > 0 || noPickGeometryCount > 0) &&
       (benchmarkCount > 0 || gateCount > 0 || canaryCount > 0 || helpCount > 0 || listScenesCount > 0)) {
@@ -589,6 +604,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
     result.parentWindow = value;
   }
   result.noPickGeometry = noPickGeometryCount > 0;
+  result.assetBuildProfile = std::move(assetBuildProfile);
+  result.assetGeneration = assetGeneration;
   return result;
 }
 

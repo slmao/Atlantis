@@ -115,6 +115,19 @@ function(atlantis_catalog_guid out_var)
   set(${out_var} "${CMAKE_MATCH_1}" PARENT_SCOPE)
 endfunction()
 
+# Private Windows rebuild inventory. The configured graph remains the authority
+# for each producer and its stamp; this file contains no executable recipe.
+function(_atlantis_register_asset_producer kind root source stamp generated)
+  atlantis_catalog_guid(root_guid ROOT "${root}" PATH "${source}")
+  file(RELATIVE_PATH relative_stamp "${CMAKE_BINARY_DIR}" "${stamp}")
+  set(relative_source "-")
+  if(NOT generated STREQUAL "")
+    file(RELATIVE_PATH relative_source "${CMAKE_BINARY_DIR}" "${generated}")
+  endif()
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_PRODUCERS
+    "${kind}	${root}	${source}	${root_guid}	${relative_stamp}	${relative_source}")
+endfunction()
+
 # Plan 0047 P15: where this build assembles its catalog (the Runtime's
 # ATLANTIS_RUNTIME_ASSET_CATALOG_PATH and every test's ATLANTIS_ASSET_CATALOG_PATH).
 set(ATLANTIS_ASSET_CATALOG_PATH "${CMAKE_BINARY_DIR}/asset_catalog.txt" CACHE INTERNAL
@@ -166,6 +179,7 @@ function(atlantis_add_static_mesh_asset)
 
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "mesh\tassets\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(mesh assets "${ARG_SOURCE}" "${stamp}" "")
 
   # Exposed to the caller (e.g. Step 6's fixture consumer) so it can
   # add_dependencies() on the artifact without hand-reconstructing this
@@ -208,6 +222,7 @@ function(atlantis_add_scene_asset)
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "scene\tassets\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(scene assets "${ARG_SOURCE}" "${stamp}" "")
 
   atlantis_catalog_guid(scene_guid ROOT assets PATH ${ARG_SOURCE})
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
@@ -273,6 +288,8 @@ function(atlantis_add_imported_scene)
   # content:<content-root name>/<glTF file name>.
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS
     "gltf_import\tcontent\t${content_root_name}/${gltf_name}")
+  _atlantis_register_asset_producer(gltf_import content "${content_root_name}/${gltf_name}" "${stamp}"
+    "${import_dir}/${ARG_NAME}/${ARG_NAME}.scene.txt")
 
   set(ATLANTIS_${ARG_NAME}_scene_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -343,6 +360,7 @@ function(atlantis_add_texture_asset)
   # rejects as DuplicateGuid (Plan 0047 P13).
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "texture\tassets\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(texture assets "${ARG_SOURCE}" "${stamp}" "")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
@@ -378,6 +396,7 @@ function(atlantis_add_environment_asset)
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "environment\tassets\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(environment assets "${ARG_SOURCE}" "${stamp}" "")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
@@ -415,6 +434,7 @@ function(atlantis_add_material_asset)
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
   set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\tassets\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(material assets "${ARG_SOURCE}" "${stamp}" "")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)
@@ -440,6 +460,11 @@ function(_atlantis_add_asset_catalog_target)
   set(fragment_list "${CMAKE_BINARY_DIR}/assets/catalog_fragments.txt")
   list(JOIN fragments "\n" fragments_text)
   file(GENERATE OUTPUT "${fragment_list}" CONTENT "${fragments_text}\n")
+
+  get_property(producers GLOBAL PROPERTY ATLANTIS_ASSET_PRODUCERS)
+  list(JOIN producers "\n" producer_text)
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/assets/producers-$<CONFIG>.txt"
+    CONTENT "atlantis.asset-producers/1\t${CMAKE_SOURCE_DIR}\t${CMAKE_GENERATOR}\t${CMAKE_GENERATOR_PLATFORM}\t$<CONFIG>\t${ATLANTIS_BISTRO_CONTENT_DIR}\n${producer_text}\n")
 
   set(catalog "${CMAKE_BINARY_DIR}/asset_catalog.txt")
   set(closure "${CMAKE_BINARY_DIR}/integrated_showcase_demo.catalog.txt")

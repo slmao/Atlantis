@@ -1,9 +1,9 @@
 # ADR 0146: Managed Asset Rebuild and Generation Publication
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-07
-- **Deciders:** Pending joint review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** 2026-11-08, [joint ruling](https://github.com/slmao/Atlantis/pull/333#issuecomment-6709726017) on `9e91e96`. Design #333 manually merged as `a35224d`.
 - **Related Spec:** [Spec 0085](../specs/0085-shared-asset-rebuild.md)
 - **Related ADRs:** Extends [ADR-0098](0098-asset-catalog-and-catalog-based-resolution.md),
   [ADR-0106](0106-attachable-runtime-transport-and-control.md),

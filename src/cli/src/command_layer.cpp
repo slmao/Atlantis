@@ -733,6 +733,66 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   // Plan 0065 P6: scene open | nodes | get | set | create | destroy | add |
   // remove | parent | camera | apply | save (scene tx is the invocation's).
   if (t[0] == "scene") return runScene(t, line);
+  if (t[0] == "assets") {
+    namespace ca = connection::assets;
+    const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
+    const bool start = t.size() == 3 && t[1] == "rebuild";
+    if (!start && !((t.size() == 2 || t.size() == 3) && t[1] == "rebuild-status"))
+      return failed(command, usageError("assets rebuild <GUID> | assets rebuild-status [<JobId>]"));
+    std::optional<asset_system::AssetGuid> id;
+    if (t.size() == 3) {
+      const auto parsed = asset_system::parseAssetGuid(t[2]);
+      if (parsed.isErr()) return failed(command, usageError("expected a non-nil canonical GUID"));
+      id = parsed.value();
+    }
+    auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+    const auto refuse = [&](ca::RebuildError error) {
+      const std::string text(ca::toString(error));
+      return failed(command, plainError(text, ErrorCategory::Refused, text));
+    };
+    if (!endpoint) return refuse(ca::RebuildError::Unavailable);
+    const auto jobJson = [](const ca::RebuildJob& job) {
+      Value result = Value::object();
+      result.set("id", Value::string(asset_system::toString(job.id.value)));
+      result.set("asset", Value::string(asset_system::toString(job.asset)));
+      result.set("state", Value::string(std::string(ca::toString(job.state))));
+      if (job.generation) result.set("generation", Value::string(asset_system::toString(job.generation->value)));
+      if (job.failure) {
+        Value failure = Value::object();
+        failure.set("stage", Value::string(std::string(ca::toString(job.failure->stage))));
+        failure.set("code", Value::string(std::string(ca::toString(job.failure->code))));
+        failure.set("diagnostic", Value::string(job.failure->diagnostic));
+        if (job.failure->exitCode)
+          failure.set("exitCode", Value::number(static_cast<std::uint64_t>(*job.failure->exitCode)));
+        result.set("failure", std::move(failure));
+      }
+      return result;
+    };
+    if (start) {
+      const auto accepted = endpoint->rebuild(*id);
+      if (accepted.isErr()) return refuse(accepted.error());
+      auto result = jobJson(accepted.value());
+      auto human = json::write(result) + "\n";
+      return done(command, std::move(human), std::move(result));
+    }
+    const auto queried = endpoint->rebuildStatus(id ? std::optional{ca::RebuildId{*id}} : std::nullopt);
+    if (queried.isErr()) return refuse(queried.error());
+    const auto& status = queried.value();
+    Value result = Value::object();
+    result.set("activeGeneration", status.activeGeneration
+        ? Value::string(asset_system::toString(status.activeGeneration->value)) : Value());
+    result.set("job", status.job ? jobJson(*status.job) : Value());
+    auto human = json::write(result) + "\n";
+    if (status.job && status.job->failure) {
+      const auto& failure = *status.job->failure;
+      auto reply = failed(command, plainError(std::string(ca::toString(failure.code)), ErrorCategory::Refused,
+                                              failure.diagnostic));
+      reply.result = std::move(result);
+      reply.text = std::move(human);
+      return reply;
+    }
+    return done(command, std::move(human), std::move(result));
+  }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
     if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))

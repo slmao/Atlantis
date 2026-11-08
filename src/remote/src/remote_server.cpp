@@ -537,6 +537,27 @@ struct RemoteServer::State {
       if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
       return response(requestId, std::move(outcome.value()));
     }
+    if (name == "assets.rebuild" || name == "assets.rebuildStatus") {
+      namespace ca = connection::assets;
+      const bool start = name == "assets.rebuild";
+      if (!p.isObject()) return errorResponse(requestId, "BadRequest", "malformed asset rebuild request");
+      const auto* member = p.find(start ? "asset" : "jobId");
+      if (p.asObject().size() != (member ? 1u : 0u))
+        return errorResponse(requestId, "BadRequest", "unexpected asset rebuild parameter");
+      std::optional<asset_system::AssetGuid> guid;
+      if (member) guid = codec::decodeAsset(*member);
+      if ((start || member) && (!guid || *guid == asset_system::AssetGuid{}))
+        return errorResponse(requestId, "BadRequest", "asset rebuild requires a non-nil canonical GUID");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto reply = [&](const auto& result) {
+        return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+            : codec::err(Value::string(std::string(ca::toString(result.error())))));
+      };
+      if (start) return reply(client.assets ? client.assets->rebuild(*guid)
+                                          : ca::RebuildStartResult::Err(ca::RebuildError::Unavailable));
+      return reply(client.assets ? client.assets->rebuildStatus(guid ? std::optional{ca::RebuildId{*guid}} : std::nullopt)
+                                 : ca::RebuildStatusResult::Err(ca::RebuildError::Unavailable));
+    }
     if (name.starts_with("assets.")) {
       std::optional<asset_system::AssetGuid> guid;
       if (!p.isObject() || (name != "assets.list" && name != "assets.get"))

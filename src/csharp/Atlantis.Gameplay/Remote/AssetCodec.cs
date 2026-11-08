@@ -58,4 +58,93 @@ public static partial class Codec
     public static JsonValue Encode(A.AssetError e) => JsonValue.String(e.ToString());
     public static A.AssetError? DecodeAssetError(JsonValue v) => v.IsString ? v.AsString switch
     { "CatalogUnavailable" => A.AssetError.CatalogUnavailable, "UnknownAsset" => A.AssetError.UnknownAsset, _ => null } : null;
+
+    private static T? RebuildToken<T>(JsonValue? value) where T : struct, Enum =>
+        value is { IsString: true } && Enum.TryParse(value.AsString, out T parsed) &&
+        Enum.IsDefined(parsed) && parsed.ToString() == value.AsString ? parsed : null;
+
+    /// <summary>Compatibility response for either well-formed new rebuild operation on a pinned legacy host.</summary>
+    public static bool IsLegacyAssetRebuildRefusal(JsonValue envelope) =>
+        envelope.Find("result") is null && envelope.Find("error") is JsonValue error &&
+        error.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+        error.Find("message") is { IsString: true, AsString: "unknown or malformed asset query" };
+
+    public static A.RebuildError? DecodeRebuildError(JsonValue value, bool start)
+    {
+        A.RebuildError? error = RebuildToken<A.RebuildError>(value);
+        if (error is null or A.RebuildError.Unsupported) return null;
+        return error == A.RebuildError.Unavailable || (error == A.RebuildError.UnknownJob) != start ? error : null;
+    }
+
+    private static AssetGuid? RebuildGuid(JsonValue? value) =>
+        value is not null && DecodeAsset(value) is AssetGuid guid && !guid.IsNil ? guid : null;
+
+    public static A.RebuildJob? DecodeRebuildJob(JsonValue value)
+    {
+        if (RebuildGuid(value.Find("id")) is not AssetGuid id || RebuildGuid(value.Find("asset")) is not AssetGuid asset ||
+            RebuildToken<A.RebuildState>(value.Find("state")) is not A.RebuildState state) return null;
+        JsonValue? g = value.Find("generation"), f = value.Find("failure");
+        if ((g is not null) != (state == A.RebuildState.Succeeded) ||
+            (f is not null) != (state == A.RebuildState.Failed)) return null;
+        A.GenerationId? generation = null;
+        A.RebuildFailure? failure = null;
+        if (g is not null)
+        {
+            if (RebuildGuid(g) is not AssetGuid guid) return null;
+            generation = new(guid);
+        }
+        if (f is not null)
+        {
+            if (RebuildToken<A.RebuildStage>(f.Find("stage")) is not A.RebuildStage stage ||
+                RebuildToken<A.RebuildFailureCode>(f.Find("code")) is not A.RebuildFailureCode code ||
+                f.Find("diagnostic") is not { IsString: true } diagnostic ||
+                System.Text.Encoding.UTF8.GetByteCount(diagnostic.AsString) > 4096) return null;
+            bool valid = code switch
+            {
+                A.RebuildFailureCode.LaunchFailed => stage == A.RebuildStage.Launch,
+                A.RebuildFailureCode.BuildFailed => stage == A.RebuildStage.Pipeline,
+                A.RebuildFailureCode.InvalidOutput or A.RebuildFailureCode.IdentityChanged => stage == A.RebuildStage.Validation,
+                A.RebuildFailureCode.PublishFailed => stage == A.RebuildStage.Publication,
+                A.RebuildFailureCode.TimedOut => true,
+                _ => false,
+            };
+            if (!valid) return null;
+            uint? exit = null;
+            if (f.Find("exitCode") is JsonValue e)
+            {
+                if (!e.TryGetUInt64(out ulong n) || n > uint.MaxValue) return null;
+                exit = (uint)n;
+            }
+            failure = new(stage, code, diagnostic.AsString, exit);
+        }
+        return new(new(id), asset, state, generation, failure);
+    }
+
+    public static A.RebuildStatus? DecodeRebuildStatus(JsonValue value)
+    {
+        if (value.Find("activeGeneration") is not JsonValue a || value.Find("job") is not JsonValue j) return null;
+        AssetGuid? active = a.IsNull ? null : RebuildGuid(a);
+        A.RebuildJob? job = j.IsNull ? null : DecodeRebuildJob(j);
+        if ((!a.IsNull && active is null) || (!j.IsNull && job is null)) return null;
+        return new(active is AssetGuid id ? new A.GenerationId(id) : null, job);
+    }
+
+    public static JsonValue Encode(A.RebuildJob job)
+    {
+        JsonValue value = JsonValue.NewObject().Set("id", Encode(job.Id.Value)).Set("asset", Encode(job.Asset))
+            .Set("state", JsonValue.String(job.State.ToString()));
+        if (job.Generation is A.GenerationId id) value.Set("generation", Encode(id.Value));
+        if (job.Failure is A.RebuildFailure failure)
+        {
+            JsonValue f = JsonValue.NewObject().Set("stage", JsonValue.String(failure.Stage.ToString()))
+                .Set("code", JsonValue.String(failure.Code.ToString())).Set("diagnostic", JsonValue.String(failure.Diagnostic));
+            if (failure.ExitCode is uint code) f.Set("exitCode", JsonValue.Number((ulong)code));
+            value.Set("failure", f);
+        }
+        return value;
+    }
+
+    public static JsonValue Encode(A.RebuildStatus status) => JsonValue.NewObject()
+        .Set("activeGeneration", status.ActiveGeneration is A.GenerationId id ? Encode(id.Value) : JsonValue.Null())
+        .Set("job", status.Job is A.RebuildJob job ? Encode(job) : JsonValue.Null());
 }

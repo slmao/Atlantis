@@ -1,4 +1,5 @@
 #include "asset_host.h"
+#include "asset_rebuild_host.h"
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
@@ -12,8 +13,10 @@ namespace atlantis::runtime {
 namespace as = asset_system;
 namespace ac = connection::assets;
 struct AssetHost::State final : connection::AssetConnection {
-  explicit State(std::string path) : path_(std::move(path)) {}
+  State(std::string path, AssetRebuildHost* rebuild) : path_(std::move(path)), rebuild_(rebuild) {}
   std::string path_;
+  AssetRebuildHost* rebuild_;
+  mutable std::shared_ptr<const as::AssetCatalog> catalog_;
   mutable bool initialized_ = false;
   mutable std::vector<ac::AssetDetails> details_;
   mutable std::vector<ac::AssetSummary> summaries_;
@@ -41,6 +44,7 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
     for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source});
+    if (rebuild_) catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override {
@@ -57,6 +61,15 @@ struct AssetHost::State final : connection::AssetConnection {
                                     [](const auto& d, const auto& key) { return d.guid < key; });
     return it != details_.end() && it->guid == guid ? R::Ok(*it) : R::Err(ac::AssetError::UnknownAsset);
   }
+  ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
+    if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
+    if (auto error = rebuild_->admissionError()) return ac::RebuildStartResult::Err(*error);
+    initialize();
+    return rebuild_->start(guid, catalog_);
+  }
+  ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override {
+    return rebuild_ ? rebuild_->status(id) : ac::RebuildStatusResult::Err(ac::RebuildError::Unavailable);
+  }
 };
 namespace {
 class BorrowedAssets final : public connection::AssetConnection {
@@ -64,11 +77,14 @@ class BorrowedAssets final : public connection::AssetConnection {
   explicit BorrowedAssets(connection::AssetConnection& host) : host_(host) {}
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
+  ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
+  ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
  private:
   connection::AssetConnection& host_;
 };
 }
-AssetHost::AssetHost(std::string path) : state_(std::make_unique<State>(std::move(path))) {}
+AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild)
+    : state_(std::make_unique<State>(std::move(path), rebuild)) {}
 AssetHost::~AssetHost() = default;
 std::unique_ptr<connection::AssetConnection> AssetHost::connect() { return std::make_unique<BorrowedAssets>(*state_); }
 }  // namespace atlantis::runtime

@@ -236,6 +236,26 @@ Runtime catalog. Use `scene schema Renderable` to inspect the declarations.
 On a host without this metadata the chooser keeps its manual type filters.
 A type match can still fail during Runtime apply (Specs 0082 and 0084).
 
+For managed asset rebuild on Windows, configure a dedicated staging build
+from the same checkout, generator, configuration and content options as the
+Runtime build. Create a separate empty publication directory. The local
+profile names the existing absolute directories as JSON, for example
+`{"stagingBuild":"D:/atlantis-stage","publicationRoot":"D:/atlantis-published"}`.
+Keep the Runtime build, staging build and publication root disjoint.
+Launch Runtime or Editor with `--asset-build-profile <file>`. Only its
+coordinator writes the staging build while the profile is active.
+
+Use **Rebuild selected** in Assets or `assets rebuild <GUID>` in the CLI.
+Poll `assets rebuild-status <JobId>` for the published generation or failure.
+Runtime continues using its original files until a new process is launched
+with the same profile and `--asset-generation <GUID>`. Save any hand-authored
+document changes that should survive restart. Imported sources come from the
+selected generation. The local build log is `asset-rebuild.log` in staging.
+For `WorkspaceNeedsRepair`, stop the profile's Runtime processes, verify
+the build descendants have exited, and recreate or validate the staging
+build before clearing `.atlantis-rebuild-dirty`. Keep staging offline until
+repair is complete. Remove old generations only with their consumers stopped.
+
 Authoring apply has two stages: the document snapshot is accepted, then the
 Runtime attempts to load it. Use `scene apply` for a receipt and
 `scene apply-status [id]` to inspect its outcome. Both SDKs and MCP expose

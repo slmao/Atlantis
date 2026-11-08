@@ -66,6 +66,12 @@ internal static class ToolSchemas
         JsonObject shape = Object(("id", Nullable(String))); shape["required"] = new JsonArray();
         return JsonSerializer.SerializeToElement(shape);
     }
+    internal static JsonElement RebuildStatusParameters()
+    {
+        JsonObject shape = Object(("jobId", String));
+        shape["required"] = new JsonArray();
+        return JsonSerializer.SerializeToElement(shape);
+    }
 
     private static JsonObject Object(params (string Name, JsonNode Shape)[] fields)
     {

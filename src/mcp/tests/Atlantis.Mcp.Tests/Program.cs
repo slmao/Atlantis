@@ -30,6 +30,9 @@ internal static partial class Program
     [
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
+        ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.rebuild_status", "assets.rebuildStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
         ("world.list_entities", "connection.listEntities", "{}", $$$"""["{{{Entity}}}"]"""),
         ("world.get_property", "connection.getProperty", "{\"address\":" + WorldAddress + "}", """{"ok":{"u64":"18446744073709551615"}}"""),
         ("world.submit_transaction", "connection.submitTransaction", """{"commands":[]}""", """{"first":18446744073709551615,"count":0}"""),
@@ -125,7 +128,8 @@ internal static partial class Program
             Check(Json.Write(session.Calls[0].Parameters) == Json.Write(Json.Parse(c.Args)), c.Tool + " arguments unchanged");
             CheckForward(result, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
-            Check(c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
+            Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
+                c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
                 description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
                 ? description.Contains("document") : description.Contains("disposable")), c.Tool + " editing model stated");
         }
@@ -134,6 +138,12 @@ internal static partial class Program
         CheckCall("control.set_viewport_camera", """{"camera":null}""", "null");
         CheckCall("control.set_viewport_overlay", """{"overlay":null}""", """{"ok":null}""");
         CheckCall("control.step", """{"request":{"frames":0,"image":null}}""", """{"ok":null}""");
+        string failedJob = """{"ok":{"activeGeneration":null,"job":{"id":"GUID","asset":"GUID","state":"Failed","failure":{"stage":"Pipeline","code":"BuildFailed","diagnostic":"test","exitCode":4}}}}"""
+            .Replace("GUID", Entity, StringComparison.Ordinal);
+        FakeSession failed = new() { Response = "{\"result\":" + failedJob + "}" };
+        CallToolResult failedResult = new ToolRegistry(failed).Invoke(Request("assets.rebuild_status", "{}"));
+        Check(failedResult.IsError == true && failed.Calls.Count == 1, "failed rebuild status is a single tool error");
+        CheckForward(failedResult, failedJob, "failed rebuild preserves job payload");
     }
 
     private static void CheckForward(CallToolResult result, string expected, string context)
@@ -183,6 +193,7 @@ internal static partial class Program
         (string Tool, string Args)[] invalid =
         [
             ("assets.list", """{"extra":1}"""), ("assets.get", "{}"), ("assets.get", """{"guid":1}"""),
+            ("assets.rebuild", "{}"), ("assets.rebuild_status", """{"jobId":null}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),
             ("authoring.get_property", "{\"address\":" + WorldAddress + "}"),
@@ -306,12 +317,17 @@ internal static partial class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 36 approved tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 38 approved tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
+            if (c.Method is "assets.rebuild" or "assets.rebuildStatus")
+            {
+                Check(result.IsError == true, "typed rebuild tool rejects the non-DTO echo response");
+                continue;
+            }
             Check(result.IsError != true, "MCP tools/call " + c.Tool + " succeeds");
             CheckForward(result, expected, "MCP dispatch " + c.Tool);
         }

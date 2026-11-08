@@ -38,6 +38,7 @@ constexpr std::string_view kUsage =
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
+    "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
@@ -347,6 +348,11 @@ int Invocation::finish(Reply reply) {
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
       failure->text = "error: " + failure->message;
     }
+    if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {
+      failure->message += checked.command == "assets rebuild" ? "; rebuild admission unknown"
+                                                            : "; rebuild outcome unknown";
+      failure->text = "error: " + failure->message;
+    }
     if (const auto deferred = layer_.takeDeferredApply()) {
       const std::string id = connection::authoring::toString(deferred->id);
       if (!failure->subject.isObject()) failure->subject = Value::object();
@@ -387,6 +393,7 @@ int Invocation::finish(Reply reply) {
 
 int Invocation::repl(std::istream& in) {
   deferredApplyExitCode_ = 0;
+  int rebuildExitCode = 0;
   std::string line;
   while (true) {
     err_ << "atlantis> " << std::flush;
@@ -394,10 +401,11 @@ int Invocation::repl(std::istream& in) {
     const std::vector<std::string_view> tokens = tokenize(line);
     if (tokens.empty()) continue;
     if (tokens.size() == 1 && (tokens[0] == "exit" || tokens[0] == "quit")) break;
-    (void)runTokens(tokens, line);
+    const int code = runTokens(tokens, line);
+    if (tokens[0] == "assets") rebuildExitCode = std::max(rebuildExitCode, code);
   }
   err_ << '\n' << std::flush;
-  return deferredApplyExitCode_;
+  return std::max(deferredApplyExitCode_, rebuildExitCode);
 }
 
 }  // namespace atlantis::cli

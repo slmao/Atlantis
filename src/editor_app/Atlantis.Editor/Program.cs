@@ -50,6 +50,7 @@ public static class Program
         string scene = "integrated_showcase_demo";
         string? outPath = null;
         string? sessionPath = null;
+        string? assetBuildProfile = null, assetGeneration = null;
         int measureFrames = 0;
         bool smoke = false;
         bool measureEdit = false;
@@ -73,6 +74,8 @@ public static class Program
             {
                 case "--runtime": runtime = Next(); break;
                 case "--scene": scene = Next(); break;
+                case "--asset-build-profile": assetBuildProfile = Next(); break;
+                case "--asset-generation": assetGeneration = Next(); break;
                 case "--out": outPath = Next(); break;
                 case "--session": sessionPath = Next(); break;
                 case "--measure-frames": measureFrames = int.Parse(Next(), System.Globalization.CultureInfo.InvariantCulture); break;
@@ -106,6 +109,11 @@ public static class Program
             }
         }
 
+        if (assetGeneration is not null && (assetBuildProfile is null ||
+            !Atlantis.Gameplay.AssetGuid.TryParse(assetGeneration, out var generation) || generation.IsNil))
+            return Usage("--asset-generation requires a canonical GUID and --asset-build-profile");
+        if (assetBuildProfile is not null && (smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
+            return Usage("--asset-build-profile is for the ordinary editor launch");
         if (measureFrames > 0)
         {
             if (sessionPath is null) return Usage("--measure-frames needs --session <session file>");
@@ -124,6 +132,8 @@ public static class Program
 
         var options = new EditorOptions(runtime, scene)
         {
+            AssetBuildProfile = assetBuildProfile is null ? null : Path.GetFullPath(assetBuildProfile),
+            AssetGeneration = assetGeneration,
             MeasureDrag = measureDrag,
             AttachSession = attach is null ? null : Path.GetFullPath(attach),
             DriveDrags = drive,
@@ -146,7 +156,7 @@ public static class Program
     {
         Console.Error.WriteLine("Atlantis.Editor: " + why);
         Console.Error.WriteLine(
-            "usage: Atlantis.Editor [--runtime <exe>] [--scene <name>]\n" +
+            "usage: Atlantis.Editor [--runtime <exe>] [--scene <name>] [--asset-build-profile <file> [--asset-generation <guid>]]\n" +
             "       Atlantis.Editor --smoke [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
             "       Atlantis.Editor --measure-edit [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
             "       Atlantis.Editor --measure-frames <n> --session <session file> [--out <file>]\n" +

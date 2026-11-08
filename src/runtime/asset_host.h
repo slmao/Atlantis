@@ -6,12 +6,13 @@
 #include <string>
 
 namespace atlantis::runtime {
+class AssetRebuildHost;
 // Spec 0081 R3: executable-private, frame-thread-only host. Construction and
 // connect do no I/O. The first query fixes Ready/Unavailable until destruction.
 // Connections borrow this host; destroy them first. No RuntimeApplication seam.
 class AssetHost {
  public:
-  explicit AssetHost(std::string catalogPath);
+  explicit AssetHost(std::string catalogPath, AssetRebuildHost* rebuild = nullptr);
   ~AssetHost();
   AssetHost(const AssetHost&) = delete;
   AssetHost& operator=(const AssetHost&) = delete;

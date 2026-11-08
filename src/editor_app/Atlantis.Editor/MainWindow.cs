@@ -35,12 +35,15 @@ using Avalonia.Layout;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
+using Atlantis.Gameplay.Assets;
 using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
 
 public sealed record EditorOptions(string RuntimePath, string Scene)
 {
+    public string? AssetBuildProfile { get; init; }
+    public string? AssetGeneration { get; init; }
     // Plan 0066 M1: the input investigation's options (measurement-only).
     public bool MeasureDrag { get; init; }
     public string? AttachSession { get; init; }
@@ -103,6 +106,13 @@ public sealed class MainWindow : Window
     private readonly AssetBrowser _assetBrowser = new();
     private readonly ListBox _assetsList = new() { Height = 230 };
     private readonly TextBlock _assetsState = new();
+    private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
+    private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
+    private readonly DispatcherTimer _rebuildPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private RebuildId? _rebuildJob;
+    private GenerationId? _activeAssetGeneration;
+    private bool _rebuildPending, _rebuildRunning;
     private readonly StackPanel _assetDetails = new() { Spacing = 4 };
     private bool _assetsSync;
     private readonly TabControl _assetTabs = new();
@@ -335,7 +345,8 @@ public sealed class MainWindow : Window
             return;
         }
         ulong parent = (ulong)window.Handle.ToInt64();
-        var launch = new RuntimeLaunch(_options.RuntimePath, _options.Scene, parent, _workDirectory);
+        var launch = new RuntimeLaunch(_options.RuntimePath, _options.Scene, parent, _workDirectory)
+        { AssetBuildProfile = _options.AssetBuildProfile, AssetGeneration = _options.AssetGeneration };
         Task.Run(() =>
         {
             RuntimeProcess runtime = RuntimeProcess.Start(launch);
@@ -362,6 +373,8 @@ public sealed class MainWindow : Window
         ++_referenceLaunch;
         _referenceWindow?.Close(); _referenceWindow = null;
         _referenceBusy = false; _referenceSessionFailed = false;
+        _rebuildPoll.Stop(); _rebuildJob = null; _activeAssetGeneration = null;
+        _rebuildPending = _rebuildRunning = false; _rebuildState.Text = "";
         _assetBrowser.Disconnect();
         RenderAssets();
         ViewportWindow? window = _viewport.Window;
@@ -389,12 +402,18 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             OnConnected(snapshot);
+            UpdateRebuildButtons();
             if (_assetTabs.SelectedIndex == 1) LoadAssets();
         };
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            _rebuildPoll.Stop();
+            if (_rebuildPending || _rebuildRunning)
+                _rebuildState.Text = _rebuildJob is RebuildId job ? $"Rebuild {job} outcome unknown." : "Rebuild admission unknown.";
+            _rebuildPending = _rebuildRunning = false;
+            UpdateRebuildButtons();
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
             _referenceWindow?.Invalidate("the session failed");
             _referenceBusy = false; ++_referenceLaunch; UpdateReferenceButtons();
@@ -792,7 +811,14 @@ public sealed class MainWindow : Window
         panel.Children.Add(_assetsList);
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
-        panel.Children.Add(copy); panel.Children.Add(_assetDetails);
+        panel.Children.Add(copy);
+        _rebuildStart.Click += (_, _) => StartAssetRebuild();
+        _rebuildRefresh.Click += (_, _) => ReadRebuildStatus();
+        _rebuildPoll.Tick += (_, _) => ReadRebuildStatus();
+        panel.Children.Add(_rebuildStart);
+        panel.Children.Add(_rebuildRefresh);
+        panel.Children.Add(_rebuildState);
+        panel.Children.Add(_assetDetails);
         return new ScrollViewer { Content = panel };
     }
     private void LoadAssets()
@@ -821,12 +847,76 @@ public sealed class MainWindow : Window
         _assetsSync = true;
         try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
         finally { _assetsSync = false; }
+        UpdateRebuildButtons();
         _assetDetails.Children.Clear();
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
         _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private void UpdateRebuildButtons()
+    {
+        bool available = _worker is not null && !_referenceSessionFailed && !_rebuildPending;
+        _rebuildStart.IsEnabled = available && !_rebuildRunning && _assetBrowser.State == "Ready" &&
+                                  _assetsList.SelectedItem is AssetSummary;
+        _rebuildRefresh.IsEnabled = available;
+    }
+
+    private void StartAssetRebuild()
+    {
+        if (!_rebuildStart.IsEnabled || _worker is not { } worker ||
+            _assetsList.SelectedItem is not AssetSummary selected) return;
+        _rebuildPending = true; _rebuildJob = null;
+        _rebuildState.Text = "Requesting rebuild…";
+        UpdateRebuildButtons();
+        worker.RebuildAsset(selected.Guid, result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _rebuildPending = false;
+            if (result.IsOk) ShowRebuild(result.Value!);
+            else _rebuildState.Text = "Rebuild refused: " + result.Error;
+            UpdateRebuildButtons();
+        });
+    }
+
+    private void ReadRebuildStatus()
+    {
+        if (!_rebuildRefresh.IsEnabled || _worker is not { } worker) return;
+        _rebuildPending = true;
+        UpdateRebuildButtons();
+        worker.QueryRebuild(_rebuildJob, result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _rebuildPending = false;
+            if (result.IsOk)
+            {
+                _activeAssetGeneration = result.Value!.ActiveGeneration;
+                ShowRebuild(result.Value.Job);
+            }
+            else
+            {
+                _rebuildPoll.Stop(); _rebuildRunning = false;
+                if (result.Error == RebuildError.UnknownJob) _rebuildJob = null;
+                _rebuildState.Text = "Rebuild status: " + result.Error;
+            }
+            UpdateRebuildButtons();
+        });
+    }
+
+    private void ShowRebuild(RebuildJob? job)
+    {
+        _rebuildJob = job?.Id;
+        _rebuildRunning = job?.State == RebuildState.Running;
+        if (_rebuildRunning) _rebuildPoll.Start(); else _rebuildPoll.Stop();
+        string state = job is null ? "No admitted job" : $"Rebuild {job.Id} · {job.State}";
+        if (job?.Failure is RebuildFailure failure)
+            state += $" · {failure.Stage}/{failure.Code}: {failure.Diagnostic}";
+        if (job?.Generation is GenerationId published)
+            state += $" · published {published}. Restart Runtime explicitly with --asset-generation {published}.";
+        if (_activeAssetGeneration is GenerationId active) state += $" Active generation: {active}.";
+        _rebuildState.Text = state;
     }
 
     private void OnInspectorChanged(InspectorSnapshot snapshot)
@@ -1086,6 +1176,7 @@ public sealed class MainWindow : Window
     private void Shutdown()
     {
         _uiTicker.Stop();
+        _rebuildPoll.Stop();
         ++_referenceLaunch; _referenceWindow?.Close(); _referenceWindow = null;
         if (!_driving) WriteDragReport();  // a manual run's report (a driven run writes its own)
         _worker?.Dispose();
