@@ -180,6 +180,25 @@ public static partial class Program
         var status = await Task.Run(() => observer.Assets.ImportStatus());
         checks.Add(new("SDK reads the selected import generation",
             status.IsOk && status.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration));
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_INBOX_NAME") is string inbox)
+        {
+            var tabs = NameUiField<TabControl>(window, "_assetTabs")!;
+            tabs.SelectedIndex = 1;
+            NameUiField<TextBox>(window, "_importName")!.Text = inbox;
+            var register = NameUiField<Button>(window, "_importRegister")!;
+            await NameUiWait(() => register.IsEnabled, "import action is available");
+            register.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var display = NameUiField<TextBlock>(window, "_importState")!;
+            await NameUiWait(() => display.Text?.Contains(" · Succeeded", StringComparison.Ordinal) == true,
+                "Assets panel observes the published import", 150);
+            var observed = await Task.Run(() => observer.Assets.ImportStatus());
+            checks.Add(new("Assets panel and SDK agree on the job and published generation",
+                observed.IsOk && observed.Value?.Job is { Generation: GenerationId published } job && job.Name == inbox &&
+                display.Text!.Contains(job.Id.ToString(), StringComparison.Ordinal) &&
+                display.Text.Contains("--asset-generation " + published, StringComparison.Ordinal) &&
+                observed.Value.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration));
+            tabs.SelectedIndex = 0;
+        }
         var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
         var mesh = assets.Single(a => a.Source == "content:managed_sample/source.gltf#mesh/0/0");
         var schema = await Task.Run(() => observer.Authoring.Schema);

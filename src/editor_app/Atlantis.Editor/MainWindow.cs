@@ -997,7 +997,7 @@ public sealed class MainWindow : Window
         _importJob = job?.Id;
         _importRunning = job?.State == RebuildState.Running;
         if (_importRunning) _importPoll.Start(); else _importPoll.Stop();
-        string text = job is null ? "No admitted import" : $"Import {job.Name} · {job.State}";
+        string text = job is null ? "No admitted import" : $"Import {job.Name} ({job.Id}) · {job.State}";
         if (job?.Failure is ImportFailure failure)
         {
             text += $" · {failure.Stage}/{failure.Code}: {failure.Diagnostic} · registration {failure.Registration}";
