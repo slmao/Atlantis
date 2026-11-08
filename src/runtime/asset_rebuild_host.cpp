@@ -923,6 +923,10 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     const fs::path selected = *publication / as::toString(generation->value);
     if (!realDirectory(selected) || !safeRelative(selected, fs::path(kManifest)))
       return R::Err("Unknown, incomplete or foreign asset generation.");
+    const auto selectedManifest = readJson(selected / kManifest);
+    if (!selectedManifest || (state->project.empty() &&
+        *selectedManifest != manifest(state->owner, *generation, state->producers)))
+      return R::Err("Unknown, incomplete or foreign asset generation.");
     const auto catalog = readCatalog(selected);
     if (!catalog) return R::Err("Incomplete asset generation files.");
     if (!state->project.empty()) {
@@ -934,9 +938,10 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       state->producers = std::move(*frozen);
     }
     const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
-    if (readJson(selected / kManifest) != manifest(state->owner, *generation, state->producers, managedInventory) ||
-        !outputFiles(selected, *catalog, state->producers))
+    if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory))
       return R::Err("Unknown, incomplete or foreign asset generation.");
+    if (!outputFiles(selected, *catalog, state->producers))
+      return R::Err("Incomplete asset generation files.");
     state->active = selected / kCatalog;
   }
   const fs::path lock = *stage / ".atlantis-rebuild-lock";
