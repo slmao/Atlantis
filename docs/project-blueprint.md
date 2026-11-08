@@ -995,8 +995,12 @@ milestone being listed does not authorize starting it — see Section 1.
   the [implementation](https://github.com/slmao/Atlantis/pull/332) is merged.
   [Spec 0085](specs/0085-shared-asset-rebuild.md) and
   [Plan 0085](plans/0085-shared-asset-rebuild.md) cover shared rebuild of
-  existing producers with isolated publication and explicit Runtime restart.
-  Preview, new asset registration and broader pipeline management remain future work.
+  existing producers with isolated publication and explicit Runtime restart,
+  delivered in [PR #334](https://github.com/slmao/Atlantis/pull/334).
+  [Spec 0086](specs/0086-new-asset-import.md) and
+  [Plan 0086](plans/0086-new-asset-import.md) are in joint review for managed
+  import and registration of a first static-mesh glTF source.
+  Preview and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
