@@ -1,3 +1,11 @@
+if(WIN32)
+  set(ATLANTIS_MANAGED_IMPORT_ROOT "" CACHE PATH "Optional local managed import project")
+  if(ATLANTIS_MANAGED_IMPORT_ROOT)
+    include("${CMAKE_SOURCE_DIR}/cmake/AtlantisManagedImports.cmake")
+    atlantis_add_managed_imports()
+  endif()
+endif()
+
 # Plan 0012 Step 4b: the one static mesh asset this Plan ships --
 # transcribed exactly from
 # tests/image_regression/fixture/minimal_cube_fixture.cpp's own

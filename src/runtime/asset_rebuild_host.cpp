@@ -5,13 +5,16 @@
 #include <windows.h>
 #include <objbase.h>
 
+#include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/log.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <exception>
 #include <fstream>
 #include <iterator>
 #include <map>
@@ -35,6 +38,10 @@ constexpr std::string_view kCatalog = "asset_catalog.txt";
 constexpr std::string_view kManifest = "generation.json";
 constexpr std::string_view kDirty = ".atlantis-rebuild-dirty";
 constexpr std::string_view kOwner = ".atlantis-rebuild-profile";
+constexpr std::string_view kManagedProject = "assets/managed-project.txt";
+constexpr std::string_view kPendingSelection = "assets/managed-pending.txt";
+constexpr std::string_view kManagedSource = "assets/managed-catalog-source.txt";
+constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
 
 class Handle {
  public:
@@ -138,6 +145,17 @@ std::optional<fs::path> canonicalDirectory(const json::Value* value) {
   return path;
 }
 
+bool safeProjectRoot(const fs::path& configured, const fs::path& canonical) {
+  const auto normalized = configured.lexically_normal();
+  if (!contains(normalized, canonical) || !contains(canonical, normalized)) return false;
+  auto path = canonical;
+  while (path.has_relative_path()) {
+    if (!realDirectory(path)) return false;
+    path = path.parent_path();
+  }
+  return true;
+}
+
 std::vector<std::string> columns(const std::string& line) {
   std::istringstream row(line);
   std::vector<std::string> out;
@@ -149,6 +167,7 @@ struct Producer {
   as::CatalogAssetType type;
   fs::path stamp;
   fs::path generated;
+  friend bool operator==(const Producer&, const Producer&) = default;
 };
 using Producers = std::map<std::string, Producer, std::less<>>;
 std::optional<Producers> readProducers(const std::string& data) {
@@ -190,11 +209,118 @@ std::optional<as::AssetCatalog> readCatalog(const fs::path& root) {
   auto parsed = as::parseAssetCatalog(*text, utf8(root));
   return parsed.isOk() ? std::optional{std::move(parsed.value())} : std::nullopt;
 }
-bool matchesIdentity(const as::AssetCatalog& a, const as::AssetCatalog& b) {
-  if (a.size() != b.size()) return false;
+bool retainsIdentity(const as::AssetCatalog& a, const as::AssetCatalog& b) {
   for (const auto& record : a.records()) {
     const auto* other = b.find(record.guid);
     if (!other || record.type != other->type || as::toString(record.source) != as::toString(other->source)) return false;
+  }
+  return true;
+}
+
+using Registrations = std::map<std::string, as::AssetGuid, std::less<>>;
+
+std::string managedSourceKey(std::string_view name) {
+  return "content:managed_" + std::string(name) + "/source.gltf";
+}
+std::optional<std::string_view> managedName(std::string_view source) {
+  constexpr std::string_view prefix = "content:managed_";
+  constexpr std::string_view suffix = "/source.gltf";
+  if (!source.starts_with(prefix) || !source.ends_with(suffix)) return std::nullopt;
+  const auto name = source.substr(prefix.size(), source.size() - prefix.size() - suffix.size());
+  if (!ca::validImportName(name)) return std::nullopt;
+  return name;
+}
+Registrations managedRegistrations(const Producers& producers) {
+  Registrations result;
+  for (const auto& [key, producer] : producers)
+    if (const auto name = managedName(key)) result.emplace(*name, producer.root);
+  return result;
+}
+Producers baseProducers(Producers producers) {
+  std::erase_if(producers, [](const auto& row) { return managedName(row.first).has_value(); });
+  return producers;
+}
+std::string_view inventoryHeader(std::string_view data) {
+  return data.substr(0, data.find('\n'));
+}
+
+std::optional<Registrations> readRegistrations(const fs::path& root) {
+  const auto registry = root / "registered";
+  if (!realDirectory(registry)) return std::nullopt;
+  Registrations result;
+  std::error_code ec;
+  for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
+    const auto dir = at->path();
+    const auto leaf = utf8(dir.filename());
+    if (!leaf.starts_with("managed_") || !ca::validImportName(std::string_view(leaf).substr(8)) ||
+        !realDirectory(dir) || !safeRelative(dir, "source.gltf") || !safeRelative(dir, "catalog-source.txt"))
+      return std::nullopt;
+    const auto text = readText(dir / "catalog-source.txt");
+    if (!text) return std::nullopt;
+    const auto catalog = as::parseAssetCatalogSource(*text);
+    if (catalog.isErr() || catalog.value().entries().size() != 1) return std::nullopt;
+    const auto& entry = catalog.value().entries().front();
+    if (entry.root != as::CatalogRoot::Content || entry.type != as::CatalogAssetType::GltfImport ||
+        entry.path != leaf + "/source.gltf") return std::nullopt;
+    result.emplace(leaf.substr(8), entry.guid);
+  }
+  if (ec) return std::nullopt;
+  return result;
+}
+
+std::optional<Producers> readManagedView(const fs::path& root, const fs::path& inventory) {
+  if (!safeRelative(root, inventory) || !safeRelative(root, fs::path(kManagedSource))) return std::nullopt;
+  const auto producerText = readText(root / inventory);
+  const auto catalogText = readText(root / kManagedSource);
+  if (!producerText || !catalogText) return std::nullopt;
+  auto producers = readProducers(*producerText);
+  const auto catalog = as::parseAssetCatalogSource(*catalogText);
+  if (!producers || catalog.isErr()) return std::nullopt;
+  for (const auto& [source, producer] : *producers) {
+    const auto key = as::parseCatalogSourceId(source);
+    const auto* entry = key ? catalog.value().find(key->root, key->path) : nullptr;
+    if (!entry || entry->guid != producer.root || entry->type != producer.type) return std::nullopt;
+  }
+  return producers;
+}
+
+bool matchesManagedCatalog(const as::AssetCatalog& catalog, const Producers& producers) {
+  const auto registered = managedRegistrations(producers);
+  for (const auto& [name, root] : registered) {
+    const auto* mesh = catalog.find(as::deriveAssetGuid(root, "mesh/0/0"));
+    const auto* scene = catalog.find(as::deriveAssetGuid(root, "scene"));
+    const auto key = managedSourceKey(name);
+    if (!mesh || mesh->type != as::CatalogAssetType::Mesh || as::toString(mesh->source) != key + "#mesh/0/0" ||
+        !scene || scene->type != as::CatalogAssetType::Scene || as::toString(scene->source) != key + "#scene")
+      return false;
+  }
+  for (const auto& record : catalog.records()) {
+    const auto source = as::toString({record.source.root, record.source.path, {}});
+    if (auto name = managedName(source)) {
+      const auto root = registered.find(*name);
+      if (root == registered.end() || record.source.subKey.empty() ||
+          as::deriveAssetGuid(root->second, record.source.subKey) != record.guid) return false;
+    }
+  }
+  return true;
+}
+
+bool exactImportDelta(const fs::path& staging, const as::AssetCatalog& active, const as::AssetCatalog& staged,
+                      const Producer& producer, std::string_view key) {
+  const auto fragment = producer.generated.parent_path().parent_path() / "import.catalog.txt";
+  if (!safeRelative(staging, fragment)) return false;
+  const auto text = readText(staging / fragment);
+  if (!text) return false;
+  const auto records = as::parseAssetCatalogRecords(*text);
+  if (records.isErr() || !retainsIdentity(active, staged) || active.size() + records.value().size() != staged.size())
+    return false;
+  for (const auto& record : records.value()) {
+    const auto* added = staged.find(record.guid);
+    if (!added || active.find(record.guid) || added->type != record.type ||
+        as::toString(added->source) != as::toString(record.source) ||
+        as::toString({record.source.root, record.source.path, {}}) != key ||
+        record.source.subKey.empty() || as::deriveAssetGuid(producer.root, record.source.subKey) != record.guid)
+      return false;
   }
   return true;
 }
@@ -221,11 +347,17 @@ json::Value generatedSources(const Producers& producers) {
     if (!producer.generated.empty()) value.set(as::toString(producer.root), json::Value::string(utf8(producer.generated)));
   return value;
 }
-json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers) {
+json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers,
+                     const fs::path& managedInventory = {}) {
   auto value = json::Value::object();
   value.set("profile", json::Value::string(std::string(owner)));
   value.set("generation", json::Value::string(as::toString(id.value)));
   value.set("importedSources", generatedSources(producers));
+  if (!managedInventory.empty()) {
+    value.set("version", json::Value::number(std::uint64_t{2}));
+    value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
+    value.set("producers", json::Value::string(utf8(managedInventory)));
+  }
   return value;
 }
 
@@ -334,6 +466,36 @@ bool copyOutput(const fs::path& from, const fs::path& to, Interrupted interrupte
   output.close();
   return input.eof() && !input.bad() && output && !interrupted();
 }
+bool createMarker(const fs::path& path, std::string_view text) {
+  Handle marker(CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, 0, nullptr));
+  DWORD written = 0;
+  return marker && (text.empty() ||
+      (WriteFile(marker.get(), text.data(), static_cast<DWORD>(text.size()), &written, nullptr) &&
+       written == text.size())) && FlushFileBuffers(marker.get());
+}
+
+template<class Interrupted>
+bool copyInbox(const fs::path& from, const fs::path& to, Interrupted interrupted) {
+  Handle input(CreateFileW(from.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+  BY_HANDLE_FILE_INFORMATION info{};
+  constexpr DWORD maxSize = 16 * 1024 * 1024;
+  if (!input || !GetFileInformationByHandle(input.get(), &info) || info.nFileSizeHigh ||
+      !info.nFileSizeLow || info.nFileSizeLow > maxSize || info.nNumberOfLinks != 1 ||
+      (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))) return false;
+  std::ofstream output(to, std::ios::binary);
+  if (!output) return false;
+  std::array<char, 64 * 1024> block{};
+  DWORD remaining = info.nFileSizeLow;
+  while (remaining && !interrupted()) {
+    DWORD size = 0;
+    if (!ReadFile(input.get(), block.data(), std::min(remaining, static_cast<DWORD>(block.size())), &size, nullptr) ||
+        !size || !output.write(block.data(), size)) return false;
+    remaining -= size;
+  }
+  output.close();
+  return !remaining && output && !interrupted();
+}
 }  // namespace
 
 struct AssetRebuildHost::State {
@@ -344,8 +506,19 @@ struct AssetRebuildHost::State {
     Clock::time_point deadline;
   };
 
+  struct ImportWork {
+    ca::ImportJob job;
+    std::optional<as::AssetGuid> registeredRoot;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    Clock::time_point deadline;
+  };
+
   Config config;
-  fs::path staging, publication, active, inventoryPath;
+  fs::path staging, publication, active, inventoryPath, inventoryRelative, project;
+  Handle projectWriter;
+  Registrations registered, activeRegistered;
+  std::optional<ImportWork> importing;
+  std::deque<ca::ImportJob> imported;
   std::string inventory, owner;
   Producers producers;
   Handle writer;
@@ -369,11 +542,50 @@ struct AssetRebuildHost::State {
     if (worker.joinable()) worker.join();
   }
 
-  std::optional<ca::RebuildError> admissionLocked() const {
+  std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
-    if (!writer || running) return ca::RebuildError::Busy;
+    if (!writer || (!project.empty() && !projectWriter) || running || importing) return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
     return std::nullopt;
+  }
+
+  std::optional<ca::RebuildError> admissionLocked() const {
+    if (auto error = slotError()) return error;
+    if (!project.empty() && registered != activeRegistered) return ca::RebuildError::Unavailable;
+    return std::nullopt;
+  }
+
+  struct Prepared { ca::GenerationId id; fs::path directory; };
+  template<class Interrupted>
+  std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted) {
+    auto files = outputFiles(staging, catalog, view);
+    if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
+    if (!project.empty()) {
+      files->push_back(inventoryRelative);
+      files->push_back(fs::path(kManagedSource));
+    }
+    if (interrupted()) return timedOut(Stage::Validation);
+    const auto guid = newGuid();
+    if (!guid) return fail(Stage::Publication, Code::PublishFailed, "Cannot allocate a generation ID.");
+    const ca::GenerationId id{*guid};
+    const fs::path temp = publication / (".pending-" + as::toString(*guid));
+    std::error_code ec;
+    if (!fs::create_directory(temp, ec) || ec)
+      return fail(Stage::Publication, Code::PublishFailed, "Cannot create publication staging.");
+    for (const auto& file : *files) {
+      if (!copyOutput(staging / file, temp / file, interrupted))
+        return interrupted() ? timedOut(Stage::Publication)
+                             : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
+    }
+    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative);
+    if (!writeText(temp / kManifest, json::write(data)))
+      return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
+    return Prepared{id, temp};
+  }
+
+  bool publish(const Prepared& generation) const {
+    return MoveFileExW(generation.directory.c_str(),
+                      (publication / as::toString(generation.id.value)).c_str(), 0);
   }
 
   std::variant<ca::GenerationId, End> build(const Work& work) {
@@ -397,46 +609,193 @@ struct AssetRebuildHost::State {
     if (interrupted()) return timedOut(Stage::Validation);
     const auto catalog = readCatalog(staging);
     const auto after = readText(inventoryPath);
-    if (!catalog || !after || *after != inventory)
+    const auto view = project.empty() ? std::optional{producers} : readManagedView(staging, inventoryRelative);
+    if (!catalog || !after || !view || (project.empty() ? *after != inventory :
+        inventoryHeader(*after) != inventoryHeader(inventory) || *view != producers))
       return fail(Stage::Validation, Code::InvalidOutput, "Staging catalog or producer inventory is invalid.", true);
-    if (!matchesIdentity(*work.catalog, *catalog))
+    if (work.catalog->size() != catalog->size() || !retainsIdentity(*work.catalog, *catalog))
       return fail(Stage::Validation, Code::IdentityChanged, "Rebuild changed the catalog identity set.");
-    const auto files = outputFiles(staging, *catalog, producers);
-    if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
-    if (interrupted()) return timedOut(Stage::Validation);
-
-    const auto guid = newGuid();
-    if (!guid) return fail(Stage::Publication, Code::PublishFailed, "Cannot allocate a generation ID.");
-    const ca::GenerationId id{*guid};
-    const auto name = as::toString(*guid);
-    const fs::path temp = publication / (".pending-" + name);
-    if (!fs::create_directory(temp, ec) || ec)
-      return fail(Stage::Publication, Code::PublishFailed, "Cannot create publication staging.");
-    // Interrupted publication trees are unselectable and can be removed offline.
-    for (const auto& file : *files) {
-      if (!copyOutput(staging / file, temp / file, interrupted))
-        return interrupted() ? timedOut(Stage::Publication)
-                             : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
-    }
-    if (!writeText(temp / kManifest, json::write(manifest(owner, id, producers))))
-      return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
-    // This lock is independent of job observation. Shutdown and publication
-    // settle in order without making the frame thread wait on filesystem I/O.
+    auto prepared = prepare(*catalog, *view, interrupted);
+    if (const auto* error = std::get_if<End>(&prepared)) return *error;
+    const auto& generation = std::get<Prepared>(prepared);
     std::lock_guard commit(publicationCommit);
     if (interrupted()) return timedOut(Stage::Publication);
-    if (!MoveFileExW(temp.c_str(), (publication / name).c_str(), 0))
+    if (!publish(generation))
       return fail(Stage::Publication, Code::PublishFailed, "Cannot publish the generation directory.");
-    return id;
+    return generation.id;
+  }
+
+  struct ImportOutcome {
+    std::optional<ca::GenerationId> generation;
+    std::optional<ca::ImportFailure> failure;
+    bool repair;
+  };
+
+  ImportOutcome buildImport(ImportWork& work) {
+    using IS = ca::ImportStage;
+    using IC = ca::ImportFailureCode;
+    using RS = ca::RegistrationState;
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto failed = [&](IS stage, IC code, std::string message, bool repair = false,
+                            std::optional<std::uint32_t> exit = std::nullopt) {
+      if (interrupted() && stage != IS::Registration && stage != IS::Publication) {
+        code = IC::TimedOut;
+        repair = true;
+      }
+      return ImportOutcome{{}, ca::ImportFailure{stage, code, std::move(message), exit,
+        work.registeredRoot ? RS::Committed : RS::NotCommitted, work.registeredRoot}, repair};
+    };
+    const fs::path name = fromUtf8("managed_" + work.job.name);
+    const fs::path pendingParent = fs::path(".pending") / as::toString(work.job.id.value);
+    const fs::path pending = pendingParent / name;
+    const fs::path selection = staging / kPendingSelection;
+    if (interrupted()) return failed(IS::Source, IC::TimedOut, "Import stopped before staging.");
+    const auto ownerPaths = utf8(staging) + "\n" + utf8(publication) + "\n";
+    if (!createMarker(staging / kDirty, {}) || !createMarker(project / kProjectDirty, ownerPaths))
+      return failed(IS::Source, IC::InvalidSource, "Cannot mark workspace ownership.", true);
+    if (!safeBuildTree(staging, interrupted) || !realDirectory(project / "registered") ||
+        !safeBuildTree(project / "registered", interrupted) ||
+        !safeRelative(staging, fs::path(kPendingSelection)))
+      return failed(IS::Source, IC::InvalidSource, "Unsafe staging or registered input.", true);
+    const auto diskRegistrations = readRegistrations(project);
+    if (!diskRegistrations || *diskRegistrations != registered)
+      return failed(IS::Source, IC::InvalidSource, "Registered inputs changed outside the worker.", true);
+    std::error_code ec;
+    as::AssetGuid root;
+    if (work.registeredRoot) {
+      root = *work.registeredRoot;
+      if (!writeText(selection, {}))
+        return failed(IS::Source, IC::InvalidSource, "Cannot clear pending selection.", true);
+    } else {
+      const auto inbox = fs::path("inbox") / fromUtf8(work.job.name + ".gltf");
+      if (!safeRelative(project, inbox))
+        return failed(IS::Source, IC::InvalidSource, "Inbox source is missing or unsafe.");
+      if (!safeRelative(project, pending / "source.gltf", true) ||
+          !fs::create_directories(project / pending, ec) || ec)
+        return failed(IS::Source, IC::InvalidSource, "Cannot create private pending input.", true);
+      if (!copyInbox(project / inbox, project / pending / "source.gltf", interrupted))
+        return failed(IS::Source, IC::InvalidSource, "Cannot copy a bounded inbox source.");
+      try {
+        root = as::mintAssetGuids(1).front();
+      } catch (const std::exception&) {
+        return failed(IS::Registration, IC::RegisterFailed, "Cannot allocate the source GUID.");
+      }
+      const auto source = as::serializeAssetCatalogSource(
+          {{root, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, utf8(name / "source.gltf")}});
+      if (!writeText(project / pending / "catalog-source.txt", source) || !writeText(selection, utf8(pending)))
+        return failed(IS::Source, IC::InvalidSource, "Cannot write pending registration inputs.", true);
+    }
+    const auto key = managedSourceKey(work.job.name);
+    // A previous refused attempt can leave the same producer's stamp in staging.
+    const fs::path stamp = name / (utf8(name) + ".stamp");
+    if (!safeRelative(staging, stamp, true))
+      return failed(IS::Pipeline, IC::LaunchFailed, "Unsafe managed producer stamp.", true);
+    fs::remove(staging / stamp, ec);
+    if (ec && ec != std::errc::no_such_file_or_directory)
+      return failed(IS::Pipeline, IC::LaunchFailed, "Cannot invalidate the managed stamp.", true);
+    if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) {
+      const auto code = error->failure.code == Code::TimedOut ? IC::TimedOut :
+                        error->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
+      return failed(IS::Pipeline, code, error->failure.diagnostic, error->repair, error->failure.exitCode);
+    }
+    const auto catalog = readCatalog(staging);
+    const auto view = readManagedView(staging, inventoryRelative);
+    const auto inventoryAfter = readText(inventoryPath);
+    if (!catalog || !view || !inventoryAfter || inventoryHeader(*inventoryAfter) != inventoryHeader(inventory) ||
+        !matchesManagedCatalog(*catalog, *view))
+      return failed(IS::Validation, IC::InvalidOutput, "Cannot validate managed staging output.", true);
+    auto expected = activeRegistered;
+    expected.emplace(work.job.name, root);
+    const auto producer = view->find(key);
+    if (baseProducers(*view) != baseProducers(producers) || managedRegistrations(*view) != expected ||
+        producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
+        !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
+      return failed(IS::Validation, IC::IdentityConflict, "Staged identity delta differs from this import.");
+    auto prepared = prepare(*catalog, *view, interrupted);
+    if (const auto* error = std::get_if<End>(&prepared)) {
+      const auto stage = error->failure.stage == Stage::Validation ? IS::Validation : IS::Publication;
+      const auto code = error->failure.code == Code::TimedOut ? IC::TimedOut :
+                        stage == IS::Validation ? IC::InvalidOutput : IC::PublishFailed;
+      return failed(stage, code, error->failure.diagnostic, error->repair);
+    }
+    const auto& generation = std::get<Prepared>(prepared);
+    std::lock_guard commit(publicationCommit);
+    if (interrupted())
+      return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
+                    "Import stopped before the commit point.", true);
+    if (!work.registeredRoot) {
+      if (!MoveFileExW((project / pending).c_str(), (project / "registered" / name).c_str(), 0)) {
+        const auto disk = readRegistrations(project);
+        if (disk && !disk->contains(work.job.name))
+          return failed(IS::Registration, IC::RegisterFailed, "Cannot commit the source registration.");
+        if (disk && disk->at(work.job.name) == root) {
+          work.registeredRoot = root;
+          return failed(IS::Registration, IC::RegisterFailed, "Registration needs workspace repair.", true);
+        }
+        auto outcome = failed(IS::Registration, IC::RegisterFailed, "Cannot verify source registration.", true);
+        outcome.failure->registration = RS::Unknown;
+        return outcome;
+      }
+      work.registeredRoot = root;
+    }
+    if (!publish(generation))
+      return failed(IS::Publication, IC::PublishFailed, "Cannot publish the registered import generation.");
+    return {generation.id, {}, false};
+  }
+
+  void settleImport(ImportWork& work) {
+    auto result = buildImport(work);
+    bool repair = result.repair;
+    if (!repair) {
+      std::error_code ec;
+      const auto pending = project / ".pending" / as::toString(work.job.id.value);
+      if (work.job.mode == ca::ImportMode::Register && realDirectory(pending)) {
+        const auto unit = pending / fromUtf8("managed_" + work.job.name);
+        if (realDirectory(unit)) {
+          fs::remove(unit / "source.gltf", ec);
+          if (!ec) fs::remove(unit / "catalog-source.txt", ec);
+          if (!ec) fs::remove(unit, ec);
+        }
+        if (!ec) fs::remove(pending, ec);
+      }
+      repair = ec || !writeText(staging / kPendingSelection, {});
+      if (!repair) {
+        fs::remove(staging / kDirty, ec);
+        if (!ec) fs::remove(project / kProjectDirty, ec);
+        repair = static_cast<bool>(ec);
+      }
+    }
+    auto& job = work.job;
+    if (result.generation) {
+      job.state = ca::RebuildState::Succeeded;
+      job.rootGuid = work.registeredRoot;
+      job.generation = result.generation;
+    } else {
+      job.state = ca::RebuildState::Failed;
+      job.failure = std::move(result.failure);
+    }
+    std::lock_guard lock(mutex);
+    if (work.registeredRoot) registered.insert_or_assign(job.name, *work.registeredRoot);
+    dirty = repair;
+    imported.push_front(std::move(job));
+    if (imported.size() > 16) imported.pop_back();
+    importing.reset();
   }
 
   void run() {
     for (;;) {
       std::optional<Work> work;
+      std::optional<ImportWork> import;
       {
         std::unique_lock lock(mutex);
-        changed.wait(lock, [&] { return stopping || running.has_value(); });
-        if (stopping && !running) return;
+        changed.wait(lock, [&] { return stopping || running || importing; });
+        if (stopping && !running && !importing) return;
         work = running;
+        import = importing;
+      }
+      if (import) {
+        settleImport(*import);
+        continue;
       }
       auto result = build(*work);
       auto& job = work->job;
@@ -482,15 +841,43 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
   state->staging = *stage;
   state->publication = *publication;
   const auto inventory = fs::path("assets") / ("producers-" + state->config.configuration + ".txt");
+  state->inventoryRelative = inventory;
   state->inventoryPath = *stage / inventory;
+  if (const auto* optIn = profile->find("importProject")) {
+    const auto project = canonicalDirectory(optIn);
+    if (!project || !safeProjectRoot(fromUtf8(optIn->asString()), *project) ||
+        overlap(*project, seed) || overlap(*project, *stage) || overlap(*project, *publication))
+      return R::Err("Import project must be an existing disjoint directory.");
+    state->project = *project;
+    for (const auto& tree : {seed, *stage}) {
+      if (!safeRelative(tree, fs::path(kManagedProject)))
+        return R::Err("Both builds must be configured with the import project.");
+      const auto configured = readText(tree / kManagedProject);
+      if (!configured || !fs::equivalent(fromUtf8(*configured), *project, ec) || ec)
+        return R::Err("Both builds must use the configured import project.");
+    }
+  }
   if (!safeRelative(seed, inventory) || !safeRelative(*stage, inventory))
     return R::Err("The configured asset producer inventory is missing or unsafe.");
   const auto seedInventory = readText(seed / inventory);
   auto stageInventory = readText(state->inventoryPath);
-  if (!seedInventory || !stageInventory || *seedInventory != *stageInventory)
-    return R::Err("Staging must use the same checkout, generator, configuration and asset declarations.");
+  if (!seedInventory || !stageInventory)
+    return R::Err("Cannot read the configured producer inventories.");
   auto producers = readProducers(*stageInventory);
   if (!producers) return R::Err("Invalid configured asset producer inventory.");
+  if (state->project.empty()) {
+    if (*seedInventory != *stageInventory || !managedRegistrations(*producers).empty())
+      return R::Err("Staging must use the same checkout, generator, configuration and asset declarations.");
+  } else {
+    const auto seedHeader = columns(std::string(inventoryHeader(*seedInventory)));
+    if (seedHeader.size() < 2 || overlap(state->project, fromUtf8(seedHeader[1])))
+      return R::Err("Import project must be disjoint from the checkout.");
+    auto seedView = readManagedView(seed, inventory);
+    if (!seedView || inventoryHeader(*seedInventory) != inventoryHeader(*stageInventory) ||
+        baseProducers(*seedView) != baseProducers(*producers))
+      return R::Err("Managed staging must match the seed's base producers and build configuration.");
+    producers = std::move(seedView);
+  }
   state->inventory = std::move(*stageInventory);
   state->producers = std::move(*producers);
   const std::string buildIdentity = state->inventory.substr(0, state->inventory.find('\n'));
@@ -500,6 +887,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
   binding.set("publication", json::Value::string(utf8(*publication)));
   binding.set("configuration", json::Value::string(state->config.configuration));
   binding.set("build", json::Value::string(buildIdentity));
+  if (!state->project.empty()) binding.set("importProject", json::Value::string(utf8(state->project)));
   state->owner = json::write(binding);
   const fs::path ownerPath = *publication / kOwner;
   if (!safeRelative(*publication, fs::path(kOwner), true))
@@ -517,6 +905,11 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     const auto oldPublication = recorded ? canonicalDirectory(recorded->find("publication")) : std::nullopt;
     const auto* configuration = recorded ? recorded->find("configuration") : nullptr;
     const auto* build = recorded ? recorded->find("build") : nullptr;
+    const auto* oldProjectValue = recorded ? recorded->find("importProject") : nullptr;
+    const auto oldProject = canonicalDirectory(oldProjectValue);
+    if (state->project.empty() ? oldProjectValue != nullptr :
+        !oldProject || !fs::equivalent(state->project, *oldProject, ec) || ec)
+      return R::Err("Publication root belongs to a different import project.");
     if (!oldSeed || !oldStage || !oldPublication || !fs::equivalent(seed, *oldSeed, ec) || ec ||
         !fs::equivalent(*stage, *oldStage, ec) || ec || !fs::equivalent(*publication, *oldPublication, ec) || ec ||
         !configuration || !configuration->isString() ||
@@ -528,20 +921,55 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
   state->active = seed / kCatalog;
   if (const auto generation = state->config.generation) {
     const fs::path selected = *publication / as::toString(generation->value);
-    if (!realDirectory(selected) || !safeRelative(selected, fs::path(kManifest)) ||
-        readJson(selected / kManifest) != manifest(state->owner, *generation, state->producers))
+    if (!realDirectory(selected) || !safeRelative(selected, fs::path(kManifest)))
       return R::Err("Unknown, incomplete or foreign asset generation.");
     const auto catalog = readCatalog(selected);
-    if (!catalog || !outputFiles(selected, *catalog, state->producers))
-      return R::Err("Incomplete asset generation files.");
+    if (!catalog) return R::Err("Incomplete asset generation files.");
+    if (!state->project.empty()) {
+      auto frozen = readManagedView(selected, inventory);
+      const auto frozenInventory = readText(selected / inventory);
+      if (!frozen || !frozenInventory || inventoryHeader(*frozenInventory) != inventoryHeader(state->inventory) ||
+          baseProducers(*frozen) != baseProducers(state->producers) || !matchesManagedCatalog(*catalog, *frozen))
+        return R::Err("Invalid managed generation metadata.");
+      state->producers = std::move(*frozen);
+    }
+    const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
+    if (readJson(selected / kManifest) != manifest(state->owner, *generation, state->producers, managedInventory) ||
+        !outputFiles(selected, *catalog, state->producers))
+      return R::Err("Unknown, incomplete or foreign asset generation.");
     state->active = selected / kCatalog;
   }
   const fs::path lock = *stage / ".atlantis-rebuild-lock";
   if (!safeRelative(*stage, lock.filename(), true)) return R::Err("Unsafe workspace writer lock path.");
   state->writer = Handle(CreateFileW(lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
   if (!state->writer && GetLastError() != ERROR_SHARING_VIOLATION) return R::Err("Cannot open the workspace writer lock.");
-  if (state->writer) {
+  if (!state->project.empty()) {
+    state->activeRegistered = managedRegistrations(state->producers);
+    if (!state->config.generation) {
+      const auto catalog = readCatalog(seed);
+      if (!catalog || !matchesManagedCatalog(*catalog, state->producers))
+        return R::Err("Seed catalog does not match its frozen managed producer view.");
+    }
+    if (state->writer) {
+      const fs::path projectLock = ".atlantis-import-lock";
+      if (!safeRelative(state->project, projectLock, true)) return R::Err("Unsafe import project writer lock.");
+      state->projectWriter = Handle(CreateFileW((state->project / projectLock).c_str(),
+          GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, 0, nullptr));
+      if (!state->projectWriter && GetLastError() != ERROR_SHARING_VIOLATION)
+        return R::Err("Cannot open import project writer lock.");
+    }
+  }
+  if (state->writer && (state->project.empty() || state->projectWriter)) {
     state->dirty = !safeRelative(*stage, fs::path(kDirty), true) || fs::exists(*stage / kDirty, ec) || static_cast<bool>(ec);
+    if (!state->project.empty()) {
+      auto registered = readRegistrations(state->project);
+      const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
+          ? readText(*stage / kPendingSelection) : std::nullopt;
+      state->dirty = state->dirty || !registered ||
+          !safeRelative(state->project, fs::path(kProjectDirty), true) ||
+          fs::exists(state->project / kProjectDirty, ec) || ec || !pending || !pending->empty();
+      if (registered) state->registered = std::move(*registered);
+    }
     auto* workState = state.get();
     try {
       state->worker = std::thread([workState] { workState->run(); });
@@ -594,6 +1022,55 @@ ca::RebuildStatusResult AssetRebuildHost::status(std::optional<ca::RebuildId> id
     }
   }
   if (id && !status.job) return R::Err(ca::RebuildError::UnknownJob);
+  return R::Ok(std::move(status));
+}
+fs::path AssetRebuildHost::generationCatalogSource() const {
+  if (state_->project.empty()) return {};
+  return state_->active.parent_path() / kManagedSource;
+}
+ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::ImportMode mode,
+                                                   std::shared_ptr<const as::AssetCatalog> catalog) {
+  using R = ca::ImportStartResult;
+  using E = ca::ImportError;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty() || !ca::validImportName(name)) return R::Err(E::Unavailable);
+  if (auto error = state_->slotError()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::Unavailable);
+  }
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto committed = state_->registered.find(name);
+  std::optional<as::AssetGuid> root;
+  if (mode == ca::ImportMode::Register) {
+    if (committed != state_->registered.end() || state_->producers.contains(managedSourceKey(name)))
+      return R::Err(E::NameConflict);
+    if (state_->registered != state_->activeRegistered) return R::Err(E::ActivationRequired);
+  } else {
+    if (committed == state_->registered.end() || state_->activeRegistered.contains(name))
+      return R::Err(E::NothingToResume);
+    auto expected = state_->activeRegistered;
+    expected.emplace(committed->first, committed->second);
+    if (expected != state_->registered) return R::Err(E::ActivationRequired);
+    root = committed->second;
+  }
+  const auto guid = newGuid();
+  if (!guid) return R::Err(E::Unavailable);
+  ca::ImportJob job{{*guid}, std::string(name), mode, ca::RebuildState::Running, {}, {}, {}};
+  state_->importing.emplace(State::ImportWork{job, root, std::move(catalog), Clock::now() + state_->config.timeout});
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+ca::ImportStatusResult AssetRebuildHost::importStatus(std::optional<ca::ImportId> id) const {
+  using R = ca::ImportStatusResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty()) return R::Err(ca::ImportError::Unavailable);
+  ca::ImportStatus status{state_->config.generation, {}};
+  if (state_->importing && (!id || state_->importing->job.id == *id)) status.job = state_->importing->job;
+  else for (const auto& job : state_->imported) {
+    if (!id || job.id == *id) { status.job = job; break; }
+  }
+  if (id && !status.job) return R::Err(ca::ImportError::UnknownJob);
   return R::Ok(std::move(status));
 }
 }  // namespace atlantis::runtime

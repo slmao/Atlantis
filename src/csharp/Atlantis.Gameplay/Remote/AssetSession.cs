@@ -41,7 +41,8 @@ public sealed class AssetSession
     public Outcome<A.RebuildJob, A.RebuildError> Rebuild(AssetGuid asset)
     {
         if (asset.IsNil) throw new ArgumentException("a non-nil asset GUID is required", nameof(asset));
-        return RebuildRequest("assets.rebuild", JsonValue.NewObject().Set("asset", Codec.Encode(asset)), true,
+        return JobRequest("assets.rebuild", JsonValue.NewObject().Set("asset", Codec.Encode(asset)),
+            A.RebuildError.Unsupported, v => Codec.DecodeRebuildError(v, true),
             value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null);
     }
     public Outcome<A.RebuildStatus, A.RebuildError> RebuildStatus(A.RebuildId? jobId = null)
@@ -49,20 +50,41 @@ public sealed class AssetSession
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         JsonValue parameters = JsonValue.NewObject();
         if (jobId is A.RebuildId id) parameters.Set("jobId", Codec.Encode(id.Value));
-        return RebuildRequest("assets.rebuildStatus", parameters, false, value =>
+        return JobRequest("assets.rebuildStatus", parameters, A.RebuildError.Unsupported,
+            v => Codec.DecodeRebuildError(v, false), value =>
             Codec.DecodeRebuildStatus(value) is A.RebuildStatus status && (jobId is null || status.Job?.Id == jobId)
                 ? status : null);
     }
-    private Outcome<T, A.RebuildError> RebuildRequest<T>(string method, JsonValue parameters, bool start,
-                                                         Func<JsonValue, T?> decode) where T : class
+    public Outcome<A.ImportJob, A.ImportError> ImportAsset(string name, A.ImportMode mode = A.ImportMode.Register)
+    {
+        if (!Codec.ValidImportName(name)) throw new ArgumentException("invalid managed import name", nameof(name));
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        JsonValue parameters = JsonValue.NewObject().Set("name", JsonValue.String(name)).Set("mode", JsonValue.String(mode.ToString()));
+        return JobRequest("assets.import", parameters, A.ImportError.Unsupported,
+            v => Codec.DecodeImportError(v, true), value =>
+                Codec.DecodeImportJob(value) is { State: A.RebuildState.Running } job && job.Name == name && job.Mode == mode
+                    ? job : null);
+    }
+    public Outcome<A.ImportStatus, A.ImportError> ImportStatus(A.ImportId? jobId = null)
+    {
+        if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
+        JsonValue parameters = JsonValue.NewObject();
+        if (jobId is A.ImportId id) parameters.Set("jobId", Codec.Encode(id.Value));
+        return JobRequest("assets.importStatus", parameters, A.ImportError.Unsupported,
+            v => Codec.DecodeImportError(v, false), value =>
+                Codec.DecodeImportStatus(value) is A.ImportStatus status && (jobId is null || status.Job?.Id == jobId)
+                    ? status : null);
+    }
+    private Outcome<T, E> JobRequest<T, E>(string method, JsonValue parameters, E unsupported,
+        Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode) where T : class where E : struct, Enum
     {
         JsonValue response = _session.AwaitResponse(_session.Send(method, parameters));
         if (Codec.IsLegacyAssetRebuildRefusal(response))
-            return Outcome<T, A.RebuildError>.Err(A.RebuildError.Unsupported);
+            return Outcome<T, E>.Err(unsupported);
         if (response.Find("error") is not null || response.Find("result") is not JsonValue result)
             throw _session.Malformed(method);
         CheckEnvelope(result, method);
-        return _session.InBand<T, A.RebuildError>(result, method, decode, value => Codec.DecodeRebuildError(value, start));
+        return _session.InBand<T, E>(result, method, decode, decodeError);
     }
     private void CheckEnvelope(JsonValue value, string method)
     {

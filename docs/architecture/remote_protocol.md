@@ -526,3 +526,15 @@ commands/events require updated peers, including all-events subscribers.
 No RPC method or protocol version changes. CLI uses
 `scene name <node-guid> <json-string>` (also in `scene tx`; `""` clears), and MCP
 uses its existing `authoring.submit_transaction` tool with the command above.
+
+### Managed asset import
+
+[Spec 0086](../specs/0086-new-asset-import.md#requirements) defines
+`assets.import { name, mode }` and `assets.importStatus { jobId? }`.
+They use the existing typed `ok`/`err` envelopes. The start receipt echoes
+the logical inbox name and `Register` or `Resume`, with `Running` and a
+job ID. An explicit status query returns the same ID or `UnknownJob`.
+A successful job includes `rootGuid` and `generation`. A failed job
+reports the registration state separately, including `registeredRootGuid`
+if committed. Activation is an explicit local launch action. Existing
+asset and authoring calls keep their wire shapes.

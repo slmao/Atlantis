@@ -483,6 +483,18 @@ void authoringVectors(std::vector<Vector>& out) {
   failedBuild.state = ca::RebuildState::Failed;
   failedBuild.failure = ca::RebuildFailure{ca::RebuildStage::Pipeline, ca::RebuildFailureCode::BuildFailed, "tool refused", UINT32_MAX};
   out.push_back({"assets.rebuild.failed", "RebuildStatus", codec::encode(ca::RebuildStatus{{}, failedBuild})});
+  const ca::ImportJob importing{{kAsset}, "sample", ca::ImportMode::Register, ca::RebuildState::Running, {}, {}, {}};
+  out.push_back({"assets.import.running", "ImportJob", codec::encode(importing)});
+  auto imported = importing;
+  imported.state = ca::RebuildState::Succeeded;
+  imported.rootGuid = asset;
+  imported.generation = ca::GenerationId{kAsset};
+  out.push_back({"assets.import.succeeded", "ImportStatus", codec::encode(ca::ImportStatus{{}, imported})});
+  auto failedImport = importing;
+  failedImport.state = ca::RebuildState::Failed;
+  failedImport.failure = ca::ImportFailure{ca::ImportStage::Publication, ca::ImportFailureCode::PublishFailed,
+      "publication refused", {}, ca::RegistrationState::Committed, asset};
+  out.push_back({"assets.import.failed", "ImportStatus", codec::encode(ca::ImportStatus{{}, failedImport})});
 
   // Spec 0083: all outcome alternatives, bounded observation shape and exact u64 literals.
   const ac::ApplyReceipt receipt{ac::ApplyId{kAsset.bytes}, UINT64_MAX};

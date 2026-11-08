@@ -243,7 +243,12 @@ endfunction()
 # <import dir>/import.catalog.txt, the import's one catalog fragment.
 function(atlantis_add_imported_scene)
   set(oneValueArgs NAME GLTF CONTENT_ROOT OVERLAY)
-  cmake_parse_arguments(ARG "" "${oneValueArgs}" "" ${ARGN})
+  cmake_parse_arguments(ARG "MANAGED" "${oneValueArgs}" "" ${ARGN})
+  if(ARG_MANAGED)
+    set(import_options "--managed-static-mesh=on")
+  else()
+    set(import_options "--overlay=${ARG_OVERLAY}")
+  endif()
 
   set(work_dir "${CMAKE_BINARY_DIR}/${ARG_NAME}")
   set(import_dir "${work_dir}/import")
@@ -272,7 +277,7 @@ function(atlantis_add_imported_scene)
     # directory is rewritten in place.
     COMMAND ${CMAKE_COMMAND} -E rm -rf "${import_dir}"
     COMMAND atlantis_gltf_importer
-      --input=${ARG_GLTF} --content-root=${ARG_CONTENT_ROOT} --overlay=${ARG_OVERLAY}
+      --input=${ARG_GLTF} --content-root=${ARG_CONTENT_ROOT} ${import_options}
       --output-dir=${import_dir} --name=${ARG_NAME} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
     COMMAND atlantis_asset_cooker
       --kind=cook-manifest --import-dir=${import_dir} --cooked-dir=${cooked_dir}
@@ -454,6 +459,10 @@ function(atlantis_finalize_asset_catalog)
 endfunction()
 
 function(_atlantis_add_asset_catalog_target)
+  get_property(effective_source GLOBAL PROPERTY ATLANTIS_EFFECTIVE_CATALOG_SOURCE)
+  if(effective_source)
+    set(ATLANTIS_ASSET_CATALOG_SOURCE "${effective_source}")
+  endif()
   atlantis_catalog_guid(closure_scene ROOT assets PATH scenes/integrated_showcase_demo.scene.txt)
   get_property(fragments GLOBAL PROPERTY ATLANTIS_ASSET_CATALOG_FRAGMENTS)
   get_property(asset_targets GLOBAL PROPERTY ATLANTIS_ASSET_TARGETS)

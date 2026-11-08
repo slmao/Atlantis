@@ -108,11 +108,14 @@ public static partial class Program
             {
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
+                bool import = _scene == "--asset-import";
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    legacyReadiness || rebuild ? "integrated_showcase_demo" : _scene)
+                    legacyReadiness || rebuild || import ? "integrated_showcase_demo" : _scene)
                 {
-                    AssetBuildProfile = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
+                    AssetBuildProfile = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
+                        rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
+                    AssetGeneration = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
+                        rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                 });
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
@@ -120,6 +123,7 @@ public static partial class Program
                     try
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
                     }
@@ -163,6 +167,83 @@ public static partial class Program
         checks.Add(new("publication does not select active generation or replace Assets selection",
             terminal.IsOk && terminal.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration &&
             browser.Selected == row.Guid));
+    }
+
+    private static async Task CheckImportedMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
+            File.Exists(process.SessionPath) && NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject is not null,
+            "imported generation and Inspector", 90);
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        work(Path.GetDirectoryName(runtime.SessionPath)!);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var status = await Task.Run(() => observer.Assets.ImportStatus());
+        checks.Add(new("SDK reads the selected import generation",
+            status.IsOk && status.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration));
+        var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
+        var mesh = assets.Single(a => a.Source == "content:managed_sample/source.gltf#mesh/0/0");
+        var schema = await Task.Run(() => observer.Authoring.Schema);
+        var subject = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!.Subject!.Value;
+        var address = SceneSchema.AddressOf(schema, subject, "Renderable", "meshAsset")!.Value;
+        var document = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
+        AssetGuid Read() => document.GetProperty(address)!.Value.AsAsset();
+        var original = await Task.Run(Read);
+        var info = (await Task.Run(() => observer.Authoring.Document()))!;
+        var allowed = Environment.GetEnvironmentVariable("ATLANTIS_0086_DISPOSABLE_SCENE");
+        if (allowed is null || info.Provenance != Provenance.HandAuthored ||
+            !Path.GetFullPath(allowed).Equals(Path.GetFullPath(info.SourcePath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The test requires an explicitly named disposable hand-authored scene");
+        byte[] source = File.ReadAllBytes(info.SourcePath);
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Task<ulong> Generation() => Task.Run(() => observer.Control.Status().SceneGeneration);
+        async Task WaitEdit(AssetGuid expected, ulong before, string label)
+        {
+            await NameUiWait(async () => await Task.Run(Read) == expected && await Generation() > before, label, 60);
+            checks.Add(new(label, true));
+        }
+
+        try
+        {
+            var row = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
+                .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
+            Click(row.Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…"));
+            AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
+            await NameUiWait(() => Picker() is { } p && PickerField<AssetBrowser>(p, "_browser").State == "Ready",
+                "mesh picker uses activated catalog");
+            var picker = Picker()!;
+            var browser = PickerField<AssetBrowser>(picker, "_browser");
+            PickerField<ListBox>(picker, "_list").SelectedItem = browser.Visible.Single(a => a.Guid == mesh.Guid);
+            await NameUiWait(() => browser.Details?.Guid == mesh.Guid, "imported mesh detail");
+            ulong before = await Generation();
+            Click(PickerField<Button>(picker, "_confirm"));
+            await WaitEdit(mesh.Guid, before, "typed picker commits the imported GUID and reloads");
+            before = await Generation();
+            Click(NameUiField<Button>(window, "_undo")!);
+            await WaitEdit(original, before, "Undo restores the prior mesh and reloads");
+            before = await Generation();
+            Click(NameUiField<Button>(window, "_redo")!);
+            await WaitEdit(mesh.Guid, before, "Redo restores the imported mesh and reloads");
+            Click(NameUiField<Button>(window, "_save")!);
+            await NameUiWait(() => File.ReadAllText(info.SourcePath).Contains(mesh.Guid.ToString(), StringComparison.Ordinal),
+                "Save writes imported GUID");
+            checks.Add(new("Save persists the literal derived mesh GUID", true));
+
+            using var restarted = RuntimeProcess.Start(runtime.Launch with
+                { ParentWindow = null, WorkDirectory = RuntimeProcess.NewWorkDirectory() });
+            using var reopened = await Task.Run(() => RemoteSession.Connect(restarted.WaitForSession(TimeSpan.FromSeconds(60))));
+            var opened = await Task.Run(() => reopened.Authoring.Open());
+            var reopenedDoc = await Task.Run(() => new RemoteAuthoringDocument(reopened.Authoring, reopened));
+            checks.Add(new("fresh Runtime authoring opens the saved reference",
+                opened is null && (await Task.Run(() => reopenedDoc.GetProperty(address)))?.AsAsset() == mesh.Guid));
+            ulong prior = (await Task.Run(() => reopened.Control.Status())).SceneGeneration;
+            var applied = await Task.Run(() => reopened.Authoring.ApplyTracked());
+            if (!applied.IsOk) throw new InvalidOperationException("Saved scene apply refused: " + applied.Error);
+            await NameUiWait(async () => (await Task.Run(() => reopened.Control.Status())).SceneGeneration > prior,
+                "saved imported reference reloads in the fresh Runtime", 60);
+            checks.Add(new("saved reference applies under the same generation", true));
+            restarted.CloseMainWindow();
+        }
+        finally { File.WriteAllBytes(info.SourcePath, source); }
     }
 
     private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)

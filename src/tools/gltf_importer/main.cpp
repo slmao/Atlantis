@@ -49,9 +49,12 @@ int main(int argc, char** argv) {
   std::optional<fs::path> overlayPath;
   if (parseArgumentValue(argc, argv, "overlay", overlay)) overlayPath = fs::path(overlay);
 
+  std::string managed;
+  const bool managedStaticMesh = parseArgumentValue(argc, argv, "managed-static-mesh", managed);
+  if (managedStaticMesh && managed != "on") return 2;
   const auto result = atlantis::gltf_importer::importGltf(fs::path(input), fs::path(contentRoot),
                                                                 fs::path(outputDir), name, importRoot.value(),
-                                                                overlayPath);
+                                                                overlayPath, managedStaticMesh);
   if (result.isErr()) {
     std::cerr << "atlantis_gltf_importer: " << atlantis::gltf_importer::gltfImportErrorMessage(result.error())
               << "\n";

@@ -147,4 +147,98 @@ public static partial class Codec
     public static JsonValue Encode(A.RebuildStatus status) => JsonValue.NewObject()
         .Set("activeGeneration", status.ActiveGeneration is A.GenerationId id ? Encode(id.Value) : JsonValue.Null())
         .Set("job", status.Job is A.RebuildJob job ? Encode(job) : JsonValue.Null());
+
+    public static bool ValidImportName(string? name)
+    {
+        if (name is null || name.Length is < 1 or > 48 || name[0] is < 'a' or > 'z') return false;
+        foreach (char c in name)
+            if (c is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '_')) return false;
+        if (name is "con" or "prn" or "aux" or "nul") return false;
+        return !(name.Length == 4 && name[3] is >= '0' and <= '9' &&
+            (name.StartsWith("com", StringComparison.Ordinal) || name.StartsWith("lpt", StringComparison.Ordinal)));
+    }
+
+    public static A.ImportError? DecodeImportError(JsonValue value, bool start)
+    {
+        var error = RebuildToken<A.ImportError>(value);
+        if (error is null or A.ImportError.Unsupported) return null;
+        return error == A.ImportError.Unavailable || (error == A.ImportError.UnknownJob) != start ? error : null;
+    }
+
+    private static A.ImportFailure? DecodeImportFailure(JsonValue value)
+    {
+        if (RebuildToken<A.ImportStage>(value.Find("stage")) is not A.ImportStage stage ||
+            RebuildToken<A.ImportFailureCode>(value.Find("code")) is not A.ImportFailureCode code ||
+            RebuildToken<A.RegistrationState>(value.Find("registration")) is not A.RegistrationState registration ||
+            value.Find("diagnostic") is not { IsString: true } diagnostic ||
+            System.Text.Encoding.UTF8.GetByteCount(diagnostic.AsString) > 4096) return null;
+        bool valid = code switch
+        {
+            A.ImportFailureCode.InvalidSource => stage == A.ImportStage.Source,
+            A.ImportFailureCode.LaunchFailed or A.ImportFailureCode.BuildFailed => stage == A.ImportStage.Pipeline,
+            A.ImportFailureCode.InvalidOutput or A.ImportFailureCode.IdentityConflict => stage == A.ImportStage.Validation,
+            A.ImportFailureCode.RegisterFailed => stage == A.ImportStage.Registration,
+            A.ImportFailureCode.PublishFailed => stage == A.ImportStage.Publication,
+            A.ImportFailureCode.TimedOut => true,
+            _ => false,
+        };
+        JsonValue? rootField = value.Find("registeredRootGuid");
+        AssetGuid? root = RebuildGuid(rootField);
+        if (!valid || (rootField is not null) != (registration == A.RegistrationState.Committed) ||
+            (rootField is not null && root is null)) return null;
+        uint? exit = null;
+        if (value.Find("exitCode") is JsonValue raw)
+        {
+            if (!raw.TryGetUInt64(out ulong number) || number > uint.MaxValue) return null;
+            exit = (uint)number;
+        }
+        return new(stage, code, diagnostic.AsString, exit, registration, root);
+    }
+
+    public static A.ImportJob? DecodeImportJob(JsonValue value)
+    {
+        if (RebuildGuid(value.Find("id")) is not AssetGuid id ||
+            value.Find("name") is not { IsString: true } name || !ValidImportName(name.AsString) ||
+            RebuildToken<A.ImportMode>(value.Find("mode")) is not A.ImportMode mode ||
+            RebuildToken<A.RebuildState>(value.Find("state")) is not A.RebuildState state) return null;
+        JsonValue? root = value.Find("rootGuid"), generation = value.Find("generation"), failure = value.Find("failure");
+        bool success = state == A.RebuildState.Succeeded;
+        if ((root is not null) != success || (generation is not null) != success ||
+            (failure is not null) != (state == A.RebuildState.Failed)) return null;
+        AssetGuid? guid = RebuildGuid(root), selected = RebuildGuid(generation);
+        A.ImportFailure? detail = failure is null ? null : DecodeImportFailure(failure);
+        if ((success && (guid is null || selected is null)) || (failure is not null && detail is null)) return null;
+        return new(new(id), name.AsString, mode, state, guid, selected is AssetGuid gen ? new A.GenerationId(gen) : null, detail);
+    }
+
+    public static A.ImportStatus? DecodeImportStatus(JsonValue value)
+    {
+        if (value.Find("activeGeneration") is not JsonValue active || value.Find("job") is not JsonValue job) return null;
+        AssetGuid? id = active.IsNull ? null : RebuildGuid(active);
+        A.ImportJob? decoded = job.IsNull ? null : DecodeImportJob(job);
+        if ((!active.IsNull && id is null) || (!job.IsNull && decoded is null)) return null;
+        return new(id is AssetGuid guid ? new A.GenerationId(guid) : null, decoded);
+    }
+
+    public static JsonValue Encode(A.ImportJob job)
+    {
+        JsonValue value = JsonValue.NewObject().Set("id", Encode(job.Id.Value)).Set("name", JsonValue.String(job.Name))
+            .Set("mode", JsonValue.String(job.Mode.ToString())).Set("state", JsonValue.String(job.State.ToString()));
+        if (job.RootGuid is AssetGuid root) value.Set("rootGuid", Encode(root));
+        if (job.Generation is A.GenerationId gen) value.Set("generation", Encode(gen.Value));
+        if (job.Failure is A.ImportFailure failure)
+        {
+            JsonValue detail = JsonValue.NewObject().Set("stage", JsonValue.String(failure.Stage.ToString()))
+                .Set("code", JsonValue.String(failure.Code.ToString())).Set("diagnostic", JsonValue.String(failure.Diagnostic))
+                .Set("registration", JsonValue.String(failure.Registration.ToString()));
+            if (failure.ExitCode is uint exit) detail.Set("exitCode", JsonValue.Number((ulong)exit));
+            if (failure.RegisteredRootGuid is AssetGuid guid) detail.Set("registeredRootGuid", Encode(guid));
+            value.Set("failure", detail);
+        }
+        return value;
+    }
+
+    public static JsonValue Encode(A.ImportStatus status) => JsonValue.NewObject()
+        .Set("activeGeneration", status.ActiveGeneration is A.GenerationId gen ? Encode(gen.Value) : JsonValue.Null())
+        .Set("job", status.Job is A.ImportJob job ? Encode(job) : JsonValue.Null());
 }

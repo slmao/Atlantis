@@ -39,6 +39,7 @@ constexpr std::string_view kUsage =
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
+    "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
@@ -346,6 +347,10 @@ int Invocation::finish(Reply reply) {
           failure->subject.set("documentRevision", *revision);
       }
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets import" || checked.command == "assets import-status") {
+      failure->message += checked.command == "assets import" ? "; import admission unknown" : "; import outcome unknown";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {

@@ -273,3 +273,33 @@ TEST_CASE("The real atlantis_gltf_importer produces byte-identical output across
     CHECK(readText(dir / "out_a" / file) == readText(dir / "out_b" / file));
   }
 }
+
+TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gltf_importer][guid]") {
+  const auto dir = gltf_test::freshDirectory("managed_static_mesh");
+  const auto input = dir / "source.gltf";
+  const auto out = dir / "output";
+  auto text = gltf_test::buildGltf(gltf_test::unitQuad());
+  bool accepted = false;
+  SECTION("embedded indexed mesh") { accepted = true; }
+  SECTION("external buffer is refused before loading") {
+    const auto uri = text.find("data:application/octet-stream;base64,");
+    REQUIRE(uri != std::string::npos);
+    text.replace(uri, text.find('"', uri) - uri, "missing.bin");
+  }
+  SECTION("declared buffer size must match embedded bytes") {
+    const auto length = text.rfind("\"byteLength\":");
+    REQUIRE(length != std::string::npos);
+    const auto start = length + std::string_view("\"byteLength\":").size();
+    text.replace(start, text.find(',', start) - start, "400000000");
+  }
+  std::ofstream(input, std::ios::binary) << text;
+  const auto result = importGltf(input, dir, out, "managed_mesh", root(), std::nullopt, true);
+  if (accepted) {
+    REQUIRE(result.isOk());
+    CHECK(result.value().meshCount == 1);
+  } else {
+    REQUIRE(result.isErr());
+    CHECK(result.error() == GltfImportError::MalformedGltf);
+    CHECK_FALSE(fs::exists(out));
+  }
+}

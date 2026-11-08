@@ -386,6 +386,10 @@ int main(int argc, char** argv) {
   // and before every client, so every authoring connection closes first.
   atlantis::runtime::AuthoringSources authoringSources;
   authoringSources.catalogSource = ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH;
+  if (rebuild) {
+    if (auto source = rebuild->generationCatalogSource(); !source.empty())
+      authoringSources.catalogSource = std::move(source);
+  }
   authoringSources.roots.assetsRoot = ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR;
 #if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID) && defined(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)
   if (const auto bistroImport = atlantis::asset_system::parseAssetGuid(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID);

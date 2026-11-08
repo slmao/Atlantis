@@ -135,7 +135,8 @@ struct GltfImportSummary {
     const std::filesystem::path& inputPath, const std::filesystem::path& contentRoot,
     const std::filesystem::path& outputDir, const std::string& name,
     const atlantis::asset_system::AssetGuid& importRoot,
-    const std::optional<std::filesystem::path>& overlayPath = std::nullopt);
+    const std::optional<std::filesystem::path>& overlayPath = std::nullopt,
+           bool managedStaticMesh = false);
 
 // Plan 0047 P7: the import root's GUID, looked up in the catalog source as
 // content:<content-root name>/<glTF file name>, which must be a gltf_import

@@ -2,6 +2,7 @@
 
 #include <atlantis/assert.h>
 
+#include <algorithm>
 #include <array>
 
 namespace atlantis::connection::assets {
@@ -55,6 +56,46 @@ bool validFailure(RebuildStage stage, RebuildFailureCode code) noexcept {
     case RebuildFailureCode::IdentityChanged: return stage == RebuildStage::Validation;
     case RebuildFailureCode::PublishFailed: return stage == RebuildStage::Publication;
     case RebuildFailureCode::TimedOut: return true;
+  }
+  return false;
+}
+
+std::string_view toString(ImportMode value) noexcept {
+  return token(value, std::array{"Register", "Resume"});
+}
+std::string_view toString(ImportError value) noexcept {
+  return token(value, std::array{"Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable", "NameConflict",
+                                 "ActivationRequired", "NothingToResume", "UnknownJob", "Unsupported"});
+}
+std::string_view toString(ImportStage value) noexcept {
+  return token(value, std::array{"Source", "Pipeline", "Validation", "Registration", "Publication"});
+}
+std::string_view toString(ImportFailureCode value) noexcept {
+  return token(value, std::array{"InvalidSource", "LaunchFailed", "BuildFailed", "InvalidOutput",
+                                 "IdentityConflict", "RegisterFailed", "PublishFailed", "TimedOut"});
+}
+std::string_view toString(RegistrationState value) noexcept {
+  return token(value, std::array{"NotCommitted", "Committed", "Unknown"});
+}
+bool validImportName(std::string_view name) noexcept {
+  const auto letter = [](char c) { return c >= 'a' && c <= 'z'; };
+  if (name.empty() || name.size() > 48 || !letter(name.front())) return false;
+  if (!std::ranges::all_of(name, [&](char c) { return letter(c) || (c >= '0' && c <= '9') || c == '_'; }))
+    return false;
+  if (name == "con" || name == "prn" || name == "aux" || name == "nul") return false;
+  return !(name.size() == 4 && (name.starts_with("com") || name.starts_with("lpt")) &&
+           name.back() >= '0' && name.back() <= '9');
+}
+bool validFailure(ImportStage stage, ImportFailureCode code) noexcept {
+  switch (code) {
+    case ImportFailureCode::InvalidSource: return stage == ImportStage::Source;
+    case ImportFailureCode::LaunchFailed:
+    case ImportFailureCode::BuildFailed: return stage == ImportStage::Pipeline;
+    case ImportFailureCode::InvalidOutput:
+    case ImportFailureCode::IdentityConflict: return stage == ImportStage::Validation;
+    case ImportFailureCode::RegisterFailed: return stage == ImportStage::Registration;
+    case ImportFailureCode::PublishFailed: return stage == ImportStage::Publication;
+    case ImportFailureCode::TimedOut: return true;
   }
   return false;
 }

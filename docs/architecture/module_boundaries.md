@@ -1656,6 +1656,13 @@ generations for explicit startup selection. Remote carries the two
 operations to the same CLI, SDK, Editor and MCP clients. RuntimeHost,
 Authoring and the frame loop acquire no build or process ownership.
 
+[Spec 0086](../specs/0086-new-asset-import.md) extends the private Windows
+asset build coordinator with project-owned glTF registration and shared
+import receipts. CMake and Tools still own producer execution. The
+Runtime selects a frozen generation for discovery and authoring. Clients
+share the same operations through Connection and Remote. See
+[ADR-0147](../adr/0147-managed-import-registration-and-publication.md).
+
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
 the clients' Viewport overlay:

@@ -14,6 +14,7 @@ struct Assets final : atlantis::connection::AssetConnection {
   bool unavailable = false;
   bool unordered = false;
   std::optional<ca::RebuildJob> job;
+  std::optional<ca::ImportJob> imported;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
@@ -36,6 +37,15 @@ struct Assets final : atlantis::connection::AssetConnection {
     if (id && (!job || job->id != *id)) return ca::RebuildStatusResult::Err(ca::RebuildError::UnknownJob);
     return ca::RebuildStatusResult::Ok({{}, job});
   }
+  ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
+    imported = ca::ImportJob{{as::deriveAssetGuid(guid(), "import")}, std::string(name), mode,
+                            ca::RebuildState::Running, {}, {}, {}};
+    return ca::ImportStartResult::Ok(*imported);
+  }
+  ca::ImportStatusResult importStatus(std::optional<ca::ImportId> id) const override {
+    if (id && (!imported || imported->id != *id)) return ca::ImportStatusResult::Err(ca::ImportError::UnknownJob);
+    return ca::ImportStatusResult::Ok({{}, imported});
+  }
 };
 struct Borrow final : atlantis::connection::AssetConnection {
   explicit Borrow(Assets& a) : a_(a) {}
@@ -43,6 +53,12 @@ struct Borrow final : atlantis::connection::AssetConnection {
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override { return a_.rebuild(asset); }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
+  ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
+    return a_.importAsset(name, mode);
+  }
+  ca::ImportStatusResult importStatus(std::optional<ca::ImportId> id) const override {
+    return a_.importStatus(id);
+  }
   Assets& a_;
 };
 }
@@ -120,4 +136,28 @@ TEST_CASE("asset rebuild: typed receipts and status use the same shared provider
   encoded.set("generation", codec::encodeAsset(guid()));
   CHECK_FALSE(codec::decodeRebuildJob(encoded));
   CHECK_FALSE(codec::decodeRebuildError(Value::string("UnknownJob"), true));
+}
+
+TEST_CASE("asset import: committed failure remains observable on a separate session", "[remote][assets][asset-import]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto a = served.attach(), b = served.attach();
+  const auto accepted = a->assets().importAsset("sample", ca::ImportMode::Register);
+  REQUIRE(accepted.isOk());
+  const auto id = accepted.value().id;
+  CHECK(b->assets().importStatus(id).value().job == accepted.value());
+  CHECK(b->assets().importStatus(ca::ImportId{guid()}).error() == ca::ImportError::UnknownJob);
+  assets.imported->state = ca::RebuildState::Failed;
+  assets.imported->failure = ca::ImportFailure{ca::ImportStage::Publication, ca::ImportFailureCode::PublishFailed,
+      "test", {}, ca::RegistrationState::Committed, guid()};
+  const auto terminal = b->assets().importStatus(id);
+  REQUIRE(terminal.isOk());
+  CHECK(terminal.value().job == assets.imported);
+  auto raw = codec::encode(*assets.imported);
+  raw.set("generation", codec::encodeAsset(guid()));
+  CHECK_FALSE(codec::decodeImportJob(raw));
+  CHECK_FALSE(b->failure());
+  CHECK(b->assets().listAssets().isOk());
 }

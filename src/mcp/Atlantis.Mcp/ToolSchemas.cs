@@ -66,6 +66,9 @@ internal static class ToolSchemas
         JsonObject shape = Object(("id", Nullable(String))); shape["required"] = new JsonArray();
         return JsonSerializer.SerializeToElement(shape);
     }
+    internal static JsonElement ImportParameters() =>
+        Parameters(("name", String), ("mode", Enum("Register", "Resume")));
+
     internal static JsonElement RebuildStatusParameters()
     {
         JsonObject shape = Object(("jobId", String));
