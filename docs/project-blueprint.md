@@ -998,7 +998,7 @@ milestone being listed does not authorize starting it — see Section 1.
   existing producers with isolated publication and explicit Runtime restart,
   delivered in [PR #334](https://github.com/slmao/Atlantis/pull/334).
   [Spec 0086](specs/0086-new-asset-import.md) and
-  [Plan 0086](plans/0086-new-asset-import.md) are in joint review for managed
+  [Plan 0086](plans/0086-new-asset-import.md) are approved for managed
   import and registration of a first static-mesh glTF source.
   Preview and broader pipeline management remain future work.
   Other future work, each its own
