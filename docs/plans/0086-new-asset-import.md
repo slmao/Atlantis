@@ -52,56 +52,69 @@ generation compatibility before exposing the operation in the Editor.
 
 | Joint decision | Recommendation |
 |---|---|
-| **J1 — First source and trust boundary** | Approve one untextured static-mesh `.gltf` with embedded buffers, the size cap and the trusted local inbox. Expose only a logical name and closed mode to clients. |
-| **J2 — Identity and pipeline** | Approve project-owned committed source units, one explicit v4 mint, existing v8 derivation and deterministic effective catalog source. Require old identity preservation and additions only from the requested root. |
-| **J3 — Recovery and activation** | Approve the shared worker and two commits, retained registration with explicit resume, and generation-local validation with explicit restart. Accept that a saved scene requires the project registry and compatible generation. |
-| **J4 — Shared delivery** | Approve the start/status and compatibility rules. Authorize S2–S4 together after the design merge, with the existing verification and human merge gates. |
+| **J1 — First source and trust boundary** | Approve the 16 MiB untextured, indexed static-mesh `.gltf` subset with one verified embedded buffer. Keep source placement local and expose only a logical name and closed mode to clients. |
+| **J2 — Identity and pipeline** | Approve project-owned registration units, explicit v4 mint, existing v8 derivation and deterministic catalog-source composition. Require every old identity plus exactly the validated producer fragment. Accept Spec 0085's whole-graph artifact behavior. |
+| **J3 — Recovery and activation** | Approve the shared worker, staging and project markers, ordered registration/publication renames, and explicit resume with the original GUID. Use frozen generation metadata and explicit restart. Keep the project registration with any saved dependent scene. |
+| **J4 — Shared delivery** | Approve shared start/status, typed settlement and narrow legacy fallback. Reuse discovery and scene authoring after activation. Authorize S2–S4 together after manual design merge, with the existing verification and human merge gates. |
 
 ### Suggested joint authorization
 
 > I approve J1–J4 and jointly approve Spec/Plan 0086 at the reviewed revision.
 > I accept ADR-0147. After this design PR is manually merged, proceed from
-> current main through S2–S4, including applicable verification and a
-> review-ready implementation PR. Ordinary in-scope fixes and reuse of
-> valid unchanged-input evidence are authorized. Existing gates, deviation
-> rules and human final merge apply.
+> current main through S2–S4, including implementation, applicable verification
+> and submission of a review-ready implementation PR. Ordinary in-scope fixes
+> and reuse of valid unchanged-input evidence are authorized. Existing gates,
+> deviation rules and human final merge apply.
 
 ## Verification Checklist
 
 - [ ] **S1 design.** Check numbering, navigation, cross-links, status and
   scope of the documentation-only PR.
 - [ ] **R1 source boundary.** Import the existing fixture shape with one
-  embedded untextured primitive. Refuse an external buffer or image before
-  opening it, oversize input, unsupported geometry, traversal, case-alias
-  and Windows reparse inputs. Verify the inbox and checkout are unchanged.
-- [ ] **R2 identity and build.** Use the real configure, importer,
-  cook-manifest and assembly. Check the persisted root GUID and derived
-  mesh/scene identities. Reject a name conflict and injected catalog
-  identity or key collision before registration. In a clean opt-in build,
-  consume committed sources only and obtain the same GUIDs. Check the
-  default build's registration inputs are unchanged.
+  embedded untextured indexed primitive. Refuse an external buffer or image
+  before opening it, oversized input, invalid base64 or mismatched decoded
+  length, unsupported geometry, traversal, case aliases and Windows
+  reparse inputs. Verify inbox and checkout hashes stay unchanged.
+- [ ] **R2 identity and build.** Use real configure, importer,
+  cook-manifest and assembly. Compare the full staged delta with the
+  expected fragment and recompute mesh/scene GUIDs from the persisted
+  root. Refuse duplicate name and injected unrelated addition, missing
+  record, old identity change or GUID/key collision before either rename.
+  In a clean opt-in build with no inbox dependency or pending selection,
+  reproduce the registered identities. Confirm the ordinary build's inputs
+  and the next managed rebuild's full identity comparison.
 - [ ] **R3 recovery and activation.** Exercise overlapping import/rebuild
-  and a second host sharing the import workspace. Inject failures before
-  registration, between the two renames and after publication with a lost
-  receipt. Check the actual committed directory, prior generation
-  integrity, dirty recovery and explicit resume with the original GUID.
-  Confirm old and new generation selection after later registration, and
-  verify a legacy Spec 0085 profile/generation can still start.
-- [ ] **R3 scene path.** Start from a disposable hand-authored scene with
-  a known compatible material. The old session, including a first
-  discovery query after publication, must omit the new mesh. Explicitly
-  restart, find it through shared list/get and the typed Inspector
-  picker, then select it and observe successful apply/reload and a rendered
-  instance. Exercise undo/redo and save the selected GUID. Reopen and apply
-  it in a fresh session using the same generation. Check saved source
-  and generation bytes separately. Reuse unchanged-input failure recovery
-  evidence for existing apply semantics.
+  and a second host sharing the project with a distinct staging tree.
+  Inject failure before registration, between the renames, and process
+  loss after publication before receipt. Check the committed directory,
+  selectable generations and dirty markers, including repair through the
+  original workspace. Verify duplicate register after commitment refuses.
+  Remove the inbox copy in the fixture and resume from the committed
+  source with the original GUID. Verify a known complete generation can
+  be selected after receipt loss and that a stale pending selection never
+  participates in a later job. After another registration, start the
+  older generation for discovery and confirm its mutation guard. Verify
+  legacy Spec 0085 profile/generation startup.
+- [ ] **R3 scene path.** Use a disposable hand-authored scene with a known
+  compatible material and distinguishable original mesh. Before restart,
+  list/get must omit the new mesh even if discovery initializes after
+  publication. Start the selected generation and find the new GUID through
+  list/get and the typed Inspector picker. Confirm selection and wait for
+  the correlated successful Runtime reload. Observe the new rendered mesh,
+  undo to the original GUID, then redo to the imported GUID. Save and check
+  the literal GUID in the hand-authored source and that cooked generation
+  files are unchanged. Start another session on that generation, reopen
+  the saved source and apply it, then verify the same mesh resolves and
+  renders. Reuse unchanged-input failure recovery evidence for existing
+  apply semantics.
 - [ ] **R4 clients.** Compare native/managed codec vectors and the same
   admitted job and terminal data across CLI, both SDKs, MCP and Editor.
-  Verify closed inputs, known/unknown outcomes, disconnect or a late
-  callback, and failure payload/exit behavior. Cover old clients on the
-  new host and new calls' narrow fallback on the pinned older host while
-  list/get and authoring remain usable.
+  Cover a mismatched start echo or status ID, unknown job, lost start
+  response, late session callback and terminal failure payload/exit
+  behavior. Check exact `Unsupported` fallback on the pinned 0085 host,
+  plus a different malformed reply that follows normal protocol failure.
+  Check an old client on the new host and a new client without a profile.
+  Verify list/get, rebuild and authoring remain usable where supported.
 - [ ] **R5 builds and gates.** Run affected Windows Debug/Release and
   applicable Android build checks, focused native/managed suites and live
   Vulkan validation. Run or justify reuse of applicable headless/golden
