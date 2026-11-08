@@ -316,7 +316,7 @@ TEST_CASE("asset rebuild: an escaping producer stamp cannot touch the seed", "[r
   CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::WorkspaceNeedsRepair);
 }
 
-TEST_CASE("asset import: resume rejects an unrelated catalog addition", "[runtime][asset-import]") {
+TEST_CASE("asset import: resume rejects an invalid catalog delta before publication", "[runtime][asset-import]") {
   Fixture f;
   const auto project = f.base / "project";
   const auto registered = project / "registered/managed_sample";
@@ -355,7 +355,26 @@ TEST_CASE("asset import: resume rejects an unrelated catalog addition", "[runtim
   extra.guid = f.unknown;
   extra.assetId = as::assetKey(extra.guid);
   extra.source.path = "unexpected.material.txt";
-  write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene, extra}));
+  auto changed = old.value().front();
+  changed.source.path = "changed.material.txt";
+  auto colliding = extra;
+  colliding.guid = mesh.guid;
+  colliding.assetId = mesh.assetId;
+  auto expectedCode = ca::ImportFailureCode::IdentityConflict;
+  SECTION("unrelated addition") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene, extra}));
+  }
+  SECTION("missing imported record") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh}));
+    expectedCode = ca::ImportFailureCode::InvalidOutput;
+  }
+  SECTION("changed existing identity") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({changed, mesh, scene}));
+  }
+  SECTION("duplicate imported GUID and key") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene, colliding}));
+    expectedCode = ca::ImportFailureCode::InvalidOutput;
+  }
   write(f.base / "producer.cmake", "# The fixture supplies already assembled records.\n");
 
   auto host = f.host();
@@ -372,9 +391,10 @@ TEST_CASE("asset import: resume rejects an unrelated catalog addition", "[runtim
   REQUIRE(result.isOk());
   REQUIRE(result.value().job);
   REQUIRE(result.value().job->failure);
-  CHECK(result.value().job->failure->code == ca::ImportFailureCode::IdentityConflict);
+  CHECK(result.value().job->failure->code == expectedCode);
   CHECK(result.value().job->failure->registeredRootGuid == root);
   CHECK_FALSE(result.value().job->generation);
-  CHECK_FALSE(fs::exists(project / ".atlantis-import-dirty"));
-  CHECK_FALSE(fs::exists(f.marker));
+  const bool repair = expectedCode == ca::ImportFailureCode::InvalidOutput;
+  CHECK(fs::exists(project / ".atlantis-import-dirty") == repair);
+  CHECK(fs::exists(f.marker) == repair);
 }
