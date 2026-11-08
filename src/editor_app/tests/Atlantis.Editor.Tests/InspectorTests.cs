@@ -196,6 +196,19 @@ public static partial class Program
         byte[] source = File.ReadAllBytes(info.SourcePath);
         void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Task<ulong> Generation() => Task.Run(() => observer.Control.Status().SceneGeneration);
+        Task<byte[]> Capture(string name) => Task.Run(() =>
+        {
+            string path = Path.Combine(runtime.Launch.WorkDirectory, name + ".png");
+            observer.Control.Pause();
+            try
+            {
+                var step = observer.Control.Step(new StepRequest(1, path));
+                if (step.Report?.Image is null || step.Report.Data.DrawItemCount == 0)
+                    throw new InvalidOperationException("No rendered capture for " + name);
+                return File.ReadAllBytes(path);
+            }
+            finally { observer.Control.Resume(); }
+        });
         async Task WaitEdit(AssetGuid expected, ulong before, string label)
         {
             await NameUiWait(async () => await Task.Run(Read) == expected && await Generation() > before, label, 60);
@@ -204,6 +217,7 @@ public static partial class Program
 
         try
         {
+            var renderedBefore = await Capture("original-mesh");
             var row = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
                 .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
             Click(row.Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…"));
@@ -217,6 +231,8 @@ public static partial class Program
             ulong before = await Generation();
             Click(PickerField<Button>(picker, "_confirm"));
             await WaitEdit(mesh.Guid, before, "typed picker commits the imported GUID and reloads");
+            checks.Add(new("imported mesh produces a distinct rendered capture",
+                !(await Capture("imported-mesh")).SequenceEqual(renderedBefore)));
             before = await Generation();
             Click(NameUiField<Button>(window, "_undo")!);
             await WaitEdit(original, before, "Undo restores the prior mesh and reloads");
