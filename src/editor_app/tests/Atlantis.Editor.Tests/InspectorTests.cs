@@ -172,8 +172,8 @@ public static partial class Program
     private static async Task CheckImportedMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
         await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
-            File.Exists(process.SessionPath) && NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject is not null,
-            "imported generation and Inspector", 90);
+            File.Exists(process.SessionPath) && NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0,
+            "imported generation and Hierarchy", 60);
         var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
         work(Path.GetDirectoryName(runtime.SessionPath)!);
         using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
@@ -183,7 +183,13 @@ public static partial class Program
         var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
         var mesh = assets.Single(a => a.Source == "content:managed_sample/source.gltf#mesh/0/0");
         var schema = await Task.Run(() => observer.Authoring.Schema);
-        var subject = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!.Subject!.Value;
+        TypeId renderable = SceneSchema.TypeOf(schema, "Renderable")!.Value;
+        var subject = await Task.Run(() => observer.Authoring.ListNodes().Value
+            .First(n => observer.Authoring.ListComponents(n.Node).Value.Contains(renderable)).Node);
+        var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+        NameUiField<ListBox>(window, "_entities")!.SelectedItem = rows.First(r => r.Node == subject);
+        await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == subject,
+            "renderable Inspector");
         var address = SceneSchema.AddressOf(schema, subject, "Renderable", "meshAsset")!.Value;
         var document = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
         AssetGuid Read() => document.GetProperty(address)!.Value.AsAsset();
