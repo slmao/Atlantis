@@ -394,7 +394,7 @@ std::optional<bool> descendantsStopped(const Handle& job) {
 }
 template<class Interrupted>
 std::optional<End> runBuild(const fs::path& cmake, const fs::path& staging, const std::string& configuration,
-                            Interrupted interrupted) {
+                            Interrupted interrupted, bool configure = false) {
   const auto launchFailed = [] { return fail(Stage::Launch, Code::LaunchFailed, "Cannot start contained CMake asset build."); };
   Handle job(CreateJobObjectW(nullptr, nullptr));
   JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
@@ -402,13 +402,18 @@ std::optional<End> runBuild(const fs::path& cmake, const fs::path& staging, cons
   if (!job || !SetInformationJobObject(job.get(), JobObjectExtendedLimitInformation, &limits,
                                        static_cast<DWORD>(sizeof(limits)))) return launchFailed();
   SECURITY_ATTRIBUTES inheritable{static_cast<DWORD>(sizeof(SECURITY_ATTRIBUTES)), nullptr, TRUE};
-  const fs::path logPath = staging / "asset-rebuild.log";
+  const fs::path logPath = staging / (configure ? "asset-configure.log" : "asset-rebuild.log");
   if (!safeRelative(staging, logPath.filename(), true)) return launchFailed();
   Handle log(CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &inheritable, CREATE_ALWAYS, 0, nullptr));
   Handle input(CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inheritable, OPEN_EXISTING, 0, nullptr));
   if (!log || !input) return launchFailed();
-  std::wstring command = quote(cmake.native()) + L" --build " + quote(staging.native()) + L" --config " +
-      quote(fromUtf8(configuration).native()) + L" --target atlantis_asset_catalog";
+  std::wstring command = quote(cmake.native());
+  if (configure) {
+    command += L" " + quote(staging.native());
+  } else {
+    command += L" --build " + quote(staging.native()) + L" --config " +
+        quote(fromUtf8(configuration).native()) + L" --target atlantis_asset_catalog";
+  }
   STARTUPINFOW startup{};
   startup.cb = sizeof(startup);
   startup.dwFlags = STARTF_USESTDHANDLES;
@@ -444,8 +449,10 @@ std::optional<End> runBuild(const fs::path& cmake, const fs::path& staging, cons
   DWORD exit = 0;
   if (!GetExitCodeProcess(child.get(), &exit))
     return fail(Stage::Pipeline, Code::BuildFailed, "Cannot read CMake exit status.", true);
-  if (exit != 0) return fail(Stage::Pipeline, Code::BuildFailed, "The asset catalog target failed. See asset-rebuild.log.",
-                             false, static_cast<std::uint32_t>(exit));
+  if (exit != 0) return fail(Stage::Pipeline, Code::BuildFailed,
+      configure ? "Managed CMake configure failed. See asset-configure.log."
+                : "The asset catalog target failed. See asset-rebuild.log.",
+      false, static_cast<std::uint32_t>(exit));
   return std::nullopt;
 }
 
@@ -605,6 +612,9 @@ struct AssetRebuildHost::State {
     if (ec && ec != std::errc::no_such_file_or_directory)
       return fail(Stage::Launch, Code::LaunchFailed, "Cannot invalidate the producer stamp.");
     if (interrupted()) return timedOut(Stage::Launch);
+    if (!project.empty()) {
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true)) return *error;
+    }
     if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) return *error;
     if (interrupted()) return timedOut(Stage::Validation);
     const auto catalog = readCatalog(staging);
@@ -693,7 +703,9 @@ struct AssetRebuildHost::State {
     fs::remove(staging / stamp, ec);
     if (ec && ec != std::errc::no_such_file_or_directory)
       return failed(IS::Pipeline, IC::LaunchFailed, "Cannot invalidate the managed stamp.", true);
-    if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) {
+    auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true);
+    if (!error) error = runBuild(config.cmake, staging, config.configuration, interrupted);
+    if (error) {
       const auto code = error->failure.code == Code::TimedOut ? IC::TimedOut :
                         error->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
       return failed(IS::Pipeline, code, error->failure.diagnostic, error->repair, error->failure.exitCode);
