@@ -285,6 +285,26 @@ public static partial class Program
             restarted.CloseMainWindow();
         }
         finally { File.WriteAllBytes(info.SourcePath, source); }
+
+        var workerField = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var worker = (EditorWorker)workerField.GetValue(window)!;
+        NameUiField<TabControl>(window, "_assetTabs")!.SelectedIndex = 1;
+        var refresh = NameUiField<Button>(window, "_importRefresh")!;
+        var importState = NameUiField<TextBlock>(window, "_importState")!;
+        var previousImportState = importState.Text;
+        await NameUiWait(() => refresh.IsEnabled, "import status refresh is available");
+        Click(refresh);
+        workerField.SetValue(window, null);
+        try
+        {
+            // The following query is queued after the panel's status query on the old worker.
+            bool drained = false;
+            worker.QueryImport(null, _ => drained = true);
+            await NameUiWait(() => drained, "old import status callback drained");
+            checks.Add(new("late import status from the old session leaves the panel unchanged",
+                importState.Text == previousImportState && !refresh.IsEnabled));
+        }
+        finally { workerField.SetValue(window, worker); }
     }
 
     private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)

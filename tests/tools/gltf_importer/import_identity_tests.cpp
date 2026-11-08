@@ -280,11 +280,21 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
   const auto out = dir / "output";
   auto text = gltf_test::buildGltf(gltf_test::unitQuad());
   bool accepted = false;
+  auto expectedError = GltfImportError::MalformedGltf;
   SECTION("embedded indexed mesh") { accepted = true; }
   SECTION("external buffer is refused before loading") {
     const auto uri = text.find("data:application/octet-stream;base64,");
     REQUIRE(uri != std::string::npos);
     text.replace(uri, text.find('"', uri) - uri, "missing.bin");
+  }
+  SECTION("external image is refused before loading") {
+    text.insert(text.find('{') + 1, "\"images\":[{\"uri\":\"missing.png\"}],");
+  }
+  SECTION("invalid embedded base64 is refused") {
+    constexpr std::string_view prefix = "data:application/octet-stream;base64,";
+    const auto uri = text.find(prefix);
+    REQUIRE(uri != std::string::npos);
+    text[uri + prefix.size()] = '?';
   }
   SECTION("declared buffer size must match embedded bytes") {
     const auto length = text.rfind("\"byteLength\":");
@@ -292,6 +302,13 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
     const auto start = length + std::string_view("\"byteLength\":").size();
     text.replace(start, text.find(',', start) - start, "400000000");
   }
+  SECTION("non-triangle geometry is refused") {
+    auto geometry = gltf_test::unitQuad();
+    geometry.mode = 1;
+    text = gltf_test::buildGltf(geometry);
+    expectedError = GltfImportError::NonTrianglesMode;
+  }
+  SECTION("oversized source is refused") { text.resize(16 * 1024 * 1024 + 1, ' '); }
   std::ofstream(input, std::ios::binary) << text;
   const auto result = importGltf(input, dir, out, "managed_mesh", root(), std::nullopt, true);
   if (accepted) {
@@ -299,7 +316,7 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
     CHECK(result.value().meshCount == 1);
   } else {
     REQUIRE(result.isErr());
-    CHECK(result.error() == GltfImportError::MalformedGltf);
+    CHECK(result.error() == expectedError);
     CHECK_FALSE(fs::exists(out));
   }
 }
