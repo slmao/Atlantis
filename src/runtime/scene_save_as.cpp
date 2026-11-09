@@ -7,8 +7,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
-#include <fstream>
+#include <algorithm>
 #include <cstring>
+#include <fstream>
 #include <iterator>
 #include <memory>
 
@@ -136,8 +137,11 @@ std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalog
     if (entry.guid == copy.scene || entry.assetId == key) return Error::IdentityConflict;
 
   for (const auto& item : fs::directory_iterator(root)) {
-    const auto leaf = item.path().filename().string();
-    if (!leaf.starts_with("save_") || !ca::validSaveAsName(std::string_view(leaf).substr(5))) continue;
+    const auto leaf = item.path().filename().wstring();
+    if (!leaf.starts_with(L"save_") || !std::ranges::all_of(leaf, [](wchar_t c) { return c <= 0x7f; })) continue;
+    std::string siblingName(leaf.size() - 5, '\0');
+    std::transform(leaf.begin() + 5, leaf.end(), siblingName.begin(), [](wchar_t c) { return static_cast<char>(c); });
+    if (!ca::validSaveAsName(siblingName)) continue;
     auto sibling = open(item.path(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING,
                         FILE_FLAG_BACKUP_SEMANTICS);
     if (!sibling) return Error::UnsafeTarget;
@@ -154,7 +158,7 @@ std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalog
     if (fragment.isErr() || fragment.value().entries().size() != 1) return Error::IdentityConflict;
     const auto& entry = fragment.value().entries().front();
     if (entry.type != as::CatalogAssetType::Scene || entry.root != as::CatalogRoot::Assets ||
-        entry.path != ca::saveAsSource(std::string_view(leaf).substr(5)) || entry.guid == copy.scene ||
+        entry.path != ca::saveAsSource(siblingName) || entry.guid == copy.scene ||
         as::assetKey(entry.guid) == key) return Error::IdentityConflict;
   }
   return std::nullopt;

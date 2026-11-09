@@ -181,6 +181,13 @@ public static partial class Program
         await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0, "Save As authoring ready");
         using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(session)));
         DocumentInfo original = (await Task.Run(() => observer.Authoring.Document()))!;
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_REOPENED_GUID") is { } expected)
+        {
+            checks.Add(new("copied scene opens with its own identity and fresh history",
+                original.Scene.ToString() == expected && !NameUiField<Button>(window, "_undo")!.IsEnabled &&
+                !NameUiField<Button>(window, "_redo")!.IsEnabled));
+            return;
+        }
         byte[] beforeSource = File.ReadAllBytes(original.SourcePath);
         var nodes = (await Task.Run(() => observer.Authoring.ListNodes())).Value;
         var subject = nodes.First();
