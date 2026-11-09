@@ -16,9 +16,9 @@ Editor structural history.
 1. **S1 — Design.** Review this Plan and Spec together. Record J1–J4 and
    explicit implementation authorization in the review PR.
 2. **S2 — Compose and settle one edit.** Add the UI-free transaction plan,
-   reuse the structural recorder, and route worker validation and settlement
-   through the existing edit and apply paths. Keep the document guard and
-   immutable mesh target local to this action.
+   reuse the structural recorder and settle submit/drain before using the
+   existing automatic apply policy. Keep the document guard and immutable
+   mesh target local to this action.
 3. **S3 — Assets action and feedback.** Wire the action and eligibility to
    the existing panel and Hierarchy selection. Exercise refusal, pending
    apply, recovery, and late completion in model or UI fixtures as mapped below.
@@ -29,7 +29,12 @@ Editor structural history.
 
 - Editor Model: add the operation to
   [HierarchyCommands.cs](../../src/editor_app/Atlantis.Editor.Model/HierarchyCommands.cs).
-  Reuse the existing EditPlan and structural record shape.
+  Reuse the existing EditPlan and structural record shape. Adapt the local
+  ApplyController in [DocumentTree.cs](../../src/editor_app/Atlantis.Editor.Model/DocumentTree.cs)
+  to handle an already settled local edit. Use
+  [AuthoringDocument.cs](../../src/editor_app/Atlantis.Editor.Model/AuthoringDocument.cs)
+  if needed to preserve event observation errors for this action. Keep the
+  existing pipelined edit path for other actions.
 - Editor App: [EditorSession.cs](../../src/editor_app/Atlantis.Editor/EditorSession.cs)
   for worker-side eligibility, settlement and document observation, and
   [MainWindow.cs](../../src/editor_app/Atlantis.Editor/MainWindow.cs) for the
@@ -56,9 +61,17 @@ S2–S4 can proceed continuously under one human authorization.
 | Decision | Recommendation |
 | --- | --- |
 | J1 — Scope and defaults | Approve one selected Mesh in a hand-authored scene, root placement with identity Transform, existing unnamed label and absent material. |
-| J2 — Composition and races | Approve existing CreateNode plus SetProperty in one transaction, explicit EntityGuid and current-worker/document guards with existing cross-client transaction semantics. No new ADR or shared API. |
-| J3 — Feedback and recovery | Select after document commit, report tracked apply separately, keep ordinary undo/redo/save, and never automatically retry creation after unknown settlement. |
+| J2 — Composition and races | Approve CreateNode with Renderable plus SetProperty in one transaction, explicit EntityGuid, and request/worker/document-open guards. Keep existing non-atomic cross-client semantics. No new ADR or shared API. |
+| J3 — Feedback and recovery | Settle submit/drain before automatic apply. Select and record history after confirmed commit. Distinguish unknown commit from known commit with unknown apply. Keep ordinary undo/redo/save and explicit recovery. |
 | J4 — Acceptance and delivery | Approve the focused model/UI and import-to-reopen flow below with existing gate rules. Authorize S2–S4 through a review-ready PR after manual design merge. |
+
+Suggested joint authorization for the current reviewed revision:
+
+> I approve J1–J4 and Spec/Plan 0087 together. After manual merge of the
+> design PR, proceed from current main through S2–S4, including scoped
+> implementation fixes, applicable verification, reuse of valid evidence,
+> and submission of a review-ready implementation PR. Preserve existing
+> gates and leave final review and merge to a human.
 
 ## Verification Checklist
 
@@ -66,30 +79,41 @@ S2–S4 can proceed continuously under one human authorization.
   whitespace. This design-only PR needs document checks.
 - [ ] **R1/R2 model and UI.** Check Mesh vs. non-Mesh, deselection/filtering,
   a pending display callback, absent or imported document, active gesture,
-  duplicate activation and an observed reopen or worker replacement. Verify
+  duplicate activation and an observed reopen or worker replacement. Cover
+  a same-source successful reopen, a refused reopen, and failed event
+  observation before submission. Verify
   current GUID/type and schema failure cause refusal, captured GUID is used
   if selection changes, and exactly one command batch creates one unnamed
   root with identity Transform, correct mesh and absent material.
-  Verify a transaction refusal keeps node count, selection and history intact.
-- [ ] **R3 settlement and recovery.** Test delayed settlement after reopen or
-  replacement, unknown commit on connection loss and paused apply. Verify the
-  Runtime remains on its old projection until successful reload. On a disposable
-  Runtime fixture, force a reload failure after commit (for example, withhold
-  the new mesh artifact before its first load), then restore the input and use
-  explicit Retry Apply. Verify the same node GUID and one history entry
-  throughout, with no second creation. Check that stale selection callbacks do
-  not change the current document's selection or action state.
+  Verify a transaction refusal keeps node count, selection and history intact
+  and issues no apply from this action. Verify external changes to the
+  created node block destructive undo, and a conflicting GUID blocks redo.
+- [ ] **R3 settlement and recovery.** Test late feedback after reopen or
+  replacement, loss before transaction settlement, and loss of the apply
+  reply after known settlement. Check that a node changed before history
+  capture does not receive a destructive undo record. Check that a reopened
+  document cannot receive the old request's selection, history or apply when
+  the reopen was observed before that action. Check pending apply coalescing and a suspended
+  edit waiting for explicit Retry. On a disposable generation, start Runtime
+  and verify discovery, then withhold an as-yet-unloaded mesh artifact before
+  the add's apply and restore it after the correlated reload failure. Verify
+  the old Runtime projection, committed node GUID and one history entry, then
+  explicitly Retry Apply and verify the same node renders. No recovery submits
+  a second creation.
 - [ ] **R2–R4 live acceptance.** In a disposable hand-authored scene with an
   origin-visible camera, use a valid self-contained 0086 glTF whose mesh has a
   distinguishable render. Import and publish using the existing path. Verify
   the active old catalog omits it and explicitly restart with the new
   generation. Select the mesh in Assets and add it. Check node count +1,
   root identity Transform, exact mesh GUID, absent material, Hierarchy
-  selection and Inspector subject. Observe correlated apply success and the
-  added draw using the Runtime's existing fallback. Undo removes the node and
-  draw, redo restores the same node GUID and mesh and the draw. Save and
-  verify both GUIDs in source. Restart on the same generation, reopen and
-  confirm the same node and rendered mesh with fresh session history.
+  selection and Inspector subject. With Runtime paused, verify the committed
+  node is selected while apply is pending and the old projection remains.
+  Step or Resume, verify the receipt reaches Applied and capture the added
+  draw using the existing fallback. Undo removes the node and draw, redo
+  restores the same node GUID, mesh, transform and draw. Save explicitly and
+  verify both GUIDs in source and the generation files unchanged. Restart on
+  the same generation, reopen the saved source, and confirm the same node and
+  rendered mesh with fresh session history.
 - [ ] **Applicable gates.** Run affected Editor builds and model/UI checks,
   live Vulkan validation and the established full-diff performance
   applicability selector. Run or justify reuse of applicable headless/golden

@@ -45,24 +45,27 @@ and activating a newly published generation from the Assets panel.
 
 - **R1 — Eligibility and target.** Offer one explicit action for a selected
   Mesh row in a ready Assets catalog and an open hand-authored scene. Unknown,
-  missing, filtered-out, deselected and non-Mesh rows are ineligible. A
-  connected imported scene can still use its existing editing workflow but
-  cannot persist this new action. Show why the action is unavailable when a
-  mesh is selected and the scene is ineligible. Catalog eligibility is based
-  on the selected row and a worker-side shared assets.get check of its GUID and
-  Mesh type, independent of pending detail-display callbacks. A published but
-  inactive generation remains outside the current catalog. Block the action
+  missing, filtered-out, deselected and non-Mesh rows are ineligible. Imported
+  documents are ineligible because the current Save contract cannot persist
+  them. Show the reason when a mesh is selected and the scene is ineligible.
+  Catalog eligibility uses the selected row and a worker-side shared assets.get
+  check of its GUID and Mesh type, independent of pending detail callbacks.
+  A published but inactive generation remains outside the current catalog. Block the action
   during an active Gizmo gesture and suppress duplicate submissions while one
   add is settling. Normal Inspector focus-loss commits keep their own existing
   transaction and history semantics.
 - **R2 — One structural transaction.** Capture the mesh GUID, current worker,
-  and observed document lifetime at activation. On the worker, observe the
-  current document and schema before submitting. Refuse an observed reopen,
-  replacement or lost session before submission, even if the scene path or
-  GUID is unchanged. Never substitute a later Assets selection for the captured
-  mesh. Use a fresh explicit EntityGuid and the existing CreateNode command
-  with Renderable in the initial component list, then SetProperty of
-  Renderable.meshAsset in the same transaction. Resolve the component and
+  observed document-open lifetime and a local request identity at activation.
+  On the worker, check the mesh and schema and refresh the document/events
+  before submitting. A successful open advances the local lifetime when its
+  DocumentReopened event is observed, including for the same path and scene
+  GUID. A refused open preserves the lifetime. Refuse before submission if
+  the observations fail, the document is ineligible, a gesture is active, or
+  the captured worker or lifetime is no longer current. Never substitute a
+  later selection for the captured mesh. Use a fresh explicit EntityGuid and
+  the existing CreateNode command with Renderable in the initial component
+  list, then SetProperty of Renderable.meshAsset in the same transaction.
+  Resolve the component and
   property from the authoring schema. Use the existing append position from
   the current observed node order, a root parent, default unnamed node, and
   Transform defaults (origin, zero rotation, unit scale). Leave the optional
@@ -72,24 +75,34 @@ and activating a newly published generation from the Assets panel.
   checks and submission remains subject to the existing transaction rules,
   including insertion-position validation. No cross-client compare-and-swap
   is implied.
-- **R3 — Settlement, selection and recovery.** A refused validation or
-  transaction creates no node or history entry, leaves selection intact and
-  shows the reason. The ordinary pipelined edit path can still request an
-  apply of the existing document after a refused transaction. An apply result
-  never confirms creation. After confirmed document commit, record one structural
-  history entry and select the new GUID through the existing Hierarchy/
-  Inspector selection path. Keep the Assets tab and its mesh selection in place.
-  Selection refers to the document and may precede a Runtime swap. An old
-  worker or old document's completion must never select a node or replace the
-  current request state. If transport is lost before commit settlement, show
-  an unknown result and the attempted EntityGuid when available. Avoid automatic
-  resubmission and inspect the document on reconnect before an explicit retry.
-  Use the existing
-  ApplyController and its correlated outcomes. Paused or pending apply leaves
-  the node in the document. Reload failure keeps the committed node, its
-  history and the last applied Runtime projection. Use the existing repair,
-  undo and explicit Retry Apply workflow, including its conflict and suspension
-  rules. Recovery must never submit creation again.
+- **R3 — Settlement, selection and recovery.** Settle the transaction on
+  the same worker by observing its submit reply and draining failures for
+  its ticket range before requesting apply. A validation or transaction
+  refusal creates no node or history entry, preserves selection and reports
+  the reason. This action issues no apply for a refused edit. After confirmed
+  commit, record the node through the existing structural history and select
+  its GUID through Hierarchy/Inspector if it is still present. Keep the Assets
+  tab and its mesh selection in place. Selection refers to the document and
+  can precede a Runtime swap. Refresh the document events after settlement.
+  Guard history, automatic apply and feedback by the request, worker and
+  observed document lifetime. Suppress stale selection and action-state
+  callbacks, including after an observed reopen during settlement. A confirmed
+  commit that can no longer be safely read for history is reported as committed
+  with history unavailable. Never construct an undo record from another
+  document or a node already changed externally.
+
+  A lost connection before transaction settlement leaves its result unknown
+  if submission may have reached the host. Show the attempted EntityGuid and
+  direct the user to inspect the document on reconnect before an explicit
+  retry. If the transaction already settled, a later lost apply reply leaves
+  the known document result intact and only the apply outcome unknown. Neither case automatically submits
+  another creation. Pass the settled local edit to the existing apply policy.
+  An in-flight apply retains its coalescing rules, including during recovery.
+  A suspended controller keeps edits in the document until explicit Apply or
+  Retry. Pending/paused, failed, superseded and unknown outcomes retain the
+  existing correlated apply semantics. Reload failure keeps the committed node,
+  available history and last successful Runtime projection. Recovery applies
+  the current document without creating another node.
 - **R4 — History and persistence.** Undo removes the whole added node through
   the existing structural recorder and its external-change guards. Redo
   reconstructs the same EntityGuid, transform and mesh, with the material
@@ -111,8 +124,11 @@ Put the action next to the existing Assets selection actions. An editor-local
 plan composes the shared discovery result, schema addresses and existing
 authoring commands. Include Renderable in CreateNode's component list so the
 structural recorder captures it in the created node snapshot together with
-Transform. The worker submits through the ordinary edit settlement path and
-reports the document result separately from the existing apply status. Use
+Transform. The worker separates submit/drain from automatic apply for this
+action. The existing pipelined CommitAndApply sends apply before the drain
+result is known, so it cannot provide this action's refusal and settlement
+semantics. Feed confirmed edits into the same ApplyController policy as normal
+edits. An automatic edit is distinct from the explicit recovery request. Use
 the current selection affordances and ordinary UI feedback, with local request
 and document-lifetime guards for this action.
 
