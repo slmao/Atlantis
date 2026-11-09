@@ -22,6 +22,7 @@ using System.Text;
 using System.Threading;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
+using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
 using Command = Atlantis.Gameplay.Authoring.Command;
@@ -322,6 +323,9 @@ public sealed class EditorWorker : IDisposable
     public event Action<FrameTimes>? Measured;
     // Plan 0068 M2.
     public event Action<DocumentInfo?>? DocumentOpened;
+    public event Action<long>? MeshDocumentReopened;
+    private long _meshDocumentLifetime;
+    public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
     public event Action<string>? ApplyStateChanged;
     public event Action<bool, bool>? ApplyControlsChanged;
@@ -667,6 +671,93 @@ public sealed class EditorWorker : IDisposable
 
     public void AddComponent(TypeId component) => Edit(document => (_inspector!.AddComponent(component), null));
 
+    public void AddMesh(AssetGuid mesh, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
+    {
+        void Report(EntityGuid? created, string notice) => _post(() => settled(created, notice));
+        bool IsCurrent()
+        {
+            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime;
+        }
+        bool Observe(RemoteAuthoringDocument document)
+        {
+            if (!IsCurrent() || document.ObserveEvents() is not { } events || !IsCurrent()) return false;
+            // Observe reopens now, but account for a settled local edit before polling recovery.
+            PollDocument(session, events, pollApply: false);
+            return IsCurrent();
+        }
+
+        EntityGuid? attempted = null;
+        bool committed = false, recorded = false, applying = false;
+        try
+        {
+            if (_document is not RemoteAuthoringDocument document || _apply is not { } apply ||
+                document.Info()?.Provenance != Provenance.HandAuthored)
+            {
+                Report(null, "Add refused: open a hand-authored scene.");
+                return;
+            }
+            var asset = session.Assets.GetAsset(mesh);
+            if (!asset.IsOk || asset.Value is not { Type: AssetType.Mesh } details || details.Guid != mesh)
+            {
+                Report(null, "Add refused: the selected mesh is unavailable in this catalog.");
+                return;
+            }
+            var schema = document.Schema;
+            if (!Observe(document) || _gizmo?.Dragging == true)
+            {
+                Report(null, "Add refused: the document changed, could not be observed, or a gesture is active.");
+                return;
+            }
+            var node = new EntityGuid(Guid.NewGuid());
+            var plan = HierarchyCommands.AddMesh(schema, (ulong)_tree.Count, node, mesh);
+            if (plan.Refusal is { } refusal) { Report(null, "Add refused: " + refusal); return; }
+            if (!IsCurrent()) { Report(null, "Add refused: the session or document changed."); return; }
+
+            attempted = node;
+            var ticket = document.SubmitTransaction(plan.Commands);
+            var failures = document.DrainFailures().Where(failure => ticket.Contains(failure.Ticket)).ToList();
+            if (ticket.Count != (ulong)plan.Commands.Count)
+            {
+                Report(null, $"Add outcome unknown for {node}. Inspect the document before retrying.");
+                return;
+            }
+            if (failures.Count != 0) { Report(null, "Add refused: " + failures[0].Error); return; }
+            committed = true;
+            if (!Observe(document)) { Report(null, $"Added {node}. Current document or history unavailable."); return; }
+            var state = new DocumentView(document, _tree).ReadNode(node);
+            var edit = HierarchyCommands.AddedMeshHistory(schema, state, mesh);
+            if (!Observe(document)) { Report(null, $"Added {node}. Current document or history unavailable."); return; }
+            if (edit is not null && _history is not null && _historyTarget is not null)
+            {
+                _history.Record(edit, _historyTarget.Committed(failures));
+                _history.Update();
+                PostHistory(lifetime);
+                recorded = true;
+            }
+            var selected = _tree.Contains(node) ? node : (EntityGuid?)null;
+            if (!IsCurrent()) { Report(null, $"Added {node}. Session or document changed before apply."); return; }
+            applying = true;
+            apply.AfterLocalEdit(true);
+            Report(selected, recorded ? $"Added {node}." : $"Added {node}. Undo history unavailable.");
+        }
+        catch (Exception e) when (e is GameplayException or IOException)
+        {
+            if (applying)
+            {
+                _apply?.LostApplyAcceptance();
+                string? applyText = _apply?.Text;
+                if (applyText is not null)
+                    _post(() => { if (MeshDocumentLifetime == lifetime) ApplyStateChanged?.Invoke(applyText); });
+            }
+            Report(null, committed
+                ? $"Added {attempted}. {(applying ? "Apply outcome unknown." : "History unavailable.")}"
+                : attempted is not null ? $"Add outcome unknown for {attempted}. Inspect the document on reconnect before retrying."
+                : "Add refused: " + e.Message);
+            throw;
+        }
+        PostApplyState(lifetime);
+    });
+
     public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
 
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
@@ -798,11 +889,11 @@ public sealed class EditorWorker : IDisposable
         PostHistory();
     }
 
-    private void PostHistory()
+    private void PostHistory(long? lifetime = null)
     {
         if (_history is null) return;
         var snapshot = new HistorySnapshot(_history.CanUndo, _history.CanRedo, _history.UndoLabel, _history.RedoLabel, _history.Notice);
-        _post(() => HistoryChanged?.Invoke(snapshot));
+        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) HistoryChanged?.Invoke(snapshot); });
     }
 
     /// <summary>Plan 0068 M5 (Spec 0068 R8): undo the last edit -- one transaction, then an apply -- or say why not.</summary>
@@ -923,11 +1014,11 @@ public sealed class EditorWorker : IDisposable
     }
 
     // Drains the authoring events into the tree, the transform cache and the apply controller; posts what changed.
-    private void PollDocument(RemoteSession session)
+    private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
-        IReadOnlyList<Event> events = _document.DrainEvents();
+        IReadOnlyList<Event> events = observed ?? _document.DrainEvents();
         var destroyed = new List<EntityGuid>();
         foreach (Event e in events)
         {
@@ -940,9 +1031,11 @@ public sealed class EditorWorker : IDisposable
             if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
             if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
         }
-        if (events.Any(e => e is DocumentReopened) && _history is not null)
+        if (events.Any(e => e is DocumentReopened))
         {
-            _history.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
+            long lifetime = Interlocked.Increment(ref _meshDocumentLifetime);
+            _post(() => MeshDocumentReopened?.Invoke(lifetime));
+            _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
             PostHistory();
         }
         if (destroyed.Count > 0)
@@ -960,6 +1053,7 @@ public sealed class EditorWorker : IDisposable
             PostInspector();
         }
         if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
+        if (!pollApply) return;
         _apply.Poll();
         if (_apply.Status is ApplyStatus.Failed or ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply) _commitTicks = null;
         if (_commitTicks is long committed && _apply.Status == ApplyStatus.Applied)
@@ -995,7 +1089,7 @@ public sealed class EditorWorker : IDisposable
     // The apply state line: the controller's text, with the play note appended while the Runtime plays.
     private const string PlayNote = " · playing: an apply replaces the scene, gameplay clients' changes included";
 
-    private void PostApplyState()
+    private void PostApplyState(long? lifetime = null)
     {
         if (_apply is null) return;
         bool canApply = _apply.CanApply, canPreview = _apply.CanPreview;
@@ -1008,14 +1102,14 @@ public sealed class EditorWorker : IDisposable
                 _gizmoBlocked = !canPreview;
             }
             _applyControls = (canApply, canPreview);
-            _post(() => ApplyControlsChanged?.Invoke(canApply, canPreview));
+            _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyControlsChanged?.Invoke(canApply, canPreview); });
             if (_previewSession is RemoteSession session) SendOverlay(session);
         }
         string text = _apply.Text + (_playing ? PlayNote : "");
         if (text == _applyText) return;
         _applyText = text;
         _log.Write("apply: " + text);
-        _post(() => ApplyStateChanged?.Invoke(text));
+        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(text); });
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.
@@ -1071,13 +1165,18 @@ public sealed class EditorWorker : IDisposable
         _post(() => Measured?.Invoke(times));
     });
 
-    public void Dispose()
+    public void Stop()
     {
         lock (_lock)
         {
             _stopping = true;
             Monitor.Pulse(_lock);
         }
+    }
+
+    public void Dispose()
+    {
+        Stop();
         _thread.Join(TimeSpan.FromSeconds(5));
     }
 

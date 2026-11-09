@@ -1,9 +1,9 @@
 # Plan: Add a Mesh from Assets to the Current Scene
 
 - **Spec:** [Spec 0087](../specs/0087-add-mesh-to-scene.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. Implementation authorization pending.
+- **Joint Human Review:** Owner approved J1–J4 and Spec/Plan 0087 together at revision `aef1a45e` and authorized S2–S4 in chat on 2026-11-09. [PR #337](https://github.com/slmao/Atlantis/pull/337) was manually merged as `dbb6f57e`. The authorization covers scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR, with existing gates and manual final merge.
 
 ## Objective
 

@@ -273,12 +273,7 @@ public sealed class ApplyController
         {
             _document.SubmitTransaction(commands);
             var failures = _document.DrainFailures();
-            if (failures.Count == 0 && _inFlight && !_suspended)
-            {
-                if (!_recovering || commands.Count != 0) _again = true;
-                if (_recovering && commands.Count != 0) ++_localRecoveryCommits;
-            }
-            if (failures.Count == 0) _needGlobalStatus = true;
+            if (failures.Count == 0) AfterLocalEdit(commands.Count != 0);
             return failures;
         }
         CommitOutcome outcome = _document.CommitAndApply(commands);
@@ -291,6 +286,20 @@ public sealed class ApplyController
         }
         return outcome.Failures;
     }
+    public void AfterLocalEdit(bool hasCommands)
+    {
+        _needGlobalStatus = true;
+        if (_suspended || _stopped) return;
+        if (_inFlight)
+        {
+            if (!_recovering || hasCommands) _again = true;
+            if (_recovering && hasCommands) ++_localRecoveryCommits;
+            return;
+        }
+        Issue();
+    }
+
+    public void LostApplyAcceptance() => Suspend(ApplyStatus.Unknown, "apply reply lost after document commit");
     public void SetPaused(bool paused)
     {
         _paused = paused;

@@ -114,6 +114,10 @@ public sealed class MainWindow : Window
     private readonly Button _importResume = new() { Content = "Resume publication", IsEnabled = false };
     private readonly Button _importRefresh = new() { Content = "Refresh import status", IsEnabled = false };
     private readonly TextBlock _importState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _addMesh = new() { Content = "Add to Scene", IsEnabled = false };
+    private readonly TextBlock _addMeshState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private bool _canAddMeshToDocument, _addingMesh;
+    private long _meshRequest, _meshDocumentLifetime;
     private readonly DispatcherTimer _importPoll = new() { Interval = TimeSpan.FromSeconds(1) };
     private ImportId? _importJob;
     private bool _importPending, _importRunning;
@@ -378,6 +382,11 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        _worker?.Stop();
+        ++_meshRequest;
+        _meshDocumentLifetime = 0;
+        _canAddMeshToDocument = _addingMesh = false;
+        _addMeshState.Text = "";
         ++_referenceLaunch;
         _referenceWindow?.Close(); _referenceWindow = null;
         _referenceBusy = false; _referenceSessionFailed = false;
@@ -420,6 +429,9 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            if (_addingMesh) _addMeshState.Text = "Add interrupted. Inspect the document on reconnect before retrying.";
+            _addingMesh = false;
+            ++_meshRequest;
             _importPoll.Stop();
             if (_importPending || _importRunning)
                 _importState.Text = _importJob is ImportId importId ? $"Import {importId} outcome unknown." : "Import admission unknown.";
@@ -447,6 +459,7 @@ public sealed class MainWindow : Window
         };
         worker.HistoryChanged += history =>
         {
+            if (!ReferenceEquals(_worker, worker)) return;
             _undo.IsEnabled = history.CanUndo;
             _redo.IsEnabled = history.CanRedo;
             _undo.Content = history.CanUndo ? "Undo " + history.UndoLabel : "Undo";
@@ -454,12 +467,14 @@ public sealed class MainWindow : Window
         };
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
-        worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        worker.ApplyStateChanged += text => { if (ReferenceEquals(_worker, worker)) _applyLine.Text = "apply: " + text; };
         worker.ApplyControlsChanged += (canApply, canPreview) =>
         {
+            if (!ReferenceEquals(_worker, worker)) return;
             _retryApply.IsEnabled = canApply; _allowGizmoPreview = canPreview;
             _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
             if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }
+            UpdateAddMeshButton();
         };
         // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
         worker.PlayStateChanged += playing =>
@@ -469,8 +484,23 @@ public sealed class MainWindow : Window
             _step.IsEnabled = !playing;
         };
         worker.EditNotice += text => _editLine.Text = text;
-        worker.DocumentOpened += info => _applyLine.Text = info is null ? "authoring: no document" :
-            "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
+        worker.DocumentOpened += info =>
+        {
+            if (!ReferenceEquals(_worker, worker)) return;
+            _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
+            UpdateAddMeshButton();
+            _applyLine.Text = info is null ? "authoring: no document" :
+                "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
+        };
+        worker.MeshDocumentReopened += lifetime =>
+        {
+            if (!ReferenceEquals(_worker, worker)) return;
+            ++_meshRequest;
+            _meshDocumentLifetime = lifetime;
+            _addingMesh = false;
+            _addMeshState.Text = "Scene reopened.";
+            UpdateAddMeshButton();
+        };
         worker.NodesDestroyed += nodes =>
         {
             if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
@@ -651,6 +681,7 @@ public sealed class MainWindow : Window
                 GizmoHandle?[]? handles = Gizmo.Handles(camera, rect, new Vector3(world[12], world[13], world[14]), directions);
                 if (handles is null || Gizmo.Grab(handles, directions, camera, mode, new Vector2(e.X, e.Y)) is not GizmoGrab grab) return false;
                 _gizmoGrab = grab;
+                UpdateAddMeshButton();
                 _gizmoGrabMode = mode;
                 _pressed = null;
                 _worker.BeginGizmoDrag(grab.Axis);
@@ -663,6 +694,7 @@ public sealed class MainWindow : Window
             case ViewportPointer.LeftUp when _gizmoGrab is { } grab:
                 _worker?.EndGizmoDrag(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
                 _gizmoGrab = null;
+                UpdateAddMeshButton();
                 return true;
             default:
                 return false;
@@ -823,11 +855,20 @@ public sealed class MainWindow : Window
         _assetsList.ItemTemplate = new FuncDataTemplate<Atlantis.Gameplay.Assets.AssetSummary>((v, _) => new TextBlock {
             Text = v is null ? "" : v.Type + " · " + v.Source + "\n" + v.Guid,
             TextWrapping = Avalonia.Media.TextWrapping.Wrap });
-        _assetsList.SelectionChanged += (_, _) => { if (!_assetsSync && _assetsList.SelectedItem is Atlantis.Gameplay.Assets.AssetSummary v) ReadAsset(v.Guid); };
+        _assetsList.SelectionChanged += (_, _) =>
+        {
+            if (_assetsSync) return;
+            if (_assetsList.SelectedItem is AssetSummary asset) ReadAsset(asset.Guid);
+            else { _assetBrowser.ClearSelection(); RenderAssets(); }
+        };
         panel.Children.Add(_assetsList);
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
         panel.Children.Add(copy);
+        ToolTip.SetShowOnDisabled(_addMesh, true);
+        _addMesh.Click += (_, _) => AddMeshToScene();
+        panel.Children.Add(_addMesh);
+        panel.Children.Add(_addMeshState);
         _rebuildStart.Click += (_, _) => StartAssetRebuild();
         _rebuildRefresh.Click += (_, _) => ReadRebuildStatus();
         _rebuildPoll.Tick += (_, _) => ReadRebuildStatus();
@@ -873,6 +914,7 @@ public sealed class MainWindow : Window
         _assetsSync = true;
         try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
         finally { _assetsSync = false; }
+        UpdateAddMeshButton();
         UpdateRebuildButtons();
         UpdateImportButtons();
         _assetDetails.Children.Clear();
@@ -881,6 +923,37 @@ public sealed class MainWindow : Window
         _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private AssetSummary? SelectedMesh() => _assetBrowser.State == "Ready" &&
+        _assetsList.SelectedItem is AssetSummary { Type: AssetType.Mesh } asset ? asset : null;
+
+    private void UpdateAddMeshButton()
+    {
+        bool meshSelected = SelectedMesh() is not null;
+        _addMesh.IsEnabled = meshSelected && _worker is not null && _canAddMeshToDocument &&
+            !_referenceSessionFailed && !_addingMesh && _gizmoGrab is null;
+        ToolTip.SetTip(_addMesh, meshSelected && !_canAddMeshToDocument
+            ? "Open a hand-authored scene to add a mesh." : null);
+    }
+
+    private void AddMeshToScene()
+    {
+        if (!_addMesh.IsEnabled || _worker is not { } worker || SelectedMesh() is not { } mesh) return;
+        long request = ++_meshRequest;
+        long lifetime = _meshDocumentLifetime;
+        _addingMesh = true;
+        _addMeshState.Text = "Adding mesh…";
+        UpdateAddMeshButton();
+        worker.AddMesh(mesh.Guid, lifetime, (node, notice) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _meshRequest ||
+                lifetime != worker.MeshDocumentLifetime) return;
+            _addingMesh = false;
+            _addMeshState.Text = notice;
+            if (node is EntityGuid created && _hierarchyRows.Any(row => row.Node == created)) SetSelection(created, true);
+            UpdateAddMeshButton();
+        });
     }
 
     private void UpdateRebuildButtons()

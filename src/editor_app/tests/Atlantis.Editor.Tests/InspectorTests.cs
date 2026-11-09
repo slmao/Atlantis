@@ -108,7 +108,8 @@ public static partial class Program
             {
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
-                bool import = _scene == "--asset-import";
+                bool addMesh = _scene == "--mesh-add";
+                bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
                     legacyReadiness || rebuild || import ? "integrated_showcase_demo" : _scene)
                 {
@@ -123,6 +124,7 @@ public static partial class Program
                     try
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        else if (addMesh) await CheckAddMeshUi(window, _checks, _work);
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
@@ -167,6 +169,190 @@ public static partial class Program
         checks.Add(new("publication does not select active generation or replace Assets selection",
             terminal.IsOk && terminal.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration &&
             browser.Selected == row.Guid));
+    }
+
+    private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
+            File.Exists(process.SessionPath) && NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0,
+            "activated Runtime and authoring document", 60);
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        work(runtime.Launch.WorkDirectory);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var info = (await Task.Run(() => observer.Authoring.Document()))!;
+        var allowed = Environment.GetEnvironmentVariable("ATLANTIS_0086_DISPOSABLE_SCENE");
+        if (allowed is null || info.Provenance != Provenance.HandAuthored ||
+            !Path.GetFullPath(allowed).Equals(Path.GetFullPath(info.SourcePath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("An explicit disposable scene is required.");
+        byte[] originalSource = File.ReadAllBytes(info.SourcePath);
+        var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
+        string meshSource = Environment.GetEnvironmentVariable("ATLANTIS_0087_MESH_SOURCE") ?? "content:managed_sample/source.gltf#mesh/0/0";
+        var mesh = assets.Single(a => a.Source == meshSource);
+        var original = (await Task.Run(() => observer.Authoring.ListNodes())).Value.Select(n => n.Node).ToHashSet();
+        var tabs = NameUiField<TabControl>(window, "_assetTabs")!;
+        var list = NameUiField<ListBox>(window, "_assetsList")!;
+        var add = NameUiField<Button>(window, "_addMesh")!;
+        var state = NameUiField<TextBlock>(window, "_addMeshState")!;
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        void Check(string label, bool ok) => checks.Add(new(label, ok));
+        Task<ApplySnapshot> ApplyView() => Task.Run(() => observer.Authoring.ApplyStatus().Value!);
+        Task<(ulong Count, byte[] Image)> Capture(string label) => Task.Run(() =>
+        {
+            string path = Path.Combine(runtime.Launch.WorkDirectory, label + ".png");
+            var result = observer.Control.Step(new StepRequest(1, path));
+            var data = result.Report?.Data ?? throw new InvalidOperationException("Capture failed.");
+            return ((ulong)data.DrawItemCount, File.ReadAllBytes(path));
+        });
+        string? withheld = Environment.GetEnvironmentVariable("ATLANTIS_0087_WITHHOLD_MESH");
+        string? backup = withheld is null ? null : withheld + ".0087-test";
+        try
+        {
+            tabs.SelectedIndex = 1;
+            await NameUiWait(() => NameUiField<AssetBrowser>(window, "_assetBrowser")?.State == "Ready", "catalog ready");
+            var visible = NameUiField<AssetBrowser>(window, "_assetBrowser")!.Visible;
+            list.SelectedItem = visible.First(a => a.Type != AssetType.Mesh);
+            Check("non-mesh is ineligible", !add.IsEnabled);
+            list.SelectedItem = visible.Single(a => a.Guid == mesh.Guid);
+            await NameUiWait(() => add.IsEnabled, "selected mesh eligible");
+            var search = window.GetVisualDescendants().OfType<TextBox>().Single(box => box.PlaceholderText == "Source or GUID");
+            search.Text = "no mesh matches this fixture";
+            var browser = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
+            await NameUiWait(() => browser.Visible.Count == 0, "search filter observed");
+            Check("filtering out the mesh disables Add", !add.IsEnabled);
+            search.Text = "";
+            await NameUiWait(() => browser.Visible.Any(a => a.Guid == mesh.Guid), "search cleared");
+            list.SelectedItem = browser.Visible.Single(a => a.Guid == mesh.Guid);
+            list.SelectedItem = null;
+            Check("deselection disables Add", !add.IsEnabled);
+            list.SelectedItem = visible.Single(a => a.Guid == mesh.Guid);
+            await NameUiWait(() => add.IsEnabled, "mesh reselected");
+            await Task.Run(() => observer.Control.Pause());
+            var before = await Capture("mesh-add-before");
+            var initial = await ApplyView();
+            if (withheld is not null) File.Move(withheld, backup!);
+            Click(add);
+            Check("duplicate click while submitting is disabled", !add.IsEnabled);
+            Click(add);
+            await NameUiWait(() => state.Text?.StartsWith("Added ", StringComparison.Ordinal) == true, "document commit");
+            var nodes = (await Task.Run(() => observer.Authoring.ListNodes())).Value;
+            var node = nodes.Single(n => !original.Contains(n.Node));
+            var schema = await Task.Run(() => observer.Authoring.Schema);
+            var doc = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
+            var meshAddress = SceneSchema.AddressOf(schema, node.Node, "Renderable", "meshAsset")!.Value;
+            var material = SceneSchema.AddressOf(schema, node.Node, "Renderable", "materialAsset")!.Value;
+            Check("one unnamed root, identity Transform and absent material", nodes.Count == original.Count + 1 &&
+                node.Parent is null && node.Name == "" && (await Task.Run(() => TransformMath.LocalOf(doc, node.Node))) == LocalTransform.Identity &&
+                (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid &&
+                (await Task.Run(() => doc.GetProperty(material)))?.IsAbsent == true);
+            await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node.Node, "new node selected");
+            Check("Assets tab and mesh selection retained", tabs.SelectedIndex == 1 && (list.SelectedItem as AssetSummary)?.Guid == mesh.Guid);
+            var pending = await ApplyView();
+            Check("commit precedes paused Runtime swap", pending.Request?.State == ApplyState.Pending && pending.Projection == initial.Projection);
+            var rendered = await Capture("mesh-add-applied");
+            if (withheld is not null)
+            {
+                await NameUiWait(async () => (await ApplyView()).Request?.State == ApplyState.Failed, "correlated reload failure");
+                Check("failed reload preserves projection, node and Undo", (await ApplyView()).Projection == initial.Projection &&
+                    rendered.Count == before.Count && (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid &&
+                    NameUiField<Button>(window, "_undo")!.IsEnabled);
+                File.Move(backup!, withheld);
+                var retry = NameUiField<Button>(window, "_retryApply")!;
+                await NameUiWait(() => retry.IsEnabled, "Retry available");
+                Click(retry);
+                await NameUiWait(async () => (await ApplyView()).Request is { State: ApplyState.Pending } request &&
+                    request.Receipt != pending.Request?.Receipt, "new retry receipt");
+                rendered = await Capture("mesh-add-retried");
+            }
+            await NameUiWait(async () => (await ApplyView()).Request?.State == ApplyState.Applied, "applied receipt");
+            Check("one new rendered mesh", rendered.Count == before.Count + 1 && !rendered.Image.SequenceEqual(before.Image));
+            await Task.Run(() => observer.Control.Resume());
+            Click(NameUiField<Button>(window, "_undo")!);
+            await NameUiWait(async () => !(await Task.Run(() => observer.Authoring.ListNodes())).Value.Any(n => n.Node == node.Node) &&
+                (await ApplyView()).Request is { State: ApplyState.Applied } undo && undo.Receipt.DocumentRevision == (await ApplyView()).CurrentDocumentRevision,
+                "Undo removed node and applied");
+            await Task.Run(() => observer.Control.Pause());
+            Check("Undo removes the draw", (await Capture("mesh-add-undo")).Count == before.Count);
+            await Task.Run(() => observer.Control.Resume());
+            Click(NameUiField<Button>(window, "_redo")!);
+            await NameUiWait(async () => (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid &&
+                (await ApplyView()).Request is { State: ApplyState.Applied } redo && redo.Receipt.DocumentRevision == (await ApplyView()).CurrentDocumentRevision,
+                "Redo restores same GUID and applies");
+            await Task.Run(() => observer.Control.Pause());
+            Check("Redo restores the draw and material absence", (await Capture("mesh-add-redo")).Count == rendered.Count &&
+                (await Task.Run(() => doc.GetProperty(material)))?.IsAbsent == true);
+            Click(NameUiField<Button>(window, "_save")!);
+            await NameUiWait(() => File.ReadAllText(info.SourcePath).Contains(node.Node.ToString(), StringComparison.Ordinal), "Save writes node GUID");
+            Check("saved source contains both GUIDs", File.ReadAllText(info.SourcePath).Contains(mesh.Guid.ToString(), StringComparison.Ordinal));
+            using var restarted = RuntimeProcess.Start(runtime.Launch with { ParentWindow = null, WorkDirectory = RuntimeProcess.NewWorkDirectory() });
+            using var reopened = await Task.Run(() => RemoteSession.Connect(restarted.WaitForSession(TimeSpan.FromSeconds(60))));
+            Check("fresh Runtime opens the saved node and mesh", await Task.Run(() => reopened.Authoring.Open() is null &&
+                reopened.Authoring.GetProperty(meshAddress).Value.AsAsset() == mesh.Guid));
+            await Task.Run(() => reopened.Control.Pause());
+            var savedApply = await Task.Run(() => reopened.Authoring.ApplyTracked());
+            var fresh = await Task.Run(() => reopened.Control.Step(new StepRequest(1, Path.Combine(runtime.Launch.WorkDirectory, "mesh-add-reopened.png"))));
+            Check("fresh Runtime applies saved source and renders the same extra draw", savedApply.IsOk &&
+                (await Task.Run(() => reopened.Authoring.ApplyStatus(savedApply.Value!.Id))).Value?.Request?.State == ApplyState.Applied &&
+                (ulong?)fresh.Report?.Data.DrawItemCount == rendered.Count);
+            restarted.CloseMainWindow();
+            async Task Rename(string name)
+            {
+                await Task.Run(() =>
+                {
+                    observer.Authoring.Submit(new SetNodeName(node.Node, name));
+                    if (observer.Authoring.DrainFailures().Count != 0) throw new InvalidOperationException("External rename refused.");
+                });
+                await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!
+                    .Any(row => row.Node == node.Node && row.Label.Contains(name, StringComparison.Ordinal)), "external rename observed");
+            }
+            await Rename("Mesh add external edit");
+            Click(NameUiField<Button>(window, "_undo")!);
+            var editNotice = NameUiField<TextBlock>(window, "_editLine")!;
+            await NameUiWait(() => editNotice.Text?.Contains("changed elsewhere", StringComparison.OrdinalIgnoreCase) == true,
+                "external edit blocks Undo");
+            Check("conflicted Undo keeps the mesh", (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid);
+            await Rename("");
+            var worker = NameUiField<EditorWorker>(window, "_worker")!;
+            long lifetime = worker.MeshDocumentLifetime;
+            byte[] saved = File.ReadAllBytes(info.SourcePath);
+            try
+            {
+                File.WriteAllText(info.SourcePath, "invalid disposable scene");
+                Check("refused reopen leaves the document lifetime intact", await Task.Run(() => observer.Authoring.Open()) is not null &&
+                    worker.MeshDocumentLifetime == lifetime);
+            }
+            finally { File.WriteAllBytes(info.SourcePath, saved); }
+            Check("same source reopened", await Task.Run(() => observer.Authoring.Open()) is null);
+            await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "same-source reopen invalidates lifetime");
+            string? stale = null;
+            worker.AddMesh(mesh.Guid, lifetime, (_, notice) => stale = notice);
+            await NameUiWait(() => stale is not null, "stale add settled");
+            Check("old lifetime refuses before submission", stale!.StartsWith("Add refused", StringComparison.Ordinal) &&
+                (await Task.Run(() => observer.Authoring.ListNodes())).Value.Count == original.Count + 1 &&
+                !NameUiField<Button>(window, "_undo")!.IsEnabled);
+
+            await NameUiWait(() => add.IsEnabled, "add eligible after reopen");
+            Click(add);
+            var workerField = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            workerField.SetValue(window, null);
+            const string replacementStatus = "Replacement session feedback";
+            state.Text = replacementStatus;
+            EntityGuid? previousSelection = NameUiField<Selection>(window, "_selection")?.Node;
+            try
+            {
+                bool drained = false;
+                worker.QueryImport(null, _ => drained = true);
+                await NameUiWait(() => drained, "old worker add callback drained");
+                Check("late add feedback cannot replace the current action state", state.Text == replacementStatus &&
+                    NameUiField<Selection>(window, "_selection")?.Node == previousSelection &&
+                    (await Task.Run(() => observer.Authoring.ListNodes())).Value.Count == original.Count + 2);
+            }
+            finally { workerField.SetValue(window, worker); }
+        }
+        finally
+        {
+            if (backup is not null && File.Exists(backup)) File.Move(backup, withheld!);
+            File.WriteAllBytes(info.SourcePath, originalSource);
+        }
     }
 
     private static async Task CheckImportedMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
@@ -1174,8 +1360,59 @@ public static partial class Program
             NameUiField<TextBlock>(window, "_applyLine")!.Text!.StartsWith("apply: applied", StringComparison.Ordinal), "restore original material and settle history/apply");
     }
 
+    private static void MeshAddModelChecks()
+    {
+        var doc = new FakeDocument();
+        var node = FakeDocument.Guid(87);
+        var mesh = AssetGuid.Parse("00000000-0000-4000-8000-000000000087");
+        TypeId renderable = new(870);
+        FieldId meshField = new(871), materialField = new(872);
+        var schema = doc.Schema.Append(new SchemaType(renderable, "asset_system::scene::Renderable", TypeKind.Struct, 1,
+            new[] {
+                new SchemaField(meshField, "meshAsset", TypeKind.Primitive, PrimitiveKind.AssetGuid, default, FieldFlags.Serializable),
+                new SchemaField(materialField, "materialAsset", TypeKind.Primitive, PrimitiveKind.AssetGuid, default, FieldFlags.Serializable | FieldFlags.Optional)
+            }, Array.Empty<SchemaConstant>())).ToList();
+        var plan = HierarchyCommands.AddMesh(schema, 3, node, mesh);
+        Check(plan.Commands is [CreateNode create, SetProperty set] && create.Node == node && create.Position == 3 &&
+              create.Components.SequenceEqual(new[] { renderable }) && set.Address == new SceneAddress(node, renderable, meshField) &&
+              set.Value.AsAsset() == mesh, "mesh add plans one initialized Renderable");
+        Check(HierarchyCommands.AddMesh(doc.Schema, 0, node, mesh).Refusal is not null, "mesh add requires the authoring schema field");
+        var state = new NodeState(node, 3, null, Array.Empty<EntityGuid>(), new ComponentState[] {
+            new(FakeDocument.Transform, new[] {
+                (new SceneAddress(node, FakeDocument.Transform, FakeDocument.Position), PropertyValue.FromVec3(Vector3.Zero)),
+                (new SceneAddress(node, FakeDocument.Transform, FakeDocument.Euler), PropertyValue.FromVec3(Vector3.Zero)),
+                (new SceneAddress(node, FakeDocument.Transform, FakeDocument.ScaleField), PropertyValue.FromVec3(Vector3.One))
+            }),
+            new(renderable, new[] {
+                (new SceneAddress(node, renderable, meshField), PropertyValue.FromAsset(mesh)),
+                (new SceneAddress(node, renderable, materialField), PropertyValue.Absent)
+            })
+        });
+        var edit = HierarchyCommands.AddedMeshHistory(schema, state, mesh);
+        Check(edit?.Structure is [NodeLife { Created: true }] && StructuralSteps.Commands(edit, false, schema) is [DestroyNode destroy] &&
+              destroy.Node == node && StructuralSteps.Commands(edit, true, schema)[0] is CreateNode { Node: var restored } && restored == node,
+              "mesh add is one structural step restoring the same GUID");
+        Check(HierarchyCommands.AddedMeshHistory(schema, state with { Name = "external" }, mesh) is null,
+              "mesh add does not capture externally changed state as its own");
+        doc.Add(87, null, LocalTransform.Identity);
+        var tree = new DocumentTree();
+        tree.Rebuild(doc);
+        Check(edit is not null && StructuralSteps.Check(edit, true, new DocumentView(doc, tree)) == HistoryResult.ChangedElsewhere,
+              "mesh add redo refuses an external node with the same GUID");
+        var apply = new ApplyController(doc);
+        apply.AfterLocalEdit(true);
+        apply.AfterLocalEdit(true);
+        Check(doc.Applies == 1, "settled mesh edits coalesce during pending apply");
+        apply.LostApplyAcceptance();
+        apply.AfterLocalEdit(true);
+        Check(doc.Applies == 1 && apply.Suspended && apply.Status == ApplyStatus.Unknown, "settled mesh edit waits during apply suspension");
+        apply.Retry();
+        Check(doc.Applies == 2, "explicit Retry applies without creating another node");
+    }
+
     private static void InspectorChecks()
     {
+        MeshAddModelChecks();
         var document = new FakeDocument();
         EntityGuid light = document.Add(1, null, LocalTransform.Identity, FakeDocument.Light);
         EntityGuid camera = document.Add(2, null, LocalTransform.Identity, FakeDocument.CameraType);

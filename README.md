@@ -283,6 +283,12 @@ then select the new mesh in the existing scene Inspector. Back up
 `registered` with any hand-authored scenes that reference imported GUIDs.
 A clean opt-in build reads the committed registrations.
 
+In a hand-authored scene, select a Mesh in Assets and choose **Add to Scene**.
+The Editor selects the new root node at the origin. It uses the Runtime's
+fallback material until you assign one. Undo/Redo covers the whole node and
+Save writes the scene source. If Runtime reload fails, the node remains in
+the document. Correct the input and use **Retry Apply** to refresh the Runtime.
+
 If publication failed after registration, use `assets import <name> --resume`
 after correcting the failure. This uses the committed input and GUID. If
 repair is required, stop the hosts, confirm their children exited and

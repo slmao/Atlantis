@@ -1,10 +1,10 @@
 # Spec: Add a Mesh from Assets to the Current Scene
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-09
 - **Related Plan:** [Plan 0087](../plans/0087-add-mesh-to-scene.md)
-- **Approval:** Pending joint human review
+- **Approval:** Joint human approval of J1–J4 at [PR #337](https://github.com/slmao/Atlantis/pull/337), revision `aef1a45e`, 2026-11-09. See Plan 0087.
 - **Related ADRs:** None new. See Architectural Impact.
 
 ## Summary

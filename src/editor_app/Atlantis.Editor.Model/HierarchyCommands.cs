@@ -12,6 +12,7 @@
 // UI-free.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
@@ -119,6 +120,39 @@ public static class TransformMath
 
 public static class HierarchyCommands
 {
+    public const string AddMeshLabel = "add mesh to scene";
+
+    public static EditPlan AddMesh(IReadOnlyList<SchemaType> schema, ulong position, EntityGuid node, AssetGuid mesh)
+    {
+        var renderable = schema.FirstOrDefault(type => type.Kind == TypeKind.Struct && type.ShortName == "Renderable");
+        var field = renderable?.Fields.FirstOrDefault(field => field.Name == "meshAsset");
+        if (renderable is null || field is not { Kind: TypeKind.Primitive, Primitive: PrimitiveKind.AssetGuid } ||
+            (field.Flags & FieldFlags.Serializable) == 0)
+            return EditPlan.Refused(AddMeshLabel, "the mesh field is unavailable");
+        var address = new SceneAddress(node, renderable.Id, field.Id);
+        return new EditPlan(AddMeshLabel, new Command[] {
+            new CreateNode(node, position, new[] { address.Component }),
+            new SetProperty(address, PropertyValue.FromAsset(mesh))
+        });
+    }
+
+    public static EditTransaction? AddedMeshHistory(IReadOnlyList<SchemaType> schema, NodeState? state, AssetGuid mesh)
+    {
+        if (state is null || state.Name.Length != 0 || state.Parent is not null || state.Children.Count != 0 ||
+            state.Components.Count != 2) return null;
+        var expected = new[] {
+            ("Transform", "localPosition", PropertyValue.FromVec3(Vector3.Zero)),
+            ("Transform", "localEulerAnglesRadians", PropertyValue.FromVec3(Vector3.Zero)),
+            ("Transform", "localScale", PropertyValue.FromVec3(Vector3.One)),
+            ("Renderable", "meshAsset", PropertyValue.FromAsset(mesh)),
+            ("Renderable", "materialAsset", PropertyValue.Absent)
+        };
+        var values = state.Components.SelectMany(component => component.Values).ToList();
+        if (values.Count != expected.Length || expected.Any(field =>
+            SceneSchema.AddressOf(schema, state.Node, field.Item1, field.Item2) is not SceneAddress address ||
+            !values.Any(value => value.Address == address && value.Value.Equals(field.Item3)))) return null;
+        return new EditTransaction(AddMeshLabel, Array.Empty<PropertyWrite>(), new EditEntry[] { new NodeLife(state, true) });
+    }
     /// <summary>A rename against the latest observed name; labels never identify the node.</summary>
     public static EditPlan Rename(DocumentTree tree, EntityGuid node, string before, string name)
     {
