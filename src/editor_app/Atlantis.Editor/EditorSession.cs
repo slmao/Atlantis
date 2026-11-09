@@ -674,11 +674,16 @@ public sealed class EditorWorker : IDisposable
     public void AddMesh(AssetGuid mesh, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
     {
         void Report(EntityGuid? created, string notice) => _post(() => settled(created, notice));
+        bool IsCurrent()
+        {
+            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime;
+        }
         bool Observe(RemoteAuthoringDocument document)
         {
-            if (document.ObserveEvents() is not { } events) return false;
-            PollDocument(session, events);
-            return MeshDocumentLifetime == lifetime;
+            if (!IsCurrent() || document.ObserveEvents() is not { } events || !IsCurrent()) return false;
+            // Observe reopens now, but account for a settled local edit before polling recovery.
+            PollDocument(session, events, pollApply: false);
+            return IsCurrent();
         }
 
         EntityGuid? attempted = null;
@@ -706,6 +711,7 @@ public sealed class EditorWorker : IDisposable
             var node = new EntityGuid(Guid.NewGuid());
             var plan = HierarchyCommands.AddMesh(schema, (ulong)_tree.Count, node, mesh);
             if (plan.Refusal is { } refusal) { Report(null, "Add refused: " + refusal); return; }
+            if (!IsCurrent()) { Report(null, "Add refused: the session or document changed."); return; }
 
             attempted = node;
             var ticket = document.SubmitTransaction(plan.Commands);
@@ -729,6 +735,7 @@ public sealed class EditorWorker : IDisposable
                 recorded = true;
             }
             var selected = _tree.Contains(node) ? node : (EntityGuid?)null;
+            if (!IsCurrent()) { Report(null, $"Added {node}. Session or document changed before apply."); return; }
             applying = true;
             apply.AfterLocalEdit(true);
             Report(selected, recorded ? $"Added {node}." : $"Added {node}. Undo history unavailable.");
@@ -1007,7 +1014,7 @@ public sealed class EditorWorker : IDisposable
     }
 
     // Drains the authoring events into the tree, the transform cache and the apply controller; posts what changed.
-    private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null)
+    private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
@@ -1046,6 +1053,7 @@ public sealed class EditorWorker : IDisposable
             PostInspector();
         }
         if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
+        if (!pollApply) return;
         _apply.Poll();
         if (_apply.Status is ApplyStatus.Failed or ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply) _commitTicks = null;
         if (_commitTicks is long committed && _apply.Status == ApplyStatus.Applied)
@@ -1157,13 +1165,18 @@ public sealed class EditorWorker : IDisposable
         _post(() => Measured?.Invoke(times));
     });
 
-    public void Dispose()
+    public void Stop()
     {
         lock (_lock)
         {
             _stopping = true;
             Monitor.Pulse(_lock);
         }
+    }
+
+    public void Dispose()
+    {
+        Stop();
         _thread.Join(TimeSpan.FromSeconds(5));
     }
 

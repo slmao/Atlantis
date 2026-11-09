@@ -382,6 +382,7 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        _worker?.Stop();
         ++_meshRequest;
         _meshDocumentLifetime = 0;
         _canAddMeshToDocument = _addingMesh = false;
