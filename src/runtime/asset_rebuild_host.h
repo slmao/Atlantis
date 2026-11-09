@@ -34,6 +34,11 @@ class AssetRebuildHost {
       asset_system::AssetGuid asset, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::RebuildStatusResult status(
       std::optional<connection::assets::RebuildId> id) const;
+  [[nodiscard]] std::filesystem::path generationCatalogSource() const;
+  [[nodiscard]] connection::assets::ImportStartResult startImport(
+      std::string_view name, connection::assets::ImportMode mode,
+      std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::ImportStatusResult importStatus(std::optional<connection::assets::ImportId> id) const;
   void stop();
 
  private:

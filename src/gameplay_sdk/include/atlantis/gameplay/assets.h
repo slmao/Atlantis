@@ -24,6 +24,15 @@ class Assets {
       std::optional<connection::assets::RebuildId> id = std::nullopt) const {
     return connection_.rebuildStatus(id);
   }
+  [[nodiscard]] connection::assets::ImportStartResult importAsset(
+      std::string_view name, connection::assets::ImportMode mode = connection::assets::ImportMode::Register) {
+    return connection_.importAsset(name, mode);
+  }
+  [[nodiscard]] connection::assets::ImportStatusResult importStatus(
+      std::optional<connection::assets::ImportId> id = std::nullopt) const {
+    return connection_.importStatus(id);
+  }
+
  private:
   connection::AssetConnection& connection_;
 };

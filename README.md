@@ -266,6 +266,31 @@ the document and its undo/redo history; repair or undo the edit, then choose
 
 See [examples/](examples/) for smaller, single-purpose demo programs.
 
+### Register a new static mesh
+
+On Windows, create a trusted project directory outside the checkout and build
+trees with `inbox` and `registered` subdirectories. Configure the seed and
+dedicated staging builds with `-DATLANTIS_MANAGED_IMPORT_ROOT=<project>`
+and the same generator, configuration and base content. Build the seed
+and use a separate, empty publication directory. Add `importProject` to the
+existing local asset-build profile alongside `stagingBuild` and `publicationRoot`.
+
+Place a self-contained untextured static-mesh `<name>.gltf` in `inbox`.
+Run `atlantis assets import <name>` against the managed Runtime and query
+`atlantis assets import-status <JobId>`. The Assets panel offers the same
+operation. Restart explicitly with the profile and returned generation,
+then select the new mesh in the existing scene Inspector. Back up
+`registered` with any hand-authored scenes that reference imported GUIDs.
+A clean opt-in build reads the committed registrations.
+
+If publication failed after registration, use `assets import <name> --resume`
+after correcting the failure. This uses the committed input and GUID. If
+repair is required, stop the hosts, confirm their children exited and
+inspect the project marker's staging and publication paths. Check the
+registered unit and any complete generation. Recreate or validate staging,
+clear its pending selection, and remove both dirty markers only after
+settlement is known. See [Spec 0086](docs/specs/0086-new-asset-import.md).
+
 ## Status
 
 In active development. See [docs/specs/README.md](docs/specs/README.md) for

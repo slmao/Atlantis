@@ -1,9 +1,9 @@
 # ADR 0147: Managed Import Registration and Publication
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-08
-- **Deciders:** Pending joint human review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** 2026-11-08, [joint ruling](https://github.com/slmao/Atlantis/pull/335#joint-human-approval) on `7a750e8`.
 - **Related Spec:** [Spec 0086](../specs/0086-new-asset-import.md)
 
 ## Context

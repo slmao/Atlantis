@@ -736,62 +736,83 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   if (t[0] == "assets") {
     namespace ca = connection::assets;
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
-    const bool start = t.size() == 3 && t[1] == "rebuild";
-    if (!start && !((t.size() == 2 || t.size() == 3) && t[1] == "rebuild-status"))
-      return failed(command, usageError("assets rebuild <GUID> | assets rebuild-status [<JobId>]"));
+    const bool rebuild = t.size() > 1 && t[1] == "rebuild";
+    const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
+    const bool import = t.size() > 1 && t[1] == "import";
+    const bool importStatus = t.size() > 1 && t[1] == "import-status";
+    const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
+    if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus) && t.size() <= 3) ||
+          (import && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
+      return failed(command, usageError("assets rebuild <GUID> | assets rebuild-status [<JobId>] | "
+                                         "assets import <name> [--resume] | assets import-status [<JobId>]"));
     std::optional<asset_system::AssetGuid> id;
-    if (t.size() == 3) {
+    if (!import && t.size() == 3) {
       const auto parsed = asset_system::parseAssetGuid(t[2]);
       if (parsed.isErr()) return failed(command, usageError("expected a non-nil canonical GUID"));
       id = parsed.value();
     }
     auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
-    const auto refuse = [&](ca::RebuildError error) {
+    const auto refuse = [&](auto error) {
       const std::string text(ca::toString(error));
       return failed(command, plainError(text, ErrorCategory::Refused, text));
     };
     if (!endpoint) return refuse(ca::RebuildError::Unavailable);
-    const auto jobJson = [](const ca::RebuildJob& job) {
+    const auto jobJson = [](const auto& job) {
       Value result = Value::object();
       result.set("id", Value::string(asset_system::toString(job.id.value)));
-      result.set("asset", Value::string(asset_system::toString(job.asset)));
+      if constexpr (requires { job.asset; }) {
+        result.set("asset", Value::string(asset_system::toString(job.asset)));
+      } else {
+        result.set("name", Value::string(job.name));
+        result.set("mode", Value::string(std::string(ca::toString(job.mode))));
+        if (job.rootGuid) result.set("rootGuid", Value::string(asset_system::toString(*job.rootGuid)));
+      }
       result.set("state", Value::string(std::string(ca::toString(job.state))));
       if (job.generation) result.set("generation", Value::string(asset_system::toString(job.generation->value)));
       if (job.failure) {
-        Value failure = Value::object();
-        failure.set("stage", Value::string(std::string(ca::toString(job.failure->stage))));
-        failure.set("code", Value::string(std::string(ca::toString(job.failure->code))));
-        failure.set("diagnostic", Value::string(job.failure->diagnostic));
-        if (job.failure->exitCode)
-          failure.set("exitCode", Value::number(static_cast<std::uint64_t>(*job.failure->exitCode)));
-        result.set("failure", std::move(failure));
+        const auto& failure = *job.failure;
+        Value detail = Value::object();
+        detail.set("stage", Value::string(std::string(ca::toString(failure.stage))));
+        detail.set("code", Value::string(std::string(ca::toString(failure.code))));
+        detail.set("diagnostic", Value::string(failure.diagnostic));
+        if (failure.exitCode) detail.set("exitCode", Value::number(static_cast<std::uint64_t>(*failure.exitCode)));
+        if constexpr (requires { failure.registration; }) {
+          detail.set("registration", Value::string(std::string(ca::toString(failure.registration))));
+          if (failure.registeredRootGuid)
+            detail.set("registeredRootGuid", Value::string(asset_system::toString(*failure.registeredRootGuid)));
+        }
+        result.set("failure", std::move(detail));
       }
       return result;
     };
-    if (start) {
-      const auto accepted = endpoint->rebuild(*id);
+    const auto renderStart = [&](const auto& accepted) {
       if (accepted.isErr()) return refuse(accepted.error());
       auto result = jobJson(accepted.value());
       auto human = json::write(result) + "\n";
       return done(command, std::move(human), std::move(result));
-    }
-    const auto queried = endpoint->rebuildStatus(id ? std::optional{ca::RebuildId{*id}} : std::nullopt);
-    if (queried.isErr()) return refuse(queried.error());
-    const auto& status = queried.value();
-    Value result = Value::object();
-    result.set("activeGeneration", status.activeGeneration
-        ? Value::string(asset_system::toString(status.activeGeneration->value)) : Value());
-    result.set("job", status.job ? jobJson(*status.job) : Value());
-    auto human = json::write(result) + "\n";
-    if (status.job && status.job->failure) {
-      const auto& failure = *status.job->failure;
-      auto reply = failed(command, plainError(std::string(ca::toString(failure.code)), ErrorCategory::Refused,
-                                              failure.diagnostic));
-      reply.result = std::move(result);
-      reply.text = std::move(human);
-      return reply;
-    }
-    return done(command, std::move(human), std::move(result));
+    };
+    const auto renderStatus = [&](const auto& queried) {
+      if (queried.isErr()) return refuse(queried.error());
+      const auto& status = queried.value();
+      Value result = Value::object();
+      result.set("activeGeneration", status.activeGeneration
+          ? Value::string(asset_system::toString(status.activeGeneration->value)) : Value());
+      result.set("job", status.job ? jobJson(*status.job) : Value());
+      auto human = json::write(result) + "\n";
+      if (status.job && status.job->failure) {
+        const auto& failure = *status.job->failure;
+        auto reply = failed(command, plainError(std::string(ca::toString(failure.code)), ErrorCategory::Refused,
+                                                failure.diagnostic));
+        reply.result = std::move(result);
+        reply.text = std::move(human);
+        return reply;
+      }
+      return done(command, std::move(human), std::move(result));
+    };
+    if (rebuild) return renderStart(endpoint->rebuild(*id));
+    if (import) return renderStart(endpoint->importAsset(t[2], mode));
+    if (importStatus) return renderStatus(endpoint->importStatus(id ? std::optional{ca::ImportId{*id}} : std::nullopt));
+    return renderStatus(endpoint->rebuildStatus(id ? std::optional{ca::RebuildId{*id}} : std::nullopt));
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";

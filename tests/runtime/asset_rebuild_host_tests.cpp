@@ -315,3 +315,86 @@ TEST_CASE("asset rebuild: an escaping producer stamp cannot touch the seed", "[r
   CHECK(fs::is_regular_file(f.marker));
   CHECK(host->start(f.guid, f.snapshot).error() == ca::RebuildError::WorkspaceNeedsRepair);
 }
+
+TEST_CASE("asset import: resume rejects an invalid catalog delta before publication", "[runtime][asset-import]") {
+  Fixture f;
+  const auto project = f.base / "project";
+  const auto registered = project / "registered/managed_sample";
+  REQUIRE(fs::create_directories(registered));
+  const auto root = as::parseAssetGuid("00860086-0086-4086-8086-008600860086").value();
+  const as::CatalogSourceEntry baseEntry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Assets, "a.material.txt"};
+  const as::CatalogSourceEntry importEntry{root, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content,
+                                           "managed_sample/source.gltf"};
+  write(registered / "source.gltf", "fixture");
+  write(registered / "catalog-source.txt", as::serializeAssetCatalogSource({importEntry}));
+  write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
+      f.published.generic_string() + "\",\"importProject\":\"" + project.generic_string() + "\"}");
+  for (const auto& build : {f.seed, f.staging})
+    write(build / "assets/managed-project.txt", project.generic_string());
+  write(f.staging / "assets/managed-pending.txt", {});
+  write(f.seed / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry}));
+  write(f.staging / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry, importEntry}));
+  write(f.staging / "assets/producers-Debug.txt", read(f.seed / "assets/producers-Debug.txt") +
+      "gltf_import\tcontent\tmanaged_sample/source.gltf\t" + as::toString(root) +
+      "\tmanaged_sample/managed_sample.stamp\tmanaged_sample/import/managed_sample/managed_sample.scene.txt\n");
+  const auto importedDir = f.staging / "managed_sample/import/managed_sample";
+  REQUIRE(fs::create_directories(importedDir));
+  write(importedDir / "managed_sample.scene.txt", "fixture");
+  const auto old = as::parseAssetCatalogRecords(read(f.seed / "asset_catalog.txt"));
+  REQUIRE(old.isOk());
+  const auto derived = [&](as::CatalogAssetType type, std::string_view subKey) {
+    const auto guid = as::deriveAssetGuid(root, subKey);
+    return as::AssetCatalogRecord{guid, as::assetKey(guid), type,
+        {as::CatalogRoot::Content, importEntry.path, std::string(subKey)},
+        "artifact", "metadata", 1, {}, "fixture/1", {}};
+  };
+  const auto mesh = derived(as::CatalogAssetType::Mesh, "mesh/0/0");
+  const auto scene = derived(as::CatalogAssetType::Scene, "scene");
+  write(importedDir.parent_path() / "import.catalog.txt", as::serializeAssetCatalog({mesh, scene}));
+  auto extra = old.value().front();
+  extra.guid = f.unknown;
+  extra.assetId = as::assetKey(extra.guid);
+  extra.source.path = "unexpected.material.txt";
+  auto changed = old.value().front();
+  changed.source.path = "changed.material.txt";
+  auto colliding = extra;
+  colliding.guid = mesh.guid;
+  colliding.assetId = mesh.assetId;
+  auto expectedCode = ca::ImportFailureCode::IdentityConflict;
+  SECTION("unrelated addition") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene, extra}));
+  }
+  SECTION("missing imported record") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh}));
+    expectedCode = ca::ImportFailureCode::InvalidOutput;
+  }
+  SECTION("changed existing identity") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({changed, mesh, scene}));
+  }
+  SECTION("duplicate imported GUID and key") {
+    write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene, colliding}));
+    expectedCode = ca::ImportFailureCode::InvalidOutput;
+  }
+  write(f.base / "producer.cmake", "# The fixture supplies already assembled records.\n");
+
+  auto host = f.host();
+  CHECK(host->startImport("sample", ca::ImportMode::Register, f.snapshot).error() == ca::ImportError::NameConflict);
+  const auto accepted = host->startImport("sample", ca::ImportMode::Resume, f.snapshot);
+  REQUIRE(accepted.isOk());
+  const auto limit = std::chrono::steady_clock::now() + 20s;
+  auto result = host->importStatus(accepted.value().id);
+  while (result.isOk() && result.value().job && result.value().job->state == ca::RebuildState::Running &&
+         std::chrono::steady_clock::now() < limit) {
+    std::this_thread::sleep_for(20ms);
+    result = host->importStatus(accepted.value().id);
+  }
+  REQUIRE(result.isOk());
+  REQUIRE(result.value().job);
+  REQUIRE(result.value().job->failure);
+  CHECK(result.value().job->failure->code == expectedCode);
+  CHECK(result.value().job->failure->registeredRootGuid == root);
+  CHECK_FALSE(result.value().job->generation);
+  const bool repair = expectedCode == ca::ImportFailureCode::InvalidOutput;
+  CHECK(fs::exists(project / ".atlantis-import-dirty") == repair);
+  CHECK(fs::exists(f.marker) == repair);
+}

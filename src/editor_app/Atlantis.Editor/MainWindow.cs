@@ -109,6 +109,14 @@ public sealed class MainWindow : Window
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
+    private readonly TextBox _importName = new() { PlaceholderText = "Inbox name (without .gltf)" };
+    private readonly Button _importRegister = new() { Content = "Register and publish", IsEnabled = false };
+    private readonly Button _importResume = new() { Content = "Resume publication", IsEnabled = false };
+    private readonly Button _importRefresh = new() { Content = "Refresh import status", IsEnabled = false };
+    private readonly TextBlock _importState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly DispatcherTimer _importPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private ImportId? _importJob;
+    private bool _importPending, _importRunning;
     private readonly DispatcherTimer _rebuildPoll = new() { Interval = TimeSpan.FromSeconds(1) };
     private RebuildId? _rebuildJob;
     private GenerationId? _activeAssetGeneration;
@@ -373,6 +381,9 @@ public sealed class MainWindow : Window
         ++_referenceLaunch;
         _referenceWindow?.Close(); _referenceWindow = null;
         _referenceBusy = false; _referenceSessionFailed = false;
+        _importPoll.Stop(); _importJob = null; _importPending = _importRunning = false;
+        _importState.Text = "";
+        UpdateImportButtons();
         _rebuildPoll.Stop(); _rebuildJob = null; _activeAssetGeneration = null;
         _rebuildPending = _rebuildRunning = false; _rebuildState.Text = "";
         _assetBrowser.Disconnect();
@@ -409,6 +420,11 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            _importPoll.Stop();
+            if (_importPending || _importRunning)
+                _importState.Text = _importJob is ImportId importId ? $"Import {importId} outcome unknown." : "Import admission unknown.";
+            _importPending = _importRunning = false;
+            UpdateImportButtons();
             _rebuildPoll.Stop();
             if (_rebuildPending || _rebuildRunning)
                 _rebuildState.Text = _rebuildJob is RebuildId job ? $"Rebuild {job} outcome unknown." : "Rebuild admission unknown.";
@@ -819,6 +835,16 @@ public sealed class MainWindow : Window
         panel.Children.Add(_rebuildRefresh);
         panel.Children.Add(_rebuildState);
         panel.Children.Add(_assetDetails);
+        _importName.TextChanged += (_, _) => UpdateImportButtons();
+        _importRegister.Click += (_, _) => StartImport(ImportMode.Register);
+        _importResume.Click += (_, _) => StartImport(ImportMode.Resume);
+        _importRefresh.Click += (_, _) => ReadImportStatus();
+        _importPoll.Tick += (_, _) => ReadImportStatus();
+        panel.Children.Add(_importName);
+        panel.Children.Add(_importRegister);
+        panel.Children.Add(_importResume);
+        panel.Children.Add(_importRefresh);
+        panel.Children.Add(_importState);
         return new ScrollViewer { Content = panel };
     }
     private void LoadAssets()
@@ -848,6 +874,7 @@ public sealed class MainWindow : Window
         try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
         finally { _assetsSync = false; }
         UpdateRebuildButtons();
+        UpdateImportButtons();
         _assetDetails.Children.Clear();
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
@@ -917,6 +944,68 @@ public sealed class MainWindow : Window
             state += $" · published {published}. Restart Runtime explicitly with --asset-generation {published}.";
         if (_activeAssetGeneration is GenerationId active) state += $" Active generation: {active}.";
         _rebuildState.Text = state;
+    }
+
+    private void UpdateImportButtons()
+    {
+        bool available = _worker is not null && !_referenceSessionFailed && !_importPending;
+        _importRefresh.IsEnabled = available;
+        _importRegister.IsEnabled = _importResume.IsEnabled = available && !_importRunning && Codec.ValidImportName(_importName.Text);
+    }
+
+    private void StartImport(ImportMode mode)
+    {
+        if (!_importRegister.IsEnabled || _worker is not { } worker || _importName.Text is not { } name) return;
+        _importPending = true;
+        _importJob = null;
+        _importState.Text = "Requesting import…";
+        UpdateImportButtons();
+        worker.ImportAsset(name, mode, result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _importPending = false;
+            if (result.IsOk) ShowImport(result.Value!);
+            else _importState.Text = "Import refused: " + result.Error;
+            UpdateImportButtons();
+        });
+    }
+
+    private void ReadImportStatus()
+    {
+        if (!_importRefresh.IsEnabled || _worker is not { } worker) return;
+        _importPending = true;
+        UpdateImportButtons();
+        worker.QueryImport(_importJob, result =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _importPending = false;
+            if (result.IsOk) ShowImport(result.Value!.Job);
+            else
+            {
+                _importPoll.Stop();
+                _importRunning = false;
+                _importState.Text = result.Error == ImportError.UnknownJob ? $"Import {_importJob} outcome unknown." :
+                    "Import status refused: " + result.Error;
+                if (result.Error == ImportError.UnknownJob) _importJob = null;
+            }
+            UpdateImportButtons();
+        });
+    }
+
+    private void ShowImport(ImportJob? job)
+    {
+        _importJob = job?.Id;
+        _importRunning = job?.State == RebuildState.Running;
+        if (_importRunning) _importPoll.Start(); else _importPoll.Stop();
+        string text = job is null ? "No admitted import" : $"Import {job.Name} ({job.Id}) · {job.State}";
+        if (job?.Failure is ImportFailure failure)
+        {
+            text += $" · {failure.Stage}/{failure.Code}: {failure.Diagnostic} · registration {failure.Registration}";
+            if (failure.RegisteredRootGuid is AssetGuid root) text += $" ({root}). Resume publication after correction.";
+        }
+        if (job?.Generation is GenerationId generation)
+            text += $" · published {generation}. Restart Runtime explicitly with --asset-generation {generation}.";
+        _importState.Text = text;
     }
 
     private void OnInspectorChanged(InspectorSnapshot snapshot)
@@ -1176,6 +1265,7 @@ public sealed class MainWindow : Window
     private void Shutdown()
     {
         _uiTicker.Stop();
+        _importPoll.Stop();
         _rebuildPoll.Stop();
         ++_referenceLaunch; _referenceWindow?.Close(); _referenceWindow = null;
         if (!_driving) WriteDragReport();  // a manual run's report (a driven run writes its own)

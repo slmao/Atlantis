@@ -25,3 +25,25 @@ public sealed record RebuildFailure(RebuildStage Stage, RebuildFailureCode Code,
 public sealed record RebuildJob(RebuildId Id, AssetGuid Asset, RebuildState State,
                                 GenerationId? Generation = null, RebuildFailure? Failure = null);
 public sealed record RebuildStatus(GenerationId? ActiveGeneration, RebuildJob? Job);
+
+public readonly record struct ImportId(AssetGuid Value)
+{
+    public override string ToString() => Value.ToString();
+}
+public enum ImportMode { Register, Resume }
+public enum ImportError
+{
+    Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, NameConflict, ActivationRequired,
+    NothingToResume, UnknownJob, Unsupported,
+}
+public enum ImportStage { Source, Pipeline, Validation, Registration, Publication }
+public enum ImportFailureCode
+{
+    InvalidSource, LaunchFailed, BuildFailed, InvalidOutput, IdentityConflict, RegisterFailed, PublishFailed, TimedOut,
+}
+public enum RegistrationState { NotCommitted, Committed, Unknown }
+public sealed record ImportFailure(ImportStage Stage, ImportFailureCode Code, string Diagnostic, uint? ExitCode,
+                                   RegistrationState Registration, AssetGuid? RegisteredRootGuid);
+public sealed record ImportJob(ImportId Id, string Name, ImportMode Mode, RebuildState State,
+                                AssetGuid? RootGuid = null, GenerationId? Generation = null, ImportFailure? Failure = null);
+public sealed record ImportStatus(GenerationId? ActiveGeneration, ImportJob? Job);

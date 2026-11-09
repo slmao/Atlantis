@@ -108,11 +108,14 @@ public static partial class Program
             {
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
+                bool import = _scene == "--asset-import";
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    legacyReadiness || rebuild ? "integrated_showcase_demo" : _scene)
+                    legacyReadiness || rebuild || import ? "integrated_showcase_demo" : _scene)
                 {
-                    AssetBuildProfile = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
+                    AssetBuildProfile = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
+                        rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
+                    AssetGeneration = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
+                        rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                 });
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
@@ -120,6 +123,7 @@ public static partial class Program
                     try
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
                     }
@@ -163,6 +167,144 @@ public static partial class Program
         checks.Add(new("publication does not select active generation or replace Assets selection",
             terminal.IsOk && terminal.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration &&
             browser.Selected == row.Guid));
+    }
+
+    private static async Task CheckImportedMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
+            File.Exists(process.SessionPath) && NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0,
+            "imported generation and Hierarchy", 60);
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        work(Path.GetDirectoryName(runtime.SessionPath)!);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var status = await Task.Run(() => observer.Assets.ImportStatus());
+        checks.Add(new("SDK reads the selected import generation",
+            status.IsOk && status.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration));
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_INBOX_NAME") is string inbox)
+        {
+            var tabs = NameUiField<TabControl>(window, "_assetTabs")!;
+            tabs.SelectedIndex = 1;
+            NameUiField<TextBox>(window, "_importName")!.Text = inbox;
+            var register = NameUiField<Button>(window, "_importRegister")!;
+            await NameUiWait(() => register.IsEnabled, "import action is available");
+            register.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var display = NameUiField<TextBlock>(window, "_importState")!;
+            await NameUiWait(() => display.Text?.Contains(" · Succeeded", StringComparison.Ordinal) == true,
+                "Assets panel observes the published import", 150);
+            var observed = await Task.Run(() => observer.Assets.ImportStatus());
+            checks.Add(new("Assets panel and SDK agree on the job and published generation",
+                observed.IsOk && observed.Value?.Job is { Generation: GenerationId published } job && job.Name == inbox &&
+                display.Text!.Contains(job.Id.ToString(), StringComparison.Ordinal) &&
+                display.Text.Contains("--asset-generation " + published, StringComparison.Ordinal) &&
+                observed.Value.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration));
+            tabs.SelectedIndex = 0;
+        }
+        var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
+        var mesh = assets.Single(a => a.Source == "content:managed_sample/source.gltf#mesh/0/0");
+        var schema = await Task.Run(() => observer.Authoring.Schema);
+        TypeId renderable = SceneSchema.TypeOf(schema, "Renderable")!.Value;
+        var subject = await Task.Run(() => observer.Authoring.ListNodes().Value
+            .First(n => observer.Authoring.ListComponents(n.Node).Value.Contains(renderable)).Node);
+        var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+        NameUiField<ListBox>(window, "_entities")!.SelectedItem = rows.First(r => r.Node == subject);
+        await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == subject,
+            "renderable Inspector");
+        var address = SceneSchema.AddressOf(schema, subject, "Renderable", "meshAsset")!.Value;
+        var document = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
+        AssetGuid Read() => document.GetProperty(address)!.Value.AsAsset();
+        var original = await Task.Run(Read);
+        var info = (await Task.Run(() => observer.Authoring.Document()))!;
+        var allowed = Environment.GetEnvironmentVariable("ATLANTIS_0086_DISPOSABLE_SCENE");
+        if (allowed is null || info.Provenance != Provenance.HandAuthored ||
+            !Path.GetFullPath(allowed).Equals(Path.GetFullPath(info.SourcePath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The test requires an explicitly named disposable hand-authored scene");
+        byte[] source = File.ReadAllBytes(info.SourcePath);
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Task<ulong> Generation() => Task.Run(() => observer.Control.Status().SceneGeneration);
+        Task<byte[]> Capture(string name) => Task.Run(() =>
+        {
+            string path = Path.Combine(runtime.Launch.WorkDirectory, name + ".png");
+            observer.Control.Pause();
+            try
+            {
+                var step = observer.Control.Step(new StepRequest(1, path));
+                if (step.Report?.Image is null || step.Report.Data.DrawItemCount == 0)
+                    throw new InvalidOperationException("No rendered capture for " + name);
+                return File.ReadAllBytes(path);
+            }
+            finally { observer.Control.Resume(); }
+        });
+        async Task WaitEdit(AssetGuid expected, ulong before, string label)
+        {
+            await NameUiWait(async () => await Task.Run(Read) == expected && await Generation() > before, label, 60);
+            checks.Add(new(label, true));
+        }
+
+        try
+        {
+            var renderedBefore = await Capture("original-mesh");
+            var row = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
+                .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
+            Click(row.Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…"));
+            AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
+            await NameUiWait(() => Picker() is { } p && PickerField<AssetBrowser>(p, "_browser").State == "Ready",
+                "mesh picker uses activated catalog");
+            var picker = Picker()!;
+            var browser = PickerField<AssetBrowser>(picker, "_browser");
+            PickerField<ListBox>(picker, "_list").SelectedItem = browser.Visible.Single(a => a.Guid == mesh.Guid);
+            await NameUiWait(() => browser.Details?.Guid == mesh.Guid, "imported mesh detail");
+            ulong before = await Generation();
+            Click(PickerField<Button>(picker, "_confirm"));
+            await WaitEdit(mesh.Guid, before, "typed picker commits the imported GUID and reloads");
+            checks.Add(new("imported mesh produces a distinct rendered capture",
+                !(await Capture("imported-mesh")).SequenceEqual(renderedBefore)));
+            before = await Generation();
+            Click(NameUiField<Button>(window, "_undo")!);
+            await WaitEdit(original, before, "Undo restores the prior mesh and reloads");
+            before = await Generation();
+            Click(NameUiField<Button>(window, "_redo")!);
+            await WaitEdit(mesh.Guid, before, "Redo restores the imported mesh and reloads");
+            Click(NameUiField<Button>(window, "_save")!);
+            await NameUiWait(() => File.ReadAllText(info.SourcePath).Contains(mesh.Guid.ToString(), StringComparison.Ordinal),
+                "Save writes imported GUID");
+            checks.Add(new("Save persists the literal derived mesh GUID", true));
+
+            using var restarted = RuntimeProcess.Start(runtime.Launch with
+                { ParentWindow = null, WorkDirectory = RuntimeProcess.NewWorkDirectory() });
+            using var reopened = await Task.Run(() => RemoteSession.Connect(restarted.WaitForSession(TimeSpan.FromSeconds(60))));
+            var opened = await Task.Run(() => reopened.Authoring.Open());
+            var reopenedDoc = await Task.Run(() => new RemoteAuthoringDocument(reopened.Authoring, reopened));
+            checks.Add(new("fresh Runtime authoring opens the saved reference",
+                opened is null && (await Task.Run(() => reopenedDoc.GetProperty(address)))?.AsAsset() == mesh.Guid));
+            ulong prior = (await Task.Run(() => reopened.Control.Status())).SceneGeneration;
+            var applied = await Task.Run(() => reopened.Authoring.ApplyTracked());
+            if (!applied.IsOk) throw new InvalidOperationException("Saved scene apply refused: " + applied.Error);
+            await NameUiWait(async () => (await Task.Run(() => reopened.Control.Status())).SceneGeneration > prior,
+                "saved imported reference reloads in the fresh Runtime", 60);
+            checks.Add(new("saved reference applies under the same generation", true));
+            restarted.CloseMainWindow();
+        }
+        finally { File.WriteAllBytes(info.SourcePath, source); }
+
+        var workerField = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var worker = (EditorWorker)workerField.GetValue(window)!;
+        NameUiField<TabControl>(window, "_assetTabs")!.SelectedIndex = 1;
+        var refresh = NameUiField<Button>(window, "_importRefresh")!;
+        var importState = NameUiField<TextBlock>(window, "_importState")!;
+        var previousImportState = importState.Text;
+        await NameUiWait(() => refresh.IsEnabled, "import status refresh is available");
+        Click(refresh);
+        workerField.SetValue(window, null);
+        try
+        {
+            // The following query is queued after the panel's status query on the old worker.
+            bool drained = false;
+            worker.QueryImport(null, _ => drained = true);
+            await NameUiWait(() => drained, "old import status callback drained");
+            checks.Add(new("late import status from the old session leaves the panel unchanged",
+                importState.Text == previousImportState && !refresh.IsEnabled));
+        }
+        finally { workerField.SetValue(window, worker); }
     }
 
     private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)

@@ -70,6 +70,14 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override {
     return rebuild_ ? rebuild_->status(id) : ac::RebuildStatusResult::Err(ac::RebuildError::Unavailable);
   }
+  ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {
+    if (!rebuild_) return ac::ImportStartResult::Err(ac::ImportError::Unavailable);
+    initialize();
+    return rebuild_->startImport(name, mode, catalog_);
+  }
+  ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
+    return rebuild_ ? rebuild_->importStatus(id) : ac::ImportStatusResult::Err(ac::ImportError::Unavailable);
+  }
 };
 namespace {
 class BorrowedAssets final : public connection::AssetConnection {
@@ -79,6 +87,12 @@ class BorrowedAssets final : public connection::AssetConnection {
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
+  ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {
+    return host_.importAsset(name, mode);
+  }
+  ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
+    return host_.importStatus(id);
+  }
  private:
   connection::AssetConnection& host_;
 };

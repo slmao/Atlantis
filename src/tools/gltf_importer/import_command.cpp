@@ -413,11 +413,66 @@ atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> resolveImpo
   return ResultT::Ok(entry->guid);
 }
 
+namespace {
+
+bool validManagedStaticMesh(const cgltf_data& data) {
+  if (data.file_type != cgltf_file_type_gltf || !data.asset.version ||
+      std::string_view(data.asset.version) != "2.0" ||
+      data.scenes_count != 1 || data.scenes[0].nodes_count != 1 ||
+      data.nodes_count != 1 || !data.nodes[0].mesh || data.meshes_count != 1 ||
+      data.meshes[0].primitives_count != 1 || data.meshes[0].primitives[0].targets_count ||
+      data.materials_count > 1 || data.buffers_count != 1 || data.images_count ||
+      data.textures_count || data.extensions_used_count || data.extensions_required_count ||
+      data.data_extensions_count || data.skins_count || data.animations_count || data.cameras_count)
+    return false;
+
+  const auto& buffer = data.buffers[0];
+  const auto& primitive = data.meshes[0].primitives[0];
+  if (data.asset.extensions_count || data.nodes[0].extensions_count || data.scenes[0].extensions_count ||
+      data.meshes[0].extensions_count || primitive.extensions_count || primitive.has_draco_mesh_compression ||
+      buffer.extensions_count || (data.materials_count && data.materials[0].extensions_count) ||
+      !buffer.uri) return false;
+  std::string_view encoded(buffer.uri);
+  constexpr std::string_view octets = "data:application/octet-stream;base64,";
+  constexpr std::string_view gltfBuffer = "data:application/gltf-buffer;base64,";
+  if (encoded.starts_with(octets)) encoded.remove_prefix(octets.size());
+  else if (encoded.starts_with(gltfBuffer)) encoded.remove_prefix(gltfBuffer.size());
+  else return false;
+  if (encoded.empty() || encoded.size() % 4 != 0) return false;
+  const std::size_t padding = encoded.ends_with("==") ? 2 : encoded.ends_with('=') ? 1 : 0;
+  if (buffer.size != encoded.size() / 4 * 3 - padding) return false;
+  for (cgltf_size i = 0; i < data.buffer_views_count; ++i) {
+    const auto& view = data.buffer_views[i];
+    if (view.extensions_count || view.has_meshopt_compression ||
+        view.buffer != &buffer || view.offset > buffer.size || view.size > buffer.size - view.offset) return false;
+  }
+  for (cgltf_size i = 0; i < data.accessors_count; ++i) {
+    const auto& accessor = data.accessors[i];
+    if (accessor.extensions_count || !accessor.buffer_view || accessor.is_sparse || !accessor.count ||
+        accessor.count > buffer.size || accessor.stride > buffer.size || accessor.offset > accessor.buffer_view->size)
+      return false;
+  }
+  for (const char c : encoded.substr(0, encoded.size() - padding)) {
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+          (c >= '0' && c <= '9') || c == '+' || c == '/')) return false;
+  }
+  return true;
+}
+
+}  // namespace
+
 atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& inputPath, const fs::path& contentRoot,
                                                                  const fs::path& outputDir, const std::string& name,
                                                                  const atlantis::asset_system::AssetGuid& importRoot,
-                                                                 const std::optional<fs::path>& overlayPath) {
+                                                                 const std::optional<fs::path>& overlayPath,
+                                                                 bool managedStaticMesh) {
   using ResultT = atlantis::Result<GltfImportSummary, GltfImportError>;
+  if (managedStaticMesh) {
+    std::error_code ec;
+    const auto size = fs::file_size(inputPath, ec);
+    if (ec || size > 16 * 1024 * 1024 || overlayPath || inputPath.extension() != ".gltf")
+      return ResultT::Err(GltfImportError::MalformedGltf);
+  }
 
   // Plan 0046 Milestone 2 (ADR-0094 Decision 3): the overlay is read and
   // parsed first, so every overlay rule fails before any output exists.
@@ -445,6 +500,8 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   if (parseResult != cgltf_result_success || guard.data == nullptr) {
     return ResultT::Err(GltfImportError::MalformedGltf);
   }
+  if (managedStaticMesh && !validManagedStaticMesh(*guard.data))
+    return ResultT::Err(GltfImportError::MalformedGltf);
   // cgltf concatenates relative buffer URIs onto this path verbatim --
   // it must end with a directory separator or the first path segment
   // merges ("content/bistro" + "bistro.bin").

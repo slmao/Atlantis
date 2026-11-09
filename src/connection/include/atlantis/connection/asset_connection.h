@@ -77,6 +77,53 @@ struct RebuildStatus {
 };
 using RebuildStartResult = Result<RebuildJob, RebuildError>;
 using RebuildStatusResult = Result<RebuildStatus, RebuildError>;
+struct ImportId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const ImportId&, const ImportId&) = default;
+};
+enum class ImportMode : std::uint8_t { Register, Resume };
+enum class ImportError : std::uint8_t {
+  Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, NameConflict, ActivationRequired,
+  NothingToResume, UnknownJob, Unsupported,
+};
+enum class ImportStage : std::uint8_t { Source, Pipeline, Validation, Registration, Publication };
+enum class ImportFailureCode : std::uint8_t {
+  InvalidSource, LaunchFailed, BuildFailed, InvalidOutput, IdentityConflict, RegisterFailed, PublishFailed, TimedOut,
+};
+enum class RegistrationState : std::uint8_t { NotCommitted, Committed, Unknown };
+[[nodiscard]] std::string_view toString(ImportMode value) noexcept;
+[[nodiscard]] std::string_view toString(ImportError value) noexcept;
+[[nodiscard]] std::string_view toString(ImportStage value) noexcept;
+[[nodiscard]] std::string_view toString(ImportFailureCode value) noexcept;
+[[nodiscard]] std::string_view toString(RegistrationState value) noexcept;
+[[nodiscard]] bool validImportName(std::string_view name) noexcept;
+[[nodiscard]] bool validFailure(ImportStage stage, ImportFailureCode code) noexcept;
+struct ImportFailure {
+  ImportStage stage;
+  ImportFailureCode code;
+  std::string diagnostic;
+  std::optional<std::uint32_t> exitCode;
+  RegistrationState registration = RegistrationState::NotCommitted;
+  std::optional<asset_system::AssetGuid> registeredRootGuid;
+  friend bool operator==(const ImportFailure&, const ImportFailure&) = default;
+};
+struct ImportJob {
+  ImportId id;
+  std::string name;
+  ImportMode mode;
+  RebuildState state = RebuildState::Running;
+  std::optional<asset_system::AssetGuid> rootGuid;
+  std::optional<GenerationId> generation;
+  std::optional<ImportFailure> failure;
+  friend bool operator==(const ImportJob&, const ImportJob&) = default;
+};
+struct ImportStatus {
+  std::optional<GenerationId> activeGeneration;
+  std::optional<ImportJob> job;
+  friend bool operator==(const ImportStatus&, const ImportStatus&) = default;
+};
+using ImportStartResult = Result<ImportJob, ImportError>;
+using ImportStatusResult = Result<ImportStatus, ImportError>;
 }  // namespace assets
 
 // Spec 0081 / ADR-0143: read-only cooked-catalog facts, not GPU residency.
@@ -99,6 +146,12 @@ class AssetConnection {
   }
   [[nodiscard]] virtual assets::RebuildStatusResult rebuildStatus(std::optional<assets::RebuildId>) const {
     return assets::RebuildStatusResult::Err(assets::RebuildError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::ImportStartResult importAsset(std::string_view, assets::ImportMode) {
+    return assets::ImportStartResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::ImportStatusResult importStatus(std::optional<assets::ImportId>) const {
+    return assets::ImportStatusResult::Err(assets::ImportError::Unavailable);
   }
 };
 }  // namespace atlantis::connection

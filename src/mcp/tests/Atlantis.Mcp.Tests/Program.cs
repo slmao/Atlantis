@@ -30,6 +30,9 @@ internal static partial class Program
     [
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
+        ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
+        ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
         ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.rebuild_status", "assets.rebuildStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -129,6 +132,7 @@ internal static partial class Program
             CheckForward(result, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
+                c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
                 c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
                 description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
                 ? description.Contains("document") : description.Contains("disposable")), c.Tool + " editing model stated");
@@ -317,13 +321,13 @@ internal static partial class Program
             Arguments = [typeof(Program).Assembly.Location, "--fake-host"],
         }), cancellationToken: deadline.Token);
         var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 38 approved tools");
+        Check(tools.Select(t => t.Name).Order().SequenceEqual(ExpectedNames.Order()), "MCP tools/list exposes exactly all 40 approved tools");
         foreach (var c in Cases)
         {
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.rebuild" or "assets.rebuildStatus")
+            if (c.Method is "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus")
             {
                 Check(result.IsError == true, "typed rebuild tool rejects the non-DTO echo response");
                 continue;

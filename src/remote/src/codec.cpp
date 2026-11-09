@@ -171,6 +171,93 @@ std::optional<ca::RebuildError> decodeRebuildError(const Value& value, bool star
   return (*error == ca::RebuildError::UnknownJob) != start ? error : std::nullopt;
 }
 
+Value encode(const ca::ImportJob& job) {
+  Value out = Value::object();
+  out.set("id", encodeAsset(job.id.value));
+  out.set("name", Value::string(job.name));
+  out.set("mode", Value::string(std::string(ca::toString(job.mode))));
+  out.set("state", Value::string(std::string(ca::toString(job.state))));
+  if (job.rootGuid) out.set("rootGuid", encodeAsset(*job.rootGuid));
+  if (job.generation) out.set("generation", encodeAsset(job.generation->value));
+  if (job.failure) {
+    const auto& failure = *job.failure;
+    Value f = Value::object();
+    f.set("stage", Value::string(std::string(ca::toString(failure.stage))));
+    f.set("code", Value::string(std::string(ca::toString(failure.code))));
+    f.set("diagnostic", Value::string(failure.diagnostic));
+    f.set("registration", Value::string(std::string(ca::toString(failure.registration))));
+    if (failure.exitCode) f.set("exitCode", Value::number(static_cast<std::uint64_t>(*failure.exitCode)));
+    if (failure.registeredRootGuid) f.set("registeredRootGuid", encodeAsset(*failure.registeredRootGuid));
+    out.set("failure", std::move(f));
+  }
+  return out;
+}
+Value encode(const ca::ImportStatus& status) {
+  Value out = Value::object();
+  out.set("activeGeneration", status.activeGeneration ? encodeAsset(status.activeGeneration->value) : Value());
+  out.set("job", status.job ? encode(*status.job) : Value());
+  return out;
+}
+std::optional<ca::ImportJob> decodeImportJob(const Value& value) {
+  const auto id = nonNilAsset(value.find("id"));
+  const auto* name = value.find("name");
+  const auto mode = rebuildToken(value.find("mode"), ca::ImportMode::Resume);
+  const auto state = rebuildToken(value.find("state"), ca::RebuildState::Failed);
+  if (!id || !name || !name->isString() || !ca::validImportName(name->asString()) || !mode || !state)
+    return std::nullopt;
+  const auto* root = value.find("rootGuid");
+  const auto* generation = value.find("generation");
+  const auto* failure = value.find("failure");
+  const bool success = *state == ca::RebuildState::Succeeded;
+  if (static_cast<bool>(root) != success || static_cast<bool>(generation) != success ||
+      static_cast<bool>(failure) != (*state == ca::RebuildState::Failed)) return std::nullopt;
+  ca::ImportJob job{{*id}, name->asString(), *mode, *state, {}, {}, {}};
+  if (success) {
+    const auto selected = nonNilAsset(generation);
+    job.rootGuid = nonNilAsset(root);
+    if (!selected || !job.rootGuid) return std::nullopt;
+    job.generation = ca::GenerationId{*selected};
+  }
+  if (failure) {
+    const auto stage = rebuildToken(failure->find("stage"), ca::ImportStage::Publication);
+    const auto code = rebuildToken(failure->find("code"), ca::ImportFailureCode::TimedOut);
+    const auto registration = rebuildToken(failure->find("registration"), ca::RegistrationState::Unknown);
+    const auto* diagnostic = failure->find("diagnostic");
+    const auto* committed = failure->find("registeredRootGuid");
+    const auto registeredRoot = nonNilAsset(committed);
+    if (!stage || !code || !ca::validFailure(*stage, *code) || !registration || !diagnostic ||
+        !diagnostic->isString() || diagnostic->asString().size() > 4096 ||
+        static_cast<bool>(committed) != (*registration == ca::RegistrationState::Committed) ||
+        (committed && !registeredRoot)) return std::nullopt;
+    std::optional<std::uint32_t> exit;
+    if (const auto* raw = failure->find("exitCode")) {
+      const auto number = decodeUInt64(*raw);
+      if (!number || *number > UINT32_MAX) return std::nullopt;
+      exit = static_cast<std::uint32_t>(*number);
+    }
+    job.failure = ca::ImportFailure{*stage, *code, diagnostic->asString(), exit, *registration, registeredRoot};
+  }
+  return job;
+}
+std::optional<ca::ImportStatus> decodeImportStatus(const Value& value) {
+  const auto* active = value.find("activeGeneration");
+  const auto* job = value.find("job");
+  if (!active || !job) return std::nullopt;
+  ca::ImportStatus status;
+  if (!active->isNull()) {
+    const auto guid = nonNilAsset(active);
+    if (!guid) return std::nullopt;
+    status.activeGeneration = ca::GenerationId{*guid};
+  }
+  if (!job->isNull() && !(status.job = decodeImportJob(*job))) return std::nullopt;
+  return status;
+}
+std::optional<ca::ImportError> decodeImportError(const Value& value, bool start) {
+  const auto error = rebuildToken(&value, ca::ImportError::UnknownJob);
+  if (!error || *error == ca::ImportError::Unavailable) return error;
+  return (*error == ca::ImportError::UnknownJob) != start ? error : std::nullopt;
+}
+
 using atlantis::asset_system::AssetGuid;
 using atlantis::asset_system::EntityGuid;
 using connection::EventFilter;

@@ -370,6 +370,13 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.RebuildStatus, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.RebuildStatus(id); _post(() => done(result)); });
 
+    public void ImportAsset(string name, Atlantis.Gameplay.Assets.ImportMode mode,
+        Action<Outcome<Atlantis.Gameplay.Assets.ImportJob, Atlantis.Gameplay.Assets.ImportError>> done) =>
+        Enqueue(session => { var result = session.Assets.ImportAsset(name, mode); _post(() => done(result)); });
+    public void QueryImport(Atlantis.Gameplay.Assets.ImportId? id,
+        Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
+        Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
+
     public void Start() => _thread.Start();
 
     public void SetCamera(ViewportCamera? camera, long inputTicks)

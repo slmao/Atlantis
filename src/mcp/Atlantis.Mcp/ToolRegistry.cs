@@ -43,6 +43,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.import", "assets.import", "Register a project inbox source or resume a committed import.", RebuildModel,
+            ToolSchemas.ImportParameters()),
+        Declare("assets.import_status", "assets.importStatus", "Read-only status for a retained import job or the latest admission.", RebuildModel,
+            ToolSchemas.RebuildStatusParameters()),
         Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String))),
         Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
@@ -126,8 +130,13 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
+            bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
+            string? importName = import ? wireParameters.Find("name")?.AsString : null;
+            string? importMode = import ? wireParameters.Find("mode")?.AsString : null;
+            if (import && !Codec.ValidImportName(importName))
+                return Error("InvalidArguments: invalid managed import name");
             AssetGuid? requested = null;
-            if ((rebuild || rebuildStatus) && wireParameters.Find(rebuild ? "asset" : "jobId") is JsonValue key)
+            if ((rebuild || rebuildStatus || importStatus) && wireParameters.Find(rebuild ? "asset" : "jobId") is JsonValue key)
             {
                 if (!key.IsString || !AssetGuid.TryParse(key.AsString, out AssetGuid guid) || guid.IsNil)
                     return Error("InvalidArguments: expected a non-nil canonical GUID");
@@ -140,7 +149,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 wireParameters = JsonValue.NewObject().Set("subscription", subscription.Find("result")!);
             }
             JsonValue response = session.Request(mapping.Method, wireParameters);
-            if ((rebuild || rebuildStatus) && Codec.IsLegacyAssetRebuildRefusal(response))
+            if ((rebuild || rebuildStatus || import || importStatus) && Codec.IsLegacyAssetRebuildRefusal(response))
                 return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
             if (response.Find("error") is JsonValue error) return Forward(error, true);
             if (response.Find("result") is not JsonValue result) return Error("ProtocolError: response has no result or error");
@@ -158,6 +167,22 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return status is not null && (requested is null || status.Job?.Id.Value == requested)
                     ? Forward(result, status.Job?.State == Gameplay.Assets.RebuildState.Failed)
                     : Error("ProtocolError: malformed rebuild status");
+            }
+            if (import || importStatus)
+            {
+                JsonValue? ok = result.Find("ok"), err = result.Find("err");
+                if ((ok is null) == (err is null)) return Error("ProtocolError: malformed import outcome");
+                if (err is not null)
+                    return Codec.DecodeImportError(err, import) is not null ? Forward(result, true)
+                        : Error("ProtocolError: malformed import refusal");
+                if (import)
+                    return Codec.DecodeImportJob(ok!) is { State: Gameplay.Assets.RebuildState.Running } job &&
+                        job.Name == importName && job.Mode.ToString() == importMode
+                        ? Forward(result, false) : Error("ProtocolError: malformed import receipt");
+                var status = Codec.DecodeImportStatus(ok!);
+                return status is not null && (requested is null || status.Job?.Id.Value == requested)
+                    ? Forward(result, status.Job?.State == Gameplay.Assets.RebuildState.Failed)
+                    : Error("ProtocolError: malformed import status");
             }
             bool refused = result.Find("err") is not null
                 || (mapping.Method is "connection.drainFailures" or "authoring.drainFailures"

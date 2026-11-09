@@ -1,11 +1,11 @@
 # Spec: Managed Import and Registration of New Assets
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-08
 - **Related Plan:** [Plan 0086](../plans/0086-new-asset-import.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0147](../adr/0147-managed-import-registration-and-publication.md) (Proposed)
+- **Approval:** slmao, 2026-11-08, [joint ruling](https://github.com/slmao/Atlantis/pull/335#joint-human-approval) on `7a750e8`.
+- **Related ADR:** [ADR-0147](../adr/0147-managed-import-registration-and-publication.md) (Accepted)
 
 ## Summary
 
