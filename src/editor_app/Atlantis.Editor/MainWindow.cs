@@ -466,9 +466,10 @@ public sealed class MainWindow : Window
         };
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
-        worker.ApplyStateChanged += text => _applyLine.Text = "apply: " + text;
+        worker.ApplyStateChanged += text => { if (ReferenceEquals(_worker, worker)) _applyLine.Text = "apply: " + text; };
         worker.ApplyControlsChanged += (canApply, canPreview) =>
         {
+            if (!ReferenceEquals(_worker, worker)) return;
             _retryApply.IsEnabled = canApply; _allowGizmoPreview = canPreview;
             _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
             if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }

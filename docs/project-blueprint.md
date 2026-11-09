@@ -1002,8 +1002,9 @@ milestone being listed does not authorize starting it — see Section 1.
   registration of a first static-mesh glTF source in merged
   [PR #336](https://github.com/slmao/Atlantis/pull/336).
   [Spec 0087](specs/0087-add-mesh-to-scene.md) and
-  [Plan 0087](plans/0087-add-mesh-to-scene.md) propose adding one mesh from
-  Assets to the current hand-authored scene and are in joint review.
+  [Plan 0087](plans/0087-add-mesh-to-scene.md) cover adding one mesh from
+  Assets to the current hand-authored scene, implemented in
+  [PR #338](https://github.com/slmao/Atlantis/pull/338).
   Preview and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay

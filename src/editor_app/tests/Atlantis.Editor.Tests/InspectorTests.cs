@@ -216,9 +216,12 @@ public static partial class Program
             await NameUiWait(() => add.IsEnabled, "selected mesh eligible");
             var search = window.GetVisualDescendants().OfType<TextBox>().Single(box => box.PlaceholderText == "Source or GUID");
             search.Text = "no mesh matches this fixture";
+            var browser = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
+            await NameUiWait(() => browser.Visible.Count == 0, "search filter observed");
             Check("filtering out the mesh disables Add", !add.IsEnabled);
             search.Text = "";
-            list.SelectedItem = NameUiField<AssetBrowser>(window, "_assetBrowser")!.Visible.Single(a => a.Guid == mesh.Guid);
+            await NameUiWait(() => browser.Visible.Any(a => a.Guid == mesh.Guid), "search cleared");
+            list.SelectedItem = browser.Visible.Single(a => a.Guid == mesh.Guid);
             list.SelectedItem = null;
             Check("deselection disables Add", !add.IsEnabled);
             list.SelectedItem = visible.Single(a => a.Guid == mesh.Guid);
@@ -310,6 +313,14 @@ public static partial class Program
             await Rename("");
             var worker = NameUiField<EditorWorker>(window, "_worker")!;
             long lifetime = worker.MeshDocumentLifetime;
+            byte[] saved = File.ReadAllBytes(info.SourcePath);
+            try
+            {
+                File.WriteAllText(info.SourcePath, "invalid disposable scene");
+                Check("refused reopen leaves the document lifetime intact", await Task.Run(() => observer.Authoring.Open()) is not null &&
+                    worker.MeshDocumentLifetime == lifetime);
+            }
+            finally { File.WriteAllBytes(info.SourcePath, saved); }
             Check("same source reopened", await Task.Run(() => observer.Authoring.Open()) is null);
             await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "same-source reopen invalidates lifetime");
             string? stale = null;
@@ -318,6 +329,24 @@ public static partial class Program
             Check("old lifetime refuses before submission", stale!.StartsWith("Add refused", StringComparison.Ordinal) &&
                 (await Task.Run(() => observer.Authoring.ListNodes())).Value.Count == original.Count + 1 &&
                 !NameUiField<Button>(window, "_undo")!.IsEnabled);
+
+            await NameUiWait(() => add.IsEnabled, "add eligible after reopen");
+            Click(add);
+            var workerField = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            workerField.SetValue(window, null);
+            const string replacementStatus = "Replacement session feedback";
+            state.Text = replacementStatus;
+            EntityGuid? previousSelection = NameUiField<Selection>(window, "_selection")?.Node;
+            try
+            {
+                bool drained = false;
+                worker.QueryImport(null, _ => drained = true);
+                await NameUiWait(() => drained, "old worker add callback drained");
+                Check("late add feedback cannot replace the current action state", state.Text == replacementStatus &&
+                    NameUiField<Selection>(window, "_selection")?.Node == previousSelection &&
+                    (await Task.Run(() => observer.Authoring.ListNodes())).Value.Count == original.Count + 2);
+            }
+            finally { workerField.SetValue(window, worker); }
         }
         finally
         {

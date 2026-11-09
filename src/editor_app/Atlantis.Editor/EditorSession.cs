@@ -739,7 +739,8 @@ public sealed class EditorWorker : IDisposable
             {
                 _apply?.LostApplyAcceptance();
                 string? applyText = _apply?.Text;
-                if (applyText is not null) _post(() => ApplyStateChanged?.Invoke(applyText));
+                if (applyText is not null)
+                    _post(() => { if (MeshDocumentLifetime == lifetime) ApplyStateChanged?.Invoke(applyText); });
             }
             Report(null, committed
                 ? $"Added {attempted}. {(applying ? "Apply outcome unknown." : "History unavailable.")}"
@@ -747,7 +748,7 @@ public sealed class EditorWorker : IDisposable
                 : "Add refused: " + e.Message);
             throw;
         }
-        PostApplyState();
+        PostApplyState(lifetime);
     });
 
     public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
@@ -1080,7 +1081,7 @@ public sealed class EditorWorker : IDisposable
     // The apply state line: the controller's text, with the play note appended while the Runtime plays.
     private const string PlayNote = " · playing: an apply replaces the scene, gameplay clients' changes included";
 
-    private void PostApplyState()
+    private void PostApplyState(long? lifetime = null)
     {
         if (_apply is null) return;
         bool canApply = _apply.CanApply, canPreview = _apply.CanPreview;
@@ -1093,14 +1094,14 @@ public sealed class EditorWorker : IDisposable
                 _gizmoBlocked = !canPreview;
             }
             _applyControls = (canApply, canPreview);
-            _post(() => ApplyControlsChanged?.Invoke(canApply, canPreview));
+            _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyControlsChanged?.Invoke(canApply, canPreview); });
             if (_previewSession is RemoteSession session) SendOverlay(session);
         }
         string text = _apply.Text + (_playing ? PlayNote : "");
         if (text == _applyText) return;
         _applyText = text;
         _log.Write("apply: " + text);
-        _post(() => ApplyStateChanged?.Invoke(text));
+        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(text); });
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.
