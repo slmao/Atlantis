@@ -979,6 +979,11 @@ for lifecycle, ownership and failure behavior.
 
 ## Atlantis Authoring
 
+Spec 0088 adds a Save As snapshot sink. Authoring owns the accepted
+document and uses its existing serializer. The Windows executable host
+validates and commits the independent source unit. The copy does not
+retarget the session. See [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md).
+
 **Status: Approved** (Spec 0065, with its three Corrections;
 [ADR-0129](../adr/0129-authoring-document-ownership.md),
 [ADR-0130](../adr/0130-authoring-access-interface-and-module-boundary.md),

@@ -20,6 +20,8 @@ namespace atlantis::runtime {
 struct AuthoringSources {
   std::filesystem::path catalogSource;
   atlantis::authoring::SourceRoots roots;
+  std::filesystem::path cookedCatalog;
+  bool allowSceneSaveAs = false;
 };
 
 // The session is created lazily, on the first connect() -- an atlantis_runtime

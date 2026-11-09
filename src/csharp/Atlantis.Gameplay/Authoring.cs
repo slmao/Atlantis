@@ -219,6 +219,14 @@ public enum OpenError
 }
 
 /// <summary>Why Save failed.</summary>
+public enum SaveAsError
+{
+    Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
+    Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported,
+}
+
+public sealed record SavedScene(AssetGuid Scene, string Source, ulong DocumentRevision);
+
 public enum SaveError
 {
     NoDocument,

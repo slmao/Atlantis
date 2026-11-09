@@ -1943,6 +1943,23 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     }
     return done(command, human + "\n", std::move(result));
   }
+  if (verb == "save-as") {
+    if (t.size() != 3) return failed(command, usageError("scene save-as <name>"));
+    auto saved = a->saveAs(t[2]);
+    if (saved.isErr()) {
+      const std::string code(ac::toString(saved.error()));
+      if (saved.error() == ac::SaveAsError::UnknownOutcome)
+        return failed(command, plainError(code, ErrorCategory::Runtime,
+            "Save As outcome unknown. Inspect the destination and confirm settlement before retrying."));
+      return failed(command, plainError(code, ErrorCategory::Refused, "Save As refused: " + code));
+    }
+    const auto& copy = saved.value();
+    Value result = Value::object();
+    result.set("scene", Value::string(atlantis::asset_system::toString(copy.scene)));
+    result.set("source", Value::string(copy.source));
+    result.set("documentRevision", Value::number(copy.documentRevision));
+    return done(command, "saved copy " + copy.source + "\n", std::move(result));
+  }
   if (verb == "save") {
     if (t.size() != 2) return failed(command, usageError("scene save"));
     const auto saved = a->save();

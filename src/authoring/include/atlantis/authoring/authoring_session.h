@@ -82,6 +82,8 @@ enum class LocateError : std::uint8_t {
 // The host later reports the executed result by id. Frame thread only; owned input.
 using SceneSink = std::function<Result<std::optional<connection::authoring::ApplyId>, std::monostate>(
     connection::authoring::ApplyId id, asset_system::ValidatedSceneData scene)>;
+using SaveAsSink = std::function<Result<connection::authoring::SavedScene, connection::authoring::SaveAsError>(
+    std::string_view name, std::string source, std::uint64_t documentRevision)>;
 
 // At most one open document (ADR-0129 D1): the scene `source` names, read by
 // open(). Every client reaches it through a connection(); commands apply to a
@@ -114,6 +116,7 @@ class AuthoringSession {
 
   // The host's scene sink (ADR-0131 D3); without one, apply() is NoSceneSink.
   void setSceneSink(SceneSink sink);
+  void setSaveAsSink(SaveAsSink sink);
 
   // The host reports that the Runtime swapped in an applied document (Plan
   // 0065 P4, ADR-0131 D5): every subscription receives Applied{generation}.

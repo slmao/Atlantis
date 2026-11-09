@@ -104,7 +104,7 @@ add_executable(atlantis_runtime asset_host.cpp main.cpp cli.cpp editor_attachmen
   benchmark_report.cpp benchmark_loop.cpp benchmark_variants.cpp benchmark_run.cpp
   # Plan 0060 (ADR-0119): the performance gate, executable-private like the benchmark.
   gate_canary.cpp canary_run.cpp gate_set.cpp gate_policy.cpp gate_evaluate.cpp gate_orchestrate.cpp gate_process_windows.cpp gate_store.cpp gate_applies.cpp gate_run.cpp
-  asset_rebuild_host.cpp)
+  scene_save_as.cpp asset_rebuild_host.cpp)
 
 # Plan 0059 M9 (ADR-0117 D6): what the result document records about the build,
 # read at configure time -- the configuration, the source revision (and whether the
@@ -126,6 +126,17 @@ file(STRINGS "${CMAKE_SOURCE_DIR}/tools/content/bistro_source.provenance.txt" AT
   REGEX "^source_commit: ")
 if(ATLANTIS_PROVENANCE_LINES)
   string(REGEX REPLACE "^source_commit: ([0-9a-f]+).*" "\\1" ATLANTIS_BISTRO_CONTENT_PIN_TEXT "${ATLANTIS_PROVENANCE_LINES}")
+endif()
+set(runtime_authoring_catalog "${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt")
+get_property(runtime_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+set(runtime_development_dir "${CMAKE_CURRENT_BINARY_DIR}")
+if(runtime_multi_config)
+  string(APPEND runtime_development_dir "/$<CONFIG>")
+endif()
+if(ATLANTIS_saved_scene_GUID)
+  get_property(runtime_authoring_catalog GLOBAL PROPERTY ATLANTIS_EFFECTIVE_CATALOG_SOURCE)
+  target_compile_definitions(atlantis_runtime PRIVATE ATLANTIS_RUNTIME_SAVED_SCENE_GUID="${ATLANTIS_saved_scene_GUID}")
+  add_dependencies(atlantis_runtime ${ATLANTIS_saved_scene_TARGET})
 endif()
 target_compile_definitions(atlantis_runtime PRIVATE
   # Plan 0060 M5: where the gate finds gate_policy.json and baselines/ unless told otherwise.
@@ -178,7 +189,8 @@ target_compile_definitions(atlantis_runtime PRIVATE
   ATLANTIS_RUNTIME_SCENE_GUID="${ATLANTIS_integrated_showcase_demo_scene_GUID}"
   # Plan 0065 P5 (ADR-0129 D3): where the authoring session finds the scene's
   # source -- the committed catalog source and the assets tree.
-  ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH="${CMAKE_SOURCE_DIR}/assets/asset_catalog.txt"
+  ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH="${runtime_authoring_catalog}"
+  ATLANTIS_RUNTIME_DEVELOPMENT_DIR="${runtime_development_dir}"
   ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR="${CMAKE_SOURCE_DIR}/assets"
   # Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   # built-in shader pair's own output directory -- reuses the already-

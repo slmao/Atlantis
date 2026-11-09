@@ -973,6 +973,35 @@ public sealed class EditorWorker : IDisposable
         _post(() => EditNotice?.Invoke("saved " + info?.SourcePath));
     });
 
+    public void SaveAs(string name, long lifetime, Action<string> settled) => Enqueue(session =>
+    {
+        void Report(string text) => _post(() => settled(text));
+        bool IsCurrent()
+        {
+            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime;
+        }
+        bool sent = false;
+        try
+        {
+            if (!IsCurrent() || _document is not RemoteAuthoringDocument document ||
+                document.ObserveEvents() is not { } events)
+            { Report("Save As refused: the document or session is unavailable."); return; }
+            PollDocument(session, events, pollApply: false);
+            if (!IsCurrent()) { Report("Save As refused: the document or session changed."); return; }
+            sent = true;
+            var result = session.Authoring.SaveAs(name);
+            Report(result.IsOk && result.Value is { } copy
+                ? $"Saved copy {copy.Source} ({copy.Scene}), revision {copy.DocumentRevision}. Configure a separate build with ATLANTIS_SAVED_SCENE={name}, then launch --scene saved_scene."
+                : "Save As refused: " + result.Error);
+        }
+        catch (GameplayException e)
+        {
+            Report(sent ? $"Save As outcome unknown for {name}. Inspect the destination and confirm settlement before retrying."
+                : "Save As did not send a request: " + e.Message);
+            throw;
+        }
+    });
+
     // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
     private void OpenDocument(RemoteSession session)
     {

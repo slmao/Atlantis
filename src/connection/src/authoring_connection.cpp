@@ -104,6 +104,35 @@ std::string_view toString(SaveError error) noexcept {
   return "Unknown";
 }
 
+bool validSaveAsName(std::string_view name) noexcept {
+  if (name.empty() || name.size() > 48 || name.front() < 'a' || name.front() > 'z') return false;
+  for (char c : name) {
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) return false;
+  }
+  return true;
+}
+
+std::string saveAsSource(std::string_view name) {
+  return "scenes/saved/save_" + std::string(name) + "/scene.scene.txt";
+}
+
+std::string_view toString(SaveAsError error) noexcept {
+  switch (error) {
+    case SaveAsError::Unavailable: return "Unavailable";
+    case SaveAsError::InvalidName: return "InvalidName";
+    case SaveAsError::NoDocument: return "NoDocument";
+    case SaveAsError::ImportedSceneNotSavable: return "ImportedSceneNotSavable";
+    case SaveAsError::UnsafeTarget: return "UnsafeTarget";
+    case SaveAsError::Busy: return "Busy";
+    case SaveAsError::NameConflict: return "NameConflict";
+    case SaveAsError::IdentityConflict: return "IdentityConflict";
+    case SaveAsError::WriteFailed: return "WriteFailed";
+    case SaveAsError::Unsupported: return "Unsupported";
+    case SaveAsError::UnknownOutcome: return "UnknownOutcome";
+  }
+  return "Unknown";
+}
+
 std::string_view toString(ApplyError error) noexcept {
   switch (error) {
     case ApplyError::NoDocument: return "NoDocument";

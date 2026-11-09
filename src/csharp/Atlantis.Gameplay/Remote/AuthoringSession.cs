@@ -80,6 +80,23 @@ public sealed class AuthoringSession
     /// <summary>Writes a hand-authored document to its source; null on success.</summary>
     public A.SaveError? Save() => Unit("authoring.save", Codec.DecodeSaveError);
 
+    /// <summary>Creates a source copy without changing the bound document. A lost reply throws and must not be replayed.</summary>
+    public Outcome<A.SavedScene, A.SaveAsError> SaveAs(string name)
+    {
+        const string method = "authoring.saveAs";
+        if (!Codec.ValidSaveAsName(name)) return Outcome<A.SavedScene, A.SaveAsError>.Err(A.SaveAsError.InvalidName);
+        var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("name", JsonValue.String(name))));
+        var error = reply.Find("error");
+        var result = reply.Find("result");
+        if (Codec.IsLegacySaveAsRefusal(reply))
+            return Outcome<A.SavedScene, A.SaveAsError>.Err(A.SaveAsError.Unsupported);
+        if (error is not null || result is null || ((result.Find("ok") is null) == (result.Find("err") is null)))
+            throw _session.Malformed(method);
+        return _session.InBand<A.SavedScene, A.SaveAsError>(result, method,
+            value => Codec.DecodeSavedScene(value) is { } copy && copy.Source == Codec.SaveAsSource(name) ? copy : null,
+            Codec.DecodeSaveAsError);
+    }
+
     // --- Queries.
 
     /// <summary>Every node, in the document's order.</summary>

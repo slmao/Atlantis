@@ -1,11 +1,11 @@
 # Spec: Save As for Hand-Authored Scenes
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-10
 - **Related Plan:** [Plan 0088](../plans/0088-scene-save-as.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md) (Proposed)
+- **Approval:** Jointly approved at revision `a5b2b186` of [PR #339](https://github.com/slmao/Atlantis/pull/339), 2026-11-10. See Plan 0088.
+- **Related ADR:** [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md) (Accepted)
 
 ## Summary
 

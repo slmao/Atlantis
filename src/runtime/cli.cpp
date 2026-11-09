@@ -15,7 +15,7 @@ constexpr std::string_view kUsageText =
     "usage: atlantis_runtime [--scene <name>] [--exec <script|->] [--listen <port> [--session-file <path>]] "
     "[--editor]\n"
     "                        [--parent-window <handle>] [--no-pick-geometry]\n"
-    "                        [--asset-build-profile <file> [--asset-generation <guid>]]\n"
+    "                        [--asset-build-profile <file> [--asset-generation <guid>]] [--allow-scene-save-as]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
@@ -121,6 +121,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   std::string_view sessionFile;
   std::optional<std::string> assetBuildProfile;
   std::optional<atlantis::asset_system::AssetGuid> assetGeneration;
+  bool allowSceneSaveAs = false;
   // Spec 0059 / ADR-0117 D1: --benchmark and its options.
   int benchmarkCount = 0, warmupCount = 0, framesCount = 0, resolutionCount = 0, variantCount = 0;
   int jsonCount = 0, outputCount = 0, baselineCount = 0, seriesCount = 0, gpuTimingCount = 0;
@@ -141,6 +142,9 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++sceneCount > 1) return makeError("--scene supplied more than once");
       if (i + 1 >= argc) return makeError("--scene requires a value");
       requestedSceneName = argv[++i];
+    } else if (arg == "--allow-scene-save-as") {
+      if (allowSceneSaveAs) return makeError("--allow-scene-save-as supplied more than once");
+      allowSceneSaveAs = true;
     } else if (arg == "--asset-build-profile") {
       if (assetBuildProfile || i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--"))
         return makeError("--asset-build-profile requires one file");
@@ -312,6 +316,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   if (assetGeneration && !assetBuildProfile) return makeError("--asset-generation requires --asset-build-profile");
   if (assetBuildProfile && (benchmarkCount || gateCount || canaryCount || helpCount || listScenesCount))
     return makeError("--asset-build-profile is only available when running a scene");
+  if (allowSceneSaveAs && (benchmarkCount || gateCount || canaryCount || helpCount || listScenesCount))
+    return makeError("--allow-scene-save-as is only available when running a scene");
   if (parentWindowCount > 0 && editorCount > 0) return makeError("--parent-window and --editor may not be combined");
   if ((parentWindowCount > 0 || noPickGeometryCount > 0) &&
       (benchmarkCount > 0 || gateCount > 0 || canaryCount > 0 || helpCount > 0 || listScenesCount > 0)) {
@@ -606,6 +612,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   result.noPickGeometry = noPickGeometryCount > 0;
   result.assetBuildProfile = std::move(assetBuildProfile);
   result.assetGeneration = assetGeneration;
+  result.allowSceneSaveAs = allowSceneSaveAs;
   return result;
 }
 

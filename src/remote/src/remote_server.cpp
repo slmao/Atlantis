@@ -246,6 +246,12 @@ namespace ac = atlantis::connection::authoring;
   if (method == "authoring.save") {
     return Outcome::Ok(inBand(authoring.save(), &encodeNull, &codec::encodeSaveError));
   }
+  if (method == "authoring.saveAs") {
+    const auto* name = p.find("name");
+    if (!name || !name->isString()) return Outcome::Err("saveAs requires a name");
+    return Outcome::Ok(inBand(authoring.saveAs(name->asString()),
+        [](const connection::authoring::SavedScene& scene) { return codec::encode(scene); }, &codec::encodeSaveAsError));
+  }
   if (method == "authoring.document") {
     const auto document = authoring.document();
     return Outcome::Ok(document ? codec::encode(*document) : Value());

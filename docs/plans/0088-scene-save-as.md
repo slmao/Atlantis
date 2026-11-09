@@ -1,10 +1,10 @@
 # Plan: Save As for Hand-Authored Scenes
 
 - **Spec:** [Spec 0088](../specs/0088-scene-save-as.md)
-- **ADR:** [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md) (Proposed)
-- **Status:** In Review
+- **ADR:** [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. Implementation authorization pending.
+- **Joint Human Review:** The owner approved J1–J4, Spec/Plan 0088 and ADR-0148 at revision `a5b2b186` on 2026-11-10. [PR #339](https://github.com/slmao/Atlantis/pull/339) was manually merged as `5b12c8dc`. The authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Existing gates and human final merge apply.
 
 ## Objective
 

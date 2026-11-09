@@ -66,6 +66,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("authoring.apply_status", "authoring.applyStatus", "Read a retained request and current projection non-destructively; absent/null id is global newest, never proof of a lost caller receipt. Inspect state, not tool success.", AuthoringModel,
             ToolSchemas.ApplyStatusParameters()),
         Declare("authoring.save", "authoring.save", "Save a hand-authored source; imported sources are refused.", AuthoringModel),
+        Declare("authoring.save_as", "authoring.saveAs", "Create a named hand-authored copy without retargeting the document. Inspect the destination and confirm settlement before retrying a lost reply.", AuthoringModel,
+            ToolSchemas.Parameters(("name", ToolSchemas.String))),
         Declare("authoring.active_camera", "authoring.activeCamera", "Read the document's active camera node or null.", AuthoringModel),
         Declare("authoring.schema", "authoring.schema", "Read scene schema types, fields, IDs, constants and declared target asset types in the wire's section 6.7 shape.", AuthoringModel),
         Declare("control.status", "control.status", "Read pause state, frame, scene and sceneGeneration.", ControlModel),
@@ -129,6 +131,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
             bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
             string? importName = import ? wireParameters.Find("name")?.AsString : null;
@@ -197,6 +200,34 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult SaveAs(JsonValue parameters)
+    {
+        string? name = parameters.Find("name")?.AsString;
+        if (!Codec.ValidSaveAsName(name))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("InvalidName")), true);
+        JsonValue reply;
+        try { reply = session.Request("authoring.saveAs", parameters); }
+        catch (RemoteException e)
+        {
+            return Error("Save As outcome unknown. Inspect the destination and confirm settlement before retrying. " + e.Message);
+        }
+        if (Codec.IsLegacySaveAsRefusal(reply))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        var error = reply.Find("error");
+        var result = reply.Find("result");
+        if (error is not null && result is null && error.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+            return Forward(error, true);
+        if (error is null && result is not null)
+        {
+            var ok = result.Find("ok");
+            var err = result.Find("err");
+            if (ok is null && err is not null && Codec.DecodeSaveAsError(err) is not null) return Forward(result, true);
+            if (err is null && ok is not null && Codec.DecodeSavedScene(ok) is { } copy && copy.Source == Codec.SaveAsSource(name!))
+                return Forward(result, false);
+        }
+        return Error("ProtocolError: malformed Save As outcome. Inspect the destination and confirm settlement before retrying.");
     }
 
     private static CallToolResult Forward(JsonValue value, bool error)

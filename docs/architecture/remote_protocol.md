@@ -207,6 +207,7 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 | `authoring.drainFailures` | — | `[<AuthoringFailure>…]` |
 | `authoring.apply` | — | `{"ok":null}` or `{"err":"<ApplyError>"}` |
 | `authoring.save` | — | `{"ok":null}` or `{"err":"<SaveError>"}` |
+| `authoring.saveAs` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
 
 **Semantics** are `AuthoringConnection`'s (Spec 0065 R1–R9):
 - the session is created by the Runtime at the first `authoring.*` request
@@ -230,6 +231,12 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   event; use the correlated status below for its outcome;
 - `authoring.save` writes a hand-authored source atomically; an imported
   scene's save is refused.
+- `authoring.saveAs` creates an independent source/catalog unit on an
+  opted-in Windows development host. The source is relative to the assets
+  root. The receipt names the copy and captured revision. Save As leaves the
+  existing authoring binding and Runtime projection alone. A lost reply is
+  an unknown outcome. See [Spec 0088](../specs/0088-scene-save-as.md) for names,
+  refusals and recovery.
 
 ### 5.2 Cooked asset queries (Spec 0081 / ADR-0143)
 

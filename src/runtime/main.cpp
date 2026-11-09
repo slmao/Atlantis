@@ -83,9 +83,14 @@ int main(int argc, char** argv) {
   // content present at configure time), and renders without the global
   // environment -- a night street lit by its own lights, not a studio IBL.
 #if defined(ATLANTIS_RUNTIME_BISTRO_IMPORT_GUID)
-  constexpr std::size_t kWhitelistSize = 5;
+  constexpr std::size_t kBuiltInScenes = 5;
 #else
-  constexpr std::size_t kWhitelistSize = 4;
+  constexpr std::size_t kBuiltInScenes = 4;
+#endif
+#if defined(ATLANTIS_RUNTIME_SAVED_SCENE_GUID)
+  constexpr std::size_t kWhitelistSize = kBuiltInScenes + 1;
+#else
+  constexpr std::size_t kWhitelistSize = kBuiltInScenes;
 #endif
   const std::array<SceneWhitelistEntry, kWhitelistSize> whitelist{{
       {"integrated_showcase_demo", SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_SCENE_GUID)}},
@@ -101,6 +106,9 @@ int main(int argc, char** argv) {
                                                               "scene"),
                       /*disableEnvironmentLight=*/true}},
 #endif
+#if defined(ATLANTIS_RUNTIME_SAVED_SCENE_GUID)
+      {"saved_scene", SceneSelection{guidFromDefinition(ATLANTIS_RUNTIME_SAVED_SCENE_GUID)}},
+#endif
   }};
 
   const CommandLineResult cliResult = parseCommandLine(argc, argv, whitelist);
@@ -112,6 +120,12 @@ int main(int argc, char** argv) {
     std::cerr << cliResult.message;
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
   }
+#if defined(ATLANTIS_RUNTIME_SAVED_SCENE_GUID)
+  if (cliResult.assetBuildProfile || cliResult.assetGeneration) {
+    std::cerr << "atlantis_runtime: a saved-slot build cannot use an asset build profile or generation\n";
+    return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
+#endif
 
   // Spec 0060 Correction 2026-10-15: `--canary` runs the gate's fixed GPU micro-workload on a headless
   // device; stdout carries the one document, so the log sink moves to stderr first.
@@ -385,6 +399,8 @@ int main(int argc, char** argv) {
   // directories are (ADR-0129: a development tree only). Declared after `app`
   // and before every client, so every authoring connection closes first.
   atlantis::runtime::AuthoringSources authoringSources;
+  authoringSources.allowSceneSaveAs = cliResult.allowSceneSaveAs;
+  authoringSources.cookedCatalog = config.assetCatalogPath;
   authoringSources.catalogSource = ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH;
   if (rebuild) {
     if (auto source = rebuild->generationCatalogSource(); !source.empty())

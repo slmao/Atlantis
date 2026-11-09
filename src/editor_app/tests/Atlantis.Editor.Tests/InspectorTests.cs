@@ -109,6 +109,7 @@ public static partial class Program
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool addMesh = _scene == "--mesh-add";
+                bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
                     legacyReadiness || rebuild || import ? "integrated_showcase_demo" : _scene)
@@ -117,6 +118,7 @@ public static partial class Program
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
                     AssetGeneration = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
+                    AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") : null,
                 });
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
@@ -125,6 +127,7 @@ public static partial class Program
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
                         else if (addMesh) await CheckAddMeshUi(window, _checks, _work);
+                        else if (saveAs) await CheckSaveAsUi(window, _checks);
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
@@ -169,6 +172,44 @@ public static partial class Program
         checks.Add(new("publication does not select active generation or replace Assets selection",
             terminal.IsOk && terminal.Value?.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration &&
             browser.Selected == row.Guid));
+    }
+
+    private static async Task CheckSaveAsUi(MainWindow window, List<NameUiCheck> checks)
+    {
+        string session = Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") ?? throw new InvalidOperationException("An opt-in Runtime session is required.");
+        string name = Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_NAME") ?? "editorcopy";
+        await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0, "Save As authoring ready");
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(session)));
+        DocumentInfo original = (await Task.Run(() => observer.Authoring.Document()))!;
+        byte[] beforeSource = File.ReadAllBytes(original.SourcePath);
+        var nodes = (await Task.Run(() => observer.Authoring.ListNodes())).Value;
+        var subject = nodes.First();
+        var row = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!.First(x => x.Node == subject.Node);
+        NameUiField<ListBox>(window, "_entities")!.SelectedItem = row;
+        var worker = NameUiField<EditorWorker>(window, "_worker")!;
+        await Task.Run(() => observer.Control.Pause());
+        worker.CommitName(subject.Node, subject.Name, "Unsaved Save As fixture");
+        var undo = NameUiField<Button>(window, "_undo")!;
+        await NameUiWait(() => undo.IsEnabled, "fixture edit recorded");
+        var before = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value;
+        var nameBox = NameUiField<TextBox>(window, "_saveAsName")!;
+        var action = NameUiField<Button>(window, "_saveAs")!;
+        var notice = NameUiField<TextBlock>(window, "_saveAsState")!;
+        nameBox.Text = name;
+        await NameUiWait(() => action.IsEnabled, "Save As ready");
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        checks.Add(new("Save As disables duplicate activation while pending", !action.IsEnabled));
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => notice.Text?.StartsWith("Saved copy ", StringComparison.Ordinal) == true, "Save As result");
+        checks.Add(new("Save As reports the expected copy and launch", notice.Text!.Contains(Codec.SaveAsSource(name), StringComparison.Ordinal) &&
+            notice.Text.Contains("--scene saved_scene", StringComparison.Ordinal)));
+        checks.Add(new("Save As preserves the original source, history and paused apply", undo.IsEnabled &&
+            before?.Request?.State == ApplyState.Pending && (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == before &&
+            await Task.Run(() => observer.Authoring.Document()) == original && File.ReadAllBytes(original.SourcePath).SequenceEqual(beforeSource)));
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => notice.Text?.Contains("NameConflict", StringComparison.Ordinal) == true, "duplicate name refused");
+        checks.Add(new("conflict leaves the current document and history", undo.IsEnabled &&
+            await Task.Run(() => observer.Authoring.Document()) == original && File.ReadAllBytes(original.SourcePath).SequenceEqual(beforeSource)));
     }
 
     private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)

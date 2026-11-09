@@ -104,6 +104,18 @@ TEST_CASE("parseCommandLine(): no argument selects the default scene", "[runtime
   requireRunScene(result, whitelist, kDefaultSceneName);
 }
 
+TEST_CASE("parseCommandLine(): Save As is an explicit scene-run opt-in", "[runtime][cli]") {
+  const auto whitelist = makeFixtureWhitelist();
+  FakeArgv normal{};
+  CHECK_FALSE(parseCommandLine(normal.argc(), normal.argv(), whitelist).allowSceneSaveAs);
+  FakeArgv enabled{"--allow-scene-save-as"};
+  CHECK(parseCommandLine(enabled.argc(), enabled.argv(), whitelist).allowSceneSaveAs);
+  FakeArgv repeated{"--allow-scene-save-as", "--allow-scene-save-as"};
+  requireError(parseCommandLine(repeated.argc(), repeated.argv(), whitelist), "supplied more than once");
+  FakeArgv diagnostic{"--list-scenes", "--allow-scene-save-as"};
+  requireError(parseCommandLine(diagnostic.argc(), diagnostic.argv(), whitelist), "only available when running a scene");
+}
+
 TEST_CASE("parseCommandLine(): --scene integrated_showcase_demo selects the default scene explicitly",
           "[runtime][cli]") {
   const auto whitelist = makeFixtureWhitelist();

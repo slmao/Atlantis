@@ -324,6 +324,33 @@ public static partial class Codec
     public static A.OpenError? DecodeOpenError(JsonValue value) => DecodeName<A.OpenError>(value);
     public static JsonValue Encode(A.SaveError error) => JsonValue.String(error.ToString());
     public static A.SaveError? DecodeSaveError(JsonValue value) => DecodeName<A.SaveError>(value);
+    public static bool ValidSaveAsName(string? name)
+    {
+        if (name is null || name.Length is < 1 or > 48 || name[0] is < 'a' or > 'z') return false;
+        foreach (char c in name)
+            if (c is not (>= 'a' and <= 'z') and not (>= '0' and <= '9') and not '_') return false;
+        return true;
+    }
+    public static string SaveAsSource(string name) => "scenes/saved/save_" + name + "/scene.scene.txt";
+    public static bool IsLegacySaveAsRefusal(JsonValue reply) =>
+        reply.Find("result") is null && reply.Find("error") is { } error &&
+        error.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+        error.Find("message") is { IsString: true, AsString: "unknown method authoring.saveAs" };
+    public static A.SaveAsError? DecodeSaveAsError(JsonValue value) =>
+        DecodeName<A.SaveAsError>(value) is { } error && error != A.SaveAsError.Unsupported ? error : null;
+    public static JsonValue Encode(A.SavedScene value) => JsonValue.NewObject().Set("scene", Encode(value.Scene))
+        .Set("source", JsonValue.String(value.Source)).Set("documentRevision", JsonValue.Number(value.DocumentRevision));
+    public static A.SavedScene? DecodeSavedScene(JsonValue value)
+    {
+        const string prefix = "scenes/saved/save_", suffix = "/scene.scene.txt";
+        if (value.Find("scene") is not { IsString: true } scene || DecodeAsset(scene) is not AssetGuid guid || guid.IsNil ||
+            scene.AsString != guid.ToString() || value.Find("source") is not { IsString: true } source ||
+            value.Find("documentRevision") is not { } revision || DecodeUInt64(revision) is not ulong number) return null;
+        string path = source.AsString;
+        return path.Length > prefix.Length + suffix.Length && path.StartsWith(prefix, System.StringComparison.Ordinal) &&
+            path.EndsWith(suffix, System.StringComparison.Ordinal) && ValidSaveAsName(path[prefix.Length..^suffix.Length])
+            ? new A.SavedScene(guid, path, number) : null;
+    }
     public static JsonValue Encode(A.ApplyError error) => JsonValue.String(error.ToString());
     public static A.ApplyError? DecodeApplyError(JsonValue value) => DecodeName<A.ApplyError>(value);
 

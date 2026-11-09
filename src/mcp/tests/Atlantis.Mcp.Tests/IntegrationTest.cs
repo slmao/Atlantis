@@ -134,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 40 tools", tools.Count == 40 && tools.Select(t => t.Name).Distinct().Count() == 40);
+            Require("real host discovers exactly 41 tools", tools.Count == 41 && tools.Select(t => t.Name).Distinct().Count() == 41);
         }
         await Query(first, "control.pause");
         Require("Runtime paused", (await Query(first, "control.status")).Find("paused")?.AsBool == true);

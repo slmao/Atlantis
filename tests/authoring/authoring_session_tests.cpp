@@ -39,6 +39,7 @@ TEST_CASE("authoring: before open() there is no document; open() reads it and re
   CHECK(c.activeCamera().error() == ac::Error::NoDocument);
   CHECK(refusalOf(c, {ac::SetActiveCamera{}}) == ac::Error::NoDocument);
   CHECK(c.save().error() == ac::SaveError::NoDocument);
+  CHECK(c.saveAs("copy").error() == ac::SaveAsError::NoDocument);
   CHECK(c.apply().error() == ac::ApplyError::NoDocument);
 
   const SubscriptionId all = c.subscribe({});
@@ -390,6 +391,30 @@ TEST_CASE("authoring: save() writes the document atomically; an unchanged docume
   CHECK(c.document().has_value());
 }
 
+TEST_CASE("authoring: Save As snapshots unsaved edits without changing the active scene", "[authoring][session][save]") {
+  Fixture f;
+  auto& connection = *f.connection;
+  CHECK(connection.saveAs("copy").error() == ac::SaveAsError::Unavailable);
+  CHECK(connection.saveAs("../copy").error() == ac::SaveAsError::InvalidName);
+  const std::string original = readText(f.source);
+  REQUIRE_FALSE(refusalOf(connection, {ac::SetNodeName{entity(3), "Copy mesh"}}).has_value());
+  auto subscription = connection.subscribe({});
+  auto state = connection.applyStatus().value();
+  f.session.setSaveAsSink([&](std::string_view name, std::string text, std::uint64_t revision) {
+    CHECK(name == "copy");
+    CHECK(documentOf(text) == f.document());
+    CHECK(revision == state.currentDocumentRevision);
+    return atlantis::Result<ac::SavedScene, ac::SaveAsError>::Ok({asset(71), ac::saveAsSource(name), revision});
+  });
+  const auto saved = connection.saveAs("copy");
+  REQUIRE(saved.isOk());
+  CHECK(saved.value().scene != connection.document()->scene);
+  CHECK(connection.document()->sourcePath == f.source.generic_string());
+  CHECK(connection.applyStatus().value() == state);
+  CHECK(drain(connection, subscription).empty());
+  CHECK(readText(f.source) == original);
+}
+
 TEST_CASE("authoring: an imported document is editable but never saved (ADR-0129 D4)", "[authoring][session][save]") {
   TempDir dir;
   const fs::path generated = dir.path / "imported.scene.txt";
@@ -401,6 +426,7 @@ TEST_CASE("authoring: an imported document is editable but never saved (ADR-0129
   c->submit(ac::SetProperty{address(kLightNode, kLight, field("Light", "intensity")), 7.0f});
   CHECK(c->drainFailures().empty());
   CHECK(c->save().error() == ac::SaveError::ImportedSceneNotSavable);
+  CHECK(c->saveAs("copy").error() == ac::SaveAsError::ImportedSceneNotSavable);
   CHECK(readText(generated) == textOf(baseScene()));
 }
 
