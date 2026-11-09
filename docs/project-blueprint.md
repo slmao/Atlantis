@@ -1003,8 +1003,11 @@ milestone being listed does not authorize starting it — see Section 1.
   [PR #336](https://github.com/slmao/Atlantis/pull/336).
   [Spec 0087](specs/0087-add-mesh-to-scene.md) and
   [Plan 0087](plans/0087-add-mesh-to-scene.md) cover adding one mesh from
-  Assets to the current hand-authored scene, implemented in
+  Assets to the current hand-authored scene, delivered in merged
   [PR #338](https://github.com/slmao/Atlantis/pull/338).
+  [Spec 0088](specs/0088-scene-save-as.md) and
+  [Plan 0088](plans/0088-scene-save-as.md) propose hand-authored Save As
+  with an explicit offline build and launch. Joint review is pending.
   Preview and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
