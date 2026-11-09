@@ -205,10 +205,12 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
         throw new RemoteException(RemoteError.ProtocolError, "a malformed authoring.applyTracked result");
     }
 
-    public IReadOnlyList<Event> DrainEvents()
+    public IReadOnlyList<Event> DrainEvents() => ObserveEvents() ?? Array.Empty<Event>();
+
+    public IReadOnlyList<Event>? ObserveEvents()
     {
         var events = _session.DrainEvents(_subscription);
-        return events.IsOk ? events.Value! : Array.Empty<Event>();
+        return events.IsOk ? events.Value : null;
     }
 
     public ApplyError? Apply() => _session.Apply();

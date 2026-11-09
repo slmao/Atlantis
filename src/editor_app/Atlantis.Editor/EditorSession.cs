@@ -22,6 +22,7 @@ using System.Text;
 using System.Threading;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
+using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Remote;
 using W = Atlantis.Gameplay.World;
 using Command = Atlantis.Gameplay.Authoring.Command;
@@ -322,6 +323,9 @@ public sealed class EditorWorker : IDisposable
     public event Action<FrameTimes>? Measured;
     // Plan 0068 M2.
     public event Action<DocumentInfo?>? DocumentOpened;
+    public event Action<long>? MeshDocumentReopened;
+    private long _meshDocumentLifetime;
+    public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
     public event Action<string>? ApplyStateChanged;
     public event Action<bool, bool>? ApplyControlsChanged;
@@ -667,6 +671,85 @@ public sealed class EditorWorker : IDisposable
 
     public void AddComponent(TypeId component) => Edit(document => (_inspector!.AddComponent(component), null));
 
+    public void AddMesh(AssetGuid mesh, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
+    {
+        void Report(EntityGuid? created, string notice) => _post(() => settled(created, notice));
+        bool Observe(RemoteAuthoringDocument document)
+        {
+            if (document.ObserveEvents() is not { } events) return false;
+            PollDocument(session, events);
+            return MeshDocumentLifetime == lifetime;
+        }
+
+        EntityGuid? attempted = null;
+        bool committed = false, recorded = false, applying = false;
+        try
+        {
+            if (_document is not RemoteAuthoringDocument document || _apply is not { } apply ||
+                document.Info()?.Provenance != Provenance.HandAuthored)
+            {
+                Report(null, "Add refused: open a hand-authored scene.");
+                return;
+            }
+            var asset = session.Assets.GetAsset(mesh);
+            if (!asset.IsOk || asset.Value is not { Type: AssetType.Mesh } details || details.Guid != mesh)
+            {
+                Report(null, "Add refused: the selected mesh is unavailable in this catalog.");
+                return;
+            }
+            var schema = document.Schema;
+            if (!Observe(document) || _gizmo?.Dragging == true)
+            {
+                Report(null, "Add refused: the document changed, could not be observed, or a gesture is active.");
+                return;
+            }
+            var node = new EntityGuid(Guid.NewGuid());
+            var plan = HierarchyCommands.AddMesh(schema, (ulong)_tree.Count, node, mesh);
+            if (plan.Refusal is { } refusal) { Report(null, "Add refused: " + refusal); return; }
+
+            attempted = node;
+            var ticket = document.SubmitTransaction(plan.Commands);
+            var failures = document.DrainFailures().Where(failure => ticket.Contains(failure.Ticket)).ToList();
+            if (ticket.Count != (ulong)plan.Commands.Count)
+            {
+                Report(null, $"Add outcome unknown for {node}. Inspect the document before retrying.");
+                return;
+            }
+            if (failures.Count != 0) { Report(null, "Add refused: " + failures[0].Error); return; }
+            committed = true;
+            if (!Observe(document)) { Report(null, $"Added {node}. Current document or history unavailable."); return; }
+            var state = new DocumentView(document, _tree).ReadNode(node);
+            var edit = HierarchyCommands.AddedMeshHistory(schema, state, mesh);
+            if (!Observe(document)) { Report(null, $"Added {node}. Current document or history unavailable."); return; }
+            if (edit is not null && _history is not null && _historyTarget is not null)
+            {
+                _history.Record(edit, _historyTarget.Committed(failures));
+                _history.Update();
+                PostHistory(lifetime);
+                recorded = true;
+            }
+            var selected = _tree.Contains(node) ? node : (EntityGuid?)null;
+            applying = true;
+            apply.AfterLocalEdit(true);
+            Report(selected, recorded ? $"Added {node}." : $"Added {node}. Undo history unavailable.");
+        }
+        catch (Exception e) when (e is GameplayException or IOException)
+        {
+            if (applying)
+            {
+                _apply?.LostApplyAcceptance();
+                string? applyText = _apply?.Text;
+                if (applyText is not null) _post(() => ApplyStateChanged?.Invoke(applyText));
+            }
+            Report(null, committed
+                ? $"Added {attempted}. {(applying ? "Apply outcome unknown." : "History unavailable.")}"
+                : attempted is not null ? $"Add outcome unknown for {attempted}. Inspect the document on reconnect before retrying."
+                : "Add refused: " + e.Message);
+            throw;
+        }
+        PostApplyState();
+    });
+
     public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
 
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
@@ -798,11 +881,11 @@ public sealed class EditorWorker : IDisposable
         PostHistory();
     }
 
-    private void PostHistory()
+    private void PostHistory(long? lifetime = null)
     {
         if (_history is null) return;
         var snapshot = new HistorySnapshot(_history.CanUndo, _history.CanRedo, _history.UndoLabel, _history.RedoLabel, _history.Notice);
-        _post(() => HistoryChanged?.Invoke(snapshot));
+        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) HistoryChanged?.Invoke(snapshot); });
     }
 
     /// <summary>Plan 0068 M5 (Spec 0068 R8): undo the last edit -- one transaction, then an apply -- or say why not.</summary>
@@ -923,11 +1006,11 @@ public sealed class EditorWorker : IDisposable
     }
 
     // Drains the authoring events into the tree, the transform cache and the apply controller; posts what changed.
-    private void PollDocument(RemoteSession session)
+    private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
-        IReadOnlyList<Event> events = _document.DrainEvents();
+        IReadOnlyList<Event> events = observed ?? _document.DrainEvents();
         var destroyed = new List<EntityGuid>();
         foreach (Event e in events)
         {
@@ -940,9 +1023,11 @@ public sealed class EditorWorker : IDisposable
             if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
             if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
         }
-        if (events.Any(e => e is DocumentReopened) && _history is not null)
+        if (events.Any(e => e is DocumentReopened))
         {
-            _history.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
+            long lifetime = Interlocked.Increment(ref _meshDocumentLifetime);
+            _post(() => MeshDocumentReopened?.Invoke(lifetime));
+            _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
             PostHistory();
         }
         if (destroyed.Count > 0)
