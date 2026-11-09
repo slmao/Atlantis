@@ -202,14 +202,34 @@ public static partial class Program
         var nameBox = NameUiField<TextBox>(window, "_saveAsName")!;
         var action = NameUiField<Button>(window, "_saveAs")!;
         var notice = NameUiField<TextBlock>(window, "_saveAsState")!;
+        await NameUiWait(() => NameUiField<TextBox>(window, "_nameBox") is not null, "Inspector name field ready");
+        var draft = NameUiField<TextBox>(window, "_nameBox")!;
+        const string unacceptedName = "Discarded Save As name draft";
+        bool focusedDraft = draft.Focus() && draft.IsFocused;
+        draft.Text = unacceptedName;
+        bool movedFocus = nameBox.Focus() && nameBox.IsFocused;
         nameBox.Text = name;
         await NameUiWait(() => action.IsEnabled, "Save As ready");
         action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         checks.Add(new("Save As disables duplicate activation while pending", !action.IsEnabled));
         action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        string savedRoot = Path.Combine(Path.GetDirectoryName(original.SourcePath)!, "saved");
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_LOSS_MARKER") is { } lossMarker)
+        {
+            await NameUiWait(() => notice.Text?.Contains("outcome unknown", StringComparison.Ordinal) == true, "Save As lost receipt");
+            checks.Add(new("lost receipt tells the operator to inspect and wait for settlement before retrying",
+                notice.Text!.Contains(name, StringComparison.Ordinal) && notice.Text.Contains("confirm settlement", StringComparison.Ordinal) &&
+                !Directory.Exists(Path.Combine(savedRoot, "save_" + name))));
+            File.WriteAllText(lossMarker, "observed");
+            return;
+        }
         await NameUiWait(() => notice.Text?.StartsWith("Saved copy ", StringComparison.Ordinal) == true, "Save As result");
         checks.Add(new("Save As reports the expected copy and launch", notice.Text!.Contains(Codec.SaveAsSource(name), StringComparison.Ordinal) &&
             notice.Text.Contains("--scene saved_scene", StringComparison.Ordinal)));
+        string copy = File.ReadAllText(Path.Combine(savedRoot, "save_" + name, "scene.scene.txt"));
+        checks.Add(new("normal focus loss discards the unaccepted name and preserves the accepted edit in the copy",
+            focusedDraft && movedFocus && copy.Contains("Unsaved Save As fixture", StringComparison.Ordinal) &&
+            !copy.Contains(unacceptedName, StringComparison.Ordinal)));
         checks.Add(new("Save As preserves the original source, history and paused apply", undo.IsEnabled &&
             before?.Request?.State == ApplyState.Pending && (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == before &&
             await Task.Run(() => observer.Authoring.Document()) == original && File.ReadAllBytes(original.SourcePath).SequenceEqual(beforeSource)));
@@ -217,6 +237,32 @@ public static partial class Program
         await NameUiWait(() => notice.Text?.Contains("NameConflict", StringComparison.Ordinal) == true, "duplicate name refused");
         checks.Add(new("conflict leaves the current document and history", undo.IsEnabled &&
             await Task.Run(() => observer.Authoring.Document()) == original && File.ReadAllBytes(original.SourcePath).SequenceEqual(beforeSource)));
+
+        long lifetime = worker.MeshDocumentLifetime;
+        if (await Task.Run(() => observer.Authoring.Open()) is not null) throw new InvalidOperationException("Fixture reopen refused.");
+        await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "source reopened");
+        string? stale = null;
+        worker.SaveAs(name + "_stale", lifetime, result => stale = result);
+        await NameUiWait(() => stale is not null, "stale copy settled");
+        checks.Add(new("old document lifetime refuses Save As before sending", stale!.StartsWith("Save As refused", StringComparison.Ordinal) &&
+            !Directory.Exists(Path.Combine(savedRoot, "save_" + name + "_stale"))));
+
+        nameBox.Text = name + "_late";
+        await NameUiWait(() => action.IsEnabled, "Save As after reopen");
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var workerField = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        workerField.SetValue(window, null);
+        const string replacementStatus = "Replacement session feedback";
+        notice.Text = replacementStatus;
+        try
+        {
+            bool drained = false;
+            worker.QueryImport(null, _ => drained = true);
+            await NameUiWait(() => drained, "old worker copy callback drained");
+            checks.Add(new("late Save As feedback cannot replace current session state", notice.Text == replacementStatus &&
+                File.Exists(Path.Combine(savedRoot, "save_" + name + "_late", "scene.scene.txt"))));
+        }
+        finally { workerField.SetValue(window, worker); }
     }
 
     private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
