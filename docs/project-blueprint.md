@@ -998,8 +998,12 @@ milestone being listed does not authorize starting it — see Section 1.
   existing producers with isolated publication and explicit Runtime restart,
   delivered in [PR #334](https://github.com/slmao/Atlantis/pull/334).
   [Spec 0086](specs/0086-new-asset-import.md) and
-  [Plan 0086](plans/0086-new-asset-import.md) are approved for managed
-  import and registration of a first static-mesh glTF source.
+  [Plan 0086](plans/0086-new-asset-import.md) deliver managed import and
+  registration of a first static-mesh glTF source in merged
+  [PR #336](https://github.com/slmao/Atlantis/pull/336).
+  [Spec 0087](specs/0087-add-mesh-to-scene.md) and
+  [Plan 0087](plans/0087-add-mesh-to-scene.md) propose adding one mesh from
+  Assets to the current hand-authored scene and are in joint review.
   Preview and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
