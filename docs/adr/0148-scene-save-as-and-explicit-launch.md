@@ -22,7 +22,8 @@ while the original session retains its document and apply projection.
    Authoring captures and serializes its current hand-authored document.
    A narrow sink in the opt-in Windows executable host owns local filesystem
    authority and registration. It atomically commits one no-replace source
-   unit under the trusted development assets root. The unit carries a new
+   unit under the pinned development assets namespace. A workspace-exclusive
+   final check covers identity collisions across hosts. The unit carries a new
    Asset System-minted scene GUID in a standard catalog-source fragment.
    Copy EntityGuids and asset references unchanged. ADR-0097's scene-scoped
    identity makes the new scene's entity references distinct.
@@ -33,8 +34,9 @@ while the original session retains its document and apply projection.
    starting a Runtime whose loaded scene is the copy.
 3. Extend the existing build and executable whitelist with one explicitly
    configured saved-scene slot. Validate the selected unit and add its
-   fragment to the effective build catalog source, reusing the hand-authored
-   scene producer. Bind the build's reserved saved_scene name to its GUID.
+   fragment to the effective catalog source shared by configure, cooking,
+   assembly and authoring lookup. Reuse the hand-authored scene producer.
+   Bind the build's reserved saved_scene name to its GUID.
    Fresh Runtime startup loads the cooked result and existing authoring
    lookup opens the copy. A saved-slot development build can consume the
    committed inputs of [ADR-0147](0147-managed-import-registration-and-publication.md)
@@ -49,7 +51,8 @@ The copy and its identity can be retained or built independently of the
 original session. Keeping the existing launch boundary requires an
 operator-driven configure/build/start sequence, with one copied scene per
 configured executable. A committed unit can survive a lost response. The
-operator can inspect the unit before deciding whether to retry. The copy
+operator inspects the unit and establishes that an absent attempt can no
+longer commit before retrying. The copy
 depends on the project providing the asset GUIDs it references.
 
 ## Alternatives Considered

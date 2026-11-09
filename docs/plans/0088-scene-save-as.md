@@ -59,10 +59,18 @@ one authorization.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — Authority and overwrite** | Approve the opt-in Windows host, fixed saved-scene namespace, logical names and atomic no-replace scene units. |
-| **J2 — Identity and state** | Approve a fresh scene GUID, preserved node GUIDs and asset references, and the original document, history and projection remaining current. Settle a lost reply through local inspection. |
-| **J3 — Shared contract and launch** | Approve one additive authoring operation and one explicit saved-scene build slot with the saved_scene alias. Reuse ordinary open/save in the new Runtime. |
+| **J1 — Authority and overwrite** | Approve the opt-in Windows host, pinned case-insensitive NTFS namespace, logical names and one atomic no-replace commit. Serialize final checks across hosts. |
+| **J2 — Identity and state** | Approve a fresh scene GUID, preserved node GUIDs and asset references, and unchanged original session state. Reconcile a lost reply locally and verify the old attempt cannot still commit before retrying an absent name. |
+| **J3 — Shared contract and launch** | Approve one additive authoring operation and one explicit saved-scene build slot using a single effective catalog source and the saved_scene alias. Reuse ordinary open/save in the new Runtime. |
 | **J4 — Acceptance and delivery** | Approve the verification below, retain existing gates and authorize S2–S4 together after manual design merge. |
+
+Suggested joint authorization for the reviewed revision:
+
+> I approve J1–J4 and Spec/Plan 0088 together and accept ADR-0148. After
+> the design PR is manually merged, proceed from current main through
+> S2–S4, including scoped fixes, applicable verification, valid evidence
+> reuse and submission of a review-ready implementation PR. Preserve the
+> existing gates and leave final review and merge to a human.
 
 ## Verification Checklist
 
@@ -70,22 +78,28 @@ one authorization.
   whitespace.
 - [ ] **R1–R3 host and identity.** Exercise successful copy, unconfigured
   host, absent/imported document, invalid names, traversal, aliases,
-  reparse inputs and unsafe root. Race two hosts on one destination and
-  verify one intact winner. Verify pre-existing files, units and case aliases
-  remain byte-identical. Inject preparation/commit failure and process loss
-  on both sides of rename. Prove no visible partial unit, temporary units
-  ignored, a lost reply can be inspected, and retry cannot overwrite. Check
-  fresh scene GUID, matching fragment and no change to original source.
+  reparse inputs and unsafe root. Attempt parent replacement during prepare
+  or commit and verify no write escapes the pinned namespace. Race two hosts
+  on one destination and verify one intact winner and Busy or NameConflict
+  for the other. Force a GUID or derived key collision across distinct names
+  and confirm it cannot publish a second identity. Verify pre-existing files,
+  units and case aliases remain byte-identical. Inject preparation/commit
+  failure and process loss on both sides of rename. Prove no partial final
+  unit and temporary units ignored. Lose the reply while the old request is
+  still in flight and exercise both late commit and confirmed absence after
+  settlement. Verify the original source and a committed copy remain intact.
 - [ ] **R4 contract and state.** Compare native/C# codec vectors and
   CLI/SDK/MCP/Editor outcomes. Verify old-client Save/Open on the new host
   and new-client refusal on a pinned old host. Only the exact legacy
-  unknown-method reply maps to Unsupported. Verify other malformed
-  replies and lost-response feedback. Save a snapshot with unsaved
+  unknown-method reply maps to Unsupported. Verify other malformed replies,
+  including a success naming the wrong source path, and lost-response feedback.
+  Save a snapshot with unsaved
   committed edits while a tracked apply is paused. Compare original
   binding, revision, undo/redo, apply receipt, projection, source and
-  catalog before and after copy and refusal. Exercise stale Editor
-  completion and duplicate click. Confirm original Save still writes
-  the original source.
+  catalog before and after copy and refusal. Exercise normal focus-loss
+  ordering, a reopen or worker replacement observed before send, stale
+  completion after send and duplicate click. Confirm original Save still
+  writes the original source.
 - [ ] **R2–R5 live acceptance.** In a disposable Windows development
   checkout, use a hand-authored scene with a registered 0086 mesh reference.
   Save As via the Editor after a distinguishable accepted edit and compare
@@ -93,12 +107,16 @@ one authorization.
   and open remain tied to the original. Select the returned name in a
   separate clean build with the same required managed inputs. Verify the
   cooked catalog entry, exact asset references and fresh scene identity.
+  Confirm the selected fragment and source reach their respective configure
+  and cook dependencies, and the saved-slot build refuses a managed pending
+  selection and profile-backed startup.
   Start with --scene saved_scene, call ordinary open, compare semantic
   node values, active camera, node GUIDs and captured rendering. Verify
   the copied document starts with fresh history. Make an edit and Save
   on the new host, rebuild/restart and verify it persists in the copy,
   while the original remains byte-identical. Compare the default build
-  and startup without the slot. Refuse malformed/duplicate selected
+  and startup without the slot, including refusal of the saved_scene alias.
+  Refuse malformed/duplicate selected
   catalog input and demonstrate a missing dependency, repair the build
   inputs and restart using the same copied scene GUID.
 - [ ] **Applicable gates.** Build Windows Debug/Release and affected

@@ -51,8 +51,12 @@ at a time. The same workspace can store multiple distinct units.
   name of one to 48 ASCII characters matching [a-z][a-z0-9_]*. It identifies
   assets/scenes/saved/save_<name> with the fixed leaves scene.scene.txt and
   catalog-source.txt. Requests cannot supply a path, suffix or root. The host
-  verifies containment through preparation and commit using the trusted root
-  and rejects unsafe roots, reparse points, alternate paths and name aliases.
+  verifies and pins the trusted destination directory chain through
+  preparation and commit, so a checked parent cannot be replaced between
+  validation and use. Support local case-insensitive NTFS directories in
+  this slice. Refuse a missing root, reparse points, case-sensitive
+  directories and alternate path spellings. The host creates only its
+  private temporary unit and the final unit in this existing namespace.
   The opt-in authorizes the existing in-process and authenticated loopback
   authoring clients on that host. Installed or unconfigured
   hosts refuse the operation. A source is eligible only when the active
@@ -61,28 +65,40 @@ at a time. The same workspace can store multiple distinct units.
   its document revision when the host services the request. The capture
   includes settled edits and excludes client drafts and Runtime-only changes.
   Serialize through the ordinary lossless scene path and emit a one-entry
-  catalog-source v1 fragment of type scene, rooted at assets, for the new
-  source. Mint a fresh scene AssetGuid through the existing Asset System
-  authority. Preserve every EntityGuid, node order, name, parent, active
+  catalog-source v1 fragment of type scene, rooted at assets, with path
+  scenes/saved/save_<name>/scene.scene.txt. Mint a fresh scene AssetGuid
+  through the existing Asset System authority. Preserve every EntityGuid,
+  node order, name, parent, active
   camera, property and asset reference. The existing scene-scoped identity
   pair distinguishes corresponding nodes in the two scenes. No asset is
   copied, remapped or added to the active catalog. Copy completion attests
   source settlement. Build and Runtime still validate dependencies and
   loadability.
-- **R3 — Commit, conflicts and recovery.** Prepare the scene and catalog
-  fragment in a private sibling directory and publish the entire unit with a
-  same-volume, atomic no-replace directory operation. A name held by a file,
-  directory, incomplete unit or case alias conflicts. Simultaneous same-name
-  requests have one winner and the others refuse. A collision in scene GUID
-  or derived catalog key must never overwrite an identity. Validate uniqueness
-  against known registrations and recheck it at configure against the complete build
-  input set, using the existing catalog rules. Failed preparation or commit
-  leaves no final unit from that request. Clean up owned temporary state on
-  ordinary failure. A crash may leave a private temporary unit, which builds
-  ignore. A lost response leaves the client outcome unknown. Inspect the
-  final unit locally. An existing complete unit keeps its GUID, and repeating
-  the name refuses. After verifying there is no final unit, an operator can
-  explicitly retry. No automatic replay or overwrite.
+- **R3 — Commit, conflicts and recovery.** Write and close both files in a
+  uniquely created private sibling directory before making the unit visible.
+  Use one atomic same-volume directory rename with replacement and copy
+  fallback disabled. An existing file, directory, incomplete unit or case
+  alias at the destination is a conflict. Use a short, nonblocking
+  workspace-exclusive section, released on process exit, for the final identity check and commit so
+  distinct-name requests from separate hosts also check each other's commits.
+  Concurrent attempts have at most one winner for a name. A contending host
+  may report Busy while another commit is in progress. An occupied destination
+  reports NameConflict after contention settles. Check scene GUID and derived
+  AssetId against known source/catalog entries and committed sibling units.
+  Configure rechecks the selected unit against the complete build input set.
+  A typed preparation or commit failure leaves no final unit from the failed
+  request. Clean up only that request's temporary unit. A process interruption
+  may leave private temporary units that build selection ignores.
+
+  A successful rename is the commit point, even if the reply is lost. A
+  transport interruption leaves the caller's result unknown. Inspect both
+  files of the final unit. A valid existing unit can be used with its stored
+  GUID after its contents are confirmed. Its presence alone does not identify
+  which caller won. An absent unit does not settle the old request while the
+  submitting host can still commit. Establish that the prior attempt can no
+  longer commit before explicitly retrying an absent name. If needed, stop the
+  submitting host and inspect again. Never replay automatically or overwrite
+  an occupied name. A Busy refusal is safe to retry explicitly after contention.
 - **R4 — State and shared contract.** Success reports the new scene GUID,
   asset-root-relative source path and captured document revision. The original
   remains the current document on success and failure, with the same source,
@@ -90,19 +106,29 @@ at a time. The same workspace can store multiple distinct units.
   neither marks the original saved nor emits DocumentReopened. It requests
   no Runtime apply, cancels no pending apply and changes no Runtime
   projection, generation selection or catalog. Existing pending work can
-  settle independently. The Editor action settles normal focused edits
-  through the existing workflow before making the request and reports the copy
-  and explicit build/launch instructions. Guard stale session callbacks and
-  duplicate UI activation while a request is pending.
+  settle independently. Normal focus loss retains its existing edit behavior.
+  Save As follows already queued edits on the session worker. A draft that
+  never became an accepted edit stays out of the copy. The Editor captures
+  the logical name and session, checks an observed document reopen or
+  replaced worker before sending, and guards late feedback and duplicate
+  activation. A request already sent may settle even if the client leaves.
+  Show the copy and explicit build/launch instructions without clearing the
+  original's history or apply feedback.
 - **R5 — Build and reopen.** A separate Windows development build explicitly
   selects one completed unit with the proposed CMake input
   ATLANTIS_SAVED_SCENE=<name>. Configure validates the fixed unit and exact
   catalog entry and composes it with the normal catalog sources before
-  declaring producers. Use the existing scene cook and catalog assembly.
+  declaring producers. Use the same effective source for GUID lookup, the
+  scene cook, catalog assembly and authoring source lookup. Track the selected
+  fragment as a configure input and its scene source as a cook input.
   Include the same managed-import inputs when the source references 0086
-  assets. Missing dependencies follow the existing build or startup failure
-  path. In that build, the existing --scene command accepts the reserved
-  name saved_scene. Its selection is bound to the saved unit's catalog GUID.
+  assets. Only committed managed imports participate. Refuse a nonempty
+  managed pending selection in the saved-slot build. Missing dependencies
+  follow the existing build or startup failure path. The existing --scene
+  command accepts the reserved name saved_scene only when the slot is configured. It binds to the saved
+  unit's catalog GUID and uses the normal development environment defaults.
+  Host camera overrides and other launch-specific presentation settings stay
+  with the original process.
   This build's authoring host uses the effective catalog source, which
   includes the saved slot, in place of its usual checked-in source catalog.
   Build the normal atlantis_runtime target in the separate tree. Start a new
@@ -116,15 +142,19 @@ at a time. The same workspace can store multiple distinct units.
 ### Shared client surface
 
 Add proposed authoring.saveAs { name } to the existing AuthoringConnection
-and atlantis.remote/1 authoring surface. A successful result carries
-{ scene, source, documentRevision }. Typed refusal categories are
-Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
-NameConflict, IdentityConflict and WriteFailed. Client-side Unsupported
-represents the legacy BadRequest with message "unknown method authoring.saveAs".
-Other malformed responses use ordinary protocol failure. Existing NoAuthoring
-behavior applies when the host serves no authoring session. Transport loss is
-distinct from a typed refusal. Expose the same operation in both SDKs,
-CLI scene save-as, MCP authoring.save_as and Editor Save As. Preserve existing Save/Open and
+and atlantis.remote/1 authoring surface. Use the existing in-band result
+envelope, either `{"ok":{"scene":...,"source":...,"documentRevision":...}}`
+or `{"err":"<refusal>"}`. A successful response carries a canonical
+non-nil scene GUID, the exact asset-root-relative source path for the
+requested name and an unsigned 64-bit captured revision. Typed refusals
+are Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable,
+UnsafeTarget, Busy, NameConflict, IdentityConflict and WriteFailed.
+Client-side Unsupported represents only the legacy BadRequest with message
+"unknown method authoring.saveAs". Malformed responses use ordinary
+protocol failure. Existing NoAuthoring behavior applies when the host serves
+no authoring session. Transport loss is distinct from a typed refusal.
+Expose the same operation in both SDKs, CLI scene save-as, MCP
+authoring.save_as and Editor Save As. Preserve existing Save/Open and
 old-client behavior. No transport or session file version changes.
 
 ### Non-functional
