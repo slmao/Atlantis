@@ -1,11 +1,11 @@
 # Spec: New Hand-Authored Scene
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-10
 - **Related Plan:** [Plan 0089](../plans/0089-new-hand-authored-scene.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md) (Proposed)
+- **Approval:** Jointly approved at revision `89305f09` of [PR #341](https://github.com/slmao/Atlantis/pull/341), 2026-11-10. See Plan 0089.
+- **Related ADR:** [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md) (Accepted)
 
 ## Summary
 
