@@ -160,6 +160,8 @@ public static class FrameSampler
 }
 
 /// <summary>A pick's answer, with when its input arrived and when the answer did.</summary>
+public sealed record SavedSceneReceipt(string Name, AssetGuid Scene, string Source);
+
 public sealed record PickResult(RaycastResult Result, PickRay Ray, double InputToAnswerMs);
 
 /// <summary>
@@ -973,9 +975,9 @@ public sealed class EditorWorker : IDisposable
         _post(() => EditNotice?.Invoke("saved " + info?.SourcePath));
     });
 
-    public void SaveAs(string name, long lifetime, Action<string> settled) => Enqueue(session =>
+    public void SaveAs(string name, long lifetime, Action<string, SavedSceneReceipt?> settled) => Enqueue(session =>
     {
-        void Report(string text) => _post(() => settled(text));
+        void Report(string text, SavedSceneReceipt? receipt = null) => _post(() => settled(text, receipt));
         bool IsCurrent()
         {
             lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime;
@@ -990,9 +992,11 @@ public sealed class EditorWorker : IDisposable
             if (!IsCurrent()) { Report("Save As refused: the document or session changed."); return; }
             sent = true;
             var result = session.Authoring.SaveAs(name);
-            Report(result.IsOk && result.Value is { } copy
-                ? $"Saved copy {copy.Source} ({copy.Scene}), revision {copy.DocumentRevision}. Configure a separate build with ATLANTIS_SAVED_SCENE={name}, then launch --scene saved_scene."
-                : "Save As refused: " + result.Error);
+            if (result.IsOk && result.Value is { } copy)
+                Report($"Saved copy {copy.Source} ({copy.Scene}), revision {copy.DocumentRevision}. Configure a separate build with ATLANTIS_SAVED_SCENE={name}, then launch --scene saved_scene.",
+                    new(name, copy.Scene, copy.Source));
+            else
+                Report("Save As refused: " + result.Error);
         }
         catch (GameplayException e)
         {
@@ -1002,9 +1006,9 @@ public sealed class EditorWorker : IDisposable
         }
     });
 
-    public void CreateScene(string name, Action<string> settled) => Enqueue(session =>
+    public void CreateScene(string name, Action<string, SavedSceneReceipt?> settled) => Enqueue(session =>
     {
-        void Report(string text) => _post(() => settled(text));
+        void Report(string text, SavedSceneReceipt? receipt = null) => _post(() => settled(text, receipt));
         lock (_lock)
         {
             if (_stopping)
@@ -1020,7 +1024,8 @@ public sealed class EditorWorker : IDisposable
             {
                 Report($"Created {name}: {created.Source} ({created.Scene}). The new scene is not open. " +
                     $"In this checkout, configure a separate build with -DATLANTIS_SAVED_SCENE={name} and build atlantis_runtime. " +
-                    "Keep this Editor open. Start a second Atlantis.Editor --runtime <new-build-runtime> --scene saved_scene.");
+                    "Keep this Editor open. Start a second Atlantis.Editor --runtime <new-build-runtime> --scene saved_scene.",
+                    new(name, created.Scene, created.Source));
                 return;
             }
             string next = result.Error switch

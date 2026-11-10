@@ -45,6 +45,9 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public string? AssetBuildProfile { get; init; }
     public string? AssetGeneration { get; init; }
     public bool AllowSceneSaveAs { get; init; }
+    public string? SavedSceneCheckout { get; init; }
+    public string? SavedSceneCMake { get; init; }
+    public string? SavedSceneAppHost { get; init; }
     // Plan 0066 M1: the input investigation's options (measurement-only).
     public bool MeasureDrag { get; init; }
     public string? AttachSession { get; init; }
@@ -68,6 +71,18 @@ public sealed class MainWindow : Window
     private readonly EditorOptions _options;
     private readonly string _workDirectory = RuntimeProcess.NewWorkDirectory();
     private readonly EditorLog _log;
+    private readonly SavedSceneAttempts _savedAttempts = new();
+    private readonly SavedSceneWorkspace? _savedWorkspace;
+    private readonly ListBox _savedList = new() { Height = 140, SelectionMode = SelectionMode.Single };
+    private readonly Button _savedRefresh = new() { Content = "Refresh" };
+    private readonly Button _savedBuild = new() { Content = "Build", IsEnabled = false };
+    private readonly Button _savedOpen = new() { Content = "Open", IsEnabled = false };
+    private readonly TextBox _savedManaged = new() { PlaceholderText = "Absolute committed managed import root (optional)" };
+    private readonly TextBlock _savedDiscovery = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock _savedHint = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBox _savedBuildResult = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock _savedOpenResult = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+
     // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
     private readonly Selection _selection = new();
@@ -182,6 +197,10 @@ public sealed class MainWindow : Window
     public MainWindow(EditorOptions options)
     {
         _options = options;
+        if (options.SavedSceneCheckout is { } checkout && options.SavedSceneCMake is { } cmake &&
+            options.SavedSceneAppHost is not null &&
+            options.Scene != "saved_scene" && options.AttachSession is null && !options.MeasureDrag && !options.MeasureOverlay)
+            _savedWorkspace = new(checkout, cmake, _workDirectory);
         _log = new EditorLog(Path.Combine(_workDirectory, "editor.log"));
         _log.Write("editor: runtime " + options.RuntimePath + ", scene " + options.Scene);
         Title = "Atlantis Editor (Phase 1 prototype) - " + options.Scene;
@@ -269,14 +288,19 @@ public sealed class MainWindow : Window
         var inspectorSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
         Grid.SetColumn(inspectorSplitter, 3);
         var inspectorScroll = new ScrollViewer { Content = _inspectorPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        _assetTabs.ItemsSource = new[] {
-            new TabItem { Header = "Inspector", Content = inspectorScroll },
-            new TabItem { Header = "Assets", Content = BuildAssetsPanel() } };
+        var tabs = new List<TabItem> {
+            new() { Header = "Inspector", Content = inspectorScroll },
+            new() { Header = "Assets", Content = BuildAssetsPanel() } };
+        if (_savedWorkspace is not null)
+            tabs.Add(new TabItem { Header = "Saved Scenes", Content = BuildSavedScenePanel() });
+        _assetTabs.ItemsSource = tabs;
         _assetTabs.SelectionChanged += (_, e) =>
         {
             // SelectionChanged also bubbles from the list and filter ComboBox.
             if (ReferenceEquals(e.Source, _assetTabs) && _assetTabs.SelectedIndex == 1 &&
                 _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+            if (ReferenceEquals(e.Source, _assetTabs) && _assetTabs.SelectedIndex == 2)
+                RefreshSavedScenes();
         };
         Grid.SetColumn(_assetTabs, 4);
         Grid.SetRow(_status, 1);
@@ -352,7 +376,17 @@ public sealed class MainWindow : Window
         };
         _uiTicker.Tick += (_, _) => OnUiTick();
         _uiTicker.Start();
-        Closing += (_, _) => Shutdown();
+        Closing += (_, e) =>
+        {
+            if (_savedAttempts.Busy)
+            {
+                e.Cancel = true;
+                _savedOpenResult.Text = "Wait for the saved scene operation to finish, then close again.";
+                _assetTabs.SelectedIndex = 2;
+                return;
+            }
+            Shutdown();
+        };
         UpdateStatus();
     }
 
@@ -979,6 +1013,154 @@ public sealed class MainWindow : Window
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
     }
 
+    private Control BuildSavedScenePanel()
+    {
+        var panel = new StackPanel { Margin = new Thickness(8), Spacing = 8 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Checkout: " + _options.SavedSceneCheckout + "\nVisual Studio 18 2026 · x64 · Debug",
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        });
+        panel.Children.Add(_savedHint);
+        panel.Children.Add(_savedRefresh);
+        panel.Children.Add(_savedDiscovery);
+        panel.Children.Add(_savedList);
+        panel.Children.Add(new TextBlock { Text = "Committed managed import root (optional)" });
+        panel.Children.Add(_savedManaged);
+        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _savedBuild, _savedOpen } });
+        panel.Children.Add(_savedBuildResult);
+        panel.Children.Add(_savedOpenResult);
+        _savedRefresh.Click += (_, _) => RefreshSavedScenes();
+        _savedList.SelectionChanged += (_, _) => UpdateSavedSceneButtons();
+        _savedManaged.TextChanged += (_, _) =>
+        {
+            if (_savedAttempts.Busy) return;
+            if (_savedAttempts.Result is not null)
+                InvalidateSavedResult("Managed input changed. Build again.");
+            UpdateSavedSceneButtons();
+        };
+        _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
+        _savedOpen.Click += async (_, _) => await OpenSelectedSavedScene();
+        return new ScrollViewer { Content = panel };
+    }
+
+    private void ShowSavedSceneReceipt(SavedSceneReceipt? receipt)
+    {
+        if (_savedWorkspace is null || receipt is null) return;
+        _savedHint.Text = $"Receipt for {receipt.Name}: {receipt.Source} ({receipt.Scene}). " +
+            "Refresh and select the local unit explicitly. A matching name does not verify the checkout.";
+    }
+
+    private SavedSceneInput? SelectedSavedInput() => _savedList.SelectedItem is string name
+        ? new(name, string.IsNullOrWhiteSpace(_savedManaged.Text) ? null : _savedManaged.Text.Trim())
+        : null;
+
+    private void UpdateSavedSceneButtons()
+    {
+        bool idle = !_savedAttempts.Busy;
+        SavedSceneInput? input = SelectedSavedInput();
+        _savedList.IsEnabled = _savedManaged.IsEnabled = _savedRefresh.IsEnabled = idle;
+        _savedBuild.IsEnabled = _savedAttempts.CanBuild(input);
+        _savedOpen.IsEnabled = _savedAttempts.CanOpen(input);
+    }
+
+    private void InvalidateSavedResult(string why)
+    {
+        _savedAttempts.Invalidate();
+        _savedOpenResult.Text = "Stale. " + why;
+    }
+
+    private void RefreshSavedScenes()
+    {
+        if (_savedWorkspace is null || _savedAttempts.Busy) return;
+        string? selected = _savedList.SelectedItem as string;
+        string[] names;
+        try
+        {
+            bool missing;
+            (names, missing) = _savedWorkspace.Discover();
+            _savedDiscovery.Text = missing ? "The checkout has no assets/scenes/saved directory." :
+                names.Length == 0 ? "No complete saved scene units." : "Select a local saved scene.";
+        }
+        catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
+        {
+            names = [];
+            _savedDiscovery.Text = "Cannot read saved scenes: " + e.Message;
+        }
+        _savedList.ItemsSource = names;
+        _savedList.SelectedItem = names.Contains(selected, StringComparer.Ordinal) ? selected : null;
+        if (_savedAttempts.Result is { } result && !names.Contains(result.Input.Name, StringComparer.Ordinal))
+            InvalidateSavedResult("The built unit is no longer listed. Build again after restoring it.");
+        UpdateSavedSceneButtons();
+    }
+
+    private void ShowSavedBuild(SavedSceneInput input, SavedSceneBuildReport report)
+    {
+        _savedBuildResult.Text = $"{report.Phase}: {report.Detail}\nScene: {input.Name}\n" +
+            $"Visual Studio 18 2026 · x64 · Debug\nManaged root: {input.ManagedRoot ?? "(none)"}\n" +
+            $"Build directory: {report.Directory}\nLog: {(report.Log.Length == 0 ? "(unavailable)" : report.Log)}" +
+            (report.Result is { } built ? "\nRuntime: " + built.Executable : "");
+    }
+
+    private async Task BuildSelectedSavedScene()
+    {
+        if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
+            !_savedAttempts.BeginBuild(input)) return;
+        _savedOpenResult.Text = "";
+        _savedBuildResult.Text = "Preparing a fresh build for " + input.Name;
+        UpdateSavedSceneButtons();
+        var progress = new Progress<SavedSceneBuildReport>(report =>
+        {
+            if (_savedAttempts.Building) ShowSavedBuild(input, report);
+        });
+        var result = await Task.Run(() => workspace.BuildAsync(input, ((IProgress<SavedSceneBuildReport>)progress).Report));
+        _savedAttempts.FinishBuild(result.Result);
+        ShowSavedBuild(input, result);
+        UpdateSavedSceneButtons();
+    }
+
+    private async Task OpenSelectedSavedScene()
+    {
+        if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
+            _savedAttempts.BeginOpen(input) is not { } result) return;
+        _savedOpenResult.Text = "Starting a separate Editor for " + input.Name;
+        UpdateSavedSceneButtons();
+        Process? child = null;
+        try
+        {
+            child = await Task.Run(() =>
+            {
+                if (!workspace.IsCurrent(result)) return null;
+                return Process.Start(SavedSceneWorkspace.ChildStart(_options.SavedSceneAppHost!, result.Executable))
+                    ?? throw new IOException("The Editor process did not start.");
+            });
+            if (child is null)
+                InvalidateSavedResult("The saved unit or executable changed or is unavailable. Build again.");
+            else
+                _savedOpenResult.Text = $"Editor started for {input.Name}. Check its window for Runtime and document readiness.";
+        }
+        catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
+        {
+            _savedOpenResult.Text = "Editor start failed. Retry Open if the build is still current. " + e.Message;
+        }
+        finally
+        {
+            _savedAttempts.FinishOpen(input.Name, child is not null);
+            UpdateSavedSceneButtons();
+        }
+        if (child is not null)
+        {
+            using (child)
+                await child.WaitForExitAsync();
+            if (ReferenceEquals(_savedAttempts.Result, result) &&
+                !await Task.Run(() => workspace.IsCurrent(result)) &&
+                ReferenceEquals(_savedAttempts.Result, result))
+                InvalidateSavedResult("The child closed and the saved unit or executable changed. Build again.");
+            _savedAttempts.ChildExited(input.Name);
+            UpdateSavedSceneButtons();
+        }
+    }
+
     private string NewSceneHint() => _options.AllowSceneSaveAs
         ? "New Scene saves a camera-only scene and leaves the current scene open."
         : "New Scene requires an Editor launch with --allow-scene-save-as.";
@@ -995,11 +1177,12 @@ public sealed class MainWindow : Window
         _newScenePendingName = name;
         _newSceneState.Text = $"Creating {name}…";
         UpdateNewSceneButton();
-        worker.CreateScene(name, text =>
+        worker.CreateScene(name, (text, receipt) =>
         {
             if (!ReferenceEquals(_worker, worker) || request != _newSceneRequest) return;
             _newScenePendingName = null;
             _newSceneState.Text = text;
+            ShowSavedSceneReceipt(receipt);
             UpdateNewSceneButton();
         });
     }
@@ -1014,12 +1197,13 @@ public sealed class MainWindow : Window
         _saveAsPending = true;
         _saveAsState.Text = "Saving copy…";
         UpdateSaveAsButton();
-        worker.SaveAs(name, lifetime, text =>
+        worker.SaveAs(name, lifetime, (text, receipt) =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _saveAsRequest ||
                 lifetime != worker.MeshDocumentLifetime) return;
             _saveAsPending = false;
             _saveAsState.Text = text;
+            ShowSavedSceneReceipt(receipt);
             UpdateSaveAsButton();
         });
     }

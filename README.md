@@ -334,6 +334,22 @@ launch and retry it using the same name. The created source remains available.
 For a lost creation reply, follow the saved-unit inspection guidance above.
 See [Spec 0089](docs/specs/0089-new-hand-authored-scene.md).
 
+### Build and open a saved scene in Editor
+
+Start the ordinary Windows `Atlantis.Editor.exe` with
+`--saved-scene-checkout <absolute-checkout> --saved-scene-cmake <absolute-cmake.exe>`.
+Use a trusted local checkout and CMake installation with Visual Studio 18 2026
+x64 support. The separate `--allow-scene-save-as` option grants New Scene and
+Save As authority if needed.
+
+In **Saved Scenes**, refresh and select the local unit. Supply an absolute
+committed managed import root if the unit references managed assets. **Build**
+runs the saved-slot Debug build and retains its directory and log. **Open**
+starts another Editor on that build. Check its window for Runtime and document
+readiness. Its ordinary Save writes to the saved unit. After a source or
+executable change, build again before opening. The manual CMake recipe above
+uses the same saved slot.
+
 ## Status
 
 In active development. See [docs/specs/README.md](docs/specs/README.md) for
