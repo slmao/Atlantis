@@ -10,6 +10,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading.Tasks;
 using Atlantis.Gameplay.Remote;
 using A = Atlantis.Gameplay.Authoring;
 
@@ -38,6 +41,54 @@ public static class LiveAuthoringSuite
         }
         Imported(t);
         NoAuthoring(t);
+        CreateSceneUnknownOutcome(t, RemoteError.Disconnected, null);
+        CreateSceneUnknownOutcome(t, RemoteError.ProtocolError, "scenes/saved/save_other/scene.scene.txt");
+    }
+
+    private static void CreateSceneUnknownOutcome(TestContext t, RemoteError expected, string? replySource)
+    {
+        const string name = "unknown_starter";
+        const string source = "scenes/saved/save_unknown_starter/scene.scene.txt";
+        const string scene = "52052052-00aa-4052-8052-0000000000aa";
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        Task<JsonValue> peer = Task.Run(() =>
+        {
+            using TcpClient socket = listener.AcceptTcpClient();
+            socket.ReceiveTimeout = 5000;
+            using var stream = socket.GetStream();
+            using var reader = new StreamReader(stream);
+            using var writer = new StreamWriter(stream) { AutoFlush = true, NewLine = "\n" };
+            JsonValue Read() => Json.Parse(reader.ReadLine() ?? throw new EndOfStreamException());
+            void Reply(JsonValue request, JsonValue result) =>
+                writer.WriteLine(Json.Write(JsonValue.NewObject().Set("id", request.Find("id")!).Set("result", result)));
+
+            Reply(Read(), JsonValue.NewObject().Set("scene", JsonValue.String(scene)));
+            Reply(Read(), Json.Parse("[]"));
+            JsonValue creation = Read();
+            if (replySource is not null)
+                Reply(creation, JsonValue.NewObject().Set("ok", JsonValue.NewObject()
+                    .Set("scene", JsonValue.String(scene)).Set("source", JsonValue.String(replySource))));
+            return creation;
+        });
+
+        var info = new SessionInfo((ushort)((IPEndPoint)listener.LocalEndpoint).Port,
+            "00112233445566778899aabbccddeeff", 1, AssetGuid.Parse(scene));
+        using RemoteSession client = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
+        var error = t.Throws<RemoteException>(() => client.Authoring.CreateScene(name), $"{expected}: CreateScene throws");
+        t.Equal<RemoteError?>(expected, error?.Error, "original error category");
+        t.Equal<RemoteError?>(expected, client.Failure, "original error stays sticky");
+        t.Check(error?.Message.Contains("outcome unknown", StringComparison.Ordinal) == true &&
+            error.Message.Contains(source, StringComparison.Ordinal) &&
+            error.Message.Contains("scene.scene.txt and catalog-source.txt", StringComparison.Ordinal) &&
+            error.Message.Contains("Confirm the previous request can no longer commit before retrying", StringComparison.Ordinal),
+            "direct SDK error gives destination and recovery guidance");
+        var later = t.Throws<RemoteException>(() => client.Authoring.CreateScene("never_sent"), "failed session refuses a later call");
+        t.Check(later is not null && ReferenceEquals(later, error?.InnerException) && later.Error == expected &&
+            !later.Message.Contains("outcome unknown", StringComparison.Ordinal), "known unsent call has no unknown outcome");
+        JsonValue request = peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        t.Equal("authoring.createScene", request.Find("method")?.AsString, "peer received the CreateScene request");
+        t.Equal(name, request.Find("params")?.Find("name")?.AsString, "peer received the attempted name");
     }
 
     private static void Names(TestContext t, RemoteSession first, RemoteSession second)

@@ -11,6 +11,7 @@ namespace Atlantis.Gameplay;
 public abstract class GameplayException : Exception
 {
     private protected GameplayException(string message) : base(message) { }
+    private protected GameplayException(string message, Exception innerException) : base(message, innerException) { }
 }
 
 /// <summary>Why a remote session failed (the C++ RemoteError's names).</summary>
@@ -34,6 +35,12 @@ public sealed class RemoteException : GameplayException
         : base(error + (detail.Length > 0 ? ": " + detail : ""))
     {
         Error = error;
+    }
+
+    internal RemoteException(RemoteException cause, string context)
+        : base(cause.Message + ". " + context, cause)
+    {
+        Error = cause.Error;
     }
 
     public RemoteError Error { get; }

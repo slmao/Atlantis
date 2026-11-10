@@ -97,23 +97,36 @@ public sealed class AuthoringSession
             Codec.DecodeSaveAsError);
     }
 
-    /// <summary>Creates a camera-only source without changing the bound document. A lost reply throws and must not be replayed.</summary>
+    /// <summary>Creates a camera-only source without changing the bound document.</summary>
+    /// <exception cref="RemoteException">A missing or invalid reply reports an unknown creation outcome
+    /// and its destination while retaining the transport or protocol error.</exception>
     public Outcome<A.CreatedScene, A.CreateSceneError> CreateScene(string name)
     {
         const string method = "authoring.createScene";
         if (!Codec.ValidSaveAsName(name)) return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.InvalidName);
-        var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("name", JsonValue.String(name))));
-        var error = reply.Find("error");
-        var result = reply.Find("result");
-        if (Codec.IsLegacyCreateSceneRefusal(reply))
-            return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.Unsupported);
-        if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
-            return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.NoAuthoring);
-        if (error is not null || result is null || ((result.Find("ok") is null) == (result.Find("err") is null)))
-            throw _session.Malformed(method);
-        return _session.InBand<A.CreatedScene, A.CreateSceneError>(result, method,
-            value => Codec.DecodeCreatedScene(value) is { } copy && copy.Source == Codec.SaveAsSource(name) ? copy : null,
-            Codec.DecodeCreateSceneError);
+        string source = Codec.SaveAsSource(name);
+        _session.ThrowIfFailed(); // A previously failed session cannot send this request.
+        try
+        {
+            var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("name", JsonValue.String(name))));
+            var error = reply.Find("error");
+            var result = reply.Find("result");
+            if (Codec.IsLegacyCreateSceneRefusal(reply))
+                return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.Unsupported);
+            if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+                return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.NoAuthoring);
+            if (error is not null || result is null || ((result.Find("ok") is null) == (result.Find("err") is null)))
+                throw _session.Malformed(method);
+            return _session.InBand<A.CreatedScene, A.CreateSceneError>(result, method,
+                value => Codec.DecodeCreatedScene(value) is { } created && created.Source == source ? created : null,
+                Codec.DecodeCreateSceneError);
+        }
+        catch (RemoteException e)
+        {
+            throw new RemoteException(e, $"Create Scene outcome unknown for {name} at {source}. " +
+                "Inspect scene.scene.txt and catalog-source.txt and verify any existing unit. " +
+                "Confirm the previous request can no longer commit before retrying.");
+        }
     }
 
     // --- Queries.

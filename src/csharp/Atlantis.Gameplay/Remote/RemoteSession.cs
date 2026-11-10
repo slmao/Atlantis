@@ -247,7 +247,7 @@ public sealed class RemoteSession : IDisposable
         _responses[key] = parsed;
     }
 
-    private void ThrowIfFailed()
+    internal void ThrowIfFailed()
     {
         if (_failure is not null) throw _failure;
     }
