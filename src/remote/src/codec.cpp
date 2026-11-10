@@ -1641,6 +1641,31 @@ Value encodeOpenError(authoring::OpenError error) { return Value::string(std::st
 std::optional<authoring::OpenError> decodeOpenError(const Value& value) { return enumeratorNamed(value, kOpenErrors); }
 Value encodeSaveError(authoring::SaveError error) { return Value::string(std::string(authoring::toString(error))); }
 std::optional<authoring::SaveError> decodeSaveError(const Value& value) { return enumeratorNamed(value, kSaveErrors); }
+Value encode(const authoring::CreatedScene& scene) {
+  Value out = Value::object();
+  out.set("scene", Value::string(asset_system::toString(scene.scene)));
+  out.set("source", Value::string(scene.source));
+  return out;
+}
+std::optional<authoring::CreatedScene> decodeCreatedScene(const Value& value) {
+  const auto* scene = value.find("scene");
+  const auto* source = value.find("source");
+  if (!scene || !scene->isString() || !source || !source->isString()) return std::nullopt;
+  const auto guid = asset_system::parseAssetGuid(scene->asString());
+  const std::string_view path = source->asString();
+  constexpr std::string_view prefix = "scenes/saved/save_", suffix = "/scene.scene.txt";
+  if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != scene->asString() ||
+      !path.starts_with(prefix) || !path.ends_with(suffix) || path.size() < prefix.size() + suffix.size() ||
+      !authoring::validSaveAsName(path.substr(prefix.size(), path.size() - prefix.size() - suffix.size()))) return std::nullopt;
+  return authoring::CreatedScene{guid.value(), std::string(path)};
+}
+Value encodeCreateSceneError(authoring::CreateSceneError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::CreateSceneError> decodeCreateSceneError(const Value& value) {
+  using E = authoring::CreateSceneError;
+  constexpr std::array errors{E::Unavailable, E::InvalidName, E::UnsafeTarget, E::Busy, E::NameConflict,
+                              E::IdentityConflict, E::WriteFailed};
+  return enumeratorNamed(value, errors);
+}
 Value encode(const authoring::SavedScene& scene) {
   Value out = Value::object();
   out.set("scene", Value::string(asset_system::toString(scene.scene)));

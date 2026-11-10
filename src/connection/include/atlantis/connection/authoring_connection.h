@@ -277,6 +277,17 @@ struct SavedScene {
 [[nodiscard]] bool validSaveAsName(std::string_view name) noexcept;
 [[nodiscard]] std::string saveAsSource(std::string_view name);
 [[nodiscard]] std::string_view toString(SaveAsError error) noexcept;
+
+enum class CreateSceneError : std::uint8_t {
+  Unavailable, InvalidName, UnsafeTarget, Busy, NameConflict, IdentityConflict, WriteFailed,
+  Unsupported, UnknownOutcome, NoAuthoring,  // client-side only
+};
+struct CreatedScene {
+  asset_system::AssetGuid scene;
+  std::string source;
+  friend bool operator==(const CreatedScene&, const CreatedScene&) = default;
+};
+[[nodiscard]] std::string_view toString(CreateSceneError error) noexcept;
 enum class ApplyError : std::uint8_t {
   NoDocument,
   NoSceneSink,  // the host gave the session no way to reach the Runtime (ADR-0131 D3)
@@ -381,6 +392,9 @@ class AuthoringConnection {
       std::optional<authoring::ApplyId> id = std::nullopt) const = 0;
   virtual atlantis::Result<std::monostate, authoring::SaveError> save() = 0;
   virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
+  virtual Result<authoring::CreatedScene, authoring::CreateSceneError> createScene(std::string_view) {
+    return Result<authoring::CreatedScene, authoring::CreateSceneError>::Err(authoring::CreateSceneError::Unavailable);
+  }
 };
 
 }  // namespace atlantis::connection

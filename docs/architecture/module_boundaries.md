@@ -983,6 +983,10 @@ Spec 0088 adds a Save As snapshot sink. Authoring owns the accepted
 document and uses its existing serializer. The Windows executable host
 validates and commits the independent source unit. The copy does not
 retarget the session. See [ADR-0148](../adr/0148-scene-save-as-and-explicit-launch.md).
+Spec 0089 adds a separate creation sink: Authoring serializes and cooks a
+fresh camera-only source, and the executable shares the saved-unit publisher
+with Save As. Clients explicitly build and launch the new source through the
+existing saved slot. See [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md).
 
 **Status: Approved** (Spec 0065, with its three Corrections;
 [ADR-0129](../adr/0129-authoring-document-ownership.md),

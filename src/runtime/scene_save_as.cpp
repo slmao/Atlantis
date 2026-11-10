@@ -21,6 +21,7 @@ namespace as = asset_system;
 namespace ca = connection::authoring;
 using Error = ca::SaveAsError;
 using CopyResult = Result<ca::SavedScene, Error>;
+using UnitResult = Result<ca::CreatedScene, Error>;
 
 struct CloseHandleDeleter {
   void operator()(void* value) const { CloseHandle(value); }
@@ -149,7 +150,7 @@ std::optional<std::string> readFragment(const fs::path& path) {
 }
 
 std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalogSource,
-                                   const fs::path& cookedCatalog, const ca::SavedScene& copy) {
+                                   const fs::path& cookedCatalog, const ca::CreatedScene& copy) {
   const auto sourceText = readCatalog(catalogSource);
   const auto cookedText = readCatalog(cookedCatalog);
   if (!sourceText || !cookedText) return Error::WriteFailed;
@@ -202,49 +203,73 @@ bool runningFromSceneDevelopmentBuild(const fs::path& runtimeDirectory) {
   return fs::equivalent(fs::path(executable).parent_path(), runtimeDirectory, error) && !error;
 }
 
-CopyResult publishSceneCopy(const fs::path& assetsRoot, const fs::path& catalogSource, const fs::path& cookedCatalog,
-                            std::string_view name, std::string source, std::uint64_t documentRevision) {
-  if (!ca::validSaveAsName(name)) return CopyResult::Err(Error::InvalidName);
+static UnitResult publishSceneUnit(const fs::path& assetsRoot, const fs::path& catalogSource, const fs::path& cookedCatalog,
+                            std::string_view name, std::string source, std::optional<as::AssetGuid> sceneGuid) {
+  if (!ca::validSaveAsName(name)) return UnitResult::Err(Error::InvalidName);
   try {
     const auto root = (assetsRoot / L"scenes" / L"saved").make_preferred();
     const auto pins = pinParents(root);
-    if (pins.empty()) return CopyResult::Err(Error::UnsafeTarget);
+    if (pins.empty()) return UnitResult::Err(Error::UnsafeTarget);
     const auto target = root / ("save_" + std::string(name));
-    if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) return CopyResult::Err(Error::NameConflict);
+    if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) return UnitResult::Err(Error::NameConflict);
 
-    const auto ids = as::mintAssetGuids(2);
-    ca::SavedScene copy{ids[0], ca::saveAsSource(name), documentRevision};
-    auto pending = root / (".pending-" + as::toString(ids[1]));
-    if (!CreateDirectoryW(pending.c_str(), nullptr)) return CopyResult::Err(Error::WriteFailed);
+    const auto ids = as::mintAssetGuids(sceneGuid ? 1 : 2);
+    ca::CreatedScene copy{sceneGuid.value_or(ids.front()), ca::saveAsSource(name)};
+    auto pending = root / (".pending-" + as::toString(ids.back()));
+    if (!CreateDirectoryW(pending.c_str(), nullptr)) return UnitResult::Err(Error::WriteFailed);
     TemporaryUnit temporary{std::move(pending), {}};
     temporary.directory = open(temporary.path, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
     if (!isOrdinary(temporary.directory, true) || !isCaseInsensitive(temporary.directory))
-      return CopyResult::Err(Error::UnsafeTarget);
+      return UnitResult::Err(Error::UnsafeTarget);
     const auto fragment = as::serializeAssetCatalogSource(
         {{copy.scene, as::CatalogAssetType::Scene, as::CatalogRoot::Assets, copy.source}});
     if (!writeNew(temporary.path / L"scene.scene.txt", source, temporary.sceneCreated) ||
         !writeNew(temporary.path / L"catalog-source.txt", fragment, temporary.fragmentCreated))
-      return CopyResult::Err(Error::WriteFailed);
+      return UnitResult::Err(Error::WriteFailed);
 
     CommitLock lock{workspaceMutex(pins.back())};
-    if (!lock.mutex) return CopyResult::Err(Error::WriteFailed);
+    if (!lock.mutex) return UnitResult::Err(Error::WriteFailed);
     const auto acquired = WaitForSingleObject(lock.mutex.get(), 0);
-    if (acquired == WAIT_TIMEOUT) return CopyResult::Err(Error::Busy);
-    if (acquired != WAIT_OBJECT_0 && acquired != WAIT_ABANDONED) return CopyResult::Err(Error::WriteFailed);
+    if (acquired == WAIT_TIMEOUT) return UnitResult::Err(Error::Busy);
+    if (acquired != WAIT_OBJECT_0 && acquired != WAIT_ABANDONED) return UnitResult::Err(Error::WriteFailed);
     lock.acquired = true;
-    if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) return CopyResult::Err(Error::NameConflict);
-    if (const auto error = checkIdentity(root, catalogSource, cookedCatalog, copy)) return CopyResult::Err(*error);
+    if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) return UnitResult::Err(Error::NameConflict);
+    if (const auto error = checkIdentity(root, catalogSource, cookedCatalog, copy)) return UnitResult::Err(*error);
     if (!renameNew(temporary.directory, target)) {
       const auto error = GetLastError();
-      return CopyResult::Err(error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS ||
+      return UnitResult::Err(error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS ||
                             GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES
                                 ? Error::NameConflict : Error::WriteFailed);
     }
     temporary.path.clear();
-    return CopyResult::Ok(std::move(copy));
+    return UnitResult::Ok(std::move(copy));
   } catch (const std::exception&) {
-    return CopyResult::Err(Error::WriteFailed);
+    return UnitResult::Err(Error::WriteFailed);
+  }
+}
+
+CopyResult publishSceneCopy(const fs::path& assetsRoot, const fs::path& catalogSource, const fs::path& cookedCatalog,
+                            std::string_view name, std::string source, std::uint64_t documentRevision) {
+  auto unit = publishSceneUnit(assetsRoot, catalogSource, cookedCatalog, name, std::move(source), std::nullopt);
+  if (unit.isErr()) return CopyResult::Err(unit.error());
+  return CopyResult::Ok({unit.value().scene, std::move(unit.value().source), documentRevision});
+}
+
+Result<ca::CreatedScene, ca::CreateSceneError> publishSceneStarter(
+    const fs::path& assetsRoot, const fs::path& catalogSource, const fs::path& cookedCatalog,
+    std::string_view name, as::AssetGuid scene, std::string source) {
+  using E = ca::CreateSceneError;
+  using R = Result<ca::CreatedScene, E>;
+  auto unit = publishSceneUnit(assetsRoot, catalogSource, cookedCatalog, name, std::move(source), scene);
+  if (unit.isOk()) return R::Ok(std::move(unit.value()));
+  switch (unit.error()) {
+    case Error::InvalidName: return R::Err(E::InvalidName);
+    case Error::UnsafeTarget: return R::Err(E::UnsafeTarget);
+    case Error::Busy: return R::Err(E::Busy);
+    case Error::NameConflict: return R::Err(E::NameConflict);
+    case Error::IdentityConflict: return R::Err(E::IdentityConflict);
+    default: return R::Err(E::WriteFailed);
   }
 }
 

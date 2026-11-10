@@ -1002,6 +1002,47 @@ public sealed class EditorWorker : IDisposable
         }
     });
 
+    public void CreateScene(string name, Action<string> settled) => Enqueue(session =>
+    {
+        void Report(string text) => _post(() => settled(text));
+        lock (_lock)
+        {
+            if (_stopping)
+            {
+                Report("New Scene was not sent: the session changed.");
+                return;
+            }
+        }
+        try
+        {
+            var result = session.Authoring.CreateScene(name);
+            if (result.IsOk && result.Value is { } created)
+            {
+                Report($"Created {name}: {created.Source} ({created.Scene}). The new scene is not open. " +
+                    $"In this checkout, configure a separate build with -DATLANTIS_SAVED_SCENE={name} and build atlantis_runtime. " +
+                    "Keep this Editor open. Start a second Atlantis.Editor --runtime <new-build-runtime> --scene saved_scene.");
+                return;
+            }
+            string next = result.Error switch
+            {
+                CreateSceneError.Busy => "Retry explicitly after contention clears.",
+                CreateSceneError.NameConflict => "Choose another name or inspect the existing unit.",
+                CreateSceneError.InvalidName => "Use 1–48 lowercase letters, digits or underscores, starting with a letter.",
+                CreateSceneError.Unavailable or CreateSceneError.Unsupported => "Use a supported development Runtime with --allow-scene-save-as.",
+                CreateSceneError.NoAuthoring => "This Runtime has no authoring session.",
+                CreateSceneError.UnsafeTarget => "Check the development checkout and its ordinary assets/scenes/saved directory.",
+                _ => "Check the Runtime log and destination before trying again.",
+            };
+            Report($"New Scene refused ({result.Error}). {next}");
+        }
+        catch (GameplayException)
+        {
+            Report($"New Scene outcome unknown for {name} at {Codec.SaveAsSource(name)}. Inspect scene.scene.txt and " +
+                "catalog-source.txt. If the unit is absent, confirm the previous request can no longer commit before retrying.");
+            throw;
+        }
+    });
+
     // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
     private void OpenDocument(RemoteSession session)
     {

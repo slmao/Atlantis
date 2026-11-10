@@ -227,6 +227,13 @@ public enum SaveAsError
 
 public sealed record SavedScene(AssetGuid Scene, string Source, ulong DocumentRevision);
 
+public enum CreateSceneError
+{
+    Unavailable, InvalidName, UnsafeTarget, Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, NoAuthoring,
+}
+
+public sealed record CreatedScene(AssetGuid Scene, string Source);
+
 public enum SaveError
 {
     NoDocument,

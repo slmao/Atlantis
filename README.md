@@ -318,6 +318,22 @@ unit's source and catalog fragment. If it is absent, confirm the earlier
 request can no longer commit before retrying. See
 [Spec 0088](docs/specs/0088-scene-save-as.md).
 
+### Create a hand-authored scene
+
+Use the same Windows development checkout and saved directory as Save As.
+Launch the ordinary Editor with `--allow-scene-save-as` and use **New Scene**,
+or run `atlantis --session <file> scene create <name>` against an opted-in
+Runtime. Creation writes a separate camera-only scene and reports its relative
+source path. The current session keeps its document, unsaved edits and undo history.
+
+Configure a separate build with `-DATLANTIS_SAVED_SCENE=<name>`, then build
+`atlantis_runtime`. Start a second Editor with
+`--runtime <new-build-runtime> --scene saved_scene`, or start that Runtime
+directly with `--scene saved_scene`. If this step fails, fix the build or
+launch and retry it using the same name. The created source remains available.
+For a lost creation reply, follow the saved-unit inspection guidance above.
+See [Spec 0089](docs/specs/0089-new-hand-authored-scene.md).
+
 ## Status
 
 In active development. See [docs/specs/README.md](docs/specs/README.md) for

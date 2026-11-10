@@ -51,6 +51,7 @@ internal static partial class Program
         ("authoring.apply_tracked", "authoring.applyTracked", "{}", $$$"""{"ok":{"id":"{{{Entity}}}","documentRevision":3}}"""),
         ("authoring.apply_status", "authoring.applyStatus", "{}", $$$"""{"ok":{"currentDocumentRevision":3,"request":{"receipt":{"id":"{{{Entity}}}","documentRevision":3},"state":"Failed","error":"ScenePreparationFailed"},"projection":null}}"""),
         ("authoring.save", "authoring.save", "{}", """{"ok":null}"""),
+        ("authoring.create_scene", "authoring.createScene", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt"}}"""),
         ("authoring.save_as", "authoring.saveAs", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt","documentRevision":3}}"""),
         ("authoring.active_camera", "authoring.activeCamera", "{}", """{"ok":null}"""),
         ("authoring.schema", "authoring.schema", "{}", """[{"id":"0x123456789abcdef0","name":"scene::Light","kind":"Enum","version":2,"fields":[],"constants":[{"name":"Point","value":-1}]}]"""),
@@ -254,6 +255,14 @@ internal static partial class Program
         Refusals<A.ApplyError>("authoring.apply_tracked");
         Refusals<A.ApplyLookupError>("authoring.apply_status");
         Refusals<A.SaveError>("authoring.save");
+        var create = Request("authoring.create_scene", """{"name":"sample"}""");
+        FakeSession oldCreate = new() { Response = """{"error":{"code":"BadRequest","message":"unknown method authoring.createScene"}}""" };
+        var unsupportedCreate = new ToolRegistry(oldCreate).Invoke(create);
+        Check(unsupportedCreate.IsError == true && oldCreate.Calls.Count == 1, "legacy Create Scene is one refusal");
+        CheckForward(unsupportedCreate, """{"err":"Unsupported"}""", "legacy Create Scene refusal");
+        FakeSession wrongScenePath = new() { Response = "{\"result\":" + Cases.Single(c => c.Method == "authoring.createScene").Result.Replace("save_sample", "save_other") + "}" };
+        Check(new ToolRegistry(wrongScenePath).Invoke(create).IsError == true && wrongScenePath.Calls.Count == 1,
+              "Create Scene rejects a mismatched receipt without replay");
         var saveAs = Request("authoring.save_as", """{"name":"sample"}""");
         FakeSession oldAuthoring = new() { Response = """{"error":{"code":"BadRequest","message":"unknown method authoring.saveAs"}}""" };
         var unsupportedSaveAs = new ToolRegistry(oldAuthoring).Invoke(saveAs);
@@ -335,7 +344,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs")
+            if (c.Method is "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed rebuild tool rejects the non-DTO echo response");
                 continue;

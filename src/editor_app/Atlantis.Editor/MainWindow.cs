@@ -44,6 +44,7 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
 {
     public string? AssetBuildProfile { get; init; }
     public string? AssetGeneration { get; init; }
+    public bool AllowSceneSaveAs { get; init; }
     // Plan 0066 M1: the input investigation's options (measurement-only).
     public bool MeasureDrag { get; init; }
     public string? AttachSession { get; init; }
@@ -86,6 +87,12 @@ public sealed class MainWindow : Window
     private readonly TextBlock _saveAsState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private long _saveAsRequest;
     private bool _saveAsPending;
+    private readonly Button _newScene = new() { Content = "New Scene", IsEnabled = false };
+    private readonly TextBox _newSceneName = new() { PlaceholderText = "New scene name", Width = 135, MaxLength = 48 };
+    private readonly TextBlock _newSceneState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private long _newSceneRequest;
+    private string? _newScenePendingName;
+    private bool _newSceneSessionReady;
     private readonly Button _retryApply = new() { Content = "Apply current document / Retry", IsEnabled = false };
     private bool _allowGizmoPreview;
     private readonly Button _play = new() { Content = "Play", IsEnabled = false };
@@ -233,11 +240,15 @@ public sealed class MainWindow : Window
         { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
         edits.Children.Add(_saveAsName);
         edits.Children.Add(_saveAs);
+        edits.Children.Add(_newSceneName);
+        edits.Children.Add(_newScene);
+        _newSceneState.Text = NewSceneHint();
         foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
         state.Children.Add(_applyLine);
         state.Children.Add(_editLine);
         state.Children.Add(_saveAsState);
+        state.Children.Add(_newSceneState);
         DockPanel.SetDock(edits, Dock.Top);
         DockPanel.SetDock(state, Dock.Bottom);
         left.Children.Add(heading);
@@ -296,6 +307,8 @@ public sealed class MainWindow : Window
         _save.Click += (_, _) => _worker?.Save();
         _saveAsName.TextChanged += (_, _) => UpdateSaveAsButton();
         _saveAs.Click += (_, _) => SaveSceneCopy();
+        _newSceneName.TextChanged += (_, _) => UpdateNewSceneButton();
+        _newScene.Click += (_, _) => CreateScene();
         _retryApply.Click += (_, _) =>
         {
             if (!_retryApply.IsEnabled || _worker is not EditorWorker worker) return;
@@ -368,7 +381,10 @@ public sealed class MainWindow : Window
         }
         ulong parent = (ulong)window.Handle.ToInt64();
         var launch = new RuntimeLaunch(_options.RuntimePath, _options.Scene, parent, _workDirectory)
-        { AssetBuildProfile = _options.AssetBuildProfile, AssetGeneration = _options.AssetGeneration };
+        {
+            AssetBuildProfile = _options.AssetBuildProfile, AssetGeneration = _options.AssetGeneration,
+            AllowSceneSaveAs = _options.AllowSceneSaveAs,
+        };
         Task.Run(() =>
         {
             RuntimeProcess runtime = RuntimeProcess.Start(launch);
@@ -397,6 +413,10 @@ public sealed class MainWindow : Window
         _saveAsPending = false;
         _saveAs.IsEnabled = false;
         _saveAsState.Text = "";
+        ++_newSceneRequest;
+        _newScenePendingName = null;
+        _newScene.IsEnabled = false;
+        _newSceneState.Text = NewSceneHint();
         ++_meshRequest;
         _meshDocumentLifetime = 0;
         _canAddMeshToDocument = _addingMesh = false;
@@ -436,6 +456,8 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             OnConnected(snapshot);
+            _newSceneSessionReady = true;
+            UpdateNewSceneButton();
             UpdateRebuildButtons();
             if (_assetTabs.SelectedIndex == 1) LoadAssets();
         };
@@ -443,6 +465,12 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            if (_newScenePendingName is not null)
+            {
+                _newSceneState.Text = "New Scene was not sent: the authoring session disconnected.";
+                _newScenePendingName = null;
+            }
+            UpdateNewSceneButton();
             if (_saveAsPending) _saveAsState.Text = "Save As interrupted. Inspect the destination and confirm settlement before retrying.";
             _saveAsPending = false;
             ++_saveAsRequest;
@@ -949,6 +977,31 @@ public sealed class MainWindow : Window
         _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private string NewSceneHint() => _options.AllowSceneSaveAs
+        ? "New Scene saves a camera-only scene and leaves the current scene open."
+        : "New Scene requires an Editor launch with --allow-scene-save-as.";
+
+    private void UpdateNewSceneButton() => _newScene.IsEnabled = _options.AllowSceneSaveAs &&
+        _worker is not null && _newSceneSessionReady && !_referenceSessionFailed && _newScenePendingName is null &&
+        Codec.ValidSaveAsName(_newSceneName.Text);
+
+    private void CreateScene()
+    {
+        if (!_newScene.IsEnabled || _worker is not { } worker || _newSceneName.Text is not { } name ||
+            !Codec.ValidSaveAsName(name)) return;
+        long request = ++_newSceneRequest;
+        _newScenePendingName = name;
+        _newSceneState.Text = $"Creating {name}…";
+        UpdateNewSceneButton();
+        worker.CreateScene(name, text =>
+        {
+            if (!ReferenceEquals(_worker, worker) || request != _newSceneRequest) return;
+            _newScenePendingName = null;
+            _newSceneState.Text = text;
+            UpdateNewSceneButton();
+        });
     }
 
     private void UpdateSaveAsButton() => _saveAs.IsEnabled = _worker is not null && _canAddMeshToDocument &&

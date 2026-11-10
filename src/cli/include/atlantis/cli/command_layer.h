@@ -153,7 +153,7 @@ class CommandLayer {
   std::function<atlantis::asset_system::EntityGuid()> guidSource_;
   std::unique_ptr<Pending> pending_;
   // Plan 0065 P6: the `scene` group.
-  [[nodiscard]] atlantis::connection::AuthoringConnection* authoring();
+  [[nodiscard]] atlantis::connection::AuthoringConnection* authoring(bool observe = true);
   Reply runScene(std::span<const std::string_view> tokens, std::string_view line);
   // Drains the `scene` subscription, keeping a deferred apply's Applied.
   [[nodiscard]] std::vector<atlantis::connection::authoring::Event> drainSceneEvents();

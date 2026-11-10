@@ -97,6 +97,25 @@ public sealed class AuthoringSession
             Codec.DecodeSaveAsError);
     }
 
+    /// <summary>Creates a camera-only source without changing the bound document. A lost reply throws and must not be replayed.</summary>
+    public Outcome<A.CreatedScene, A.CreateSceneError> CreateScene(string name)
+    {
+        const string method = "authoring.createScene";
+        if (!Codec.ValidSaveAsName(name)) return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.InvalidName);
+        var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("name", JsonValue.String(name))));
+        var error = reply.Find("error");
+        var result = reply.Find("result");
+        if (Codec.IsLegacyCreateSceneRefusal(reply))
+            return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.Unsupported);
+        if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+            return Outcome<A.CreatedScene, A.CreateSceneError>.Err(A.CreateSceneError.NoAuthoring);
+        if (error is not null || result is null || ((result.Find("ok") is null) == (result.Find("err") is null)))
+            throw _session.Malformed(method);
+        return _session.InBand<A.CreatedScene, A.CreateSceneError>(result, method,
+            value => Codec.DecodeCreatedScene(value) is { } copy && copy.Source == Codec.SaveAsSource(name) ? copy : null,
+            Codec.DecodeCreateSceneError);
+    }
+
     // --- Queries.
 
     /// <summary>Every node, in the document's order.</summary>

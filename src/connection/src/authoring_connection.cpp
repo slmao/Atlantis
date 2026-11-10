@@ -133,6 +133,22 @@ std::string_view toString(SaveAsError error) noexcept {
   return "Unknown";
 }
 
+std::string_view toString(CreateSceneError error) noexcept {
+  switch (error) {
+    case CreateSceneError::Unavailable: return "Unavailable";
+    case CreateSceneError::InvalidName: return "InvalidName";
+    case CreateSceneError::UnsafeTarget: return "UnsafeTarget";
+    case CreateSceneError::Busy: return "Busy";
+    case CreateSceneError::NameConflict: return "NameConflict";
+    case CreateSceneError::IdentityConflict: return "IdentityConflict";
+    case CreateSceneError::WriteFailed: return "WriteFailed";
+    case CreateSceneError::Unsupported: return "Unsupported";
+    case CreateSceneError::UnknownOutcome: return "UnknownOutcome";
+    case CreateSceneError::NoAuthoring: return "NoAuthoring";
+  }
+  return "Unknown";
+}
+
 std::string_view toString(ApplyError error) noexcept {
   switch (error) {
     case ApplyError::NoDocument: return "NoDocument";

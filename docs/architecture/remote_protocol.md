@@ -207,6 +207,7 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 | `authoring.drainFailures` | — | `[<AuthoringFailure>…]` |
 | `authoring.apply` | — | `{"ok":null}` or `{"err":"<ApplyError>"}` |
 | `authoring.save` | — | `{"ok":null}` or `{"err":"<SaveError>"}` |
+| `authoring.createScene` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>}}` or `{"err":"<CreateSceneError>"}` |
 | `authoring.saveAs` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
 
 **Semantics** are `AuthoringConnection`'s (Spec 0065 R1–R9):
@@ -237,6 +238,16 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   existing authoring binding and Runtime projection alone. A lost reply is
   an unknown outcome. See [Spec 0088](../specs/0088-scene-save-as.md) for names,
   refusals and recovery.
+
+- `authoring.createScene` uses the same host opt-in and fixed saved-unit path
+  as Save As. It writes an independent camera-only source with fresh scene
+  and camera GUIDs, without reading, opening, or changing the current
+  document. Host refusals are `Unavailable`, `InvalidName`, `UnsafeTarget`,
+  `Busy`, `NameConflict`, `IdentityConflict`, and `WriteFailed`. An absent
+  endpoint returns outer `NoAuthoring`. The exact old-host unknown-method
+  refusal means unsupported. A lost or malformed reply after sending means
+  unknown outcome; do not retry automatically. See
+  [Spec 0089](../specs/0089-new-hand-authored-scene.md) for recovery and explicit startup.
 
 ### 5.2 Cooked asset queries (Spec 0081 / ADR-0143)
 

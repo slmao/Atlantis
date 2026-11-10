@@ -351,6 +351,25 @@ public static partial class Codec
             path.EndsWith(suffix, System.StringComparison.Ordinal) && ValidSaveAsName(path[prefix.Length..^suffix.Length])
             ? new A.SavedScene(guid, path, number) : null;
     }
+    public static bool IsLegacyCreateSceneRefusal(JsonValue reply) =>
+        reply.Find("result") is null && reply.Find("error") is { } error &&
+        error.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+        error.Find("message") is { IsString: true, AsString: "unknown method authoring.createScene" };
+    public static JsonValue Encode(A.CreateSceneError error) => JsonValue.String(error.ToString());
+    public static A.CreateSceneError? DecodeCreateSceneError(JsonValue value) =>
+        DecodeName<A.CreateSceneError>(value) is { } error && error is not (A.CreateSceneError.Unsupported or A.CreateSceneError.NoAuthoring) ? error : null;
+    public static JsonValue Encode(A.CreatedScene value) => JsonValue.NewObject().Set("scene", Encode(value.Scene))
+        .Set("source", JsonValue.String(value.Source));
+    public static A.CreatedScene? DecodeCreatedScene(JsonValue value)
+    {
+        const string prefix = "scenes/saved/save_", suffix = "/scene.scene.txt";
+        if (value.Find("scene") is not { IsString: true } scene || DecodeAsset(scene) is not AssetGuid guid || guid.IsNil ||
+            scene.AsString != guid.ToString() || value.Find("source") is not { IsString: true } source) return null;
+        string path = source.AsString;
+        return path.Length > prefix.Length + suffix.Length && path.StartsWith(prefix, System.StringComparison.Ordinal) &&
+            path.EndsWith(suffix, System.StringComparison.Ordinal) && ValidSaveAsName(path[prefix.Length..^suffix.Length])
+            ? new A.CreatedScene(guid, path) : null;
+    }
     public static JsonValue Encode(A.ApplyError error) => JsonValue.String(error.ToString());
     public static A.ApplyError? DecodeApplyError(JsonValue value) => DecodeName<A.ApplyError>(value);
 

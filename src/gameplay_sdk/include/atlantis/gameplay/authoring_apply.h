@@ -13,6 +13,9 @@ class AuthoringApply {
       std::optional<connection::authoring::ApplyId> id = std::nullopt) const {
     return connection_.applyStatus(id);
   }
+  [[nodiscard]] Result<connection::authoring::CreatedScene, connection::authoring::CreateSceneError> createScene(
+      std::string_view name) { return connection_.createScene(name); }
+
   [[nodiscard]] Result<connection::authoring::SavedScene, connection::authoring::SaveAsError> saveAs(std::string_view name) {
     return connection_.saveAs(name);
   }

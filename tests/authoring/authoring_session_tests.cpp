@@ -391,6 +391,58 @@ TEST_CASE("authoring: save() writes the document atomically; an unchanged docume
   CHECK(c.document().has_value());
 }
 
+TEST_CASE("authoring: creates a fresh camera-only source without opening or retargeting the document",
+          "[authoring][session][create_scene]") {
+  Fixture f(baseScene(), false);
+  auto& connection = *f.connection;
+  using R = atlantis::Result<ac::CreatedScene, ac::CreateSceneError>;
+  CHECK(connection.createScene("new_scene").error() == ac::CreateSceneError::Unavailable);
+  CHECK(connection.createScene("../escape").error() == ac::CreateSceneError::InvalidName);
+  std::vector<as::EntityGuid> cameras;
+  f.session.setCreateSceneSink([&](std::string_view name, as::AssetGuid guid, std::string text) {
+    const auto parsed = as::parseSceneSource(text);
+    REQUIRE(parsed.isOk());
+    REQUIRE(parsed.value().nodes.size() == 1);
+    const auto& node = parsed.value().nodes.front();
+    REQUIRE(node.camera);
+    CHECK(node.name == "Camera");
+    CHECK(parsed.value().activeCameraNodeId == node.nodeId);
+    CHECK_FALSE(node.parentNodeId);
+    CHECK_FALSE(node.meshAsset);
+    CHECK_FALSE(node.materialAsset);
+    CHECK_FALSE(node.light);
+    CHECK(node.transform.positionZ == 5.0f);
+    CHECK(node.camera->fovYRadians > 1.04f);
+    CHECK(node.camera->fovYRadians < 1.05f);
+    CHECK(node.camera->nearZ == 0.1f);
+    CHECK(node.camera->farZ == 100.0f);
+    CHECK(node.camera->exposureCompensationEv == 0.0f);
+    CHECK(node.camera->fog.density == 0.0f);
+    CHECK(node.camera->bloom.strength == 0.0f);
+    REQUIRE(as::cookSceneSource(text, guid).isOk());
+    cameras.push_back(node.entityGuid);
+    return R::Ok({guid, ac::saveAsSource(name)});
+  });
+  const auto first = connection.createScene("first");
+  REQUIRE(first.isOk());
+  CHECK_FALSE(connection.document());
+  REQUIRE(connection.open().isOk());
+  REQUIRE_FALSE(refusalOf(connection, {ac::SetNodeName{entity(2), "Unsaved"}}));
+  const auto before = f.document();
+  const auto original = readText(f.source);
+  const auto status = connection.applyStatus().value();
+  const auto subscription = connection.subscribe({});
+  const auto second = connection.createScene("second");
+  REQUIRE(second.isOk());
+  CHECK(first.value().scene != second.value().scene);
+  REQUIRE(cameras.size() == 2);
+  CHECK(cameras[0] != cameras[1]);
+  CHECK(f.document() == before);
+  CHECK(readText(f.source) == original);
+  CHECK(connection.applyStatus().value().currentDocumentRevision == status.currentDocumentRevision);
+  CHECK(drain(connection, subscription).empty());
+}
+
 TEST_CASE("authoring: Save As snapshots unsaved edits without changing the active scene", "[authoring][session][save]") {
   Fixture f;
   auto& connection = *f.connection;
