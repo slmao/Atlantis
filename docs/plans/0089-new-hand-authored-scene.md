@@ -1,10 +1,10 @@
 # Plan: New Hand-Authored Scene
 
 - **Spec:** [Spec 0089](../specs/0089-new-hand-authored-scene.md)
-- **ADR:** [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** The owner approved J1–J4, Spec/Plan 0089 and ADR-0149 at revision `89305f09` on 2026-11-10. [PR #341](https://github.com/slmao/Atlantis/pull/341) was manually merged as `3a6dfe18`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Existing gates and human final merge apply.
 
 ## Objective
 

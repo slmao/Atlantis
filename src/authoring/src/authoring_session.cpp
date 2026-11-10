@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <numbers>
 #include <random>
 #include <sstream>
 #include <string>
@@ -134,6 +135,7 @@ struct AuthoringSession::State {
   std::optional<scene::AuthoringScene> document;
   SceneSink sink;
   SaveAsSink copySink;
+  CreateSceneSink createSink;
   std::uint64_t documentRevision = 0;
   std::optional<ac::ApplyRecord> pendingApply;
   std::vector<ac::ApplyRecord> terminalApplies;
@@ -466,6 +468,27 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return state_.copySink(name, asset_system::serializeSceneSource(parsed.value()), state_.documentRevision);
   }
 
+  Result<ac::CreatedScene, ac::CreateSceneError> createScene(std::string_view name) override {
+    using E = ac::CreateSceneError;
+    using R = Result<ac::CreatedScene, E>;
+    if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    if (!state_.createSink) return R::Err(E::Unavailable);
+
+    const auto sceneGuid = asset_system::mintAssetGuids(1).front();
+    asset_system::ParsedSceneSource starter;
+    auto& camera = starter.nodes.emplace_back();
+    camera.nodeId = 1;
+    camera.entityGuid = asset_system::mintEntityGuid();
+    camera.name = "Camera";
+    camera.transform.positionZ = 5.0f;
+    camera.camera = asset_system::DecodedCamera{.fovYRadians = std::numbers::pi_v<float> / 3.0f,
+                                               .nearZ = 0.1f, .farZ = 100.0f, .fog = {}, .bloom = {}};
+    starter.activeCameraNodeId = camera.nodeId;
+    auto source = asset_system::serializeSceneSource(starter);
+    if (asset_system::cookSceneSource(source, sceneGuid).isErr()) return R::Err(E::WriteFailed);
+    return state_.createSink(name, sceneGuid, std::move(source));
+  }
+
  private:
   AuthoringSession::State& state_;
   ConnectionState own_;
@@ -495,6 +518,7 @@ const scene::AuthoringScene* AuthoringSession::document() const noexcept {
 
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }
+void AuthoringSession::setCreateSceneSink(CreateSceneSink sink) { state_->createSink = std::move(sink); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
 void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {

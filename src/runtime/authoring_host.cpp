@@ -73,6 +73,10 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
         return publishSceneCopy(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
                                 name, std::move(source), revision);
       });
+      session_->setCreateSceneSink([this](std::string_view name, as::AssetGuid scene, std::string source) {
+        return publishSceneStarter(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
+                                   name, scene, std::move(source));
+      });
     }
     ATLANTIS_LOG_INFO("authoring: session created for scene {}", as::toString(application_.sceneGuid()));
   }

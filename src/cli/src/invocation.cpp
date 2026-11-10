@@ -42,6 +42,7 @@ constexpr std::string_view kUsage =
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "  scene create <name>    create a camera-only scene source (Spec 0089); GUID/option forms create nodes\n"
     "  scene save-as <name>   create an independent hand-authored scene copy (Spec 0088);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
@@ -348,6 +349,10 @@ int Invocation::finish(Reply reply) {
           failure->subject.set("documentRevision", *revision);
       }
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "scene create" && checked.error && checked.error->code == "UnknownOutcome") {
+      failure->message += "; " + checked.error->message;
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets import" || checked.command == "assets import-status") {

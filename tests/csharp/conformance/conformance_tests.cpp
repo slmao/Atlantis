@@ -512,7 +512,12 @@ void authoringVectors(std::vector<Vector>& out) {
     out.push_back({"apply.status." + std::string(ac::toString(error)), "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
         ac::ApplyRecord{receipt, ac::ApplyState::Failed, {}, error, {}}, ac::ApplyProjection{older, 8}})});
   out.push_back({"apply.lookup.unknown", "ApplyLookupError", codec::encodeApplyLookupError(ac::ApplyLookupError::UnknownApply)});
-  out.push_back({"save_as.copy", "SavedScene", codec::encode(ac::SavedScene{kAsset, ac::saveAsSource("sample"), UINT64_MAX})});
+    out.push_back({"create_scene.starter", "CreatedScene", codec::encode(ac::CreatedScene{kAsset, ac::saveAsSource("sample")})});
+    for (const auto error : {ac::CreateSceneError::Unavailable, ac::CreateSceneError::InvalidName,
+                             ac::CreateSceneError::UnsafeTarget, ac::CreateSceneError::Busy, ac::CreateSceneError::NameConflict,
+                             ac::CreateSceneError::IdentityConflict, ac::CreateSceneError::WriteFailed})
+      out.push_back({"create_scene." + std::string(ac::toString(error)), "CreateSceneError", codec::encodeCreateSceneError(error)});
+    out.push_back({"save_as.copy", "SavedScene", codec::encode(ac::SavedScene{kAsset, ac::saveAsSource("sample"), UINT64_MAX})});
   for (const auto error : {ac::SaveAsError::Unavailable, ac::SaveAsError::InvalidName, ac::SaveAsError::NoDocument,
                            ac::SaveAsError::ImportedSceneNotSavable, ac::SaveAsError::UnsafeTarget, ac::SaveAsError::Busy,
                            ac::SaveAsError::NameConflict, ac::SaveAsError::IdentityConflict, ac::SaveAsError::WriteFailed})

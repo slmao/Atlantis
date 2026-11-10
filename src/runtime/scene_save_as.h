@@ -15,4 +15,9 @@ Result<connection::authoring::SavedScene, connection::authoring::SaveAsError> pu
     const std::filesystem::path& cookedCatalog, std::string_view name, std::string source,
     std::uint64_t documentRevision);
 
+Result<connection::authoring::CreatedScene, connection::authoring::CreateSceneError> publishSceneStarter(
+    const std::filesystem::path& assetsRoot, const std::filesystem::path& catalogSource,
+    const std::filesystem::path& cookedCatalog, std::string_view name,
+    asset_system::AssetGuid scene, std::string source);
+
 }  // namespace atlantis::runtime

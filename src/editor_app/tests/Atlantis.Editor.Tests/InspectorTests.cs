@@ -108,17 +108,22 @@ public static partial class Program
             {
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
-                bool addMesh = _scene == "--mesh-add";
+                bool lostCreation = _scene == "--new-scene-lost-reply";
+                bool newScene = _scene is "--new-scene" or "--new-scene-no-opt-in" || lostCreation;
+                bool addToNew = _scene == "--edit-new-scene";
+                bool addMesh = _scene == "--mesh-add" || addToNew;
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    legacyReadiness || rebuild || import ? "integrated_showcase_demo" : _scene)
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene ? "integrated_showcase_demo" : _scene)
                 {
-                    AssetBuildProfile = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
+                    AllowSceneSaveAs = _scene == "--new-scene" || lostCreation,
+                    AssetBuildProfile = import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = import ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
+                    AssetGeneration = import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
-                    AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") : null,
+                    AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
+                        lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
@@ -126,7 +131,8 @@ public static partial class Program
                     try
                     {
                         if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
-                        else if (addMesh) await CheckAddMeshUi(window, _checks, _work);
+                        else if (newScene) await CheckNewSceneUi(window, _checks, _scene == "--new-scene" || lostCreation);
+                        else if (addMesh) await CheckAddMeshUi(window, _checks, _work, addToNew);
                         else if (saveAs) await CheckSaveAsUi(window, _checks);
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
@@ -265,7 +271,138 @@ public static partial class Program
         finally { workerField.SetValue(window, worker); }
     }
 
-    private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    private static async Task CheckNewSceneUi(MainWindow window, List<NameUiCheck> checks, bool enabled)
+    {
+        await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0,
+            "original authoring document ready", 60);
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime");
+        string? lossMarker = Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_LOSS_MARKER");
+        string session = lossMarker is null ? runtime!.SessionPath :
+            Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_UPSTREAM")!;
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(session)));
+        var original = (await Task.Run(() => observer.Authoring.Document()))!;
+        string name = Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_NAME") ?? "editorstarter";
+        var box = NameUiField<TextBox>(window, "_newSceneName")!;
+        var action = NameUiField<Button>(window, "_newScene")!;
+        var notice = NameUiField<TextBlock>(window, "_newSceneState")!;
+        var worker = NameUiField<EditorWorker>(window, "_worker")!;
+        box.Text = name;
+        string saved = Path.Combine(Path.GetDirectoryName(original.SourcePath)!, "saved", "save_" + name);
+        if (!enabled)
+        {
+            var direct = await Task.Run(() => observer.Authoring.CreateScene(name));
+            checks.Add(new("ordinary launch leaves creation disabled at both Editor and Runtime",
+                !action.IsEnabled && !runtime!.Launch.AllowSceneSaveAs &&
+                direct.Error == CreateSceneError.Unavailable && !Directory.Exists(saved)));
+            return;
+        }
+
+        byte[] source = File.ReadAllBytes(original.SourcePath);
+        var subject = (await Task.Run(() => observer.Authoring.ListNodes())).Value.First();
+        await Task.Run(() => observer.Control.Pause());
+        var selection = NameUiField<ListBox>(window, "_entities")!;
+        selection.SelectedItem = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!.First(r => r.Node == subject.Node);
+        worker.CommitName(subject.Node, subject.Name, "Unsaved original 0089");
+        var undo = NameUiField<Button>(window, "_undo")!;
+        await NameUiWait(() => undo.IsEnabled && action.IsEnabled, "unsaved edit and creation action ready");
+        var pending = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value;
+        await NameUiWait(() => NameUiField<TextBox>(window, "_nameBox") is not null, "name draft control ready");
+        var draft = NameUiField<TextBox>(window, "_nameBox")!;
+        const string draftText = "Unsubmitted original 0089 draft";
+        draft.Text = draftText;
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        checks.Add(new("in-flight creation disables a duplicate click", !action.IsEnabled));
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (lossMarker is not null)
+        {
+            await NameUiWait(() => notice.Text?.Contains("outcome unknown", StringComparison.Ordinal) == true,
+                "Editor lost creation reply");
+            checks.Add(new("loss reports the attempted path and settlement guidance, without claiming creation or opening",
+                notice.Text!.Contains(name, StringComparison.Ordinal) &&
+                notice.Text.Contains(Codec.SaveAsSource(name), StringComparison.Ordinal) &&
+                notice.Text.Contains("confirm the previous request can no longer commit", StringComparison.Ordinal) &&
+                !notice.Text.Contains("--scene saved_scene", StringComparison.Ordinal) && !Directory.Exists(saved)));
+            checks.Add(new("lost reply preserves draft, accepted edit, history, source and pending apply",
+                draft.Text == draftText && undo.IsEnabled && source.SequenceEqual(File.ReadAllBytes(original.SourcePath)) &&
+                (await Task.Run(() => observer.Authoring.Document())) == original &&
+                (await Task.Run(() => observer.Authoring.ListNodes())).Value.Any(n =>
+                    n.Node == subject.Node && n.Name == "Unsaved original 0089") &&
+                pending?.Request?.State == ApplyState.Pending &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == pending));
+            File.WriteAllText(lossMarker, "observed");
+            return;
+        }
+        await NameUiWait(() => notice.Text?.StartsWith("Created ", StringComparison.Ordinal) == true, "creation receipt");
+        string starter = File.ReadAllText(Path.Combine(saved, "scene.scene.txt"));
+        checks.Add(new("explicit opt-in reaches the Runtime and result explains separate startup",
+            runtime!.Launch.AllowSceneSaveAs && notice.Text!.Contains(Codec.SaveAsSource(name), StringComparison.Ordinal) &&
+            notice.Text.Contains("--scene saved_scene", StringComparison.Ordinal) &&
+            Directory.GetFiles(saved).Length == 2 && !starter.Contains("Unsaved original 0089", StringComparison.Ordinal)));
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => notice.Text?.Contains("NameConflict", StringComparison.Ordinal) == true, "creation conflict");
+        checks.Add(new("success and refusal leave draft, source, history, document and pending projection intact",
+            draft.Text == draftText && undo.IsEnabled && (selection.SelectedItem as HierarchyRow)?.Node == subject.Node &&
+            source.SequenceEqual(File.ReadAllBytes(original.SourcePath)) &&
+            await Task.Run(() => observer.Authoring.Document()) == original &&
+            pending?.Request?.State == ApplyState.Pending &&
+            (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == pending));
+
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_RELEASE") is { } release)
+        {
+            File.WriteAllText(release + ".ready", runtime!.SessionPath);
+            await NameUiWait(() => File.Exists(release), "independent saved-slot workflow", 600);
+            checks.Add(new("original source, unsaved edit and history survive the other Editor's workflow",
+                undo.IsEnabled && source.SequenceEqual(File.ReadAllBytes(original.SourcePath)) &&
+                (await Task.Run(() => observer.Authoring.Document())) == original &&
+                (await Task.Run(() => observer.Authoring.ListNodes())).Value.Any(n =>
+                    n.Node == subject.Node && n.Name == "Unsaved original 0089") &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == pending));
+        }
+
+        long lifetime = worker.MeshDocumentLifetime;
+        if (await Task.Run(() => observer.Authoring.Open()) is not null)
+            throw new InvalidOperationException("Original fixture reopen refused.");
+        await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "original document reopened");
+        box.Text = name + "_late";
+        await NameUiWait(() => action.IsEnabled, "creation remains eligible after document reopen");
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var field = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        field.SetValue(window, null);
+        const string replacement = "Replacement session feedback";
+        notice.Text = replacement;
+        try
+        {
+            bool drained = false;
+            worker.QueryImport(null, _ => drained = true);
+            await NameUiWait(() => drained, "old worker creation callback drained");
+            checks.Add(new("document reopen keeps creation valid; a late callback cannot overwrite a replacement session",
+                notice.Text == replacement && File.Exists(Path.Combine(Path.GetDirectoryName(saved)!,
+                    "save_" + name + "_late", "scene.scene.txt"))));
+        }
+        finally { field.SetValue(window, worker); }
+
+        // Park the old worker before send, then exercise the replacement's Stop path.
+        using var releaseWork = new System.Threading.ManualResetEventSlim(false);
+        var parked = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var enqueue = typeof(EditorWorker).GetMethod("Enqueue", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        enqueue.Invoke(worker, [new Action<RemoteSession>(_ =>
+        {
+            parked.TrySetResult(true);
+            releaseWork.Wait(TimeSpan.FromSeconds(10));
+        })]);
+        try
+        {
+            await parked.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            worker.CreateScene(name + "_unsent", _ => { });
+            worker.Stop();
+        }
+        finally { releaseWork.Set(); }
+        worker.Dispose();
+        checks.Add(new("replacing a parked session discards queued creation before it can publish",
+            !Directory.Exists(Path.Combine(Path.GetDirectoryName(saved)!, "save_" + name + "_unsent"))));
+    }
+
+    private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work, bool newScene = false)
     {
         await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } process &&
             File.Exists(process.SessionPath) && NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")?.Count > 0,
@@ -279,6 +416,7 @@ public static partial class Program
             !Path.GetFullPath(allowed).Equals(Path.GetFullPath(info.SourcePath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("An explicit disposable scene is required.");
         byte[] originalSource = File.ReadAllBytes(info.SourcePath);
+        bool retainDisposableSave = false;
         var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
         string meshSource = Environment.GetEnvironmentVariable("ATLANTIS_0087_MESH_SOURCE") ?? "content:managed_sample/source.gltf#mesh/0/0";
         var mesh = assets.Single(a => a.Source == meshSource);
@@ -322,6 +460,10 @@ public static partial class Program
             await NameUiWait(() => add.IsEnabled, "mesh reselected");
             await Task.Run(() => observer.Control.Pause());
             var before = await Capture("mesh-add-before");
+            if (newScene) Check("new Editor opened a camera-only scene with fresh history and no selection",
+                original.Count == 1 && before.Count == 0 &&
+                NameUiField<ListBox>(window, "_entities")!.SelectedItem is null &&
+                !NameUiField<Button>(window, "_undo")!.IsEnabled && !NameUiField<Button>(window, "_redo")!.IsEnabled);
             var initial = await ApplyView();
             if (withheld is not null) File.Move(withheld, backup!);
             Click(add);
@@ -374,6 +516,32 @@ public static partial class Program
             await Task.Run(() => observer.Control.Pause());
             Check("Redo restores the draw and material absence", (await Capture("mesh-add-redo")).Count == rendered.Count &&
                 (await Task.Run(() => doc.GetProperty(material)))?.IsAbsent == true);
+            if (newScene)
+            {
+                var newWorker = NameUiField<EditorWorker>(window, "_worker")!;
+                var entityList = NameUiField<ListBox>(window, "_entities")!;
+                entityList.SelectedItem = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!.First(r => r.Node == node.Node);
+                newWorker.CommitName(node.Node, "", "Mesh after new scene");
+                await NameUiWait(async () => (await Task.Run(() => observer.Authoring.ListNodes())).Value
+                    .Any(n => n.Node == node.Node && n.Name == "Mesh after new scene"), "restored object edited");
+                await NameUiWait(async () => (await ApplyView()).Request?.State == ApplyState.Pending,
+                    "edited object awaiting apply");
+                await Capture("new-scene-edited");
+                await NameUiWait(async () => (await ApplyView()).Request?.State == ApplyState.Applied, "edit applied");
+                Click(NameUiField<Button>(window, "_save")!);
+                await NameUiWait(() => File.ReadAllText(info.SourcePath).Contains("Mesh after new scene", StringComparison.Ordinal),
+                    "edited object saved");
+                if (await Task.Run(() => observer.Authoring.Open()) is not null) throw new InvalidOperationException("Saved source reopen refused.");
+                await NameUiWait(() => !NameUiField<Button>(window, "_undo")!.IsEnabled &&
+                    !NameUiField<Button>(window, "_redo")!.IsEnabled, "reopen clears local history");
+                var reopenedNodes = (await Task.Run(() => observer.Authoring.ListNodes())).Value;
+                Check("saved source reopens with the same camera and edited mesh identities",
+                    reopenedNodes.Any(n => original.Contains(n.Node)) &&
+                    reopenedNodes.Any(n => n.Node == node.Node && n.Name == "Mesh after new scene") &&
+                    (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid);
+                retainDisposableSave = checks.All(c => c.Ok);
+                return;
+            }
             Click(NameUiField<Button>(window, "_save")!);
             await NameUiWait(() => File.ReadAllText(info.SourcePath).Contains(node.Node.ToString(), StringComparison.Ordinal), "Save writes node GUID");
             Check("saved source contains both GUIDs", File.ReadAllText(info.SourcePath).Contains(mesh.Guid.ToString(), StringComparison.Ordinal));
@@ -445,7 +613,7 @@ public static partial class Program
         finally
         {
             if (backup is not null && File.Exists(backup)) File.Move(backup, withheld!);
-            File.WriteAllBytes(info.SourcePath, originalSource);
+            if (!retainDisposableSave) File.WriteAllBytes(info.SourcePath, originalSource);
         }
     }
 

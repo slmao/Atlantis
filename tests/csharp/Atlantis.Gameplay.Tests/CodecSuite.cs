@@ -173,6 +173,8 @@ public static class CodecSuite
             case "ApplyReceipt": return Codec.DecodeApplyReceipt(wire) is {} receipt ? W(Codec.Encode(receipt)) : null;
             case "ApplySnapshot": return Codec.DecodeApplySnapshot(wire) is {} snapshot ? W(Codec.Encode(snapshot)) : null;
             case "ApplyLookupError": return Codec.DecodeApplyLookupError(wire) is {} unknown ? W(Codec.Encode(unknown)) : null;
+            case "CreatedScene": return Codec.DecodeCreatedScene(wire) is {} scene ? W(Codec.Encode(scene)) : null;
+            case "CreateSceneError": return Codec.DecodeCreateSceneError(wire) is {} createError ? W(Codec.Encode(createError)) : null;
             case "SavedScene": return Codec.DecodeSavedScene(wire) is {} copy ? W(Codec.Encode(copy)) : null;
             case "SaveAsError": return Codec.DecodeSaveAsError(wire) is {} saveAsError ? W(JsonValue.String(saveAsError.ToString())) : null;
             case "AssetDetails": return Codec.DecodeAssetDetails(wire) is {} detail ? W(Codec.Encode(detail)) : null;

@@ -736,6 +736,30 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return failed(R::Err(E::UnknownOutcome));
   }
 
+  Result<ac::CreatedScene, ac::CreateSceneError> createScene(std::string_view name) override {
+    using E = ac::CreateSceneError;
+    using R = Result<ac::CreatedScene, E>;
+    if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    Value params = Value::object();
+    params.set("name", Value::string(std::string(name)));
+    const auto envelope = state_->awaitResponse(state_->send("authoring.createScene", std::move(params)));
+    if (envelope) {
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error && (result->find("ok") != nullptr) != (result->find("err") != nullptr)) {
+        const auto decoded = decodeInBand<ac::CreatedScene, E>(*result, &codec::decodeCreatedScene, &codec::decodeCreateSceneError);
+        if (decoded && (!decoded->isOk() || decoded->value().source == ac::saveAsSource(name))) return *decoded;
+      } else if (error && !result) {
+        const auto* code = error->find("code");
+        const auto* message = error->find("message");
+        if (code && code->isString() && code->asString() == "BadRequest" && message && message->isString() &&
+            message->asString() == "unknown method authoring.createScene") return R::Err(E::Unsupported);
+        if (code && code->isString() && code->asString() == "NoAuthoring") return R::Err(E::NoAuthoring);
+      }
+    }
+    return failed(R::Err(E::UnknownOutcome));
+  }
+
  private:
   template <typename T>
   T failed(T empty) const {

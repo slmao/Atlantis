@@ -40,8 +40,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 41 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 41,
-            "41 unique approved tools including asset rebuild, import and Save As");
+        Check(ToolRegistry.AllMappings.Length == 42 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 42,
+            "42 unique approved tools including asset rebuild, import, Save As and Create Scene");
         foreach (var c in CompositionCases)
         {
             FakeSession session = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };

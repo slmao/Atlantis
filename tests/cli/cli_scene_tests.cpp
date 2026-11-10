@@ -129,6 +129,31 @@ struct SceneCli {
 
 }  // namespace
 
+TEST_CASE("cli scene: a logical name creates a source while node creation stays structural", "[cli][scene]") {
+  namespace ac = atlantis::connection::authoring;
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene create a89_starter") == 1);
+  CHECK(member(*scene.envelope().find("error"), "code") == "\"Unavailable\"");
+  std::size_t creations = 0;
+  scene.session.setCreateSceneSink([&](std::string_view name, auto guid, std::string) {
+    ++creations;
+    return atlantis::Result<ac::CreatedScene, ac::CreateSceneError>::Ok({guid, ac::saveAsSource(name)});
+  });
+  REQUIRE(scene.run("scene create a89_starter") == 0);
+  CHECK(member(*scene.envelope().find("result"), "source") == "\"scenes/saved/save_a89_starter/scene.scene.txt\"");
+  CHECK(creations == 1);
+  REQUIRE(scene.run("scene open") == 0);
+  REQUIRE(scene.run("scene create --component Camera") == 0);
+  CHECK(creations == 1);
+  scene.session.setCreateSceneSink([&](std::string_view, auto, std::string) {
+    scene.disconnected = true;
+    return atlantis::Result<ac::CreatedScene, ac::CreateSceneError>::Err(ac::CreateSceneError::UnknownOutcome);
+  });
+  REQUIRE(scene.run("scene create lost_starter") != 0);
+  CHECK(scene.cli.out.str().find("scenes/saved/save_lost_starter/scene.scene.txt") != std::string::npos);
+  CHECK(scene.cli.out.str().find("confirm settlement") != std::string::npos);
+}
+
 TEST_CASE("cli scene: inspect shared target types without opening the document", "[cli][scene][schema]") {
   SceneCli scene(true);
   REQUIRE(scene.run("scene schema Renderable") == 0);

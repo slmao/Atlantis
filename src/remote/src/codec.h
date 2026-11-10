@@ -167,6 +167,10 @@ namespace authoring = atlantis::connection::authoring;
 [[nodiscard]] std::optional<authoring::SavedScene> decodeSavedScene(const Value& value);
 [[nodiscard]] Value encodeSaveAsError(authoring::SaveAsError error);
 [[nodiscard]] std::optional<authoring::SaveAsError> decodeSaveAsError(const Value& value);
+[[nodiscard]] Value encode(const authoring::CreatedScene& scene);
+[[nodiscard]] std::optional<authoring::CreatedScene> decodeCreatedScene(const Value& value);
+[[nodiscard]] Value encodeCreateSceneError(authoring::CreateSceneError error);
+[[nodiscard]] std::optional<authoring::CreateSceneError> decodeCreateSceneError(const Value& value);
 [[nodiscard]] Value encodeApplyError(authoring::ApplyError error);
 [[nodiscard]] std::optional<authoring::ApplyError> decodeApplyError(const Value& value);
 

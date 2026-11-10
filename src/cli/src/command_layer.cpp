@@ -1593,11 +1593,9 @@ std::vector<ac::Event> CommandLayer::drainSceneEvents() {
   return std::move(events.value());
 }
 
-connection::AuthoringConnection* CommandLayer::authoring() {
-  if (authoring_ == nullptr && authoringProvider_) {
-    authoring_ = authoringProvider_();
-    if (authoring_ != nullptr) authoringEvents_ = authoring_->subscribe(ac::EventFilter{});
-  }
+connection::AuthoringConnection* CommandLayer::authoring(bool observe) {
+  if (authoring_ == nullptr && authoringProvider_) authoring_ = authoringProvider_();
+  if (observe && authoring_ != nullptr && !authoringEvents_) authoringEvents_ = authoring_->subscribe(ac::EventFilter{});
   return authoring_;
 }
 
@@ -1808,12 +1806,35 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
 
 Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_view line) {
   const std::string command = t.size() >= 2 ? "scene " + std::string(t[1]) : std::string("scene");
-  connection::AuthoringConnection* a = authoring();
+  const bool createsSource = t.size() == 3 && t[1] == "create" && !t[2].starts_with("--") &&
+                             text::parseEntity(t[2]).isErr();
+  connection::AuthoringConnection* a = authoring(!createsSource);
   if (a == nullptr) {
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
   if (t.size() < 2) {
     return failed(command, usageError("scene schema|open|nodes|get|set|create|destroy|add|remove|parent|camera|apply|save|tx"));
+  }
+  // A sole logical name is disjoint from the existing entity GUID and option forms.
+  if (createsSource) {
+    const auto created = a->createScene(t[2]);
+    if (created.isErr()) {
+      const std::string code(ac::toString(created.error()));
+      if (created.error() == ac::CreateSceneError::UnknownOutcome)
+        return failed(command, plainError(code, ErrorCategory::Runtime,
+            "Create Scene outcome unknown for " + ac::saveAsSource(t[2]) +
+            ". Inspect both files and confirm settlement before retrying."));
+      const auto category = created.error() == ac::CreateSceneError::NoAuthoring ? ErrorCategory::Runtime : ErrorCategory::Refused;
+      return failed(command, plainError(code, category, "Create Scene refused: " + code));
+    }
+    const auto& unit = created.value();
+    Value result = Value::object();
+    const auto guid = atlantis::asset_system::toString(unit.scene);
+    result.set("scene", Value::string(guid));
+    result.set("source", Value::string(unit.source));
+    return done(command, "created " + unit.source + " (" + guid + "); current scene unchanged. Configure a separate "
+                "build with -DATLANTIS_SAVED_SCENE=" + std::string(t[2]) +
+                ", build atlantis_runtime and launch --scene saved_scene.\n", std::move(result));
   }
   const std::span<const TypeDescriptor> schema = a->schema();
   const std::string_view verb = t[1];

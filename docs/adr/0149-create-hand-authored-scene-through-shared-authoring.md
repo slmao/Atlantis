@@ -1,9 +1,9 @@
 # ADR 0149: Create Hand-Authored Scenes Through Shared Authoring
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-10
-- **Deciders:** Pending human review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** Accepted on 2026-11-10 at revision `89305f09` of [PR #341](https://github.com/slmao/Atlantis/pull/341).
 - **Related Spec:** [Spec 0089](../specs/0089-new-hand-authored-scene.md)
 
 ## Context

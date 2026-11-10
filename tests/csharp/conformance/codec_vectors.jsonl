@@ -187,6 +187,14 @@
 {"case":"apply.status.RenderPreparationFailed","type":"ApplySnapshot","wire":{"currentDocumentRevision":18446744073709551615,"request":{"receipt":{"id":"52052052-00aa-4052-8052-0000000000aa","documentRevision":18446744073709551615},"state":"Failed","error":"RenderPreparationFailed"},"projection":{"receipt":{"id":"52052052-0002-4052-8052-000000000002","documentRevision":1},"generation":8}}}
 {"case":"apply.status.RuntimeStopped","type":"ApplySnapshot","wire":{"currentDocumentRevision":18446744073709551615,"request":{"receipt":{"id":"52052052-00aa-4052-8052-0000000000aa","documentRevision":18446744073709551615},"state":"Failed","error":"RuntimeStopped"},"projection":{"receipt":{"id":"52052052-0002-4052-8052-000000000002","documentRevision":1},"generation":8}}}
 {"case":"apply.lookup.unknown","type":"ApplyLookupError","wire":"UnknownApply"}
+{"case":"create_scene.starter","type":"CreatedScene","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","source":"scenes/saved/save_sample/scene.scene.txt"}}
+{"case":"create_scene.Unavailable","type":"CreateSceneError","wire":"Unavailable"}
+{"case":"create_scene.InvalidName","type":"CreateSceneError","wire":"InvalidName"}
+{"case":"create_scene.UnsafeTarget","type":"CreateSceneError","wire":"UnsafeTarget"}
+{"case":"create_scene.Busy","type":"CreateSceneError","wire":"Busy"}
+{"case":"create_scene.NameConflict","type":"CreateSceneError","wire":"NameConflict"}
+{"case":"create_scene.IdentityConflict","type":"CreateSceneError","wire":"IdentityConflict"}
+{"case":"create_scene.WriteFailed","type":"CreateSceneError","wire":"WriteFailed"}
 {"case":"save_as.copy","type":"SavedScene","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","source":"scenes/saved/save_sample/scene.scene.txt","documentRevision":18446744073709551615}}
 {"case":"save_as.Unavailable","type":"SaveAsError","wire":"Unavailable"}
 {"case":"save_as.InvalidName","type":"SaveAsError","wire":"InvalidName"}
