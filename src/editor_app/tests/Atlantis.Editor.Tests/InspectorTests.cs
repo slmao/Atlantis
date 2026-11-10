@@ -318,6 +318,40 @@ public static partial class Program
             await Task.Run(() => observer.Authoring.Document()) == original &&
             pending?.Request?.State == ApplyState.Pending &&
             (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == pending));
+
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_RELEASE") is { } release)
+        {
+            File.WriteAllText(release + ".ready", runtime.SessionPath);
+            await NameUiWait(() => File.Exists(release), "independent saved-slot workflow", 600);
+            checks.Add(new("original source, unsaved edit and history survive the other Editor's workflow",
+                undo.IsEnabled && source.SequenceEqual(File.ReadAllBytes(original.SourcePath)) &&
+                (await Task.Run(() => observer.Authoring.Document())) == original &&
+                (await Task.Run(() => observer.Authoring.ListNodes())).Value.Any(n =>
+                    n.Node == subject.Node && n.Name == "Unsaved original 0089") &&
+                (await Task.Run(() => observer.Authoring.ApplyStatus())).Value == pending));
+        }
+
+        long lifetime = worker.MeshDocumentLifetime;
+        if (await Task.Run(() => observer.Authoring.Open()) is not null)
+            throw new InvalidOperationException("Original fixture reopen refused.");
+        await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "original document reopened");
+        box.Text = name + "_late";
+        await NameUiWait(() => action.IsEnabled, "creation remains eligible after document reopen");
+        action.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var field = typeof(MainWindow).GetField("_worker", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        field.SetValue(window, null);
+        const string replacement = "Replacement session feedback";
+        notice.Text = replacement;
+        try
+        {
+            bool drained = false;
+            worker.QueryImport(null, _ => drained = true);
+            await NameUiWait(() => drained, "old worker creation callback drained");
+            checks.Add(new("document reopen keeps creation valid; a late callback cannot overwrite a replacement session",
+                notice.Text == replacement && File.Exists(Path.Combine(Path.GetDirectoryName(saved)!,
+                    "save_" + name + "_late", "scene.scene.txt"))));
+        }
+        finally { field.SetValue(window, worker); }
     }
 
     private static async Task CheckAddMeshUi(MainWindow window, List<NameUiCheck> checks, Action<string> work, bool newScene = false)
@@ -334,6 +368,7 @@ public static partial class Program
             !Path.GetFullPath(allowed).Equals(Path.GetFullPath(info.SourcePath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("An explicit disposable scene is required.");
         byte[] originalSource = File.ReadAllBytes(info.SourcePath);
+        bool retainDisposableSave = false;
         var assets = (await Task.Run(() => observer.Assets.ListAssets())).Value;
         string meshSource = Environment.GetEnvironmentVariable("ATLANTIS_0087_MESH_SOURCE") ?? "content:managed_sample/source.gltf#mesh/0/0";
         var mesh = assets.Single(a => a.Source == meshSource);
@@ -456,6 +491,7 @@ public static partial class Program
                     reopenedNodes.Any(n => original.Contains(n.Node)) &&
                     reopenedNodes.Any(n => n.Node == node.Node && n.Name == "Mesh after new scene") &&
                     (await Task.Run(() => doc.GetProperty(meshAddress)))?.AsAsset() == mesh.Guid);
+                retainDisposableSave = checks.All(c => c.Ok);
                 return;
             }
             Click(NameUiField<Button>(window, "_save")!);
@@ -529,7 +565,7 @@ public static partial class Program
         finally
         {
             if (backup is not null && File.Exists(backup)) File.Move(backup, withheld!);
-            File.WriteAllBytes(info.SourcePath, originalSource);
+            if (!retainDisposableSave) File.WriteAllBytes(info.SourcePath, originalSource);
         }
     }
 
