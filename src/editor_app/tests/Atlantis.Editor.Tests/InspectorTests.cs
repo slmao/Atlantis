@@ -61,14 +61,14 @@ public static partial class Program
         }) { Name = "Atlantis name UI smoke", IsBackground = true };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        if (!thread.Join(TimeSpan.FromMinutes(6)))
+        if (!thread.Join(TimeSpan.FromMinutes(scene == "--saved-scene-workflow" ? 20 : 6)))
         {
             Dispatcher.UIThread.Post(() =>
             {
                 if (Application.Current?.ApplicationLifetime is IControlledApplicationLifetime desktop) desktop.Shutdown(1);
             });
             thread.Join(TimeSpan.FromSeconds(30));
-            checks.Add(new NameUiCheck("bounded UI lifetime", false, "exceeded six minutes"));
+            checks.Add(new NameUiCheck("bounded UI lifetime", false, "fixture timed out"));
             exit = 1;
         }
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
@@ -106,6 +106,9 @@ public static partial class Program
         {
             if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
             {
+                bool savedWorkflow = _scene == "--saved-scene-workflow";
+                bool savedOwnership = _scene == "--saved-scene-ownership";
+                bool savedPanel = savedWorkflow || savedOwnership;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool lostCreation = _scene == "--new-scene-lost-reply";
@@ -115,12 +118,17 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene ? "integrated_showcase_demo" : _scene)
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel ? "integrated_showcase_demo" : _scene)
                 {
-                    AllowSceneSaveAs = _scene == "--new-scene" || lostCreation,
-                    AssetBuildProfile = import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
+                    AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
+                    SavedSceneCheckout = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT") : null,
+                    SavedSceneCMake = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CMAKE") : null,
+                    SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,
+                    AssetBuildProfile = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
+                        import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
+                    AssetGeneration = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
+                        import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
@@ -130,7 +138,9 @@ public static partial class Program
                 {
                     try
                     {
-                        if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
+                        if (savedWorkflow) await CheckSavedSceneWorkflow(window, _checks, _work);
+                        else if (savedOwnership) await CheckSavedSceneOwnership(window, _checks);
+                        else if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
                         else if (newScene) await CheckNewSceneUi(window, _checks, _scene == "--new-scene" || lostCreation);
                         else if (addMesh) await CheckAddMeshUi(window, _checks, _work, addToNew);
                         else if (saveAs) await CheckSaveAsUi(window, _checks);
@@ -248,7 +258,7 @@ public static partial class Program
         if (await Task.Run(() => observer.Authoring.Open()) is not null) throw new InvalidOperationException("Fixture reopen refused.");
         await NameUiWait(() => worker.MeshDocumentLifetime != lifetime, "source reopened");
         string? stale = null;
-        worker.SaveAs(name + "_stale", lifetime, result => stale = result);
+        worker.SaveAs(name + "_stale", lifetime, (result, _) => stale = result);
         await NameUiWait(() => stale is not null, "stale copy settled");
         checks.Add(new("old document lifetime refuses Save As before sending", stale!.StartsWith("Save As refused", StringComparison.Ordinal) &&
             !Directory.Exists(Path.Combine(savedRoot, "save_" + name + "_stale"))));
@@ -393,7 +403,7 @@ public static partial class Program
         try
         {
             await parked.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            worker.CreateScene(name + "_unsent", _ => { });
+            worker.CreateScene(name + "_unsent", (_, _) => { });
             worker.Stop();
         }
         finally { releaseWork.Set(); }

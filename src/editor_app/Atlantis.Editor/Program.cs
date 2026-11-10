@@ -51,6 +51,7 @@ public static class Program
         string? outPath = null;
         string? sessionPath = null;
         string? assetBuildProfile = null, assetGeneration = null;
+        string? savedCheckout = null, savedCMake = null;
         int measureFrames = 0;
         bool allowSceneSaveAs = false;
         bool smoke = false;
@@ -76,6 +77,8 @@ public static class Program
                 case "--runtime": runtime = Next(); break;
                 case "--scene": scene = Next(); break;
                 case "--allow-scene-save-as": allowSceneSaveAs = true; break;
+                case "--saved-scene-checkout": savedCheckout = Next(); break;
+                case "--saved-scene-cmake": savedCMake = Next(); break;
                 case "--asset-build-profile": assetBuildProfile = Next(); break;
                 case "--asset-generation": assetGeneration = Next(); break;
                 case "--out": outPath = Next(); break;
@@ -118,6 +121,22 @@ public static class Program
             return Usage("--asset-build-profile is for the ordinary editor launch");
         if (allowSceneSaveAs && (smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
             return Usage("--allow-scene-save-as is for the ordinary editor launch");
+        if (savedCheckout is not null || savedCMake is not null)
+        {
+            if (savedCheckout is null || savedCMake is null)
+                return Usage("saved scene builds require both --saved-scene-checkout and --saved-scene-cmake");
+            if (!OperatingSystem.IsWindows() || smoke || measureEdit || measureDrag || measureOverlay ||
+                measureFrames > 0 || attach is not null || scene == "saved_scene")
+                return Usage("saved scene builds require the ordinary Windows launcher on a scene other than saved_scene");
+            if (!string.Equals(Path.GetFileNameWithoutExtension(Environment.ProcessPath), "Atlantis.Editor", StringComparison.OrdinalIgnoreCase))
+                return Usage("saved scene builds require the Atlantis.Editor.exe apphost");
+            try
+            {
+                savedCheckout = SavedSceneWorkspace.CheckoutPath(savedCheckout);
+                savedCMake = SavedSceneWorkspace.CMakePath(savedCMake);
+            }
+            catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { return Usage(e.Message); }
+        }
         if (measureFrames > 0)
         {
             if (sessionPath is null) return Usage("--measure-frames needs --session <session file>");
@@ -139,6 +158,9 @@ public static class Program
             AssetBuildProfile = assetBuildProfile is null ? null : Path.GetFullPath(assetBuildProfile),
             AssetGeneration = assetGeneration,
             AllowSceneSaveAs = allowSceneSaveAs,
+            SavedSceneCheckout = savedCheckout,
+            SavedSceneCMake = savedCMake,
+            SavedSceneAppHost = savedCheckout is null ? null : Environment.ProcessPath,
             MeasureDrag = measureDrag,
             AttachSession = attach is null ? null : Path.GetFullPath(attach),
             DriveDrags = drive,
@@ -162,6 +184,7 @@ public static class Program
         Console.Error.WriteLine("Atlantis.Editor: " + why);
         Console.Error.WriteLine(
             "usage: Atlantis.Editor [--runtime <exe>] [--scene <name>] [--asset-build-profile <file> [--asset-generation <guid>]] [--allow-scene-save-as]\n" +
+            "                       [--saved-scene-checkout <absolute path> --saved-scene-cmake <absolute exe>]\n" +
             "       Atlantis.Editor --smoke [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
             "       Atlantis.Editor --measure-edit [--runtime <exe>] [--scene <name>] [--out <file>]\n" +
             "       Atlantis.Editor --measure-frames <n> --session <session file> [--out <file>]\n" +
