@@ -145,6 +145,13 @@ TEST_CASE("cli scene: a logical name creates a source while node creation stays 
   REQUIRE(scene.run("scene open") == 0);
   REQUIRE(scene.run("scene create --component Camera") == 0);
   CHECK(creations == 1);
+  scene.session.setCreateSceneSink([&](std::string_view, auto, std::string) {
+    scene.disconnected = true;
+    return atlantis::Result<ac::CreatedScene, ac::CreateSceneError>::Err(ac::CreateSceneError::UnknownOutcome);
+  });
+  REQUIRE(scene.run("scene create lost_starter") != 0);
+  CHECK(scene.cli.out.str().find("scenes/saved/save_lost_starter/scene.scene.txt") != std::string::npos);
+  CHECK(scene.cli.out.str().find("confirm settlement") != std::string::npos);
 }
 
 TEST_CASE("cli scene: inspect shared target types without opening the document", "[cli][scene][schema]") {

@@ -134,8 +134,13 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 41 tools", tools.Count == 41 && tools.Select(t => t.Name).Distinct().Count() == 41);
+            Require("real host discovers exactly 42 tools", tools.Count == 42 && tools.Select(t => t.Name).Distinct().Count() == 42);
         }
+        var unavailableCreation = await first.CallToolAsync("authoring.create_scene",
+            new Dictionary<string, object?> { ["name"] = "requires_opt_in" }, cancellationToken: _token);
+        Require("creation requires explicit host opt-in on a live session", unavailableCreation.IsError == true &&
+            unavailableCreation.Content.OfType<TextContentBlock>().Any(content =>
+                content.Text.Contains("Unavailable", StringComparison.Ordinal)));
         await Query(first, "control.pause");
         Require("Runtime paused", (await Query(first, "control.status")).Find("paused")?.AsBool == true);
         await Query(first, "authoring.open");

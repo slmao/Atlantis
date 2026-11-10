@@ -351,6 +351,10 @@ int Invocation::finish(Reply reply) {
       failure->message += id && id->isString() ? "; apply " + id->asString() + " completion unknown" : "; apply completion unknown";
       failure->text = "error: " + failure->message;
     }
+    if (checked.command == "scene create" && checked.error && checked.error->code == "UnknownOutcome") {
+      failure->message += "; " + checked.error->message;
+      failure->text = "error: " + failure->message;
+    }
     if (checked.command == "assets import" || checked.command == "assets import-status") {
       failure->message += checked.command == "assets import" ? "; import admission unknown" : "; import outcome unknown";
       failure->text = "error: " + failure->message;
