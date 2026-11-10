@@ -1,11 +1,11 @@
 # Spec: Build and Open Saved Scenes
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-11
 - **Related Plan:** [Plan 0090](../plans/0090-saved-scene-build-open.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0150](../adr/0150-local-saved-scene-build-launch.md) (Proposed)
+- **Approval:** Jointly approved at revision `6a128904` of [PR #343](https://github.com/slmao/Atlantis/pull/343), 2026-11-11. See Plan 0090.
+- **Related ADR:** [ADR-0150](../adr/0150-local-saved-scene-build-launch.md) (Accepted)
 
 ## Summary
 

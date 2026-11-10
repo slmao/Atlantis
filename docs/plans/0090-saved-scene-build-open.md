@@ -1,10 +1,10 @@
 # Plan: Build and Open Saved Scenes
 
 - **Spec:** [Spec 0090](../specs/0090-saved-scene-build-open.md)
-- **ADR:** [ADR-0150](../adr/0150-local-saved-scene-build-launch.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0150](../adr/0150-local-saved-scene-build-launch.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** The owner approved J1–J4, Spec/Plan 0090 and ADR-0150 at `6a128904` on 2026-11-11. [PR #343](https://github.com/slmao/Atlantis/pull/343) was manually merged as `cb14ccf9`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Final merge remains human.
 
 ## Objective
 

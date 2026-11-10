@@ -1,9 +1,9 @@
 # ADR 0150: Local Saved Scene Build and Launch
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-11
-- **Deciders:** Pending human review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** Accepted on 2026-11-11 at revision `6a128904` of [PR #343](https://github.com/slmao/Atlantis/pull/343).
 - **Related Spec:** [Spec 0090](../specs/0090-saved-scene-build-open.md)
 
 ## Context
