@@ -1,0 +1,127 @@
+# Plan: New Hand-Authored Scene
+
+- **Spec:** [Spec 0089](../specs/0089-new-hand-authored-scene.md)
+- **ADR:** [ADR-0149](../adr/0149-create-hand-authored-scene-through-shared-authoring.md) (Proposed)
+- **Status:** Draft
+- **Author:** Codex
+- **Joint Human Review:** Pending
+
+## Objective
+
+Deliver one shared operation that creates a durable starter scene and uses
+the existing saved-slot launch path. Verify the full workflow without
+changing the original session or introducing a new document lifecycle.
+
+## Milestones / Task Breakdown
+
+1. **S1 — Design.** Review the Spec, Plan, and ADR together and record J1–J4.
+2. **S2 — Authoring and publication.** Add the starter and shared values in
+   Authoring/Connection. Reuse the existing serialization and cook. Factor
+   only the executable-private publication common to Create Scene and Save
+   As; keep snapshot and result semantics in their respective operations.
+3. **S3 — Shared clients and Editor.** Carry the operation through Remote,
+   CLI, both SDKs, and MCP. Add the Editor action, lifecycle guards and
+   saved-slot instructions. Leave launch, asset addition, Save and
+   apply recovery on their existing paths.
+4. **S4 — Verification and PR.** Run the mapped checks, cite valid reused
+   evidence, and submit the exact implementation candidate for human review.
+
+## Files / Modules Touched (expected)
+
+- **Authoring and Connection:** AuthoringConnection headers and in-process
+  implementation; AuthoringSession header/source and focused authoring
+  tests. Use existing Asset System public helpers without format or module
+  changes.
+- **Executable host:** `src/runtime/authoring_host.*`, `main.cpp` and
+  `cli.*` where the existing opt-in is routed or documented,
+  `scene_save_as.*` for the shared publication primitive, and focused
+  host/filesystem tests in `tests/runtime/`. Keep the helper in the
+  existing translation unit. No new build target, saved-slot logic or
+  RuntimeHost change is planned.
+- **Clients:** Existing authoring codecs and dispatch in `src/remote/`,
+  command handling in `src/cli/`, authoring wrappers in the Gameplay
+  SDK and `src/csharp/`, MCP schema/registry in `src/mcp/`, and
+  `src/editor_app/` MainWindow, EditorSession and focused Editor tests.
+  Extend current boundary/codec/client tests and regenerate conformance
+  vectors through their existing generator.
+- **Docs:** README usage and opt-in, Remote protocol and module-boundary
+  documentation, and navigation updates. Link the acceptance evidence
+  from the implementation PR.
+
+No changes are expected in Runtime frame/render code, Asset System
+formats, build/CI, Android hosting, or committed goldens. Report any
+necessary file-list adjustment in the implementation PR.
+
+## Sequencing & Dependencies
+
+Base on [0088 / PR #340](https://github.com/slmao/Atlantis/pull/340).
+Reuse [0087](../specs/0087-add-mesh-to-scene.md) and
+[0083](../specs/0083-authoring-apply-outcomes.md) in the new session.
+Start S2 only after joint approval, ADR acceptance and manual design merge.
+
+| Decision | Recommendation |
+| --- | --- |
+| **J1 — Starter and identity** | Approve the fixed active camera, no source asset references, and fresh persistent scene/camera GUIDs (R2). |
+| **J2 — Destination and recovery** | Approve reuse of the existing Windows development opt-in, saved-unit namespace and no-replace publisher, including shared conflicts and 0088 recovery (R1/R3). |
+| **J3 — Shared contract and lifecycle** | Approve one additive operation, preservation of original unsaved work, and explicit activation in a separate Runtime through the existing build slot (R4/R5). |
+| **J4 — Acceptance and delivery** | Approve the verification below and one authorization for S2–S4 after human design merge, retaining existing gates. |
+
+Suggested authorization: “I approve J1–J4 and Spec/Plan 0089 together and
+accept ADR-0149. After manual design merge, proceed from current main
+through S2–S4, including scoped fixes, applicable verification, valid
+evidence reuse and a review-ready implementation PR. Final merge is human.”
+
+## Verification Checklist
+
+- [ ] **S1:** Check numbering, references, statuses, scope and whitespace.
+- [ ] **R1–R3: creation and publication.** Check unopened and imported
+  sessions, disabled/unavailable hosts, invalid names, unsafe roots, and
+  occupied destinations. Cook and decode the starter; verify the exact
+  active camera, defaults, absence of source references, distinct
+  identities between creations, and fixed relative path. Exercise a
+  cross-host Create/Save As race for one name, forced scene identity
+  conflict, staging/commit failure, and a dropped reply after commit. Check
+  one intact winner, no partial publication, original/other files untouched
+  and no automatic retry. Reuse 0088 cases only when the affected primitive
+  and relevant inputs are unchanged.
+- [ ] **R4: contract and current state.** Check native/C# codec vectors and
+  parity across CLI, SDKs, MCP and Editor. Check old-client calls on the new
+  host, exact legacy Unsupported handling, and malformed success (nil GUID
+  or wrong path). With unsaved accepted edits, a client draft and an
+  outstanding apply, exercise success, refusal and response loss. Verify
+  no create-induced save, edit, reopen, history item, receipt change, or
+  reload; distinguish any ordinary focus or pending work. Exercise repeated
+  clicks, session replacement before send and a stale result after send.
+- [ ] **R5: one live Windows acceptance.** In a disposable development
+  checkout, start the original host with a distinguishable unsaved edit.
+  Use the Editor to create a starter; verify the original remains attached
+  with the edit and history intact. Build the starter in a separate tree and
+  launch `--scene saved_scene`. Open normally and verify the camera-only
+  scene, fresh history and bound source. Add a catalog-visible mesh via
+  Assets (a committed 0086 import may be used with the same managed inputs),
+  edit its name or transform, observe successful apply, then undo and redo.
+  Use one controlled reload failure to verify retained document/history and
+  the unchanged 0083 recovery, then confirm a successful apply. Save, reopen
+  the new document, and independently rebuild/restart and reopen it. Verify
+  the scene, camera and mesh-node identities, reference, edited value and
+  visible object persist. Verify original files and the original Runtime
+  binding stayed unchanged; cover a missing build dependency and retry
+  with the same new unit.
+- [ ] **Applicable gates:** Run focused Windows native/managed build,
+  boundary, conformance, Editor and live Vulkan validation checks. Cover
+  shared Android compile paths as applicable. Run or justify reuse of
+  applicable headless and golden checks; use the full-diff performance
+  applicability selector and original protocol if selected. Cite the
+  revision, inputs and configuration supporting any reuse. Do not
+  reopen or waive the historical #340 performance record.
+
+## Rollback Plan
+
+Revert Create Scene and its client action. Units already committed use the
+0088 scene and fragment formats and can still be opened with the saved slot.
+
+## Definition of Done
+
+Follow the [Definition of Done](../process/definition-of-done.md).
+S4 records all applicable evidence for the exact candidate; final review
+and merge remain human.
