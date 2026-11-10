@@ -67,6 +67,19 @@ public static partial class Program
             Check(workspace.Discover().Names.SequenceEqual(new[] { "alpha", "zeta" }),
                 "discovery sorts only ordinary complete canonical units");
 
+            // The reference Windows machine permits symlinks. Other development machines can
+            // run these model checks without elevation or Developer Mode.
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(saved, "save_link"), Path.Combine(saved, "save_alpha"));
+                Check(workspace.Discover().Names.SequenceEqual(new[] { "alpha", "zeta" }),
+                    "discovery omits a reparse unit even when it resolves to two valid leaves");
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine("  skip  saved scene symlink fixture: " + e.Message);
+            }
+
             string reply = Directory.CreateDirectory(Path.Combine(work, ".cmake", "api", "v1", "reply")).FullName;
             string exe = Path.Combine(Directory.CreateDirectory(Path.Combine(work, "Debug")).FullName, "atlantis_runtime.exe");
             File.WriteAllText(exe, "runtime");
@@ -176,6 +189,12 @@ public static partial class Program
         var model = NameUiField<SavedSceneAttempts>(window, "_savedAttempts")!;
         void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         tabs.SelectedIndex = 2;
+        typeof(MainWindow).GetMethod("ShowSavedSceneReceipt", System.Reflection.BindingFlags.Instance |
+            System.Reflection.BindingFlags.NonPublic)!.Invoke(window,
+            [new SavedSceneReceipt("first", new AssetGuid(Guid.NewGuid()), "scenes/saved/save_first/scene.scene.txt")]);
+        checks.Add(new("same-name receipt remains a hint and cannot select a unit in this checkout",
+            list.SelectedItem is null && !build.IsEnabled &&
+            NameUiField<TextBlock>(window, "_savedHint")!.Text!.Contains("does not verify the checkout", StringComparison.Ordinal)));
         list.SelectedItem = "first";
         Click(build);
         await NameUiWait(() => !model.Busy, "fixture build settled", 90);
@@ -281,13 +300,20 @@ public static partial class Program
             return model.Result;
         }
 
+        static string RuntimeLog(string path)
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+            return reader.ReadToEnd();
+        }
+
         static string? FindChildWork(string executable)
         {
             foreach (string dir in Directory.EnumerateDirectories(Path.Combine(Path.GetTempPath(), "atlantis_editor")))
             {
                 string log = Path.Combine(dir, "runtime.log");
                 if (!File.Exists(log)) continue;
-                try { if (File.ReadLines(log).FirstOrDefault()?.StartsWith("# " + executable + " ", StringComparison.OrdinalIgnoreCase) == true) return dir; }
+                try { if (RuntimeLog(log).StartsWith("# " + executable + " ", StringComparison.OrdinalIgnoreCase)) return dir; }
                 catch (IOException) { }
             }
             return null;
@@ -328,7 +354,8 @@ public static partial class Program
                 var savedDoc = (await Task.Run(() => session.Authoring.Document()))!;
                 string source = Path.Combine(checkout, "assets", "scenes", "saved", "save_" + artifact.Input.Name, "scene.scene.txt");
                 string catalog = File.ReadAllText(Path.Combine(Path.GetDirectoryName(source)!, "catalog-source.txt"));
-                string childArgs = File.ReadLines(Path.Combine(childWork!, "runtime.log")).First();
+                string childLog = Path.Combine(childWork!, "runtime.log");
+                string childArgs = RuntimeLog(childLog).Split('\n')[0];
                 CheckUi("child binds exact saved source and identity with isolated session and no inherited generation",
                     Path.GetFullPath(savedDoc.SourcePath).Equals(Path.GetFullPath(source), StringComparison.OrdinalIgnoreCase) &&
                     catalog.Contains(savedDoc.Scene.ToString(), StringComparison.Ordinal) &&
@@ -359,7 +386,7 @@ public static partial class Program
                     session.Authoring.ListNodes().Value.Any(n => n.Node == node && n.Name == edited) &&
                     session.Authoring.GetProperty(SceneSchema.AddressOf(session.Authoring.Schema, node, "Renderable", "meshAsset")!.Value)
                         .Value.AsAsset() == reference));
-                File.Copy(Path.Combine(childWork!, "runtime.log"), Path.Combine(runtime.Launch.WorkDirectory, artifact.Input.Name + "-child.log"));
+                File.WriteAllText(Path.Combine(runtime.Launch.WorkDirectory, artifact.Input.Name + "-child.log"), RuntimeLog(childLog));
             }
             finally { await Close(child, artifact.Input.Name); }
             CheckUi("saving invalidates Open after child exit for " + artifact.Input.Name,
@@ -378,7 +405,7 @@ public static partial class Program
             try
             {
                 await NameUiWait(() => FindChildWork(missing.Executable) is { } dir &&
-                    File.ReadAllText(Path.Combine(dir, "runtime.log")).Contains("SceneDependencyLoadFailed", StringComparison.Ordinal),
+                    RuntimeLog(Path.Combine(dir, "runtime.log")).Contains("SceneDependencyLoadFailed", StringComparison.Ordinal),
                     "missing managed asset rejected by Runtime startup", 90);
                 checks.Add(new("missing managed asset is a child startup failure after a successful build", true));
             }
