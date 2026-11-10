@@ -42,71 +42,93 @@ and cross-process editing or build locks.
 ### Functional
 
 - **R1 — Local workspace and selection.** The ordinary Windows development
-  Editor apphost enables this panel only with explicit local launch settings
-  naming an absolute trusted Atlantis checkout and CMake executable. The
-  operator may select an absolute committed managed import root in the panel
-  while idle. These inputs do not derive from Runtime paths, RPC data, or the
-  current document. Show the selected checkout. On opening the panel or on explicit
-  Refresh, list names in ordinal order from the immediate children of
-  `assets/scenes/saved` that have canonical `save_<name>` names and the two
-  ordinary leaves `scene.scene.txt` and `catalog-source.txt`. Reuse the logical
-  name rules, refuse reparse points in the inspected paths, and ignore private
-  staging, unrelated entries and incomplete units. Treat this as discovery
-  only. CMake remains authoritative for catalog, identity and source validation.
-  A confirmed New Scene or Save As result may offer its logical name as a
-  selection hint after Refresh. Show the receipt and the local checkout
-  separately. A matching name does not verify that a receipt came from this
-  checkout. Refusals and unknown outcomes never imply that a unit is ready to
-  build. Existing inspection and settlement rules still apply.
+  Editor apphost enables the panel through explicit local launch settings for
+  the absolute trusted Atlantis checkout and local CMake executable. The operator
+  may choose an absolute trusted committed managed import root in the panel
+  while idle. These settings do not come from a Runtime session, receipt,
+  current document, or the child apphost. Build authority and the Runtime's
+  source-write opt-in are separate. The panel can work without a connected
+  Runtime. Limit the panel to an ordinary launcher whose own scene selection
+  is other than `saved_scene`, so it cannot open a second copy of its own
+  saved document.
+
+  Show the checkout and distinguish a missing saved directory from a path or
+  access error. On opening the panel or on Refresh, list the immediate
+  `assets/scenes/saved` children in ordinal order. Use the existing canonical
+  `save_<name>` spelling and logical name rules. Inspect ordinary paths on
+  the local case-insensitive NTFS checkout. Refuse reparse points in the
+  checkout ancestry and through the unit and both fixed leaves. Omit private staging,
+  unrelated names, and incomplete or unsafe units. Repeat the same checks
+  before Build and Open. The list is a discovery view. CMake owns catalog,
+  identity and source validation.
+
+  Only a typed success from New Scene or Save As may suggest a name. Show its
+  source path and scene GUID separately from the candidate's checkout. The
+  user explicitly selects the local unit, even when its name matches the
+  hint. A match does not establish identity or location. Refusal and unknown
+  outcomes retain the existing inspection and settlement guidance. Neither
+  outcomes nor Refresh start a build or launch.
 - **R2 — Build inputs and generation.** Build starts only on explicit user
   action. First release uses one profile, Visual Studio 18 2026, x64, Debug.
-  Use the configured CMake executable with an argument vector, the selected
-  checkout as source, a fresh absolute build directory owned by this attempt,
-  and `-DATLANTIS_SAVED_SCENE=<name>`. Configure with the optional
-  `ATLANTIS_MANAGED_IMPORT_ROOT` only when explicitly supplied, then build the
-  `atlantis_runtime` target with `--config Debug`. Show these settings and the
-  build directory with the result. The saved slot cooks the checkout and any
-  committed managed imports at build time. It does not consume, change, or
-  publish the original Runtime's asset generation. The child gets no
-  `--asset-build-profile` or `--asset-generation` arguments. If a scene refers to
-  a managed asset, use its committed source and stable identity in the supplied
-  root. Missing dependencies are build failures with actionable diagnostics.
+  Invoke the configured CMake executable with structured arguments and no
+  shell. Configure with `-S <checkout> -B <attempt>`, `-G "Visual Studio 18 2026"`,
+  `-A x64`, and `-DATLANTIS_SAVED_SCENE=<name>`. Pass
+  `-DATLANTIS_MANAGED_IMPORT_ROOT=<root>` only for an explicit selection.
+  Then use `cmake --build <attempt> --config Debug --target atlantis_runtime`.
+  Show the captured settings, selected name and attempt directory.
+  The saved slot cooks the checkout and any committed managed imports at
+  build time. It does not consume, change, or publish the original Runtime's
+  asset generation. The child receives neither `--asset-build-profile` nor
+  `--asset-generation`. A managed reference uses the committed source and
+  stable asset identity in the selected root. The existing build or Runtime
+  startup path can reject missing dependencies. A successful build does not
+  prove that the Runtime can load the scene.
 - **R3 — Build state, isolation and retry.** Allow one configure/build in
-  flight per launcher. Lock selection, Refresh, and managed root changes while it runs. Disable
-  Build and Open during the attempt. Show Configuring, Building, Failed or Succeeded, with the relevant
-  exit result and a path to the retained stdout/stderr log. The launcher owns
-  the configure and build processes, drains their output off the UI thread
-  and defers ordinary window close until they settle. On forced exit, leftover
-  tool processes may finish in that attempt's isolated directory. A new
-  launcher starts with no eligible result. Each accepted Build discards the
-  previous Open eligibility and uses a fresh directory, including retries. Changing the managed root invalidates Open eligibility.
-  Record the selected two files' content fingerprints at admission. Recheck
-  them after building and before Open. If either differs or is missing, mark
-  the attempt stale and require explicit Build. This check covers the two
-  saved-unit files and does not lock them or certify other build inputs.
-  Configure and build must both succeed. Resolve the executable from the
-  fresh CMake File API codemodel for the Debug `atlantis_runtime` target and
-  require an existing ordinary executable resolved inside the attempt's build
-  directory. Missing
-  or ambiguous artifact metadata is a build failure. No previous output can
-  satisfy the new attempt. Retain output and logs for inspection.
-- **R4 — Explicit independent open.** Enable Open only for the selected unit's
-  successful, current build result. Use the same ordinary Windows Editor
-  apphost with the built executable and `--scene saved_scene`. The child
-  Editor owns its Runtime and session file. The launcher reports whether
-  the Editor process started, and the child reports its Runtime connection
-  and document readiness through the ordinary UI. The launcher never
-  attaches to that Runtime or transfers the original session, source-write
-  opt-in or build-launch settings to the child. Suppress repeat Open while
-  starting or while a child launched by this launcher for that source is
-  alive. Disable Build for that same source while the child is alive. A child
-  exit releases both guards. A process start failure is
-  retryable against the same eligible build. If Runtime startup fails
-  inside the child, the user can inspect its diagnostics, close it and
-  retry Open or Build as appropriate. A successfully started child
-  survives closure of the launcher. External Editors and manual launches
-  are outside the duplicate guard. The UI must identify the source so
-  users can avoid opening it for writing in multiple Editors.
+  flight per launcher. Lock selection, Refresh, and managed root changes
+  while it runs. Disable Build and Open during the attempt. Show Configuring,
+  Building, Failed, Stale or Succeeded, with the phase, available exit
+  result and path to retained stdout/stderr. Drain output off the UI thread.
+  The launcher owns these tool processes. Refuse ordinary close while the
+  attempt is active and tell the user when they can close again. On forced
+  exit, leftover tools may finish in the isolated attempt directory. A new
+  launcher starts with no eligible result.
+
+  Each accepted Build immediately invalidates the previous result, even
+  when configuration never starts. Reserve a fresh directory under the launcher's local work area for every
+  attempt. Changing the managed root or losing the selected unit from a
+  refresh invalidates eligibility. Open can use only the last successful
+  result for the selected unit and inputs.
+
+  Capture fingerprints of both saved-unit files at admission, and compare
+  after building and immediately before Open. Require successful configure
+  and build, then resolve the executable from the attempt's current CMake
+  File API codemodel for the exact Debug `atlantis_runtime` target. Request
+  the codemodel before configure. Require an unambiguous ordinary executable
+  within the attempt directory and capture its fingerprint with the result.
+  Immediately before Open, require that the executable still resolves
+  inside that directory and matches the fingerprint. A changed, missing,
+  or unsafe checked input or executable makes the result stale and requires
+  explicit Build. A fresh attempt cannot fall back to earlier output.
+  These checks detect changes in the two source files and the executable.
+  Broader build freshness and source locking remain out of scope.
+- **R4 — Explicit independent open.** Enable Open only for an eligible
+  selected result. Start the same ordinary Windows Editor apphost with an
+  absolute `--runtime <built executable>` and `--scene saved_scene`. The child
+  owns its Runtime and session file. The launcher reports process start or
+  start failure. The child reports Runtime startup, connection and document
+  readiness through its ordinary UI. Do not transfer the original session,
+  source-write opt-in or build-launch settings to the child.
+
+  Reserve the canonical local unit before starting the process. Suppress
+  repeated Open and Build for that unit until start fails or the launched
+  Editor exits. Refuse ordinary close while start is in flight. A
+  successfully started child survives closure of the launcher. A start
+  failure with an eligible result permits another Open. If Runtime startup
+  or document open fails in the child, show the ordinary diagnostics there.
+  Close the child and retry Open if the same artifact remains eligible.
+  For missing build inputs, correct the inputs, Build again, then Open.
+  The guard is per launcher and does not cover other Editors or manual
+  launches. Show the source so users can avoid simultaneous writers.
 - **R5 — Editing continuity.** Ordinary authoring in the child binds to the
   source of `saved_scene`. Existing shared editing, apply, undo/redo, and Save
   rules govern that document. The original Editor remains on its own Runtime,
@@ -155,7 +177,7 @@ successful build into a second Editor, edit and save.
 
 The proposed first release uses a single toolchain profile and retains build
 directories until the user cleans them up. Its freshness check is limited to
-the saved unit. The build consumes live checkout and managed source inputs.
+the saved unit and resolved executable. The build consumes live checkout and managed source inputs.
 The launcher is not a source lock. Confirm these bounds in joint review.
 
 ## Out of Scope / Future Work

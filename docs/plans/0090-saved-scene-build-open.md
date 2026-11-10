@@ -19,7 +19,7 @@ saved-slot and ordinary authoring contracts.
 2. **S2 — Local selection and build.** Add trusted launch inputs and discovery.
    Implement a UI-independent attempt model and a private CMake adapter.
    Capture source fingerprints, collect phase results and logs, and resolve
-   the fresh Debug executable through the CMake File API.
+   and fingerprint the fresh Debug executable through the CMake File API.
 3. **S3 — Editor flow and launch.** Add receipt hints, selection, Build, result
    and Open. Integrate attempt state with window close and the duplicate child
    guard. Start the ordinary child apphost and leave it responsible for its Runtime.
@@ -29,8 +29,10 @@ saved-slot and ordinary authoring contracts.
 ## Files / Modules Touched (expected)
 
 - `src/editor_app/Atlantis.Editor/Program.cs` and `MainWindow.cs` for
-  launch settings, receipt hints and the panel. Keep shell launch in the
-  Editor app and reuse its ordinary child Runtime entry path.
+  launch settings, receipt hints and the panel. Extend `EditorSession.cs`
+  to pass confirmed receipt values to the panel without parsing status text.
+  Keep process launch in the Editor app and reuse its ordinary child Runtime
+  entry path.
 - A small saved-scene attempt model under
   `src/editor_app/Atlantis.Editor.Model/` and a private adapter under
   `src/editor_app/Atlantis.Editor/` for filesystem, CMake and Editor
@@ -49,10 +51,10 @@ after joint approval, ADR acceptance and manual design merge.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — Local authority and selection** | Approve explicit trusted checkout and CMake inputs, shallow discovery and confirmed-receipt hints. Keep catalog validation in CMake (R1). |
-| **J2 — Build profile and assets** | Approve Windows x64 Debug on Visual Studio 18 2026, one fresh saved-slot build per attempt, explicit committed managed root and no generation transfer (R2/R3). |
-| **J3 — Ownership, retries and Open** | Approve a launcher-owned build with retained logs, saved-unit freshness checks and an explicit independent Editor launch. Approve session-local duplicate guards, ordinary close deferral and retry rules (R3–R5). |
-| **J4 — Acceptance and delivery** | Approve the checks below and one implementation authorization through S4 after human design merge. Preserve existing gates and final human merge. |
+| **J1 — Local authority and selection** | Approve explicit local build authority separate from source-write permission, shallow discovery, and typed receipt hints with explicit local selection. Keep catalog validation in CMake (R1). |
+| **J2 — Build profile and assets** | Approve Windows x64 Debug on Visual Studio 18 2026, one fresh saved-slot build per attempt, an explicit committed managed root and no generation transfer. Treat build and Runtime load failures as separate phases (R2/R3). |
+| **J3 — Ownership, retries and Open** | Approve a launcher-owned build with retained logs and source/executable freshness checks. Approve separate child startup, per-launcher source reservation, and phase-specific close and retry rules (R3–R5). |
+| **J4 — Acceptance and delivery** | Approve both Windows acceptance paths, the negative cases below, and one implementation authorization through S4 after human design merge. Preserve applicable gates and final human merge. |
 
 Suggested authorization: approve J1–J4, Spec/Plan 0090 and ADR-0150 at the
 reviewed revision, then authorize S2–S4 from current main after manual design
@@ -61,40 +63,49 @@ and an implementation PR for review.
 
 ## Verification Checklist
 
-- [ ] **R1 — Discovery and receipts.** Exercise explicit workspace opt-in,
-  canonical complete units, incomplete and private staging entries, reparse
-  points, and Refresh. Check both confirmed receipt hints, including a receipt
-  from a different workspace with the same name. Check unknown and refused
-  outcomes keep their existing inspection/settlement guidance and trigger
-  no automatic action.
-- [ ] **R2/R3 — Build and recovery.** Check argument vectors including paths
-  with spaces, phase order, exit results, retained logs, and exact Debug
-  target resolution. Reject missing, ambiguous or out-of-tree artifacts.
-  Test duplicate Build, pending window close, configure failure, build
-  failure and retry in a fresh directory, a prior successful artifact
-  followed by failure, and source changes during build and before Open.
-  Confirm the saved build uses the explicit committed managed root and
-  never receives Runtime profile/generation arguments.
-- [ ] **R4 — Independent launch.** Check duplicate Open during process start
-  and while the child is live, retry after start failure and child exit,
-  and child Runtime startup failure with visible diagnostics. Confirm the
-  child survives launcher closure and uses a distinct Runtime/session file.
-  Cross-check the same artifact with the documented ordinary command-line
-  launch recipe.
-- [ ] **R5 — Live Windows flow.** With unsaved edits in the original
-  development Editor, create a camera starter and separately Save As a
-  hand-authored scene that references a committed managed mesh. Select and
-  build each saved unit using the panel. On the managed copy, omit the
-  managed root in a controlled attempt, verify build failure and source
-  preservation, then set the root and retry from the same launcher. Use a source
-  Runtime with an active generation for the managed case and check its
-  active generation and session identity after the build and Open.
-  Open each successful build in a separate Editor and verify the expected
-  scene and source bind. Add a mesh to the starter and edit the copied mesh
-  in the other case. Observe apply, save and reopen the saved documents.
-  Verify scene and node identities, references and saved edits. Check the
-  original document, history, unsaved edits and source remain intact while
-  both flows run. Validate child startup/rendering with Vulkan validation.
+- [ ] **R1 — Discovery and receipts.** Exercise explicit workspace and tool
+  opt-in, separation from source-write authority, and refusal of launcher
+  settings in measurement, attach and `saved_scene` modes. Check canonical
+  complete units, missing root, path/access error, incomplete entries,
+  reparse points, and Refresh. Check typed success hints from both operations,
+  including a different checkout with the same name. Confirm explicit
+  selection is still required. Unknown and refused outcomes trigger no action.
+- [ ] **R2/R3 — Build and recovery.** Check arguments with spaces, fixed
+  generator/architecture/configuration, phase order, exits, and retained
+  logs. Resolve the exact Debug target from the fresh CMake reply. Reject
+  missing, ambiguous, reparse or out-of-tree artifacts. Test duplicate Build,
+  close while active, configure and build failures, and retry in a fresh
+  directory. Verify a failed attempt cannot reopen a previous artifact.
+  Test source changes during build and before Open, a removed selection,
+  managed root changes, and a deleted or replaced executable after success.
+  Confirm build and launch use the explicit committed inputs without
+  forwarding Runtime profile or generation.
+- [ ] **R4 — Independent launch.** Check duplicate Open and Build for one
+  source during process start and while the child is live, including
+  selection away and back. Check close during start, retry after process
+  start failure, and release of the guard after child exit. Confirm child
+  startup or authoring failure has its own diagnostics and is distinct from
+  process start. Confirm the child survives launcher closure and uses a
+  distinct Runtime/session file. Cross-check an artifact with the documented
+  command-line recipe.
+- [ ] **R5 — Live Windows flow.** Keep the original development Editor open
+  with a distinguishable unsaved edit and history. Create a camera starter
+  and Save As a hand-authored scene that references a committed managed
+  mesh. Select and build each unit using the panel. For the managed copy,
+  omit the root in a controlled attempt and follow the actual failure phase.
+  If CMake succeeds, Open and observe Runtime startup failure. Preserve both
+  unit files, then set the correct root and Build again from the same
+  launcher. Verify the original Runtime's explicit active generation,
+  session and document before and after both workflows.
+
+  Open each successful build in a second ordinary Editor and verify the
+  expected scene GUID and source binding. Add a mesh to the starter and edit
+  the copied mesh in the other case. Observe apply and Save in both
+  children. Reopen the sources and verify scene and node identities,
+  references and saved edits. Verify a Save that changes either unit makes
+  the old build ineligible for Open after the child exits. Verify the
+  original document, source, edits and history remain intact. Validate
+  child startup and rendering with Vulkan validation enabled.
 - [ ] **Applicable gates.** Run focused Windows managed and model/UI tests,
   live Vulkan checks and documentation checks. Run the full-diff performance
   applicability selector and keep the existing gate if selected. Run or
