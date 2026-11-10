@@ -87,10 +87,37 @@ struct TemporaryUnit {
     if (path.empty()) return;
     if (sceneCreated) DeleteFileW((path / L"scene.scene.txt").c_str());
     if (fragmentCreated) DeleteFileW((path / L"catalog-source.txt").c_str());
-    directory.reset();
-    RemoveDirectoryW(path.c_str());
+    if (isOrdinary(directory, true)) {
+      FILE_DISPOSITION_INFO disposition{TRUE};
+      SetFileInformationByHandle(directory.get(), FileDispositionInfo, &disposition, sizeof(disposition));
+    } else if (!directory) {
+      // Nothing was written before the directory was pinned. Remove only an
+      // empty ordinary directory at the name this request just created.
+      const DWORD attributes = GetFileAttributesW(path.c_str());
+      if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) &&
+          !(attributes & FILE_ATTRIBUTE_REPARSE_POINT)) RemoveDirectoryW(path.c_str());
+    }
   }
 };
+
+struct CommitLock {
+  Handle mutex;
+  bool acquired = false;
+  ~CommitLock() { if (acquired) ReleaseMutex(mutex.get()); }
+};
+
+Handle workspaceMutex(const Handle& root) {
+  FILE_ID_INFO identity{};
+  if (!GetFileInformationByHandleEx(root.get(), FileIdInfo, &identity, sizeof(identity))) return {};
+  // The pinned directory identity also unifies different paths to the same workspace.
+  auto name = L"Global\\Atlantis.SceneSaveAs." + std::to_wstring(identity.VolumeSerialNumber) + L".";
+  constexpr wchar_t hex[] = L"0123456789abcdef";
+  for (const auto byte : identity.FileId.Identifier) {
+    name += hex[byte >> 4];
+    name += hex[byte & 15];
+  }
+  return Handle(CreateMutexW(nullptr, FALSE, name.c_str()));
+}
 
 bool renameNew(const Handle& directory, const fs::path& target) {
   const auto bytes = target.native().size() * sizeof(wchar_t);
@@ -189,19 +216,23 @@ CopyResult publishSceneCopy(const fs::path& assetsRoot, const fs::path& catalogS
     ca::SavedScene copy{ids[0], ca::saveAsSource(name), documentRevision};
     auto pending = root / (".pending-" + as::toString(ids[1]));
     if (!CreateDirectoryW(pending.c_str(), nullptr)) return CopyResult::Err(Error::WriteFailed);
-    auto directory = open(pending, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
-                          OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
-    if (!isOrdinary(directory, true) || !isCaseInsensitive(directory)) return CopyResult::Err(Error::UnsafeTarget);
-    TemporaryUnit temporary{std::move(pending), std::move(directory)};
+    TemporaryUnit temporary{std::move(pending), {}};
+    temporary.directory = open(temporary.path, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                               OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
+    if (!isOrdinary(temporary.directory, true) || !isCaseInsensitive(temporary.directory))
+      return CopyResult::Err(Error::UnsafeTarget);
     const auto fragment = as::serializeAssetCatalogSource(
         {{copy.scene, as::CatalogAssetType::Scene, as::CatalogRoot::Assets, copy.source}});
     if (!writeNew(temporary.path / L"scene.scene.txt", source, temporary.sceneCreated) ||
         !writeNew(temporary.path / L"catalog-source.txt", fragment, temporary.fragmentCreated))
       return CopyResult::Err(Error::WriteFailed);
 
-    const auto lock = open(root / L".save-as.lock", GENERIC_READ | GENERIC_WRITE, 0, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL);
-    if (!lock) return CopyResult::Err(GetLastError() == ERROR_SHARING_VIOLATION ? Error::Busy : Error::WriteFailed);
-    if (!isOrdinary(lock, false)) return CopyResult::Err(Error::UnsafeTarget);
+    CommitLock lock{workspaceMutex(pins.back())};
+    if (!lock.mutex) return CopyResult::Err(Error::WriteFailed);
+    const auto acquired = WaitForSingleObject(lock.mutex.get(), 0);
+    if (acquired == WAIT_TIMEOUT) return CopyResult::Err(Error::Busy);
+    if (acquired != WAIT_OBJECT_0 && acquired != WAIT_ABANDONED) return CopyResult::Err(Error::WriteFailed);
+    lock.acquired = true;
     if (GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES) return CopyResult::Err(Error::NameConflict);
     if (const auto error = checkIdentity(root, catalogSource, cookedCatalog, copy)) return CopyResult::Err(*error);
     if (!renameNew(temporary.directory, target)) {

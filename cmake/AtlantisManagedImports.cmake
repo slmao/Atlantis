@@ -100,6 +100,52 @@ function(atlantis_check_saved_scene_catalog)
   endforeach()
 endfunction()
 
+function(atlantis_check_saved_scene_generated_identities)
+  set(probe "${CMAKE_SOURCE_DIR}/src/tools/gltf_importer")
+  set(build "${CMAKE_CURRENT_BINARY_DIR}/saved-scene-identity")
+  set(configure -S "${probe}/configure_check" -B "${build}" -G "${CMAKE_GENERATOR}"
+    "-DCMAKE_BUILD_TYPE=Release" "-DATLANTIS_CGLTF_SOURCE=${cgltf_SOURCE_DIR}")
+  if(CMAKE_GENERATOR_PLATFORM)
+    list(APPEND configure -A "${CMAKE_GENERATOR_PLATFORM}")
+  endif()
+  if(CMAKE_GENERATOR_TOOLSET)
+    list(APPEND configure -T "${CMAKE_GENERATOR_TOOLSET}")
+  endif()
+  if(CMAKE_GENERATOR_INSTANCE)
+    list(APPEND configure "-DCMAKE_GENERATOR_INSTANCE=${CMAKE_GENERATOR_INSTANCE}")
+  endif()
+  if(NOT CMAKE_GENERATOR MATCHES "^Visual Studio")
+    list(APPEND configure "-DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}" "-DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}")
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" ${configure} RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+  if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Cannot configure the saved scene identity check\n${output}\n${errors}")
+  endif()
+  execute_process(COMMAND "${CMAKE_COMMAND}" --build "${build}" --config Release --target saved_scene_identity --parallel 4
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE errors)
+  if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Cannot build the saved scene identity check\n${output}\n${errors}")
+  endif()
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${probe}/configure_check/main.cpp" "${probe}/configure_check/CMakeLists.txt"
+    "${probe}/import_command.cpp" "${probe}/material_import.cpp"
+    "${CMAKE_SOURCE_DIR}/src/asset_system/src/asset_guid.cpp")
+
+  get_property(imports GLOBAL PROPERTY ATLANTIS_SAVED_SCENE_IMPORTS)
+  list(JOIN imports "\n" inputs)
+  if(inputs)
+    string(APPEND inputs "\n")
+  endif()
+  set(input_file "${build}/imports.txt")
+  file(WRITE "${input_file}" "${inputs}")
+  execute_process(COMMAND "${build}/bin/saved_scene_identity.exe"
+    "${ATLANTIS_ASSET_CATALOG_SOURCE}" "${saved_scene_source}" "${input_file}"
+    RESULT_VARIABLE result ERROR_VARIABLE errors)
+  if(NOT result STREQUAL "0")
+    message(FATAL_ERROR "Saved scene identity validation failed\n${errors}")
+  endif()
+endfunction()
+
 # Spec 0086: build-time view of a trusted local project registration.
 function(atlantis_add_managed_imports)
   file(REAL_PATH "${ATLANTIS_MANAGED_IMPORT_ROOT}" managed_root)

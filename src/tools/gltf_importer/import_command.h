@@ -166,6 +166,10 @@ inline constexpr std::string_view kImporterToolVersion = "atlantis-gltf-importer
 
 }  // namespace detail
 
+// Derive the catalog identities without loading buffers or textures or writing an import unit.
+[[nodiscard]] atlantis::Result<std::vector<atlantis::asset_system::AssetGuid>, GltfImportError> importAssetGuids(
+    const std::filesystem::path& input, const atlantis::asset_system::AssetGuid& root);
+
 [[nodiscard]] const char* gltfImportErrorMessage(GltfImportError error) noexcept;
 
 }  // namespace atlantis::gltf_importer

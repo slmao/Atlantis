@@ -1186,3 +1186,7 @@ else()
   message(STATUS "Bistro content not found at ${ATLANTIS_BISTRO_CONTENT_DIR}: no bistro scene (run "
                  "tools/content/fetch_bistro.ps1)")
 endif()
+
+if(WIN32 AND NOT ATLANTIS_SAVED_SCENE STREQUAL "")
+  atlantis_check_saved_scene_generated_identities()
+endif()

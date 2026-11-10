@@ -16,6 +16,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -121,6 +122,15 @@ TEST_CASE("Every import output carries the GUIDs derived from the import root", 
         std::string::npos);
   CHECK(manifest.find("--guid=" + as::toString(as::deriveAssetGuid(root(), "material/0"))) != std::string::npos);
   CHECK(manifest.find("--guid=" + as::toString(sceneGuid)) != std::string::npos);
+
+  // The configure-time check sees the actual output GUIDs even when the
+  // texture payload is unavailable and the importer cannot cook this scene.
+  REQUIRE(fs::remove(content / "quad_diff.dds"));
+  const auto listed = atlantis::gltf_importer::importAssetGuids(input, root());
+  REQUIRE(listed.isOk());
+  const std::vector expected{mesh.value().assetGuid, as::deriveAssetGuid(root(), "material/0"),
+                             material.value().textureAsset, sceneGuid};
+  CHECK(std::ranges::is_permutation(listed.value(), expected));
 }
 
 TEST_CASE("The importer writes each mesh's catalog fragment and names every cook line's source",

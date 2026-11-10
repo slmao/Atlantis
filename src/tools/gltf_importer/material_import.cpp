@@ -160,6 +160,20 @@ struct MaterialTextures {
   return contentRootDirectory(contentRoot).filename().string() + "/" + uri;
 }
 
+std::optional<std::string> textureSubKey(const fs::path& contentRoot, const std::string& logicalPath) {
+  const auto normalized = atlantis::asset_system::normalizeLogicalPath(logicalPath);
+  const std::string prefix = contentRootDirectory(contentRoot).filename().string() + "/";
+  if (normalized.isErr() || !normalized.value().starts_with(prefix)) return std::nullopt;
+  return "texture/" + normalized.value().substr(prefix.size());
+}
+
+auto textureAssetGuid(const fs::path& contentRoot, const std::string& logicalPath,
+                      const atlantis::asset_system::AssetGuid& root) {
+  using GuidResult = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
+  const auto key = textureSubKey(contentRoot, logicalPath);
+  return key ? deriveImportAssetGuid(root, *key) : GuidResult::Err(GltfImportError::InvalidAssetSubKey);
+}
+
 [[nodiscard]] CheckResult checkTextureView(const cgltf_data& data, const cgltf_texture_view& view,
                                            const fs::path& contentRoot) {
   if (view.texcoord != 0 || view.has_transform) return CheckResult::Err(GltfImportError::UnsupportedTextureFeature);
@@ -304,6 +318,25 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
   return CheckResult::Ok(std::monostate{});
 }
 
+CheckResult collectMaterialAssetGuids(const cgltf_data& data, const fs::path& contentRoot,
+                                     const atlantis::asset_system::AssetGuid& root,
+                                     std::vector<atlantis::asset_system::AssetGuid>& guids) {
+  for (cgltf_size i = 0; i < data.materials_count; ++i) {
+    guids.push_back(atlantis::asset_system::deriveAssetGuid(root, "material/" + std::to_string(i)));
+    const auto used = usedTextures(data.materials[i]);
+    if (!used.baseColor) guids.push_back(atlantis::asset_system::deriveAssetGuid(root, "fallback/white"));
+    for (const auto* view : {used.baseColor, used.normal, used.emissive}) {
+      if (!view) continue;
+      const auto resolved = resolveTexture(data, *view->texture);
+      if (!resolved) return CheckResult::Err(GltfImportError::TextureWithoutSource);
+      const auto guid = textureAssetGuid(contentRoot, textureLogicalPath(contentRoot, resolved->uri), root);
+      if (guid.isErr()) return CheckResult::Err(guid.error());
+      guids.push_back(guid.value());
+    }
+  }
+  return CheckResult::Ok(std::monostate{});
+}
+
 atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_data& data, const fs::path& contentRoot,
                                                                  const fs::path& stagingDir, const std::string& name,
                                                                  const atlantis::asset_system::AssetGuid& importRoot,
@@ -333,17 +366,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
   // Plan 0047 P5: a texture's sub-key is its URI as normalized under the
   // content root, without the root's own name -- so moving the content root
   // changes no GUID (Spec 0047 R14).
-  const std::string rootPrefix = contentRootDirectory(contentRoot).filename().string() + "/";
-  const auto textureSubKey = [&](const std::string& logicalPath) -> std::optional<std::string> {
-    const auto normalized = atlantis::asset_system::normalizeLogicalPath(logicalPath);
-    if (normalized.isErr() || normalized.value().rfind(rootPrefix, 0) != 0) return std::nullopt;
-    return "texture/" + normalized.value().substr(rootPrefix.size());
-  };
   const auto textureGuid = [&](const std::string& logicalPath) {
-    using GuidResult = atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError>;
-    const auto subKey = textureSubKey(logicalPath);
-    if (!subKey) return GuidResult::Err(GltfImportError::InvalidAssetSubKey);
-    return deriveImportAssetGuid(importRoot, *subKey);
+    return textureAssetGuid(contentRoot, logicalPath, importRoot);
   };
   std::size_t samplerDefaulted = 0;
 
@@ -572,7 +596,7 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     // Plan 0047 P12: the sub-key the GUID was derived from (texture/<uri>
     // was already checked when the GUID was derived).
     line += " --catalog-id=" + importRootId + "#" +
-            (t.logicalPath == whiteLogical ? std::string("fallback/white") : *textureSubKey(t.logicalPath));
+            (t.logicalPath == whiteLogical ? std::string("fallback/white") : *textureSubKey(contentRoot, t.logicalPath));
     manifestLines.push_back(line);
   }
   summary.texturesReferenced += static_cast<std::uint32_t>(textures.size());
