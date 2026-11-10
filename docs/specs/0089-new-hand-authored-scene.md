@@ -47,9 +47,12 @@ scene browser.
 - **R1 — Authority and destination.** A Windows development Runtime that
   serves authoring and explicitly opts in with the existing
   `--allow-scene-save-as` flag may create a starter unit. Document that the
-  flag also authorizes New Scene under the same root. A caller need not open a
-  document or have a hand-authored source open; an imported document, if
-  present, supplies no data. A host that cannot serve authoring still returns
+  flag also authorizes New Scene under the same root. The ordinary Editor
+  launcher accepts this same explicit flag and forwards it to its child
+  Runtime; it defaults off. The Runtime still validates all authority.
+  A caller need not open a document or have a hand-authored source open;
+  an imported document, if present, supplies no data. A host that cannot
+  serve authoring still returns
   `NoAuthoring`; a host that serves authoring but has not opted in returns
   `Unavailable`. Reuse 0088's logical name validation, pre-existing pinned
   local NTFS root, path safeguards and two fixed leaves in
@@ -63,21 +66,27 @@ scene browser.
   materials or other source asset references. Mint a fresh scene AssetGuid
   and camera EntityGuid through Asset System; neither is copied from the
   current scene, supplied by a client or derived from the requested name.
-  Persist both identities in the existing scene source and catalog fragment,
-  with the camera GUID distinct across creations. Produce ordinary lossless
+  Persist the camera GUID in the scene source and the scene GUID in the
+  catalog fragment. The camera uses the existing scene-scoped entity
+  identity rule, with no cross-scene camera registry. Produce ordinary lossless
   scene source and validate it using the existing in-memory cook before
   publication. The starter source requires no managed inputs; the saved-slot
-  launch retains its ordinary Runtime defaults.
+  launch retains its ordinary Runtime defaults. A working initial viewport
+  has no scene mesh to show; this is expected, not a failed scene load.
 - **R3 — Commit and recovery.** Use 0088's private staging, shared
   workspace commit exclusion, scene GUID and derived AssetId checks,
   atomic no-replace publication and request-owned cleanup. A racing Create
   Scene and Save As for the same name have at most one winner. Typed refusal
   leaves no final unit from that attempt; interrupted private staging remains
   outside build selection. A successful rename commits even if the reply is
-  lost. Apply 0088's inspection and retry rules: a complete unit may be used
-  after validating both files and intended contents, but its existence alone
-  does not identify the winning caller. For an absent unit, first establish
-  that the previous request can no longer commit. Never replay automatically.
+  lost. Apply 0088's inspection and retry rules. Inspect both fixed leaves
+  for the attempted name; use the existing unit only after verifying its
+  catalog entry, stored GUID and intended starter contents. An occupied
+  name alone proves neither that it is the intended scene nor who created
+  it. If absent, establish that the previous request can no longer commit
+  before explicitly retrying. Do not stop the old host on the user's behalf
+  or treat reconnect as proof of settlement. A typed `Busy` refusal permits
+  an explicit retry after contention clears. Never replay automatically.
 - **R4 — Shared result and current session.** Add
   `authoring.createScene { name }` to the existing AuthoringConnection and
   `atlantis.remote/1` surface. Return the ordinary in-band
@@ -89,9 +98,12 @@ scene browser.
   `IdentityConflict` and `WriteFailed` (including preparation failure).
   Client-side `Unsupported` maps only the legacy BadRequest with exact
   unknown-method message `unknown method authoring.createScene`.
-  Malformed replies follow the existing protocol failure path; transport
-  loss is not a typed refusal. Expose the operation as Editor **New Scene**,
-  CLI `scene create <name>`, native/C# SDK methods, and MCP
+  A request known not to have been sent has no creation outcome. If a request
+  may have reached the host and no valid result arrives, report outcome
+  unknown and give R3 recovery guidance. Malformed replies retain the
+  existing protocol error; neither malformed replies nor transport loss
+  become a typed host refusal or proof of non-commit. Expose the operation
+  as Editor **New Scene**, CLI `scene create <name>`, native/C# SDK methods, and MCP
   `authoring.create_scene`. Existing clients, Save, Save As and Open
   retain their behavior; there is no wire or session-file version bump.
 
@@ -101,20 +113,34 @@ scene browser.
   save, flush or discard the current document or client drafts; it emits no
   document reopen, adds no undo item and initiates no Runtime reload. Normal
   focus-loss edits and queued authoring/apply work can settle independently
-  on their existing paths. The Editor prevents duplicate submission from
-  one action, refuses to send a queued request on a replaced session, and
-  discards stale callbacks for detached sessions. A request already sent
-  can still commit. The Editor explains before submission that creation
-  writes a new unit and does not open it; feedback gives the created
-  identity or refusal/unknown outcome and the explicit next steps. It does
-  not close the current document or Runtime.
+  on their existing paths. The Editor requires a usable session and valid
+  name, not an open or editable document. It prevents duplicate submission
+  from one action, refuses to send a queued request on a replaced session,
+  and discards stale callbacks for detached sessions. An ordinary document
+  reopen on the same session does not invalidate creation. A request already
+  sent can still commit. The Editor explains before submission that creation
+  writes a new unit and leaves the current scene open. Keep the result
+  readable in the creation UI: for success show the captured logical name,
+  source path and scene GUID, say that the new scene is not open, and
+  provide the R5 build and launch steps using that name. For a refusal show
+  the reason and an actionable next step; for unknown outcome show the
+  attempted name, destination and R3 inspection/retry guidance. Do not
+  show launch instructions as confirmed creation for either case.
 - **R5 — Open, edit and restart.** The new source unit enters only the
-  explicit 0088 saved-slot build: set `ATLANTIS_SAVED_SCENE=<name>`, build
-  and start a separate `atlantis_runtime --scene saved_scene`. Until then
-  the current Runtime and its catalog snapshot do not discover or activate
-  the new scene. Existing saved-slot catalog, conflict checks and managed
-  input rules apply. Ordinary `authoring.open` binds to the created source
-  in the new process; the Editor starts with no selection and empty history.
+  explicit 0088 saved-slot build. From the same checkout, configure a new
+  build directory with `-DATLANTIS_SAVED_SCENE=<name>`, then build the
+  `atlantis_runtime` target and use the executable for the configuration
+  built. Keep the original Editor/Runtime open.
+  For interactive editing, start a second ordinary Editor instance with
+  `--runtime <new-build-runtime> --scene saved_scene`; its existing launcher
+  starts the new child and uses a separate session file. Other clients
+  can start that Runtime directly with `--scene saved_scene --listen 0
+  --session-file <new-file>` and connect normally. There is no change to
+  Editor attach modes. The original Runtime catalog does not discover or
+  activate the new scene. Existing saved-slot catalog, conflict checks and
+  managed input rules apply. Ordinary `authoring.open` binds to the created
+  source in the new process; the Editor starts with no selection and empty
+  history.
   The new source is already on disk before any edit. Use 0087 Assets mesh
   addition, existing transactions and apply receipts/recovery, ordinary
   undo/redo and Save. Saving edits updates that new source; ordinary reopen

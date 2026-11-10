@@ -21,8 +21,9 @@ changing the original session or introducing a new document lifecycle.
    As; keep snapshot and result semantics in their respective operations.
 3. **S3 — Shared clients and Editor.** Carry the operation through Remote,
    CLI, both SDKs, and MCP. Add the Editor action, lifecycle guards and
-   saved-slot instructions. Leave launch, asset addition, Save and
-   apply recovery on their existing paths.
+   saved-slot instructions. Forward the explicit existing Runtime opt-in
+   through the ordinary Editor launcher. Reuse the second Editor instance,
+   asset addition, Save and apply recovery on their existing paths.
 4. **S4 — Verification and PR.** Run the mapped checks, cite valid reused
    evidence, and submit the exact implementation candidate for human review.
 
@@ -41,7 +42,8 @@ changing the original session or introducing a new document lifecycle.
 - **Clients:** Existing authoring codecs and dispatch in `src/remote/`,
   command handling in `src/cli/`, authoring wrappers in the Gameplay
   SDK and `src/csharp/`, MCP schema/registry in `src/mcp/`, and
-  `src/editor_app/` MainWindow, EditorSession and focused Editor tests.
+  `src/editor_app/` Program, MainWindow, RuntimeProcess, EditorSession and
+  focused Editor tests.
   Extend current boundary/codec/client tests and regenerate conformance
   vectors through their existing generator.
 - **Docs:** README usage and opt-in, Remote protocol and module-boundary
@@ -63,13 +65,14 @@ Start S2 only after joint approval, ADR acceptance and manual design merge.
 | --- | --- |
 | **J1 — Starter and identity** | Approve the fixed active camera, no source asset references, and fresh persistent scene/camera GUIDs (R2). |
 | **J2 — Destination and recovery** | Approve reuse of the existing Windows development opt-in, saved-unit namespace and no-replace publisher, including shared conflicts and 0088 recovery (R1/R3). |
-| **J3 — Shared contract and lifecycle** | Approve one additive operation, preservation of original unsaved work, and explicit activation in a separate Runtime through the existing build slot (R4/R5). |
+| **J3 — Shared contract and lifecycle** | Approve one additive operation, explicit creation and recovery feedback, and opening the saved-slot build from a second ordinary Editor without closing the original (R4/R5). |
 | **J4 — Acceptance and delivery** | Approve the verification below and one authorization for S2–S4 after human design merge, retaining existing gates. |
 
 Suggested authorization: “I approve J1–J4 and Spec/Plan 0089 together and
-accept ADR-0149. After manual design merge, proceed from current main
-through S2–S4, including scoped fixes, applicable verification, valid
-evidence reuse and a review-ready implementation PR. Final merge is human.”
+accept ADR-0149 for the reviewed PR revision. After manual design merge,
+proceed from current main through S2–S4, including scoped fixes, applicable
+verification, valid evidence reuse and a review-ready implementation PR.
+Retain the existing gates; final merge is human.”
 
 ## Verification Checklist
 
@@ -80,33 +83,43 @@ evidence reuse and a review-ready implementation PR. Final merge is human.”
   active camera, defaults, absence of source references, distinct
   identities between creations, and fixed relative path. Exercise a
   cross-host Create/Save As race for one name, forced scene identity
-  conflict, staging/commit failure, and a dropped reply after commit. Check
-  one intact winner, no partial publication, original/other files untouched
-  and no automatic retry. Reuse 0088 cases only when the affected primitive
-  and relevant inputs are unchanged.
+  conflict, staging/commit failure, and dropped replies before and after
+  commit. Check one intact winner, no partial publication, original/other
+  files untouched and no automatic retry. Exercise the recovery guidance for
+  both a valid committed starter and a still-unsettled absent destination.
+  Reuse 0088 cases only when the affected primitive and inputs are unchanged.
 - [ ] **R4: contract and current state.** Check native/C# codec vectors and
   parity across CLI, SDKs, MCP and Editor. Check old-client calls on the new
-  host, exact legacy Unsupported handling, and malformed success (nil GUID
-  or wrong path). With unsaved accepted edits, a client draft and an
+  host, new clients against an old host, exact legacy Unsupported handling,
+  and malformed success (nil GUID or wrong path). Verify user-visible
+  distinctions among confirmed creation, refusal, unsent request and unknown
+  outcome after send. With unsaved accepted edits, a client draft and an
   outstanding apply, exercise success, refusal and response loss. Verify
   no create-induced save, edit, reopen, history item, receipt change, or
   reload; distinguish any ordinary focus or pending work. Exercise repeated
-  clicks, session replacement before send and a stale result after send.
+  clicks, unopened/read-only documents, a reopen on the same session,
+  session replacement before send and a stale result after send.
 - [ ] **R5: one live Windows acceptance.** In a disposable development
-  checkout, start the original host with a distinguishable unsaved edit.
-  Use the Editor to create a starter; verify the original remains attached
-  with the edit and history intact. Build the starter in a separate tree and
-  launch `--scene saved_scene`. Open normally and verify the camera-only
-  scene, fresh history and bound source. Add a catalog-visible mesh via
-  Assets (a committed 0086 import may be used with the same managed inputs),
-  edit its name or transform, observe successful apply, then undo and redo.
-  Use one controlled reload failure to verify retained document/history and
-  the unchanged 0083 recovery, then confirm a successful apply. Save, reopen
-  the new document, and independently rebuild/restart and reopen it. Verify
-  the scene, camera and mesh-node identities, reference, edited value and
-  visible object persist. Verify original files and the original Runtime
-  binding stayed unchanged; cover a missing build dependency and retry
-  with the same new unit.
+  checkout, launch the ordinary Editor with the explicit flag; verify
+  forwarding and that default launch grants no creation authority. Create
+  a starter while the original has a distinguishable unsaved edit. Read
+  the result and follow its instructions: configure and build a separate
+  tree, then start a second ordinary Editor on that build and saved scene.
+  Do not use a measurement attach path. Verify distinct Runtime sessions,
+  the original edit and history intact, and a running camera-only viewport
+  with a new bound source, no selection and empty history.
+  Add one catalog mesh that fits the default camera and renders using
+  0087's fallback material. Observe successful apply, undo and redo the
+  add with the existing history, and then edit the restored object. Induce
+  one recoverable reload failure and verify the
+  accepted document and history survive while the prior projection stays
+  visible. Retry apply without another create or add, and verify success.
+  Save, reopen the new document and confirm its values and cleared local
+  history. Rebuild/restart it independently and verify the same scene,
+  camera and mesh-node identities, reference, edited value and visible
+  object. Check the original files and Runtime binding stayed unchanged.
+  Verify a failed build/start leaves the committed unit available for an
+  explicit retry with the same identity.
 - [ ] **Applicable gates:** Run focused Windows native/managed build,
   boundary, conformance, Editor and live Vulkan validation checks. Cover
   shared Android compile paths as applicable. Run or justify reuse of

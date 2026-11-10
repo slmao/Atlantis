@@ -27,6 +27,10 @@ creation takes no snapshot of the current document.
 
 Creation commits source, not a new active document or a Runtime projection.
 Reuse ADR-0148's explicit offline selection and separate Runtime launch.
+The ordinary Editor may pass through the existing explicit development
+opt-in to its child. It has no filesystem authority of its own. The user
+can open the separately built scene in a second ordinary Editor instance,
+leaving the original session and its unsaved work in place.
 Existing Open, Save, undo/redo and apply rules then govern the new session.
 Editor, CLI, SDKs and MCP use the same authority and result; no editor-owned
 files or separate transport are introduced.
