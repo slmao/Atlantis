@@ -297,6 +297,27 @@ registered unit and any complete generation. Recreate or validate staging,
 clear its pending selection, and remove both dirty markers only after
 settlement is known. See [Spec 0086](docs/specs/0086-new-asset-import.md).
 
+### Save a hand-authored scene copy
+
+In a Windows development checkout on local NTFS, create the ordinary
+directory `assets/scenes/saved`. Start that build's Runtime with
+`--allow-scene-save-as --listen 0 --session-file <file>`. Open the scene
+through `atlantis --session <file> scene open`, or attach the Editor to that
+session. Use `scene save-as <name>` or the Editor's **Save As** action.
+Save As captures accepted edits under `assets/scenes/saved/save_<name>`.
+The original remains open and its ordinary Save still targets its source.
+
+Configure a separate development build with `-DATLANTIS_SAVED_SCENE=<name>`.
+Supply the same `ATLANTIS_MANAGED_IMPORT_ROOT` when the copy references managed
+meshes. Build `atlantis_runtime` and launch it with `--scene saved_scene`.
+Ordinary `scene open` and Save in that session target the copy. This build
+uses its own cooked catalog and accepts no asset build profile or generation.
+
+An occupied name is never overwritten. After losing a reply, inspect the
+unit's source and catalog fragment. If it is absent, confirm the earlier
+request can no longer commit before retrying. See
+[Spec 0088](docs/specs/0088-scene-save-as.md).
+
 ## Status
 
 In active development. See [docs/specs/README.md](docs/specs/README.md) for

@@ -1006,8 +1006,9 @@ milestone being listed does not authorize starting it — see Section 1.
   Assets to the current hand-authored scene, delivered in merged
   [PR #338](https://github.com/slmao/Atlantis/pull/338).
   [Spec 0088](specs/0088-scene-save-as.md) and
-  [Plan 0088](plans/0088-scene-save-as.md) propose hand-authored Save As
-  with an explicit offline build and launch. Joint review is pending.
+  [Plan 0088](plans/0088-scene-save-as.md) cover hand-authored Save As
+  with an explicit offline build and launch in [PR #340](https://github.com/slmao/Atlantis/pull/340).
+  [ADR-0148](adr/0148-scene-save-as-and-explicit-launch.md) is accepted.
   Preview and broader pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay

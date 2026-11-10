@@ -81,6 +81,11 @@ public sealed class MainWindow : Window
     // Plan 0068 M6 (Spec 0068 R9): the document's save and the Runtime's transport. The Runtime starts playing, so
     // Pause is the enabled action until the first play state says otherwise.
     private readonly Button _save = new() { Content = "Save" };
+    private readonly Button _saveAs = new() { Content = "Save As", IsEnabled = false };
+    private readonly TextBox _saveAsName = new() { PlaceholderText = "Copy name", Width = 115, MaxLength = 48 };
+    private readonly TextBlock _saveAsState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private long _saveAsRequest;
+    private bool _saveAsPending;
     private readonly Button _retryApply = new() { Content = "Apply current document / Retry", IsEnabled = false };
     private bool _allowGizmoPreview;
     private readonly Button _play = new() { Content = "Play", IsEnabled = false };
@@ -226,10 +231,13 @@ public sealed class MainWindow : Window
         var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
         foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _retryApply, _play, _pause, _step })
         { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
+        edits.Children.Add(_saveAsName);
+        edits.Children.Add(_saveAs);
         foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
         var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
         state.Children.Add(_applyLine);
         state.Children.Add(_editLine);
+        state.Children.Add(_saveAsState);
         DockPanel.SetDock(edits, Dock.Top);
         DockPanel.SetDock(state, Dock.Bottom);
         left.Children.Add(heading);
@@ -286,6 +294,8 @@ public sealed class MainWindow : Window
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
         _save.Click += (_, _) => _worker?.Save();
+        _saveAsName.TextChanged += (_, _) => UpdateSaveAsButton();
+        _saveAs.Click += (_, _) => SaveSceneCopy();
         _retryApply.Click += (_, _) =>
         {
             if (!_retryApply.IsEnabled || _worker is not EditorWorker worker) return;
@@ -383,6 +393,10 @@ public sealed class MainWindow : Window
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         _worker?.Stop();
+        ++_saveAsRequest;
+        _saveAsPending = false;
+        _saveAs.IsEnabled = false;
+        _saveAsState.Text = "";
         ++_meshRequest;
         _meshDocumentLifetime = 0;
         _canAddMeshToDocument = _addingMesh = false;
@@ -429,6 +443,10 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _referenceSessionFailed = true;
+            if (_saveAsPending) _saveAsState.Text = "Save As interrupted. Inspect the destination and confirm settlement before retrying.";
+            _saveAsPending = false;
+            ++_saveAsRequest;
+            UpdateSaveAsButton();
             if (_addingMesh) _addMeshState.Text = "Add interrupted. Inspect the document on reconnect before retrying.";
             _addingMesh = false;
             ++_meshRequest;
@@ -489,6 +507,7 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
             UpdateAddMeshButton();
+            UpdateSaveAsButton();
             _applyLine.Text = info is null ? "authoring: no document" :
                 "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
         };
@@ -497,6 +516,13 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
+            if (_saveAsPending)
+            {
+                ++_saveAsRequest;
+                _saveAsPending = false;
+                _saveAsState.Text = "Document reopened. Inspect the destination if the copy was already sent.";
+                UpdateSaveAsButton();
+            }
             _addingMesh = false;
             _addMeshState.Text = "Scene reopened.";
             UpdateAddMeshButton();
@@ -923,6 +949,26 @@ public sealed class MainWindow : Window
         _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private void UpdateSaveAsButton() => _saveAs.IsEnabled = _worker is not null && _canAddMeshToDocument &&
+        !_referenceSessionFailed && !_saveAsPending && Codec.ValidSaveAsName(_saveAsName.Text);
+
+    private void SaveSceneCopy()
+    {
+        if (!_saveAs.IsEnabled || _worker is not { } worker || _saveAsName.Text is not { } name || !Codec.ValidSaveAsName(name)) return;
+        long request = ++_saveAsRequest, lifetime = _meshDocumentLifetime;
+        _saveAsPending = true;
+        _saveAsState.Text = "Saving copy…";
+        UpdateSaveAsButton();
+        worker.SaveAs(name, lifetime, text =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _saveAsRequest ||
+                lifetime != worker.MeshDocumentLifetime) return;
+            _saveAsPending = false;
+            _saveAsState.Text = text;
+            UpdateSaveAsButton();
+        });
     }
 
     private AssetSummary? SelectedMesh() => _assetBrowser.State == "Ready" &&

@@ -1,4 +1,5 @@
 #include "authoring_host.h"
+#include "scene_save_as.h"
 
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/log.h>
@@ -67,6 +68,12 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
     session_->setSceneSink([this](connection::authoring::ApplyId id, as::ValidatedSceneData scene) {
       return application_.requestSceneReload(id, std::move(scene));
     });
+    if (sources_.allowSceneSaveAs && runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR)) {
+      session_->setSaveAsSink([this](std::string_view name, std::string source, std::uint64_t revision) {
+        return publishSceneCopy(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
+                                name, std::move(source), revision);
+      });
+    }
     ATLANTIS_LOG_INFO("authoring: session created for scene {}", as::toString(application_.sceneGuid()));
   }
   if (!session_) return nullptr;

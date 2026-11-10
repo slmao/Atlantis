@@ -512,6 +512,11 @@ void authoringVectors(std::vector<Vector>& out) {
     out.push_back({"apply.status." + std::string(ac::toString(error)), "ApplySnapshot", codec::encode(ac::ApplySnapshot{UINT64_MAX,
         ac::ApplyRecord{receipt, ac::ApplyState::Failed, {}, error, {}}, ac::ApplyProjection{older, 8}})});
   out.push_back({"apply.lookup.unknown", "ApplyLookupError", codec::encodeApplyLookupError(ac::ApplyLookupError::UnknownApply)});
+  out.push_back({"save_as.copy", "SavedScene", codec::encode(ac::SavedScene{kAsset, ac::saveAsSource("sample"), UINT64_MAX})});
+  for (const auto error : {ac::SaveAsError::Unavailable, ac::SaveAsError::InvalidName, ac::SaveAsError::NoDocument,
+                           ac::SaveAsError::ImportedSceneNotSavable, ac::SaveAsError::UnsafeTarget, ac::SaveAsError::Busy,
+                           ac::SaveAsError::NameConflict, ac::SaveAsError::IdentityConflict, ac::SaveAsError::WriteFailed})
+    out.push_back({"save_as." + std::string(ac::toString(error)), "SaveAsError", codec::encodeSaveAsError(error)});
 
   // Plan 0066 P2 (Spec 0066 R1, R5; ADR-0132 D1): the Viewport overlay (section 6.6) and the step's withOverlay.
   using connection::OverlayDepth;

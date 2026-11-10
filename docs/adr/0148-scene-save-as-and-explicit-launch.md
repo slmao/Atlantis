@@ -1,9 +1,9 @@
 # ADR 0148: Scene Save As and Explicit Launch
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-10
-- **Deciders:** Pending joint human review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** 2026-11-10, joint approval of revision `a5b2b186` in [PR #339](https://github.com/slmao/Atlantis/pull/339).
 - **Related Spec:** [Spec 0088](../specs/0088-scene-save-as.md)
 
 ## Context

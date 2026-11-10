@@ -1641,6 +1641,34 @@ Value encodeOpenError(authoring::OpenError error) { return Value::string(std::st
 std::optional<authoring::OpenError> decodeOpenError(const Value& value) { return enumeratorNamed(value, kOpenErrors); }
 Value encodeSaveError(authoring::SaveError error) { return Value::string(std::string(authoring::toString(error))); }
 std::optional<authoring::SaveError> decodeSaveError(const Value& value) { return enumeratorNamed(value, kSaveErrors); }
+Value encode(const authoring::SavedScene& scene) {
+  Value out = Value::object();
+  out.set("scene", Value::string(asset_system::toString(scene.scene)));
+  out.set("source", Value::string(scene.source));
+  out.set("documentRevision", Value::number(scene.documentRevision));
+  return out;
+}
+std::optional<authoring::SavedScene> decodeSavedScene(const Value& value) {
+  const auto* scene = value.find("scene");
+  const auto* source = value.find("source");
+  const auto* revision = value.find("documentRevision");
+  if (!scene || !scene->isString() || !source || !source->isString() || !revision) return std::nullopt;
+  const auto guid = asset_system::parseAssetGuid(scene->asString());
+  const auto number = decodeUInt64(*revision);
+  constexpr std::string_view prefix = "scenes/saved/save_", suffix = "/scene.scene.txt";
+  const std::string_view path = source->asString();
+  if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != scene->asString() ||
+      !number || !path.starts_with(prefix) || !path.ends_with(suffix) || path.size() < prefix.size() + suffix.size() ||
+      !authoring::validSaveAsName(path.substr(prefix.size(), path.size() - prefix.size() - suffix.size()))) return std::nullopt;
+  return authoring::SavedScene{guid.value(), std::string(path), *number};
+}
+Value encodeSaveAsError(authoring::SaveAsError error) { return Value::string(std::string(authoring::toString(error))); }
+std::optional<authoring::SaveAsError> decodeSaveAsError(const Value& value) {
+  using E = authoring::SaveAsError;
+  constexpr std::array errors{E::Unavailable, E::InvalidName, E::NoDocument, E::ImportedSceneNotSavable, E::UnsafeTarget,
+                              E::Busy, E::NameConflict, E::IdentityConflict, E::WriteFailed};
+  return enumeratorNamed(value, errors);
+}
 Value encodeApplyError(authoring::ApplyError error) { return Value::string(std::string(authoring::toString(error))); }
 std::optional<authoring::ApplyError> decodeApplyError(const Value& value) {
   return enumeratorNamed(value, kApplyErrors);

@@ -264,6 +264,19 @@ enum class SaveError : std::uint8_t {
   ImportedSceneNotSavable,  // ADR-0129 D4
   WriteFailed,              // the temporary file could not be written or renamed; the source is untouched
 };
+enum class SaveAsError : std::uint8_t {
+  Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
+  Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome,
+};
+struct SavedScene {
+  asset_system::AssetGuid scene;
+  std::string source;
+  std::uint64_t documentRevision = 0;
+  friend bool operator==(const SavedScene&, const SavedScene&) = default;
+};
+[[nodiscard]] bool validSaveAsName(std::string_view name) noexcept;
+[[nodiscard]] std::string saveAsSource(std::string_view name);
+[[nodiscard]] std::string_view toString(SaveAsError error) noexcept;
 enum class ApplyError : std::uint8_t {
   NoDocument,
   NoSceneSink,  // the host gave the session no way to reach the Runtime (ADR-0131 D3)
@@ -367,6 +380,7 @@ class AuthoringConnection {
   [[nodiscard]] virtual Result<authoring::ApplySnapshot, authoring::ApplyLookupError> applyStatus(
       std::optional<authoring::ApplyId> id = std::nullopt) const = 0;
   virtual atlantis::Result<std::monostate, authoring::SaveError> save() = 0;
+  virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
 };
 
 }  // namespace atlantis::connection

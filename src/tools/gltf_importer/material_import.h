@@ -16,6 +16,10 @@ struct cgltf_data;
 // includes cgltf.h (ADR-0084 boundary test).
 namespace atlantis::gltf_importer::detail {
 
+[[nodiscard]] atlantis::Result<std::monostate, GltfImportError> collectMaterialAssetGuids(
+    const cgltf_data& data, const std::filesystem::path& contentRoot,
+    const atlantis::asset_system::AssetGuid& root, std::vector<atlantis::asset_system::AssetGuid>& guids);
+
 // Everything that can make the material slice fail is checked here, before
 // any output exists: extension scope, texture features, sampler wraps,
 // texture sources and their files on disk.

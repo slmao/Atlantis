@@ -133,6 +133,7 @@ struct AuthoringSession::State {
   DocumentSource source;
   std::optional<scene::AuthoringScene> document;
   SceneSink sink;
+  SaveAsSink copySink;
   std::uint64_t documentRevision = 0;
   std::optional<ac::ApplyRecord> pendingApply;
   std::vector<ac::ApplyRecord> terminalApplies;
@@ -453,6 +454,17 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
   }
 
   atlantis::Result<std::monostate, ac::SaveError> save() override { return state_.save(); }
+  Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
+    using R = Result<ac::SavedScene, ac::SaveAsError>;
+    if (!ac::validSaveAsName(name)) return R::Err(ac::SaveAsError::InvalidName);
+    if (!state_.document) return R::Err(ac::SaveAsError::NoDocument);
+    if (!std::holds_alternative<HandAuthored>(state_.source.provenance))
+      return R::Err(ac::SaveAsError::ImportedSceneNotSavable);
+    if (!state_.copySink) return R::Err(ac::SaveAsError::Unavailable);
+    const auto parsed = scene::toParsedSceneSource(*state_.document);
+    ATLANTIS_CHECK_MSG(parsed.isOk(), "saveAs(): a valid document failed to map to its source form");
+    return state_.copySink(name, asset_system::serializeSceneSource(parsed.value()), state_.documentRevision);
+  }
 
  private:
   AuthoringSession::State& state_;
@@ -482,6 +494,7 @@ const scene::AuthoringScene* AuthoringSession::document() const noexcept {
 }
 
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
+void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
 void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {

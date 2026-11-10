@@ -461,6 +461,30 @@ bool validManagedStaticMesh(const cgltf_data& data) {
 
 }  // namespace
 
+atlantis::Result<std::vector<atlantis::asset_system::AssetGuid>, GltfImportError> importAssetGuids(
+    const fs::path& input, const atlantis::asset_system::AssetGuid& root) {
+  namespace as = atlantis::asset_system;
+  using ResultT = atlantis::Result<std::vector<as::AssetGuid>, GltfImportError>;
+  std::ifstream stream(input, std::ios::binary);
+  if (!stream) return ResultT::Err(GltfImportError::InputUnreadable);
+  const std::string text((std::istreambuf_iterator<char>(stream)), {});
+  if (stream.bad()) return ResultT::Err(GltfImportError::InputUnreadable);
+  CgltfDataGuard guard;
+  cgltf_options options{};
+  if (cgltf_parse(&options, text.data(), text.size(), &guard.data) != cgltf_result_success || !guard.data)
+    return ResultT::Err(GltfImportError::MalformedGltf);
+
+  std::vector<as::AssetGuid> guids{as::deriveAssetGuid(root, "scene")};
+  for (cgltf_size mesh = 0; mesh < guard.data->meshes_count; ++mesh) {
+    for (cgltf_size primitive = 0; primitive < guard.data->meshes[mesh].primitives_count; ++primitive) {
+      guids.push_back(as::deriveAssetGuid(root, "mesh/" + std::to_string(mesh) + "/" + std::to_string(primitive)));
+    }
+  }
+  const auto materials = detail::collectMaterialAssetGuids(*guard.data, input.parent_path(), root, guids);
+  if (materials.isErr()) return ResultT::Err(materials.error());
+  return ResultT::Ok(std::move(guids));
+}
+
 atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& inputPath, const fs::path& contentRoot,
                                                                  const fs::path& outputDir, const std::string& name,
                                                                  const atlantis::asset_system::AssetGuid& importRoot,

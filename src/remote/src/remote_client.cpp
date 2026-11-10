@@ -713,6 +713,28 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return sessionCall<ac::SaveError>("authoring.save", &codec::decodeSaveError,
                                       ResultT::Err(ac::SaveError::NoDocument));
   }
+  Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
+    using E = ac::SaveAsError;
+    using R = Result<ac::SavedScene, E>;
+    if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    Value params = Value::object();
+    params.set("name", Value::string(std::string(name)));
+    const auto envelope = state_->awaitResponse(state_->send("authoring.saveAs", std::move(params)));
+    if (envelope) {
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error && (result->find("ok") != nullptr) != (result->find("err") != nullptr)) {
+        const auto decoded = decodeInBand<ac::SavedScene, E>(*result, &codec::decodeSavedScene, &codec::decodeSaveAsError);
+        if (decoded && (!decoded->isOk() || decoded->value().source == ac::saveAsSource(name))) return *decoded;
+      } else if (error && !result) {
+        const auto* code = error->find("code");
+        const auto* message = error->find("message");
+        if (code && code->isString() && code->asString() == "BadRequest" && message && message->isString() &&
+            message->asString() == "unknown method authoring.saveAs") return R::Err(E::Unsupported);
+      }
+    }
+    return failed(R::Err(E::UnknownOutcome));
+  }
 
  private:
   template <typename T>

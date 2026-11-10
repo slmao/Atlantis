@@ -187,6 +187,16 @@
 {"case":"apply.status.RenderPreparationFailed","type":"ApplySnapshot","wire":{"currentDocumentRevision":18446744073709551615,"request":{"receipt":{"id":"52052052-00aa-4052-8052-0000000000aa","documentRevision":18446744073709551615},"state":"Failed","error":"RenderPreparationFailed"},"projection":{"receipt":{"id":"52052052-0002-4052-8052-000000000002","documentRevision":1},"generation":8}}}
 {"case":"apply.status.RuntimeStopped","type":"ApplySnapshot","wire":{"currentDocumentRevision":18446744073709551615,"request":{"receipt":{"id":"52052052-00aa-4052-8052-0000000000aa","documentRevision":18446744073709551615},"state":"Failed","error":"RuntimeStopped"},"projection":{"receipt":{"id":"52052052-0002-4052-8052-000000000002","documentRevision":1},"generation":8}}}
 {"case":"apply.lookup.unknown","type":"ApplyLookupError","wire":"UnknownApply"}
+{"case":"save_as.copy","type":"SavedScene","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","source":"scenes/saved/save_sample/scene.scene.txt","documentRevision":18446744073709551615}}
+{"case":"save_as.Unavailable","type":"SaveAsError","wire":"Unavailable"}
+{"case":"save_as.InvalidName","type":"SaveAsError","wire":"InvalidName"}
+{"case":"save_as.NoDocument","type":"SaveAsError","wire":"NoDocument"}
+{"case":"save_as.ImportedSceneNotSavable","type":"SaveAsError","wire":"ImportedSceneNotSavable"}
+{"case":"save_as.UnsafeTarget","type":"SaveAsError","wire":"UnsafeTarget"}
+{"case":"save_as.Busy","type":"SaveAsError","wire":"Busy"}
+{"case":"save_as.NameConflict","type":"SaveAsError","wire":"NameConflict"}
+{"case":"save_as.IdentityConflict","type":"SaveAsError","wire":"IdentityConflict"}
+{"case":"save_as.WriteFailed","type":"SaveAsError","wire":"WriteFailed"}
 {"case":"overlay.empty","type":"ViewportOverlay","wire":{"selection":[],"groups":[]}}
 {"case":"overlay.selection","type":"ViewportOverlay","wire":{"selection":["58005800-0000-4000-8000-0000000000b1","52052052-0002-4052-8052-000000000002"],"groups":[]}}
 {"case":"overlay.world","type":"ViewportOverlay","wire":{"selection":[],"groups":[{"anchor":null,"segments":[{"a":[0,0,0],"b":[1,0.5,-2.25],"color":[1,0.25,0,1],"depth":"Tested","width":2},{"a":[-1,0,3],"b":[1,0,3],"color":[0,1,0,0.5],"depth":"OnTop","width":1}],"triangles":[{"a":[0,0,0],"b":[1,0,0],"c":[0,1,0],"color":[0.2,0.4,0.6,0.75],"depth":"Tested"}],"points":[{"p":[0.1,0.2,0.3],"color":[1,1,1,1],"depth":"OnTop","size":6.5}]}]}}

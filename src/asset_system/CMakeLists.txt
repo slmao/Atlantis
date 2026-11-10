@@ -301,6 +301,10 @@ function(atlantis_add_imported_scene)
   # Plan 0047 P15: the import root's catalog GUID (the Runtime derives the
   # scene's GUID from it).
   atlantis_catalog_guid(import_guid ROOT content PATH ${content_root_name}/${gltf_name})
+  if(WIN32 AND DEFINED ATLANTIS_SAVED_SCENE AND NOT ATLANTIS_SAVED_SCENE STREQUAL "")
+    set_property(GLOBAL APPEND PROPERTY ATLANTIS_SAVED_SCENE_IMPORTS "${import_guid}\t${ARG_GLTF}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${ARG_GLTF}")
+  endif()
   set(ATLANTIS_${ARG_NAME}_scene_IMPORT_GUID "${import_guid}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_scene_TARGET "atlantis_${ARG_NAME}_scene" PARENT_SCOPE)
   # Plan 0046 M3: the import directory, for the content-gated load test.
