@@ -238,6 +238,15 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         return JsonDocument.Parse(File.ReadAllBytes(full));
     }
 
+    private static string FileApiPath(JsonElement entry, string property, string description)
+    {
+        if (entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty(property, out var value) &&
+            value.ValueKind == JsonValueKind.String && value.GetString() is { } path &&
+            !string.IsNullOrWhiteSpace(path) && path.IndexOfAny(Path.GetInvalidPathChars()) < 0)
+            return path;
+        throw new IOException("Invalid CMake File API " + description + ".");
+    }
+
     internal static string ResolveExecutable(string attempt)
     {
         string reply = Path.Combine(attempt, ".cmake", "api", "v1", "reply");
@@ -245,19 +254,25 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         string indexPath = Directory.EnumerateFiles(reply, "index-*.json").OrderDescending(StringComparer.Ordinal).FirstOrDefault()
             ?? throw new IOException("CMake produced no File API reply.");
         using var index = ReadJson(reply, indexPath);
-        string modelPath = index.RootElement.GetProperty("reply").GetProperty("codemodel-v2").GetProperty("jsonFile").GetString()!;
+        string modelPath = FileApiPath(index.RootElement.GetProperty("reply").GetProperty("codemodel-v2"),
+                                       "jsonFile", "codemodel path");
         using var model = ReadJson(reply, modelPath);
         var debug = model.RootElement.GetProperty("configurations").EnumerateArray()
             .Single(config => config.GetProperty("name").GetString() == "Debug");
         var target = debug.GetProperty("targets").EnumerateArray()
             .Single(item => item.GetProperty("name").GetString() == "atlantis_runtime");
-        using var metadata = ReadJson(reply, target.GetProperty("jsonFile").GetString()!);
+        using var metadata = ReadJson(reply, FileApiPath(target, "jsonFile", "target reply path"));
         if (metadata.RootElement.GetProperty("type").GetString() != "EXECUTABLE")
             throw new IOException("CMake did not report an executable target.");
-        string artifact = metadata.RootElement.GetProperty("artifacts").EnumerateArray()
-            .Select(item => item.GetProperty("path").GetString()!)
-            .Single(path => Path.GetFileName(path).Equals("atlantis_runtime.exe", StringComparison.OrdinalIgnoreCase));
-        string executable = Under(attempt, artifact);
+        if (!metadata.RootElement.TryGetProperty("artifacts", out var artifacts) || artifacts.ValueKind != JsonValueKind.Array)
+            throw new IOException("CMake File API artifacts must be an array.");
+        var runtimeArtifacts = artifacts.EnumerateArray()
+            .Select(item => FileApiPath(item, "path", "artifact path"))
+            .Where(path => string.Equals(Path.GetFileName(path), "atlantis_runtime.exe", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (runtimeArtifacts.Length != 1)
+            throw new IOException("CMake File API must report exactly one atlantis_runtime.exe artifact.");
+        string executable = Under(attempt, runtimeArtifacts[0]);
         Ordinary(executable, directory: false);
         return executable;
     }

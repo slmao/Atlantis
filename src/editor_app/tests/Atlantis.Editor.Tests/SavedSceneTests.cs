@@ -95,13 +95,17 @@ public static partial class Program
                 """{"type":"EXECUTABLE","artifacts":[{"path":"../atlantis_runtime.exe"}]}""",
                 """{"type":"EXECUTABLE","artifacts":[{"path":"Debug/atlantis_runtime.exe"},{"path":"Other/atlantis_runtime.exe"}]}""",
                 """{"type":"EXECUTABLE","artifacts":[{"path":"Missing/atlantis_runtime.exe"}]}""",
+                """{"type":"EXECUTABLE","artifacts":[{"path":null}]}""",
+                """{"type":"EXECUTABLE","artifacts":[{"path":""}]}""",
+                """{"type":"EXECUTABLE","artifacts":[{}]}""",
+                """{"type":"EXECUTABLE","artifacts":[{"path":"Debug/atlantis_runtime.exe"},{"path":42}]}""",
             })
             {
                 File.WriteAllText(target, invalid);
                 bool refused = false;
                 try { _ = SavedSceneWorkspace.ResolveExecutable(work); }
                 catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { refused = true; }
-                Check(refused, "File API refuses out-of-tree, ambiguous or missing executable " + invalid);
+                Check(refused, "File API refuses an invalid artifact reply " + invalid);
             }
             string Hash(string value) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
                 System.Text.Encoding.UTF8.GetBytes(value)));
@@ -196,8 +200,32 @@ public static partial class Program
             list.SelectedItem is null && !build.IsEnabled &&
             NameUiField<TextBlock>(window, "_savedHint")!.Text!.Contains("does not verify the checkout", StringComparison.Ordinal)));
         list.SelectedItem = "first";
-        Click(build);
-        await NameUiWait(() => !model.Busy, "fixture build settled", 90);
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0090_INVALID_REPLY_MARKER") is { } marker)
+        {
+            Click(build);
+            await NameUiWait(() => !model.Busy, "malformed artifact attempt settled", 90);
+            var result = NameUiField<TextBox>(window, "_savedBuildResult")!;
+            string failedDirectory = result.Text!.Split('\n').Single(line => line.StartsWith("Build directory: ", StringComparison.Ordinal))[17..];
+            string log = File.ReadAllText(Path.Combine(failedDirectory, "build.log"));
+            checks.Add(new("null artifact path reports Failed, retains both successful process exits and re-enables Build",
+                result.Text.StartsWith("Failed: Checking output", StringComparison.Ordinal) &&
+                result.Text.Contains("artifact path", StringComparison.OrdinalIgnoreCase) &&
+                log.Contains("artifact path", StringComparison.OrdinalIgnoreCase) &&
+                log.Split('\n').Count(line => line.TrimEnd() == "# exit 0") == 2 &&
+                model.Result is null && build.IsEnabled && !open.IsEnabled));
+
+            File.Delete(marker);
+            Click(build);
+            await NameUiWait(() => !model.Busy, "fresh retry settled", 90);
+            checks.Add(new("retry of the same scene uses a fresh directory and enables Open",
+                model.Result is { } retried && retried.Input.Name == "first" &&
+                retried.Directory != failedDirectory && open.IsEnabled));
+        }
+        else
+        {
+            Click(build);
+            await NameUiWait(() => !model.Busy, "fixture build settled", 90);
+        }
         if (model.Result is null)
             throw new InvalidOperationException(NameUiField<TextBox>(window, "_savedBuildResult")?.Text);
         Click(open);
