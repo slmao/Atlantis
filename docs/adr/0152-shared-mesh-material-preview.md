@@ -1,9 +1,9 @@
 # ADR 0152: Shared Offscreen Mesh and Material Preview
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-12
-- **Deciders:** Pending joint review
-- **Acceptance:** Pending
+- **Deciders:** slmao
+- **Acceptance:** slmao, 2026-11-12, at revision `531335de` of [PR #347](https://github.com/slmao/Atlantis/pull/347).
 - **Related Spec:** [Spec 0092](../specs/0092-mesh-material-preview.md)
 - **Related ADRs:** Extends [ADR-0151](0151-shared-offscreen-mesh-preview.md)
   for an explicit pair. Retains the catalog and generation boundaries in
