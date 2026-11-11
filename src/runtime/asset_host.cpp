@@ -3,6 +3,7 @@
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/load.h>
 #include <atlantis/log.h>
 
 #include <algorithm>
@@ -13,9 +14,12 @@ namespace atlantis::runtime {
 namespace as = asset_system;
 namespace ac = connection::assets;
 struct AssetHost::State final : connection::AssetConnection {
-  State(std::string path, AssetRebuildHost* rebuild) : path_(std::move(path)), rebuild_(rebuild) {}
+  State(std::string path, AssetRebuildHost* rebuild, PreviewProvider preview)
+      : path_(std::move(path)), rebuild_(rebuild), preview_(std::move(preview)) {}
   std::string path_;
   AssetRebuildHost* rebuild_;
+  PreviewProvider preview_;
+  bool previewAdmitted_ = false;
   mutable std::shared_ptr<const as::AssetCatalog> catalog_;
   mutable bool initialized_ = false;
   mutable std::vector<ac::AssetDetails> details_;
@@ -44,7 +48,7 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
     for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source});
-    if (rebuild_) catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
+    if (rebuild_ || preview_.render) catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override {
@@ -60,6 +64,24 @@ struct AssetHost::State final : connection::AssetConnection {
     const auto it = std::lower_bound(details_.begin(), details_.end(), guid,
                                     [](const auto& d, const auto& key) { return d.guid < key; });
     return it != details_.end() && it->guid == guid ? R::Ok(*it) : R::Err(ac::AssetError::UnknownAsset);
+  }
+  ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override {
+    using E = ac::PreviewError;
+    using R = ac::MeshPreviewResult;
+    ATLANTIS_CHECK(guid != as::AssetGuid{});
+    if (!preview_.render) return R::Err(E::Unsupported);
+    if (!preview_.available || !preview_.available()) return R::Err(E::Unavailable);
+    if (std::exchange(previewAdmitted_, true)) return R::Err(E::Busy);
+    initialize();
+    if (!catalog_) return R::Err(E::CatalogUnavailable);
+    const auto* record = catalog_->find(guid);
+    if (!record) return R::Err(E::UnknownAsset);
+    if (record->type != as::CatalogAssetType::Mesh) return R::Err(E::NotMesh);
+    auto mesh = as::loadStaticMeshPreviewAsset(*record);
+    if (mesh.isErr()) {
+      return R::Err(mesh.error() == as::MeshPreviewLoadError::TooLarge ? E::TooLarge : E::InvalidMesh);
+    }
+    return preview_.render(guid, std::move(mesh.value()));
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
@@ -85,6 +107,7 @@ class BorrowedAssets final : public connection::AssetConnection {
   explicit BorrowedAssets(connection::AssetConnection& host) : host_(host) {}
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
+  ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
   ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {
@@ -97,8 +120,9 @@ class BorrowedAssets final : public connection::AssetConnection {
   connection::AssetConnection& host_;
 };
 }
-AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild)
-    : state_(std::make_unique<State>(std::move(path), rebuild)) {}
+AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild, PreviewProvider preview)
+    : state_(std::make_unique<State>(std::move(path), rebuild, std::move(preview))) {}
 AssetHost::~AssetHost() = default;
 std::unique_ptr<connection::AssetConnection> AssetHost::connect() { return std::make_unique<BorrowedAssets>(*state_); }
+void AssetHost::beginServiceInterval() noexcept { state_->previewAdmitted_ = false; }
 }  // namespace atlantis::runtime

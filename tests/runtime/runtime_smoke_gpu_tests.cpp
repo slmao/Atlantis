@@ -1,4 +1,6 @@
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/asset_system/load.h>
 #include <atlantis/profile_recorder.h>
 #include <atlantis/cli/command.h>
 #include <atlantis/cli/invocation.h>
@@ -48,6 +50,7 @@
 #include "vulkan_debug_utils.h"  // Plan 0059 M5: the debug-name observer
 #include "../../src/runtime/benchmark_run.h"
 #include "../../src/runtime/benchmark_variants.h"
+#include "../../src/runtime/src/mesh_preview.h"
 
 // Plan 0013 Section D10: links Atlantis::RuntimeHost directly (never
 // atlantis_runtime, which this test does not invoke as a subprocess) and
@@ -146,6 +149,18 @@ struct RuntimeSmokeTestAccess {
   // same private maps runFrame()'s own DrawItem loop already uses.
   static std::size_t meshResourceMapSize(const RuntimeApplication& app) { return app.meshResourceMap_.size(); }
   static std::size_t materialResourceMapSize(const RuntimeApplication& app) { return app.materialResourceMap_.size(); }
+
+  static bool hasMesh(const RuntimeApplication& app, atlantis::asset_system::AssetId mesh) {
+    return app.meshResourceMap_.contains(mesh);
+  }
+  static bool hasIncompletePreview(const RuntimeApplication& app) { return static_cast<bool>(app.incompleteMeshPreview_); }
+  static connection::assets::MeshPreviewResult failPreviewCompletion(
+      RuntimeApplication& app, const BootstrapConfig& config, const atlantis::asset_system::StaticMeshAssetData& mesh,
+      const atlantis::asset_system::AssetGuid& guid) {
+    return app.previewMeshWithCompletion(config, guid, mesh, [](atlantis::rhi::Device&) {
+      return atlantis::Result<std::monostate, atlantis::rhi::SubmitError>::Err(atlantis::rhi::SubmitError::DeviceLost);
+    });
+  }
 
   [[nodiscard]] static atlantis::world::access::RuntimeWorldAccess& worldAccess(RuntimeApplication& app) {
     return *app.worldAccess_;
@@ -854,6 +869,98 @@ TEST_CASE("Runtime: a capture is a deterministic, edit-sensitive PNG of the fram
   REQUIRE(reason == RuntimeExitReason::Success);
   std::error_code ec;
   fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", "[runtime][gpu][preview]") {
+  namespace as = atlantis::asset_system;
+  namespace ac = atlantis::connection::assets;
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() / ("atlantis_preview_frames_" + std::to_string(std::random_device{}()));
+  fs::create_directories(dir);
+  const BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  const auto guid = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();  // off-origin quad
+  const auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(catalog.isOk());
+  const auto* record = catalog.value().find(guid);
+  REQUIRE(record);
+  REQUIRE_FALSE(RuntimeSmokeTestAccess::hasMesh(app, record->assetId));
+
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto before = app.captureFrameData();
+  REQUIRE(before.isOk());
+  const auto generation = app.sceneGeneration();
+  REQUIRE(app.captureImage((dir / "before.png").string()).isOk());
+  for (int i = 0; i < 3; ++i) {
+    app.runFrame();  // ordinary submission can still be in flight when preview records
+    REQUIRE(app.shouldContinue());
+    auto mesh = as::loadStaticMeshPreviewAsset(*record);
+    REQUIRE(mesh.isOk());
+    auto shaderConfig = config;
+    if (i == 0) shaderConfig.outputTransformUnormVertexShaderSpirvPath.clear();
+    const auto preview = app.previewMesh(shaderConfig, guid, std::move(mesh.value()));
+    if (i == 0) {
+      REQUIRE(preview.isErr());
+      CHECK(preview.error() == ac::PreviewError::RenderFailed);
+    } else {
+      REQUIRE(preview.isOk());
+      CHECK(preview.value().guid == guid);
+      CHECK(preview.value().width == ac::kPreviewDimension);
+      CHECK(preview.value().height == ac::kPreviewDimension);
+      CHECK_FALSE(preview.value().png.empty());
+      CHECK(preview.value().png.size() <= ac::kPreviewPngMaxBytes);
+    }
+    CHECK(app.shouldContinue());
+    CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
+  }
+  CHECK_FALSE(RuntimeSmokeTestAccess::hasMesh(app, record->assetId));
+  CHECK(app.sceneGeneration() == generation);
+  app.runFrame();
+  const auto after = app.captureFrameData();
+  REQUIRE(after.isOk());
+  CHECK(after.value() == before.value());
+  REQUIRE(app.captureImage((dir / "after.png").string()).isOk());
+  const auto beforeImage = atlantis::image_regression::decodePng(dir / "before.png");
+  const auto afterImage = atlantis::image_regression::decodePng(dir / "after.png");
+  REQUIRE(beforeImage.isOk());
+  REQUIRE(afterImage.isOk());
+  const bool identical = beforeImage.value().pixels.rgba8 == afterImage.value().pixels.rgba8;
+  CHECK(identical);
+  CHECK(app.shutdown() == RuntimeExitReason::Success);
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Runtime retains unconfirmed preview resources through its terminal drain", "[runtime][gpu][preview]") {
+  namespace as = atlantis::asset_system;
+  namespace ac = atlantis::connection::assets;
+  const BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  const auto guid = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();
+  const auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(catalog.isOk());
+  const auto* record = catalog.value().find(guid);
+  REQUIRE(record);
+  const auto mesh = as::loadStaticMeshPreviewAsset(*record);
+  REQUIRE(mesh.isOk());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto failed = RuntimeSmokeTestAccess::failPreviewCompletion(app, config, mesh.value(), guid);
+  REQUIRE(failed.isErr());
+  CHECK(failed.error() == ac::PreviewError::Unavailable);
+  CHECK_FALSE(app.shouldContinue());
+  CHECK_FALSE(app.meshPreviewAvailable());
+  CHECK(app.previewMesh(config, guid, mesh.value()).error() == ac::PreviewError::Unavailable);
+  CHECK(RuntimeSmokeTestAccess::hasIncompletePreview(app));
+  // The injected completion failure left a real Vulkan submission undrained.
+  // Shutdown now uses the real wait and releases its scratch before the Device.
+  CHECK(app.shutdown() == RuntimeExitReason::UnrecoverableRuntimeError);
+  CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
 }
 
 // Plan 0055 M7 (Spec 0055 R8, ruling Q7 A-a; J4): the north star in one

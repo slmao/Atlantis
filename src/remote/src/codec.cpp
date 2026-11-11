@@ -171,6 +171,10 @@ std::optional<ca::RebuildError> decodeRebuildError(const Value& value, bool star
   return (*error == ca::RebuildError::UnknownJob) != start ? error : std::nullopt;
 }
 
+std::optional<ca::PreviewError> decodePreviewError(const Value& value) {
+  return rebuildToken(&value, ca::PreviewError::RenderFailed);
+}
+
 Value encode(const ca::ImportJob& job) {
   Value out = Value::object();
   out.set("id", encodeAsset(job.id.value));

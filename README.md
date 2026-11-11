@@ -227,6 +227,14 @@ The catalog is fixed at the first valid query, including an initial failure.
 Reload view and reconnect do not reread disk; restart Runtime after a changed
 build or a repaired initial failure. See the [shared contract](docs/architecture/remote_protocol.md#52-cooked-asset-queries-spec-0081--adr-0143).
 
+Select a mesh and choose **Preview geometry** to render one read-only,
+256 × 256 still. It shows the mesh's vertex colors with a fixed camera,
+independent of the scene's materials, lighting and camera. The same call is
+available as `atlantis --json asset preview <guid>`, C++ `previewMesh(guid)`,
+C# `session.Assets.PreviewMesh(guid)`, and MCP `assets.preview_mesh`.
+The image uses the connected Runtime's existing catalog; a newly published
+asset is available after restarting into the new generation.
+
 Inspector asset-reference fields also offer **Choose…** (F4 while editing the
 field). Choose a catalog GUID and Confirm to make one ordinary undoable edit;
 Cancel discards the choice. Pointer/F4 launch discards that field's uncommitted

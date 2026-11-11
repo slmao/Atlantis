@@ -134,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 42 tools", tools.Count == 42 && tools.Select(t => t.Name).Distinct().Count() == 42);
+            Require("real host discovers exactly 43 tools", tools.Count == 43 && tools.Select(t => t.Name).Distinct().Count() == 43);
         }
         var unavailableCreation = await first.CallToolAsync("authoring.create_scene",
             new Dictionary<string, object?> { ["name"] = "requires_opt_in" }, cancellationToken: _token);
@@ -188,6 +188,15 @@ internal sealed class IntegrationTest
         }
         Require("every MCP detail and direct dependency agrees with the assembled catalog", assetFacts);
         await Call(first, "assets.get", Object("guid", String("00810081-0081-4081-8081-008100810081")), error: true);
+        const string previewGuid = "3b9b8177-eac1-4139-b203-a49d5577eb3b";
+        Reply preview = await Call(first, "assets.preview_mesh", Object("guid", String(previewGuid)));
+        var image = preview.Mcp.Content.OfType<ImageContentBlock>().Single();
+        JsonValue? metadata = preview.Wire.Find("ok");
+        Require("live preview returns one PNG block and bounded mesh metadata", preview.Mcp.Content.Count == 2
+            && image.MimeType == "image/png" && image.DecodedData.Length is > 33 and <= 512 * 1024
+            && metadata?.Find("guid")?.AsString == previewGuid && metadata.Find("mimeType")?.AsString == "image/png"
+            && metadata.Find("width")?.NumberText == "256" && metadata.Find("height")?.NumberText == "256"
+            && metadata.Find("pngBase64") is null);
         JsonValue before = await Capture(first, "before");
         string originalName = nodes.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")!.AsString;
         await Query(first, "authoring.drain_events");

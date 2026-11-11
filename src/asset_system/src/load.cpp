@@ -1,10 +1,12 @@
 #include <atlantis/asset_system/load.h>
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 namespace atlantis::asset_system {
@@ -57,37 +59,16 @@ namespace {
   return vertexStrideBytes != 0 ? static_cast<std::uint32_t>(vertexByteCount / vertexStrideBytes) : 0;
 }
 
-}  // namespace
-
-atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const std::string& artifactPath,
-                                                                           const std::string& metadataPath) {
+[[nodiscard]] atlantis::Result<StaticMeshAssetData, AssetLoadError> decodeLoadedMesh(
+    const std::vector<std::byte>& artifactBytes, const AssetMetadata& metadata, const MeshArtifactHeaderPeek& header) {
   using ResultT = atlantis::Result<StaticMeshAssetData, AssetLoadError>;
-
-  std::vector<std::byte> artifactBytes;
-  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(AssetLoadError::ArtifactFileUnreadable);
-
-  std::string metadataText;
-  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(AssetLoadError::MetadataFileUnreadable);
-
-  const auto metadataResult = parseAssetMetadata(metadataText);
-  if (metadataResult.isErr()) return ResultT::Err(AssetLoadError::MetadataParseFailed);
-  const AssetMetadata& metadata = metadataResult.value();
-
-  // Spec 0039 Requirement 4 / ADR-0087 Decision item 3: the artifact's
-  // own header decides which decoder runs. Not a caller-supplied hint,
-  // not the filename, not a manifest field -- the scene dependency
-  // manifest records paths and AssetIds and deliberately never records a
-  // schema version (ruling O5), so this is the only place that knows.
-  const auto headerResult = peekMeshArtifactHeader(artifactBytes);
-  if (headerResult.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
-
-  if (headerResult.value().schemaVersion == kMeshArtifactSchemaVersionU32) {
+  if (header.schemaVersion == kMeshArtifactSchemaVersionU32) {
     // Spec 0039 ruling O1 / Plan 0039 P2, applied to the header before
     // the decode, not after it: decodeMeshArtifactU32() rejects every
     // index >= vertex_count, so bounding the vertex count bounds every
     // index value in the artifact exactly. One comparison, no per-index
     // pass, and no gigabyte decoded only to be thrown away.
-    if (headerResult.value().vertexCount > kMaxDrawableVertexCount) {
+    if (header.vertexCount > kMaxDrawableVertexCount) {
       return ResultT::Err(AssetLoadError::IndexValueExceedsDrawableRange);
     }
 
@@ -124,6 +105,74 @@ atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const 
 
   return ResultT::Ok(
       StaticMeshAssetData(std::move(artifact.vertexBytes), std::move(artifact.indices), artifact.vertexStrideBytes));
+}
+
+// Measure and read the same opened handle. Probe EOF after an exact read,
+// so a file growing beyond the cap cannot be silently accepted truncated.
+template <typename ByteContainer>
+[[nodiscard]] std::optional<MeshPreviewLoadError> readPreviewFile(const std::string& path, std::size_t cap,
+                                                                  ByteContainer& out) {
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file) return MeshPreviewLoadError::InvalidMesh;
+  const auto size = static_cast<std::streamoff>(file.tellg());
+  if (size < 0) return MeshPreviewLoadError::InvalidMesh;
+  if (size > static_cast<std::streamoff>(cap)) return MeshPreviewLoadError::TooLarge;
+  file.seekg(0);
+  if (!file) return MeshPreviewLoadError::InvalidMesh;
+  out.resize(static_cast<std::size_t>(size));
+  if (size != 0 && !file.read(reinterpret_cast<char*>(out.data()), static_cast<std::streamsize>(size))) {
+    return MeshPreviewLoadError::InvalidMesh;
+  }
+  if (file.peek() != std::char_traits<char>::eof()) {
+    return out.size() == cap ? MeshPreviewLoadError::TooLarge : MeshPreviewLoadError::InvalidMesh;
+  }
+  return file.eof() && !file.bad() ? std::nullopt : std::optional{MeshPreviewLoadError::InvalidMesh};
+}
+
+}  // namespace
+
+atlantis::Result<StaticMeshAssetData, AssetLoadError> loadStaticMeshAsset(const std::string& artifactPath,
+                                                                      const std::string& metadataPath) {
+  using ResultT = atlantis::Result<StaticMeshAssetData, AssetLoadError>;
+  std::vector<std::byte> artifactBytes;
+  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(AssetLoadError::ArtifactFileUnreadable);
+
+  std::string metadataText;
+  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(AssetLoadError::MetadataFileUnreadable);
+
+  const auto metadata = parseAssetMetadata(metadataText);
+  if (metadata.isErr()) return ResultT::Err(AssetLoadError::MetadataParseFailed);
+  // ADR-0087: the header chooses the decoder; caller input is not a version hint.
+  const auto header = peekMeshArtifactHeader(artifactBytes);
+  if (header.isErr()) return ResultT::Err(AssetLoadError::ArtifactDecodeFailed);
+  return decodeLoadedMesh(artifactBytes, metadata.value(), header.value());
+}
+
+atlantis::Result<StaticMeshAssetData, MeshPreviewLoadError> loadStaticMeshPreviewAsset(
+    const AssetCatalogRecord& record) {
+  using ResultT = atlantis::Result<StaticMeshAssetData, MeshPreviewLoadError>;
+  if (record.type != CatalogAssetType::Mesh) return ResultT::Err(MeshPreviewLoadError::InvalidMesh);
+
+  std::vector<std::byte> artifactBytes;
+  if (const auto error = readPreviewFile(record.artifact, kPreviewMeshMaxArtifactBytes, artifactBytes)) {
+    return ResultT::Err(*error);
+  }
+  std::string metadataText;
+  if (const auto error = readPreviewFile(record.metadata, kPreviewMeshMaxMetadataBytes, metadataText)) {
+    return ResultT::Err(*error);
+  }
+  const auto metadata = parseAssetMetadata(metadataText);
+  const auto header = peekMeshArtifactHeader(artifactBytes);
+  if (metadata.isErr() || header.isErr() || metadata.value().assetGuid != record.guid ||
+      metadata.value().assetId != record.assetId || metadata.value().assetType != "static_mesh" ||
+      header.value().schemaVersion != record.artifactSchema) {
+    return ResultT::Err(MeshPreviewLoadError::InvalidMesh);
+  }
+
+  auto decoded = decodeLoadedMesh(artifactBytes, metadata.value(), header.value());
+  if (decoded.isErr()) return ResultT::Err(MeshPreviewLoadError::InvalidMesh);
+  if (decoded.value().indexCount() > kPreviewMeshMaxIndices) return ResultT::Err(MeshPreviewLoadError::TooLarge);
+  return ResultT::Ok(std::move(decoded.value()));
 }
 
 }  // namespace atlantis::asset_system

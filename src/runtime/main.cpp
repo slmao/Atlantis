@@ -417,7 +417,12 @@ int main(int argc, char** argv) {
   }
 #endif
   atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
-  atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get());
+  atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get(),
+      {.available = [&app] { return app.meshPreviewAvailable(); },
+       .render = [&app, &config](const atlantis::asset_system::AssetGuid& guid,
+                                atlantis::asset_system::StaticMeshAssetData mesh) {
+         return app.previewMesh(config, guid, std::move(mesh));
+       }});
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks
 
@@ -528,8 +533,11 @@ int main(int argc, char** argv) {
                         *session.window);
       sessionPending = false;
     }
-    if (server) server->poll();
-    if (runner) runner->step();
+    if (server || runner) {
+      assets.beginServiceInterval();
+      if (server) server->poll();
+      if (runner) runner->step();
+    }
     if (editor) editor->update();
   }
 

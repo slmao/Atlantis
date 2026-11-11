@@ -1,10 +1,10 @@
 # Plan: Read-Only Static Mesh Preview in Assets
 
 - **Spec:** [Spec 0091](../specs/0091-static-mesh-preview.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending; implementation is not authorized
-- **ADR:** [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md) (Proposed)
+- **Joint Human Review:** The owner approved J1–J4, Spec/Plan 0091 and ADR-0151 at `b4d71608` on 2026-11-11. [PR #345](https://github.com/slmao/Atlantis/pull/345) was manually merged as `18fa0c93`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Final merge remains human.
+- **ADR:** [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md) (Accepted)
 
 ## Objective
 

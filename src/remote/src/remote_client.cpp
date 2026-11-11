@@ -460,6 +460,29 @@ class RemoteAssets final : public connection::AssetConnection {
       return d && d->guid == guid ? d : std::nullopt;
     });
   }
+  ca::MeshPreviewResult previewMesh(const AssetGuid& guid) override {
+    ATLANTIS_CHECK(guid != AssetGuid{});
+    Value params = Value::object();
+    params.set("guid", codec::encodeAsset(guid));
+    const auto envelope = state_.awaitResponse(state_.send("assets.previewMesh", std::move(params)));
+    if (envelope) {
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error) {
+        const auto* ok = result->find("ok");
+        const auto* err = result->find("err");
+        if (ok && !err) {
+          if (auto image = ca::decodeMeshPreview(*ok, guid)) return ca::MeshPreviewResult::Ok(std::move(*image));
+        } else if (err && !ok) {
+          if (auto e = codec::decodePreviewError(*err)) return ca::MeshPreviewResult::Err(*e);
+        }
+      } else if (error && !result && legacyAssetRefusal(*error)) {
+        return ca::MeshPreviewResult::Err(ca::PreviewError::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return ca::MeshPreviewResult::Err(ca::PreviewError::Unavailable);
+  }
   ca::RebuildStartResult rebuild(const AssetGuid& guid) override {
     ATLANTIS_CHECK(guid != AssetGuid{});
     Value params = Value::object();
@@ -501,6 +524,13 @@ class RemoteAssets final : public connection::AssetConnection {
         });
   }
  private:
+  static bool legacyAssetRefusal(const Value& error) {
+    const auto* code = error.find("code");
+    const auto* message = error.find("message");
+    return code && code->isString() && code->asString() == "BadRequest" &&
+           message && message->isString() && message->asString() == "unknown or malformed asset query";
+  }
+
   template<class T, class E, class Decode>
   Result<T, E> jobRequest(std::string_view method, Value params, bool start,
                          std::optional<E> (*decodeError)(const Value&, bool), Decode decode) const {
@@ -514,13 +544,7 @@ class RemoteAssets final : public connection::AssetConnection {
         const auto* err = result->find("err");
         if (ok && !err) { if (auto v = decode(*ok)) return R::Ok(std::move(*v)); }
         if (err && !ok) { if (auto e = decodeError(*err, start)) return R::Err(*e); }
-      } else if (error && !result) {
-        const auto* code = error->find("code");
-        const auto* message = error->find("message");
-        if (code && code->isString() && code->asString() == "BadRequest" &&
-            message && message->isString() && message->asString() == "unknown or malformed asset query")
-          return R::Err(E::Unsupported);
-      }
+      } else if (error && !result && legacyAssetRefusal(*error)) return R::Err(E::Unsupported);
     }
     state_.fail(RemoteError::ProtocolError);
     return R::Err(E::Unavailable);

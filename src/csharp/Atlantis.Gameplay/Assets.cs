@@ -9,6 +9,14 @@ public sealed record AssetSummary(AssetGuid Guid, AssetType Type, string Source)
 public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source, uint ArtifactSchema,
                                   uint? SourceSchema, string Tool, IReadOnlyList<AssetGuid> Dependencies);
 
+public enum PreviewError
+{
+    Unsupported, Unavailable, Busy, CatalogUnavailable, UnknownAsset, NotMesh, TooLarge, InvalidMesh, RenderFailed,
+}
+
+/// <summary>An owned PNG and its mesh identity. The consumer owns the byte array and decodes the image.</summary>
+public sealed record MeshPreview(AssetGuid Guid, int Width, int Height, byte[] PngBytes);
+
 public readonly record struct RebuildId(AssetGuid Value)
 {
     public override string ToString() => Value.ToString();

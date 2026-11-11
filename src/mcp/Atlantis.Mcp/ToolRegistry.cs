@@ -43,6 +43,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.preview_mesh", "assets.previewMesh", "Render one cooked mesh as a fixed geometry PNG, without scene materials or lighting.",
+            AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.import", "assets.import", "Register a project inbox source or resume a committed import.", RebuildModel,
             ToolSchemas.ImportParameters()),
         Declare("assets.import_status", "assets.importStatus", "Read-only status for a retained import job or the latest admission.", RebuildModel,
@@ -133,6 +135,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
@@ -203,6 +206,23 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult PreviewMesh(JsonValue parameters)
+    {
+        if (!AssetGuid.TryParse(parameters.Find("guid")?.AsString, out AssetGuid guid) || guid.IsNil)
+            return Error("InvalidArguments: expected a non-nil canonical mesh GUID");
+        var outcome = session.PreviewMesh(guid);
+        if (!outcome.IsOk)
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String(outcome.Error.ToString())), true);
+        var image = outcome.Value;
+        const string mime = "image/png";
+        JsonValue metadata = JsonValue.NewObject().Set("guid", Codec.Encode(image.Guid))
+            .Set("width", JsonValue.Number((long)image.Width)).Set("height", JsonValue.Number((long)image.Height))
+            .Set("mimeType", JsonValue.String(mime));
+        CallToolResult result = Forward(JsonValue.NewObject().Set("ok", metadata), false);
+        result.Content = [.. result.Content, ImageContentBlock.FromBytes(image.PngBytes, mime)];
+        return result;
     }
 
     private CallToolResult SaveAs(JsonValue parameters)

@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/json.h>
 #include <atlantis/result.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -31,6 +33,33 @@ struct AssetDetails {
   std::vector<asset_system::AssetGuid> dependencies;
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
+
+inline constexpr std::uint32_t kPreviewDimension = 256;
+inline constexpr std::size_t kPreviewPngMaxBytes = 512 * 1024;
+inline constexpr std::string_view kPreviewMimeType = "image/png";
+
+enum class PreviewError : std::uint8_t {
+  Unsupported, Unavailable, Busy, CatalogUnavailable, UnknownAsset, NotMesh, TooLarge, InvalidMesh, RenderFailed,
+};
+[[nodiscard]] std::string_view toString(PreviewError error) noexcept;
+
+struct MeshPreview {
+  asset_system::AssetGuid guid;
+  std::uint32_t width = kPreviewDimension;
+  std::uint32_t height = kPreviewDimension;
+  std::vector<std::uint8_t> png;
+  friend bool operator==(const MeshPreview&, const MeshPreview&) = default;
+};
+using MeshPreviewResult = Result<MeshPreview, PreviewError>;
+
+// Shared structured payload for Remote and CLI. These functions borrow only
+// for the call; results own their contents. Safe on distinct values. Nullopt
+// means malformed or out of bounds, not an asset refusal. Only the PNG header
+// is validated here; the consumer owns complete image decoding.
+[[nodiscard]] std::optional<json::Value> encodeMeshPreview(const MeshPreview& image,
+                                                          const asset_system::AssetGuid& requested);
+[[nodiscard]] std::optional<MeshPreview> decodeMeshPreview(const json::Value& payload,
+                                                          const asset_system::AssetGuid& requested);
 
 // Canonical GUID values in separate domains from an asset identity.
 struct RebuildId {
@@ -139,6 +168,12 @@ class AssetConnection {
   // Precondition: guid is non-nil.
   [[nodiscard]] virtual Result<assets::AssetDetails, assets::AssetError> getAsset(
       const asset_system::AssetGuid& guid) const = 0;
+  // Spec 0091 / ADR-0151: a synchronous geometry still from this Runtime's
+  // catalog snapshot. Precondition: guid is non-nil. No World or file changes.
+  // Remote failures use Unavailable as a sentinel; check the session first.
+  [[nodiscard]] virtual assets::MeshPreviewResult previewMesh(const asset_system::AssetGuid&) {
+    return assets::MeshPreviewResult::Err(assets::PreviewError::Unsupported);
+  }
   // Spec 0085. Accepts a non-nil catalog GUID and returns an admission receipt.
   // Remote failures use Unavailable as a sentinel; check the session first.
   [[nodiscard]] virtual assets::RebuildStartResult rebuild(const asset_system::AssetGuid&) {

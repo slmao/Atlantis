@@ -6,6 +6,7 @@
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/connection/authoring_connection.h>
+#include <atlantis/connection/asset_connection.h>
 #include <atlantis/connection/in_process_endpoint.h>
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/connection/runtime_control.h>
@@ -47,7 +48,16 @@
 #include <unordered_map>
 #include <vector>
 
+namespace atlantis::asset_system {
+class StaticMeshAssetData;
+}
+
 namespace atlantis::runtime {
+
+namespace detail {
+struct MeshPreviewResources;
+using PreviewCompletion = atlantis::Result<std::monostate, rhi::SubmitError> (*)(rhi::Device&);
+}
 
 // Plan 0066 P4 (ADR-0132 D4; J11): where the Viewport overlay's three compiled
 // shader pairs are -- each directory holds <name>.vert.spv and <name>.frag.spv
@@ -95,6 +105,12 @@ class RuntimeApplication {
   void runFrame();
 
   [[nodiscard]] bool shouldContinue() const noexcept;
+
+  // Spec 0091: explicit between-frame offscreen work. No scene or
+  // presentation input. A fatal device failure stops subsequent frames.
+  [[nodiscard]] bool meshPreviewAvailable() const noexcept;
+  [[nodiscard]] connection::assets::MeshPreviewResult previewMesh(
+      const BootstrapConfig& config, const asset_system::AssetGuid& guid, asset_system::StaticMeshAssetData mesh);
 
   // Spec 0059 / ADR-0117 D2: the extent the scene is rendered at -- the
   // swapchain's, or the Viewport's while an overlay is attached -- as last seen
@@ -249,6 +265,10 @@ class RuntimeApplication {
   void detachOverlay();
 
  private:
+  [[nodiscard]] connection::assets::MeshPreviewResult previewMeshWithCompletion(
+      const BootstrapConfig& config, const asset_system::AssetGuid& guid, const asset_system::StaticMeshAssetData& mesh,
+      detail::PreviewCompletion complete);
+
   // Plan 0056 P7: the helpers of runFrame()'s named overlay places, called
   // only while overlay_ is set. overlayViewportExtent() (place 2) also brings
   // the Viewport target and the overlay Pipeline to the Viewport's size and
@@ -321,6 +341,9 @@ class RuntimeApplication {
   // member destruction.
   PlatformSession platformSession_;
   std::unique_ptr<atlantis::rhi::Device> device_;
+  // Normally empty; a preview with unconfirmed GPU completion keeps its
+  // resources through the terminal shutdown drain, before Device teardown.
+  std::shared_ptr<detail::MeshPreviewResources> incompleteMeshPreview_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;  // lazy: constructed on first SurfaceCreated
   // Plan 0025/M7: declared before borrowing Materials so reverse destruction
   // releases all Materials first, then environment resources, then Device.

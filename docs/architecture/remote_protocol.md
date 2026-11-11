@@ -290,6 +290,27 @@ List-all sends one complete reply using existing limits (§3), including the sha
 64 MiB pending-output budget. Overflow disconnects, never truncates or succeeds
 empty. There is no pagination, streaming, new cap, event or capability handshake.
 
+#### Static mesh preview (Spec 0091 / ADR-0151)
+
+`assets.previewMesh` takes exactly `{"guid":"<non-nil canonical asset GUID>"}`.
+Success is `{"ok":{"guid":"<same GUID>","mimeType":"image/png","width":256,"height":256,"pngBase64":"<canonical padded base64>"}}`.
+There is one result arm: success or `{"err":"<PreviewError>"}`. Refusals
+are `Unsupported`, `Unavailable`, `Busy`, `CatalogUnavailable`,
+`UnknownAsset`, `NotMesh`, `TooLarge`, `InvalidMesh` and `RenderFailed`.
+Invalid parameters are outer `BadRequest`; no preview provider returns
+`Unsupported`.
+Typed clients recognize only the exact older Runtime unknown-method response
+as `Unsupported`. Other protocol and transport errors retain their normal
+classification. Successful replies must match the requested GUID, MIME and
+dimensions and have a valid PNG signature and IHDR. Encoded and decoded sizes
+are checked before allocation (decoded maximum: 512 KiB).
+
+The first admitted preview uses the same lazy catalog as list/get. The
+catalog stays fixed across clients, apply and reconnect until Runtime restart.
+Preview is synchronous with one shared Remote/`--exec` permit per service
+interval. `Busy` does not enqueue work. No scene step, camera or authoring
+change is implicit in rendering a preview. See [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md).
+
 ### 5.2.1 Managed asset rebuild (Spec 0085 / ADR-0146)
 
 | Method | Parameters | Result |

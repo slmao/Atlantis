@@ -46,5 +46,40 @@ public static partial class Program
               reloadModel.DetailState == "Ready", "assets: replacement detail settles after reload");
         Check(!reloadModel.CompleteDetail(pendingDetail, a, Outcome<AssetDetails, AssetError>.Ok(detail)) &&
               ReferenceEquals(reloadModel.Details, refreshed), "assets: late old reply for the same GUID cannot overwrite reload result");
+
+        var preview = new AssetPreviewRequests();
+        Check(!preview.Request() && preview.TakeNext() is null, "preview: no visible mesh cannot request");
+        preview.SetSelection(a);
+        Check(preview.CanRequest && preview.TakeNext() is null, "preview: browsing never starts work");
+        Check(preview.Request() && !preview.Request(), "preview: one explicit intent per current selection");
+        var first = preview.TakeNext()!;
+        Check(preview.CanSend(first), "preview: current request admitted after setup");
+        preview.SetSelection(b);
+        Check(preview.Request() && preview.TakeNext() is null, "preview: B waits while A is in flight");
+        preview.SetSelection(a);
+        Check(preview.Request() && !preview.Settle(first), "preview: late A cannot settle a newer A epoch");
+        var latest = preview.TakeNext()!;
+        Check(latest.Guid == a && latest.Epoch != first.Epoch && preview.CanSend(latest),
+              "preview: A to B to A drops the unsent B and admits only the latest A");
+        preview.SetSelection(null);
+        Check(!preview.Settle(latest) && !preview.CanRequest && preview.TakeNext() is null,
+              "preview: hiding or deselecting discards late output and unsent work");
+
+        preview.SetSelection(a);
+        Check(preview.Request(), "preview: accepts a new explicit request after navigation");
+        var connecting = preview.TakeNext()!;
+        preview.SetSelection(null, invalidate: true);
+        preview.SetSelection(a);
+        Check(preview.Request() && !preview.CanSend(connecting) && preview.TakeNext() is null,
+              "preview: reconnect during setup invalidates the old send and retains one active slot");
+        Check(!preview.Settle(connecting), "preview: setup failure from old session cannot change the current view");
+        var newSession = preview.TakeNext()!;
+        Check(preview.CanSend(newSession) && preview.Settle(newSession) && preview.CanRequest,
+              "preview: timeout on current request releases the slot for an explicit retry");
+        Check(preview.Request(), "preview: retry enters the empty slot");
+        var retry = preview.TakeNext()!;
+        preview.SetSelection(a, invalidate: true);
+        Check(!preview.CanSend(retry) && !preview.Settle(retry) && preview.TakeNext() is null,
+              "preview: same-GUID Reload invalidates the request without starting another");
     }
 }

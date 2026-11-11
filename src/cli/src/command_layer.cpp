@@ -816,8 +816,29 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
+    if (t.size() > 1 && t[1] == "preview") {
+      namespace ca = connection::assets;
+      if (t.size() != 3) return failed(command, usageError("asset preview <non-nil canonical mesh-guid>"));
+      const auto guid = asset_system::parseAssetGuid(t[2]);
+      if (guid.isErr()) return failed(command, usageError("asset preview <non-nil canonical mesh-guid>"));
+      const auto refuse = [&](ca::PreviewError error) {
+        const std::string name(ca::toString(error));
+        return failed(command, plainError(name, ErrorCategory::Refused, name));
+      };
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      if (!endpoint) return refuse(ca::PreviewError::Unsupported);
+      const auto preview = endpoint->previewMesh(guid.value());
+      if (preview.isErr()) return refuse(preview.error());
+      auto result = ca::encodeMeshPreview(preview.value(), guid.value());
+      if (!result) return refuse(ca::PreviewError::RenderFailed);
+      const auto& image = preview.value();
+      std::string human = "asset preview " + asset_system::toString(image.guid) + " " +
+                          std::to_string(image.width) + "x" + std::to_string(image.height) +
+                          " image/png (" + std::to_string(image.png.size()) + " bytes)\n";
+      return done(command, std::move(human), std::move(*result));
+    }
     if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))
-      return failed(command, usageError("asset list | asset get <asset-guid>"));
+      return failed(command, usageError("asset list | asset get <asset-guid> | asset preview <mesh-guid>"));
     std::optional<asset_system::AssetGuid> guid;
     if (t[1] == "get") {
       auto parsed = asset_system::parseAssetGuid(t[2]);

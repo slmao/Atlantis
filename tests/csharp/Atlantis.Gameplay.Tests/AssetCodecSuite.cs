@@ -1,3 +1,4 @@
+using System;
 using Atlantis.Gameplay.Remote;
 using A = Atlantis.Gameplay.Assets;
 
@@ -39,5 +40,56 @@ public static class AssetCodecSuite
                 "closed failure stage/code pair");
         t.Check(Codec.DecodeRebuildError(JsonValue.String("UnknownJob"), true) is null &&
                 Codec.DecodeRebuildError(JsonValue.String("Busy"), false) is null, "closed operation refusal sets");
+        Preview(t, guid);
+    }
+
+    // Minimal PNG header for wire checks. The SDK deliberately does not decode image data.
+    internal static readonly byte[] PreviewHeader = [137, 80, 78, 71, 13, 10, 26, 10,
+        0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 1, 0, 0, 0, 1, 0, 8, 6, 0, 0, 0, 0, 0, 0, 0];
+
+    internal static JsonValue PreviewValue(AssetGuid guid, byte[] png) => JsonValue.NewObject()
+        .Set("guid", Codec.Encode(guid)).Set("width", JsonValue.Number(256L)).Set("height", JsonValue.Number(256L))
+        .Set("mimeType", JsonValue.String("image/png")).Set("pngBase64", JsonValue.String(Convert.ToBase64String(png)));
+
+    private static void Preview(TestContext t, AssetGuid guid)
+    {
+        var value = PreviewValue(guid, PreviewHeader);
+        var decoded = Codec.DecodeMeshPreview(value, guid);
+        t.Check(decoded is { Width: 256, Height: 256 } && decoded.Guid == guid &&
+                decoded.PngBytes.AsSpan().SequenceEqual(PreviewHeader), "preview header and bytes decode");
+        decoded!.PngBytes[0] = 0;
+        t.Check(Codec.DecodeMeshPreview(value, guid)?.PngBytes[0] == 137, "each preview result owns its bytes");
+        t.Check(Codec.DecodeMeshPreview(value, AssetGuid.Parse("11111111-2222-4333-8444-555555555555")) is null,
+            "mismatched preview GUID is refused");
+        t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, PreviewHeader).Set("mimeType", JsonValue.String("image/jpeg")), guid) is null,
+            "wrong preview MIME is refused");
+        t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, PreviewHeader).Set("width", JsonValue.Number(255L)), guid) is null,
+            "wrong preview dimensions are refused");
+        foreach (int byteIndex in new[] { 0, 11, 12, 19, 23 })
+        {
+            byte[] malformed = (byte[])PreviewHeader.Clone();
+            ++malformed[byteIndex];
+            t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, malformed), guid) is null, "invalid preview PNG header byte " + byteIndex);
+        }
+        t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, PreviewHeader[..^1]), guid) is null, "truncated first PNG chunk is refused");
+        byte[] padded = [.. PreviewHeader, 0];
+        string canonical = Convert.ToBase64String(padded);
+        t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, padded), guid) is not null, "canonical padded base64 is accepted");
+        foreach (string invalid in new[] { canonical[..^3] + "B==", canonical.TrimEnd('='), canonical[..8] + " " + canonical[9..] })
+            t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, padded).Set("pngBase64", JsonValue.String(invalid)), guid) is null,
+                "noncanonical preview base64 is refused");
+        const int limit = 512 * 1024;
+        byte[] boundary = new byte[limit];
+        PreviewHeader.CopyTo(boundary, 0);
+        t.Check(Codec.DecodeMeshPreview(PreviewValue(guid, boundary), guid)?.PngBytes.Length == limit,
+            "512 KiB decoded limit is inclusive");
+        Array.Resize(ref boundary, limit + 1);
+        JsonValue oversized = PreviewValue(guid, boundary);
+        t.Check(oversized.Find("pngBase64")?.AsString.Length == 699_052 && Codec.DecodeMeshPreview(oversized, guid) is null,
+            "decoded limit applies even when encoded character length fits");
+        foreach (var error in Enum.GetValues<A.PreviewError>())
+            t.Equal<A.PreviewError?>(error, Codec.DecodePreviewError(JsonValue.String(error.ToString())), "typed preview refusal " + error);
+        t.Check(Codec.DecodePreviewError(JsonValue.String("0")) is null && Codec.DecodePreviewError(JsonValue.String("Future")) is null,
+            "preview errors are closed wire tokens");
     }
 }

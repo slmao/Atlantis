@@ -2634,9 +2634,8 @@ RuntimeExitReason RuntimeApplication::shutdown() {
   bool hadFailure = (lifecycle_.state() == RuntimeLifecycleState::Failed);
   lifecycle_.beginShutdown();
 
-  // waitIdle() is meaningful only if this object ever reached Running --
-  // before that, runFrame() (the only place Device::submit() is ever
-  // called) has never run, so there is nothing outstanding to wait for.
+  // Frames and between-frame capture/preview work require a Running
+  // application. Drain outstanding submissions before releasing their resources.
   if (device_ && lifecycle_.hasEverRun()) {
     auto result = device_->waitIdle();
     if (result.isErr()) {
@@ -2645,6 +2644,8 @@ RuntimeExitReason RuntimeApplication::shutdown() {
                            // condition for this run; teardown proceeds regardless.
     }
   }
+
+  incompleteMeshPreview_.reset();  // Spec 0091 R3: after the terminal drain, before Device teardown.
 
   // Plan 0018 Section P10: explicit clear, texture/sampler-before-
   // material order (D9) -- material_.reset()'s own former single line

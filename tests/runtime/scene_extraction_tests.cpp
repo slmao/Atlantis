@@ -1,3 +1,6 @@
+#include "../../src/runtime/src/mesh_preview.h"
+
+#include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/scene_types.h>
 #include <atlantis/runtime/scene_extraction.h>
 
@@ -5,6 +8,7 @@
 #include <atlantis/world/light.h>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <cstddef>
@@ -72,6 +76,82 @@ void requireOrthonormalProperBasis(const Mat4& view) {
   REQUIRE(std::abs(determinant - 1.0f) < kEpsilon);
 }
 }  // namespace
+
+TEST_CASE("preview frames indexed planar geometry independently of scale and translation", "[runtime][preview]") {
+  namespace as = atlantis::asset_system;
+  using Position = std::array<float, 3>;
+  constexpr auto stride = as::kMeshArtifactVertexStrideBytes;
+  constexpr std::array<Position, 4> planar{{{-1, -1, 0}, {1, -1, 0}, {0, 1, 0}, {5, 10, 20}}};
+  const auto makeVertices = [&](float scale, float offset) {
+    std::vector<std::byte> vertices(planar.size() * stride, std::byte{0x2a});
+    for (std::size_t i = 0; i < planar.size(); ++i) {
+      Position p = planar[i];
+      for (auto& component : p) component = component * scale + offset;
+      std::memcpy(vertices.data() + i * stride + as::kMeshArtifactPositionOffsetBytes, p.data(), sizeof(p));
+    }
+    return vertices;
+  };
+  const as::StaticMeshAssetData origin(makeVertices(1, 0), std::vector<std::uint16_t>{0, 1, 2}, stride);
+  const auto baseline = atlantis::runtime::detail::frameMeshPreview(origin);
+  REQUIRE(baseline);
+  float scale = 1.0f;
+  float translation = 0.0f;
+  SECTION("centered planar mesh") {}
+  SECTION("small but representable triangle far from origin") { scale = 32.0f; translation = 1.0e8f; }
+  SECTION("very small near origin") { scale = 1.0e-30f; }
+  SECTION("very large near origin") { scale = 1.0e30f; }
+  const auto input = makeVertices(scale, translation);
+  const as::StaticMeshAssetData subject(input, std::vector<std::uint32_t>{0, 1, 2}, stride);
+  const auto framed = atlantis::runtime::detail::frameMeshPreview(subject);
+  REQUIRE(framed);
+  CHECK(framed->camera.view == baseline->camera.view);
+  CHECK(framed->camera.projection == baseline->camera.projection);
+
+  const auto transform = [](const Mat4& matrix, const std::array<float, 4>& vector) {
+    std::array<float, 4> output{};
+    for (std::size_t row = 0; row < 4; ++row) {
+      for (std::size_t col = 0; col < 4; ++col) output[row] += matrix[col * 4 + row] * vector[col];
+    }
+    return output;
+  };
+  for (std::size_t i = 0; i < 3; ++i) {
+    Position pos, expected;
+    const auto offset = i * stride + as::kMeshArtifactPositionOffsetBytes;
+    std::memcpy(pos.data(), framed->vertexBytes.data() + offset, sizeof(pos));
+    std::memcpy(expected.data(), baseline->vertexBytes.data() + offset, sizeof(pos));
+    for (std::size_t axis = 0; axis < pos.size(); ++axis) CHECK(std::abs(pos[axis] - expected[axis]) < kEpsilon);
+    const auto view = transform(framed->camera.view, {pos[0], pos[1], pos[2], 1.0f});
+    const auto clip = transform(framed->camera.projection, view);
+    CHECK(std::all_of(clip.begin(), clip.end(), [](float v) { return std::isfinite(v); }));
+    REQUIRE(clip[3] > 0.0f);
+    CHECK(std::abs(clip[0]) < clip[3]);
+    CHECK(std::abs(clip[1]) < clip[3]);
+    CHECK(clip[2] > 0.0f);
+    CHECK(clip[2] < clip[3]);
+    const auto color = i * stride + as::kMeshArtifactColorOffsetBytes;
+    CHECK(std::memcmp(input.data() + color, framed->vertexBytes.data() + color, sizeof(Position)) == 0);
+  }
+  CHECK(std::memcmp(input.data() + 3 * stride, framed->vertexBytes.data() + 3 * stride, stride) == 0);
+}
+
+TEST_CASE("preview rejects nonfinite, non-triangular, and degenerate indexed geometry", "[runtime][preview]") {
+  namespace as = atlantis::asset_system;
+  using Position = std::array<float, 3>;
+  constexpr auto stride = as::kMeshArtifactVertexStrideBytes;
+  std::array<Position, 3> positions{{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}}};
+  std::vector<std::uint16_t> indices{0, 1, 2};
+  SECTION("all positions coincide") { positions = {}; }
+  SECTION("collinear") { positions[2] = {2, 0, 0}; }
+  SECTION("nonfinite") { positions[2][1] = std::numeric_limits<float>::infinity(); }
+  SECTION("truncated triangle") { indices.pop_back(); }
+  SECTION("out of range index") { indices[2] = 3; }
+  std::vector<std::byte> bytes(positions.size() * stride);
+  for (std::size_t i = 0; i < positions.size(); ++i) {
+    std::memcpy(bytes.data() + i * stride + as::kMeshArtifactPositionOffsetBytes, positions[i].data(), sizeof(Position));
+  }
+  const as::StaticMeshAssetData mesh(std::move(bytes), std::move(indices), stride);
+  CHECK_FALSE(atlantis::runtime::detail::frameMeshPreview(mesh));
+}
 
 // V15 (camera-matrix extraction, well-formed case)
 TEST_CASE("extractCameraMatrices(): a well-formed input produces an orthonormal view basis and a correct projection",

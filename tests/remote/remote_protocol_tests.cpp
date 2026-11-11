@@ -1,5 +1,6 @@
 #include "remote_fixture.h"
 
+#include "codec.h"
 #include "line_channel.h"
 #include "os/socket.h"
 
@@ -101,20 +102,103 @@ TEST_CASE("assets: invalid wire arguments never open the lazy provider", "[remot
   world.server->serveAssets([&]() -> std::unique_ptr<atlantis::connection::AssetConnection> { ++opens; return nullptr; });
   LineChannel client = rawClient(*world.server);
   sendRaw(client, hello() + request(1, "assets.get", R"({"guid":"00000000-0000-0000-0000-000000000000"})") +
-      request(2, "assets.get", R"({"guid":123})") + request(3, "assets.get", "{}") + request(4, "assets.list", "[]"));
+      request(2, "assets.get", R"({"guid":123})") + request(3, "assets.get", "{}") + request(4, "assets.list", "[]") +
+      request(5, "assets.previewMesh", R"({"guid":"00000000-0000-0000-0000-000000000000"})") +
+      request(6, "assets.previewMesh", R"({"guid":"00810081-0081-4081-8081-0081008100AB"})") +
+      request(7, "assets.previewMesh", R"({"guid":"00810081-0081-4081-8081-0081008100ab","width":256})") +
+      request(8, "assets.previewMesh", "{}"));
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   world.server->poll();
-  auto replies = receive(client, 5);
-  REQUIRE(replies.responses.size() == 5);
+  auto replies = receive(client, 9);
+  REQUIRE(replies.responses.size() == 9);
   for (std::size_t i = 1; i < replies.responses.size(); ++i) CHECK(errorCode(replies.responses[i]) == "BadRequest");
   CHECK(opens == 0);
-  sendRaw(client, request(5, "assets.list"));
+  sendRaw(client, request(9, "assets.list"));
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   world.server->poll();
   replies = receive(client, 1);
   REQUIRE(replies.responses.size() == 1);
   CHECK(errorCode(replies.responses[0]) == "NoAssets");
   CHECK(opens == 1);
+}
+
+TEST_CASE("asset preview: only the exact legacy refusal preserves the native session", "[remote][assets][protocol][asset-preview]") {
+  namespace ca = atlantis::connection::assets;
+  namespace codec = atlantis::remote::codec;
+  namespace os = atlantis::remote::os;
+  using atlantis::remote::test::fixtureSceneGuid;
+  constexpr std::string_view legacy = R"("error":{"code":"BadRequest","message":"unknown or malformed asset query"})";
+  std::string previewReply = std::string(legacy);
+  bool supportedFallback = false;
+  SECTION("legacy reply") { supportedFallback = true; }
+  SECTION("similar error is not a fallback") {
+    previewReply = R"("error":{"code":"BadRequest","message":"unknown asset query"})";
+  }
+  SECTION("result and top-level error are mutually exclusive") {
+    previewReply += R"(,"result":{"err":"Busy"})";
+  }
+  SECTION("ok and err are mutually exclusive") {
+    previewReply = R"("result":{"ok":null,"err":"Busy"})";
+  }
+  SECTION("unknown in-band error") { previewReply = R"("result":{"err":"NewError"})"; }
+  SECTION("invalid image") { previewReply = R"("result":{"ok":{"guid":"00000000-0000-0000-0000-000000000000"}})"; }
+
+  const auto guid = fixtureSceneGuid();
+  const auto detail = ca::AssetDetails{guid, ca::AssetType::Scene, "assets:scene.scene.txt", 7, 7, "test/1", {}};
+  auto listener = os::listenLoopback(0);
+  REQUIRE(listener.isOk());
+  std::optional<LineChannel> peer;
+  atlantis::remote::RemoteOptions options;
+  options.responseTimeoutMilliseconds = 3000;
+  options.whileWaiting = [&] {
+    if (!peer) {
+      auto incoming = os::acceptPending(listener.value());
+      if (!incoming.valid()) return;
+      peer.emplace(std::move(incoming), 4096, 4096);
+    }
+    std::vector<std::string> lines;
+    REQUIRE(peer->read(lines) == LineChannel::ReadStatus::Ok);
+    for (const auto& line : lines) {
+      auto parsed = json::parse(line);
+      REQUIRE(parsed.isOk());
+      const auto& req = parsed.value();
+      const auto& method = req.find("method")->asString();
+      const auto prefix = "{\"id\":" + req.find("id")->numberText() + ",";
+      if (method == "assets.previewMesh") {
+        CHECK(*req.find("params") == json::Value::object({{"guid", codec::encodeAsset(guid)}}));
+        REQUIRE(peer->queue(prefix + previewReply + "}"));
+        continue;
+      }
+      json::Value result;
+      if (method == "hello") {
+        result = json::Value::object({{"scene", codec::encodeAsset(guid)}});
+      } else if (method == "connection.schema") {
+        result = json::Value::array();
+      } else if (method == "assets.list") {
+        result = codec::ok(json::Value::array({codec::encode(ca::AssetSummary{guid, detail.type, detail.source})}));
+      } else {
+        REQUIRE(method == "assets.get");
+        result = codec::ok(codec::encode(detail));
+      }
+      REQUIRE(peer->queue(prefix + "\"result\":" + json::write(result) + "}"));
+    }
+    REQUIRE(peer->flush());
+  };
+  auto connected = atlantis::remote::connectRemote({os::localPort(listener.value()), kToken, 0, guid, {}},
+                                                   std::move(options));
+  REQUIRE(connected.isOk());
+  auto& session = *connected.value();
+  auto reply = session.assets().previewMesh(guid);
+  REQUIRE(reply.isErr());
+  if (supportedFallback) {
+    CHECK(reply.error() == ca::PreviewError::Unsupported);
+    CHECK_FALSE(session.failure());
+    CHECK(session.assets().listAssets().value().size() == 1);
+    CHECK(session.assets().getAsset(guid).value() == detail);
+  } else {
+    CHECK(reply.error() == ca::PreviewError::Unavailable);
+    CHECK(session.failure() == atlantis::remote::RemoteError::ProtocolError);
+  }
 }
 
 TEST_CASE("protocol: pipelined requests are all answered in one poll, in order", "[remote][protocol]") {

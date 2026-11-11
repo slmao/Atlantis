@@ -1,9 +1,9 @@
 # ADR 0151: Shared Offscreen Static Mesh Preview
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-11
 - **Deciders:** slmao
-- **Acceptance:** Pending joint review
+- **Acceptance:** slmao, 2026-11-11, at revision `b4d71608` of [PR #345](https://github.com/slmao/Atlantis/pull/345).
 - **Related Spec:** [Spec 0091](../specs/0091-static-mesh-preview.md)
 - **Related ADRs:** Extends [ADR-0143](0143-shared-cooked-asset-catalog-queries.md)
   and [ADR-0106](0106-attachable-runtime-transport-and-control.md) for one

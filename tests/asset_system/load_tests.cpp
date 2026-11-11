@@ -1,5 +1,6 @@
 #include <atlantis/asset_system/load.h>
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/asset_metadata.h>
 #include <atlantis/asset_system/cook.h>
@@ -97,11 +98,13 @@ void writeFile(const fs::path& path, const std::string& content) {
 // differ in exactly the index width and the version field. The importer
 // is production's only v5 producer; this test writes one directly rather
 // than depending on the Tools subsystem.
-[[nodiscard]] std::pair<std::string, std::string> writeValidTriangleV5(const fs::path& dir) {
-  const auto parsed = parseMeshSource(std::string(kValidTriangleSource));
+[[nodiscard]] std::pair<std::string, std::string> writeValidTriangleV5(const fs::path& dir, std::uint32_t indexCount = 3) {
+  auto parsed = parseMeshSource(std::string(kValidTriangleSource));
   REQUIRE(parsed.isOk());
   const auto tangents = generateTangents(parsed.value());
   REQUIRE(tangents.isOk());
+  parsed.value().indices.resize(indexCount);
+  for (std::uint32_t i = 3; i < indexCount; ++i) parsed.value().indices[i] = parsed.value().indices[i % 3];
 
   const auto logicalPath = normalizeLogicalPath("triangle_v5.mesh.txt");
   REQUIRE(logicalPath.isOk());
@@ -141,6 +144,17 @@ void writeAllBytes(const std::string& path, const std::vector<char>& bytes) {
   out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 }
 
+AssetCatalogRecord previewRecord(const std::pair<std::string, std::string>& files, std::uint32_t schema) {
+  AssetCatalogRecord record;
+  record.guid = testAssetGuid(schema == kMeshArtifactSchemaVersion ? "triangle.mesh.txt" : "triangle_v5.mesh.txt");
+  record.assetId = assetKey(record.guid);
+  record.type = CatalogAssetType::Mesh;
+  record.artifact = files.first;
+  record.metadata = files.second;
+  record.artifactSchema = schema;
+  return record;
+}
+
 // Overwrites the little-endian uint32 at byteOffset -- the header fields
 // mesh_artifact.h documents: schema_version at 8, vertex_count at 24.
 void patchHeaderU32(std::vector<char>& bytes, std::size_t byteOffset, std::uint32_t value) {
@@ -166,6 +180,50 @@ template <typename Body>
 }
 
 }  // namespace
+
+TEST_CASE("preview mesh requires the cooked pair to match the catalog identity and schema", "[asset_system][preview]") {
+  TempDirGuard dir("preview_identity");
+  auto v4 = previewRecord(cookValidTriangle(dir.path), kMeshArtifactSchemaVersion);
+  auto v5 = previewRecord(writeValidTriangleV5(dir.path), kMeshArtifactSchemaVersionU32);
+  auto first = loadStaticMeshPreviewAsset(v4);
+  REQUIRE(first.isOk());
+  CHECK(first.value().indexType() == MeshIndexType::Uint16);
+  auto second = loadStaticMeshPreviewAsset(v5);
+  REQUIRE(second.isOk());
+  CHECK(second.value().indexType() == MeshIndexType::Uint32);
+
+  SECTION("valid replacement pair") {
+    v5.guid = v4.guid;
+    v5.assetId = v4.assetId;
+  }
+  SECTION("unexpected version") { v5.artifactSchema = v4.artifactSchema; }
+  SECTION("wrong sidecar for a valid artifact") { v5.metadata = v4.metadata; }
+  CHECK(loadStaticMeshPreviewAsset(v5).error() == MeshPreviewLoadError::InvalidMesh);
+}
+
+TEST_CASE("preview file limits apply to opened bytes before decoding, with inclusive boundaries", "[asset_system][preview]") {
+  TempDirGuard dir("preview_files");
+  const auto record = previewRecord(cookValidTriangle(dir.path), kMeshArtifactSchemaVersion);
+  std::string file;
+  std::size_t limit = 0;
+  SECTION("artifact") { file = record.artifact; limit = kPreviewMeshMaxArtifactBytes; }
+  SECTION("sidecar") { file = record.metadata; limit = kPreviewMeshMaxMetadataBytes; }
+  std::ofstream(file, std::ios::binary | std::ios::trunc).close();
+  fs::resize_file(file, limit);  // malformed contents, but the size itself is admitted
+  CHECK(loadStaticMeshPreviewAsset(record).error() == MeshPreviewLoadError::InvalidMesh);
+  fs::resize_file(file, limit + 1);
+  CHECK(loadStaticMeshPreviewAsset(record).error() == MeshPreviewLoadError::TooLarge);
+}
+
+TEST_CASE("preview admits exactly 1.5 million indices and refuses the next triangle", "[asset_system][preview]") {
+  TempDirGuard dir("preview_indices");
+  auto record = previewRecord(writeValidTriangleV5(dir.path, kPreviewMeshMaxIndices), kMeshArtifactSchemaVersionU32);
+  auto atLimit = loadStaticMeshPreviewAsset(record);
+  REQUIRE(atLimit.isOk());
+  CHECK(atLimit.value().indexCount() == kPreviewMeshMaxIndices);
+  record = previewRecord(writeValidTriangleV5(dir.path, kPreviewMeshMaxIndices + 3), kMeshArtifactSchemaVersionU32);
+  CHECK(loadStaticMeshPreviewAsset(record).error() == MeshPreviewLoadError::TooLarge);
+}
 
 TEST_CASE("loadStaticMeshAsset loads a well-formed artifact/metadata pair", "[asset_system]") {
   TempDirGuard dir("success");

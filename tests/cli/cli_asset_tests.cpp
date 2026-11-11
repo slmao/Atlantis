@@ -7,6 +7,7 @@ class Assets final : public atlantis::connection::AssetConnection {
  public:
   const atlantis::asset_system::AssetGuid guid = atlantis::asset_system::parseAssetGuid("00810081-0081-4081-8081-008100810081").value();
   bool unavailable = false;
+  int previews = 0;
   atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> listAssets() const override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     return unavailable ? R::Err(ca::AssetError::CatalogUnavailable) : R::Ok({{guid, ca::AssetType::Mesh, "assets:mesh.txt"}});
@@ -16,7 +17,53 @@ class Assets final : public atlantis::connection::AssetConnection {
     return id == guid ? R::Ok({guid, ca::AssetType::Mesh, "assets:mesh.txt", 7, std::nullopt, "test/1", {}})
                       : R::Err(ca::AssetError::UnknownAsset);
   }
+  ca::MeshPreviewResult previewMesh(const atlantis::asset_system::AssetGuid& id) override {
+    ++previews;
+    if (id != guid) return ca::MeshPreviewResult::Err(ca::PreviewError::UnknownAsset);
+    if (unavailable) return ca::MeshPreviewResult::Err(ca::PreviewError::Busy);
+    return ca::MeshPreviewResult::Ok({guid, 256, 256,
+        {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}});
+  }
 };
+}
+
+TEST_CASE("asset preview CLI: structured PNG and human/exec metadata share one operation", "[cli][assets][asset-preview]") {
+  using namespace atlantis::cli::test;
+  namespace json = atlantis::connection::json;
+  constexpr const char* command = "asset preview 00810081-0081-4081-8081-008100810081";
+  Cli cli(true);
+  REQUIRE(cli.run(command) == 1);
+  CHECK(cli.out.str().find("Unsupported") != std::string::npos);
+  Assets assets;
+  cli.invocation->setAssets([&] { return &assets; });
+  CHECK(cli.run("asset preview 00000000-0000-0000-0000-000000000000") == 2);
+  CHECK(cli.run("asset preview 00810081-0081-4081-8081-008100810081 extra") == 2);
+  CHECK(assets.previews == 0);
+  REQUIRE(cli.run(command) == 0);
+  const auto parsed = json::parse(cli.out.str());
+  REQUIRE(parsed.isOk());
+  const auto* result = parsed.value().find("result");
+  REQUIRE(result);
+  const auto decoded = ca::decodeMeshPreview(*result, assets.guid);
+  REQUIRE(decoded);
+  CHECK(decoded->png.size() == 33);
+  CHECK(result->find("mimeType")->asString() == "image/png");
+
+  Cli human;
+  human.invocation->setAssets([&] { return &assets; });
+  REQUIRE(human.run(command) == 0);
+  const auto summary = std::string(command) + " 256x256 image/png (33 bytes)\n";
+  CHECK(human.out.str() == summary);
+  human.out.str("");
+  atlantis::cli::ScriptRunner script(*human.connection, {command}, human.out);
+  script.setAssets([&] { return &assets; });
+  script.step();
+  CHECK(human.out.str() == "> " + std::string(command) + "\n" + summary);
+  assets.unavailable = true;
+  CHECK(cli.run(command) == 1);
+  CHECK(cli.out.str().find("Busy") != std::string::npos);
+  CHECK(cli.out.str().find("pngBase64") == std::string::npos);
+  CHECK(assets.previews == 4);
 }
 TEST_CASE("asset CLI: human JSON REPL and exec use injected shared queries", "[cli][assets]") {
   using namespace atlantis::cli::test;
