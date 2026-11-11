@@ -5,8 +5,10 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 // Plan 0055 P8 (ADR-0106 D5; Spec 0055 ruling Q2, C1 + C2): capture of the
 // frame just run, between frames. Private to atlantis_runtime_host: the
@@ -26,5 +28,9 @@ namespace atlantis::runtime::detail {
 // be written.
 [[nodiscard]] bool writePng(const std::string& path, std::uint32_t width, std::uint32_t height,
                             std::span<const std::uint8_t> pixels, bool bgra);
+
+// The same capture codec with a bounded memory destination (Spec 0091 R1).
+[[nodiscard]] std::optional<std::vector<std::uint8_t>> encodeCapturePng(
+    std::uint32_t width, std::uint32_t height, std::span<const std::uint8_t> rgba, std::size_t cap);
 
 }  // namespace atlantis::runtime::detail

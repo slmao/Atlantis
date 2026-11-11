@@ -1,8 +1,10 @@
 #include "fixture/minimal_cube_fixture.h"
+#include "fixture/mesh_preview_fixture.h"
 #include "support/golden_validity.h"
 #include "support/pixel_diff.h"
 #include "support/provenance.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -87,6 +89,41 @@ TEST_CASE("Full capture-compare cycle against the committed minimal_cube golden 
   REQUIRE(report.passed);
 
   REQUIRE(fixture.device->waitIdle().isOk());
+}
+
+TEST_CASE("Headless static mesh preview matches its golden and frames an off-origin quad",
+          "[image_regression][gpu][mesh_preview]") {
+  constexpr auto slug = "mesh_preview_256x256_rgba8unorm";
+  const std::filesystem::path output = ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR;
+  std::filesystem::remove(output / (std::string(slug) + "_actual.png"));
+  std::filesystem::remove(output / (std::string(slug) + "_diff.png"));
+  const auto cube = renderMeshPreviewPixels(kPreviewCubeGuid);
+  REQUIRE(cube);
+  const std::string name(kMeshPreviewGolden);
+  auto golden = loadAndValidateGolden(goldenPngPath(name), goldenSidecarPath(name));
+  REQUIRE(golden.isOk());
+  REQUIRE(cube->width == golden.value().pixels.width);
+  REQUIRE(cube->height == golden.value().pixels.height);
+  const auto report = compareBuffers(*cube, golden.value().pixels);
+  if (!report.passed) (void)writeFailureArtifacts(output, slug, *cube, golden.value().pixels);
+  CHECK(report.maxChannelDiff == 0);
+  REQUIRE(report.passed);
+
+  const auto quad = renderMeshPreviewPixels(kPreviewQuadGuid);
+  REQUIRE(quad);
+  REQUIRE(quad->width == cube->width);
+  REQUIRE(quad->height == cube->height);
+  CHECK_FALSE(compareBuffers(*cube, *quad).passed);
+  // A blank quad image would also differ from the cube. Check for geometry
+  // within the frame, keeping its outer corners on the clear background.
+  const auto& bytes = quad->rgba8;
+  REQUIRE(bytes.size() == static_cast<std::size_t>(quad->width) * quad->height * 4);
+  CHECK(std::equal(bytes.begin(), bytes.begin() + 4, bytes.end() - 4));
+  std::size_t occupied = 0;
+  for (auto pixel = bytes.begin(); pixel != bytes.end(); pixel += 4) {
+    if (!std::equal(bytes.begin(), bytes.begin() + 4, pixel)) ++occupied;
+  }
+  CHECK(occupied > 0);
 }
 
 TEST_CASE("The Asset-System-sourced cube matches the committed minimal_cube golden with zero difference",

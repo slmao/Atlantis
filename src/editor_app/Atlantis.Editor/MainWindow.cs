@@ -33,6 +33,7 @@ using Avalonia.Input.Platform;
 using Avalonia.VisualTree;
 using Avalonia.Layout;
 using Avalonia.Interactivity;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Assets;
@@ -133,6 +134,12 @@ public sealed class MainWindow : Window
     private readonly AssetBrowser _assetBrowser = new();
     private readonly ListBox _assetsList = new() { Height = 230 };
     private readonly TextBlock _assetsState = new();
+    private readonly AssetPreviewRequests _previewRequests = new();
+    private readonly Button _previewMesh = new() { Content = "Preview geometry", IsEnabled = false };
+    private readonly TextBlock _previewState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Image _previewImage = new() { Width = 256, Height = 256, IsVisible = false };
+    private SessionInfo? _previewSession;
+    private bool _previewRetry, _previewUnavailable;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
@@ -297,9 +304,11 @@ public sealed class MainWindow : Window
         _assetTabs.SelectionChanged += (_, e) =>
         {
             // SelectionChanged also bubbles from the list and filter ComboBox.
-            if (ReferenceEquals(e.Source, _assetTabs) && _assetTabs.SelectedIndex == 1 &&
+            if (!ReferenceEquals(e.Source, _assetTabs)) return;
+            SyncPreviewSelection();
+            if (_assetTabs.SelectedIndex == 1 &&
                 _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
-            if (ReferenceEquals(e.Source, _assetTabs) && _assetTabs.SelectedIndex == 2)
+            if (_assetTabs.SelectedIndex == 2)
                 RefreshSavedScenes();
         };
         Grid.SetColumn(_assetTabs, 4);
@@ -442,6 +451,7 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        EndPreviewSession();
         _worker?.Stop();
         ++_saveAsRequest;
         _saveAsPending = false;
@@ -489,7 +499,9 @@ public sealed class MainWindow : Window
         worker.Connected += snapshot =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _previewSession = session;
             OnConnected(snapshot);
+            SyncPreviewSelection();
             _newSceneSessionReady = true;
             UpdateNewSceneButton();
             UpdateRebuildButtons();
@@ -498,6 +510,7 @@ public sealed class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            EndPreviewSession();
             _referenceSessionFailed = true;
             if (_newScenePendingName is not null)
             {
@@ -953,6 +966,10 @@ public sealed class MainWindow : Window
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
         panel.Children.Add(copy);
+        _previewMesh.Click += (_, _) => RequestMeshPreview();
+        panel.Children.Add(_previewMesh);
+        panel.Children.Add(_previewState);
+        panel.Children.Add(_previewImage);
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
         panel.Children.Add(_addMesh);
@@ -1002,6 +1019,7 @@ public sealed class MainWindow : Window
         _assetsSync = true;
         try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
         finally { _assetsSync = false; }
+        SyncPreviewSelection();
         UpdateAddMeshButton();
         UpdateRebuildButtons();
         UpdateImportButtons();
@@ -1011,6 +1029,106 @@ public sealed class MainWindow : Window
         _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private void SyncPreviewSelection(bool invalidate = false)
+    {
+        var mesh = _previewSession is not null && _assetTabs.SelectedIndex == 1 &&
+            _assetBrowser.State == "Ready" && _assetsList.SelectedItem is AssetSummary { Type: AssetType.Mesh } item
+            ? item.Guid : (AssetGuid?)null;
+        if (_previewRequests.SetSelection(mesh, invalidate)) ClearPreview();
+        UpdatePreviewButton();
+    }
+
+    private void EndPreviewSession()
+    {
+        _previewSession = null;
+        SyncPreviewSelection(invalidate: true);
+    }
+
+    private void ClearPreview()
+    {
+        var previous = _previewImage.Source as Bitmap;
+        _previewImage.Source = null;
+        _previewImage.IsVisible = false;
+        previous?.Dispose();
+        _previewState.Text = "";
+        _previewRetry = _previewUnavailable = false;
+    }
+
+    private void UpdatePreviewButton()
+    {
+        _previewMesh.Content = _previewRetry ? "Retry preview" : "Preview geometry";
+        _previewMesh.IsEnabled = !_previewUnavailable && _previewRequests.CanRequest;
+    }
+
+    private void RequestMeshPreview()
+    {
+        if (!_previewMesh.IsEnabled || !_previewRequests.Request()) return;
+        ClearPreview();
+        _previewState.Text = "Loading geometry preview…";
+        UpdatePreviewButton();
+        StartNextPreview();
+    }
+
+    private async void StartNextPreview()
+    {
+        if (_previewSession is not { } session || _previewRequests.TakeNext() is not { } intent) return;
+        // One worker owns each ordinary SDK connection from setup through disposal.
+        // Window closure invalidates its intent without waiting on that worker.
+        var result = await Task.Run(() => ReadMeshPreview(session, intent));
+        if (_previewRequests.Settle(intent) && ReferenceEquals(_previewSession, session))
+        {
+            if (result.Image is { } image)
+            {
+                try
+                {
+                    using var stream = new MemoryStream(image.PngBytes, writable: false);
+                    _previewImage.Source = new Bitmap(stream);
+                    _previewImage.IsVisible = true;
+                    _previewState.Text = "Geometry preview · unlit vertex colors";
+                }
+                catch (Exception error)
+                {
+                    ClearPreview();
+                    _previewState.Text = "Could not decode the geometry preview. " + error.Message;
+                    _previewRetry = true;
+                }
+            }
+            else
+            {
+                _previewState.Text = result.Message;
+                _previewRetry = result.Retry;
+                _previewUnavailable = !result.Retry;
+            }
+            UpdatePreviewButton();
+        }
+        StartNextPreview();
+    }
+
+    private (MeshPreview? Image, string? Message, bool Retry) ReadMeshPreview(SessionInfo session, AssetPreviewIntent intent)
+    {
+        try
+        {
+            if (!_previewRequests.CanSend(intent)) return default;
+            using var preview = RemoteSession.Connect(session);
+            if (!_previewRequests.CanSend(intent)) return default;
+            var result = preview.Assets.PreviewMesh(intent.Guid);
+            if (result.IsOk) return (result.Value, null, false);
+            return result.Error switch
+            {
+                PreviewError.Unsupported => (null, "Geometry preview requires an updated Runtime.", false),
+                PreviewError.Unavailable => (null, "Runtime has no usable geometry preview context.", false),
+                PreviewError.CatalogUnavailable => (null, "Catalog unavailable. Restart Runtime after repairing the build.", false),
+                PreviewError.Busy => (null, "Runtime is busy with another preview. Retry when ready.", true),
+                PreviewError.TooLarge => (null, "This mesh exceeds the geometry preview size limit.", false),
+                _ => (null, "Geometry preview failed: " + result.Error + ". See the Runtime log for details.", true),
+            };
+        }
+        catch (RemoteException error)
+        {
+            return (null, "Geometry preview connection failed: " + error.Message, true);
+        }
     }
 
     private Control BuildSavedScenePanel()
@@ -1620,6 +1738,7 @@ public sealed class MainWindow : Window
 
     private void Shutdown()
     {
+        EndPreviewSession();
         _uiTicker.Stop();
         _importPoll.Stop();
         _rebuildPoll.Stop();

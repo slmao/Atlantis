@@ -1,3 +1,5 @@
+using Atlantis.Gameplay;
+using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Remote;
 
 namespace Atlantis.Mcp;
@@ -10,6 +12,7 @@ namespace Atlantis.Mcp;
 internal interface IAtlantisSession
 {
     JsonValue Request(string method, JsonValue parameters);
+    Outcome<MeshPreview, PreviewError> PreviewMesh(AssetGuid guid);
 }
 
 /// <summary>
@@ -25,5 +28,10 @@ internal sealed class AtlantisSession(RemoteSession session) : IAtlantisSession
         // Raw SDK requests preserve wire shapes (including schema offsets, literal numbers and
         // refusals) that decoding to SDK values and serializing those values would change.
         lock (_gate) return session.AwaitResponse(session.Send(method, parameters));
+    }
+
+    public Outcome<MeshPreview, PreviewError> PreviewMesh(AssetGuid guid)
+    {
+        lock (_gate) return session.Assets.PreviewMesh(guid);
     }
 }

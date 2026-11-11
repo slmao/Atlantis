@@ -9,10 +9,18 @@ namespace ca = atlantis::connection::assets;
 namespace codec = atlantis::remote::codec;
 using Value = atlantis::connection::json::Value;
 as::AssetGuid guid() { return as::parseAssetGuid("00810081-0081-4081-8081-008100810081").value(); }
+ca::MeshPreview preview() {
+  // Contract tests only need the signature and complete IHDR; a full PNG is
+  // exercised through the Runtime's real render path.
+  return {guid(), 256, 256, {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',
+                             0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}};
+}
 struct Assets final : atlantis::connection::AssetConnection {
   ca::AssetDetails detail{guid(), ca::AssetType::Mesh, "content:test/file.gltf#mesh/0", UINT32_MAX, std::nullopt, "unit/1", {}};
   bool unavailable = false;
   bool unordered = false;
+  std::optional<ca::PreviewError> previewError;
+  ca::MeshPreview image = preview();
   std::optional<ca::RebuildJob> job;
   std::optional<ca::ImportJob> imported;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
@@ -26,6 +34,11 @@ struct Assets final : atlantis::connection::AssetConnection {
     using R = atlantis::Result<ca::AssetDetails, ca::AssetError>;
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
     return id == detail.guid ? R::Ok(detail) : R::Err(ca::AssetError::UnknownAsset);
+  }
+  ca::MeshPreviewResult previewMesh(const as::AssetGuid& id) override {
+    if (id != detail.guid) return ca::MeshPreviewResult::Err(ca::PreviewError::UnknownAsset);
+    if (previewError) return ca::MeshPreviewResult::Err(*previewError);
+    return ca::MeshPreviewResult::Ok(image);
   }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override {
     if (job) return ca::RebuildStartResult::Err(ca::RebuildError::Busy);
@@ -51,6 +64,7 @@ struct Borrow final : atlantis::connection::AssetConnection {
   explicit Borrow(Assets& a) : a_(a) {}
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override { return a_.listAssets(); }
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
+  ca::MeshPreviewResult previewMesh(const as::AssetGuid& id) override { return a_.previewMesh(id); }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override { return a_.rebuild(asset); }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
   ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
@@ -61,6 +75,74 @@ struct Borrow final : atlantis::connection::AssetConnection {
   }
   Assets& a_;
 };
+}
+
+TEST_CASE("asset preview codec: fixed metadata, canonical PNG and inclusive decoded size", "[remote][assets][asset-preview]") {
+  const auto image = preview();
+  const auto payload = ca::encodeMeshPreview(image, guid());
+  REQUIRE(payload);
+  CHECK(payload->find("pngBase64")->asString() == "iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAAAAAAAA");
+  CHECK(ca::decodeMeshPreview(*payload, guid()) == image);
+  CHECK_FALSE(ca::decodeMeshPreview(*payload, as::deriveAssetGuid(guid(), "wrong-guid")));
+  auto bad = *payload;
+  bad.set("mimeType", Value::string("image/jpeg"));
+  CHECK_FALSE(ca::decodeMeshPreview(bad, guid()));
+  bad = *payload;
+  bad.set("width", Value::number(std::uint64_t{255}));
+  CHECK_FALSE(ca::decodeMeshPreview(bad, guid()));
+  bad = *payload;
+  bad.set("pngBase64", Value::string("iVBORw0KGgoAAAANSUhEUgAAAQAAAAIACAYAAAAAAAAA")); // IHDR height 512.
+  CHECK_FALSE(ca::decodeMeshPreview(bad, guid()));
+  bad.set("pngBase64", Value::string("iVBORw0KGgoAAAAMSUhEUgAAAQAAAAEACAYAAAAAAAAA")); // IHDR length 12.
+  CHECK_FALSE(ca::decodeMeshPreview(bad, guid()));
+  bad.set("pngBase64", Value::string("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAAAAAAA "));
+  CHECK_FALSE(ca::decodeMeshPreview(bad, guid()));
+
+  auto largest = image;
+  largest.png.resize(ca::kPreviewPngMaxBytes);
+  auto bound = ca::encodeMeshPreview(largest, guid());
+  REQUIRE(bound);
+  auto base64 = bound->find("pngBase64")->asString();
+  REQUIRE(base64.size() == 699052);
+  CHECK(ca::decodeMeshPreview(*bound, guid()) == largest);
+  REQUIRE(base64.ends_with("A="));
+  base64[base64.size() - 2] = 'B'; // Unused tail bits would give an alternate spelling.
+  bound->set("pngBase64", Value::string(base64));
+  CHECK_FALSE(ca::decodeMeshPreview(*bound, guid()));
+  base64[base64.size() - 2] = 'A';
+  base64.back() = 'A'; // Same encoded length, one byte over the decoded cap.
+  bound->set("pngBase64", Value::string(std::move(base64)));
+  CHECK_FALSE(ca::decodeMeshPreview(*bound, guid()));
+}
+
+TEST_CASE("asset preview: shared native provider and typed refusals keep discovery usable", "[remote][assets][asset-preview]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  auto absent = served.attach();
+  CHECK(absent->assets().previewMesh(guid()).error() == ca::PreviewError::Unsupported);
+  CHECK_FALSE(absent->failure());
+
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto session = served.attach();
+  auto got = session->assets().previewMesh(guid());
+  REQUIRE(got.isOk());
+  CHECK(got.value() == assets.image);
+  CHECK(session->assets().previewMesh(fixtureSceneGuid()).error() == ca::PreviewError::UnknownAsset);
+  for (auto error : {ca::PreviewError::Unsupported, ca::PreviewError::Unavailable, ca::PreviewError::Busy,
+                     ca::PreviewError::CatalogUnavailable, ca::PreviewError::NotMesh, ca::PreviewError::TooLarge,
+                     ca::PreviewError::InvalidMesh, ca::PreviewError::RenderFailed}) {
+    assets.previewError = error;
+    CHECK(session->assets().previewMesh(guid()).error() == error);
+    CHECK_FALSE(session->failure());
+  }
+  assets.previewError.reset();
+  assets.image.png.resize(ca::kPreviewPngMaxBytes + 1);
+  CHECK(session->assets().previewMesh(guid()).error() == ca::PreviewError::RenderFailed);
+  CHECK_FALSE(session->failure());
+  CHECK(got.value() == preview()); // The retained DTO owns its bytes.
+  CHECK(session->assets().listAssets().isOk());
+  CHECK(session->assets().getAsset(guid()).value() == assets.detail);
 }
 TEST_CASE("assets: typed codecs reject malformed details but tolerate extra members and future schema", "[remote][assets]") {
   Assets assets;

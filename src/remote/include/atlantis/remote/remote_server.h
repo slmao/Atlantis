@@ -49,7 +49,8 @@ struct ServerLimits {
 // and the host polls it once after each runFrame(). Each poll accepts pending
 // clients, reads every complete request line, answers what is answerable now,
 // writes what it can, and drops clients that closed, misbehaved or overran a
-// limit -- without ever waiting.
+// limit without waiting for socket I/O. An admitted asset preview can wait
+// synchronously for its offscreen GPU work (Spec 0091).
 //
 // Each client that completes its hello (token and protocol checked) gets its
 // own connection from `openConnection` (the Runtime's InProcess endpoint,

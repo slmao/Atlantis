@@ -5,7 +5,7 @@ using A = Atlantis.Gameplay.Assets;
 namespace Atlantis.Gameplay.Remote;
 
 /// <summary>
-/// Spec 0081's two read-only catalog queries. Not thread-safe; the session's
+/// Cooked catalog, preview and asset management. Not thread-safe; the session's
 /// thread. Owned copies; in-band refusals preserve the session, transport or
 /// malformed typed results throw RemoteException. No connect-time request.
 /// </summary>
@@ -38,10 +38,19 @@ public sealed class AssetSession
         return _session.InBand<A.AssetDetails, A.AssetError>(value, "assets.get", v =>
             Codec.DecodeAssetDetails(v) is A.AssetDetails d && d.Guid == guid ? d : null, Codec.DecodeAssetError);
     }
+
+    /// <summary>Requests one still of a cooked mesh. No scene state changes and no automatic retry.</summary>
+    public Outcome<A.MeshPreview, A.PreviewError> PreviewMesh(AssetGuid guid)
+    {
+        if (guid.IsNil) throw new ArgumentException("a non-nil asset GUID is required", nameof(guid));
+        return AssetRequest("assets.previewMesh", JsonValue.NewObject().Set("guid", Codec.Encode(guid)),
+            A.PreviewError.Unsupported, Codec.DecodePreviewError, value => Codec.DecodeMeshPreview(value, guid));
+    }
+
     public Outcome<A.RebuildJob, A.RebuildError> Rebuild(AssetGuid asset)
     {
         if (asset.IsNil) throw new ArgumentException("a non-nil asset GUID is required", nameof(asset));
-        return JobRequest("assets.rebuild", JsonValue.NewObject().Set("asset", Codec.Encode(asset)),
+        return AssetRequest("assets.rebuild", JsonValue.NewObject().Set("asset", Codec.Encode(asset)),
             A.RebuildError.Unsupported, v => Codec.DecodeRebuildError(v, true),
             value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null);
     }
@@ -50,7 +59,7 @@ public sealed class AssetSession
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         JsonValue parameters = JsonValue.NewObject();
         if (jobId is A.RebuildId id) parameters.Set("jobId", Codec.Encode(id.Value));
-        return JobRequest("assets.rebuildStatus", parameters, A.RebuildError.Unsupported,
+        return AssetRequest("assets.rebuildStatus", parameters, A.RebuildError.Unsupported,
             v => Codec.DecodeRebuildError(v, false), value =>
             Codec.DecodeRebuildStatus(value) is A.RebuildStatus status && (jobId is null || status.Job?.Id == jobId)
                 ? status : null);
@@ -60,7 +69,7 @@ public sealed class AssetSession
         if (!Codec.ValidImportName(name)) throw new ArgumentException("invalid managed import name", nameof(name));
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
         JsonValue parameters = JsonValue.NewObject().Set("name", JsonValue.String(name)).Set("mode", JsonValue.String(mode.ToString()));
-        return JobRequest("assets.import", parameters, A.ImportError.Unsupported,
+        return AssetRequest("assets.import", parameters, A.ImportError.Unsupported,
             v => Codec.DecodeImportError(v, true), value =>
                 Codec.DecodeImportJob(value) is { State: A.RebuildState.Running } job && job.Name == name && job.Mode == mode
                     ? job : null);
@@ -70,12 +79,12 @@ public sealed class AssetSession
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         JsonValue parameters = JsonValue.NewObject();
         if (jobId is A.ImportId id) parameters.Set("jobId", Codec.Encode(id.Value));
-        return JobRequest("assets.importStatus", parameters, A.ImportError.Unsupported,
+        return AssetRequest("assets.importStatus", parameters, A.ImportError.Unsupported,
             v => Codec.DecodeImportError(v, false), value =>
                 Codec.DecodeImportStatus(value) is A.ImportStatus status && (jobId is null || status.Job?.Id == jobId)
                     ? status : null);
     }
-    private Outcome<T, E> JobRequest<T, E>(string method, JsonValue parameters, E unsupported,
+    private Outcome<T, E> AssetRequest<T, E>(string method, JsonValue parameters, E unsupported,
         Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode) where T : class where E : struct, Enum
     {
         JsonValue response = _session.AwaitResponse(_session.Send(method, parameters));

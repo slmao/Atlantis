@@ -597,6 +597,22 @@ struct RemoteServer::State {
       return reply(client.assets ? client.assets->importStatus(guid ? std::optional{ca::ImportId{*guid}} : std::nullopt)
           : ca::ImportStatusResult::Err(ca::ImportError::Unavailable));
     }
+    if (name == "assets.previewMesh") {
+      namespace ca = connection::assets;
+      const auto* member = p.find("guid");
+      const auto guid = member ? codec::decodeAsset(*member) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != 1 || !guid || *guid == asset_system::AssetGuid{})
+        return errorResponse(requestId, "BadRequest", "asset preview requires one non-nil canonical GUID");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      auto result = client.assets ? client.assets->previewMesh(*guid)
+                                  : ca::MeshPreviewResult::Err(ca::PreviewError::Unsupported);
+      if (result.isOk()) {
+        if (auto image = ca::encodeMeshPreview(result.value(), *guid))
+          return response(requestId, codec::ok(std::move(*image)));
+      }
+      const auto error = result.isErr() ? result.error() : ca::PreviewError::RenderFailed;
+      return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
+    }
     if (name.starts_with("assets.")) {
       std::optional<asset_system::AssetGuid> guid;
       if (!p.isObject() || (name != "assets.list" && name != "assets.get"))

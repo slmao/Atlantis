@@ -1,5 +1,9 @@
 using System;
+using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading.Tasks;
 using Atlantis.Gameplay.Remote;
 using A = Atlantis.Gameplay.Assets;
 
@@ -18,6 +22,7 @@ public static class LiveAssetSuite
 
     public static void Run(TestContext t)
     {
+        PreviewContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -53,6 +58,103 @@ public static class LiveAssetSuite
             }
             t.Check(client.Failure is not null, "malformed result is sticky");
         }
+    }
 
+    private static void PreviewContract(TestContext t)
+    {
+        AssetGuid guid = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        JsonValue Metadata() => Codec.Encode(new A.AssetDetails(guid, A.AssetType.Mesh, "assets:mesh.txt", 4,
+            null, "test/1", Array.Empty<AssetGuid>()));
+        JsonValue LegacyError() => Json.Parse("""{"code":"BadRequest","message":"unknown or malformed asset query"}""");
+        JsonValue Result(JsonValue value) => JsonValue.NewObject().Set("result", value);
+        JsonValue Ok(JsonValue value) => Result(JsonValue.NewObject().Set("ok", value));
+        JsonValue Refusal(string token) => Result(JsonValue.NewObject().Set("err", JsonValue.String(token)));
+        JsonValue? Common(string method) => method switch
+        {
+            "assets.list" => Ok(JsonValue.NewArray().Push(Codec.Encode(new A.AssetSummary(guid, A.AssetType.Mesh, "assets:mesh.txt")))),
+            "assets.get" => Ok(Metadata()),
+            _ => null,
+        };
+        WithPeer(t, guid, method => method == "assets.previewMesh" ? JsonValue.NewObject().Set("error", LegacyError()) : Common(method), client =>
+        {
+            t.Throws<ArgumentException>(() => client.Assets.PreviewMesh(default), "nil preview GUID is rejected before sending");
+            var legacy = client.Assets.PreviewMesh(guid);
+            t.Check(!legacy.IsOk && legacy.Error == A.PreviewError.Unsupported, "exact legacy preview refusal becomes Unsupported");
+            t.Check(client.Failure is null && client.Assets.ListAssets().Value.Single().Guid == guid &&
+                client.Assets.GetAsset(guid).Value.Guid == guid, "older asset-capable peer remains usable for list/get");
+        });
+        int attempt = 0;
+        WithPeer(t, guid, _ => ++attempt == 1 ? Refusal("Busy") : Ok(AssetCodecSuite.PreviewValue(guid, AssetCodecSuite.PreviewHeader)), client =>
+        {
+            var busy = client.Assets.PreviewMesh(guid);
+            t.Check(!busy.IsOk && busy.Error == A.PreviewError.Busy && client.Failure is null, "Busy is in-band and never retried internally");
+            var image = client.Assets.PreviewMesh(guid);
+            t.Check(image.IsOk && image.Value.Guid == guid && image.Value.PngBytes.AsSpan().SequenceEqual(AssetCodecSuite.PreviewHeader),
+                "explicit SDK retry returns a typed preview from the correlated response");
+        }, expectedPreviews: 2);
+        foreach (var (name, reply) in new (string, JsonValue)[]
+        {
+            ("result/error", Refusal("Busy").Set("error", LegacyError())),
+            ("ok/err", Result(JsonValue.NewObject().Set("ok", AssetCodecSuite.PreviewValue(guid, AssetCodecSuite.PreviewHeader))
+                .Set("err", JsonValue.String("Busy")))),
+            ("other top-level refusal", JsonValue.NewObject().Set("error", LegacyError().Set("message", JsonValue.String("invalid guid")))),
+            ("wrong reply GUID", Ok(AssetCodecSuite.PreviewValue(AssetGuid.Parse("11111111-2222-4333-8444-555555555555"), AssetCodecSuite.PreviewHeader))),
+        })
+        {
+            WithPeer(t, guid, _ => reply, client =>
+            {
+                var error = t.Throws<RemoteException>(() => client.Assets.PreviewMesh(guid), "malformed preview " + name + " throws");
+                t.Check(error?.Error == RemoteError.ProtocolError && client.Failure == RemoteError.ProtocolError,
+                    "malformed preview " + name + " is a sticky protocol failure");
+            });
+        }
+        WithPeer(t, guid, _ => null, client =>
+        {
+            var error = t.Throws<RemoteException>(() => client.Assets.PreviewMesh(guid), "lost preview reply throws");
+            t.Check(error?.Error == RemoteError.Disconnected && client.Failure == RemoteError.Disconnected,
+                "lost preview reply stays a transport failure");
+        });
+    }
+
+    private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,
+        int expectedPreviews = 1)
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        Task<int> peer = Task.Run(() =>
+        {
+            using TcpClient socket = listener.AcceptTcpClient();
+            socket.ReceiveTimeout = 5000;
+            using NetworkStream stream = socket.GetStream();
+            using StreamReader reader = new(stream);
+            using StreamWriter writer = new(stream) { AutoFlush = true, NewLine = "\n" };
+            int requests = 0;
+            while (reader.ReadLine() is string line)
+            {
+                JsonValue request = Json.Parse(line);
+                string method = request.Find("method")!.AsString;
+                JsonValue? envelope = method switch
+                {
+                    "hello" => JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("scene", Codec.Encode(guid))),
+                    "connection.schema" => JsonValue.NewObject().Set("result", JsonValue.NewArray()),
+                    _ => reply(method),
+                };
+                if (method == "assets.previewMesh")
+                {
+                    ++requests;
+                    if (Json.Write(request.Find("params")!) != Json.Write(JsonValue.NewObject().Set("guid", Codec.Encode(guid))))
+                        throw new InvalidOperationException("preview did not send the exact GUID-only parameters");
+                }
+                if (envelope is null) break;
+                writer.WriteLine(Json.Write(envelope.Set("id", request.Find("id")!)));
+            }
+            return requests;
+        });
+
+        var info = new SessionInfo((ushort)((IPEndPoint)listener.LocalEndpoint).Port,
+            "00112233445566778899aabbccddeeff", 1, guid);
+        using (RemoteSession client = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 5000 })) run(client);
+        t.Equal(expectedPreviews, peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(),
+            "preview peer received exactly the requested number of GUID-only calls");
     }
 }

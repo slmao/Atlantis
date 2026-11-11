@@ -1,6 +1,7 @@
 #include <atlantis/log.h>
 
 #include "../fixture/minimal_cube_fixture.h"
+#include "../fixture/mesh_preview_fixture.h"
 #include "../support/pixel_diff.h"
 #include "../support/png_codec.h"
 #include "../support/provenance.h"
@@ -102,6 +103,7 @@ int main(int argc, char** argv) {
   if (argc != 2) {
     ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_golden_generator <golden-name>");
     ATLANTIS_LOG_ERROR("  e.g.: atlantis_image_regression_golden_generator minimal_cube/minimal_cube_512x512_rgba8unorm");
+    ATLANTIS_LOG_ERROR("  mesh preview: atlantis_image_regression_golden_generator {}", atlantis::image_regression::kMeshPreviewGolden);
     return 2;
   }
   const std::string goldenName = argv[1];
@@ -175,27 +177,29 @@ int main(int argc, char** argv) {
   const auto& environmentProvenance = environmentProvenanceResult.value();
 
   // Step 5: render one frame.
-  auto fixtureResult = setUpMinimalCubeFixture();
-  if (fixtureResult.isErr()) {
-    ATLANTIS_LOG_ERROR("setUpMinimalCubeFixture() failed");
-    return 1;
+  PixelBuffer capturedPixels;
+  if (goldenName == atlantis::image_regression::kMeshPreviewGolden) {
+    auto pixels = atlantis::image_regression::renderMeshPreviewPixels(atlantis::image_regression::kPreviewCubeGuid);
+    if (!pixels) {
+      ATLANTIS_LOG_ERROR("renderMeshPreviewPixels() failed");
+      return 1;
+    }
+    capturedPixels = std::move(*pixels);
+  } else {
+    auto fixtureResult = setUpMinimalCubeFixture();
+    if (fixtureResult.isErr()) {
+      ATLANTIS_LOG_ERROR("setUpMinimalCubeFixture() failed");
+      return 1;
+    }
+    MinimalCubeFixture fixture = std::move(fixtureResult.value());
+    auto renderResult = renderOneFrame(fixture);
+    const auto finalWaitResult = fixture.device->waitIdle();
+    if (renderResult.isErr() || finalWaitResult.isErr()) {
+      ATLANTIS_LOG_ERROR("minimal cube render or completion failed");
+      return 1;
+    }
+    capturedPixels = std::move(renderResult.value());
   }
-  MinimalCubeFixture fixture = std::move(fixtureResult.value());
-
-  auto renderResult = renderOneFrame(fixture);
-  // Every exit path from this point on calls waitIdle() before fixture's
-  // own destructor runs -- matching examples/headless_rendering_demo's
-  // own established teardown discipline.
-  const auto finalWaitResult = fixture.device->waitIdle();
-  if (renderResult.isErr()) {
-    ATLANTIS_LOG_ERROR("renderOneFrame() failed");
-    return 1;
-  }
-  if (finalWaitResult.isErr()) {
-    ATLANTIS_LOG_ERROR("waitIdle() failed after render");
-    return 1;
-  }
-  const PixelBuffer capturedPixels = std::move(renderResult.value());
 
   // Step 6: build the full provenance record.
   Provenance provenance;
@@ -208,8 +212,8 @@ int main(int argc, char** argv) {
   provenance.vulkanLoaderApiVersion = environmentProvenance.vulkanLoaderApiVersion;
   provenance.vulkanRequestedInstanceApiVersion = environmentProvenance.vulkanRequestedInstanceApiVersion;
   provenance.vulkanPhysicalDeviceApiVersion = environmentProvenance.vulkanPhysicalDeviceApiVersion;
-  provenance.extentWidth = atlantis::image_regression::kFixtureExtentPixels;
-  provenance.extentHeight = atlantis::image_regression::kFixtureExtentPixels;
+  provenance.extentWidth = capturedPixels.width;
+  provenance.extentHeight = capturedPixels.height;
   provenance.format = "Rgba8Unorm";
 
   const std::filesystem::path goldensDir = ATLANTIS_IMAGE_REGRESSION_GOLDENS_DIR;

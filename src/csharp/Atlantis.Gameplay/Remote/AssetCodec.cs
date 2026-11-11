@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using A = Atlantis.Gameplay.Assets;
 
@@ -58,6 +59,52 @@ public static partial class Codec
     public static JsonValue Encode(A.AssetError e) => JsonValue.String(e.ToString());
     public static A.AssetError? DecodeAssetError(JsonValue v) => v.IsString ? v.AsString switch
     { "CatalogUnavailable" => A.AssetError.CatalogUnavailable, "UnknownAsset" => A.AssetError.UnknownAsset, _ => null } : null;
+
+    private const int PreviewDimension = 256;
+    private const int MaxPreviewPngBytes = 512 * 1024;
+    private const int MaxPreviewBase64Chars = 4 * ((MaxPreviewPngBytes + 2) / 3);
+
+    /// <summary>Checks the preview envelope fields and PNG header, leaving image decoding to the consumer.</summary>
+    public static A.MeshPreview? DecodeMeshPreview(JsonValue value, AssetGuid requested)
+    {
+        if (requested.IsNil || value.Find("guid") is not JsonValue guid || DecodeAsset(guid) != requested ||
+            value.Find("width") is not JsonValue w || !w.TryGetUInt64(out ulong width) || width != PreviewDimension ||
+            value.Find("height") is not JsonValue h || !h.TryGetUInt64(out ulong height) || height != PreviewDimension ||
+            value.Find("mimeType") is not { IsString: true, AsString: "image/png" } ||
+            value.Find("pngBase64") is not { IsString: true } png) return null;
+
+        ReadOnlySpan<char> encoded = png.AsString.AsSpan();
+        if (encoded.Length < 4 || encoded.Length > MaxPreviewBase64Chars || encoded.Length % 4 != 0) return null;
+        int padding = encoded[^1] != '=' ? 0 : encoded[^2] == '=' ? 2 : 1;
+        int length = encoded.Length / 4 * 3 - padding;
+        // Signature plus a complete IHDR chunk (length, type, body and CRC).
+        if (length is < 33 or > MaxPreviewPngBytes) return null;
+        ReadOnlySpan<char> symbols = encoded[..(encoded.Length - padding)];
+        foreach (char symbol in symbols)
+            if (Base64Value(symbol) < 0) return null;
+        // Convert accepts unused nonzero bits, which would allow a second spelling of the same bytes.
+        if (padding != 0 && (Base64Value(symbols[^1]) & (padding == 1 ? 3 : 15)) != 0) return null;
+
+        byte[] bytes = new byte[length];
+        if (!Convert.TryFromBase64Chars(encoded, bytes, out int written) || written != length) return null;
+        ReadOnlySpan<byte> header = bytes;
+        ReadOnlySpan<byte> signature = [137, 80, 78, 71, 13, 10, 26, 10];
+        if (!header[..8].SequenceEqual(signature) ||
+            BinaryPrimitives.ReadUInt32BigEndian(header[8..12]) != 13 || !header[12..16].SequenceEqual("IHDR"u8) ||
+            BinaryPrimitives.ReadUInt32BigEndian(header[16..20]) != PreviewDimension ||
+            BinaryPrimitives.ReadUInt32BigEndian(header[20..24]) != PreviewDimension) return null;
+        return new A.MeshPreview(requested, PreviewDimension, PreviewDimension, bytes);
+    }
+
+    private static int Base64Value(char c) => c switch
+    {
+        >= 'A' and <= 'Z' => c - 'A',
+        >= 'a' and <= 'z' => c - 'a' + 26,
+        >= '0' and <= '9' => c - '0' + 52,
+        '+' => 62, '/' => 63, _ => -1,
+    };
+
+    public static A.PreviewError? DecodePreviewError(JsonValue value) => RebuildToken<A.PreviewError>(value);
 
     private static T? RebuildToken<T>(JsonValue? value) where T : struct, Enum =>
         value is { IsString: true } && Enum.TryParse(value.AsString, out T parsed) &&

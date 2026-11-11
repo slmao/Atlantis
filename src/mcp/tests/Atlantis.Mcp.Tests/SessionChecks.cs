@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -86,9 +87,15 @@ internal static class SessionChecks
             }), cancellationToken: deadline.Token))
             {
                 var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-                check(tools.Count == 42, "production host discovers all 42 tools after connecting");
+                check(tools.Count == 43, "production host discovers all 43 tools after connecting");
                 CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
                 check(status.IsError != true, "production host forwards control through the SDK");
+                CallToolResult preview = await client.CallToolAsync("assets.preview_mesh",
+                    new Dictionary<string, object?> { ["guid"] = Program.Entity }, cancellationToken: deadline.Token);
+                check(preview.IsError != true && preview.Content.Count == 2
+                    && preview.Content[0] is TextContentBlock metadata && metadata.Text == Program.PreviewMetadata
+                    && preview.Content[1] is ImageContentBlock image && image.MimeType == "image/png"
+                    && image.DecodedData.Span.SequenceEqual(Program.PreviewPng), "production host returns SDK-validated PNG and metadata");
                 foreach (string name in new[] { "world.drain_events", "authoring.drain_events" })
                 {
                     CallToolResult result = await client.CallToolAsync(name, cancellationToken: deadline.Token);
@@ -106,6 +113,8 @@ internal static class SessionChecks
                 "production World drain uses the server's subscription ID");
             check(sent.Single(r => r.Find("method")?.AsString == "authoring.drainEvents").Find("params")?.Find("subscription")?.NumberText == "73",
                 "production authoring drain uses the server's subscription ID");
+            check(Json.Write(sent.Single(r => r.Find("method")?.AsString == "assets.previewMesh").Find("params")!) ==
+                Json.Write(JsonValue.NewObject().Set("guid", JsonValue.String(Program.Entity))), "production preview is one GUID-only request");
         }
         finally
         {
@@ -139,6 +148,8 @@ internal static class SessionChecks
                     "connection.subscribe" => JsonValue.Number(41L),
                     "authoring.subscribe" => JsonValue.Number(73L),
                     "connection.drainEvents" or "authoring.drainEvents" => Json.Parse("{\"ok\":[]}"),
+                    "assets.previewMesh" => JsonValue.NewObject().Set("ok", Json.Parse(Program.PreviewMetadata).Find("ok")!
+                        .Set("pngBase64", JsonValue.String(Convert.ToBase64String(Program.PreviewPng)))),
                     _ => request.Find("params")!,
                 });
             await writer.WriteLineAsync(Json.Write(response).AsMemory(), token);

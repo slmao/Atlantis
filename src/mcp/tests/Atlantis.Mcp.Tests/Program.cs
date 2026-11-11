@@ -11,12 +11,15 @@ using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using A = Atlantis.Gameplay.Authoring;
+using Assets = Atlantis.Gameplay.Assets;
 
 namespace Atlantis.Mcp.Tests;
 
 internal static partial class Program
 {
-    private const string Entity = "11111111-2222-4333-8444-555555555555";
+    internal const string Entity = "11111111-2222-4333-8444-555555555555";
+    internal static readonly byte[] PreviewPng = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEAAQAAAAB0CZXLAAAAH0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAAB8Wch7gAAAABJRU5ErkJggg==");
+    internal static readonly string PreviewMetadata = $$$"""{"ok":{"guid":"{{{Entity}}}","width":256,"height":256,"mimeType":"image/png"}}""";
     private const string TypeId = "0x123456789abcdef0";
     private const string FieldId = "0xfedcba9876543210";
     private static readonly string WorldAddress = $$$"""{"entity":"{{{Entity}}}","component":"{{{TypeId}}}","field":"{{{FieldId}}}"}""";
@@ -30,6 +33,7 @@ internal static partial class Program
     [
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
+        ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
         ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -131,7 +135,7 @@ internal static partial class Program
             Check(result.IsError != true, c.Tool + " succeeds");
             Check(session.Calls.Count == 1 && session.Calls[0].Method == c.Method, c.Tool + " exact method and one round trip");
             Check(Json.Write(session.Calls[0].Parameters) == Json.Write(Json.Parse(c.Args)), c.Tool + " arguments unchanged");
-            CheckForward(result, c.Result, c.Tool);
+            CheckAssetResult(result, c.Method, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
@@ -162,6 +166,18 @@ internal static partial class Program
             ? Json.Write(Json.Parse(structured.GetRawText())) == expected : expected == "null",
             context + " verbatim structured JSON (no SDK type serialization or wrapper)");
     }
+
+    private static void CheckAssetResult(CallToolResult result, string method, string expected, string context)
+    {
+        if (method != "assets.previewMesh") { CheckForward(result, expected, context); return; }
+        CheckPreviewImage(result, context);
+        CheckForward(new CallToolResult { Content = [result.Content[0]], StructuredContent = result.StructuredContent },
+            expected, context + " metadata without duplicated PNG");
+    }
+
+    private static void CheckPreviewImage(CallToolResult result, string context) =>
+        Check(result.Content.Count == 2 && result.Content[1] is ImageContentBlock image && image.MimeType == "image/png"
+            && image.DecodedData.Span.SequenceEqual(PreviewPng), context + " exactly one PNG image block with the original bytes");
 
     private static void CheckCall(string name, string arguments, string response)
     {
@@ -199,6 +215,10 @@ internal static partial class Program
         (string Tool, string Args)[] invalid =
         [
             ("assets.list", """{"extra":1}"""), ("assets.get", "{}"), ("assets.get", """{"guid":1}"""),
+            ("assets.preview_mesh", "{}"), ("assets.preview_mesh", """{"guid":1}"""),
+            ("assets.preview_mesh", """{"guid":"00000000-0000-0000-0000-000000000000"}"""),
+            ("assets.preview_mesh", """{"guid":"11111111-2222-4333-8444-55555555555A"}"""),
+            ("assets.preview_mesh", $$$"""{"guid":"{{{Entity}}}","width":256}"""),
             ("assets.rebuild", "{}"), ("assets.rebuild_status", """{"jobId":null}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),
@@ -237,6 +257,19 @@ internal static partial class Program
     {
         Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.list");
         Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.get");
+        var preview = Request("assets.preview_mesh", Cases.Single(c => c.Method == "assets.previewMesh").Args);
+        foreach (Assets.PreviewError reason in Enum.GetValues<Assets.PreviewError>())
+        {
+            FakeSession previewSession = new() { PreviewRefusal = reason };
+            CallToolResult result = new ToolRegistry(previewSession).Invoke(preview);
+            Check(result.IsError == true && previewSession.Calls.Count == 1, "preview " + reason + " is one refusal without retry");
+            CheckForward(result, $$$"""{"err":"{{{reason}}}"}""", "preview " + reason + " contains no image");
+        }
+        FakeSession previewDisconnect = new() { Failure = new RemoteException(RemoteError.Disconnected, "lost preview reply") };
+        CallToolResult disconnected = new ToolRegistry(previewDisconnect).Invoke(preview);
+        Check(disconnected.IsError == true && disconnected.Content.Count == 1
+            && disconnected.Content[0] is TextContentBlock disconnectedText && disconnectedText.Text == previewDisconnect.Failure.Message
+            && previewDisconnect.Calls.Count == 1, "preview disconnect stays a transport error without image or retry");
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
         foreach (string reason in Enum.GetNames<A.AuthoringError>())
@@ -344,9 +377,9 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
+            if (c.Method is "assets.previewMesh" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
             {
-                Check(result.IsError == true, "typed rebuild tool rejects the non-DTO echo response");
+                Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;
             }
             Check(result.IsError != true, "MCP tools/call " + c.Tool + " succeeds");
@@ -365,7 +398,7 @@ internal static partial class Program
             CallToolResult result = await resultClient.CallToolAsync(c.Tool,
                 JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!, cancellationToken: deadline.Token);
             Check(result.IsError != true, "MCP result " + c.Tool + " succeeds");
-            CheckForward(result, c.Result, "MCP result " + c.Tool);
+            CheckAssetResult(result, c.Method, c.Result, "MCP result " + c.Tool);
         }
     }
 
@@ -373,9 +406,19 @@ internal static partial class Program
     {
         public string Response { get; init; } = "{\"result\":null}";
         public RemoteException? Failure { get; init; }
+        public Assets.PreviewError? PreviewRefusal { get; init; }
         public bool Echo { get; init; }
         public bool FixtureResults { get; init; }
         public List<(string Method, JsonValue Parameters)> Calls { get; } = new();
+
+        public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid)
+        {
+            Calls.Add(("assets.previewMesh", JsonValue.NewObject().Set("guid", JsonValue.String(guid.ToString()))));
+            if (Failure is not null) throw Failure;
+            if (Echo) throw new RemoteException(RemoteError.ProtocolError, "not a typed preview");
+            return PreviewRefusal is { } refusal ? Outcome<Assets.MeshPreview, Assets.PreviewError>.Err(refusal)
+                : Outcome<Assets.MeshPreview, Assets.PreviewError>.Ok(new(guid, 256, 256, PreviewPng));
+        }
 
         public JsonValue Request(string method, JsonValue parameters)
         {

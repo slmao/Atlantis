@@ -9,6 +9,7 @@ using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using Assets = Atlantis.Gameplay.Assets;
 
 namespace Atlantis.Mcp.Tests;
 
@@ -40,8 +41,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 42 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 42,
-            "42 unique approved tools including asset rebuild, import, Save As and Create Scene");
+        Check(ToolRegistry.AllMappings.Length == 43 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 43,
+            "43 unique approved tools including mesh preview, asset rebuild, import, Save As and Create Scene");
         foreach (var c in CompositionCases)
         {
             FakeSession session = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };
@@ -307,6 +308,9 @@ internal static partial class Program
         public bool NoAuthoring { get; init; }
         public bool RejectCommands { get; init; }
         private ulong _ticket = 100;
+
+        public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
+            throw new InvalidOperationException("Unexpected mesh preview in queue fixture");
 
         public JsonValue Request(string method, JsonValue parameters)
         {

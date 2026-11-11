@@ -46,3 +46,74 @@ public sealed class AssetBrowser
     public void Disconnect()
     { ++_listRequest; ++_detailRequest; State = "Disconnected"; Details = null; DetailState = "Disconnected"; }
 }
+
+public sealed record AssetPreviewIntent(long Epoch, AssetGuid Guid);
+
+/// <summary>One active operation and one replaceable intent across Editor
+/// sessions. UI transitions and the worker's admission check share a lock;
+/// connection setup, RPC and image decoding run outside it.</summary>
+public sealed class AssetPreviewRequests
+{
+    private readonly object _gate = new();
+    private long _epoch;
+    private AssetGuid? _selection;
+    private AssetPreviewIntent? _current, _next, _active;
+
+    public bool SetSelection(AssetGuid? selection, bool invalidate = false)
+    {
+        lock (_gate)
+        {
+            if (!invalidate && _selection == selection) return false;
+            _selection = selection;
+            ++_epoch;
+            _current = _next = null;
+            return true;
+        }
+    }
+
+    public bool CanRequest
+    {
+        get { lock (_gate) return CanRequestLocked(); }
+    }
+
+    private bool CanRequestLocked() => _selection.HasValue &&
+        (_current is null || (_current != _active && _current != _next));
+
+    public bool Request()
+    {
+        lock (_gate)
+        {
+            if (!CanRequestLocked() || _selection is not AssetGuid guid) return false;
+            _current = _next = new(++_epoch, guid);
+            return true;
+        }
+    }
+
+    public AssetPreviewIntent? TakeNext()
+    {
+        lock (_gate)
+        {
+            if (_active is not null) return null;
+            _active = _next;
+            _next = null;
+            return _active;
+        }
+    }
+
+    // This is the send admission point after setup. An invalidation that
+    // wins the lock prevents the call; a call admitted first may finish.
+    public bool CanSend(AssetPreviewIntent intent)
+    {
+        lock (_gate) return _active == intent && _current == intent;
+    }
+
+    public bool Settle(AssetPreviewIntent intent)
+    {
+        lock (_gate)
+        {
+            if (_active != intent) return false;
+            _active = null;
+            return _current == intent;
+        }
+    }
+}

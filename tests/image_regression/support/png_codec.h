@@ -5,6 +5,7 @@
 #include <atlantis/result.h>
 
 #include <filesystem>
+#include <span>
 #include <variant>
 
 namespace atlantis::image_regression {
@@ -37,6 +38,7 @@ struct DecodedPng {
 // file is exactly the silent-masking failure mode ADR-0041 requires
 // catching.
 [[nodiscard]] atlantis::Result<DecodedPng, PngDecodeError> decodePng(const std::filesystem::path& path);
+[[nodiscard]] atlantis::Result<DecodedPng, PngDecodeError> decodePng(std::span<const std::uint8_t> bytes);
 
 // Never calls stbi_flip_vertically_on_write() -- writes pixels.rgba8
 // exactly as given, row 0 first (ADR-0041's own row-order contract).

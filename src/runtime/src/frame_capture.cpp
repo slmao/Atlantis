@@ -78,6 +78,30 @@ bool writePng(const std::string& path, std::uint32_t width, std::uint32_t height
                         static_cast<int>(width) * 4) != 0;
 }
 
+std::optional<std::vector<std::uint8_t>> encodeCapturePng(
+    std::uint32_t width, std::uint32_t height, std::span<const std::uint8_t> rgba, std::size_t cap) {
+  struct Sink {
+    std::size_t cap;
+    std::vector<std::uint8_t> bytes;
+    bool overrun = false;
+  } sink{cap, {}};
+  const auto write = [](void* context, void* data, int size) {
+    auto& s = *static_cast<Sink*>(context);
+    const auto count = static_cast<std::size_t>(size);
+    if (s.overrun || count > s.cap - s.bytes.size()) {
+      s.overrun = true;
+      return;
+    }
+    const auto* first = static_cast<const std::uint8_t*>(data);
+    s.bytes.insert(s.bytes.end(), first, first + count);
+  };
+  if (stbi_write_png_to_func(write, &sink, static_cast<int>(width), static_cast<int>(height), 4,
+                             rgba.data(), static_cast<int>(width) * 4) == 0 || sink.overrun) {
+    return std::nullopt;
+  }
+  return std::move(sink.bytes);
+}
+
 }  // namespace detail
 
 // Plan 0055 P8: the DrawItems runFrame() hands drawFrame() -- the same

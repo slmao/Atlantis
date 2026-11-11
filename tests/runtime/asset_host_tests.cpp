@@ -18,6 +18,7 @@ struct CatalogFixture {
   ~CatalogFixture() { std::error_code ec; std::filesystem::remove(path, ec); std::filesystem::remove(dir, ec); }
   void write(std::vector<as::AssetCatalogRecord> records) const { std::ofstream(path, std::ios::binary) << as::serializeAssetCatalog(std::move(records)); }
 };
+using AssetHost = atlantis::runtime::AssetHost;
 as::AssetGuid guid(std::string_view key) { return as::deriveAssetGuid(as::parseAssetGuid("00810081-0081-4081-8081-008100810081").value(), key); }
 as::AssetCatalogRecord record(as::CatalogAssetType type, std::string key) {
   as::AssetCatalogRecord r;
@@ -87,4 +88,85 @@ TEST_CASE("assets: the assembled build catalog is projected completely without l
     REQUIRE(s != list.value().end());
     CHECK(*s == ac::AssetSummary{d.value().guid, d.value().type, d.value().source});
   }
+}
+
+TEST_CASE("assets preview shares the first catalog snapshot across connections without rebuild", "[runtime][assets][preview]") {
+  CatalogFixture f;
+  const auto mesh = record(as::CatalogAssetType::Mesh, "mesh");
+  const AssetHost::PreviewProvider preview{
+      .available = [] { return true; },
+      .render = [](const as::AssetGuid&, as::StaticMeshAssetData) {
+        FAIL("an unavailable or frozen catalog must not reach the renderer");
+        return ac::MeshPreviewResult::Err(ac::PreviewError::RenderFailed);
+      }};
+  AssetHost host(f.path.string(), nullptr, preview);
+  auto client = host.connect();
+  SECTION("list-first empty snapshot is not refreshed") {
+    f.write({});
+    REQUIRE(client->listAssets().isOk());
+    f.write({mesh});
+    CHECK(client->previewMesh(mesh.guid).error() == ac::PreviewError::UnknownAsset);
+    client.reset();
+    host.beginServiceInterval();
+    CHECK(host.connect()->previewMesh(mesh.guid).error() == ac::PreviewError::UnknownAsset);
+    AssetHost fresh(f.path.string(), nullptr, preview);
+    CHECK(fresh.connect()->getAsset(mesh.guid).isOk());
+    CHECK(fresh.connect()->previewMesh(mesh.guid).error() == ac::PreviewError::InvalidMesh);
+  }
+  SECTION("preview-first freezes an unavailable catalog across reconnect") {
+    CHECK(client->previewMesh(mesh.guid).error() == ac::PreviewError::CatalogUnavailable);
+    f.write({mesh});
+    client.reset();
+    host.beginServiceInterval();
+    CHECK(host.connect()->previewMesh(mesh.guid).error() == ac::PreviewError::CatalogUnavailable);
+    CHECK(host.connect()->listAssets().error() == ac::AssetError::CatalogUnavailable);
+  }
+  SECTION("preview-first freezes a readable catalog even when its mesh is unknown") {
+    f.write({mesh});
+    CHECK(client->previewMesh(guid("unknown")).error() == ac::PreviewError::UnknownAsset);
+    f.write({});
+    CHECK(host.connect()->getAsset(mesh.guid).isOk());
+  }
+}
+
+TEST_CASE("assets preview admits one usable attempt across Remote and local connections", "[runtime][assets][preview]") {
+  auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(catalog.isOk());
+  const auto& records = catalog.value().records();
+  const auto mesh = std::find_if(records.begin(), records.end(), [](const auto& r) { return r.type == as::CatalogAssetType::Mesh; });
+  const auto nonMesh = std::find_if(records.begin(), records.end(), [](const auto& r) { return r.type != as::CatalogAssetType::Mesh; });
+  REQUIRE(mesh != records.end());
+  REQUIRE(nonMesh != records.end());
+  bool usable = false;
+  int renders = 0;
+  AssetHost host(ATLANTIS_ASSET_CATALOG_PATH, nullptr,
+                 {.available = [&] { return usable; },
+                  .render = [&](const as::AssetGuid& id, as::StaticMeshAssetData data) {
+                    ++renders;
+                    CHECK(id == mesh->guid);
+                    CHECK(data.indexCount() > 0);
+                    if (renders == 1) return ac::MeshPreviewResult::Err(ac::PreviewError::RenderFailed);
+                    return ac::MeshPreviewResult::Ok({id, 256, 256, {}});
+                  }});
+  auto remoteA = host.connect();
+  auto remoteB = host.connect();
+  auto local = host.connect();
+  AssetHost noProvider(ATLANTIS_ASSET_CATALOG_PATH);
+  CHECK(noProvider.connect()->previewMesh(mesh->guid).error() == ac::PreviewError::Unsupported);
+  CHECK(remoteA->previewMesh(mesh->guid).error() == ac::PreviewError::Unavailable);
+  usable = true;  // unavailable attempt did not consume
+  CHECK(remoteA->previewMesh(nonMesh->guid).error() == ac::PreviewError::NotMesh);
+  CHECK(remoteB->previewMesh(mesh->guid).error() == ac::PreviewError::Busy);
+  CHECK(local->previewMesh(mesh->guid).error() == ac::PreviewError::Busy);
+  CHECK(renders == 0);
+  remoteA.reset();  // disconnect does not reset the shared permit
+  CHECK(host.connect()->previewMesh(mesh->guid).error() == ac::PreviewError::Busy);
+  host.beginServiceInterval();
+  CHECK(remoteB->previewMesh(mesh->guid).error() == ac::PreviewError::RenderFailed);
+  CHECK(local->previewMesh(mesh->guid).error() == ac::PreviewError::Busy);
+  host.beginServiceInterval();
+  REQUIRE(local->previewMesh(mesh->guid).isOk());
+  host.beginServiceInterval();
+  REQUIRE(remoteB->previewMesh(mesh->guid).isOk());
+  CHECK(renders == 3);
 }

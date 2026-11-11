@@ -20,26 +20,17 @@
 
 #include "png_codec.h"
 
+#include <limits>
 #include <string>
 
 namespace atlantis::image_regression {
 
-Result<DecodedPng, PngDecodeError> decodePng(const std::filesystem::path& path) {
-  if (!std::filesystem::exists(path)) {
-    return Result<DecodedPng, PngDecodeError>::Err(PngDecodeError::FileNotFound);
-  }
-
-  const std::string pathString = path.string();
-
-  int width = 0;
-  int height = 0;
-  int channelsInFile = 0;
-  unsigned char* decoded = stbi_load(pathString.c_str(), &width, &height, &channelsInFile, 4);
+namespace {
+Result<DecodedPng, PngDecodeError> checkedPixels(unsigned char* decoded, int width, int height,
+                                                int channelsInFile, bool is16Bit) {
   if (decoded == nullptr) {
     return Result<DecodedPng, PngDecodeError>::Err(PngDecodeError::DecodeFailed);
   }
-
-  const bool is16Bit = stbi_is_16_bit(pathString.c_str()) != 0;
 
   // Checked in this order (bit depth before channel count) so a
   // deliberately non-RGBA 16-bit fixture (e.g. 16-bit grayscale, which
@@ -64,6 +55,28 @@ Result<DecodedPng, PngDecodeError> decodePng(const std::filesystem::path& path) 
   stbi_image_free(decoded);
 
   return Result<DecodedPng, PngDecodeError>::Ok(std::move(result));
+}
+}  // namespace
+
+Result<DecodedPng, PngDecodeError> decodePng(const std::filesystem::path& path) {
+  if (!std::filesystem::exists(path)) {
+    return Result<DecodedPng, PngDecodeError>::Err(PngDecodeError::FileNotFound);
+  }
+  const std::string pathString = path.string();
+  int width = 0, height = 0, channels = 0;
+  auto* decoded = stbi_load(pathString.c_str(), &width, &height, &channels, 4);
+  return checkedPixels(decoded, width, height, channels, decoded && stbi_is_16_bit(pathString.c_str()) != 0);
+}
+
+Result<DecodedPng, PngDecodeError> decodePng(std::span<const std::uint8_t> bytes) {
+  if (bytes.empty() || bytes.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    return Result<DecodedPng, PngDecodeError>::Err(PngDecodeError::DecodeFailed);
+  }
+  const auto length = static_cast<int>(bytes.size());
+  int width = 0, height = 0, channels = 0;
+  auto* decoded = stbi_load_from_memory(bytes.data(), length, &width, &height, &channels, 4);
+  return checkedPixels(decoded, width, height, channels,
+                       decoded && stbi_is_16_bit_from_memory(bytes.data(), length) != 0);
 }
 
 Result<std::monostate, PngEncodeError> encodePng(const std::filesystem::path& path, const PixelBuffer& pixels) {

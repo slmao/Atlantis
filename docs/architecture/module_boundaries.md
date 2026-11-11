@@ -975,6 +975,15 @@ Remote carries `assets.list/get` through an optional provider, the CLI exposes
 `Atlantis.Gameplay.Assets`. See the [wire contract](remote_protocol.md#52-cooked-asset-queries-spec-0081--adr-0143)
 for lifecycle, ownership and failure behavior.
 
+Spec 0091 adds `previewMesh` to the same asset interface. The executable's
+`AssetHost` admits the request, resolves it against its existing snapshot and
+asks Asset System to check bounded cooked bytes. A private RuntimeHost helper
+composes a request-owned Renderer, target and RenderGraph readback on the
+existing device; it does not enter the scene frame path. Remote, CLI and both
+SDKs share the bounded PNG contract. MCP maps the typed C# result to one image
+block and small metadata. The product Editor uses an ordinary SDK connection
+on a worker and discards superseded results. See [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md).
+
 ---
 
 ## Atlantis Authoring
