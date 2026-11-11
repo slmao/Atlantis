@@ -71,12 +71,13 @@ public static partial class Program
             checks.Add(new NameUiCheck("bounded UI lifetime", false, "fixture timed out"));
             exit = 1;
         }
-        bool meshPreview = scene == "--mesh-preview";
+        bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview";
         if (meshPreview && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
+            kind = scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+                : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
             boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events, plus controlled callback and Gizmo inputs. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
@@ -114,6 +115,7 @@ public static partial class Program
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool meshPreview = _scene == "--mesh-preview";
+                bool meshMaterialPreview = _scene == "--mesh-material-preview";
                 bool lostCreation = _scene == "--new-scene-lost-reply";
                 bool newScene = _scene is "--new-scene" or "--new-scene-no-opt-in" || lostCreation;
                 bool addToNew = _scene == "--edit-new-scene";
@@ -121,7 +123,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -151,6 +153,7 @@ public static partial class Program
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
+                        else if (meshMaterialPreview) await CheckMeshMaterialPreviewUi(window, _checks, _work);
                         else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
                     }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }

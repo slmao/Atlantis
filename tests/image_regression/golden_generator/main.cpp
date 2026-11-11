@@ -104,6 +104,7 @@ int main(int argc, char** argv) {
     ATLANTIS_LOG_ERROR("usage: atlantis_image_regression_golden_generator <golden-name>");
     ATLANTIS_LOG_ERROR("  e.g.: atlantis_image_regression_golden_generator minimal_cube/minimal_cube_512x512_rgba8unorm");
     ATLANTIS_LOG_ERROR("  mesh preview: atlantis_image_regression_golden_generator {}", atlantis::image_regression::kMeshPreviewGolden);
+    ATLANTIS_LOG_ERROR("  material preview: atlantis_image_regression_golden_generator {}", atlantis::image_regression::kPairPreviewGolden);
     return 2;
   }
   const std::string goldenName = argv[1];
@@ -182,6 +183,13 @@ int main(int argc, char** argv) {
     auto pixels = atlantis::image_regression::renderMeshPreviewPixels(atlantis::image_regression::kPreviewCubeGuid);
     if (!pixels) {
       ATLANTIS_LOG_ERROR("renderMeshPreviewPixels() failed");
+      return 1;
+    }
+    capturedPixels = std::move(*pixels);
+  } else if (goldenName == atlantis::image_regression::kPairPreviewGolden) {
+    auto pixels = atlantis::image_regression::renderMeshMaterialPreviewPixels(atlantis::image_regression::kPreviewDielectricGuid);
+    if (!pixels) {
+      ATLANTIS_LOG_ERROR("renderMeshMaterialPreviewPixels() failed");
       return 1;
     }
     capturedPixels = std::move(*pixels);

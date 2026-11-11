@@ -984,6 +984,14 @@ SDKs share the bounded PNG contract. MCP maps the typed C# result to one image
 block and small metadata. The product Editor uses an ordinary SDK connection
 on a worker and discards superseded results. See [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md).
 
+Spec 0092 adds `previewMeshMaterial` through the same clients. AssetHost
+validates the pair and the material's single cooked base texture in the
+same catalog snapshot. RuntimeHost uploads, draws and reads the image in
+one request-owned submission through existing RenderGraph and Renderer
+paths. Both previews share the service interval permit and terminal drain.
+The Editor shares one intent guard between Assets and the material reference
+chooser. See [ADR-0152](../adr/0152-shared-mesh-material-preview.md).
+
 ---
 
 ## Atlantis Authoring

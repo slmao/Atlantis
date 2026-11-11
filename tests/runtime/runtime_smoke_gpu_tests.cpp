@@ -1,6 +1,8 @@
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/load.h>
+#include <atlantis/asset_system/load_material.h>
+#include <atlantis/asset_system/load_texture.h>
 #include <atlantis/profile_recorder.h>
 #include <atlantis/cli/command.h>
 #include <atlantis/cli/invocation.h>
@@ -160,6 +162,13 @@ struct RuntimeSmokeTestAccess {
     return app.previewMeshWithCompletion(config, guid, mesh, [](atlantis::rhi::Device&) {
       return atlantis::Result<std::monostate, atlantis::rhi::SubmitError>::Err(atlantis::rhi::SubmitError::DeviceLost);
     });
+  }
+  static connection::assets::MeshMaterialPreviewResult failPairPreviewCompletion(
+      RuntimeApplication& app, const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid,
+      const asset_system::AssetGuid& materialGuid, const asset_system::StaticMeshAssetData& mesh,
+      const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture) {
+    return app.previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture,
+        [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); });
   }
 
   [[nodiscard]] static atlantis::world::access::RuntimeWorldAccess& worldAccess(RuntimeApplication& app) {
@@ -887,6 +896,15 @@ TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", 
   const auto* record = catalog.value().find(guid);
   REQUIRE(record);
   REQUIRE_FALSE(RuntimeSmokeTestAccess::hasMesh(app, record->assetId));
+  const auto materialGuid = as::parseAssetGuid("1542b95d-74b5-48ba-82be-eddbe2843129").value();
+  const auto* materialRecord = catalog.value().find(materialGuid);
+  REQUIRE(materialRecord);
+  const auto material = as::loadPreviewMaterialAsset(*materialRecord);
+  REQUIRE(material.isOk());
+  const auto* textureRecord = catalog.value().find(material.value().textureAsset);
+  REQUIRE(textureRecord);
+  const auto texture = as::loadPreviewBaseColorTexture(*textureRecord);
+  REQUIRE(texture.isOk());
 
   app.runFrame();
   REQUIRE(app.shouldContinue());
@@ -901,10 +919,14 @@ TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", 
     REQUIRE(mesh.isOk());
     auto shaderConfig = config;
     if (i == 0) shaderConfig.outputTransformUnormVertexShaderSpirvPath.clear();
-    const auto preview = app.previewMesh(shaderConfig, guid, std::move(mesh.value()));
+    const auto preview = app.previewMesh(shaderConfig, guid, mesh.value());
+    const auto pair = app.previewMeshMaterial(shaderConfig, guid, materialGuid, mesh.value(),
+                                               material.value(), texture.value());
     if (i == 0) {
       REQUIRE(preview.isErr());
       CHECK(preview.error() == ac::PreviewError::RenderFailed);
+      REQUIRE(pair.isErr());
+      CHECK(pair.error() == ac::MeshMaterialPreviewError::RenderFailed);
     } else {
       REQUIRE(preview.isOk());
       CHECK(preview.value().guid == guid);
@@ -912,6 +934,10 @@ TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", 
       CHECK(preview.value().height == ac::kPreviewDimension);
       CHECK_FALSE(preview.value().png.empty());
       CHECK(preview.value().png.size() <= ac::kPreviewPngMaxBytes);
+      REQUIRE(pair.isOk());
+      CHECK(pair.value().meshGuid == guid);
+      CHECK(pair.value().materialGuid == materialGuid);
+      CHECK(pair.value().png != preview.value().png);
     }
     CHECK(app.shouldContinue());
     CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
@@ -932,6 +958,43 @@ TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", 
   CHECK(app.shutdown() == RuntimeExitReason::Success);
   std::error_code ec;
   fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Runtime retains pair upload and draw resources through its terminal drain", "[runtime][gpu][preview-pair]") {
+  namespace as = atlantis::asset_system;
+  namespace ac = atlantis::connection::assets;
+  const BootstrapConfig config = buildSmokeConfig();
+  auto appResult = createRuntimeApplication(config);
+  REQUIRE(appResult.isOk());
+  RuntimeApplication app = std::move(appResult.value());
+  const auto meshGuid = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();
+  const auto materialGuid = as::parseAssetGuid("1542b95d-74b5-48ba-82be-eddbe2843129").value();
+  const auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(catalog.isOk());
+  const auto* meshRecord = catalog.value().find(meshGuid);
+  const auto* materialRecord = catalog.value().find(materialGuid);
+  REQUIRE(meshRecord);
+  REQUIRE(materialRecord);
+  const auto mesh = as::loadStaticMeshPreviewAsset(*meshRecord);
+  const auto material = as::loadPreviewMaterialAsset(*materialRecord);
+  REQUIRE(mesh.isOk());
+  REQUIRE(material.isOk());
+  const auto* textureRecord = catalog.value().find(material.value().textureAsset);
+  REQUIRE(textureRecord);
+  const auto texture = as::loadPreviewBaseColorTexture(*textureRecord);
+  REQUIRE(texture.isOk());
+  app.runFrame();
+  REQUIRE(app.shouldContinue());
+  const auto failed = RuntimeSmokeTestAccess::failPairPreviewCompletion(
+      app, config, meshGuid, materialGuid, mesh.value(), material.value(), texture.value());
+  CHECK(failed.error() == ac::MeshMaterialPreviewError::Unavailable);
+  CHECK_FALSE(app.shouldContinue());
+  CHECK(RuntimeSmokeTestAccess::hasIncompletePreview(app));
+  CHECK(app.previewMeshMaterial(config, meshGuid, materialGuid, mesh.value(), material.value(), texture.value()).error() ==
+        ac::MeshMaterialPreviewError::Unavailable);
+  CHECK(app.previewMesh(config, meshGuid, mesh.value()).error() == ac::PreviewError::Unavailable);
+  CHECK(app.shutdown() == RuntimeExitReason::UnrecoverableRuntimeError);
+  CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
 }
 
 TEST_CASE("Runtime retains unconfirmed preview resources through its terminal drain", "[runtime][gpu][preview]") {

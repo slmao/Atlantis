@@ -4,6 +4,8 @@
 #include <atlantis/asset_system/texture_types.h>
 #include <atlantis/result.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
 
 namespace atlantis::asset_system {
@@ -21,5 +23,15 @@ namespace atlantis::asset_system {
 // copyBufferToTexture().
 [[nodiscard]] atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(
     const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
+
+struct AssetCatalogRecord;
+enum class PreviewArtifactLoadError;
+inline constexpr std::size_t kPreviewBaseColorMaxArtifactBytes = 32 * 1024 * 1024;
+inline constexpr std::uint32_t kPreviewBaseColorMaxDimension = 2048;
+
+// Spec 0092 R2: validates the bounded catalog texture before returning its
+// pixels. The preview host checks that the cooked layout is supported.
+[[nodiscard]] atlantis::Result<TextureAssetData, PreviewArtifactLoadError> loadPreviewBaseColorTexture(
+    const AssetCatalogRecord& record);
 
 }  // namespace atlantis::asset_system

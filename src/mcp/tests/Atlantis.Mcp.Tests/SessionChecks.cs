@@ -87,7 +87,7 @@ internal static class SessionChecks
             }), cancellationToken: deadline.Token))
             {
                 var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-                check(tools.Count == 43, "production host discovers all 43 tools after connecting");
+                check(tools.Count == 44, "production host discovers all 44 tools after connecting");
                 CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
                 check(status.IsError != true, "production host forwards control through the SDK");
                 CallToolResult preview = await client.CallToolAsync("assets.preview_mesh",
@@ -96,6 +96,14 @@ internal static class SessionChecks
                     && preview.Content[0] is TextContentBlock metadata && metadata.Text == Program.PreviewMetadata
                     && preview.Content[1] is ImageContentBlock image && image.MimeType == "image/png"
                     && image.DecodedData.Span.SequenceEqual(Program.PreviewPng), "production host returns SDK-validated PNG and metadata");
+                CallToolResult pair = await client.CallToolAsync("assets.preview_mesh_material",
+                    new Dictionary<string, object?> { ["meshGuid"] = Program.Entity, ["materialGuid"] = Program.Material },
+                    cancellationToken: deadline.Token);
+                check(pair.IsError != true && pair.Content.Count == 2
+                    && pair.Content[0] is TextContentBlock pairMetadata && pairMetadata.Text == Program.PairPreviewMetadata
+                    && pair.Content[1] is ImageContentBlock pairImage && pairImage.MimeType == "image/png"
+                    && pairImage.DecodedData.Span.SequenceEqual(Program.PreviewPng),
+                    "production host uses the typed pair SDK and returns one PNG with both roles in metadata");
                 foreach (string name in new[] { "world.drain_events", "authoring.drain_events" })
                 {
                     CallToolResult result = await client.CallToolAsync(name, cancellationToken: deadline.Token);
@@ -115,6 +123,8 @@ internal static class SessionChecks
                 "production authoring drain uses the server's subscription ID");
             check(Json.Write(sent.Single(r => r.Find("method")?.AsString == "assets.previewMesh").Find("params")!) ==
                 Json.Write(JsonValue.NewObject().Set("guid", JsonValue.String(Program.Entity))), "production preview is one GUID-only request");
+            check(Json.Write(sent.Single(r => r.Find("method")?.AsString == "assets.previewMeshMaterial").Find("params")!) ==
+                Program.PairPreviewArgs, "production pair preview sends exactly one request with the two ordered roles");
         }
         finally
         {
@@ -149,6 +159,8 @@ internal static class SessionChecks
                     "authoring.subscribe" => JsonValue.Number(73L),
                     "connection.drainEvents" or "authoring.drainEvents" => Json.Parse("{\"ok\":[]}"),
                     "assets.previewMesh" => JsonValue.NewObject().Set("ok", Json.Parse(Program.PreviewMetadata).Find("ok")!
+                        .Set("pngBase64", JsonValue.String(Convert.ToBase64String(Program.PreviewPng)))),
+                    "assets.previewMeshMaterial" => JsonValue.NewObject().Set("ok", Json.Parse(Program.PairPreviewMetadata).Find("ok")!
                         .Set("pngBase64", JsonValue.String(Convert.ToBase64String(Program.PreviewPng)))),
                     _ => request.Find("params")!,
                 });

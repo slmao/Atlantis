@@ -23,6 +23,7 @@ public static class LiveAssetSuite
     public static void Run(TestContext t)
     {
         PreviewContract(t);
+        PairPreviewContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -116,8 +117,85 @@ public static class LiveAssetSuite
         });
     }
 
+    private static void PairPreviewContract(TestContext t)
+    {
+        const string method = "assets.previewMeshMaterial";
+        AssetGuid mesh = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        AssetGuid material = AssetCodecSuite.PreviewMaterial;
+        JsonValue Result(JsonValue value) => JsonValue.NewObject().Set("result", value);
+        JsonValue Ok(JsonValue value) => Result(JsonValue.NewObject().Set("ok", value));
+        JsonValue Refusal(string token) => Result(JsonValue.NewObject().Set("err", JsonValue.String(token)));
+        JsonValue Pair() => AssetCodecSuite.PairValue(mesh, material, AssetCodecSuite.PreviewHeader);
+        JsonValue Legacy() => Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        JsonValue Details() => Codec.Encode(new A.AssetDetails(mesh, A.AssetType.Mesh, "assets:mesh.txt", 4,
+            null, "test/1", Array.Empty<AssetGuid>()));
+        WithPeer(t, mesh, m => m switch
+        {
+            method => Legacy(),
+            "assets.list" => Ok(JsonValue.NewArray().Push(Codec.Encode(new A.AssetSummary(mesh, A.AssetType.Mesh, "assets:mesh.txt")))),
+            "assets.get" => Ok(Details()),
+            "assets.previewMesh" => Ok(AssetCodecSuite.PreviewValue(mesh, AssetCodecSuite.PreviewHeader)),
+            _ => null,
+        }, client =>
+        {
+            t.Throws<ArgumentException>(() => client.Assets.PreviewMeshMaterial(default, material), "nil mesh is rejected before sending");
+            t.Throws<ArgumentException>(() => client.Assets.PreviewMeshMaterial(mesh, default), "nil material is rejected before sending");
+            var legacy = client.Assets.PreviewMeshMaterial(mesh, material);
+            t.Check(!legacy.IsOk && legacy.Error == A.MeshMaterialPreviewError.Unsupported, "0091 fallback accepts only the legacy refusal");
+            t.Check(client.Failure is null && client.Assets.ListAssets().Value.Single().Guid == mesh &&
+                client.Assets.GetAsset(mesh).Value.Guid == mesh && client.Assets.PreviewMesh(mesh).Value.Guid == mesh,
+                "pair fallback keeps the same session usable for list, get and geometry preview");
+        }, material: material);
+
+        int attempt = 0;
+        WithPeer(t, mesh, _ => ++attempt == 1 ? Refusal("Busy") : Ok(Pair()), client =>
+        {
+            var busy = client.Assets.PreviewMeshMaterial(mesh, material);
+            t.Check(!busy.IsOk && busy.Error == A.MeshMaterialPreviewError.Busy && client.Failure is null,
+                "pair Busy is an in-band refusal without automatic retry");
+            var image = client.Assets.PreviewMeshMaterial(mesh, material);
+            t.Check(image.IsOk && image.Value.MeshGuid == mesh && image.Value.MaterialGuid == material &&
+                image.Value.PngBytes.AsSpan().SequenceEqual(AssetCodecSuite.PreviewHeader),
+                "explicit pair retry succeeds with the correlated roles and PNG");
+        }, expectedPreviews: 2, material: material);
+
+        foreach (var (name, reply) in new (string, JsonValue)[]
+        {
+            ("duplicate id", Json.Parse("""{"id":0,"id":1,"result":{"err":"Busy"}}""")),
+            ("duplicate result", Json.Parse("""{"result":{"err":"Busy"},"result":{"err":"TooLarge"}}""")),
+            ("duplicate error", Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"},"error":null}""")),
+            ("result/error", Legacy().Set("result", JsonValue.NewObject().Set("err", JsonValue.String("Busy")))),
+            ("ok/err", Result(JsonValue.NewObject().Set("ok", Pair()).Set("err", JsonValue.String("Busy")))),
+            ("duplicate err", Json.Parse("""{"result":{"err":"Busy","err":"TooLarge"}}""")),
+            ("duplicate ok", Json.Parse("{\"result\":{\"ok\":" + Json.Write(Pair()) + ",\"ok\":null}}")),
+            ("wrong legacy message", JsonValue.NewObject().Set("error",
+                Legacy().Find("error")!.Set("message", JsonValue.String("invalid material GUID")))),
+            ("duplicate legacy code", Json.Parse("""{"error":{"code":"BadRequest","code":"Other","message":"unknown or malformed asset query"}}""")),
+            ("duplicate legacy message", Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query","message":"Other"}}""")),
+            ("wrong mesh GUID", Ok(Pair().Set("meshGuid", Codec.Encode(material)))),
+            ("wrong material GUID", Ok(Pair().Set("materialGuid", Codec.Encode(mesh)))),
+            ("swapped roles", Ok(AssetCodecSuite.PairValue(material, mesh, AssetCodecSuite.PreviewHeader))),
+            ("unknown refusal", Refusal("UnknownAsset")),
+        })
+        {
+            WithPeer(t, mesh, _ => reply, client =>
+            {
+                var error = t.Throws<RemoteException>(() => client.Assets.PreviewMeshMaterial(mesh, material),
+                    "malformed pair preview " + name + " throws");
+                t.Check(error?.Error == RemoteError.ProtocolError && client.Failure == RemoteError.ProtocolError,
+                    "malformed pair preview " + name + " is a sticky protocol failure");
+            }, material: material);
+        }
+        WithPeer(t, mesh, _ => null, client =>
+        {
+            var error = t.Throws<RemoteException>(() => client.Assets.PreviewMeshMaterial(mesh, material), "lost pair reply throws");
+            t.Check(error?.Error == RemoteError.Disconnected && client.Failure == RemoteError.Disconnected,
+                "lost pair reply stays a transport failure");
+        }, material: material);
+    }
+
     private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,
-        int expectedPreviews = 1)
+        int expectedPreviews = 1, AssetGuid? material = null)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -139,11 +217,14 @@ public static class LiveAssetSuite
                     "connection.schema" => JsonValue.NewObject().Set("result", JsonValue.NewArray()),
                     _ => reply(method),
                 };
-                if (method == "assets.previewMesh")
+                if (method == (material is null ? "assets.previewMesh" : "assets.previewMeshMaterial"))
                 {
                     ++requests;
-                    if (Json.Write(request.Find("params")!) != Json.Write(JsonValue.NewObject().Set("guid", Codec.Encode(guid))))
-                        throw new InvalidOperationException("preview did not send the exact GUID-only parameters");
+                    var parameters = material is AssetGuid asset
+                        ? JsonValue.NewObject().Set("meshGuid", Codec.Encode(guid)).Set("materialGuid", Codec.Encode(asset))
+                        : JsonValue.NewObject().Set("guid", Codec.Encode(guid));
+                    if (Json.Write(request.Find("params")!) != Json.Write(parameters))
+                        throw new InvalidOperationException("preview did not send the exact expected GUID parameters");
                 }
                 if (envelope is null) break;
                 writer.WriteLine(Json.Write(envelope.Set("id", request.Find("id")!)));

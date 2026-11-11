@@ -60,7 +60,7 @@ public static partial class Program
         var doc = new PickerDocument { Value = PropertyValue.FromAsset(a) };
         var inspector = new InspectorModel(doc);
         InspectorField Field() { inspector.Refresh(doc.Node); return inspector.Fields.Single(); }
-        AssetReferencePicker Capture() => AssetReferencePicker.Capture(82, doc.Node, Field())!;
+        AssetReferencePicker Capture() => AssetReferencePicker.Capture(82, doc.Node, Field(), inspector.Fields)!;
         InspectorField field = Field();
         Check(InspectorModel.CanChooseAsset(field) && !field.Field.IsEditable, "picker: serializable authoring field eligible without World Editable flag or known name");
         Check(!InspectorModel.CanChooseAsset(field with { Editable = false }), "picker: read-only Inspector field excluded");
@@ -70,6 +70,14 @@ public static partial class Program
         Check(!InspectorModel.CanChooseAsset(field with { Value = null }), "picker: failed read is not optional absence");
         Check(InspectorModel.CanChooseAsset(field with { Value = PropertyValue.Absent }), "picker: optional absence is eligible");
         Check(!InspectorModel.CanChooseAsset(field with { Value = PropertyValue.Absent, Optional = false }), "picker: nonoptional absence not eligible");
+        var materialField = field with { Path = "Renderable.materialAsset", ComponentName = "Renderable" };
+        var meshField = field with { Path = "Renderable.meshAsset", ComponentName = "Renderable", Value = PropertyValue.FromAsset(b) };
+        var captured = AssetReferencePicker.Capture(91, doc.Node, materialField, [materialField, meshField])!.Target;
+        Check(captured.SupportsMaterialPreview && captured.OpeningMesh == b,
+            "picker: material preview captures the opening mesh from the same component");
+        var unreadable = AssetReferencePicker.Capture(92, doc.Node, materialField, [materialField, meshField with { Value = null }])!.Target;
+        Check(unreadable.SupportsMaterialPreview && unreadable.OpeningMesh is null && !Capture().Target.SupportsMaterialPreview,
+            "picker: missing mesh affects only the material preview entry");
         var picker = Capture();
         Check(picker.Confirm(inspector, doc.Node, a).Refusal == "unchanged" && doc.Submissions == 0, "picker: same-value confirmation plans no edit");
         Check(picker.Confirm(inspector, doc.Node, b).Refusal is not null, "picker: confirmation consumed once");

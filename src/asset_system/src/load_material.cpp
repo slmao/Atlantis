@@ -1,5 +1,8 @@
 #include <atlantis/asset_system/load_material.h>
 
+#include "preview_file.h"
+
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/material_artifact.h>
 #include <atlantis/asset_system/material_metadata.h>
@@ -37,17 +40,10 @@ namespace {
   return true;
 }
 
-}  // namespace
-
-atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const std::filesystem::path& artifactPath,
-                                                                          const std::filesystem::path& metadataPath) {
+atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
+    const std::vector<std::byte>& artifactBytes, std::string_view metadataText,
+    const AssetCatalogRecord* expected = nullptr) {
   using ResultT = atlantis::Result<MaterialAssetData, MaterialLoadError>;
-
-  std::vector<std::byte> artifactBytes;
-  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(MaterialLoadError::ArtifactFileUnreadable);
-
-  std::string metadataText;
-  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(MaterialLoadError::MetadataFileUnreadable);
 
   auto artifactResult = decodeMaterialArtifact(artifactBytes);
   if (artifactResult.isErr()) return ResultT::Err(MaterialLoadError::ArtifactDecodeFailed);
@@ -58,6 +54,11 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   const DecodedMaterialArtifact& artifact = artifactResult.value();
   const MaterialMetadata& metadata = metadataResult.value();
 
+  // A successful decode proves the artifact has the current schema.
+  if (expected && (expected->artifactSchema != kMaterialArtifactSchemaVersion ||
+                   expected->guid != metadata.assetGuid || expected->assetId != metadata.assetId)) {
+    return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
+  }
   if (artifact.kind != metadata.kind || artifact.textureAsset != metadata.textureAsset) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
@@ -143,6 +144,37 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(const s
   data.alphaCutoff = artifact.alphaCutoff;
   data.emissiveTexture = artifact.emissiveTexture;
   return ResultT::Ok(std::move(data));
+}
+
+}  // namespace
+
+atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+  using ResultT = atlantis::Result<MaterialAssetData, MaterialLoadError>;
+  std::vector<std::byte> artifactBytes;
+  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(MaterialLoadError::ArtifactFileUnreadable);
+
+  std::string metadataText;
+  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(MaterialLoadError::MetadataFileUnreadable);
+  return decodeLoadedMaterial(artifactBytes, metadataText);
+}
+
+atlantis::Result<MaterialAssetData, PreviewArtifactLoadError> loadPreviewMaterialAsset(
+    const AssetCatalogRecord& record) {
+  using E = PreviewArtifactLoadError;
+  using R = atlantis::Result<MaterialAssetData, E>;
+  if (record.type != CatalogAssetType::Material) return R::Err(E::Invalid);
+  std::vector<std::byte> artifactBytes;
+  if (const auto error = detail::readPreviewFile(record.artifact, kPreviewMaterialMaxArtifactBytes, artifactBytes)) {
+    return R::Err(*error);
+  }
+  std::string metadataText;
+  if (const auto error = detail::readPreviewFile(record.metadata, kPreviewMeshMaxMetadataBytes, metadataText)) {
+    return R::Err(*error);
+  }
+  auto decoded = decodeLoadedMaterial(artifactBytes, metadataText, &record);
+  if (decoded.isErr()) return R::Err(E::Invalid);
+  return R::Ok(std::move(decoded.value()));
 }
 
 }  // namespace atlantis::asset_system

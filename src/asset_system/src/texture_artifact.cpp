@@ -101,9 +101,20 @@ std::vector<std::byte> encodeTextureArtifact(std::uint32_t width, std::uint32_t 
   return out;
 }
 
-atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextureArtifact(
+namespace {
+
+struct ValidatedTextureHeader {
+  TextureArtifactHeader summary;
+  TextureColorSpace colorSpace;
+  TextureDataLayout layout;
+  std::uint32_t mipCount;
+  std::uint32_t pixelDataOffset;
+  std::uint32_t pixelDataSizeBytes;
+};
+
+atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError> validateTextureHeader(
     const std::vector<std::byte>& bytes) {
-  using ResultT = atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError>;
+  using ResultT = atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError>;
 
   if (bytes.size() < kTextureArtifactHeaderSizeBytes) return ResultT::Err(TextureArtifactDecodeError::TruncatedHeader);
 
@@ -176,18 +187,38 @@ atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextu
     return ResultT::Err(TextureArtifactDecodeError::InconsistentPixelDataSize);
   }
 
+  return ResultT::Ok({{schemaVersion, width, height}, colorSpace, layout, mipCount,
+                      pixelDataOffset, pixelDataSizeBytes});
+}
+
+}  // namespace
+
+atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError> peekTextureArtifactHeader(
+    const std::vector<std::byte>& bytes) {
+  using R = atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError>;
+  const auto header = validateTextureHeader(bytes);
+  if (header.isErr()) return R::Err(header.error());
+  return R::Ok(header.value().summary);
+}
+
+atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextureArtifact(
+    const std::vector<std::byte>& bytes) {
+  using R = atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError>;
+  const auto header = validateTextureHeader(bytes);
+  if (header.isErr()) return R::Err(header.error());
+  const auto& h = header.value();
   DecodedTextureArtifact decoded;
-  decoded.width = width;
-  decoded.height = height;
-  decoded.colorSpace = colorSpace;
-  decoded.layout = layout;
-  decoded.mipCount = mipCount;
-  decoded.pixelBytes.reserve(pixelDataSizeBytes);
-  for (std::uint32_t i = 0; i < pixelDataSizeBytes; ++i) {
-    decoded.pixelBytes.push_back(static_cast<std::uint8_t>(bytes[pixelDataOffset + i]));
+  decoded.width = h.summary.width;
+  decoded.height = h.summary.height;
+  decoded.colorSpace = h.colorSpace;
+  decoded.layout = h.layout;
+  decoded.mipCount = h.mipCount;
+  decoded.pixelBytes.reserve(h.pixelDataSizeBytes);
+  for (std::uint32_t i = 0; i < h.pixelDataSizeBytes; ++i) {
+    decoded.pixelBytes.push_back(static_cast<std::uint8_t>(bytes[h.pixelDataOffset + i]));
   }
 
-  return ResultT::Ok(std::move(decoded));
+  return R::Ok(std::move(decoded));
 }
 
 }  // namespace atlantis::asset_system

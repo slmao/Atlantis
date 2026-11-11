@@ -136,10 +136,13 @@ public sealed class MainWindow : Window
     private readonly TextBlock _assetsState = new();
     private readonly AssetPreviewRequests _previewRequests = new();
     private readonly Button _previewMesh = new() { Content = "Preview geometry", IsEnabled = false };
+    private readonly ComboBox _previewMaterial = new() { PlaceholderText = "Select a material", IsVisible = false };
+    private readonly Button _previewPair = new() { Content = "Preview with material", IsEnabled = false, IsVisible = false };
     private readonly TextBlock _previewState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Image _previewImage = new() { Width = 256, Height = 256, IsVisible = false };
+    private IReadOnlyList<AssetSummary>? _previewCatalog;
     private SessionInfo? _previewSession;
-    private bool _previewRetry, _previewUnavailable;
+    private bool _previewRetry, _previewUnavailable, _previewWithMaterial;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
@@ -966,8 +969,14 @@ public sealed class MainWindow : Window
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
         panel.Children.Add(copy);
-        _previewMesh.Click += (_, _) => RequestMeshPreview();
+        _previewMesh.Click += (_, _) => RequestPreview(withMaterial: false);
         panel.Children.Add(_previewMesh);
+        _previewMaterial.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
+            new TextBlock { Text = asset?.Source, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        _previewMaterial.SelectionChanged += (_, _) => { if (!_assetsSync) SyncPreviewSelection(); };
+        _previewPair.Click += (_, _) => RequestPreview(withMaterial: true);
+        panel.Children.Add(_previewMaterial);
+        panel.Children.Add(_previewPair);
         panel.Children.Add(_previewState);
         panel.Children.Add(_previewImage);
         ToolTip.SetShowOnDisabled(_addMesh, true);
@@ -1017,7 +1026,19 @@ public sealed class MainWindow : Window
         _assetsState.Text = _assetBrowser.ViewState;
         var visible = _assetBrowser.Visible;
         _assetsSync = true;
-        try { _assetsList.ItemsSource = visible; _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected); }
+        try
+        {
+            _assetsList.ItemsSource = visible;
+            _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected);
+            if (_assetBrowser.State == "Ready" && !ReferenceEquals(_previewCatalog, _assetBrowser.Items))
+            {
+                _previewCatalog = _assetBrowser.Items;
+                var previous = (_previewMaterial.SelectedItem as AssetSummary)?.Guid;
+                var materials = _previewCatalog.Where(a => a.Type == AssetType.Material).ToArray();
+                _previewMaterial.ItemsSource = materials;
+                _previewMaterial.SelectedItem = materials.FirstOrDefault(a => a.Guid == previous);
+            }
+        }
         finally { _assetsSync = false; }
         SyncPreviewSelection();
         UpdateAddMeshButton();
@@ -1033,40 +1054,66 @@ public sealed class MainWindow : Window
 
     private void SyncPreviewSelection(bool invalidate = false)
     {
-        var mesh = _previewSession is not null && _assetTabs.SelectedIndex == 1 &&
-            _assetBrowser.State == "Ready" && _assetsList.SelectedItem is AssetSummary { Type: AssetType.Mesh } item
-            ? item.Guid : (AssetGuid?)null;
-        if (_previewRequests.SetSelection(mesh, invalidate)) ClearPreview();
+        var visibleMesh = _assetBrowser.State == "Ready" &&
+            _assetsList.SelectedItem is AssetSummary { Type: AssetType.Mesh };
+        _previewMaterial.IsVisible = _previewPair.IsVisible = visibleMesh;
+        _previewMaterial.IsEnabled = visibleMesh && _referenceWindow is null && _previewSession is not null;
+        AssetPreviewInputs? inputs = null;
+        if (_previewSession is not null)
+        {
+            if (_referenceWindow is { } chooser) inputs = chooser.PreviewInputs;
+            else if (_assetTabs.SelectedIndex == 1 && visibleMesh && _assetsList.SelectedItem is AssetSummary mesh)
+                inputs = new(mesh.Guid, (_previewMaterial.SelectedItem as AssetSummary)?.Guid);
+        }
+        if (_previewRequests.SetInputs(inputs, invalidate)) ClearPreview();
         UpdatePreviewButton();
     }
 
     private void EndPreviewSession()
     {
         _previewSession = null;
+        _previewMaterial.SelectedItem = null;
         SyncPreviewSelection(invalidate: true);
     }
 
     private void ClearPreview()
     {
-        var previous = _previewImage.Source as Bitmap;
-        _previewImage.Source = null;
-        _previewImage.IsVisible = false;
-        previous?.Dispose();
-        _previewState.Text = "";
+        static void Clear(Image image, TextBlock state)
+        {
+            var previous = image.Source as Bitmap;
+            image.Source = null;
+            image.IsVisible = false;
+            previous?.Dispose();
+            state.Text = "";
+        }
+        Clear(_previewImage, _previewState);
+        if (_referenceWindow is { } chooser) Clear(chooser.PreviewImage, chooser.PreviewState);
         _previewRetry = _previewUnavailable = false;
     }
 
     private void UpdatePreviewButton()
     {
-        _previewMesh.Content = _previewRetry ? "Retry preview" : "Preview geometry";
-        _previewMesh.IsEnabled = !_previewUnavailable && _previewRequests.CanRequest;
+        void Update(Button button, bool withMaterial, bool surfaceCurrent, string label)
+        {
+            bool currentMode = withMaterial == _previewWithMaterial;
+            button.Content = currentMode && _previewRetry ? "Retry preview" : label;
+            button.IsEnabled = surfaceCurrent && (!currentMode || !_previewUnavailable) &&
+                _previewRequests.CanRequest(withMaterial);
+        }
+        Update(_previewMesh, false, _referenceWindow is null, "Preview geometry");
+        Update(_previewPair, true, _referenceWindow is null, "Preview with material");
+        if (_referenceWindow is { } chooser) Update(chooser.PreviewButton, true, true, "Preview with material");
     }
 
-    private void RequestMeshPreview()
+    private void RequestPreview(bool withMaterial)
     {
-        if (!_previewMesh.IsEnabled || !_previewRequests.Request()) return;
+        var chooser = _referenceWindow;
+        var button = withMaterial ? chooser?.PreviewButton ?? _previewPair : _previewMesh;
+        if (!button.IsEnabled || !_previewRequests.Request(withMaterial)) return;
         ClearPreview();
-        _previewState.Text = "Loading geometry preview…";
+        _previewWithMaterial = withMaterial;
+        var state = chooser?.PreviewState ?? _previewState;
+        state.Text = withMaterial ? "Loading material preview…" : "Loading geometry preview…";
         UpdatePreviewButton();
         StartNextPreview();
     }
@@ -1076,28 +1123,34 @@ public sealed class MainWindow : Window
         if (_previewSession is not { } session || _previewRequests.TakeNext() is not { } intent) return;
         // One worker owns each ordinary SDK connection from setup through disposal.
         // Window closure invalidates its intent without waiting on that worker.
-        var result = await Task.Run(() => ReadMeshPreview(session, intent));
-        if (_previewRequests.Settle(intent) && ReferenceEquals(_previewSession, session))
+        var result = await Task.Run(() => ReadPreview(session, intent));
+        var chooser = _referenceWindow;
+        if (_previewRequests.Settle(intent) && ReferenceEquals(_previewSession, session) &&
+            intent.Surface == (chooser?.Target.Request ?? 0))
         {
-            if (result.Image is { } image)
+            var image = chooser?.PreviewImage ?? _previewImage;
+            var state = chooser?.PreviewState ?? _previewState;
+            if (result.Png is { } png)
             {
                 try
                 {
-                    using var stream = new MemoryStream(image.PngBytes, writable: false);
-                    _previewImage.Source = new Bitmap(stream);
-                    _previewImage.IsVisible = true;
-                    _previewState.Text = "Geometry preview · unlit vertex colors";
+                    using var stream = new MemoryStream(png, writable: false);
+                    image.Source = new Bitmap(stream);
+                    image.IsVisible = true;
+                    state.Text = intent.Material is AssetGuid material
+                        ? $"Material preview · fixed lighting\nMesh: {intent.Guid}\nMaterial: {material}"
+                        : "Geometry preview · unlit vertex colors";
                 }
                 catch (Exception error)
                 {
                     ClearPreview();
-                    _previewState.Text = "Could not decode the geometry preview. " + error.Message;
+                    state.Text = "Could not decode the preview. " + error.Message;
                     _previewRetry = true;
                 }
             }
             else
             {
-                _previewState.Text = result.Message;
+                state.Text = result.Message;
                 _previewRetry = result.Retry;
                 _previewUnavailable = !result.Retry;
             }
@@ -1106,15 +1159,36 @@ public sealed class MainWindow : Window
         StartNextPreview();
     }
 
-    private (MeshPreview? Image, string? Message, bool Retry) ReadMeshPreview(SessionInfo session, AssetPreviewIntent intent)
+    private (byte[]? Png, string? Message, bool Retry) ReadPreview(SessionInfo session, AssetPreviewIntent intent)
     {
         try
         {
             if (!_previewRequests.CanSend(intent)) return default;
             using var preview = RemoteSession.Connect(session);
             if (!_previewRequests.CanSend(intent)) return default;
+            if (intent.Material is AssetGuid material)
+            {
+                var pair = preview.Assets.PreviewMeshMaterial(intent.Guid, material);
+                if (pair.IsOk) return (pair.Value.PngBytes, null, false);
+                return pair.Error switch
+                {
+                    MeshMaterialPreviewError.Unsupported => (null, "Material preview requires an updated Runtime.", false),
+                    MeshMaterialPreviewError.Unavailable => (null, "Runtime has no usable material preview context.", false),
+                    MeshMaterialPreviewError.CatalogUnavailable => (null, "Catalog unavailable. Restart Runtime after repairing the build.", false),
+                    MeshMaterialPreviewError.Busy => (null, "Runtime is busy with another preview. Retry when ready.", true),
+                    MeshMaterialPreviewError.UnsupportedMaterial => (null, "UnsupportedMaterial. Choose an opaque base PBR material with one sRGB RGBA8 texture.", false),
+                    MeshMaterialPreviewError.DependencyUnavailable => (null, "DependencyUnavailable. Repair the material's cooked base texture and retry.", true),
+                    MeshMaterialPreviewError.TooLarge => (null, "TooLarge. Choose a smaller mesh or material texture.", false),
+                    MeshMaterialPreviewError.UnknownMesh or MeshMaterialPreviewError.NotMesh => (null, "Select a mesh from this Runtime's catalog.", false),
+                    MeshMaterialPreviewError.UnknownMaterial or MeshMaterialPreviewError.NotMaterial => (null, "Select a material from this Runtime's catalog.", false),
+                    MeshMaterialPreviewError.InvalidMesh or MeshMaterialPreviewError.InvalidMaterial =>
+                        (null, $"{pair.Error}. Repair the cooked asset and retry.", true),
+                    MeshMaterialPreviewError.IncompatiblePair => (null, "IncompatiblePair. Choose a mesh that can be framed with its cooked UVs and normals.", false),
+                    _ => (null, "Material preview failed: " + pair.Error + ". See the Runtime log and retry.", true),
+                };
+            }
             var result = preview.Assets.PreviewMesh(intent.Guid);
-            if (result.IsOk) return (result.Value, null, false);
+            if (result.IsOk) return (result.Value.PngBytes, null, false);
             return result.Error switch
             {
                 PreviewError.Unsupported => (null, "Geometry preview requires an updated Runtime.", false),
@@ -1599,16 +1673,24 @@ public sealed class MainWindow : Window
             if (target is null) { _editLine.Text = error; FinishAssetReference(); return; }
             var chooser = new AssetReferencePickerWindow(worker, target, (listRequest, guid) =>
             {
-                _referenceWindow = null;
                 worker.ConfirmAssetReference(target.Request, listRequest, guid, () =>
                 { if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch) FinishAssetReference(); });
             }, () =>
             {
                 worker.CancelAssetReference(target.Request);
                 if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch)
-                { _referenceWindow = null; FinishAssetReference(); }
+                { FinishAssetReference(); }
             });
             _referenceWindow = chooser;
+            chooser.PreviewInputsChanged += () => { if (ReferenceEquals(_referenceWindow, chooser)) SyncPreviewSelection(); };
+            chooser.PreviewButton.Click += (_, _) => RequestPreview(withMaterial: true);
+            chooser.Closed += (_, _) =>
+            {
+                if (!ReferenceEquals(_referenceWindow, chooser)) return;
+                _referenceWindow = null;
+                SyncPreviewSelection();
+            };
+            SyncPreviewSelection();
             _ = chooser.ShowDialog(this);
         });
     }

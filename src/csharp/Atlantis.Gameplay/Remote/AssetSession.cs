@@ -47,6 +47,29 @@ public sealed class AssetSession
             A.PreviewError.Unsupported, Codec.DecodePreviewError, value => Codec.DecodeMeshPreview(value, guid));
     }
 
+    /// <summary>Requests one read-only still for a cooked mesh and material. In-band refusals preserve the session.</summary>
+    public Outcome<A.MeshMaterialPreview, A.MeshMaterialPreviewError> PreviewMeshMaterial(AssetGuid meshGuid, AssetGuid materialGuid)
+    {
+        if (meshGuid.IsNil) throw new ArgumentException("a non-nil mesh GUID is required", nameof(meshGuid));
+        if (materialGuid.IsNil) throw new ArgumentException("a non-nil material GUID is required", nameof(materialGuid));
+        const string method = "assets.previewMeshMaterial";
+        var parameters = JsonValue.NewObject().Set("meshGuid", Codec.Encode(meshGuid)).Set("materialGuid", Codec.Encode(materialGuid));
+        JsonValue response = _session.AwaitResponse(_session.Send(method, parameters));
+        if (Codec.CountMember(response, "id") != 1 || Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1)
+            throw _session.Malformed(method);
+        if (response.Find("error") is JsonValue error)
+        {
+            if (Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                Codec.IsLegacyAssetRebuildRefusal(response))
+                return Outcome<A.MeshMaterialPreview, A.MeshMaterialPreviewError>.Err(A.MeshMaterialPreviewError.Unsupported);
+            throw _session.Malformed(method);
+        }
+        if (response.Find("result") is not JsonValue result || Codec.CountMember(result, "ok") + Codec.CountMember(result, "err") != 1)
+            throw _session.Malformed(method);
+        return _session.InBand<A.MeshMaterialPreview, A.MeshMaterialPreviewError>(result, method,
+            value => Codec.DecodeMeshMaterialPreview(value, meshGuid, materialGuid), Codec.DecodeMeshMaterialPreviewError);
+    }
+
     public Outcome<A.RebuildJob, A.RebuildError> Rebuild(AssetGuid asset)
     {
         if (asset.IsNil) throw new ArgumentException("a non-nil asset GUID is required", nameof(asset));

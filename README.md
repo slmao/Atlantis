@@ -235,6 +235,13 @@ C# `session.Assets.PreviewMesh(guid)`, and MCP `assets.preview_mesh`.
 The image uses the connected Runtime's existing catalog; a newly published
 asset is available after restarting into the new generation.
 
+With a mesh selected, choose a material and click **Preview with material**
+to see the pair under a fixed white directional light. This preview accepts
+opaque base PBR materials with one sRGB RGBA8 texture. The same operation
+is available as `atlantis --json asset preview-material <mesh-guid> <material-guid>`,
+C++ `previewMeshMaterial`, C# `Assets.PreviewMeshMaterial` and MCP
+`assets.preview_mesh_material`.
+
 Inspector asset-reference fields also offer **Choose…** (F4 while editing the
 field). Choose a catalog GUID and Confirm to make one ordinary undoable edit;
 Cancel discards the choice. Pointer/F4 launch discards that field's uncommitted
@@ -243,6 +250,9 @@ schema declares a target type, the chooser offers that type from the fixed
 Runtime catalog. Use `scene schema Renderable` to inspect the declarations.
 On a host without this metadata the chooser keeps its manual type filters.
 A type match can still fail during Runtime apply (Specs 0082 and 0084).
+The `Renderable.materialAsset` chooser can preview a candidate using the
+mesh shown as **Mesh at opening**. Reopen the chooser to preview with an
+updated mesh. Preview leaves Confirm and the scene's edit history independent.
 
 For managed asset rebuild on Windows, configure a dedicated staging build
 from the same checkout, generator, configuration and content options as the

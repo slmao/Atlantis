@@ -106,14 +106,18 @@ TEST_CASE("assets: invalid wire arguments never open the lazy provider", "[remot
       request(5, "assets.previewMesh", R"({"guid":"00000000-0000-0000-0000-000000000000"})") +
       request(6, "assets.previewMesh", R"({"guid":"00810081-0081-4081-8081-0081008100AB"})") +
       request(7, "assets.previewMesh", R"({"guid":"00810081-0081-4081-8081-0081008100ab","width":256})") +
-      request(8, "assets.previewMesh", "{}"));
+      request(8, "assets.previewMesh", "{}") +
+      request(9, "assets.previewMeshMaterial", R"({"meshGuid":"00810081-0081-4081-8081-0081008100ab"})") +
+      request(10, "assets.previewMeshMaterial", R"({"meshGuid":"00000000-0000-0000-0000-000000000000","materialGuid":"00810081-0081-4081-8081-0081008100ab"})") +
+      request(11, "assets.previewMeshMaterial", R"({"meshGuid":"00810081-0081-4081-8081-0081008100ab","materialGuid":"00810081-0081-4081-8081-0081008100AB"})") +
+      request(12, "assets.previewMeshMaterial", R"({"meshGuid":"00810081-0081-4081-8081-0081008100ab","materialGuid":"00810081-0081-4081-8081-0081008100ac","materialGuid":"00810081-0081-4081-8081-0081008100ad"})"));
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   world.server->poll();
-  auto replies = receive(client, 9);
-  REQUIRE(replies.responses.size() == 9);
+  auto replies = receive(client, 13);
+  REQUIRE(replies.responses.size() == 13);
   for (std::size_t i = 1; i < replies.responses.size(); ++i) CHECK(errorCode(replies.responses[i]) == "BadRequest");
   CHECK(opens == 0);
-  sendRaw(client, request(9, "assets.list"));
+  sendRaw(client, request(13, "assets.list"));
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
   world.server->poll();
   replies = receive(client, 1);
@@ -198,6 +202,105 @@ TEST_CASE("asset preview: only the exact legacy refusal preserves the native ses
   } else {
     CHECK(reply.error() == ca::PreviewError::Unavailable);
     CHECK(session.failure() == atlantis::remote::RemoteError::ProtocolError);
+  }
+}
+
+TEST_CASE("asset pair preview: exact legacy fallback and unambiguous response correlation",
+          "[remote][assets][protocol][asset-preview]") {
+  namespace as = atlantis::asset_system;
+  namespace ca = atlantis::connection::assets;
+  namespace codec = atlantis::remote::codec;
+  namespace os = atlantis::remote::os;
+  using atlantis::remote::RemoteError;
+  using atlantis::remote::test::fixtureSceneGuid;
+  using E = ca::MeshMaterialPreviewError;
+  constexpr std::string_view legacy = R"("error":{"code":"BadRequest","message":"unknown or malformed asset query"})";
+  std::string previewReply(legacy);
+  bool supportedFallback = false;
+  bool disconnect = false;
+  SECTION("exact legacy reply") { supportedFallback = true; }
+  SECTION("different message") {
+    previewReply = R"("error":{"code":"BadRequest","message":"unknown asset query"})";
+  }
+  SECTION("mixed top-level arms") { previewReply += R"(,"result":{"err":"Busy"})"; }
+  SECTION("mixed result arms") { previewReply = R"("result":{"ok":null,"err":"Busy"})"; }
+  SECTION("repeated id member") { previewReply += R"(,"id":99)"; }
+  SECTION("repeated result member") { previewReply = R"("result":{"err":"Busy"},"result":{"err":"Busy"})"; }
+  SECTION("repeated error member") { previewReply += "," + std::string(legacy); }
+  SECTION("repeated err arm") { previewReply = R"("result":{"err":"Busy","err":"Busy"})"; }
+  SECTION("repeated legacy error code") {
+    previewReply = R"("error":{"code":"BadRequest","code":"NoAssets","message":"unknown or malformed asset query"})";
+  }
+  SECTION("repeated legacy error message") {
+    previewReply = R"("error":{"code":"BadRequest","message":"unknown or malformed asset query","message":"wrong"})";
+  }
+  SECTION("unknown refusal token") { previewReply = R"("result":{"err":"NewError"})"; }
+  SECTION("transport failure") { disconnect = true; }
+
+  const auto scene = fixtureSceneGuid();
+  const auto mesh = as::deriveAssetGuid(scene, "mesh");
+  const auto material = as::deriveAssetGuid(scene, "material");
+  const auto detail = ca::AssetDetails{mesh, ca::AssetType::Mesh, "assets:mesh.mesh.txt", 5, 3, "test/1", {}};
+  const ca::MeshPreview geometry{mesh, 256, 256, {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',
+                                                  0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}};
+  auto listener = os::listenLoopback(0);
+  REQUIRE(listener.isOk());
+  std::optional<LineChannel> peer;
+  atlantis::remote::RemoteOptions options;
+  options.responseTimeoutMilliseconds = 3000;
+  options.whileWaiting = [&] {
+    if (!peer) {
+      auto incoming = os::acceptPending(listener.value());
+      if (!incoming.valid()) return;
+      peer.emplace(std::move(incoming), 4096, 4096);
+    }
+    std::vector<std::string> lines;
+    REQUIRE(peer->read(lines) == LineChannel::ReadStatus::Ok);
+    for (const auto& line : lines) {
+      auto parsed = json::parse(line);
+      REQUIRE(parsed.isOk());
+      const auto& req = parsed.value();
+      const auto& method = req.find("method")->asString();
+      const auto prefix = "{\"id\":" + req.find("id")->numberText() + ",";
+      if (method == "assets.previewMeshMaterial") {
+        CHECK(*req.find("params") == json::Value::object({{"meshGuid", codec::encodeAsset(mesh)},
+                                                         {"materialGuid", codec::encodeAsset(material)}}));
+        if (disconnect) { peer.reset(); return; }
+        REQUIRE(peer->queue(prefix + previewReply + "}"));
+        continue;
+      }
+      json::Value result;
+      if (method == "hello") {
+        result = json::Value::object({{"scene", codec::encodeAsset(scene)}});
+      } else if (method == "connection.schema") {
+        result = json::Value::array();
+      } else if (method == "assets.previewMesh") {
+        result = codec::ok(*ca::encodeMeshPreview(geometry, mesh));
+      } else if (method == "assets.list") {
+        result = codec::ok(json::Value::array({codec::encode(ca::AssetSummary{mesh, detail.type, detail.source})}));
+      } else {
+        REQUIRE(method == "assets.get");
+        result = codec::ok(codec::encode(detail));
+      }
+      REQUIRE(peer->queue(prefix + "\"result\":" + json::write(result) + "}"));
+    }
+    REQUIRE(peer->flush());
+  };
+  auto connected = atlantis::remote::connectRemote({os::localPort(listener.value()), kToken, 0, scene, {}},
+                                                   std::move(options));
+  REQUIRE(connected.isOk());
+  auto& session = *connected.value();
+  const auto reply = session.assets().previewMeshMaterial(mesh, material);
+  REQUIRE(reply.isErr());
+  if (supportedFallback) {
+    CHECK(reply.error() == E::Unsupported);
+    CHECK_FALSE(session.failure());
+    CHECK(session.assets().previewMesh(mesh).value() == geometry);
+    CHECK(session.assets().listAssets().value().size() == 1);
+    CHECK(session.assets().getAsset(mesh).value() == detail);
+  } else {
+    CHECK(reply.error() == E::Unavailable);
+    CHECK(session.failure() == (disconnect ? RemoteError::Disconnected : RemoteError::ProtocolError));
   }
 }
 

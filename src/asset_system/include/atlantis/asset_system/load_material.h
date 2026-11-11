@@ -5,6 +5,7 @@
 #include <atlantis/result.h>
 
 #include <filesystem>
+#include <cstddef>
 
 namespace atlantis::asset_system {
 
@@ -20,5 +21,13 @@ namespace atlantis::asset_system {
 // RHI Sampler/SampledTexture/Material from the result.
 [[nodiscard]] atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(
     const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
+
+struct AssetCatalogRecord;
+enum class PreviewArtifactLoadError;
+inline constexpr std::size_t kPreviewMaterialMaxArtifactBytes = 64 * 1024;
+
+// Spec 0092 R2: bounded artifact and sidecar, checked against the record.
+[[nodiscard]] atlantis::Result<MaterialAssetData, PreviewArtifactLoadError> loadPreviewMaterialAsset(
+    const AssetCatalogRecord& record);
 
 }  // namespace atlantis::asset_system

@@ -22,10 +22,11 @@ add_library(atlantis_image_regression_fixture STATIC
 
 target_compile_definitions(atlantis_image_regression_fixture PRIVATE
   ATLANTIS_PREVIEW_MINIMAL_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PREVIEW_PBR_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_SHADOW_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_OUTPUT_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}")
 add_dependencies(atlantis_image_regression_fixture
-  atlantis_asset_catalog minimal_mesh_shaders shadow_cast_shaders output_transform_unorm_shaders)
+  atlantis_asset_catalog minimal_mesh_shaders pbr_direct_lit_shaders shadow_cast_shaders output_transform_unorm_shaders)
 
 target_include_directories(atlantis_image_regression_fixture
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}

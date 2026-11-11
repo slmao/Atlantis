@@ -18,8 +18,11 @@ namespace Atlantis.Mcp.Tests;
 internal static partial class Program
 {
     internal const string Entity = "11111111-2222-4333-8444-555555555555";
+    internal const string Material = "66666666-7777-4888-8999-aaaaaaaaaaaa";
     internal static readonly byte[] PreviewPng = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAQAAAAEAAQAAAAB0CZXLAAAAH0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAvg0hAAAB8Wch7gAAAABJRU5ErkJggg==");
     internal static readonly string PreviewMetadata = $$$"""{"ok":{"guid":"{{{Entity}}}","width":256,"height":256,"mimeType":"image/png"}}""";
+    internal static readonly string PairPreviewArgs = $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}"}""";
+    internal static readonly string PairPreviewMetadata = $$$"""{"ok":{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}","width":256,"height":256,"mimeType":"image/png"}}""";
     private const string TypeId = "0x123456789abcdef0";
     private const string FieldId = "0xfedcba9876543210";
     private static readonly string WorldAddress = $$$"""{"entity":"{{{Entity}}}","component":"{{{TypeId}}}","field":"{{{FieldId}}}"}""";
@@ -34,6 +37,7 @@ internal static partial class Program
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
         ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
+        ("assets.preview_mesh_material", "assets.previewMeshMaterial", PairPreviewArgs, PairPreviewMetadata),
         ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -169,7 +173,7 @@ internal static partial class Program
 
     private static void CheckAssetResult(CallToolResult result, string method, string expected, string context)
     {
-        if (method != "assets.previewMesh") { CheckForward(result, expected, context); return; }
+        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial")) { CheckForward(result, expected, context); return; }
         CheckPreviewImage(result, context);
         CheckForward(new CallToolResult { Content = [result.Content[0]], StructuredContent = result.StructuredContent },
             expected, context + " metadata without duplicated PNG");
@@ -219,6 +223,11 @@ internal static partial class Program
             ("assets.preview_mesh", """{"guid":"00000000-0000-0000-0000-000000000000"}"""),
             ("assets.preview_mesh", """{"guid":"11111111-2222-4333-8444-55555555555A"}"""),
             ("assets.preview_mesh", $$$"""{"guid":"{{{Entity}}}","width":256}"""),
+            ("assets.preview_mesh_material", $$$"""{"meshGuid":"{{{Entity}}}"}"""),
+            ("assets.preview_mesh_material", $$$"""{"meshGuid":1,"materialGuid":"{{{Material}}}"}"""),
+            ("assets.preview_mesh_material", $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"00000000-0000-0000-0000-000000000000"}"""),
+            ("assets.preview_mesh_material", $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material.ToUpperInvariant()}}}"}"""),
+            ("assets.preview_mesh_material", $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}","width":256}"""),
             ("assets.rebuild", "{}"), ("assets.rebuild_status", """{"jobId":null}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),
@@ -270,6 +279,19 @@ internal static partial class Program
         Check(disconnected.IsError == true && disconnected.Content.Count == 1
             && disconnected.Content[0] is TextContentBlock disconnectedText && disconnectedText.Text == previewDisconnect.Failure.Message
             && previewDisconnect.Calls.Count == 1, "preview disconnect stays a transport error without image or retry");
+        var pair = Request("assets.preview_mesh_material", PairPreviewArgs);
+        foreach (Assets.MeshMaterialPreviewError reason in Enum.GetValues<Assets.MeshMaterialPreviewError>())
+        {
+            FakeSession session = new() { PairPreviewRefusal = reason };
+            CallToolResult result = new ToolRegistry(session).Invoke(pair);
+            Check(result.IsError == true && session.Calls.Count == 1, "pair preview " + reason + " is one refusal without retry");
+            CheckForward(result, $$$"""{"err":"{{{reason}}}"}""", "pair preview " + reason + " contains no image");
+        }
+        FakeSession malformedPair = new() { Failure = new RemoteException(RemoteError.ProtocolError, "malformed pair reply") };
+        CallToolResult pairError = new ToolRegistry(malformedPair).Invoke(pair);
+        Check(pairError.IsError == true && pairError.Content.Count == 1 &&
+            pairError.Content[0] is TextContentBlock pairErrorText && pairErrorText.Text == malformedPair.Failure.Message &&
+            malformedPair.Calls.Count == 1, "malformed pair preview stays an SDK error without image or retry");
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
         foreach (string reason in Enum.GetNames<A.AuthoringError>())
@@ -377,7 +399,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.previewMesh" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
+            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;
@@ -407,6 +429,7 @@ internal static partial class Program
         public string Response { get; init; } = "{\"result\":null}";
         public RemoteException? Failure { get; init; }
         public Assets.PreviewError? PreviewRefusal { get; init; }
+        public Assets.MeshMaterialPreviewError? PairPreviewRefusal { get; init; }
         public bool Echo { get; init; }
         public bool FixtureResults { get; init; }
         public List<(string Method, JsonValue Parameters)> Calls { get; } = new();
@@ -418,6 +441,17 @@ internal static partial class Program
             if (Echo) throw new RemoteException(RemoteError.ProtocolError, "not a typed preview");
             return PreviewRefusal is { } refusal ? Outcome<Assets.MeshPreview, Assets.PreviewError>.Err(refusal)
                 : Outcome<Assets.MeshPreview, Assets.PreviewError>.Ok(new(guid, 256, 256, PreviewPng));
+        }
+
+        public Outcome<Assets.MeshMaterialPreview, Assets.MeshMaterialPreviewError> PreviewMeshMaterial(AssetGuid meshGuid, AssetGuid materialGuid)
+        {
+            Calls.Add(("assets.previewMeshMaterial", JsonValue.NewObject().Set("meshGuid", Codec.Encode(meshGuid))
+                .Set("materialGuid", Codec.Encode(materialGuid))));
+            if (Failure is not null) throw Failure;
+            if (Echo) throw new RemoteException(RemoteError.ProtocolError, "not a typed pair preview");
+            return PairPreviewRefusal is { } refusal
+                ? Outcome<Assets.MeshMaterialPreview, Assets.MeshMaterialPreviewError>.Err(refusal)
+                : Outcome<Assets.MeshMaterialPreview, Assets.MeshMaterialPreviewError>.Ok(new(meshGuid, materialGuid, 256, 256, PreviewPng));
         }
 
         public JsonValue Request(string method, JsonValue parameters)

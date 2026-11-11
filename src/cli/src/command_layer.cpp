@@ -243,6 +243,28 @@ struct Leaf {
                   std::move(line)};
 }
 
+[[nodiscard]] std::string_view meshMaterialPreviewHint(connection::assets::MeshMaterialPreviewError error) {
+  using Error = connection::assets::MeshMaterialPreviewError;
+  switch (error) {
+    case Error::Unsupported: return "Connect to a Runtime with mesh and material preview support.";
+    case Error::Unavailable: return "Reconnect to a Runtime with a usable preview renderer.";
+    case Error::Busy: return "Retry when the Runtime is ready.";
+    case Error::CatalogUnavailable: return "Repair the cooked catalog and restart the Runtime.";
+    case Error::UnknownMesh:
+    case Error::NotMesh: return "Choose a mesh GUID from asset list.";
+    case Error::UnknownMaterial:
+    case Error::NotMaterial: return "Choose a material GUID from asset list.";
+    case Error::InvalidMesh: return "Repair or recook the mesh.";
+    case Error::InvalidMaterial: return "Repair or recook the material.";
+    case Error::UnsupportedMaterial: return "Choose opaque PbrDirectLit with one sRGB RGBA8 base-color texture.";
+    case Error::DependencyUnavailable: return "Repair the cooked base-color texture dependency.";
+    case Error::IncompatiblePair: return "Choose a mesh that can be framed with the required vertex layout.";
+    case Error::TooLarge: return "Choose a mesh and material within the preview limits.";
+    case Error::RenderFailed: return "Check the Runtime log before retrying.";
+  }
+  return {};
+}
+
 [[nodiscard]] Reply failed(std::string command, CliError error) {
   Reply reply;
   reply.command = std::move(command);
@@ -816,6 +838,31 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
+    if (t.size() > 1 && t[1] == "preview-material") {
+      namespace ca = connection::assets;
+      using Error = ca::MeshMaterialPreviewError;
+      constexpr std::string_view usage = "asset preview-material <non-nil canonical mesh-guid> <non-nil canonical material-guid>";
+      if (t.size() != 4) return failed(command, usageError(std::string(usage)));
+      const auto meshGuid = asset_system::parseAssetGuid(t[2]);
+      const auto materialGuid = asset_system::parseAssetGuid(t[3]);
+      if (meshGuid.isErr() || materialGuid.isErr()) return failed(command, usageError(std::string(usage)));
+      const auto refuse = [&](Error error) {
+        const std::string name(ca::toString(error));
+        return failed(command, plainError(name, ErrorCategory::Refused,
+                                          name + ". " + std::string(meshMaterialPreviewHint(error))));
+      };
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      if (!endpoint) return refuse(Error::Unsupported);
+      const auto preview = endpoint->previewMeshMaterial(meshGuid.value(), materialGuid.value());
+      if (preview.isErr()) return refuse(preview.error());
+      const auto& image = preview.value();
+      auto result = ca::encodeMeshMaterialPreview(image, meshGuid.value(), materialGuid.value());
+      if (!result) return refuse(Error::RenderFailed);
+      std::string human = command + " " + asset_system::toString(image.meshGuid) + " " +
+                          asset_system::toString(image.materialGuid) + " " + std::to_string(image.width) + "x" +
+                          std::to_string(image.height) + " image/png (" + std::to_string(image.png.size()) + " bytes)\n";
+      return done(command, std::move(human), std::move(*result));
+    }
     if (t.size() > 1 && t[1] == "preview") {
       namespace ca = connection::assets;
       if (t.size() != 3) return failed(command, usageError("asset preview <non-nil canonical mesh-guid>"));
@@ -838,7 +885,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return done(command, std::move(human), std::move(*result));
     }
     if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))
-      return failed(command, usageError("asset list | asset get <asset-guid> | asset preview <mesh-guid>"));
+      return failed(command, usageError("asset list | asset get <asset-guid> | asset preview <mesh-guid> | "
+                                        "asset preview-material <mesh-guid> <material-guid>"));
     std::optional<asset_system::AssetGuid> guid;
     if (t[1] == "get") {
       auto parsed = asset_system::parseAssetGuid(t[2]);

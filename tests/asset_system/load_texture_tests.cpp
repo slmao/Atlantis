@@ -1,6 +1,8 @@
 #include <atlantis/asset_system/load_texture.h>
 
 #include <atlantis/asset_system/cook_texture.h>
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/texture_artifact.h>
 
 #include <catch2/catch_test_macros.hpp>
@@ -85,6 +87,57 @@ TEST_CASE("loadTextureAsset loads a well-formed artifact/metadata pair", "[asset
   CHECK(result.value().height == 4);
   CHECK(result.value().colorSpace == TextureColorSpace::Unorm);
   CHECK(result.value().pixelBytes == makeRgbaBytes(4, 4, 11));
+}
+
+TEST_CASE("preview texture checks catalog identity and inclusive opened bounds", "[asset_system][texture][preview-pair]") {
+  TempDirGuard dir("preview");
+  const auto [artifactPath, metadataPath] = cookValidChecker(dir.path);
+  AssetCatalogRecord record;
+  record.type = CatalogAssetType::Texture;
+  record.guid = testAssetGuid("textures/checker.png");
+  record.assetId = assetKey(record.guid);
+  record.artifactSchema = kTextureArtifactSchemaVersion;
+  record.artifact = artifactPath.generic_string();
+  record.metadata = metadataPath.generic_string();
+  REQUIRE(loadPreviewBaseColorTexture(record).isOk());
+
+  SECTION("valid sidecar from another texture is invalid") {
+    record.guid = testAssetGuid("other texture");
+    record.assetId = assetKey(record.guid);
+    CHECK(loadPreviewBaseColorTexture(record).error() == PreviewArtifactLoadError::Invalid);
+  }
+  SECTION("valid artifact from another catalog schema is invalid") {
+    ++record.artifactSchema;
+    CHECK(loadPreviewBaseColorTexture(record).error() == PreviewArtifactLoadError::Invalid);
+  }
+  SECTION("opened artifact and metadata have independent file limits") {
+    fs::resize_file(artifactPath, kPreviewBaseColorMaxArtifactBytes + 1);
+    CHECK(loadPreviewBaseColorTexture(record).error() == PreviewArtifactLoadError::TooLarge);
+    fs::resize_file(artifactPath, kPreviewBaseColorMaxArtifactBytes);
+    CHECK(loadPreviewBaseColorTexture(record).error() == PreviewArtifactLoadError::Invalid);
+  }
+  SECTION("each valid dimension at the limit fits but one extra texel is refused") {
+    for (const bool horizontal : {true, false}) {
+      for (const std::uint32_t size : {kPreviewBaseColorMaxDimension, kPreviewBaseColorMaxDimension + 1}) {
+        const std::uint32_t width = horizontal ? size : 1u;
+        const std::uint32_t height = horizontal ? 1u : size;
+        const auto pixels = makeRgbaBytes(width, height, 42);
+        REQUIRE(cookTexture(pixels.data(), width, height, 4, TextureColorSpace::Srgb, "textures/checker.png",
+                            record.guid, artifactPath, metadataPath).isOk());
+        const auto result = loadPreviewBaseColorTexture(record);
+        if (size == kPreviewBaseColorMaxDimension) {
+          REQUIRE(result.isOk());
+          CHECK(result.value().pixelBytes == pixels);
+        } else {
+          CHECK(result.error() == PreviewArtifactLoadError::TooLarge);
+        }
+      }
+    }
+  }
+  SECTION("opened sidecar has its own size limit") {
+    fs::resize_file(metadataPath, kPreviewMeshMaxMetadataBytes + 1);
+    CHECK(loadPreviewBaseColorTexture(record).error() == PreviewArtifactLoadError::TooLarge);
+  }
 }
 
 TEST_CASE("loadTextureAsset fails when the artifact file does not exist", "[asset_system]") {

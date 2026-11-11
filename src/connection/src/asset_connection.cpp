@@ -95,6 +95,31 @@ std::optional<std::vector<std::uint8_t>> decodePreviewBytes(std::string_view enc
   return out;
 }
 
+void encodePreviewImage(json::Value& payload, std::span<const std::uint8_t> png) {
+  payload.set("width", json::Value::number(std::uint64_t{kPreviewDimension}));
+  payload.set("height", json::Value::number(std::uint64_t{kPreviewDimension}));
+  payload.set("mimeType", json::Value::string(std::string(kPreviewMimeType)));
+  payload.set("pngBase64", json::Value::string(encodePreviewBytes(png)));
+}
+
+std::optional<std::vector<std::uint8_t>> decodePreviewImage(const json::Value& payload) {
+  const auto* width = payload.find("width");
+  const auto* height = payload.find("height");
+  const auto* mime = payload.find("mimeType");
+  const auto* png = payload.find("pngBase64");
+  std::uint64_t w = 0, h = 0;
+  if (!width || !width->toUInt64(w) || w != kPreviewDimension ||
+      !height || !height->toUInt64(h) || h != kPreviewDimension ||
+      !mime || !mime->isString() || mime->asString() != kPreviewMimeType || !png || !png->isString())
+    return std::nullopt;
+  return decodePreviewBytes(png->asString());
+}
+
+bool matchesPreviewGuid(const json::Value* value, const asset_system::AssetGuid& requested) {
+  return requested != asset_system::AssetGuid{} && value && value->isString() &&
+         value->asString() == asset_system::toString(requested);
+}
+
 template <class Enum, std::size_t N>
 std::string_view token(Enum value, const std::array<const char*, N>& names) noexcept {
   const auto index = static_cast<std::size_t>(value);
@@ -114,29 +139,52 @@ std::optional<json::Value> encodeMeshPreview(const MeshPreview& image, const ass
     return std::nullopt;
   auto payload = json::Value::object();
   payload.set("guid", json::Value::string(asset_system::toString(image.guid)));
-  payload.set("width", json::Value::number(std::uint64_t{image.width}));
-  payload.set("height", json::Value::number(std::uint64_t{image.height}));
-  payload.set("mimeType", json::Value::string(std::string(kPreviewMimeType)));
-  payload.set("pngBase64", json::Value::string(encodePreviewBytes(image.png)));
+  encodePreviewImage(payload, image.png);
   return payload;
 }
 
 std::optional<MeshPreview> decodeMeshPreview(const json::Value& payload, const asset_system::AssetGuid& requested) {
-  const auto* guid = payload.find("guid");
-  const auto* width = payload.find("width");
-  const auto* height = payload.find("height");
-  const auto* mime = payload.find("mimeType");
-  const auto* png = payload.find("pngBase64");
-  std::uint64_t w = 0, h = 0;
-  if (requested == asset_system::AssetGuid{} || !guid || !guid->isString() ||
-      guid->asString() != asset_system::toString(requested) ||
-      !width || !width->toUInt64(w) || w != kPreviewDimension ||
-      !height || !height->toUInt64(h) || h != kPreviewDimension ||
-      !mime || !mime->isString() || mime->asString() != kPreviewMimeType || !png || !png->isString())
-    return std::nullopt;
-  auto bytes = decodePreviewBytes(png->asString());
+  if (!matchesPreviewGuid(payload.find("guid"), requested)) return std::nullopt;
+  auto bytes = decodePreviewImage(payload);
   if (!bytes) return std::nullopt;
   return MeshPreview{requested, kPreviewDimension, kPreviewDimension, std::move(*bytes)};
+}
+
+std::string_view toString(MeshMaterialPreviewError error) noexcept {
+  return token(error, std::array{"Unsupported", "Unavailable", "Busy", "CatalogUnavailable", "UnknownMesh",
+                                "UnknownMaterial", "NotMesh", "NotMaterial", "InvalidMesh", "InvalidMaterial",
+                                "UnsupportedMaterial", "DependencyUnavailable", "IncompatiblePair", "TooLarge",
+                                "RenderFailed"});
+}
+
+std::optional<json::Value> encodeMeshMaterialPreview(const MeshMaterialPreview& image,
+                                                     const asset_system::AssetGuid& meshGuid,
+                                                     const asset_system::AssetGuid& materialGuid) {
+  if (meshGuid == asset_system::AssetGuid{} || materialGuid == asset_system::AssetGuid{} ||
+      image.meshGuid != meshGuid || image.materialGuid != materialGuid ||
+      image.width != kPreviewDimension || image.height != kPreviewDimension || !hasPreviewHeader(image.png))
+    return std::nullopt;
+  auto payload = json::Value::object();
+  payload.set("meshGuid", json::Value::string(asset_system::toString(image.meshGuid)));
+  payload.set("materialGuid", json::Value::string(asset_system::toString(image.materialGuid)));
+  encodePreviewImage(payload, image.png);
+  return payload;
+}
+
+std::optional<MeshMaterialPreview> decodeMeshMaterialPreview(const json::Value& payload,
+                                                            const asset_system::AssetGuid& meshGuid,
+                                                            const asset_system::AssetGuid& materialGuid) {
+  if (!payload.isObject()) return std::nullopt;
+  for (std::string_view key : {"meshGuid", "materialGuid", "width", "height", "mimeType", "pngBase64"}) {
+    if (std::ranges::count_if(payload.asObject(), [key](const auto& member) { return member.first == key; }) != 1)
+      return std::nullopt;
+  }
+  if (!matchesPreviewGuid(payload.find("meshGuid"), meshGuid) ||
+      !matchesPreviewGuid(payload.find("materialGuid"), materialGuid))
+    return std::nullopt;
+  auto bytes = decodePreviewImage(payload);
+  if (!bytes) return std::nullopt;
+  return MeshMaterialPreview{meshGuid, materialGuid, kPreviewDimension, kPreviewDimension, std::move(*bytes)};
 }
 
 std::string_view toString(RebuildError value) noexcept {

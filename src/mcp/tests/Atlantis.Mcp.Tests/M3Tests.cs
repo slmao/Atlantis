@@ -41,7 +41,7 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 43 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 43,
+        Check(ToolRegistry.AllMappings.Length == 44 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 44,
             "43 unique approved tools including mesh preview, asset rebuild, import, Save As and Create Scene");
         foreach (var c in CompositionCases)
         {
@@ -311,6 +311,9 @@ internal static partial class Program
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
             throw new InvalidOperationException("Unexpected mesh preview in queue fixture");
+
+        public Outcome<Assets.MeshMaterialPreview, Assets.MeshMaterialPreviewError> PreviewMeshMaterial(AssetGuid meshGuid, AssetGuid materialGuid) =>
+            throw new InvalidOperationException("Unexpected mesh and material preview in queue fixture");
 
         public JsonValue Request(string method, JsonValue parameters)
         {

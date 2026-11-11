@@ -9,7 +9,10 @@ namespace Atlantis.Editor.Model;
 
 /// <summary>Owned launch values, safe to pass from the session worker to the UI.</summary>
 public sealed record AssetReferenceTarget(long Request, SceneAddress Address, string Path, string Label,
-                                          PropertyValue Before, AssetType? TargetAssetType);
+                                          PropertyValue Before, AssetType? TargetAssetType, AssetGuid? OpeningMesh)
+{
+    public bool SupportsMaterialPreview => Path == "Renderable.materialAsset";
+}
 
 /// <summary>Worker-thread-only target guard. Invalidations are sticky; these local
 /// request states are not wire revisions or atomic conditional edits.</summary>
@@ -22,11 +25,18 @@ public sealed class AssetReferencePicker
     private long _listRequest;
     private HashSet<AssetGuid>? _eligible;
 
-    public static AssetReferencePicker? Capture(long request, EntityGuid node, InspectorField field) =>
-        InspectorModel.CanChooseAsset(field)
-            ? new(new(request, new SceneAddress(node, field.Component, field.Field.Id), field.Path, field.Label,
-                      field.Value!.Value, field.Field.TargetAssetType))
-            : null;
+    public static AssetReferencePicker? Capture(long request, EntityGuid node, InspectorField field,
+                                                IReadOnlyList<InspectorField> openingFields)
+    {
+        if (!InspectorModel.CanChooseAsset(field)) return null;
+        AssetGuid? openingMesh = null;
+        if (field.Path == "Renderable.materialAsset" &&
+            openingFields.FirstOrDefault(f => f.Component == field.Component && f.Path == "Renderable.meshAsset")?.Value
+                is PropertyValue value && value.TryGetAsset(out AssetGuid mesh) && !mesh.IsNil)
+            openingMesh = mesh;
+        return new(new(request, new SceneAddress(node, field.Component, field.Field.Id), field.Path, field.Label,
+                       field.Value!.Value, field.Field.TargetAssetType, openingMesh));
+    }
 
     public bool BeginList(long listRequest)
     {

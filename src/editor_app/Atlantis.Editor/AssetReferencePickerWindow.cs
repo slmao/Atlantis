@@ -20,9 +20,20 @@ public sealed class AssetReferencePickerWindow : Window
     private readonly TextBlock _state = new();
     private readonly TextBlock _current = new();
     private readonly Button _confirm = new() { Content = "Confirm", IsEnabled = false };
+    private readonly TextBlock _openingMesh = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    internal Button PreviewButton { get; } = new() { Content = "Preview with material", IsEnabled = false };
+    internal TextBlock PreviewState { get; } = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    internal Image PreviewImage { get; } = new() { Width = 256, Height = 256, IsVisible = false };
+    internal event Action? PreviewInputsChanged;
     private bool _sync, _closed, _invalid, _submitted, _initial = true;
     private long _displayedListRequest;
     public AssetReferenceTarget Target { get; }
+
+    internal AssetPreviewInputs? PreviewInputs =>
+        Target.SupportsMaterialPreview && !_closed && !_invalid && !_submitted && _browser.State == "Ready" &&
+        Target.OpeningMesh is AssetGuid mesh && _browser.Items.Any(a => a.Guid == mesh && a.Type == AssetType.Mesh) &&
+        _list.SelectedItem is AssetSummary { Type: AssetType.Material } material && _browser.Selected == material.Guid
+            ? new AssetPreviewInputs(mesh, material.Guid, Target.Request) : null;
 
     public AssetReferencePickerWindow(EditorWorker worker, AssetReferenceTarget target,
                                       Action<long, AssetGuid> confirm, Action cancel)
@@ -66,6 +77,7 @@ public sealed class AssetReferencePickerWindow : Window
             if (!_confirm.IsEnabled || _closed || _invalid || _submitted || _browser.State != "Ready" ||
                 _list.SelectedItem is not AssetSummary candidate || _browser.Selected != candidate.Guid) return;
             _submitted = true; _confirm.IsEnabled = false;
+            PreviewInputsChanged?.Invoke();
             confirm(_displayedListRequest, candidate.Guid); Close();
         };
         buttons.Children.Add(_confirm); buttons.Children.Add(back);
@@ -81,16 +93,34 @@ public sealed class AssetReferencePickerWindow : Window
         body.Children.Add(_list);
         var detailScroll = new ScrollViewer { Content = _details, MaxHeight = 180 };
         Grid.SetRow(detailScroll, 1); body.Children.Add(detailScroll); root.Children.Add(body);
+        if (target.SupportsMaterialPreview)
+        {
+            body.ColumnDefinitions = new ColumnDefinitions("*,276");
+            var previewPanel = new StackPanel { Spacing = 6, Margin = new Thickness(8, 0, 0, 0) };
+            previewPanel.Children.Add(_openingMesh);
+            previewPanel.Children.Add(PreviewButton);
+            previewPanel.Children.Add(PreviewState);
+            previewPanel.Children.Add(PreviewImage);
+            var previewScroll = new ScrollViewer { Content = previewPanel };
+            Grid.SetColumn(previewScroll, 1); Grid.SetRowSpan(previewScroll, 2);
+            body.Children.Add(previewScroll);
+        }
         Content = root;
         KeyDown += (_, e) => { if (e.Key == Key.Escape) { e.Handled = true; Close(); } };
         Opened += (_, _) => Load();
-        Closed += (_, _) => { _closed = true; _browser.Disconnect(); if (!_submitted) cancel(); };
+        Closed += (_, _) =>
+        {
+            _closed = true; _browser.Disconnect();
+            PreviewInputsChanged?.Invoke();
+            if (!_submitted) cancel();
+        };
     }
 
     public void Invalidate(string reason)
     {
         _invalid = true; _browser.Disconnect(); _state.Text = reason + "; close and reopen to choose again";
         _confirm.IsEnabled = false;
+        PreviewInputsChanged?.Invoke();
     }
 
     private void Load()
@@ -137,6 +167,15 @@ public sealed class AssetReferencePickerWindow : Window
         finally { _sync = false; }
         _confirm.IsEnabled = !_submitted && _browser.State == "Ready" &&
             _list.SelectedItem is AssetSummary candidate && candidate.Guid == _browser.Selected;
+        if (Target.SupportsMaterialPreview)
+        {
+            var mesh = _browser.Items.FirstOrDefault(a => a.Guid == Target.OpeningMesh && a.Type == AssetType.Mesh);
+            _openingMesh.Text = Target.OpeningMesh is not AssetGuid opening
+                ? "Preview unavailable. No mesh was readable when the chooser opened."
+                : mesh is not null ? "Mesh at opening: " + mesh.Source + "\n" + opening
+                : "Mesh at opening: " + opening + (_browser.State == "Ready" ? "\nNo mesh record in this catalog." : "");
+        }
+        PreviewInputsChanged?.Invoke();
         _details.Children.Clear();
         if (_browser.Details is not AssetDetails d) { _details.Children.Add(new TextBlock { Text = _browser.DetailState }); return; }
         _details.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool });

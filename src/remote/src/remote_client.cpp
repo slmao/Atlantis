@@ -483,6 +483,33 @@ class RemoteAssets final : public connection::AssetConnection {
     state_.fail(RemoteError::ProtocolError);
     return ca::MeshPreviewResult::Err(ca::PreviewError::Unavailable);
   }
+  ca::MeshMaterialPreviewResult previewMeshMaterial(const AssetGuid& meshGuid, const AssetGuid& materialGuid) override {
+    using R = ca::MeshMaterialPreviewResult;
+    using E = ca::MeshMaterialPreviewError;
+    ATLANTIS_CHECK(meshGuid != AssetGuid{} && materialGuid != AssetGuid{});
+    Value params = Value::object();
+    params.set("meshGuid", codec::encodeAsset(meshGuid));
+    params.set("materialGuid", codec::encodeAsset(materialGuid));
+    const auto envelope = state_.awaitResponse(state_.send("assets.previewMeshMaterial", std::move(params)));
+    if (envelope && memberCount(*envelope, "id") == 1 &&
+        memberCount(*envelope, "result") + memberCount(*envelope, "error") == 1) {
+      if (const auto* result = envelope->find("result")) {
+        if (memberCount(*result, "ok") + memberCount(*result, "err") == 1) {
+          if (const auto* ok = result->find("ok")) {
+            if (auto image = ca::decodeMeshMaterialPreview(*ok, meshGuid, materialGuid)) return R::Ok(std::move(*image));
+          } else if (auto error = codec::decodeMeshMaterialPreviewError(*result->find("err"))) {
+            return R::Err(*error);
+          }
+        }
+      } else if (const auto* error = envelope->find("error");
+                 error && memberCount(*error, "code") == 1 && memberCount(*error, "message") == 1 &&
+                 legacyAssetRefusal(*error)) {
+        return R::Err(E::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(E::Unavailable);
+  }
   ca::RebuildStartResult rebuild(const AssetGuid& guid) override {
     ATLANTIS_CHECK(guid != AssetGuid{});
     Value params = Value::object();
@@ -524,6 +551,12 @@ class RemoteAssets final : public connection::AssetConnection {
         });
   }
  private:
+  static std::size_t memberCount(const Value& value, std::string_view key) {
+    if (!value.isObject()) return 0;
+    return static_cast<std::size_t>(std::ranges::count_if(
+        value.asObject(), [key](const auto& member) { return member.first == key; }));
+  }
+
   static bool legacyAssetRefusal(const Value& error) {
     const auto* code = error.find("code");
     const auto* message = error.find("message");
