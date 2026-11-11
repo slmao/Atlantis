@@ -17,6 +17,15 @@ public enum PreviewError
 /// <summary>An owned PNG and its mesh identity. The consumer owns the byte array and decodes the image.</summary>
 public sealed record MeshPreview(AssetGuid Guid, int Width, int Height, byte[] PngBytes);
 
+public enum MeshMaterialPreviewError
+{
+    Unsupported, Unavailable, Busy, CatalogUnavailable, UnknownMesh, UnknownMaterial, NotMesh, NotMaterial,
+    InvalidMesh, InvalidMaterial, UnsupportedMaterial, DependencyUnavailable, IncompatiblePair, TooLarge, RenderFailed,
+}
+
+/// <summary>An owned PNG for an ordered mesh and material pair. The consumer owns the byte array and decodes the image.</summary>
+public sealed record MeshMaterialPreview(AssetGuid MeshGuid, AssetGuid MaterialGuid, int Width, int Height, byte[] PngBytes);
+
 public readonly record struct RebuildId(AssetGuid Value)
 {
     public override string ToString() => Value.ToString();

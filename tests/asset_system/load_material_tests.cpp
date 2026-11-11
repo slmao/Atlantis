@@ -1,7 +1,10 @@
 #include <atlantis/asset_system/load_material.h>
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/cook_material.h>
+#include <atlantis/asset_system/load.h>
+#include <atlantis/asset_system/material_artifact.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -93,6 +96,40 @@ TEST_CASE("loadMaterialAsset loads a well-formed artifact/metadata pair", "[asse
   CHECK(result.value().baseColorFactor[0] == 1.0f);
   CHECK(result.value().metallicFactor == 1.0f);
   CHECK(result.value().roughnessFactor == 1.0f);
+}
+
+TEST_CASE("preview material loads bounded bytes against its catalog identity", "[asset_system][material][preview-pair]") {
+  TempDirGuard dir("preview");
+  const auto [artifactPath, metadataPath] = cookValidMaterial(dir.path);
+  const auto guid = testAssetGuid("materials/unlit_textured_quad.material.txt");
+  AssetCatalogRecord record;
+  record.type = CatalogAssetType::Material;
+  record.guid = guid;
+  record.assetId = assetKey(guid);
+  record.artifactSchema = kMaterialArtifactSchemaVersion;
+  record.artifact = artifactPath.generic_string();
+  record.metadata = metadataPath.generic_string();
+
+  REQUIRE(loadPreviewMaterialAsset(record).isOk());
+  SECTION("valid sidecar from another catalog identity is invalid") {
+    record.guid = testAssetGuid("other material");
+    record.assetId = assetKey(record.guid);
+    CHECK(loadPreviewMaterialAsset(record).error() == PreviewArtifactLoadError::Invalid);
+  }
+  SECTION("valid artifact from another catalog schema is invalid") {
+    ++record.artifactSchema;
+    CHECK(loadPreviewMaterialAsset(record).error() == PreviewArtifactLoadError::Invalid);
+  }
+  SECTION("oversized artifact is rejected before decode") {
+    fs::resize_file(artifactPath, kPreviewMaterialMaxArtifactBytes);
+    CHECK(loadPreviewMaterialAsset(record).error() == PreviewArtifactLoadError::Invalid);
+    fs::resize_file(artifactPath, kPreviewMaterialMaxArtifactBytes + 1);
+    CHECK(loadPreviewMaterialAsset(record).error() == PreviewArtifactLoadError::TooLarge);
+  }
+  SECTION("oversized sidecar is rejected before parse") {
+    fs::resize_file(metadataPath, kPreviewMeshMaxMetadataBytes + 1);
+    CHECK(loadPreviewMaterialAsset(record).error() == PreviewArtifactLoadError::TooLarge);
+  }
 }
 
 TEST_CASE("loadMaterialAsset loads a well-formed PbrDirectLit material with its own PBR parameters",

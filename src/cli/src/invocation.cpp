@@ -39,6 +39,7 @@ constexpr std::string_view kUsage =
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
+    "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"

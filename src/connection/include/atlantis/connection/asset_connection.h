@@ -61,6 +61,30 @@ using MeshPreviewResult = Result<MeshPreview, PreviewError>;
 [[nodiscard]] std::optional<MeshPreview> decodeMeshPreview(const json::Value& payload,
                                                           const asset_system::AssetGuid& requested);
 
+enum class MeshMaterialPreviewError : std::uint8_t {
+  Unsupported, Unavailable, Busy, CatalogUnavailable, UnknownMesh, UnknownMaterial, NotMesh, NotMaterial,
+  InvalidMesh, InvalidMaterial, UnsupportedMaterial, DependencyUnavailable, IncompatiblePair, TooLarge, RenderFailed,
+};
+[[nodiscard]] std::string_view toString(MeshMaterialPreviewError error) noexcept;
+
+struct MeshMaterialPreview {
+  asset_system::AssetGuid meshGuid;
+  asset_system::AssetGuid materialGuid;
+  std::uint32_t width = kPreviewDimension;
+  std::uint32_t height = kPreviewDimension;
+  std::vector<std::uint8_t> png;
+  friend bool operator==(const MeshMaterialPreview&, const MeshMaterialPreview&) = default;
+};
+using MeshMaterialPreviewResult = Result<MeshMaterialPreview, MeshMaterialPreviewError>;
+
+// Same bounded PNG payload as a geometry preview, with both identities.
+// Encoding and decoding borrow inputs only for the call and return owned values.
+[[nodiscard]] std::optional<json::Value> encodeMeshMaterialPreview(
+    const MeshMaterialPreview& image, const asset_system::AssetGuid& meshGuid,
+    const asset_system::AssetGuid& materialGuid);
+[[nodiscard]] std::optional<MeshMaterialPreview> decodeMeshMaterialPreview(
+    const json::Value& payload, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid);
+
 // Canonical GUID values in separate domains from an asset identity.
 struct RebuildId {
   asset_system::AssetGuid value;
@@ -173,6 +197,12 @@ class AssetConnection {
   // Remote failures use Unavailable as a sentinel; check the session first.
   [[nodiscard]] virtual assets::MeshPreviewResult previewMesh(const asset_system::AssetGuid&) {
     return assets::MeshPreviewResult::Err(assets::PreviewError::Unsupported);
+  }
+  // Spec 0092 / ADR-0152: a synchronous still of a cooked mesh and material.
+  // Both GUIDs must be non-nil. Same ownership and Remote failure rules as previewMesh.
+  [[nodiscard]] virtual assets::MeshMaterialPreviewResult previewMeshMaterial(
+      const asset_system::AssetGuid&, const asset_system::AssetGuid&) {
+    return assets::MeshMaterialPreviewResult::Err(assets::MeshMaterialPreviewError::Unsupported);
   }
   // Spec 0085. Accepts a non-nil catalog GUID and returns an admission receipt.
   // Remote failures use Unavailable as a sentinel; check the session first.

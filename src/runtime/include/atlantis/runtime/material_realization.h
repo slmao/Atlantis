@@ -386,6 +386,14 @@ struct DefaultEmissiveTexture {
 [[nodiscard]] atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefaultEmissiveTexture(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& commandList);
 
+// Spec 0092 R3. Realizes a validated opaque direct-lit pair and records its
+// base-color upload. The caller keeps the returned resources and the
+// already-recorded white emissive texture alive through GPU settlement.
+[[nodiscard]] atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPreviewPbrMaterial(
+    atlantis::rhi::Device& device, atlantis::rhi::CommandList& list, atlantis::rhi::PipelineCreateParams shader,
+    atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
+    const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture& whiteEmissive);
+
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
 // Implementation -- Human Review direction, chat, 2026-09-01): every
 // geometry Pipeline (fallback and every MaterialKind) now targets the

@@ -126,6 +126,56 @@ TEST_CASE("Headless static mesh preview matches its golden and frames an off-ori
   CHECK(occupied > 0);
 }
 
+TEST_CASE("Headless mesh material preview matches its golden and distinguishes texture and authored factors",
+          "[image_regression][gpu][mesh_material_preview]") {
+  constexpr auto slug = "mesh_material_preview_256x256_rgba8unorm";
+  const auto dielectric = renderMeshMaterialPreviewPixels(kPreviewDielectricGuid);
+  REQUIRE(dielectric);
+  const std::string name(kPairPreviewGolden);
+  auto golden = loadAndValidateGolden(goldenPngPath(name), goldenSidecarPath(name));
+  REQUIRE(golden.isOk());
+  REQUIRE(dielectric->width == golden.value().pixels.width);
+  REQUIRE(dielectric->height == golden.value().pixels.height);
+  const auto report = compareBuffers(*dielectric, golden.value().pixels);
+  if (!report.passed)
+    (void)writeFailureArtifacts(ATLANTIS_IMAGE_REGRESSION_OUTPUT_DIR, slug, *dielectric, golden.value().pixels);
+  CHECK(report.maxChannelDiff == 0);
+  REQUIRE(report.passed);
+
+  const auto& bytes = dielectric->rgba8;
+  REQUIRE(bytes.size() == static_cast<std::size_t>(dielectric->width) * dielectric->height * 4);
+  for (std::size_t corner : {std::size_t{0}, std::size_t{dielectric->width - 1},
+                             std::size_t{dielectric->width} * (dielectric->height - 1), bytes.size() / 4 - 1}) {
+    CHECK(std::equal(bytes.begin(), bytes.begin() + 4, bytes.begin() + corner * 4));
+  }
+  std::size_t occupied = 0;
+  for (std::size_t i = 0; i < bytes.size(); i += 4) {
+    if (!std::equal(bytes.begin(), bytes.begin() + 4, bytes.begin() + i)) ++occupied;
+  }
+  CHECK(occupied > 0);
+
+  const auto stained = renderMeshMaterialPreviewPixels(kPreviewStainedWoodGuid);
+  const auto ash = renderMeshMaterialPreviewPixels(kPreviewAshWoodGuid);
+  REQUIRE(stained);
+  REQUIRE(ash);
+  const bool differentTexture = dielectric->rgba8 != stained->rgba8;
+  const bool differentFactors = stained->rgba8 != ash->rgba8;  // same texture
+  CHECK(differentTexture);
+  CHECK(differentFactors);
+}
+
+TEST_CASE("Headless material preview samples an uploaded nonzero RGBA8 mip",
+          "[image_regression][gpu][mesh_material_preview]") {
+  const auto mipped = renderMeshMaterialPreviewPixels(kPreviewDielectricGuid, true);
+  REQUIRE(mipped);
+  std::size_t green = 0;
+  const auto& bytes = mipped->rgba8;
+  for (std::size_t i = 0; i < bytes.size(); i += 4) {
+    if (bytes[i + 1] > bytes[i] + 8 && bytes[i + 1] > bytes[i + 2] + 8) ++green;
+  }
+  CHECK(green > 0);
+}
+
 TEST_CASE("The Asset-System-sourced cube matches the committed minimal_cube golden with zero difference",
           "[image_regression][gpu]") {
   // Plan 0012 Step 6 / D8: reuses the existing, already-committed

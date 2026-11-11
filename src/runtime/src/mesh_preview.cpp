@@ -12,6 +12,7 @@
 #include <atlantis/renderer/renderer.h>
 #include <atlantis/rhi/command_list.h>
 #include <atlantis/runtime/runtime_application.h>
+#include <atlantis/runtime/material_realization.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 
@@ -93,8 +94,9 @@ std::optional<FramedMeshPreview> frameMesh(std::span<const std::byte> bytes, std
   const auto nearZ = static_cast<float>(distance - paddedRadius);
   const auto farZ = static_cast<float>(distance + paddedRadius);
   if (!(nearZ > 0.0f && nearZ < farZ)) return std::nullopt;
-  framed.camera = {lookAtMatrix(static_cast<float>(3.0 * directionScale), static_cast<float>(2.0 * directionScale),
-                                static_cast<float>(4.0 * directionScale), 0.0f, 0.0f, 0.0f),
+  framed.eye = {static_cast<float>(3.0 * directionScale), static_cast<float>(2.0 * directionScale),
+                static_cast<float>(4.0 * directionScale)};
+  framed.camera = {lookAtMatrix(framed.eye.x, framed.eye.y, framed.eye.z, 0.0f, 0.0f, 0.0f),
                    perspectiveMatrix(static_cast<float>(fov), 1.0f, nearZ, farZ)};
   const auto finite = [](float value) { return std::isfinite(value); };
   if (!std::all_of(framed.camera.view.begin(), framed.camera.view.end(), finite) ||
@@ -149,6 +151,8 @@ std::optional<FramedMeshPreview> frameMeshPreview(const asset_system::StaticMesh
 struct MeshPreviewResources {
   std::optional<renderer::Mesh> mesh;
   std::optional<renderer::Material> material;
+  std::optional<DefaultEmissiveTexture> whiteEmissive;
+  std::optional<RealizedMaterialCandidate> pbrMaterial;  // borrows whiteEmissive
   std::unique_ptr<rhi::Pipeline> shadowPipeline;
   std::unique_ptr<rhi::Pipeline> outputPipeline;
   std::unique_ptr<rhi::Sampler> shadowSampler;
@@ -165,17 +169,58 @@ struct MeshPreviewResources {
   std::unique_ptr<rhi::RenderTarget> target;  // end the borrow before destroying offscreen
 };
 
-MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfig& config,
-                                       const as::StaticMeshAssetData& mesh, const as::AssetGuid& guid,
-                                       std::shared_ptr<MeshPreviewResources>& incompleteSubmission,
-                                       PreviewCompletion complete, const MeshPreviewReadOnly* readOnly) {
+namespace {
+
+struct PbrPreviewInputs {
+  const as::MaterialAssetData& material;
+  const as::TextureAssetData& texture;
+  as::AssetId materialId;
+};
+
+using PreviewPngResult = Result<std::vector<std::uint8_t>, ac::PreviewError>;
+struct PreviewPngExecution {
+  PreviewPngResult result;
+  bool fatal = false;
+};
+
+void writePreviewLighting(MeshPreviewResources& resources, const FramedMeshPreview& framed, bool pbr) {
+  auto* camera = static_cast<std::byte*>(resources.camera->mappedData());
+  std::memcpy(camera, &framed.camera, sizeof(CameraMatrices));
+  CameraMatrices lightSpace{identityMatrix(), identityMatrix()};
+  if (pbr) {
+    // The direct-lit shader reads the full camera block, including valid
+    // cluster geometry even with no point lights (Spec 0092 R3).
+    constexpr float inverseLength = 1.0f / 7.071067811865475f;  // length of (4, 5, 3)
+    const Vec3 direction{-4.0f * inverseLength, -5.0f * inverseLength, -3.0f * inverseLength};
+    FrameLightingData lighting;
+    lighting.directionalLightCount = 1;
+    lighting.directionalLights[0] = {{direction.x, direction.y, direction.z}, 0.0f, {1.0f, 1.0f, 1.0f}, 3.0f};
+    lightSpace = computeShadowLightSpaceMatrices(direction);
+    const CameraWorldPositionData eye{framed.eye.x, framed.eye.y, framed.eye.z, 0.0f};
+    const FogData noFog;
+    const auto cluster = buildClusterLightData(lighting, framed.camera);
+    std::memcpy(camera + kCameraUniformLightingOffsetBytes, &lighting, sizeof(lighting));
+    std::memcpy(camera + kCameraUniformWorldPositionOffsetBytes, &eye, sizeof(eye));
+    std::memset(camera + kCameraUniformIrradianceShOffsetBytes, 0,
+                kCameraUniformLightSpaceOffsetBytes - kCameraUniformIrradianceShOffsetBytes);
+    std::memcpy(camera + kCameraUniformLightSpaceOffsetBytes, &lightSpace, sizeof(lightSpace));
+    std::memcpy(camera + kCameraUniformFogOffsetBytes, &noFog, sizeof(noFog));
+    std::memcpy(camera + kCameraUniformClusterOffsetBytes, &cluster, sizeof(cluster));
+  }
+  std::memcpy(resources.light->mappedData(), &lightSpace, sizeof(lightSpace));
+}
+
+PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig& config,
+                                      const as::StaticMeshAssetData& mesh, const PbrPreviewInputs* pbr,
+                                      std::shared_ptr<MeshPreviewResources>& incompleteSubmission,
+                                      PreviewCompletion complete, const MeshPreviewReadOnly* readOnly) {
   using E = ac::PreviewError;
-  using R = ac::MeshPreviewResult;
+  using R = PreviewPngResult;
   using rhi::BufferPurpose;
   ATLANTIS_CHECK(!incompleteSubmission);
   const auto failed = [](const char* stage, bool fatal = false) {
     ATLANTIS_LOG_ERROR("mesh preview: {} failed", stage);
-    return MeshPreviewExecution{R::Err(E::RenderFailed), fatal};
+    return PreviewPngExecution{R::Err(E::RenderFailed), fatal};
   };
   const auto deviceCreationFailed = [&](const char* stage) {
     // RHI allocation/creation errors do not expose device loss separately.
@@ -186,9 +231,13 @@ MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfi
   if (!framed) return {R::Err(E::InvalidMesh), false};
 
   constexpr auto stride = as::kMeshArtifactVertexStrideBytes;
-  const auto geometry = readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath,
-                                 config.vertexShaderReflectionPath,
-                                 {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
+  const auto geometry = pbr
+      ? readPair(config.pbrDirectLitVertexShaderSpirvPath, config.pbrDirectLitFragmentShaderSpirvPath,
+                 config.pbrDirectLitVertexShaderReflectionPath,
+                 {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
+                  {2, as::kMeshArtifactNormalOffsetBytes}}, stride)
+      : readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
+                 {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
   const auto shadowShader = readPair(config.shadowCastVertexShaderSpirvPath, config.shadowCastFragmentShaderSpirvPath,
                                      config.shadowCastVertexShaderReflectionPath,
                                      {{0, as::kMeshArtifactPositionOffsetBytes}}, stride);
@@ -209,12 +258,14 @@ MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfi
 
   // These pipeline objects carry descriptor sets updated during recording.
   // The live scene may still have its previous submission in flight.
-  auto geometryParams = geometry->parameters();
-  geometryParams.colorFormat = rhi::HdrFormat::Rgba16Float;
-  geometryParams.pushConstantSizeBytes = sizeof(Mat4);
-  auto material = renderer::createMaterial(device, geometryParams);
-  if (material.isErr()) return deviceCreationFailed("material creation");
-  r.material.emplace(std::move(material.value()));
+  if (!pbr) {
+    auto geometryParams = geometry->parameters();
+    geometryParams.colorFormat = rhi::HdrFormat::Rgba16Float;
+    geometryParams.pushConstantSizeBytes = sizeof(Mat4);
+    auto material = renderer::createMaterial(device, geometryParams);
+    if (material.isErr()) return deviceCreationFailed("material creation");
+    r.material.emplace(std::move(material.value()));
+  }
   auto shadowParams = shadowShader->parameters();
   shadowParams.pushConstantSizeBytes = sizeof(Mat4);
   shadowParams.hasColorAttachment = false;
@@ -246,14 +297,13 @@ MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfi
     return deviceCreationFailed("attachment creation");
   }
 
-  if (!assign(r.camera, device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(CameraMatrices)})) ||
+  const std::size_t cameraBytes = pbr ? kCameraUniformBufferSizeBytes : sizeof(CameraMatrices);
+  if (!assign(r.camera, device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = cameraBytes})) ||
       !assign(r.light, device.createBuffer({.purpose = BufferPurpose::Uniform, .sizeBytes = sizeof(CameraMatrices)})) ||
       !assign(r.readback, device.createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = pixelBytes}))) {
     return deviceCreationFailed("buffer creation");
   }
-  const CameraMatrices noLights{identityMatrix(), identityMatrix()};
-  std::memcpy(r.camera->mappedData(), &framed->camera, sizeof(CameraMatrices));
-  std::memcpy(r.light->mappedData(), &noLights, sizeof(CameraMatrices));
+  writePreviewLighting(r, *framed, pbr != nullptr);
   std::optional<MeshPreviewReadOnly> headlessInputs;
   if (!readOnly) {
     constexpr std::array<float, 6> vertices{-1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f};
@@ -280,8 +330,19 @@ MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfi
   r.target = std::move(target.value());
   auto list = device.createCommandList();
   if (list.isErr()) return deviceCreationFailed("command list creation");
+  if (pbr) {
+    auto white = createDefaultEmissiveTexture(device, *list.value());
+    if (white.isErr()) return deviceCreationFailed("white emissive upload creation");
+    r.whiteEmissive.emplace(std::move(white.value()));
+    auto candidate = recordPreviewPbrMaterial(device, *list.value(), geometry->parameters(),
+                                              pbr->materialId, pbr->material, pbr->texture,
+                                              *r.whiteEmissive->texture);
+    if (candidate.isErr()) return deviceCreationFailed("PBR material creation");
+    r.pbrMaterial.emplace(std::move(candidate.value()));
+  }
   using rhi::ResourceState;
-  const renderer::DrawItem draw{.mesh = &*r.mesh, .material = &*r.material, .objectToWorld = identityMatrix()};
+  const auto* material = pbr ? r.pbrMaterial->material.get() : &*r.material;
+  const renderer::DrawItem draw{.mesh = &*r.mesh, .material = material, .objectToWorld = identityMatrix()};
   renderer::Renderer renderer;
   renderer.drawFrame(*list.value(), *r.target, *r.depth, *r.camera, std::span{&draw, 1}, ResourceState::TransferSource,
                      *r.hdr, readOnly->fullscreenVertices, readOnly->fullscreenIndices, *r.outputPipeline,
@@ -312,7 +373,38 @@ MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfi
   const auto* pixels = static_cast<const std::uint8_t*>(r.readback->mappedData());
   auto png = encodeCapturePng(extent.width, extent.height, {pixels, pixelBytes}, ac::kPreviewPngMaxBytes);
   if (!png) return failed("PNG encoding");
-  return {R::Ok(ac::MeshPreview{guid, extent.width, extent.height, std::move(*png)}), false};
+  return {R::Ok(std::move(*png)), false};
+}
+
+}  // namespace
+
+MeshPreviewExecution renderMeshPreview(rhi::Device& device, const BootstrapConfig& config,
+                                       const as::StaticMeshAssetData& mesh, const as::AssetGuid& guid,
+                                       std::shared_ptr<MeshPreviewResources>& incompleteSubmission,
+                                       PreviewCompletion complete, const MeshPreviewReadOnly* readOnly) {
+  using R = ac::MeshPreviewResult;
+  auto execution = renderPreviewPng(device, config, mesh, nullptr, incompleteSubmission, complete, readOnly);
+  if (execution.result.isErr()) return {R::Err(execution.result.error()), execution.fatal};
+  return {R::Ok(ac::MeshPreview{guid, ac::kPreviewDimension, ac::kPreviewDimension,
+                               std::move(execution.result.value())}), false};
+}
+
+MeshMaterialPreviewExecution renderMeshMaterialPreview(
+    rhi::Device& device, const BootstrapConfig& config, const as::StaticMeshAssetData& mesh,
+    const as::MaterialAssetData& material, const as::TextureAssetData& texture,
+    const as::AssetGuid& meshGuid, const as::AssetGuid& materialGuid,
+    std::shared_ptr<MeshPreviewResources>& incompleteSubmission, PreviewCompletion complete,
+    const MeshPreviewReadOnly* readOnly) {
+  using E = ac::MeshMaterialPreviewError;
+  using R = ac::MeshMaterialPreviewResult;
+  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid)};
+  auto execution = renderPreviewPng(device, config, mesh, &pbr, incompleteSubmission, complete, readOnly);
+  if (execution.result.isErr()) {
+    return {R::Err(execution.result.error() == ac::PreviewError::InvalidMesh ? E::IncompatiblePair : E::RenderFailed),
+            execution.fatal};
+  }
+  return {R::Ok(ac::MeshMaterialPreview{meshGuid, materialGuid, ac::kPreviewDimension, ac::kPreviewDimension,
+                                       std::move(execution.result.value())}), false};
 }
 
 }  // namespace atlantis::runtime::detail
@@ -340,6 +432,30 @@ connection::assets::MeshPreviewResult RuntimeApplication::previewMeshWithComplet
   if (execution.fatal) {
     lifecycle_.markFailed();
     return MeshPreviewResult::Err(PreviewError::Unavailable);
+  }
+  return std::move(execution.result);
+}
+
+connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterial(
+    const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
+    const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
+    const asset_system::TextureAssetData& texture) {
+  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr);
+}
+
+connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterialWithCompletion(
+    const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
+    const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
+    const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete) {
+  using namespace connection::assets;
+  if (!meshPreviewAvailable()) return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);
+  const detail::MeshPreviewReadOnly readOnly{*fullscreenTriangleVertexBuffer_, *fullscreenTriangleIndexBuffer_,
+                                            *outputTransformSampler_, *shadowMapSampler_};
+  auto execution = detail::renderMeshMaterialPreview(*device_, config, mesh, material, texture, meshGuid, materialGuid,
+                                                     incompleteMeshPreview_, complete, &readOnly);
+  if (execution.fatal) {
+    lifecycle_.markFailed();
+    return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);
   }
   return std::move(execution.result);
 }

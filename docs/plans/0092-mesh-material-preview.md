@@ -1,10 +1,10 @@
 # Plan: Read-Only Mesh and Material Preview
 
 - **Spec:** [Spec 0092](../specs/0092-mesh-material-preview.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. Implementation awaits explicit joint approval and the design PR's human merge.
-- **ADR:** [ADR-0152](../adr/0152-shared-mesh-material-preview.md) (Proposed)
+- **Joint Human Review:** The owner approved J1–J4, Spec/Plan 0092 and ADR-0152 at `531335de` on 2026-11-12. [PR #347](https://github.com/slmao/Atlantis/pull/347) was manually merged as `e2f69d47`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Final merge remains human.
+- **ADR:** [ADR-0152](../adr/0152-shared-mesh-material-preview.md) (Accepted)
 
 ## Objective
 

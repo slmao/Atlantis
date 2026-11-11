@@ -38,6 +38,8 @@ namespace atlantis::remote::codec {
 [[nodiscard]] std::optional<connection::assets::AssetDetails> decodeAssetDetails(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::AssetError> decodeAssetError(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::PreviewError> decodePreviewError(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::MeshMaterialPreviewError> decodeMeshMaterialPreviewError(
+    const connection::json::Value& value);
 [[nodiscard]] connection::json::Value encode(const connection::assets::ImportJob& value);
 [[nodiscard]] connection::json::Value encode(const connection::assets::ImportStatus& value);
 [[nodiscard]] std::optional<connection::assets::ImportJob> decodeImportJob(const connection::json::Value& value);

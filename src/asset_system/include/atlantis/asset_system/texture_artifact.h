@@ -89,6 +89,17 @@ struct DecodedTextureArtifact {
   std::vector<std::uint8_t> pixelBytes;  // the whole chain, level 0 first
 };
 
+struct TextureArtifactHeader {
+  std::uint32_t schemaVersion;
+  std::uint32_t width;
+  std::uint32_t height;
+};
+
+// Validates the same header and payload size as decodeTextureArtifact(),
+// without allocating the decoded pixel payload.
+[[nodiscard]] atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError> peekTextureArtifactHeader(
+    const std::vector<std::byte>& bytes);
+
 // width/height/layout/mipCount/pixelByteCount are the caller's own
 // already-validated values (checked by cookTexture()/cookTextureBc7()
 // before calling this) -- this function is a pure, always-succeeding

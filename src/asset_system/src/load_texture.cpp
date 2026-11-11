@@ -1,5 +1,8 @@
 #include <atlantis/asset_system/load_texture.h>
 
+#include "preview_file.h"
+
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/asset_system/texture_metadata.h>
@@ -35,17 +38,10 @@ namespace {
   return true;
 }
 
-}  // namespace
-
-atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std::filesystem::path& artifactPath,
-                                                                        const std::filesystem::path& metadataPath) {
+atlantis::Result<TextureAssetData, TextureLoadError> decodeLoadedTexture(
+    const std::vector<std::byte>& artifactBytes, std::string_view metadataText,
+    const AssetCatalogRecord* expected = nullptr) {
   using ResultT = atlantis::Result<TextureAssetData, TextureLoadError>;
-
-  std::vector<std::byte> artifactBytes;
-  if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(TextureLoadError::ArtifactDecodeFailed);
-
-  std::string metadataText;
-  if (!readFileText(metadataPath, metadataText)) return ResultT::Err(TextureLoadError::MetadataReadFailed);
 
   auto artifactResult = decodeTextureArtifact(artifactBytes);
   if (artifactResult.isErr()) return ResultT::Err(TextureLoadError::ArtifactDecodeFailed);
@@ -56,6 +52,9 @@ atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std:
   DecodedTextureArtifact& artifact = artifactResult.value();
   const TextureMetadata& metadata = metadataResult.value();
 
+  if (expected && (expected->guid != metadata.assetGuid || expected->assetId != metadata.assetId)) {
+    return ResultT::Err(TextureLoadError::MetadataArtifactMismatch);
+  }
   if (artifact.width != metadata.width || artifact.height != metadata.height ||
       artifact.colorSpace != metadata.format || artifact.layout != metadata.layout ||
       artifact.mipCount != metadata.mipCount) {
@@ -77,6 +76,43 @@ atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(const std:
   data.mipCount = artifact.mipCount;
   data.pixelBytes = std::move(artifact.pixelBytes);
   return ResultT::Ok(std::move(data));
+}
+
+}  // namespace
+
+atlantis::Result<TextureAssetData, TextureLoadError> loadTextureAsset(
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+  using R = atlantis::Result<TextureAssetData, TextureLoadError>;
+  std::vector<std::byte> artifactBytes;
+  if (!readFileBytes(artifactPath, artifactBytes)) return R::Err(TextureLoadError::ArtifactDecodeFailed);
+
+  std::string metadataText;
+  if (!readFileText(metadataPath, metadataText)) return R::Err(TextureLoadError::MetadataReadFailed);
+  return decodeLoadedTexture(artifactBytes, metadataText);
+}
+
+atlantis::Result<TextureAssetData, PreviewArtifactLoadError> loadPreviewBaseColorTexture(
+    const AssetCatalogRecord& record) {
+  using E = PreviewArtifactLoadError;
+  using R = atlantis::Result<TextureAssetData, E>;
+  if (record.type != CatalogAssetType::Texture) return R::Err(E::Invalid);
+  std::vector<std::byte> artifactBytes;
+  if (const auto error = detail::readPreviewFile(record.artifact, kPreviewBaseColorMaxArtifactBytes, artifactBytes)) {
+    return R::Err(*error);
+  }
+  const auto header = peekTextureArtifactHeader(artifactBytes);
+  if (header.isErr() || header.value().schemaVersion != record.artifactSchema) return R::Err(E::Invalid);
+  if (header.value().width > kPreviewBaseColorMaxDimension || header.value().height > kPreviewBaseColorMaxDimension) {
+    return R::Err(E::TooLarge);
+  }
+
+  std::string metadataText;
+  if (const auto error = detail::readPreviewFile(record.metadata, kPreviewMeshMaxMetadataBytes, metadataText)) {
+    return R::Err(*error);
+  }
+  auto decoded = decodeLoadedTexture(artifactBytes, metadataText, &record);
+  if (decoded.isErr()) return R::Err(E::Invalid);
+  return R::Ok(std::move(decoded.value()));
 }
 
 }  // namespace atlantis::asset_system

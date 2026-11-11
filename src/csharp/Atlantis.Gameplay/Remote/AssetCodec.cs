@@ -67,8 +67,37 @@ public static partial class Codec
     /// <summary>Checks the preview envelope fields and PNG header, leaving image decoding to the consumer.</summary>
     public static A.MeshPreview? DecodeMeshPreview(JsonValue value, AssetGuid requested)
     {
-        if (requested.IsNil || value.Find("guid") is not JsonValue guid || DecodeAsset(guid) != requested ||
-            value.Find("width") is not JsonValue w || !w.TryGetUInt64(out ulong width) || width != PreviewDimension ||
+        if (requested.IsNil || value.Find("guid") is not JsonValue guid || DecodeAsset(guid) != requested) return null;
+        byte[]? bytes = DecodePreviewPng(value);
+        return bytes is null ? null : new A.MeshPreview(requested, PreviewDimension, PreviewDimension, bytes);
+    }
+
+    /// <summary>Checks both requested roles and the bounded PNG header. Each successful call returns owned bytes.</summary>
+    public static A.MeshMaterialPreview? DecodeMeshMaterialPreview(JsonValue value, AssetGuid meshGuid, AssetGuid materialGuid)
+    {
+        if (meshGuid.IsNil || materialGuid.IsNil ||
+            CountMember(value, "meshGuid") != 1 || value.Find("meshGuid") is not JsonValue mesh || DecodeAsset(mesh) != meshGuid ||
+            CountMember(value, "materialGuid") != 1 || value.Find("materialGuid") is not JsonValue material ||
+            DecodeAsset(material) != materialGuid || CountMember(value, "width") != 1 || CountMember(value, "height") != 1 ||
+            CountMember(value, "mimeType") != 1 || CountMember(value, "pngBase64") != 1) return null;
+        byte[]? bytes = DecodePreviewPng(value);
+        return bytes is null ? null : new A.MeshMaterialPreview(meshGuid, materialGuid, PreviewDimension, PreviewDimension, bytes);
+    }
+
+    // The protocol reader keeps duplicate JSON members. The pair operation checks
+    // exact counts without changing the existing first-member behavior for other calls.
+    internal static int CountMember(JsonValue value, string key)
+    {
+        int count = 0;
+        if (value.IsObject)
+            foreach (var member in value.Members)
+                if (member.Key == key) ++count;
+        return count;
+    }
+
+    private static byte[]? DecodePreviewPng(JsonValue value)
+    {
+        if (value.Find("width") is not JsonValue w || !w.TryGetUInt64(out ulong width) || width != PreviewDimension ||
             value.Find("height") is not JsonValue h || !h.TryGetUInt64(out ulong height) || height != PreviewDimension ||
             value.Find("mimeType") is not { IsString: true, AsString: "image/png" } ||
             value.Find("pngBase64") is not { IsString: true } png) return null;
@@ -93,7 +122,7 @@ public static partial class Codec
             BinaryPrimitives.ReadUInt32BigEndian(header[8..12]) != 13 || !header[12..16].SequenceEqual("IHDR"u8) ||
             BinaryPrimitives.ReadUInt32BigEndian(header[16..20]) != PreviewDimension ||
             BinaryPrimitives.ReadUInt32BigEndian(header[20..24]) != PreviewDimension) return null;
-        return new A.MeshPreview(requested, PreviewDimension, PreviewDimension, bytes);
+        return bytes;
     }
 
     private static int Base64Value(char c) => c switch
@@ -105,6 +134,8 @@ public static partial class Codec
     };
 
     public static A.PreviewError? DecodePreviewError(JsonValue value) => RebuildToken<A.PreviewError>(value);
+    public static A.MeshMaterialPreviewError? DecodeMeshMaterialPreviewError(JsonValue value) =>
+        RebuildToken<A.MeshMaterialPreviewError>(value);
 
     private static T? RebuildToken<T>(JsonValue? value) where T : struct, Enum =>
         value is { IsString: true } && Enum.TryParse(value.AsString, out T parsed) &&

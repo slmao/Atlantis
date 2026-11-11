@@ -111,6 +111,10 @@ class RuntimeApplication {
   [[nodiscard]] bool meshPreviewAvailable() const noexcept;
   [[nodiscard]] connection::assets::MeshPreviewResult previewMesh(
       const BootstrapConfig& config, const asset_system::AssetGuid& guid, asset_system::StaticMeshAssetData mesh);
+  [[nodiscard]] connection::assets::MeshMaterialPreviewResult previewMeshMaterial(
+      const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
+      const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
+      const asset_system::TextureAssetData& texture);
 
   // Spec 0059 / ADR-0117 D2: the extent the scene is rendered at -- the
   // swapchain's, or the Viewport's while an overlay is attached -- as last seen
@@ -268,6 +272,10 @@ class RuntimeApplication {
   [[nodiscard]] connection::assets::MeshPreviewResult previewMeshWithCompletion(
       const BootstrapConfig& config, const asset_system::AssetGuid& guid, const asset_system::StaticMeshAssetData& mesh,
       detail::PreviewCompletion complete);
+  [[nodiscard]] connection::assets::MeshMaterialPreviewResult previewMeshMaterialWithCompletion(
+      const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
+      const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
+      const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete);
 
   // Plan 0056 P7: the helpers of runFrame()'s named overlay places, called
   // only while overlay_ is set. overlayViewportExtent() (place 2) also brings

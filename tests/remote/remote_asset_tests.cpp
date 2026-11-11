@@ -9,11 +9,15 @@ namespace ca = atlantis::connection::assets;
 namespace codec = atlantis::remote::codec;
 using Value = atlantis::connection::json::Value;
 as::AssetGuid guid() { return as::parseAssetGuid("00810081-0081-4081-8081-008100810081").value(); }
+as::AssetGuid materialGuid() { return as::deriveAssetGuid(guid(), "material"); }
 ca::MeshPreview preview() {
   // Contract tests only need the signature and complete IHDR; a full PNG is
   // exercised through the Runtime's real render path.
   return {guid(), 256, 256, {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',
                              0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}};
+}
+ca::MeshMaterialPreview pairPreview() {
+  return {guid(), materialGuid(), ca::kPreviewDimension, ca::kPreviewDimension, preview().png};
 }
 struct Assets final : atlantis::connection::AssetConnection {
   ca::AssetDetails detail{guid(), ca::AssetType::Mesh, "content:test/file.gltf#mesh/0", UINT32_MAX, std::nullopt, "unit/1", {}};
@@ -21,6 +25,8 @@ struct Assets final : atlantis::connection::AssetConnection {
   bool unordered = false;
   std::optional<ca::PreviewError> previewError;
   ca::MeshPreview image = preview();
+  std::optional<ca::MeshMaterialPreviewError> pairError;
+  ca::MeshMaterialPreview pairImage = pairPreview();
   std::optional<ca::RebuildJob> job;
   std::optional<ca::ImportJob> imported;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
@@ -39,6 +45,15 @@ struct Assets final : atlantis::connection::AssetConnection {
     if (id != detail.guid) return ca::MeshPreviewResult::Err(ca::PreviewError::UnknownAsset);
     if (previewError) return ca::MeshPreviewResult::Err(*previewError);
     return ca::MeshPreviewResult::Ok(image);
+  }
+  ca::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& mesh,
+                                                     const as::AssetGuid& material) override {
+    using R = ca::MeshMaterialPreviewResult;
+    using E = ca::MeshMaterialPreviewError;
+    if (mesh != guid()) return R::Err(E::UnknownMesh);
+    if (material != materialGuid()) return R::Err(E::UnknownMaterial);
+    if (pairError) return R::Err(*pairError);
+    return R::Ok(pairImage);
   }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override {
     if (job) return ca::RebuildStartResult::Err(ca::RebuildError::Busy);
@@ -65,6 +80,10 @@ struct Borrow final : atlantis::connection::AssetConnection {
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override { return a_.listAssets(); }
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
   ca::MeshPreviewResult previewMesh(const as::AssetGuid& id) override { return a_.previewMesh(id); }
+  ca::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& mesh,
+                                                     const as::AssetGuid& material) override {
+    return a_.previewMeshMaterial(mesh, material);
+  }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override { return a_.rebuild(asset); }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
   ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
@@ -141,6 +160,81 @@ TEST_CASE("asset preview: shared native provider and typed refusals keep discove
   CHECK(session->assets().previewMesh(guid()).error() == ca::PreviewError::RenderFailed);
   CHECK_FALSE(session->failure());
   CHECK(got.value() == preview()); // The retained DTO owns its bytes.
+  CHECK(session->assets().listAssets().isOk());
+  CHECK(session->assets().getAsset(guid()).value() == assets.detail);
+}
+
+TEST_CASE("asset pair preview codec: role correlation and bounded PNG", "[remote][assets][asset-preview]") {
+  const auto image = pairPreview();
+  auto payload = ca::encodeMeshMaterialPreview(image, guid(), materialGuid());
+  REQUIRE(payload);
+  CHECK(ca::decodeMeshMaterialPreview(*payload, guid(), materialGuid()) == image);
+  CHECK_FALSE(ca::encodeMeshMaterialPreview(image, materialGuid(), guid()));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(*payload, materialGuid(), guid()));
+
+  for (const auto* key : {"meshGuid", "materialGuid"}) {
+    CAPTURE(key);
+    auto mismatched = *payload;
+    mismatched.set(key, codec::encodeAsset(as::deriveAssetGuid(guid(), "wrong")));
+    CHECK_FALSE(ca::decodeMeshMaterialPreview(mismatched, guid(), materialGuid()));
+  }
+  auto duplicate = payload->asObject();
+  duplicate.emplace_back("materialGuid", codec::encodeAsset(guid()));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(Value::object(std::move(duplicate)), guid(), materialGuid()));
+  auto bad = *payload;
+  bad.set("mimeType", Value::string("image/jpeg"));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(bad, guid(), materialGuid()));
+  bad = *payload;
+  bad.set("pngBase64", Value::string("iVBORw0KGgoAAAANSUhEUgAAAQAAAAIACAYAAAAAAAAA"));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(bad, guid(), materialGuid()));
+
+  auto largest = image;
+  largest.png.resize(ca::kPreviewPngMaxBytes);
+  auto bound = ca::encodeMeshMaterialPreview(largest, guid(), materialGuid());
+  REQUIRE(bound);
+  CHECK(ca::decodeMeshMaterialPreview(*bound, guid(), materialGuid()) == largest);
+  auto encoded = bound->find("pngBase64")->asString();
+  REQUIRE(encoded.size() == 699052);
+  REQUIRE(encoded.ends_with("A="));
+  encoded[encoded.size() - 2] = 'B';
+  bound->set("pngBase64", Value::string(encoded));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(*bound, guid(), materialGuid()));
+  encoded[encoded.size() - 2] = 'A';
+  encoded.back() = 'A';
+  bound->set("pngBase64", Value::string(std::move(encoded)));
+  CHECK_FALSE(ca::decodeMeshMaterialPreview(*bound, guid(), materialGuid()));
+}
+
+TEST_CASE("asset pair preview: shared provider keeps asset discovery and geometry usable", "[remote][assets][asset-preview]") {
+  using namespace atlantis::remote::test;
+  using E = ca::MeshMaterialPreviewError;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  auto absent = served.attach();
+  CHECK(absent->assets().previewMeshMaterial(guid(), materialGuid()).error() == E::Unsupported);
+  CHECK_FALSE(absent->failure());
+
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto session = served.attach();
+  auto got = session->assets().previewMeshMaterial(guid(), materialGuid());
+  REQUIRE(got.isOk());
+  CHECK(got.value() == assets.pairImage);
+  CHECK(session->assets().previewMeshMaterial(fixtureSceneGuid(), materialGuid()).error() == E::UnknownMesh);
+  CHECK(session->assets().previewMeshMaterial(guid(), fixtureSceneGuid()).error() == E::UnknownMaterial);
+  for (auto error : {E::Unsupported, E::Unavailable, E::Busy, E::CatalogUnavailable, E::NotMesh, E::NotMaterial,
+                     E::InvalidMesh, E::InvalidMaterial, E::UnsupportedMaterial, E::DependencyUnavailable,
+                     E::IncompatiblePair, E::TooLarge, E::RenderFailed}) {
+    CAPTURE(ca::toString(error));
+    assets.pairError = error;
+    CHECK(session->assets().previewMeshMaterial(guid(), materialGuid()).error() == error);
+    CHECK_FALSE(session->failure());
+  }
+  assets.pairError.reset();
+  assets.pairImage.materialGuid = fixtureSceneGuid();
+  CHECK(session->assets().previewMeshMaterial(guid(), materialGuid()).error() == E::RenderFailed);
+  CHECK_FALSE(session->failure());
+  CHECK(got.value() == pairPreview());
+  CHECK(session->assets().previewMesh(guid()).value() == preview());
   CHECK(session->assets().listAssets().isOk());
   CHECK(session->assets().getAsset(guid()).value() == assets.detail);
 }

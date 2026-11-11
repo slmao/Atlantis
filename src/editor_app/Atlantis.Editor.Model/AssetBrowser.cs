@@ -47,7 +47,9 @@ public sealed class AssetBrowser
     { ++_listRequest; ++_detailRequest; State = "Disconnected"; Details = null; DetailState = "Disconnected"; }
 }
 
-public sealed record AssetPreviewIntent(long Epoch, AssetGuid Guid);
+// Surface 0 is Assets. A chooser uses its unique request ID.
+public readonly record struct AssetPreviewInputs(AssetGuid Mesh, AssetGuid? Material, long Surface = 0);
+public sealed record AssetPreviewIntent(long Epoch, AssetGuid Guid, AssetGuid? Material, long Surface);
 
 /// <summary>One active operation and one replaceable intent across Editor
 /// sessions. UI transitions and the worker's admission check share a lock;
@@ -56,35 +58,40 @@ public sealed class AssetPreviewRequests
 {
     private readonly object _gate = new();
     private long _epoch;
-    private AssetGuid? _selection;
+    private AssetPreviewInputs? _inputs;
     private AssetPreviewIntent? _current, _next, _active;
 
-    public bool SetSelection(AssetGuid? selection, bool invalidate = false)
+    public bool SetInputs(AssetPreviewInputs? inputs, bool invalidate = false)
     {
         lock (_gate)
         {
-            if (!invalidate && _selection == selection) return false;
-            _selection = selection;
+            if (!invalidate && _inputs == inputs) return false;
+            _inputs = inputs;
             ++_epoch;
             _current = _next = null;
             return true;
         }
     }
 
-    public bool CanRequest
+    public bool CanRequest(bool withMaterial = false)
     {
-        get { lock (_gate) return CanRequestLocked(); }
+        lock (_gate) return CanRequestLocked(withMaterial);
     }
 
-    private bool CanRequestLocked() => _selection.HasValue &&
-        (_current is null || (_current != _active && _current != _next));
+    private bool CanRequestLocked(bool withMaterial)
+    {
+        if (_inputs is not AssetPreviewInputs inputs ||
+            (withMaterial ? inputs.Material is null : inputs.Surface != 0)) return false;
+        return _current is null || _current.Material != (withMaterial ? inputs.Material : null) ||
+            (_current != _active && _current != _next);
+    }
 
-    public bool Request()
+    public bool Request(bool withMaterial = false)
     {
         lock (_gate)
         {
-            if (!CanRequestLocked() || _selection is not AssetGuid guid) return false;
-            _current = _next = new(++_epoch, guid);
+            if (!CanRequestLocked(withMaterial) || _inputs is not AssetPreviewInputs inputs) return false;
+            _current = _next = new(++_epoch, inputs.Mesh, withMaterial ? inputs.Material : null, inputs.Surface);
             return true;
         }
     }

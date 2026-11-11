@@ -311,6 +311,27 @@ Preview is synchronous with one shared Remote/`--exec` permit per service
 interval. `Busy` does not enqueue work. No scene step, camera or authoring
 change is implicit in rendering a preview. See [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md).
 
+#### Mesh and material preview (Spec 0092 / ADR-0152)
+
+`assets.previewMeshMaterial` takes exactly
+`{"meshGuid":"<GUID>","materialGuid":"<GUID>"}` with two non-nil canonical
+GUIDs. Its success arm contains both GUIDs and the same `mimeType`,
+`width`, `height` and `pngBase64` fields as geometry preview. Typed clients
+match both roles and reject repeated response IDs, arms and required image
+members. The exact old asset unknown-method response maps to `Unsupported`.
+
+The refusal tokens are `Unsupported`, `Unavailable`, `Busy`,
+`CatalogUnavailable`, `UnknownMesh`, `UnknownMaterial`, `NotMesh`,
+`NotMaterial`, `InvalidMesh`, `InvalidMaterial`, `UnsupportedMaterial`,
+`DependencyUnavailable`, `IncompatiblePair`, `TooLarge` and
+`RenderFailed`. Invalid parameters are outer `BadRequest`.
+
+Both preview methods share the retained catalog and one Remote/`--exec`
+permit. The current recipe supports opaque `PbrDirectLit` with one sRGB
+RGBA8 base texture and zero emissive contribution. The texture must match
+the material's direct dependency in that snapshot. See [Spec 0092](../specs/0092-mesh-material-preview.md)
+for input bounds and lifetime rules.
+
 ### 5.2.1 Managed asset rebuild (Spec 0085 / ADR-0146)
 
 | Method | Parameters | Result |

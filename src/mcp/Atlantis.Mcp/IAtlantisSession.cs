@@ -13,6 +13,7 @@ internal interface IAtlantisSession
 {
     JsonValue Request(string method, JsonValue parameters);
     Outcome<MeshPreview, PreviewError> PreviewMesh(AssetGuid guid);
+    Outcome<MeshMaterialPreview, MeshMaterialPreviewError> PreviewMeshMaterial(AssetGuid meshGuid, AssetGuid materialGuid);
 }
 
 /// <summary>
@@ -33,5 +34,10 @@ internal sealed class AtlantisSession(RemoteSession session) : IAtlantisSession
     public Outcome<MeshPreview, PreviewError> PreviewMesh(AssetGuid guid)
     {
         lock (_gate) return session.Assets.PreviewMesh(guid);
+    }
+
+    public Outcome<MeshMaterialPreview, MeshMaterialPreviewError> PreviewMeshMaterial(AssetGuid meshGuid, AssetGuid materialGuid)
+    {
+        lock (_gate) return session.Assets.PreviewMeshMaterial(meshGuid, materialGuid);
     }
 }

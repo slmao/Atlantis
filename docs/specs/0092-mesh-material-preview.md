@@ -1,11 +1,11 @@
 # Spec: Read-Only Mesh and Material Preview
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-12
 - **Related Plan:** [Plan 0092](../plans/0092-mesh-material-preview.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0152](../adr/0152-shared-mesh-material-preview.md) (Proposed)
+- **Approval:** Jointly approved at revision `531335de` of [PR #347](https://github.com/slmao/Atlantis/pull/347), 2026-11-12. See Plan 0092.
+- **Related ADR:** [ADR-0152](../adr/0152-shared-mesh-material-preview.md) (Accepted)
 
 ## Summary
 

@@ -170,3 +170,90 @@ TEST_CASE("assets preview admits one usable attempt across Remote and local conn
   REQUIRE(remoteB->previewMesh(mesh->guid).isOk());
   CHECK(renders == 3);
 }
+
+TEST_CASE("geometry and pair previews consume the same permit", "[runtime][assets][preview-pair]") {
+  using Pair = ac::MeshMaterialPreviewResult;
+  using E = ac::MeshMaterialPreviewError;
+  const auto mesh = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();
+  const auto material = as::parseAssetGuid("1542b95d-74b5-48ba-82be-eddbe2843129").value();
+  const auto masked = as::parseAssetGuid("3419806a-3f33-4688-bbca-3f2960290df4").value();  // Blend
+  int pairs = 0;
+  bool usable = false;
+  AssetHost host(ATLANTIS_ASSET_CATALOG_PATH, nullptr, {
+      .available = [&] { return usable; },
+      .render = [](const as::AssetGuid& id, as::StaticMeshAssetData) {
+        return ac::MeshPreviewResult::Ok({id, 256, 256, {}});
+      },
+      .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
+                        const as::StaticMeshAssetData& geometry, const as::MaterialAssetData& mat,
+                        const as::TextureAssetData& texture) {
+        ++pairs;
+        CHECK(meshId == mesh);
+        CHECK(materialId == material);
+        CHECK(geometry.indexCount() > 0);
+        CHECK(mat.kind == as::MaterialKind::PbrDirectLit);
+        CHECK(texture.colorSpace == as::TextureColorSpace::Srgb);
+        return Pair::Ok({meshId, materialId, 256, 256, {}});
+      }});
+  auto remote = host.connect();
+  auto local = host.connect();
+  CHECK(remote->previewMeshMaterial(mesh, material).error() == E::Unavailable);
+  usable = true;
+  REQUIRE(remote->previewMesh(mesh).isOk());
+  CHECK(local->previewMeshMaterial(mesh, material).error() == E::Busy);
+  CHECK(pairs == 0);
+  host.beginServiceInterval();
+  CHECK(remote->previewMeshMaterial(mesh, masked).error() == E::UnsupportedMaterial);
+  remote.reset();
+  CHECK(local->previewMesh(mesh).error() == ac::PreviewError::Busy);
+  CHECK(local->previewMeshMaterial(mesh, material).error() == E::Busy);
+  host.beginServiceInterval();
+  REQUIRE(local->previewMeshMaterial(mesh, material).isOk());
+  CHECK(local->previewMesh(mesh).error() == ac::PreviewError::Busy);
+  CHECK(pairs == 1);
+}
+
+TEST_CASE("a pair-only provider keeps the first full catalog and validates both roles", "[runtime][assets][preview-pair]") {
+  using Pair = ac::MeshMaterialPreviewResult;
+  using E = ac::MeshMaterialPreviewError;
+  const auto mesh = record(as::CatalogAssetType::Mesh, "mesh");
+  const auto material = record(as::CatalogAssetType::Material, "material");
+  CatalogFixture f;
+  const AssetHost::PreviewProvider pairOnly{
+      .available = [] { return true; },
+      .renderPair = [](const as::AssetGuid&, const as::AssetGuid&, const as::StaticMeshAssetData&,
+                       const as::MaterialAssetData&, const as::TextureAssetData&) {
+        FAIL("no cooked files in the snapshot fixture");
+        return Pair::Err(E::RenderFailed);
+      }};
+  AssetHost host(f.path.string(), nullptr, pairOnly);
+  auto connection = host.connect();
+  SECTION("list-first retains the full records, even though their files are missing") {
+    f.write({mesh, material});
+    REQUIRE(connection->listAssets().isOk());
+    f.write({});
+    CHECK(connection->previewMesh(mesh.guid).error() == ac::PreviewError::Unsupported);
+    CHECK(connection->previewMeshMaterial(material.guid, mesh.guid).error() == E::NotMesh);
+    host.beginServiceInterval();
+    CHECK(connection->previewMeshMaterial(mesh.guid, mesh.guid).error() == E::NotMaterial);
+    host.beginServiceInterval();
+    CHECK(connection->previewMeshMaterial(mesh.guid, guid("unknown material")).error() == E::UnknownMaterial);
+    host.beginServiceInterval();
+    CHECK(connection->previewMeshMaterial(mesh.guid, material.guid).error() == E::InvalidMaterial);
+  }
+  SECTION("pair-first retains a catalog initialization failure") {
+    CHECK(connection->previewMeshMaterial(mesh.guid, material.guid).error() == E::CatalogUnavailable);
+    f.write({mesh, material});
+    host.beginServiceInterval();
+    CHECK(host.connect()->previewMeshMaterial(mesh.guid, material.guid).error() == E::CatalogUnavailable);
+    CHECK(host.connect()->listAssets().error() == ac::AssetError::CatalogUnavailable);
+  }
+  SECTION("pair-first snapshots a missing record even when the request is refused") {
+    f.write({mesh});
+    CHECK(connection->previewMeshMaterial(guid("unknown mesh"), material.guid).error() == E::UnknownMesh);
+    f.write({mesh, material});
+    host.beginServiceInterval();
+    CHECK(host.connect()->previewMeshMaterial(mesh.guid, material.guid).error() == E::UnknownMaterial);
+    CHECK(host.connect()->listAssets().value().size() == 1);
+  }
+}

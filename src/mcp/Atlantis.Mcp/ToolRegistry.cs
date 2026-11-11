@@ -45,6 +45,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh", "assets.previewMesh", "Render one cooked mesh as a fixed geometry PNG, without scene materials or lighting.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.preview_mesh_material", "assets.previewMeshMaterial",
+            "Render one cooked mesh with one supported opaque PBR material under fixed preview lighting.",
+            AssetModel, ToolSchemas.Parameters(("meshGuid", ToolSchemas.String), ("materialGuid", ToolSchemas.String))),
         Declare("assets.import", "assets.import", "Register a project inbox source or resume a committed import.", RebuildModel,
             ToolSchemas.ImportParameters()),
         Declare("assets.import_status", "assets.importStatus", "Read-only status for a retained import job or the latest admission.", RebuildModel,
@@ -136,6 +139,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
+            if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
@@ -216,12 +220,30 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         if (!outcome.IsOk)
             return Forward(JsonValue.NewObject().Set("err", JsonValue.String(outcome.Error.ToString())), true);
         var image = outcome.Value;
+        return ForwardPreview(JsonValue.NewObject().Set("guid", Codec.Encode(image.Guid)), image.Width, image.Height, image.PngBytes);
+    }
+
+    private CallToolResult PreviewMeshMaterial(JsonValue parameters)
+    {
+        if (!AssetGuid.TryParse(parameters.Find("meshGuid")?.AsString, out AssetGuid meshGuid) || meshGuid.IsNil)
+            return Error("InvalidArguments: expected a non-nil canonical mesh GUID");
+        if (!AssetGuid.TryParse(parameters.Find("materialGuid")?.AsString, out AssetGuid materialGuid) || materialGuid.IsNil)
+            return Error("InvalidArguments: expected a non-nil canonical material GUID");
+        var outcome = session.PreviewMeshMaterial(meshGuid, materialGuid);
+        if (!outcome.IsOk)
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String(outcome.Error.ToString())), true);
+        var image = outcome.Value;
+        return ForwardPreview(JsonValue.NewObject().Set("meshGuid", Codec.Encode(image.MeshGuid))
+            .Set("materialGuid", Codec.Encode(image.MaterialGuid)), image.Width, image.Height, image.PngBytes);
+    }
+
+    private static CallToolResult ForwardPreview(JsonValue metadata, int width, int height, byte[] png)
+    {
         const string mime = "image/png";
-        JsonValue metadata = JsonValue.NewObject().Set("guid", Codec.Encode(image.Guid))
-            .Set("width", JsonValue.Number((long)image.Width)).Set("height", JsonValue.Number((long)image.Height))
+        metadata.Set("width", JsonValue.Number((long)width)).Set("height", JsonValue.Number((long)height))
             .Set("mimeType", JsonValue.String(mime));
         CallToolResult result = Forward(JsonValue.NewObject().Set("ok", metadata), false);
-        result.Content = [.. result.Content, ImageContentBlock.FromBytes(image.PngBytes, mime)];
+        result.Content = [.. result.Content, ImageContentBlock.FromBytes(png, mime)];
         return result;
     }
 

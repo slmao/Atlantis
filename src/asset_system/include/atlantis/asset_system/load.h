@@ -23,6 +23,7 @@ namespace atlantis::asset_system {
 
 struct AssetCatalogRecord;
 enum class MeshPreviewLoadError { InvalidMesh, TooLarge };
+enum class PreviewArtifactLoadError { Invalid, TooLarge };
 inline constexpr std::size_t kPreviewMeshMaxArtifactBytes = 32 * 1024 * 1024;
 inline constexpr std::size_t kPreviewMeshMaxMetadataBytes = 64 * 1024;
 inline constexpr std::uint32_t kPreviewMeshMaxIndices = 1'500'000;

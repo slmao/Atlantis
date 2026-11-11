@@ -613,6 +613,26 @@ struct RemoteServer::State {
       const auto error = result.isErr() ? result.error() : ca::PreviewError::RenderFailed;
       return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
     }
+    if (name == "assets.previewMeshMaterial") {
+      namespace ca = connection::assets;
+      const auto* mesh = p.find("meshGuid");
+      const auto* material = p.find("materialGuid");
+      const auto meshGuid = mesh ? codec::decodeAsset(*mesh) : std::nullopt;
+      const auto materialGuid = material ? codec::decodeAsset(*material) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != 2 || !meshGuid || *meshGuid == asset_system::AssetGuid{} ||
+          !materialGuid || *materialGuid == asset_system::AssetGuid{})
+        return errorResponse(requestId, "BadRequest", "asset pair preview requires non-nil canonical mesh and material GUIDs");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto result = client.assets
+          ? client.assets->previewMeshMaterial(*meshGuid, *materialGuid)
+          : ca::MeshMaterialPreviewResult::Err(ca::MeshMaterialPreviewError::Unsupported);
+      if (result.isOk()) {
+        if (auto image = ca::encodeMeshMaterialPreview(result.value(), *meshGuid, *materialGuid))
+          return response(requestId, codec::ok(std::move(*image)));
+      }
+      const auto error = result.isErr() ? result.error() : ca::MeshMaterialPreviewError::RenderFailed;
+      return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
+    }
     if (name.starts_with("assets.")) {
       std::optional<asset_system::AssetGuid> guid;
       if (!p.isObject() || (name != "assets.list" && name != "assets.get"))

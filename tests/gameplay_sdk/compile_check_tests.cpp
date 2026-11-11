@@ -37,6 +37,8 @@ TEST_CASE("gameplay assets: the facade borrows Connection and returns independen
   auto list = sdk.listAssets(); REQUIRE(list.isOk());
   CHECK(sdk.getAsset(list.value()[0].guid).value().source == list.value()[0].source);
   CHECK(sdk.previewMesh(list.value()[0].guid).error() == a::PreviewError::Unsupported);
+  const auto material = atlantis::asset_system::deriveAssetGuid(endpoint.guid, "material");
+  CHECK(sdk.previewMeshMaterial(endpoint.guid, material).error() == a::MeshMaterialPreviewError::Unsupported);
   list.value()[0].source = "client copy";
   CHECK(sdk.listAssets().value()[0].source == "assets:mesh.txt");
 }

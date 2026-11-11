@@ -109,6 +109,44 @@ void buildTextureUploadPass(atlantis::render_graph::RenderGraphBuilder& builder,
   });
 }
 
+[[nodiscard]] std::optional<MaterialRealizationError> createBaseColorUpload(
+    atlantis::rhi::Device& device, const atlantis::asset_system::TextureAssetData& data,
+    RealizedMaterialCandidate& candidate) {
+  auto texture = device.createSampledTexture(SampledTextureCreateParams{
+      .extent = Extent2D{data.width, data.height},
+      .format = toSampledTextureFormat(data.colorSpace, data.layout),
+      .mipLevelCount = data.mipCount,
+      .debugName = ATL_DEBUG_NAME("texture:" + atlantis::asset_system::toHexString(candidate.textureAssetId))});
+  if (texture.isErr()) return MaterialRealizationError::SampledTextureCreateFailed;
+  candidate.newSampledTexture = std::move(texture.value());
+
+  const auto stagingBytes = data.pixelBytes.size();
+  auto staging = device.createBuffer(
+      {.purpose = BufferPurpose::Staging,
+       .sizeBytes = stagingBytes,
+       .debugName = ATL_DEBUG_NAME("staging:texture:" + atlantis::asset_system::toHexString(candidate.textureAssetId))});
+  if (staging.isErr()) return MaterialRealizationError::StagingBufferCreateFailed;
+  std::memcpy(staging.value()->mappedData(), data.pixelBytes.data(), stagingBytes);
+  candidate.stagingBuffer = std::move(staging.value());
+  candidate.uploadRegions = textureUploadRegions(data);
+  return std::nullopt;
+}
+
+[[nodiscard]] auto createMaterialSampler(atlantis::rhi::Device& device,
+                                         const atlantis::asset_system::MaterialAssetData& data,
+                                         [[maybe_unused]] const RealizedMaterialCandidate& candidate,
+                                         std::uint32_t deepestMipLevel) {
+  const Filter filter = toFilter(data.filter);
+  return device.createSampler(SamplerCreateParams{
+      .filter = filter,
+      .addressMode = toAddressMode(data.addressMode),
+      .mipFilter = deepestMipLevel > 0 && filter == Filter::Linear
+                       ? atlantis::rhi::MipFilter::Linear
+                       : atlantis::rhi::MipFilter::Nearest,
+      .maxLod = static_cast<float>(deepestMipLevel),
+      .debugName = ATL_DEBUG_NAME("sampler:" + atlantis::asset_system::toHexString(candidate.materialAssetId))});
+}
+
 struct ShaderPairRef {
   const atlantis::rhi::VertexInputLayout* vertexInputLayout;
   const std::vector<std::uint32_t>* vertexSpirv;
@@ -392,26 +430,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     // same frame -- reuse its own real pointer, no new upload.
     sampledTexturePtr = existing->second;
   } else {
-    auto textureResult = device.createSampledTexture(SampledTextureCreateParams{
-        .extent = Extent2D{textureData.width, textureData.height},
-        .format = toSampledTextureFormat(textureData.colorSpace, textureData.layout),
-        .mipLevelCount = textureData.mipCount,
-        .debugName = ATL_DEBUG_NAME("texture:" + atlantis::asset_system::toHexString(materialData.textureAsset))});
-    if (textureResult.isErr()) return ResultT::Err(MaterialRealizationError::SampledTextureCreateFailed);
-    candidate.newSampledTexture = std::move(textureResult.value());
-
-    // Spec 0038: the payload size is layout-derived -- pixelBytes.size()
-    // is exactly the upload size for both Rgba8 and Bc7 layouts.
-    const std::size_t stagingBytes = textureData.pixelBytes.size();
-    auto stagingResult =
-        device.createBuffer({.purpose = BufferPurpose::Staging,
-                             .sizeBytes = stagingBytes,
-                             .debugName = ATL_DEBUG_NAME("staging:texture:" + atlantis::asset_system::toHexString(materialData.textureAsset))});
-    if (stagingResult.isErr()) return ResultT::Err(MaterialRealizationError::StagingBufferCreateFailed);
-    std::memcpy(stagingResult.value()->mappedData(), textureData.pixelBytes.data(), stagingBytes);
-    candidate.stagingBuffer = std::move(stagingResult.value());
-    candidate.uploadRegions = textureUploadRegions(textureData);
-
+    if (const auto error = createBaseColorUpload(device, textureData, candidate)) return ResultT::Err(*error);
     sampledTexturePtr = candidate.newSampledTexture.get();
   }
 
@@ -514,15 +533,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   if (emissiveTexturePtr != nullptr) {
     deepestMipLevel = std::max(deepestMipLevel, emissiveTexturePtr->mipLevelCount() - 1);
   }
-  const atlantis::rhi::Filter samplerFilter = toFilter(materialData.filter);
-  auto samplerResult = device.createSampler(SamplerCreateParams{
-      .filter = samplerFilter,
-      .addressMode = toAddressMode(materialData.addressMode),
-      .mipFilter = deepestMipLevel > 0 && samplerFilter == atlantis::rhi::Filter::Linear
-                       ? atlantis::rhi::MipFilter::Linear
-                       : atlantis::rhi::MipFilter::Nearest,
-      .maxLod = static_cast<float>(deepestMipLevel),
-      .debugName = ATL_DEBUG_NAME("sampler:" + atlantis::asset_system::toHexString(materialAssetId))});
+  auto samplerResult = createMaterialSampler(device, materialData, candidate, deepestMipLevel);
   if (samplerResult.isErr()) return ResultT::Err(MaterialRealizationError::SamplerCreateFailed);
   candidate.sampler = std::move(samplerResult.value());
 
@@ -810,6 +821,47 @@ atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefault
        .finalState = atlantis::rhi::ResourceState::ShaderRead}};
   render_graph::execute(compileResult.value(), bindings, commandList);
   return ResultT::Ok(std::move(result));
+}
+
+atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPreviewPbrMaterial(
+    atlantis::rhi::Device& device, atlantis::rhi::CommandList& list, atlantis::rhi::PipelineCreateParams shader,
+    atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
+    const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture& whiteEmissive) {
+  using E = MaterialRealizationError;
+  using R = atlantis::Result<RealizedMaterialCandidate, E>;
+  namespace rg = atlantis::render_graph;
+  ATLANTIS_CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit &&
+                 material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque &&
+                 material.normalMapTexture == 0 && material.emissiveTexture == 0);
+  RealizedMaterialCandidate candidate;
+  candidate.materialAssetId = materialId;
+  candidate.textureAssetId = material.textureAsset;
+  if (const auto error = createBaseColorUpload(device, texture, candidate)) return R::Err(*error);
+  auto sampler = createMaterialSampler(device, material, candidate, texture.mipCount - 1);
+  if (sampler.isErr()) return R::Err(E::SamplerCreateFailed);
+  candidate.sampler = std::move(sampler.value());
+
+  shader.colorFormat = atlantis::rhi::HdrFormat::Rgba16Float;
+  shader.depthFormat = DepthFormat::D32Sfloat;
+  shader.pushConstantSizeBytes = pushConstantSizeBytesFor(material.kind);
+  shader.sampledTextureBindingCount = sampledTextureBindingCountFor(material.kind, false, false);
+  auto made = createMaterial(
+      device, shader, candidate.newSampledTexture.get(), candidate.sampler.get(), pushConstantLayoutFor(material.kind),
+      {material.baseColorFactor[0], material.baseColorFactor[1], material.baseColorFactor[2], material.baseColorFactor[3]},
+      material.metallicFactor, material.roughnessFactor, atlantis::renderer::MaterialEnvironmentBinding::None,
+      nullptr, 0.0f, 0.0f, {}, 0.0f, 0.0f, 0.0f, {}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, &whiteEmissive);
+  if (made.isErr()) return R::Err(E::MaterialCreateFailed);
+  candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(made.value()));
+
+  rg::RenderGraphBuilder upload;
+  buildTextureUploadPass(upload, **candidate.stagingBuffer, *candidate.newSampledTexture, candidate.uploadRegions);
+  const auto compiled = upload.compile();
+  ATLANTIS_CHECK_MSG(compiled.isOk(), "a one-pass preview upload graph always compiles");
+  const std::vector<rg::ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .sampledTexture = candidate.newSampledTexture.get(),
+       .finalState = atlantis::rhi::ResourceState::ShaderRead}};
+  rg::execute(compiled.value(), bindings, list);
+  return R::Ok(std::move(candidate));
 }
 
 bool isSrgbFormat(atlantis::rhi::Format format) {

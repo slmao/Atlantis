@@ -46,7 +46,7 @@ internal static partial class Program
                     JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!, cancellationToken: deadline.Token);
                 Check(result.IsError != true, version + " " + c.Tool + " succeeds");
                 CheckVersionResult(result, c.Result, legacy, version + " " + c.Tool);
-                if (c.Method == "assets.previewMesh") CheckPreviewImage(result, version + " preview image");
+                if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial") CheckPreviewImage(result, version + " preview image");
             }
 
             await using McpClient queue = await VersionClient("--m3-host", version, deadline.Token);

@@ -134,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 43 tools", tools.Count == 43 && tools.Select(t => t.Name).Distinct().Count() == 43);
+            Require("real host discovers exactly 44 tools", tools.Count == 44 && tools.Select(t => t.Name).Distinct().Count() == 44);
         }
         var unavailableCreation = await first.CallToolAsync("authoring.create_scene",
             new Dictionary<string, object?> { ["name"] = "requires_opt_in" }, cancellationToken: _token);
@@ -197,6 +197,17 @@ internal sealed class IntegrationTest
             && metadata?.Find("guid")?.AsString == previewGuid && metadata.Find("mimeType")?.AsString == "image/png"
             && metadata.Find("width")?.NumberText == "256" && metadata.Find("height")?.NumberText == "256"
             && metadata.Find("pngBase64") is null);
+        const string pairMesh = "58e57a64-ad60-4925-b6d6-6561540e8476"; // textured_quad_left
+        const string pairMaterial = "1542b95d-74b5-48ba-82be-eddbe2843129"; // pbr_dielectric_rough
+        Reply pair = await Call(first, "assets.preview_mesh_material",
+            Object("meshGuid", String(pairMesh)).Set("materialGuid", String(pairMaterial)));
+        var pairImage = pair.Mcp.Content.OfType<ImageContentBlock>().Single();
+        JsonValue? pairMetadata = pair.Wire.Find("ok");
+        Require("live pair preview returns one bounded PNG with both GUIDs",
+            pair.Mcp.Content.Count == 2 && pairImage.MimeType == "image/png" && pairImage.DecodedData.Length is > 33 and <= 512 * 1024
+            && pairMetadata?.Find("meshGuid")?.AsString == pairMesh && pairMetadata.Find("materialGuid")?.AsString == pairMaterial
+            && pairMetadata.Find("mimeType")?.AsString == "image/png" && pairMetadata.Find("width")?.NumberText == "256"
+            && pairMetadata.Find("height")?.NumberText == "256" && pairMetadata.Find("pngBase64") is null);
         JsonValue before = await Capture(first, "before");
         string originalName = nodes.Items.Single(n => n.Find("node")?.AsString == camera).Find("name")!.AsString;
         await Query(first, "authoring.drain_events");

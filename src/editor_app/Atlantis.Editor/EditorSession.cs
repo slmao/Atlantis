@@ -627,7 +627,7 @@ public sealed class EditorWorker : IDisposable
         { _post(() => done(null, "the target is no longer available")); return; }
         _inspector.Refresh(node);
         InspectorField? current = _inspector.Fields.FirstOrDefault(f => f.Component == component && f.Field.Id == field);
-        var picker = current is null ? null : AssetReferencePicker.Capture(++_referenceRequest, node, current);
+        var picker = current is null ? null : AssetReferencePicker.Capture(++_referenceRequest, node, current, _inspector.Fields);
         if (picker is null) { _post(() => done(null, "the reference cannot be read or edited")); return; }
         _referencePicker = picker;
         _post(() => done(picker.Target, null));
@@ -651,7 +651,11 @@ public sealed class EditorWorker : IDisposable
         _post(settled);
     });
 
-    public void RefreshInspector() => Enqueue(_ => PostInspector());
+    public void RefreshInspector(Action? settled = null) => Enqueue(_ =>
+    {
+        PostInspector();
+        if (settled is not null) _post(settled);
+    });
 
     private void ReferenceInvalidated(string? before)
     {

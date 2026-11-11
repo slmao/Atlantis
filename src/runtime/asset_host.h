@@ -1,7 +1,9 @@
 #pragma once
 
 #include <atlantis/connection/asset_connection.h>
+#include <atlantis/asset_system/material_types.h>
 #include <atlantis/asset_system/static_mesh_asset_data.h>
+#include <atlantis/asset_system/texture_types.h>
 
 #include <functional>
 #include <memory>
@@ -19,6 +21,10 @@ class AssetHost {
     std::function<bool()> available;
     std::function<connection::assets::MeshPreviewResult(const asset_system::AssetGuid&,
                                                         asset_system::StaticMeshAssetData)> render;
+    std::function<connection::assets::MeshMaterialPreviewResult(
+        const asset_system::AssetGuid&, const asset_system::AssetGuid&,
+        const asset_system::StaticMeshAssetData&, const asset_system::MaterialAssetData&,
+        const asset_system::TextureAssetData&)> renderPair{};
   };
   explicit AssetHost(std::string catalogPath, AssetRebuildHost* rebuild = nullptr, PreviewProvider preview = {});
   ~AssetHost();

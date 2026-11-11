@@ -4,6 +4,8 @@
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/load.h>
+#include <atlantis/asset_system/load_material.h>
+#include <atlantis/asset_system/load_texture.h>
 #include <atlantis/log.h>
 
 #include <algorithm>
@@ -48,7 +50,9 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
     for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source});
-    if (rebuild_ || preview_.render) catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
+    if (rebuild_ || preview_.render || preview_.renderPair) {
+      catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
+    }
     ready_ = true;
   }
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override {
@@ -83,6 +87,53 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     return preview_.render(guid, std::move(mesh.value()));
   }
+  ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
+                                                     const as::AssetGuid& materialGuid) override {
+    using E = ac::MeshMaterialPreviewError;
+    using R = ac::MeshMaterialPreviewResult;
+    ATLANTIS_CHECK(meshGuid != as::AssetGuid{} && materialGuid != as::AssetGuid{});
+    if (!preview_.renderPair) return R::Err(E::Unsupported);
+    if (!preview_.available || !preview_.available()) return R::Err(E::Unavailable);
+    if (std::exchange(previewAdmitted_, true)) return R::Err(E::Busy);
+    initialize();
+    if (!catalog_) return R::Err(E::CatalogUnavailable);
+
+    const auto* meshRecord = catalog_->find(meshGuid);
+    if (!meshRecord) return R::Err(E::UnknownMesh);
+    if (meshRecord->type != as::CatalogAssetType::Mesh) return R::Err(E::NotMesh);
+    const auto* materialRecord = catalog_->find(materialGuid);
+    if (!materialRecord) return R::Err(E::UnknownMaterial);
+    if (materialRecord->type != as::CatalogAssetType::Material) return R::Err(E::NotMaterial);
+    auto material = as::loadPreviewMaterialAsset(*materialRecord);
+    if (material.isErr()) {
+      return R::Err(material.error() == as::PreviewArtifactLoadError::TooLarge ? E::TooLarge : E::InvalidMaterial);
+    }
+    const auto& mat = material.value();
+    if (mat.kind != as::MaterialKind::PbrDirectLit || mat.alphaMode != as::MaterialAlphaMode::Opaque ||
+        mat.normalMapTexture != 0 || mat.emissiveTexture != 0 ||
+        std::ranges::any_of(mat.emissiveFactor, [](float value) { return value != 0.0f; })) {
+      return R::Err(E::UnsupportedMaterial);
+    }
+
+    const auto* textureRecord = catalog_->find(mat.textureAsset);
+    const auto& dependencies = materialRecord->dependencies;
+    if (!textureRecord || textureRecord->type != as::CatalogAssetType::Texture || !textureRecord->dependencies.empty() ||
+        dependencies.size() != 1 || dependencies.front() != textureRecord->guid) {
+      return R::Err(E::DependencyUnavailable);
+    }
+    auto mesh = as::loadStaticMeshPreviewAsset(*meshRecord);
+    if (mesh.isErr()) {
+      return R::Err(mesh.error() == as::MeshPreviewLoadError::TooLarge ? E::TooLarge : E::InvalidMesh);
+    }
+    auto texture = as::loadPreviewBaseColorTexture(*textureRecord);
+    if (texture.isErr()) {
+      return R::Err(texture.error() == as::PreviewArtifactLoadError::TooLarge ? E::TooLarge : E::DependencyUnavailable);
+    }
+    if (texture.value().colorSpace != as::TextureColorSpace::Srgb || texture.value().layout != as::TextureDataLayout::Rgba8) {
+      return R::Err(E::UnsupportedMaterial);
+    }
+    return preview_.renderPair(meshGuid, materialGuid, mesh.value(), mat, texture.value());
+  }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
     if (auto error = rebuild_->admissionError()) return ac::RebuildStartResult::Err(*error);
@@ -108,6 +159,10 @@ class BorrowedAssets final : public connection::AssetConnection {
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
+  ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
+                                                    const as::AssetGuid& materialGuid) override {
+    return host_.previewMeshMaterial(meshGuid, materialGuid);
+  }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
   ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {

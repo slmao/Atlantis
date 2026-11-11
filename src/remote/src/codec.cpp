@@ -175,6 +175,10 @@ std::optional<ca::PreviewError> decodePreviewError(const Value& value) {
   return rebuildToken(&value, ca::PreviewError::RenderFailed);
 }
 
+std::optional<ca::MeshMaterialPreviewError> decodeMeshMaterialPreviewError(const Value& value) {
+  return rebuildToken(&value, ca::MeshMaterialPreviewError::RenderFailed);
+}
+
 Value encode(const ca::ImportJob& job) {
   Value out = Value::object();
   out.set("id", encodeAsset(job.id.value));
