@@ -1011,9 +1011,15 @@ milestone being listed does not authorize starting it — see Section 1.
   [PR #340](https://github.com/slmao/Atlantis/pull/340).
   [ADR-0148](adr/0148-scene-save-as-and-explicit-launch.md) is accepted.
   [Spec 0089](specs/0089-new-hand-authored-scene.md) and
-  [Plan 0089](plans/0089-new-hand-authored-scene.md) propose shared creation
-  of a camera-only starter using the same saved-scene build and launch.
-  Preview and broader pipeline management remain future work.
+  [Plan 0089](plans/0089-new-hand-authored-scene.md) deliver shared creation
+  of a camera-only starter in merged [PR #342](https://github.com/slmao/Atlantis/pull/342).
+  [Spec 0090](specs/0090-saved-scene-build-open.md) and
+  [Plan 0090](plans/0090-saved-scene-build-open.md) deliver the saved-scene
+  build and independent open entry in merged [PR #344](https://github.com/slmao/Atlantis/pull/344).
+  [Spec 0091](specs/0091-static-mesh-preview.md) and
+  [Plan 0091](plans/0091-static-mesh-preview.md) propose a read-only mesh
+  geometry preview through the shared Assets surface. Broader preview and
+  pipeline management remain future work.
   Other future work, each its own
   Spec when it starts: C#-authored gameplay
   components (supersedes Spec 0057's no-custom-components ruling); console and drag-and-drop panels;
