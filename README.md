@@ -237,7 +237,8 @@ asset is available after restarting into the new generation.
 
 With a mesh selected, choose a material and click **Preview with material**
 to see the pair under a fixed white directional light. This preview accepts
-opaque base PBR materials with one sRGB RGBA8 texture. The same operation
+opaque base PBR materials with one sRGB RGBA8 texture and no normal map
+or emissive input. The same operation
 is available as `atlantis --json asset preview-material <mesh-guid> <material-guid>`,
 C++ `previewMeshMaterial`, C# `Assets.PreviewMeshMaterial` and MCP
 `assets.preview_mesh_material`.

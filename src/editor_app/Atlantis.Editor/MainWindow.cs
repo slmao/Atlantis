@@ -37,6 +37,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Assets;
+using SceneAddress = Atlantis.Gameplay.Authoring.SceneAddress;
 using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
@@ -1578,6 +1579,9 @@ public sealed class MainWindow : Window
 
     private void BuildInspector(InspectorSnapshot snapshot)
     {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        var focusedAddress = focused is Button { Tag: "asset chooser", DataContext: SceneAddress address }
+            ? address : (SceneAddress?)null;
         _inspectorShown = snapshot;
         _inspectorDeferred = null;
         _nameBox = null;
@@ -1649,6 +1653,16 @@ public sealed class MainWindow : Window
             add.Children.Add(choice);
             _inspectorPanel.Children.Add(add);
         }
+        if (focusedAddress is SceneAddress previous) FocusReferenceLauncher(previous);
+    }
+
+    private void FocusReferenceLauncher(SceneAddress address)
+    {
+        if (_referenceBusy || _referenceSessionFailed || _selection.Node != address.Node ||
+            _inspectorShown?.Subject != address.Node) return;
+        _inspectorPanel.GetVisualDescendants().OfType<Button>()
+            .FirstOrDefault(b => b.Tag as string == "asset chooser" &&
+                b.DataContext is SceneAddress current && current == address)?.Focus();
     }
 
     private void UpdateReferenceButtons()
@@ -1703,9 +1717,19 @@ public sealed class MainWindow : Window
         Dispatcher.UIThread.Post(() =>
         {
             if (worker is null || !ReferenceEquals(worker, _worker) || launch != _referenceLaunch || _referenceSessionFailed) return;
+            var manager = TopLevel.GetTopLevel(this)?.FocusManager;
+            var focusBeforeRefresh = manager?.GetFocusedElement();
             focus?.Focus(); // return to the launcher, so an obsolete focused TextBox cannot defer the fresh snapshot
             _inspectorDeferred = null;
-            worker.RefreshInspector();
+            worker.RefreshInspector(() =>
+            {
+                if (!ReferenceEquals(worker, _worker) || launch != _referenceLaunch ||
+                    focus?.DataContext is not SceneAddress address) return;
+                var current = manager?.GetFocusedElement();
+                if (current is null || ReferenceEquals(current, this) || ReferenceEquals(current, focus) ||
+                    ReferenceEquals(current, focusBeforeRefresh))
+                    FocusReferenceLauncher(address);
+            });
         });
     }
 
@@ -1734,6 +1758,8 @@ public sealed class MainWindow : Window
             {
                 row.ColumnDefinitions = new ColumnDefinitions("110,*,Auto,Auto");
                 var choose = new Button { Content = "Choose…", Tag = "asset chooser", IsEnabled = !_referenceBusy && !_referenceSessionFailed };
+                if (sourceSubject is EntityGuid subject)
+                    choose.DataContext = new SceneAddress(subject, field.Component, field.Field.Id);
                 // The ancestor tunnel runs before Button's class focus handler.
                 row.AddHandler(InputElement.PointerPressedEvent, (_, e) =>
                 {

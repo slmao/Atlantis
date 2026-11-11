@@ -651,7 +651,11 @@ public sealed class EditorWorker : IDisposable
         _post(settled);
     });
 
-    public void RefreshInspector() => Enqueue(_ => PostInspector());
+    public void RefreshInspector(Action? settled = null) => Enqueue(_ =>
+    {
+        PostInspector();
+        if (settled is not null) _post(settled);
+    });
 
     private void ReferenceInvalidated(string? before)
     {

@@ -131,9 +131,10 @@ public static partial class Program
         AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
         async Task<AssetReferencePickerWindow> Open()
         {
+            tabs.SelectedIndex = 0;
             await NameUiWait(() => Launcher().IsEnabled && window.IsEffectivelyEnabled, "material chooser launcher is enabled");
             var box = MaterialRow().Children.OfType<TextBox>().Single();
-            box.Focus();
+            await NameUiWait(() => box.Focus() && box.IsFocused, "Inspector field accepts keyboard focus");
             if (!NameUiKey(box, Key.F4)) throw new InvalidOperationException("material chooser F4 was not routed");
             await NameUiWait(() => Picker() is { } picker && PickerField<AssetBrowser>(picker, "_browser").State == "Ready",
                 "real material chooser opened");
@@ -167,7 +168,11 @@ public static partial class Program
             try
             {
                 Click(button);
-                await received.Task.WaitAsync(deadline.Token);
+                if (await Task.WhenAny(received.Task, peer).WaitAsync(deadline.Token) == peer)
+                {
+                    await peer;
+                    throw new InvalidOperationException("Preview connection closed before sending the pair");
+                }
                 await whileWaiting();
                 release.TrySetResult();
                 await peer;
@@ -181,7 +186,12 @@ public static partial class Program
         }
 
         AssetReferencePickerWindow? activeChooser = null;
-        await HoldPair(pairButton, offSceneMesh, baseMaterial, async () => activeChooser = await Open(), refusal: null);
+        await HoldPair(pairButton, offSceneMesh, baseMaterial, async () =>
+        {
+            activeChooser = await Open();
+            // Exercise modal priority even if the owner tab is changed by code.
+            tabs.SelectedIndex = 1;
+        }, refusal: null);
         var chooser = activeChooser!;
         var chooserImage = PickerControl<Image>(chooser, "PreviewImage");
         var chooserState = PickerControl<TextBlock>(chooser, "PreviewState");
@@ -189,6 +199,7 @@ public static partial class Program
         Check("modal drops an admitted Assets success even while the Assets tab remains selected",
             tabs.SelectedIndex == 1 && assetsImage.Source is null && assetsState.Text == "" &&
             chooserImage.Source is null && chooserState.Text == "" && !pairButton.IsEnabled);
+        tabs.SelectedIndex = 0;
         Check("chooser labels the exact same-node mesh read at opening",
             chooser.Target.OpeningMesh == openingMesh && PickerField<TextBlock>(chooser, "_openingMesh").Text?.Contains(
                 "Mesh at opening:", StringComparison.Ordinal) == true && PickerField<TextBlock>(chooser, "_openingMesh").Text!
@@ -231,9 +242,14 @@ public static partial class Program
             !ReferenceEquals(oldChooser, chooser) && PickerControl<Image>(chooser, "PreviewImage").Source is null &&
             PickerControl<TextBlock>(chooser, "PreviewState").Text == "" && PickerControl<Button>(chooser, "PreviewButton").IsEnabled);
         var chosen = chooser;
-        Button launchControl = Launcher();
-        bool launcherFocused = false;
-        launchControl.GotFocus += (_, _) => launcherFocused = true;
+        var launchControl = Field<Button>("_referenceFocus");
+        var restoredLauncherFocus = false;
+        void ObserveFocus(object? sender, FocusChangedEventArgs args)
+        {
+            if (ReferenceEquals(args.Source, launchControl) || args.Source is Button { Tag: "asset chooser" })
+                restoredLauncherFocus = true;
+        }
+        window.GotFocus += ObserveFocus;
         await HoldPair(PickerControl<Button>(chosen, "PreviewButton"), openingMesh, baseMaterial, async () =>
         {
             Check("Confirm stays enabled during an admitted pair request", PickerField<Button>(chosen, "_confirm").IsEnabled);
@@ -241,20 +257,32 @@ public static partial class Program
             await NameUiWait(async () => Picker() is null && (await Read(materialAddress)).AsAsset() == baseMaterial,
                 "actual Confirm updates the document before the preview settles");
         });
-        await NameUiWait(() => Launcher().IsEnabled && launcherFocused, "Confirm worker settles and restores focus");
+        await NameUiWait(() => Launcher().IsEnabled &&
+            MaterialRow().Children.OfType<TextBox>().Single().Text == baseMaterial.ToString(),
+            "Confirm worker refreshes the editable field");
+        window.GotFocus -= ObserveFocus;
+        var focused = window.FocusManager?.GetFocusedElement();
         Check("Confirm restores launcher focus and late preview stays hidden",
-            launcherFocused && PickerControl<Image>(chosen, "PreviewImage").Source is null && assetsImage.Source is null);
+            ReferenceEquals(focused, Launcher()) && PickerControl<Image>(chosen, "PreviewImage").Source is null &&
+            assetsImage.Source is null,
+            $"launcher focus observed during refresh: {restoredLauncherFocus}; focused after refresh: {focused?.GetType().Name ?? "none"}");
+        async Task<bool> Applied()
+        {
+            var snapshot = await Apply();
+            return snapshot.Request is { State: ApplyState.Applied } applied &&
+                applied.Receipt.DocumentRevision == snapshot.CurrentDocumentRevision;
+        }
         Click(play);
-        await NameUiWait(async () => !(await Status()).Paused && (await Apply()).Request?.State == ApplyState.Applied,
+        await NameUiWait(async () => !(await Status()).Paused && await Applied(),
             "resume applies the confirmed edit", 60);
         ulong generation = (await Status()).SceneGeneration;
         Click(undo);
         await NameUiWait(async () => redo.IsEnabled && (await Read(materialAddress)).Equals(originalMaterial) &&
-            (await Status()).SceneGeneration > generation && (await Apply()).Request?.State == ApplyState.Applied, "Undo applies", 60);
+            (await Status()).SceneGeneration > generation && await Applied(), "Undo applies", 60);
         generation = (await Status()).SceneGeneration;
         Click(redo);
         await NameUiWait(async () => undo.IsEnabled && (await Read(materialAddress)).AsAsset() == baseMaterial &&
-            (await Status()).SceneGeneration > generation && (await Apply()).Request?.State == ApplyState.Applied, "Redo applies", 60);
+            (await Status()).SceneGeneration > generation && await Applied(), "Redo applies", 60);
         Check("existing Confirm, apply, Undo and Redo work without writing the scene source",
             File.ReadAllBytes(originalDocument.SourcePath).SequenceEqual(originalSource));
 

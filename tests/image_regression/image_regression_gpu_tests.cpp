@@ -158,8 +158,10 @@ TEST_CASE("Headless mesh material preview matches its golden and distinguishes t
   const auto ash = renderMeshMaterialPreviewPixels(kPreviewAshWoodGuid);
   REQUIRE(stained);
   REQUIRE(ash);
-  CHECK(dielectric->rgba8 != stained->rgba8);
-  CHECK(stained->rgba8 != ash->rgba8);  // both materials reference the same texture
+  const bool differentTexture = dielectric->rgba8 != stained->rgba8;
+  const bool differentFactors = stained->rgba8 != ash->rgba8;  // same texture
+  CHECK(differentTexture);
+  CHECK(differentFactors);
 }
 
 TEST_CASE("Headless material preview samples an uploaded nonzero RGBA8 mip",
