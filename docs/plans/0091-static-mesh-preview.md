@@ -35,7 +35,8 @@ using the shared clients and an isolated, disposable rendering context.
 - Runtime `src/runtime/{asset_host.h,asset_host.cpp,main.cpp,CMakeLists.txt}`
   for the executable dispatch boundary and host composition;
   `src/runtime/include/atlantis/runtime/runtime_application.h` and
-  `src/runtime/src/{mesh_preview.h,mesh_preview.cpp,frame_capture.h,frame_capture.cpp}`
+  `src/runtime/src/{mesh_preview.h,mesh_preview.cpp,frame_capture.h,frame_capture.cpp}`,
+  plus `src/runtime/src/runtime_application.cpp` for terminal cleanup only,
   for an internal RuntimeHost entry, request resources, camera setup and
   shared PNG encoding. Reuse existing shader binaries, reflection layouts
   and the standard RenderGraph readback pattern. No changes planned to
@@ -43,7 +44,8 @@ using the shared clients and an isolated, disposable rendering context.
 - Shared interfaces: `src/connection/include/atlantis/connection/asset_connection.h`
   and `src/connection/src/asset_connection.cpp` for typed values and bounded
   native wire/text encoding shared by CLI and Remote;
-  `src/remote/src/{codec.h,codec.cpp,remote_client.cpp,remote_server.cpp}`;
+  `src/remote/src/{codec.h,codec.cpp,remote_client.cpp,remote_server.cpp}` and
+  `src/remote/include/atlantis/remote/remote_server.h` (poll contract);
   `src/cli/src/{command_layer.cpp,invocation.cpp}`;
   `src/gameplay_sdk/include/atlantis/gameplay/assets.h`;
   `src/csharp/Atlantis.Gameplay/{Assets.cs,Remote/AssetCodec.cs,Remote/AssetSession.cs}`;
@@ -72,47 +74,60 @@ or authoring apply.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — Contract and input identity** | Approve one additive shared GUID → bounded PNG call; use the existing catalog snapshot, check cooked identity and support both index widths. Keep both version directions working (R1). |
-| **J2 — Framing and look** | Approve one fixed oblique 256 × 256 still, automatic fit, existing unlit vertex colors and no scene lights or authored material fidelity (R2). |
-| **J3 — Isolation, bounds and settlement** | Approve request-owned GPU state, one synchronous admission per existing service interval, bounded input and explicit Busy/retry. Approve a separate ordinary SDK connection and latest-intent guards in the Editor (R3/R4). |
-| **J4 — Verification and delivery** | Approve the focused contract/Windows/headless checks, one reviewed golden and the existing performance gate. After human design merge, authorize one S2–S4 pass through a review-ready implementation PR. |
+| **J1 — Contract and input identity** | Approve one additive shared GUID → bounded PNG call, strict reply validation and the narrow legacy fallback. Use one launch-bound catalog snapshot and validate both index widths and cooked identity (R1). |
+| **J2 — Framing and look** | Approve one fixed oblique 256 × 256 still, a normalized bounds fit with a 15% margin, existing unlit vertex colors and no scene lights or authored material fidelity (R2). |
+| **J3 — Isolation, bounds and settlement** | Approve private GPU resources and descriptor state, fatal handling when completion cannot be confirmed, one shared synchronous permit per service interval, and separate Editor transport with guarded latest intent and explicit retry (R3/R4). |
+| **J4 — Verification and delivery** | Approve the focused contract/Windows/headless checks, initial golden bootstrap and existing performance gate. After human design merge, authorize one S2–S4 pass through a review-ready implementation PR. |
 
-Suggested authorization: approve J1–J4, Spec/Plan 0091 and ADR-0151 at the
-reviewed revision, then authorize implementation, scoped fixes, applicable
-verification and valid evidence reuse through the implementation PR. Final
-merge remains human.
+Suggested authorization: jointly approve J1–J4 and Spec/Plan 0091 and accept
+ADR-0151 at the reviewed revision. After the human merges this design, use
+latest `main` and authorize S2–S4 together: implementation, ordinary fixes
+within scope, applicable verification, reuse of valid evidence and a
+review-ready implementation PR. Preserve all gates and the final human
+merge.
 
 ## Verification Checklist
 
 - [ ] **R1 — Shared contract and catalog.** Test old client → new Runtime
   and new client → older asset-capable Runtime with a successful list/get
-  on the same session. Cover strict request shape, no provider, catalog unavailable,
-  unknown GUID, wrong type, both index widths and a replaced valid but
-  mismatched artifact/sidecar pair. Cross-check the same GUID, dimensions and
-  PNG through CLI structured output, native SDK, typed C# SDK and one MCP image
-  block. Reject mismatched GUID, invalid image header/dimensions, malformed
-  or oversize base64, and distinguish protocol/transport failures from
-  refusals. Preview before list initializes the same snapshot; apply,
-  Reload view, reconnect and a published generation do not change it until
-  restart into the new generation.
-- [ ] **R2 — Correct image.** Offline tests cover centered/off-origin, planar,
-  differently scaled, and unusable geometry; check the conservative fit and
-  positive near/far planes. With Vulkan validation, run the same production
-  preview render helper on the headless/offscreen test device with the cooked
-  `minimal_cube`; compare one new golden. Use `textured_quad_left` or an
-  equivalent cooked off-origin mesh for a distinct framed image. Capture
-  the new golden on the reference environment with a provenance sidecar
-  under [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md).
-  Human review the new pixels as a rendering change. Run affected existing
-  goldens unchanged, or cite valid evidence where the inputs remain identical.
+  on the same session. Cover strict requests, no provider, unknown GUID,
+  wrong type, both index widths and a valid but mismatched artifact/sidecar
+  pair. Cross-check GUID, dimensions and PNG through CLI structured output,
+  native SDK, typed C# SDK and one MCP image block. Reject mixed `result/error`
+  or `ok/err`, mismatched GUID/MIME/dimensions, invalid IHDR and noncanonical
+  base64, including an encoded length in bounds with decoded length over the
+  cap. Distinguish protocol/transport failures from refusals. Check list-first
+  and preview-first initialization even without rebuild support, and a first
+  load failure retained across reconnect. Use one published generation adding
+  a mesh GUID: before restart the serving Runtime does not see the new GUID
+  through discovery or preview, even after apply, Reload view or reconnect;
+  after explicit restart into that generation it lists and previews it.
+- [ ] **R2 — Correct image.** Offline tests cover centered, planar, differently
+  scaled and degenerate geometry, including a representable small mesh far
+  from the origin. Check finite output matrices and containment in the
+  padded frustum. Use the production render helper on the headless Vulkan
+  device to compare a cooked `minimal_cube` preview against one new golden.
+  Use `textured_quad_left` or an equivalent cooked off-origin mesh for a
+  distinct framed image. Follow [ADR-0042](../adr/0042-image-regression-testing-comparison-methodology-and-test-ownership-boundary.md)
+  category 4, **Initial baseline bootstrap**: capture on the reference GPU
+  from clean, committed source; commit the PNG and full provenance sidecar
+  separately afterward. Record an immediate exact comparison, clean Vulkan
+  validation, the fixture's 0/0 reproducibility evidence and direct human
+  review of the non-degenerate image. Leave existing goldens unchanged;
+  run affected checks or cite valid evidence for unchanged inputs.
 - [ ] **R3 — Admission and release.** Verify the inclusive file, index and
-  image bounds, and that extra same-interval requests across clients and
-  local dispatch get `Busy` before file/GPU work. Check next-interval retry,
-  repeated successes, recoverable load/render failure and client disconnect
-  through normal shutdown. Verify request-owned resources return to their
-  pre-request count after settlement, and that idle use adds no GPU resources
-  or submission. Use narrow fixture/test seams and clean Vulkan Validation
-  Layers (zero warnings/errors); no new diagnostics framework.
+  image bounds. In one interval exercise a failed first attempt, a second
+  Remote request and a `--exec` request: both later calls get `Busy` before
+  catalog/file/GPU work; an explicit retry can proceed in the next interval.
+  Check invalid requests do not take the permit. Exercise repeated successes,
+  recoverable failure, client disconnect and an unconfirmed submit completion
+  through focused test seams. Confirm preview-owned objects and descriptor
+  sets release after normal settlement and that a fatal wait retains its
+  bundle until shutdown, with no readback or retry. Device pool capacity is
+  not a per-request resource count. Confirm no idle allocations/submissions.
+  Run preview interleaved with ordinary windowed frames, comparing the same
+  stable scene and camera before and after. Require Vulkan Validation Layers
+  clean (zero warnings/errors) on preview and affected normal GPU paths.
 - [ ] **R3/R4 — Windows Editor.** In one ordinary live session, leave an
   unsaved edit with undo/redo history and a known paused Runtime state.
   Preview a catalog mesh the scene has never loaded. Compare document
@@ -123,17 +138,22 @@ merge remains human.
   Resume via the existing flow and verify editing, undo/redo and apply
   still work. Force a recoverable preview failure, verify its message and
   retry the same GUID. Model/UI tests control ordering for A → B and
-  A → B → A, late success and failure, deselection/hidden row, Reload view,
-  tab exit, reconnect, bitmap decode failure and transport loss. Verify
-  discarded/replaced bitmaps are released and the preview reconnect does not
-  reset the editing session.
+  A → B → A, invalidation during delayed connection setup, late success and
+  failure after reconnect, deselection/hidden row, Reload view, tab exit,
+  window close, bitmap decode failure and timeout. Verify no stale request
+  is sent after setup, discarded/replaced bitmaps release, and retry after
+  timeout neither blocks close nor resets the editing session.
 - [ ] **Applicable gates.** Build focused Windows native and managed targets,
   run affected unit, protocol/conformance, Editor, headless/image and GPU
-  checks, and verify docs. Run the full implementation diff through
+  checks, and verify docs. Check the Android build when shared RuntimeHost
+  or Asset System inputs change; there is no new Android runtime workflow.
+  Run the full implementation diff through
   `atlantis_runtime --gate --applies`: planned `src/runtime/**` changes are
   selected even when preview is idle. Run the existing reference-machine
-  Release profiling-on/Tracy-off `--gate --json` protocol and retain the
-  raw verdict. No new preview timing threshold, baseline or policy edit.
+  Release profiling-on/Tracy-off `--gate --json` protocol with no preview
+  requested, and retain the raw applicability result and verdict. A fail,
+  inconclusive or incomparable result is not a pass. No new preview timing
+  threshold, baseline or policy edit.
   Keep #340's historic record parked. Evidence reuse follows AGENTS.md;
   an unresolved required gate is not a pass.
 

@@ -38,47 +38,52 @@ streaming, an Inspector preview, and new Android hosting or Editor UI.
 ### Functional
 
 - **R1 — Shared, snapshot-bound operation.** `AssetConnection::previewMesh`
-  accepts one non-nil asset GUID and defaults to `Unsupported` for existing
-  native providers. `assets.previewMesh` accepts exactly
-  `{guid}` on `atlantis.remote/1`; it returns an ordinary correlated result,
-  with no job, event, status query, or cancellation call. Resolve the GUID as
+  accepts one non-nil asset GUID and has a default `Unsupported` for existing
+  native providers. `assets.previewMesh` accepts exactly `{guid}` with the
+  existing canonical GUID spelling on `atlantis.remote/1`. Resolve it as a
   `Mesh` in the serving Runtime's [0081](0081-asset-browser-shared-interface.md)
-  lazy catalog snapshot. A first preview may initialize it. Reuse the same
-  frozen success or failure as `list/get`. Use the record's resolved cooked
-  artifact and sidecar, and verify the bytes actually read against its GUID,
-  asset key and artifact schema. Support the current 16-bit and 32-bit cooked
-  index formats. No source path or residency requirement. Apply, Reload view,
-  reconnect and publication do not replace the snapshot; switch to a newly
-  published generation by restarting into it under [0085](0085-shared-asset-rebuild.md).
-  Editing artifacts in place in a running build retains 0081's lack of a
-  consistency guarantee.
+  lazy catalog snapshot, shared with `list/get` regardless of whether rebuild
+  is enabled. Any of these calls can initialize it; the first successful or
+  failed initialization is retained. Validate the cooked artifact and sidecar
+  bytes actually read from the resolved record against its GUID, asset key and
+  schema. Support both cooked index widths without requiring scene residency.
+  Apply, Reload view, reconnect and publication do not replace the snapshot.
+  Use a newly published generation by restarting into it under
+  [0085](0085-shared-asset-rebuild.md). The snapshot freezes records and
+  resolved paths; it does not promise stable bytes for files modified in place.
 
-  The owned success value contains `guid`, `width`, `height`, and PNG bytes.
-  Width and height are both 256. On the wire add `mimeType: "image/png"` and
-  carry the bytes as `pngBase64` using canonical padded base64. No file path,
-  shared image handle or renderer handle crosses the interface. Cap decoded
-  bytes at 512 KiB and encoded bytes at 699,052 characters, checking both
-  lengths before decoding. A mismatched reply GUID, dimensions, MIME type,
-  signature or IHDR is a protocol failure. Native and C# SDKs expose typed
-  results; CLI `asset preview <guid>` returns the bounded
-  image and metadata in the existing structured output and only a metadata
-  summary in human output. No Runtime file write. MCP `assets.preview_mesh`
-  calls the typed C# SDK and emits one PNG image block plus metadata without
-  duplicating the image in text. Editor uses the C# SDK. Existing calls,
-  version and transport limits stay unchanged.
+  Return one correlated response with `result: {ok: {guid, width, height,
+  mimeType, pngBase64}}` or `result: {err: <token>}`; the alternatives are
+  exclusive. There is no job, event, status query or cancellation call.
+  Width and height are 256; `mimeType` is `image/png`. The server bounds the
+  PNG to 512 KiB. Clients validate canonical padded base64, an encoded length
+  of at most 699,052 characters and the actual decoded length implied by
+  padding before allocating a decoded buffer. Require the requested GUID,
+  matching dimensions, MIME type, PNG signature and a first chunk of type
+  `IHDR` with a 13-byte body and matching dimensions. Invalid replies are
+  protocol failures. SDKs return owned bytes and metadata; complete image
+  decoding belongs to the consumer.
+
+  `atlantis --json asset preview <guid>` returns image and metadata in the
+  existing structured output; human output, including `--exec`, summarizes
+  metadata. MCP `assets.preview_mesh` calls the typed C# SDK under its
+  existing session guard and emits one PNG image block plus metadata. Editor
+  uses the same SDK. No path, shared handle or Runtime file write. Existing
+  calls, version and transport limits stay unchanged.
 
   In-band errors are `Unsupported` (no preview provider), `Unavailable`
   (provider has no usable rendering context), `Busy` (admission exhausted),
   `CatalogUnavailable`, `UnknownAsset`, `NotMesh`, `TooLarge`, `InvalidMesh`
   (including missing, invalid or mismatched artifact, sidecar, layout or
-  bounds) and `RenderFailed` (resource, draw/readback or PNG failure). Bad
-  request shape or GUID is a request error. For a well-formed new call only,
-  map an older asset-capable Runtime's exact `BadRequest` / `unknown or
-  malformed asset query` refusal to `Unsupported` and leave the connection
-  usable. Old clients can keep using old calls on a new Runtime. A transport
-  failure stays distinct:
-  the native Remote session failure is authoritative (`Unavailable` is its
-  value sentinel), and the C# SDK uses its existing transport exception.
+  bounds) and `RenderFailed` (recoverable resource, readback or PNG failure,
+  including oversized encoder output). Bad request shape or GUID is a
+  request error. For a well-formed preview only, map an older asset-capable
+  Runtime's exact top-level `BadRequest` / `unknown or malformed asset query`
+  refusal, with no `result`, to `Unsupported` before generic error handling.
+  The connection stays usable for `list/get`. Old clients keep using old
+  calls on a new Runtime. For protocol or transport failure, the native
+  Remote session failure is authoritative (`Unavailable` is its value
+  sentinel); the C# SDK uses its existing exception path.
 - **R2 — Fixed framing and appearance.** Render one opaque DrawItem with
   the existing unlit vertex-color fallback, built-in dark background, and
   standard output transform at zero exposure compensation. No scene lights,
@@ -87,40 +92,55 @@ streaming, an Inspector preview, and new Android hosting or Editor UI.
   white. Label this as geometry preview, so it does not imply how the mesh
   will appear when used in a scene.
 
-  Frame the indexed geometry, including off-origin and planar meshes. Use
-  finite referenced positions, a conservative bounds sphere, a +Y-up oblique
-  view from direction `(3, 2, 4)`, a 35° vertical perspective FOV and a
-  15% fit margin. Choose distance and positive clip planes that enclose the
-  sphere; use existing camera math and a preview-only transform if needed to
-  keep calculations representable. Refuse unusable geometry, including no
-  non-degenerate triangles or an unrepresentable camera fit. Never write a
-  transform back to the asset. A single fixed view can show a thin surface
-  edge-on; there is no orbit or second view in this slice.
+  Frame the indexed geometry, including off-origin and planar meshes. Use the
+  midpoint and half-diagonal of the AABB of referenced positions, computed
+  in double precision. Recenter and scale referenced positions to unit radius
+  in preview-owned vertex data before using the existing float camera math;
+  preserve vertex colors and index order. Use a +Y-up view from direction
+  `(3, 2, 4)`, a 35° vertical FOV at aspect 1 and a 15% sphere margin: for
+  padded radius `1.15`, use distance `1.15 / sin(17.5°)` and near/far at
+  distance minus/plus the padded radius. Reject nonfinite data, geometry
+  with no non-degenerate 3D triangle after normalization, or a fit with
+  invalid matrices or clip planes.
+  Never write a transform back to the asset. A fixed view can show a thin
+  surface edge-on; there is no orbit or second view.
 - **R3 — Isolation, bounds and lifetime.** Runtime records the render and
   readback through Renderer/RenderGraph on its owning frame thread between
-  frames. Only immutable compatible pipeline/sampler/geometry inputs may be
-  borrowed from the application; all preview camera/light buffers, mesh
-  upload, offscreen color, depth/HDR, any required shadow attachments and
-  readback are request-owned. Use a fixed RGBA8 UNORM output with the matching
-  output transform. Reuse the existing RHI submission/completion rules: keep
-  GPU-referenced objects alive until completion or normal device teardown,
-  end the target borrow before releasing its owner, and release request
-  resources on all settled paths. No retained GPU cache or scene attachment.
+  frames. The request owns the mesh and upload data, camera/light uniforms,
+  offscreen color, depth/HDR, shadow resources, readback and all pipelines
+  that bind preview resources. Vulkan pipelines own descriptor sets mutated
+  during recording: create private fallback material, shadow and output
+  pipelines even if scene pipelines are format-compatible. Reuse shader
+  binaries, reflection layouts and read-only inputs such as samplers and
+  fullscreen geometry. Use a fixed RGBA8 UNORM target and matching output
+  transform. The existing shadow pass gets an empty caster span and private
+  attachment and uniform. Do not present a preview target.
 
-  Admit at most one preview attempt across Remote and `--exec` in each
-  existing between-frame service interval, before preview-specific file or GPU
-  work. Excess requests return `Busy` immediately; there is no host queue or
-  automatic retry. After catalog resolution, bound the actual opened cooked
-  artifact and sidecar reads to 32 MiB and 64 KiB respectively, before large
-  allocations. These are per-preview limits; 0081 catalog initialization
+  Confirm completion before reading pixels or releasing GPU-referenced
+  objects, and end the offscreen borrow before releasing its owner. Release
+  resources on success and on recoverable failure. Use the Runtime's fatal
+  path for a device submission or completion error, or device loss. Stop
+  frame and preview work; retain unconfirmed submitted resources through the
+  existing shutdown drain and release them in terminal teardown before
+  destroying the device. Do not read pixels or offer same-session retry
+  after a fatal failure. There is no retained GPU cache or scene attachment.
+
+  One service interval covers the whole existing Remote poll and the
+  following `--exec` step, if enabled. Reset one shared permit at its start,
+  keeping the existing service order. The first well-formed request to a
+  usable preview provider consumes it before lazy catalog initialization or
+  file/GPU work and holds it for that interval even if it fails. Subsequent
+  eligible requests get `Busy`; there is no host queue, fairness guarantee
+  or automatic retry. A lost reply is not replayed. After catalog resolution,
+  bound the actual opened cooked artifact and sidecar reads to 32 MiB and
+  64 KiB respectively, before large allocations. These are per-preview
+  limits; 0081 catalog initialization
   retains its existing loading behavior. Reject more than 1,500,000 indices
   before upload. All three limits are inclusive; above them return `TooLarge`.
-  The fixed image, input and admission limits bound work per interval, not
-  wall-clock latency.
-  A request may briefly stall rendering or other Runtime requests during
-  synchronous upload/readback. Preview must create no per-frame work in
+  Synchronous upload/readback can delay rendering and other Runtime requests;
+  these limits give no wall-clock guarantee. Preview adds no work to
   `runFrame()`, no new startup GPU allocations and no extra submission when
-  unused. Only already-enabled asset dispatch may reset the admission budget.
+  unused. Transport I/O and queue limits remain unchanged.
 
   Do not call `control.step`, change pause or step state, query or edit World
   for the mesh, switch Runtime scene or generation, or write active render
@@ -139,23 +159,26 @@ streaming, an Inspector preview, and new Android hosting or Editor UI.
   retryable display failure. Failure leaves catalog details and editing
   controls intact.
 
-  Use a separate ordinary SDK connection to the same Runtime, opened lazily
-  and owned by the preview worker, so a preview transport failure does not
-  poison the edit session. Keep at most one sent request and one replaceable
-  latest explicit intent per Editor, including across reconnects. Ignore a
-  duplicate action for the same GUID and current epoch. Guard both success
-  and failure with the parent session
-  identity, selected GUID and request epoch. A new selection, deselection,
-  filter that hides the selection, Reload view, leaving Assets, disconnect or
-  shutdown invalidates the image and any unsent intent. A late response never
-  restores them; the sent request may finish. Send a still-current newer
-  intent only after settlement. Release replaced or discarded image resources.
-  On session end or window close, invalidate locally at once and have the
-  worker dispose its connection after any call settles or times out, without
-  blocking the UI. A retry
-  after transport failure uses a new preview connection to the current
-  Runtime, without reconnecting the editing session. Reload view continues
-  to use the same Runtime snapshot and does not automatically render again.
+  Use a separate ordinary SDK connection, opened lazily on its owning worker
+  from the current edit session's fixed connection details. This isolates
+  preview transport errors from the edit connection. Keep one active slot
+  (including connection setup and reply wait) and one replaceable latest
+  explicit intent per Editor, even across reconnects. Ignore duplicate
+  actions for the same GUID and current epoch. Recheck the parent session,
+  epoch and visible selection at send admission after connection setup,
+  serialized with invalidation. Recheck them before decoding or displaying
+  a result or error. Selection change, deselection, a filter that hides the
+  selection, Reload view, leaving Assets, disconnect or shutdown invalidates
+  the image and any unsent intent. A request already admitted may finish;
+  discard stale output and admit only a still-current newer intent after
+  settlement. Release discarded or replaced image resources.
+
+  On session end or window close, invalidate locally at once. The owning
+  worker disposes its connection once setup or the call has settled or timed
+  out, without a UI wait. Transport failure releases the slot; explicit
+  Retry opens a fresh preview connection without reconnecting the editing
+  session. Reload view keeps the same Runtime snapshot and does not render
+  again automatically.
 
 ### Non-functional
 

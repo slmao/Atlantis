@@ -29,17 +29,22 @@ and readback machinery, but independent input, ownership and failure state.
    the contract and compatibility behavior.
 2. The executable-private Assets host admits work within the existing
    service interval. The Runtime composition root uses a private offscreen
-   helper with request-owned mutable resources, `Renderer::drawFrame`, a
-   RenderGraph readback pass and the capture PNG encoder. Nothing edits
-   World, authoring, the live viewport or the Runtime control state. Asset
-   System stays CPU-only. Renderer/RHI, the normal frame path and the
-   public scene-capture contract do not change.
-3. Serve synchronously on the owning thread, once per service interval at
-   most, with the limits in Spec R3. Complete GPU use before releasing
-   resources under existing RHI rules. This avoids a job system, queue,
-   cross-thread GPU ownership, retained render resources and new idle
-   render work. A separate ordinary Editor SDK connection isolates preview
-   transport faults from editing without adding a channel or privilege.
+   helper with request-owned mutable resources, including pipelines whose
+   Vulkan descriptor sets are written during recording. It reuses
+   `Renderer::drawFrame`, a RenderGraph readback pass and the capture PNG
+   encoder. Nothing edits World, authoring, the live viewport or Runtime
+   control state. Asset System stays CPU-only. Renderer/RHI, the normal
+   frame path and the public scene-capture contract do not change.
+3. Serve synchronously on the owning thread, at most once across the
+   existing Remote poll and `--exec` dispatch, with the limits in Spec R3.
+   Qualify ADR-0106 D1 for this handler only: it can wait for GPU completion
+   during dispatch, while socket I/O remains nonblocking and the existing
+   bounded buffers and disconnect rules still apply. Drain GPU use before
+   releasing resources, with terminal teardown for unconfirmed completion.
+   This avoids a job system, queue, cross-thread GPU ownership, GPU cache
+   and new idle render work. A separate ordinary Editor SDK connection
+   isolates preview transport faults from editing; both still share the
+   Runtime and its responsiveness.
 
 ## Consequences
 
