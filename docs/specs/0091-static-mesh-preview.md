@@ -1,11 +1,11 @@
 # Spec: Read-Only Static Mesh Preview in Assets
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-11
 - **Related Plan:** [Plan 0091](../plans/0091-static-mesh-preview.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md) (Proposed)
+- **Approval:** Jointly approved at revision `b4d71608` of [PR #345](https://github.com/slmao/Atlantis/pull/345), 2026-11-11. See Plan 0091.
+- **Related ADR:** [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md) (Accepted)
 
 ## Summary
 
