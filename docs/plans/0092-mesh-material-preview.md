@@ -87,61 +87,74 @@ remains human.
 
 ## Verification Checklist
 
-- [ ] **R1/R2. Contract and inputs.** Check canonical request shape and both
-  echoed GUIDs, exclusive arms, the 0091 PNG bounds and invalid metadata,
-  transport and protocol failures, and typed refusals. Verify old client
-  calls on the new Runtime and new-client fallback on a 0091 Runtime with
-  geometry/list/get still available in the same session. Compare the same
-  pair's image and metadata across CLI, both SDKs and one MCP image block.
+- [ ] **R1/R2. Contract and inputs.** Check canonical request shape,
+  independent mismatches of either echoed GUID, swapped roles, repeated
+  correlation or required members, exclusive arms, PNG bounds and invalid
+  metadata. Distinguish typed refusals from transport and protocol failures.
+  Verify old client calls on the new Runtime and new-client fallback on a
+  0091 Runtime with geometry/list/get still available in the same session.
+  Reject lookalike refusals with the wrong message, duplicate code or both
+  envelope arms. Compare the same pair's image and metadata across CLI,
+  both SDKs and one MCP image block.
   Exercise both cooked mesh index widths, preview-first/list-first lazy
-  catalog initialization with and without rebuild support, retained first
-  failure and a newly published material/texture visible only after Runtime
-  restart. Use the existing managed glTF publication flow for that check.
+  catalog initialization, including a pair-only provider without rebuild
+  support, and retained first-load failure. Use an eligible managed glTF
+  publication to verify the new pair is unavailable on the old session
+  through refresh, apply and reconnect, and previews after explicit restart.
   Test missing and wrong-role GUIDs, a mismatched material or
   texture sidecar/schema, absent or inconsistent dependencies, ineligible
-  material and texture variants, degenerate mesh and the inclusive size
-  limits. Use an opaque base material, a mapped variant and a transparent
-  one from existing assets where practical.
+  kind, alpha, slot and texture color space or layout, degenerate mesh
+  and inclusive input limits. Verify an unsupported material is refused
+  before dependency reads, including with a missing optional map.
 - [ ] **R2/R3. Image and isolation.** With the production helper on headless
   Vulkan, use the off-origin `textured_quad_left` and
-  `pbr_dielectric_rough` for one new golden. Compare the same mesh with a
-  distinct supported material such as `showcase_wood_reddish_stain`.
-  Check clear margins, recognizable geometry, nonblank pixels and a
-  material-dependent difference. Verify 0091's geometry golden and affected
-  scene captures remain exact. Follow ADR-0042 category 4 for the new
-  golden. Capture from clean committed source on the reference GPU, commit
-  the PNG and provenance separately, confirm immediate zero difference
-  and repeatability, and require direct human visual review.
+  `pbr_dielectric_rough` for one new golden. Check clear margins, recognizable
+  geometry and nonblank pixels. Compare the same mesh with
+  `showcase_wood_reddish_stain` for a different texture, and with
+  `showcase_wood_ash_tint` to distinguish authored factors on that same
+  wood texture. Use a small RGBA8 multi-mip fixture to cover upload regions
+  and sampler LOD without a second golden. Verify 0091's geometry golden
+  and affected scene captures remain exact. Follow ADR-0042 category 4.
+  Capture from clean committed source on the reference GPU with Vulkan
+  validation clean, add PNG and full provenance in a subsequent commit,
+  and record immediate zero difference, empirical 0/0 repeatability and
+  direct human visual review.
 - [ ] **R3. Admission and lifetime.** Exercise geometry followed by pair
   and pair followed by geometry across Remote clients and `--exec` in one
   service interval. Invalid arguments take no permit. A refusal or
   disconnect after admission still holds it, with explicit retry on the
-  next interval. Verify texture upload precedes sampling, repeated previews
-  release all request GPU objects, recoverable failure frees scratch, and
-  injected unconfirmed completion retains it until terminal drain with
-  neither readback nor retry. Use normal windowed frames and capture before
+  next interval. Verify both uploads reach `ShaderRead` before sampling.
+  Repeated previews release request GPU objects and descriptor sets.
+  Exercise a recoverable pre-submit failure and inject unconfirmed
+  completion after upload, draw and readback have been submitted. Check
+  the whole bundle stays alive until the terminal drain with no CPU
+  readback or retry. Use normal windowed frames and capture before
   and after both preview modes. Require zero Vulkan validation warnings
   or errors on the preview and affected normal GPU paths.
 - [ ] **R4. Windows Editor.** In one real session preview a mesh/material
   pair absent from the scene. With a paused Runtime, unsaved authoring edit
   and pending apply, compare document, World generation, viewport camera
   and overlay, pause/step and undo/redo before and after previews. In the
-  material chooser verify the displayed opening mesh, changing candidate,
-  Cancel with no mutation and normal Confirm even after a refused preview.
-  Verify the unavailable state without a valid opening mesh and the
-  fixed, labeled mesh when the sibling value changes. Resume and verify
-  apply, undo and redo. Model or controlled UI checks cover A→B→A, switching
-  geometry/pair and Assets/chooser, hidden/deselected candidate, reload,
-  invalid target, reopen or disconnect, and close during retry. Exercise
-  send admission after delayed setup, stale success and refusal, decode
-  failure, timeout, fresh explicit retry and bitmap release.
+  material chooser verify the labeled opening mesh after a sibling change,
+  a changed candidate and Cancel without mutation. A missing opening mesh
+  and a non-Material row on a host without target-type metadata disable
+  only preview. After the isolation comparisons, verify normal Confirm
+  and focus restoration with preview outstanding or refused. Resume and
+  verify apply, undo and redo. Model or controlled UI checks cover A→B→A,
+  switching geometry/pair, an Assets reply arriving under the modal, and
+  a same-pair reply after chooser reopen. Exercise both input changes,
+  hidden or deselected candidate, reload, target invalidation, disconnect,
+  delayed connection admission, stale success and refusal, decode failure,
+  timeout, fresh explicit retry, close and bitmap release.
 - [ ] **Applicable gates.** Build focused Windows native and managed
   targets and run affected suites. Build Android when shared RuntimeHost
   or Asset System inputs change. Run the complete final diff through
   `atlantis_runtime --gate --applies`. Planned Runtime paths select the gate.
   On the reference machine run the existing profiling-on/Tracy-off Release
   `--gate --json` protocol with no preview requested. Keep the raw verdict
-  and applicability result. Preserve the current baseline and policy.
+  and applicability result for that candidate. A failed, inconclusive or
+  incomparable result leaves the gate unresolved. Preserve the current
+  baseline and policy.
   Reuse evidence only with unchanged relevant source, tests, inputs and
   environment. Verify documentation and links.
 

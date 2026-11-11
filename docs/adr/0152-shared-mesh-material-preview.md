@@ -23,7 +23,9 @@ offscreen work introduced in 0091.
 1. Add a separate shared operation whose request and success identify both
    the mesh and the material. Reuse 0091's bounded PNG representation and
    exact legacy fallback. Both modes resolve against one retained catalog
-   and use its cooked records for all dependency reads.
+   and use its cooked records for all dependency reads. A result is
+   correlated by both roles, even when a client has since changed only one
+   input.
 2. Use one fixed, direct-lit base PBR recipe. Its single authored texture
    comes from the decoded material and must agree with the catalog
    dependency. The existing material, mesh and texture formats remain the
@@ -33,11 +35,13 @@ offscreen work introduced in 0091.
    by authoring and Runtime apply.
 3. Use the same between-frame execution boundary, admission permit and
    terminal drain as geometry preview. Reuse the Renderer, existing texture
-   upload and RenderGraph readback. The request owns all mutable GPU
-   state and staging through settlement. It reads no live scene state.
+   upload and RenderGraph readback in one submission. Keep upload staging,
+   textures and mutable GPU state together through settlement or terminal
+   drain. The realization path stays separate from live scene resources.
 4. The two Editor surfaces use one preview coordinator and the typed SDK.
-   The material reference chooser uses the labeled mesh read when opened.
-   Its preview does not participate in the existing field confirmation guard.
+   The material reference chooser owns the preview surface while open
+   and uses the labeled mesh read when opened. Its preview does not
+   participate in the existing field confirmation guard.
 
 The wire shape, recipe, limits and Editor invalidation rules are specified
 in [Spec 0092](../specs/0092-mesh-material-preview.md#requirements).
