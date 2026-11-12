@@ -18,8 +18,9 @@ language while preserving current actions, authority, and state transitions.
 2. **S2. Shared styles and main window.** Register Editor-private Fluent
    resources and original icon paths. Recompose existing controls into the
    command row, panes, state strip and diagnostics section. Keep all pointer
-   and keyboard routes, sizing and session bindings. Style the Inspector,
-   Assets and Saved Scenes with consistent list, form and result treatments.
+   and keyboard routes, sizing and session bindings. Group structural actions
+   within the Hierarchy. Give the Inspector, Assets and Saved Scenes common list,
+   component, form and result treatments.
 3. **S3. Reference chooser and constrained sizes.** Apply the same visual
    rules to the generic and material variants, including the narrow flow,
    selectable long text, stable action footer and Confirm focus restoration.
@@ -52,8 +53,8 @@ Preserve [0082](../specs/0082-generic-asset-reference-picker.md),
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1. Window layout** | Approve the three panes, common command row and separate diagnostics, with compact reflow inside the existing panes. |
-| **J2. Visual system and resources** | Approve the graphite Fluent direction, Windows UI font and limited project-authored icon paths. Keep existing dependencies and window chrome. |
+| **J1. Window layout** | Approve the three panes, centered transport controls, local hierarchy actions and separate diagnostics, with compact reflow inside the existing panes. |
+| **J2. Visual system and resources** | Approve neutral graphite Fluent, restrained blue emphasis, the Windows UI font and project-authored icon paths. Keep existing dependencies and window chrome. |
 | **J3. Dialog and state behavior** | Approve the two forms of one chooser, fixed action footer and existing keyboard/recovery semantics. Keep New Scene / Save As inline. |
 | **J4. Acceptance** | Approve the real Windows matrix and representative screenshots and interactions below. |
 
@@ -68,12 +69,14 @@ Preserve [0082](../specs/0082-generic-asset-reference-picker.md),
   or exercise the same instance through a Windows scale change and report
   that substitution. Capture standard and compact layouts and the material
   chooser at higher scaling. Check no clipped controls or hidden required
-  actions, sensible pane widths, and no child viewport overlap or input offset.
+  actions, reachable Hierarchy Actions, sensible pane widths, and no child
+  viewport overlap or input offset.
 - [ ] **R2/R3. Long and constrained content.** Use a long Unicode node
   label, a long unbroken source/checkout path, a full GUID, and a multiline
   Runtime/build failure. Check readable full values, no horizontal scroll
   at window level, scrollable content with a reachable footer, and text,
-  focus and control-boundary contrast against the chosen palette. Verify
+  focus and control-boundary contrast against the chosen palette. Check that
+  selected rows, active tabs and keyboard focus remain distinct. Verify
   normal and compact material chooser (check a 600 × 600 DIP client area
   at 150% or 200%) plus the non-preview variant.
 - [ ] **R3/R4. Interaction and state.** Check keyboard traversal and visible
