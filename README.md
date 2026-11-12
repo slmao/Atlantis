@@ -5,12 +5,11 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/bistro_finale.png" alt="Atlantis rendering the Amazon Bistro reference scene" width="512"/>
+  <img src="docs/images/editor_bistro.png" alt="Atlantis Editor design preview with the Amazon Bistro reference scene" width="1000"/>
 </p>
 
-<p align="center"><em>Atlantis rendering the <a href="https://developer.nvidia.com/orca/amazon-lumberyard-bistro">Amazon Bistro</a> reference scene —
-glTF import, 59 point lights through a clustered light association, emissive materials, alpha cutout, height fog,
-and bloom, in one frame.</em></p>
+<p align="center"><em>Atlantis Editor design preview featuring the
+<a href="https://developer.nvidia.com/orca/amazon-lumberyard-bistro">Amazon Bistro</a> reference scene.</em></p>
 
 Atlantis is a long-term, real-time rendering engine written in C++20,
 built on a backend-independent RHI (currently Vulkan) and a RenderGraph,
