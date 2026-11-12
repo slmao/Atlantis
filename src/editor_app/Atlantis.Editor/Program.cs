@@ -212,7 +212,11 @@ public sealed class EditorApplication : Application
 
     public EditorApplication(EditorOptions options) => _options = options;
 
-    public override void Initialize() => Styles.Add(new FluentTheme());
+    public override void Initialize()
+    {
+        Styles.Add(new FluentTheme());
+        EditorVisuals.Install(this);
+    }
 
     public override void OnFrameworkInitializationCompleted()
     {

@@ -28,6 +28,9 @@ using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
+using Avalonia.Controls.Primitives;
+using Avalonia.Automation;
+using Avalonia.Media;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using Avalonia.VisualTree;
@@ -83,7 +86,8 @@ public sealed class MainWindow : Window
     private readonly TextBlock _savedDiscovery = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBlock _savedHint = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly TextBox _savedBuildResult = new() { IsReadOnly = true, AcceptsReturn = true, TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly TextBlock _savedOpenResult = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly TextBlock _savedOpenResult = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _savedBuildSummary = new() { TextWrapping = TextWrapping.Wrap };
 
     // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
@@ -115,8 +119,10 @@ public sealed class MainWindow : Window
     private readonly Button _play = new() { Content = "Play", IsEnabled = false };
     private readonly Button _pause = new() { Content = "Pause" };
     private readonly Button _step = new() { Content = "Step", IsEnabled = false };
-    private readonly TextBlock _applyLine = new() { Text = "authoring: connecting..." };
-    private readonly TextBlock _editLine = new();
+    private readonly TextBlock _applyLine = EditorVisuals.Ellipsis("authoring: connecting...");
+    private readonly TextBlock _editLine = EditorVisuals.Ellipsis("");
+    private readonly TextBlock _connectionLine = EditorVisuals.Ellipsis("");
+    private readonly TextBlock _assetTitle = EditorVisuals.Ellipsis("Selected asset");
     private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _pickedUp;
@@ -129,18 +135,19 @@ public sealed class MainWindow : Window
     private GizmoGrab? _gizmoGrab;
     private GizmoMode _gizmoGrabMode;
     // Plan 0068 M3: the Inspector panel, rebuilt from the worker's snapshots (not while a field is being typed in).
-    private readonly StackPanel _inspectorPanel = new() { Spacing = 4, Margin = new Thickness(6) };
+    private readonly StackPanel _inspectorPanel = new() { Spacing = 10, Margin = new Thickness(12) };
     private InspectorSnapshot? _inspectorShown;
     private InspectorSnapshot? _inspectorDeferred;
+    private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
-    private readonly ListBox _assetsList = new() { Height = 230 };
+    private readonly ListBox _assetsList = new() { Height = 128 };
     private readonly TextBlock _assetsState = new();
     private readonly AssetPreviewRequests _previewRequests = new();
     private readonly Button _previewMesh = new() { Content = "Preview geometry", IsEnabled = false };
     private readonly ComboBox _previewMaterial = new() { PlaceholderText = "Select a material", IsVisible = false };
     private readonly Button _previewPair = new() { Content = "Preview with material", IsEnabled = false, IsVisible = false };
     private readonly TextBlock _previewState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
-    private readonly Image _previewImage = new() { Width = 256, Height = 256, IsVisible = false };
+    private readonly Image _previewImage = new() { Height = 192, Stretch = Stretch.Uniform, IsVisible = false };
     private IReadOnlyList<AssetSummary>? _previewCatalog;
     private SessionInfo? _previewSession;
     private bool _previewRetry, _previewUnavailable, _previewWithMaterial;
@@ -214,7 +221,7 @@ public sealed class MainWindow : Window
             _savedWorkspace = new(checkout, cmake, _workDirectory);
         _log = new EditorLog(Path.Combine(_workDirectory, "editor.log"));
         _log.Write("editor: runtime " + options.RuntimePath + ", scene " + options.Scene);
-        Title = "Atlantis Editor (Phase 1 prototype) - " + options.Scene;
+        Title = "Atlantis Editor · " + options.Scene;
         if (options.MeasureDrag)
         {
             _recorder = new DragRecorder();
@@ -247,84 +254,15 @@ public sealed class MainWindow : Window
         _notes.PlaceholderText = "Type here (keyboard focus check)";
         _entities.SelectionMode = SelectionMode.Single;
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
-            new TextBlock { Text = row?.Label ?? "", Margin = new Thickness((row?.Depth ?? 0) * 14, 0, 0, 0) });
+        {
+            var label = EditorVisuals.Ellipsis(row?.Label ?? "");
+            label.Margin = new Thickness(Math.Min(row?.Depth ?? 0, 7) * 12, 0, 0, 0);
+            ToolTip.SetTip(label, row?.Label);
+            return label;
+        });
         _entities.SelectionChanged += (_, _) => OnHierarchySelected();
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        buttons.Children.Add(_measureFrames);
-        buttons.Children.Add(_resetCamera);
-        var tools = new StackPanel { Spacing = 6, Margin = new Thickness(0, 6, 0, 0) };
-        tools.Children.Add(_notes);
-        tools.Children.Add(_measureLatency);
-        tools.Children.Add(buttons);
-        var sizing = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        sizing.Children.Add(_sizeBox);
-        sizing.Children.Add(_applySize);
-        tools.Children.Add(sizing);
-        var left = new DockPanel { Margin = new Thickness(6) };
-        var heading = new TextBlock { Text = "Hierarchy", Margin = new Thickness(0, 0, 0, 4) };
-        DockPanel.SetDock(heading, Dock.Top);
-        DockPanel.SetDock(tools, Dock.Bottom);
-        var edits = new WrapPanel { Margin = new Thickness(0, 0, 0, 4) };
-        foreach (Button b in new[] { _undo, _redo, _create, _destroy, _toRoot, _pickUp, _moveHere, _save, _retryApply, _play, _pause, _step })
-        { b.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(b); }
-        edits.Children.Add(_saveAsName);
-        edits.Children.Add(_saveAs);
-        edits.Children.Add(_newSceneName);
-        edits.Children.Add(_newScene);
-        _newSceneState.Text = NewSceneHint();
-        foreach (Control c in new Control[] { _gizmoMode, _gizmoSpace, _gizmoSnap }) { c.Margin = new Thickness(0, 0, 4, 4); edits.Children.Add(c); }
-        var state = new StackPanel { Spacing = 2, Margin = new Thickness(0, 4, 0, 0) };
-        state.Children.Add(_applyLine);
-        state.Children.Add(_editLine);
-        state.Children.Add(_saveAsState);
-        state.Children.Add(_newSceneState);
-        DockPanel.SetDock(edits, Dock.Top);
-        DockPanel.SetDock(state, Dock.Bottom);
-        left.Children.Add(heading);
-        left.Children.Add(edits);
-        left.Children.Add(tools);
-        left.Children.Add(state);
-        left.Children.Add(_entities);
-
-        var grid = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions("320,5,*,5,320"),
-            RowDefinitions = new RowDefinitions("*,Auto"),
-        };
-        Grid.SetColumn(left, 0);
-        var splitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(splitter, 1);
-        Grid.SetColumn(_viewport, 2);
-        var inspectorSplitter = new GridSplitter { ResizeDirection = GridResizeDirection.Columns };
-        Grid.SetColumn(inspectorSplitter, 3);
-        var inspectorScroll = new ScrollViewer { Content = _inspectorPanel, HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled };
-        var tabs = new List<TabItem> {
-            new() { Header = "Inspector", Content = inspectorScroll },
-            new() { Header = "Assets", Content = BuildAssetsPanel() } };
-        if (_savedWorkspace is not null)
-            tabs.Add(new TabItem { Header = "Saved Scenes", Content = BuildSavedScenePanel() });
-        _assetTabs.ItemsSource = tabs;
-        _assetTabs.SelectionChanged += (_, e) =>
-        {
-            // SelectionChanged also bubbles from the list and filter ComboBox.
-            if (!ReferenceEquals(e.Source, _assetTabs)) return;
-            SyncPreviewSelection();
-            if (_assetTabs.SelectedIndex == 1 &&
-                _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
-            if (_assetTabs.SelectedIndex == 2)
-                RefreshSavedScenes();
-        };
-        Grid.SetColumn(_assetTabs, 4);
-        Grid.SetRow(_status, 1);
-        Grid.SetColumnSpan(_status, 5);
-        grid.Children.Add(left);
-        grid.Children.Add(splitter);
-        grid.Children.Add(_viewport);
-        grid.Children.Add(inspectorSplitter);
-        grid.Children.Add(_assetTabs);
-        grid.Children.Add(_status);
-        Content = grid;
+        Content = BuildWorkspace();
 
         _viewport.WindowCreated += OnViewportWindow;
         _viewport.WindowDestroyed += () => _log.Write("viewport host window destroyed");
@@ -401,6 +339,140 @@ public sealed class MainWindow : Window
             Shutdown();
         };
         UpdateStatus();
+    }
+
+    private Control BuildWorkspace()
+    {
+        bool diagnosticMode = _options.MeasureDrag || _options.MeasureOverlay;
+        EditorVisuals.Glyph(_save, EditorVisuals.Save);
+        EditorVisuals.Glyph(_undo, EditorVisuals.Undo, "Undo");
+        EditorVisuals.Glyph(_redo, EditorVisuals.Redo, "Redo");
+        EditorVisuals.Glyph(_play, EditorVisuals.Play);
+        EditorVisuals.Glyph(_pause, EditorVisuals.Pause);
+        EditorVisuals.Glyph(_step, EditorVisuals.Step);
+        EditorVisuals.Glyph(_create, EditorVisuals.Plus);
+        var transport = new Border
+        {
+            Background = EditorVisuals.Inset, CornerRadius = new CornerRadius(6), Padding = new Thickness(2),
+            Child = EditorVisuals.Actions(_play, _pause, _step)
+        };
+        var commands = EditorVisuals.Bar(EditorVisuals.Columns("*,Auto,*",
+            EditorVisuals.Actions(_save, _undo, _redo), transport));
+
+        var sceneFiles = EditorVisuals.Scroll(EditorVisuals.Stack(4,
+            EditorVisuals.Actions(_newSceneName, _newScene), _newSceneState,
+            EditorVisuals.Actions(_saveAsName, _saveAs), _saveAsState));
+        sceneFiles.MaxHeight = 164;
+        _newSceneState.Text = NewSceneHint();
+        var sceneSection = EditorVisuals.Disclosure("Scene files", sceneFiles);
+        var structural = EditorVisuals.Scroll(EditorVisuals.Actions(_destroy, _toRoot, _pickUp, _moveHere));
+        structural.MaxHeight = 130;
+        var actions = new ToggleButton { Content = "Actions" };
+        structural.IsVisible = false;
+        actions.IsCheckedChanged += (_, _) => structural.IsVisible = actions.IsChecked == true;
+        var hierarchy = new DockPanel { Background = EditorVisuals.Pane };
+        AddDocked(hierarchy, EditorVisuals.Bar(EditorVisuals.Heading("Hierarchy")), Avalonia.Controls.Dock.Top);
+        var hierarchyCommands = EditorVisuals.Columns("Auto,Auto", _create, actions);
+        hierarchyCommands.Margin = new Thickness(4);
+        actions.Margin = new Thickness(4, 0, 0, 0);
+        AddDocked(hierarchy, hierarchyCommands, Avalonia.Controls.Dock.Top);
+        AddDocked(hierarchy, structural, Avalonia.Controls.Dock.Top);
+        AddDocked(hierarchy, sceneSection, Avalonia.Controls.Dock.Bottom);
+        hierarchy.Children.Add(_entities);
+        AutomationProperties.SetName(_entities, "Scene hierarchy");
+
+        var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _resetCamera);
+        viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
+        var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
+        var view = new DockPanel { Background = EditorVisuals.Inset };
+        AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
+        view.Children.Add(_viewport);
+        AutomationProperties.SetName(_gizmoMode, "Transform mode");
+        AutomationProperties.SetName(_gizmoSpace, "Coordinate space");
+        AutomationProperties.SetName(_resetCamera, "Reset to scene camera");
+
+        var tabs = new List<TabItem>
+        {
+            new() { Header = "Inspector", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Sliders),
+                    Content = EditorVisuals.Scroll(_inspectorPanel) },
+            new() { Header = "Assets", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Catalog),
+                    Content = BuildAssetsPanel() }
+        };
+        if (_savedWorkspace is not null)
+            tabs.Add(new TabItem { Header = "Saved Scenes", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.File),
+                Content = BuildSavedScenePanel() });
+        _assetTabs.Background = EditorVisuals.Pane;
+        _assetTabs.ItemsSource = tabs;
+        _assetTabs.SelectionChanged += (_, e) =>
+        {
+            // Lists and the type filters also raise SelectionChanged.
+            if (!ReferenceEquals(e.Source, _assetTabs)) return;
+            SyncPreviewSelection();
+            if (_assetTabs.SelectedIndex == 1 &&
+                _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+            if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
+        };
+
+        var grid = EditorVisuals.Columns("220,5,*,5,368", hierarchy,
+            new GridSplitter { ResizeDirection = GridResizeDirection.Columns, Background = EditorVisuals.Line },
+            view,
+            new GridSplitter { ResizeDirection = GridResizeDirection.Columns, Background = EditorVisuals.Line }, _assetTabs);
+        if (!diagnosticMode)
+        {
+            MinWidth = 960;
+            MinHeight = 600;
+            grid.ColumnDefinitions[0].MinWidth = 173;
+            grid.ColumnDefinitions[2].MinWidth = 280;
+            grid.ColumnDefinitions[4].MinWidth = 298;
+            bool customized = false;
+            foreach (var splitter in grid.Children.OfType<GridSplitter>())
+                splitter.AddHandler(Thumb.DragCompletedEvent, (_, _) => customized = true, handledEventsToo: true);
+            grid.SizeChanged += (_, e) =>
+            {
+                if (customized || _targetSize is not null) return;
+                bool compact = e.NewSize.Width < 1100;
+                grid.ColumnDefinitions[0].Width = new GridLength(compact ? 173 : 220);
+                grid.ColumnDefinitions[4].Width = new GridLength(compact ? 308 : 368);
+            };
+        }
+
+        _retryApply.Content = "Apply";
+        AutomationProperties.SetName(_retryApply, "Apply current document or retry");
+        var statusToggle = new ToggleButton { Content = "Status details" };
+        var diagnosticsToggle = new ToggleButton { Content = "Diagnostics", IsChecked = diagnosticMode };
+        var applyDetail = EditorVisuals.Details("");
+        applyDetail.Bind(TextBlock.TextProperty, _applyLine.GetObservable(TextBlock.TextProperty));
+        var editDetail = EditorVisuals.Details("");
+        editDetail.Bind(TextBlock.TextProperty, _editLine.GetObservable(TextBlock.TextProperty));
+        var runtimeDetail = EditorVisuals.Details("");
+        runtimeDetail.Bind(TextBlock.TextProperty, _connectionLine.GetObservable(TextBlock.TextProperty));
+        var statusDetails = EditorVisuals.Scroll(EditorVisuals.Stack(3, runtimeDetail, editDetail, applyDetail));
+        statusDetails.MaxHeight = 130;
+        statusDetails.IsVisible = false;
+        statusToggle.IsCheckedChanged += (_, _) => statusDetails.IsVisible = statusToggle.IsChecked == true;
+
+        _status.MaxHeight = 105;
+        var diagnosticPanel = EditorVisuals.Scroll(EditorVisuals.Stack(4,
+            EditorVisuals.Actions(_notes, _measureLatency, _measureFrames, _sizeBox, _applySize), _status));
+        diagnosticPanel.MaxHeight = 162;
+        diagnosticPanel.IsVisible = diagnosticMode;
+        diagnosticsToggle.IsCheckedChanged += (_, _) => diagnosticPanel.IsVisible = diagnosticsToggle.IsChecked == true;
+        var status = EditorVisuals.Bar(EditorVisuals.Columns("*,*,2*,Auto,Auto,Auto",
+            _connectionLine, _editLine, _applyLine, _retryApply, statusToggle, diagnosticsToggle));
+        _connectionLine.Margin = _editLine.Margin = _applyLine.Margin = new Thickness(0, 0, 8, 0);
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto,Auto") };
+        foreach (Control control in new Control[] { commands, grid, status, statusDetails, diagnosticPanel })
+        {
+            Grid.SetRow(control, root.Children.Count);
+            root.Children.Add(control);
+        }
+        return root;
+    }
+
+    private static void AddDocked(DockPanel parent, Control child, Avalonia.Controls.Dock side)
+    {
+        DockPanel.SetDock(child, side);
+        parent.Children.Add(child);
     }
 
     private void OnViewportWindow(ViewportWindow window)
@@ -561,10 +633,25 @@ public sealed class MainWindow : Window
             _redo.IsEnabled = history.CanRedo;
             _undo.Content = history.CanUndo ? "Undo " + history.UndoLabel : "Undo";
             _redo.Content = history.CanRedo ? "Redo " + history.RedoLabel : "Redo";
+            AutomationProperties.SetName(_undo, _undo.Content?.ToString());
+            AutomationProperties.SetName(_redo, _redo.Content?.ToString());
+            ToolTip.SetTip(_undo, _undo.Content);
+            ToolTip.SetTip(_redo, _redo.Content);
         };
         worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
-        worker.ApplyStateChanged += text => { if (ReferenceEquals(_worker, worker)) _applyLine.Text = "apply: " + text; };
+        worker.ApplyStateChanged += (status, text) =>
+        {
+            if (!ReferenceEquals(_worker, worker)) return;
+            _applyLine.Text = "apply: " + text;
+            _applyLine.Foreground = status switch
+            {
+                ApplyStatus.Applied => EditorVisuals.Success,
+                ApplyStatus.Failed => EditorVisuals.Error,
+                ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply => EditorVisuals.Warning,
+                _ => EditorVisuals.Muted,
+            };
+        };
         worker.ApplyControlsChanged += (canApply, canPreview) =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
@@ -947,62 +1034,78 @@ public sealed class MainWindow : Window
     // and Add / Remove component. The panel is not rebuilt under a field being typed in: the snapshot waits.
     private Control BuildAssetsPanel()
     {
-        var panel = new StackPanel { Spacing = 6, Margin = new Thickness(6) };
-        panel.Children.Add(new TextBlock { Text = "Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk.", TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var reload = new Button { Content = "Reload view" };
-        reload.Click += (_, _) => LoadAssets(); panel.Children.Add(reload);
+        reload.Click += (_, _) => LoadAssets();
         var types = new ComboBox { ItemsSource = new[] { "All types", "Mesh", "Texture", "Material", "Scene", "Environment" }, SelectedIndex = 0 };
         types.SelectionChanged += (_, _) => { _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (Atlantis.Gameplay.Assets.AssetType)(types.SelectedIndex - 1); RenderAssets(); };
-        panel.Children.Add(types);
+        AutomationProperties.SetName(types, "Asset type");
         var search = new TextBox { PlaceholderText = "Source or GUID" };
+        search.Classes.Add("editor-search");
+        AutomationProperties.SetName(search, "Search assets by source or GUID");
         search.TextChanged += (_, _) => { _assetBrowser.Search = search.Text ?? ""; RenderAssets(); };
-        panel.Children.Add(search); panel.Children.Add(_assetsState);
-        _assetsList.ItemTemplate = new FuncDataTemplate<Atlantis.Gameplay.Assets.AssetSummary>((v, _) => new TextBlock {
-            Text = v is null ? "" : v.Type + " · " + v.Source + "\n" + v.Guid,
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        _assetsState.TextWrapping = TextWrapping.Wrap;
+        var heading = EditorVisuals.Bar(EditorVisuals.Stack(5,
+            EditorVisuals.Columns("*,Auto", EditorVisuals.Heading("Asset catalog"), reload),
+            EditorVisuals.Columns("*,Auto", search, types),
+            _assetsState));
+
+        _assetsList.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
+            asset is null ? new TextBlock() : EditorVisuals.AssetRow(asset));
+        AutomationProperties.SetName(_assetsList, "Asset results");
         _assetsList.SelectionChanged += (_, _) =>
         {
             if (_assetsSync) return;
             if (_assetsList.SelectedItem is AssetSummary asset) ReadAsset(asset.Guid);
             else { _assetBrowser.ClearSelection(); RenderAssets(); }
         };
-        panel.Children.Add(_assetsList);
         var copy = new Button { Content = "Copy GUID" };
-        copy.Click += async (_, _) => { if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard) await clipboard.SetTextAsync(guid.ToString()); };
-        panel.Children.Add(copy);
+        copy.Click += async (_, _) =>
+        {
+            if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+                await clipboard.SetTextAsync(guid.ToString());
+        };
         _previewMesh.Click += (_, _) => RequestPreview(withMaterial: false);
-        panel.Children.Add(_previewMesh);
         _previewMaterial.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
-            new TextBlock { Text = asset?.Source, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+            asset is null ? new TextBlock() : EditorVisuals.AssetRow(asset));
         _previewMaterial.SelectionChanged += (_, _) => { if (!_assetsSync) SyncPreviewSelection(); };
+        AutomationProperties.SetName(_previewMaterial, "Material for mesh preview");
         _previewPair.Click += (_, _) => RequestPreview(withMaterial: true);
-        panel.Children.Add(_previewMaterial);
-        panel.Children.Add(_previewPair);
-        panel.Children.Add(_previewState);
-        panel.Children.Add(_previewImage);
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
-        panel.Children.Add(_addMesh);
-        panel.Children.Add(_addMeshState);
+        var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
+            EditorVisuals.Stack(5, _assetTitle, _addMesh, _addMeshState, _previewState,
+                _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
+                EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
+
         _rebuildStart.Click += (_, _) => StartAssetRebuild();
         _rebuildRefresh.Click += (_, _) => ReadRebuildStatus();
         _rebuildPoll.Tick += (_, _) => ReadRebuildStatus();
-        panel.Children.Add(_rebuildStart);
-        panel.Children.Add(_rebuildRefresh);
-        panel.Children.Add(_rebuildState);
-        panel.Children.Add(_assetDetails);
         _importName.TextChanged += (_, _) => UpdateImportButtons();
         _importRegister.Click += (_, _) => StartImport(ImportMode.Register);
         _importResume.Click += (_, _) => StartImport(ImportMode.Resume);
         _importRefresh.Click += (_, _) => ReadImportStatus();
         _importPoll.Tick += (_, _) => ReadImportStatus();
-        panel.Children.Add(_importName);
-        panel.Children.Add(_importRegister);
-        panel.Children.Add(_importResume);
-        panel.Children.Add(_importRefresh);
-        panel.Children.Add(_importState);
-        return new ScrollViewer { Content = panel };
+
+        var body = EditorVisuals.Stack(7, _assetsList, selected,
+            EditorVisuals.Disclosure("Rebuild", EditorVisuals.Actions(_rebuildStart, _rebuildRefresh)),
+            _rebuildState,
+            EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
+                EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
+            _importState,
+            EditorVisuals.Secondary("Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk."));
+        body.Margin = new Thickness(8);
+        var panel = new DockPanel();
+        AddDocked(panel, heading, Dock.Top);
+        panel.Children.Add(EditorVisuals.Scroll(body));
+        panel.SizeChanged += (_, e) =>
+        {
+            bool compact = e.NewSize.Width < 330 || e.NewSize.Height < 510;
+            _assetsList.Height = compact ? 101 : 128;
+            _previewImage.Height = compact ? 156 : 192;
+        };
+        return panel;
     }
+
     private void LoadAssets()
     {
         var worker = _worker; if (worker is null) return;
@@ -1024,7 +1127,11 @@ public sealed class MainWindow : Window
     }
     private void RenderAssets()
     {
-        _assetsState.Text = _assetBrowser.ViewState;
+        bool catalogFailed = _assetBrowser.State == nameof(AssetError.CatalogUnavailable);
+        _assetsState.Text = catalogFailed
+            ? "Catalog unavailable. Restart Runtime after repairing the catalog."
+            : _assetBrowser.ViewState;
+        _assetsState.Foreground = catalogFailed ? EditorVisuals.Error : EditorVisuals.Muted;
         var visible = _assetBrowser.Visible;
         _assetsSync = true;
         try
@@ -1041,6 +1148,10 @@ public sealed class MainWindow : Window
             }
         }
         finally { _assetsSync = false; }
+        _assetTitle.Text = _assetsList.SelectedItem is AssetSummary asset
+            ? EditorVisuals.AssetName(asset) : "Select an asset";
+        ToolTip.SetTip(_assetTitle, _assetTitle.Text);
+        foreach (Action refresh in _refreshReferenceLabels) refresh();
         SyncPreviewSelection();
         UpdateAddMeshButton();
         UpdateRebuildButtons();
@@ -1048,7 +1159,8 @@ public sealed class MainWindow : Window
         _assetDetails.Children.Clear();
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
-        _assetDetails.Children.Add(new TextBlock { Text = d.Type + "\n" + d.Source + "\n" + d.Guid + "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        _assetDetails.Children.Add(EditorVisuals.Details(d.Type + "\n" + d.Source + "\n" + d.Guid +
+            "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
     }
@@ -1208,21 +1320,27 @@ public sealed class MainWindow : Window
 
     private Control BuildSavedScenePanel()
     {
-        var panel = new StackPanel { Margin = new Thickness(8), Spacing = 8 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Checkout: " + _options.SavedSceneCheckout + "\nVisual Studio 18 2026 · x64 · Debug",
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        });
-        panel.Children.Add(_savedHint);
-        panel.Children.Add(_savedRefresh);
-        panel.Children.Add(_savedDiscovery);
-        panel.Children.Add(_savedList);
-        panel.Children.Add(new TextBlock { Text = "Committed managed import root (optional)" });
-        panel.Children.Add(_savedManaged);
-        panel.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { _savedBuild, _savedOpen } });
-        panel.Children.Add(_savedBuildResult);
-        panel.Children.Add(_savedOpenResult);
+        var header = EditorVisuals.Bar(EditorVisuals.Stack(2,
+            EditorVisuals.Columns("*,Auto", EditorVisuals.Heading("Saved scene units"), _savedRefresh),
+            EditorVisuals.Secondary("Visual Studio 18 2026 · x64 · Debug")));
+        var checkout = EditorVisuals.Disclosure("Checkout details",
+            EditorVisuals.Details(_options.SavedSceneCheckout ?? ""));
+        _savedHint.Foreground = EditorVisuals.Muted;
+        _savedBuildResult.MaxHeight = 170;
+        _savedOpen.Classes.Add("editor-primary");
+        var operations = EditorVisuals.Group(EditorVisuals.Heading("Build and open"),
+            EditorVisuals.Stack(6, EditorVisuals.Secondary("Committed managed import root (optional)"),
+                _savedManaged, _savedBuildSummary, _savedOpenResult, EditorVisuals.Actions(_savedBuild, _savedOpen),
+                EditorVisuals.Disclosure("Build details", _savedBuildResult)));
+        var body = EditorVisuals.Stack(6, checkout, _savedHint, _savedDiscovery, _savedList, operations);
+        body.Margin = new Thickness(8);
+        var panel = new DockPanel();
+        AddDocked(panel, header, Dock.Top);
+        panel.Children.Add(EditorVisuals.Scroll(body));
+        panel.SizeChanged += (_, e) => _savedList.Height = e.NewSize.Height < 510 ? 100 : 126;
+
+        AutomationProperties.SetName(_savedList, "Local saved scenes");
+        AutomationProperties.SetName(_savedManaged, "Committed managed import root");
         _savedRefresh.Click += (_, _) => RefreshSavedScenes();
         _savedList.SelectionChanged += (_, _) => UpdateSavedSceneButtons();
         _savedManaged.TextChanged += (_, _) =>
@@ -1234,7 +1352,7 @@ public sealed class MainWindow : Window
         };
         _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
         _savedOpen.Click += async (_, _) => await OpenSelectedSavedScene();
-        return new ScrollViewer { Content = panel };
+        return panel;
     }
 
     private void ShowSavedSceneReceipt(SavedSceneReceipt? receipt)
@@ -1261,6 +1379,7 @@ public sealed class MainWindow : Window
     {
         _savedAttempts.Invalidate();
         _savedOpenResult.Text = "Stale. " + why;
+        _savedOpenResult.Foreground = EditorVisuals.Warning;
     }
 
     private void RefreshSavedScenes()
@@ -1289,6 +1408,9 @@ public sealed class MainWindow : Window
 
     private void ShowSavedBuild(SavedSceneInput input, SavedSceneBuildReport report)
     {
+        _savedBuildSummary.Text = $"{report.Phase}: {report.Detail}";
+        _savedBuildSummary.Foreground = report.Result is not null ? EditorVisuals.Success :
+            report.Phase == "Failed" ? EditorVisuals.Error : EditorVisuals.Muted;
         _savedBuildResult.Text = $"{report.Phase}: {report.Detail}\nScene: {input.Name}\n" +
             $"Visual Studio 18 2026 · x64 · Debug\nManaged root: {input.ManagedRoot ?? "(none)"}\n" +
             $"Build directory: {report.Directory}\nLog: {(report.Log.Length == 0 ? "(unavailable)" : report.Log)}" +
@@ -1300,7 +1422,8 @@ public sealed class MainWindow : Window
         if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
             !_savedAttempts.BeginBuild(input)) return;
         _savedOpenResult.Text = "";
-        _savedBuildResult.Text = "Preparing a fresh build for " + input.Name;
+        _savedBuildResult.Text = _savedBuildSummary.Text = "Preparing a fresh build for " + input.Name;
+        _savedBuildSummary.Foreground = EditorVisuals.Muted;
         UpdateSavedSceneButtons();
         var progress = new Progress<SavedSceneBuildReport>(report =>
         {
@@ -1317,6 +1440,7 @@ public sealed class MainWindow : Window
         if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
             _savedAttempts.BeginOpen(input) is not { } result) return;
         _savedOpenResult.Text = "Starting a separate Editor for " + input.Name;
+        _savedOpenResult.Foreground = EditorVisuals.Muted;
         UpdateSavedSceneButtons();
         Process? child = null;
         try
@@ -1335,6 +1459,7 @@ public sealed class MainWindow : Window
         catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
         {
             _savedOpenResult.Text = "Editor start failed. Retry Open if the build is still current. " + e.Message;
+            _savedOpenResult.Foreground = EditorVisuals.Error;
         }
         finally
         {
@@ -1585,17 +1710,22 @@ public sealed class MainWindow : Window
         _inspectorShown = snapshot;
         _inspectorDeferred = null;
         _nameBox = null;
+        _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
         if (snapshot.Subject is not EntityGuid subject)
         {
             _inspectorPanel.Children.Add(new TextBlock { Text = "Select a node in the Hierarchy.", Opacity = 0.6 });
             return;
         }
-        _inspectorPanel.Children.Add(new TextBlock { Text = "Node " + subject, FontWeight = Avalonia.Media.FontWeight.SemiBold, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var title = EditorVisuals.Heading(string.IsNullOrEmpty(snapshot.Name) ? "Unnamed node" : snapshot.Name, 17);
+        title.TextWrapping = TextWrapping.Wrap;
+        _inspectorPanel.Children.Add(EditorVisuals.Stack(1, title, EditorVisuals.Secondary("Scene node")));
+        _inspectorPanel.Children.Add(EditorVisuals.Disclosure("Node details", EditorVisuals.Details(subject.ToString())));
         var nameRow = new Grid { ColumnDefinitions = new ColumnDefinitions("90,*"), Margin = new Thickness(0, 2) };
         nameRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
         var nameBox = new TextBox { Text = snapshot.Name, PlaceholderText = "Unnamed", MinWidth = 80 };
         _nameBox = nameBox;
+        AutomationProperties.SetName(nameBox, "Node name");
         Grid.SetColumn(nameBox, 1);
         nameRow.Children.Add(nameBox);
         _inspectorPanel.Children.Add(nameRow);
@@ -1626,32 +1756,42 @@ public sealed class MainWindow : Window
         };
         foreach (var (component, name) in snapshot.Components)
         {
-            var header = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+            var header = new DockPanel();
             if (name != "Transform")
             {
-                var remove = new Button { Content = "Remove", Padding = new Thickness(6, 0) };
+                var remove = new Button { Content = "Remove" };
+                AutomationProperties.SetName(remove, "Remove " + name + " component");
                 TypeId id = component;
                 remove.Click += (_, _) => _worker?.RemoveComponent(id);
-                DockPanel.SetDock(remove, Dock.Right);
-                header.Children.Add(remove);
+                AddDocked(header, remove, Dock.Right);
             }
-            header.Children.Add(new TextBlock { Text = name, FontWeight = Avalonia.Media.FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-            _inspectorPanel.Children.Add(header);
-            foreach (InspectorField field in snapshot.Fields.Where(f => f.Component == component)) _inspectorPanel.Children.Add(FieldRow(field));
+            header.Children.Add(EditorVisuals.Heading(name));
+            var body = new StackPanel { Spacing = 4 };
+            var fields = snapshot.Fields.Where(f => f.Component == component).ToArray();
+            ToggleButton? referenceDetails = fields.Any(InspectorModel.CanChooseAsset)
+                ? new ToggleButton { Content = "Reference details" }
+                : null;
+            if (name == "Transform" && fields.Any(IsTransformVector))
+                body.Children.Add(EditorVisuals.Columns("76,*,*,*", new TextBlock(),
+                    AxisHeading("X"), AxisHeading("Y"), AxisHeading("Z")));
+            foreach (InspectorField field in fields)
+                body.Children.Add(FieldRow(field, referenceDetails));
+            if (referenceDetails is not null) body.Children.Add(referenceDetails);
+            _inspectorPanel.Children.Add(EditorVisuals.Group(header, body));
         }
         if (snapshot.Addable.Count > 0)
         {
-            var add = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
-            var choice = new ComboBox { ItemsSource = snapshot.Addable.Select(a => a.Name).ToList(), SelectedIndex = 0, MinWidth = 140 };
-            var button = new Button { Content = "Add component", Margin = new Thickness(6, 0, 0, 0) };
+            var choice = new ComboBox
+            {
+                ItemsSource = snapshot.Addable.Select(a => a.Name).ToList(), SelectedIndex = 0, MinWidth = 115,
+            };
+            AutomationProperties.SetName(choice, "Component type");
+            var button = new Button { Content = "Add component" };
             button.Click += (_, _) =>
             {
                 if (choice.SelectedIndex >= 0) _worker?.AddComponent(snapshot.Addable[choice.SelectedIndex].Id);
             };
-            DockPanel.SetDock(button, Dock.Right);
-            add.Children.Add(button);
-            add.Children.Add(choice);
-            _inspectorPanel.Children.Add(add);
+            _inspectorPanel.Children.Add(EditorVisuals.Actions(choice, button));
         }
         if (focusedAddress is SceneAddress previous) FocusReferenceLauncher(previous);
     }
@@ -1733,11 +1873,35 @@ public sealed class MainWindow : Window
         });
     }
 
-    private Control FieldRow(InspectorField field)
+    private static bool IsTransformVector(InspectorField field) =>
+        field.Control == FieldControl.Float3 && field.Path is
+            "Transform.localPosition" or "Transform.localEulerAnglesRadians" or "Transform.localScale";
+
+    private static TextBlock AxisHeading(string axis)
+    {
+        var text = EditorVisuals.Secondary(axis);
+        text.TextAlignment = TextAlignment.Right;
+        text.Margin = new Thickness(2, 0, 6, 0);
+        return text;
+    }
+
+    private Control FieldRow(InspectorField field, ToggleButton? referenceDetails)
     {
         EntityGuid? sourceSubject = _inspectorShown?.Subject;
-        var row = new Grid { ColumnDefinitions = new ColumnDefinitions("110,*,Auto") };
-        row.Children.Add(new TextBlock { Text = field.Label, VerticalAlignment = VerticalAlignment.Center, TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis });
+        bool vector = IsTransformVector(field);
+        string name = field.Path switch
+        {
+            "Transform.localPosition" => "Position",
+            "Transform.localEulerAnglesRadians" => "Rotation (rad)",
+            "Transform.localScale" => "Scale",
+            "Renderable.meshAsset" => "Mesh",
+            "Renderable.materialAsset" => "Material",
+            _ => field.Label,
+        };
+        var label = EditorVisuals.Secondary(name);
+        label.VerticalAlignment = VerticalAlignment.Center;
+        var row = EditorVisuals.Columns(vector ? "76,*" : "76,*,Auto,Auto", label);
+        row.Tag = field.Path;
         Control editor;
         if (field.Control == FieldControl.Enum && field.Editable)
         {
@@ -1750,14 +1914,16 @@ public sealed class MainWindow : Window
         }
         else
         {
-            var box = new TextBox { Text = field.Text, IsReadOnly = !field.Editable, Opacity = field.Editable ? 1.0 : 0.6 };
+            var box = new TextBox { Text = field.Text, IsReadOnly = !field.Editable, MinWidth = 0 };
             if (field.Optional && !field.Present) box.PlaceholderText = "(absent)";
+            if (vector)
+                AutomationProperties.SetName(box, name + ", X Y Z");
             string original = field.Text;
             void ReplaceDraft() { box.Text = field.Text; original = field.Text; }
-            if (InspectorModel.CanChooseAsset(field))
+            if (InspectorModel.CanChooseAsset(field) && referenceDetails is not null)
             {
-                row.ColumnDefinitions = new ColumnDefinitions("110,*,Auto,Auto");
                 var choose = new Button { Content = "Choose…", Tag = "asset chooser", IsEnabled = !_referenceBusy && !_referenceSessionFailed };
+                AutomationProperties.SetName(choose, "Choose " + name);
                 if (sourceSubject is EntityGuid subject)
                     choose.DataContext = new SceneAddress(subject, field.Component, field.Field.Id);
                 // The ancestor tunnel runs before Button's class focus handler.
@@ -1767,9 +1933,58 @@ public sealed class MainWindow : Window
                         e.GetCurrentPoint(choose).Properties.IsLeftButtonPressed) ReplaceDraft();
                 }, RoutingStrategies.Tunnel);
                 choose.Click += (_, _) => BeginAssetReference(field, choose, sourceSubject);
-                Grid.SetColumn(choose, 2); row.Children.Add(choose);
                 box.KeyDown += (_, e) =>
                 { if (e.Key == Key.F4 && e.KeyModifiers == KeyModifiers.None) { e.Handled = true; ReplaceDraft(); BeginAssetReference(field, choose, sourceSubject); } };
+
+                row.RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto");
+                var value = EditorVisuals.Ellipsis("");
+                var sourcePath = EditorVisuals.Details("");
+                var valueWell = new Border
+                {
+                    Child = value, Padding = new Thickness(6, 4), Background = EditorVisuals.Inset,
+                    CornerRadius = new CornerRadius(4), Margin = new Thickness(0, 0, 4, 0),
+                };
+                Grid.SetColumn(valueWell, 1);
+                row.Children.Add(valueWell);
+                Grid.SetColumn(sourcePath, 1);
+                Grid.SetColumnSpan(sourcePath, 3);
+                Grid.SetRow(sourcePath, 2);
+                row.Children.Add(sourcePath);
+                Grid.SetColumn(choose, 2);
+                row.Children.Add(choose);
+                Grid.SetRow(box, 3);
+                Grid.SetColumnSpan(box, 3);
+
+                void ReferenceLabel()
+                {
+                    AssetSummary? asset = field.Value is PropertyValue v && v.TryGetAsset(out AssetGuid guid)
+                        ? _assetBrowser.Items.FirstOrDefault(a => a.Guid == guid)
+                        : null;
+                    value.Text = asset is not null ? EditorVisuals.AssetName(asset) :
+                        field.Present ? "Asset " + field.Text.Split('-')[0] : "(absent)";
+                    ToolTip.SetTip(value, asset is not null ? asset.Source + "\n" + field.Text : field.Text);
+                    sourcePath.Text = asset?.Source ?? "";
+                    sourcePath.IsVisible = referenceDetails.IsChecked == true && asset is not null;
+                }
+
+                _refreshReferenceLabels.Add(ReferenceLabel);
+                void DetailsChanged()
+                {
+                    box.IsVisible = referenceDetails.IsChecked == true;
+                    ReferenceLabel();
+                }
+
+                referenceDetails.IsCheckedChanged += (_, _) => DetailsChanged();
+                DetailsChanged();
+                AutomationProperties.SetName(box, name + " GUID");
+                row.SizeChanged += (_, e) =>
+                {
+                    bool compact = e.NewSize.Width < 285;
+                    Grid.SetColumnSpan(valueWell, compact ? 3 : 1);
+                    Grid.SetRow(choose, compact ? 1 : 0);
+                    if (row.Children.OfType<Button>().FirstOrDefault(b => b.Tag as string == "clear field") is { } clear)
+                        Grid.SetRow(clear, compact ? 1 : 0);
+                };
             }
             void Commit()
             {
@@ -1779,8 +1994,8 @@ public sealed class MainWindow : Window
             }
             box.KeyDown += (_, e) =>
             {
-                if (e.Key == Avalonia.Input.Key.Enter) Commit();
-                if (e.Key == Avalonia.Input.Key.Escape) box.Text = original;
+                if (e.Key == Key.Enter) Commit();
+                if (e.Key == Key.Escape) box.Text = original;
             };
             box.LostFocus += (_, _) =>
             {
@@ -1790,13 +2005,42 @@ public sealed class MainWindow : Window
                     if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
                 });
             };
-            editor = box;
+            if (vector)
+            {
+                var axes = new[] { AxisHeading(""), AxisHeading(""), AxisHeading("") };
+                var summary = new Border
+                {
+                    Background = EditorVisuals.Inset, CornerRadius = new CornerRadius(4),
+                    Child = EditorVisuals.Columns("*,*,*", axes), IsHitTestVisible = false,
+                    Padding = new Thickness(0, 4), VerticalAlignment = VerticalAlignment.Center,
+                };
+                void ShowVector()
+                {
+                    string text = InspectorModel.TryParse(field, box.Text ?? "", out PropertyValue value, out _)
+                        ? InspectorModel.Format(field, value) : field.Text;
+                    string[] values = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    for (int axis = 0; axis < axes.Length; ++axis)
+                        axes[axis].Text = axis < values.Length ? values[axis] : "";
+                    summary.IsVisible = !box.IsFocused;
+                    box.Opacity = box.IsFocused ? 1 : 0;
+                }
+
+                box.GotFocus += (_, _) => ShowVector();
+                box.LostFocus += (_, _) => ShowVector();
+                ShowVector();
+                var layer = new Grid { Children = { box, summary } };
+                editor = layer;
+            }
+            else editor = box;
         }
+        if (!vector && AutomationProperties.GetName(editor) is null)
+            AutomationProperties.SetName(editor, name);
         Grid.SetColumn(editor, 1);
         row.Children.Add(editor);
         if (field.Optional && field.Present && field.Editable)
         {
-            var clear = new Button { Content = "×", Padding = new Thickness(6, 0), Margin = new Thickness(4, 0, 0, 0) };
+            var clear = new Button { Content = "Clear", Tag = "clear field" };
+            AutomationProperties.SetName(clear, "Clear " + name);
             clear.Click += (_, _) => _worker?.ClearField(field.Path);
             Grid.SetColumn(clear, InspectorModel.CanChooseAsset(field) ? 3 : 2);
             row.Children.Add(clear);
@@ -1840,6 +2084,7 @@ public sealed class MainWindow : Window
     private void UpdateStatus()
     {
         string size = _viewport.Window is { } w ? "viewport " + w.Width + "x" + w.Height + " px   " : "";
+        _connectionLine.Text = _runtimeLine;
         _status.Text = string.Join("\n", new[] { _runtimeLine, _pickLine + "   " + _cameraLine, size + _inputLine + "   " + _uiLine, _measureLine }
                                          .Where(line => !string.IsNullOrWhiteSpace(line)));
     }

@@ -19,6 +19,7 @@ using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -154,7 +155,13 @@ public static partial class Program
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
                         else if (meshMaterialPreview) await CheckMeshMaterialPreviewUi(window, _checks, _work);
-                        else { await CheckNameUi(window, _checks, _work); await CheckAssetsUi(window, _checks); await CheckAssetPickerUi(window, _checks); }
+                        else
+                        {
+                            await CheckNameUi(window, _checks, _work);
+                            await CheckVectorLayout(window, _checks);
+                            await CheckAssetsUi(window, _checks);
+                            await CheckAssetPickerUi(window, _checks);
+                        }
                     }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
                     finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
@@ -162,6 +169,17 @@ public static partial class Program
             }
             base.OnFrameworkInitializationCompleted();
         }
+    }
+
+    private static Grid InspectorRow(MainWindow window, string path) =>
+        NameUiField<StackPanel>(window, "_inspectorPanel")!.GetVisualDescendants().OfType<Grid>()
+            .Single(row => Equals(row.Tag, path));
+
+    private static TextBox RevealGuidBox(Grid row)
+    {
+        ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
+            .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
+        return row.Children.OfType<TextBox>().Single();
     }
 
     private static async Task CheckAssetRebuildUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
@@ -709,8 +727,7 @@ public static partial class Program
         try
         {
             var renderedBefore = await Capture("original-mesh");
-            var row = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
-                .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
+            var row = InspectorRow(window, "Renderable.meshAsset");
             Click(row.Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…"));
             AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
             await NameUiWait(() => Picker() is { } p && PickerField<AssetBrowser>(p, "_browser").State == "Ready",
@@ -773,6 +790,63 @@ public static partial class Program
         finally { workerField.SetValue(window, worker); }
     }
 
+    private static async Task CheckVectorLayout(MainWindow window, List<NameUiCheck> checks)
+    {
+        var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var document = new RemoteAuthoringDocument(observer.Authoring, observer);
+        var selected = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!.Subject!.Value;
+        const string path = "Transform.localPosition";
+        var address = SceneSchema.AddressOf(document.Schema, selected, "Transform", "localPosition")!.Value;
+        PropertyValue original = await Task.Run(() => document.GetProperty(address)!.Value);
+        TextBox Box() => InspectorRow(window, path).GetVisualDescendants().OfType<TextBox>().Single();
+        Button ActionButton(string field) => NameUiField<Button>(window, field)!;
+        void Check(string name, bool passed) => checks.Add(new NameUiCheck("vector layout: " + name, passed, ""));
+        async Task WaitValue(PropertyValue value, string purpose) =>
+            await NameUiWait(async () => (await Task.Run(() => document.GetProperty(address))) == value, purpose);
+
+        double standardWidth = window.Width, standardHeight = window.Height;
+        try
+        {
+            TextBox draft = Box();
+            Check("one focusable editor per vector", draft.Focus() && draft.IsFocused);
+            draft.Text = "1.2345678 2 -3";
+            window.Width = 960;
+            window.Height = 600;
+            await NameUiWait(() => window.ClientSize.Width <= 970, "compact window arranged");
+            Check("reflow retains the same editor, focus and exact draft",
+                ReferenceEquals(draft, Box()) && draft.IsFocused && draft.Text == "1.2345678 2 -3");
+            NameUiKey(draft, Key.Escape);
+            Check("Escape restores full vector", draft.Text == InspectorModel.Format(
+                NameUiField<InspectorSnapshot>(window, "_inspectorShown")!.Fields.Single(f => f.Path == path), original));
+            draft.Text = "1.2345678 2 -3";
+            NameUiKey(draft, Key.Enter);
+            ActionButton("_save").Focus();
+            PropertyValue edited = PropertyValue.FromVec3(new System.Numerics.Vector3(1.2345678f, 2, -3));
+            await WaitValue(edited, "vector edit committed");
+            await NameUiWait(() => ActionButton("_undo").IsEnabled &&
+                ActionButton("_undo").Content?.ToString() == "Undo edit " + path, "one vector history action");
+            ActionButton("_undo").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitValue(original, "one Undo restores every axis");
+            Check("one Undo restores every axis", true);
+            await NameUiWait(() => ActionButton("_redo").IsEnabled, "vector redo ready");
+            ActionButton("_redo").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitValue(edited, "one Redo restores every axis");
+            Check("one Redo restores every axis", true);
+            await NameUiWait(() => ActionButton("_undo").IsEnabled, "vector cleanup undo ready");
+            ActionButton("_undo").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await WaitValue(original, "restore fixture vector");
+            await NameUiWait(() => NameUiField<TextBlock>(window, "_applyLine")!.Text?.StartsWith(
+                "apply: applied", StringComparison.Ordinal) == true && ActionButton("_redo").IsEnabled,
+                "restore vector apply settles");
+        }
+        finally
+        {
+            window.Width = standardWidth;
+            window.Height = standardHeight;
+        }
+    }
+
     private static async Task CheckLegacyReadiness(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
         var edit = NameUiField<TextBlock>(window, "_editLine")!;
@@ -796,7 +870,7 @@ public static partial class Program
         var runtime = NameUiField<RuntimeProcess>(window, "_runtime")!;
         using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
         var document = await Task.Run(() => new RemoteAuthoringDocument(observer.Authoring, observer));
-        NameUiField<TextBox>(window, "_notes")!.Focus();
+        NameUiField<Button>(window, "_save")!.Focus();
         await Task.Delay(100);
         var snapshot = NameUiField<InspectorSnapshot>(window, "_inspectorShown")!;
         EntityGuid node = snapshot.Subject!.Value;
@@ -811,9 +885,8 @@ public static partial class Program
             a.Source.StartsWith("assets:", StringComparison.Ordinal) && a.Guid != original.AsAsset()).Guid;
         var undo = NameUiField<Button>(window, "_undo")!;
         var redo = NameUiField<Button>(window, "_redo")!;
-        Grid Row() => NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
-            .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "materialAsset"));
-        TextBox Box() => Row().Children.OfType<TextBox>().Single();
+        Grid Row() => InspectorRow(window, "Renderable.materialAsset");
+        TextBox Box() => RevealGuidBox(Row());
         Button Choose() => Row().Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…");
         AssetReferencePickerWindow? Picker() => NameUiField<AssetReferencePickerWindow>(window, "_referenceWindow");
         bool Busy() => (bool)typeof(MainWindow).GetField("_referenceBusy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
@@ -1026,7 +1099,7 @@ public static partial class Program
             await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node, "worker selection restored after refusal");
 
             // Optional absence is a value state, not a failed read.
-            Row().Children.OfType<Button>().Single(b => b.Content?.ToString() == "×").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Row().Children.OfType<Button>().Single(b => b.Content?.ToString() == "Clear").RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await NameUiWait(async () => (await ReadValue()).IsAbsent && Applied(), "clear optional material"); await Refreshed();
             chooser = await Open();
             Check("optional absent target captured", chooser.Target.Before.IsAbsent);
@@ -1123,9 +1196,8 @@ public static partial class Program
                 render.Invoke(chooser, null);
                 Check("catalog refusal disables confirmation", listState.Text == "CatalogUnavailable" && !typedConfirm.IsEnabled);
                 await Cancel(chooser);
-                var meshRow = NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
-                    .Single(g => g.Children.OfType<TextBlock>().Any(t => t.Text == "meshAsset"));
-                var meshBox = meshRow.Children.OfType<TextBox>().Single();
+                var meshRow = InspectorRow(window, "Renderable.meshAsset");
+                var meshBox = RevealGuidBox(meshRow);
                 meshBox.Focus();
                 Check("mesh field opens chooser", NameUiKey(meshBox, Key.F4));
                 await NameUiWait(() => Picker() is not null && PickerField<AssetBrowser>(Picker()!, "_browser").State == "Ready", "mesh chooser lists");
@@ -1457,7 +1529,12 @@ public static partial class Program
             TextBox unfocus = NameBox();
             Check("lost-focus draft focus", unfocus.Focus() && unfocus.IsFocused);
             unfocus.Text = "leave this draft";
+            var diagnostics = window.GetVisualDescendants().OfType<ToggleButton>()
+                .Single(button => button.Content?.ToString() == "Diagnostics");
+            diagnostics.IsChecked = true;
+            await NameUiWait(() => notes.IsEffectivelyVisible && notes.Bounds.Width > 0, "Diagnostics is arranged");
             Check("focus moves to another real TextBox", notes.Focus() && notes.IsFocused);
+            diagnostics.IsChecked = false;
             Check("LostFocus restores actual text", unfocus.Text == "UI smoke 灯");
             await NoChange("LostFocus", "UI smoke 灯", generation);
 
@@ -1556,7 +1633,11 @@ public static partial class Program
         list.SelectedItem = browser.Visible.First(v => v.Guid == material.Guid);
         await NameUiWait(() => browser.Details?.Guid == material.Guid, "actual detail query");
         Check("assets UI: displayed metadata", NameUiField<StackPanel>(window, "_assetDetails")!.Children.OfType<TextBlock>().Any(b => b.Text?.Contains("artifact schema:", StringComparison.Ordinal) == true));
-        var copy = controls.OfType<Button>().Single(b => b.Content?.ToString() == "Copy GUID");
+        var details = controls.OfType<Expander>().Single(e => e.Header?.ToString() == "Asset details");
+        details.IsExpanded = true;
+        await NameUiWait(() => details.GetVisualDescendants().OfType<Button>().Any(b => b.Content?.ToString() == "Copy GUID"),
+            "copy control is reachable in Asset details");
+        var copy = details.GetVisualDescendants().OfType<Button>().Single(b => b.Content?.ToString() == "Copy GUID");
         copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         await NameUiWait(() => browser.DetailState == "Ready", "copy after detail");
         string? copied = await window.Clipboard!.TryGetTextAsync();
@@ -1612,8 +1693,7 @@ public static partial class Program
         var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
         NameUiField<ListBox>(window, "_entities")!.SelectedItem = rows.First(r => r.Node == node);
         await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node, "actual Renderable Inspector");
-        TextBox MaterialBox() => NameUiField<StackPanel>(window, "_inspectorPanel")!.Children.OfType<Grid>()
-            .Single(g => g.Children.OfType<TextBlock>().Any(b => b.Text == "materialAsset")).Children.OfType<TextBox>().Single();
+        TextBox MaterialBox() => RevealGuidBox(InspectorRow(window, "Renderable.materialAsset"));
         SceneAddress address = SceneSchema.AddressOf(document.Schema, node, "Renderable", "materialAsset")!.Value;
         AssetGuid original = document.GetProperty(address)!.Value.AsAsset();
         var replacement = browser.Items.First(v => v.Type == Atlantis.Gameplay.Assets.AssetType.Material && v.Guid != original && v.Source.StartsWith("assets:", StringComparison.Ordinal));

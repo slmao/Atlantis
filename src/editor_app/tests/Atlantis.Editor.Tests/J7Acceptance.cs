@@ -263,7 +263,7 @@ public static class J7Acceptance
 
         public void Wire(EditorWorker worker)
         {
-            worker.ApplyStateChanged += text => Apply = text;
+            worker.ApplyStateChanged += (_, text) => Apply = text;
             worker.EditNotice += text => { LatestNotice = text; Interlocked.Increment(ref Notices); };
             worker.PlayStateChanged += playing => { Playing = playing; Interlocked.Increment(ref Plays); };
             worker.DocumentOpened += info => Opened = info;
