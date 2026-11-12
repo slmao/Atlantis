@@ -12,24 +12,22 @@ while preserving current actions, authority, and state transitions.
 
 ## Milestones / Task Breakdown
 
-1. **S1. Joint review.** Compare the [design studies](../specs/0093-editor-visual-layout.md#proposed-design)
-   at 100% and 150%. Choose one layout, agree on J1–J4, and explicitly
-   authorize implementation through verification and a review-ready PR
-   after design merge. The remaining steps assume A; revise the Plan
-   before implementation if B is selected.
+1. **S1. Joint review.** Compare the [matched design studies](../specs/0093-editor-visual-layout.md#proposed-design).
+   Review the refined three-pane layout, including the Assets, Saved Scenes
+   and compact studies. Confirm J1–J4 and explicitly authorize
+   implementation through verification and a review-ready PR after merge.
 2. **S2. Styles and main window (R1/R2/R4).** Register Editor-private Fluent
-   resources and original icon paths. Recompose existing controls into the
-   command row, Viewport toolbar, three panes, status strip and disclosures.
-   Preserve all actions, sizing, pointer routes and keyboard bindings.
-   Apply the common row rhythm to the tree, Inspector, Assets and Saved Scenes.
-   Align Transform axes and distinguish selection, active tabs, hover and focus.
-3. **S3. Asset details, chooser and compact flow (R2/R3/R4).** Use existing
-   asset names with a local fallback. Move full identifiers and metadata
-   into labeled secondary details. Keep the existing raw GUID editor and
-   guarded Choose/Clear actions in the Inspector. Give the two chooser
-   variants a common structure, pinned search and footer, and a reflowing
-   material preview. Preserve field draft, eligibility, focus restoration,
-   preview request and invalidation rules.
+   resources and original icon paths. Use the existing layout, list, tab,
+   text and disclosure controls to recompose the command row, Viewport
+   toolbar, panes, status strip and details. Establish the object and
+   component hierarchy and a shared set of Transform column headings.
+   Preserve existing pointer routes, field bindings and keyboard order.
+3. **S3. Workspace tabs and chooser (R2/R3/R4).** Group the current Assets
+   list, selected asset, preview, Rebuild and Import controls. Group Saved
+   Scenes inputs, results and logs. Keep stable search and confirmation
+   regions in the chooser and reflow the preview at narrow sizes.
+   Preserve current guards, draft settlement, selection, focus restoration,
+   request intent and existing error recovery.
 4. **S4. Verify and submit.** Run the affected suites and the Windows matrix
    below. Attach native-resolution captures, interaction results and final
    gate selection to a review-ready PR for human merge.
@@ -60,9 +58,9 @@ Preserve [0082 reference editing](../specs/0082-generic-asset-reference-picker.m
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1. Window layout** | Approve A: three resizable panes, centered transport, local hierarchy and Viewport tools, inline scene file commands and a separate diagnostics section. Keep B as a comparison only. |
-| **J2. Visual system and resources** | Approve the compact graphite direction, moderate Segoe UI hierarchy, restrained outlines, aligned XYZ columns and project-authored line icons. Keep existing dependencies and native window chrome. |
-| **J3. Details, chooser and state** | Approve name-first rows and keyboard-reachable secondary details with current GUID editing and dependency actions. Keep the chooser preview explicit and independent of Confirm; preserve existing focus, draft, apply and recovery rules. |
+| **J1. Window layout** | Approve the refined three-pane layout, centered transport, local Viewport tools, inline scene file commands and compact workspace scrolling. |
+| **J2. Visual system and resources** | Approve neutral dark gray surfaces, the Segoe UI hierarchy, aligned XYZ columns and project-authored line icons in existing controls. |
+| **J3. Details, chooser and state** | Approve grouping for Assets and Saved Scenes, reachable technical details and the preview/confirmation proportions. Preserve existing focus, draft, apply, build/open and recovery rules. |
 | **J4. Acceptance** | Approve the actual Windows size/DPI matrix, long-content and interaction checks, and final-diff gate selection below. |
 
 ## Verification Checklist
@@ -75,7 +73,9 @@ Preserve [0082 reference editing](../specs/0082-generic-asset-reference-picker.m
   transition. Move one instance between differently scaled monitors when
   available, or exercise it through a Windows scale change and report the
   substitution. Capture native-resolution main and material-chooser
-  windows at 100% and higher scaling. Check clean text and icons, usable
+  windows at 100% and higher scaling. Capture Assets and Saved Scenes at
+  standard and compact sizes with preview and current build outcomes.
+  Check clean text and icons, usable
   pane widths, reachable actions, no clipping, and no child viewport
   overlap or input offset.
 - [ ] **R2/R3. Density, contrast and long content.** Compare the approved
@@ -95,10 +95,15 @@ Preserve [0082 reference editing](../specs/0082-generic-asset-reference-picker.m
   Choose, Cancel and Confirm with focus restoration; verify the current
   rules for guarded Clear, stale or filtered-out candidates and full
   metadata/dependency access. Check Assets empty/loading/busy/refused
-  states and an explicit preview retry. Switch candidates during an
+  states and an explicit preview retry. Verify that filter and Reload view
+  stay reachable when the preview or details scroll. Exercise the existing
+  Rebuild and Import entry points and verify busy or failed results and
+  their next actions remain reachable through the grouping. Switch candidates during an
   outstanding preview: no stale image or error may reappear and Confirm
   follows its existing guard. Check inline New Scene / Save As and
-  Saved Scenes build/open results when available. Exercise an authoring
+  Saved Scenes build/open when available. Check successful build and
+  independent Open, stale results with Open disabled, a failed build and
+  retry, and copyable checkout, output and log paths. Exercise an authoring
   edit with a visible failed or paused apply result, explicit recovery,
   Undo/Redo, Save and the Viewport gizmo. Record normal Runtime exit and
   a clean Windows Vulkan validation log during this session.
@@ -110,7 +115,8 @@ Preserve [0082 reference editing](../specs/0082-generic-asset-reference-picker.m
   select a gate, follow the existing policy, including human review of
   any engine golden change. Keep the separate #340 historical hold.
 - [ ] **Design PR.** Check local links, whitespace, palette contrast and
-  mockup legibility at 100% and 150% rendered independently. These
+  mockup legibility at 100% and 150% rendered independently. Compare
+  main window and chooser before/after at the same logical dimensions. These
   studies support visual review; the actual Windows matrix remains
   implementation acceptance.
 

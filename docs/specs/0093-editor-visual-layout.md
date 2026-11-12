@@ -9,7 +9,7 @@
 
 ## Summary
 
-Give the Windows Atlantis Editor App a compact graphite layout. Put scene
+Refine the Windows Atlantis Editor App's three-pane layout in neutral dark gray. Put scene
 commands next to the work they affect, make selection and keyboard focus
 easy to distinguish, and put object names, asset names and previews ahead
 of identifiers and diagnostics.
@@ -49,8 +49,8 @@ capabilities, Runtime rendering changes, and changes to the native debug Editor.
 
 ### Functional
 
-**R1. Window and panes.** For the recommended layout A, retain the native
-Windows title bar, three resizable Hierarchy / Viewport / right workspace
+**R1. Window and panes.** Retain the native Windows
+title bar, three resizable Hierarchy / Viewport / right workspace
 panes, and the existing Inspector, Assets and conditional Saved Scenes tabs.
 Put Save and Undo/Redo at the left of a common command row, and group
 Play/Pause/Step at its center. Keep Create child near the tree and put the
@@ -64,56 +64,70 @@ document and Runtime results visible in a compact strip. Reflow within the
 same panes at small widths. Keep managed controls and feedback outside the
 native child Viewport's bounds.
 
-**R2. Type, density and states.** Use neutral graphite Fluent resources and
-the Windows-installed Segoe UI family with system fallback. Start with 13 DIP
-for controls and panel headings, 12 DIP for secondary text, 15 DIP for the
-selected object name and 18 DIP for the chooser title. Use moderate heading
-weights and distinguish component groups by spacing and dividers. Use a
-4 / 8 / 12 / 16 DIP spacing scale and a common 28 DIP one-line rhythm for
-commands, list rows and properties. Grow controls where needed for text,
-focus rings or constrained layouts. Use project-authored line icons in
-16 DIP boxes with consistent stroke and optical alignment; keep command
-labels and accessible names, including Undo/Redo descriptions.
+**R2. Type, surfaces and states.** Use the existing Fluent controls and the
+Windows-installed Segoe UI family with system fallback. Start with 13 DIP
+for controls and panel or component labels, 12 DIP for secondary text,
+17 DIP for the selected object name and 22 DIP for the chooser title.
+Separate toolbar and panel headers, panel bodies, and inset input and list
+surfaces by lightness in a neutral dark gray palette. Give property groups
+a compact header and boundary so they can be scanned as units. Use the
+4 / 8 / 12 / 16 DIP spacing scale and a 30 DIP one-line rhythm. Grow
+controls for long text or constrained layouts as needed.
 
-Use slight surface differences for ordinary fields and flat actions;
-strengthen outlines on hover and show a distinct keyboard focus ring.
-Use a tinted row with a leading marker for selection and an underline for
-active tabs. Reserve blue for selection, focus and primary actions. Align
-Position, Rotation and Scale on the same three numeric columns. Put small
-text labels X/Y/Z before tabular, right-aligned values and keep each
-field's property and axis available to assistive technology. When the
-three columns no longer fit, reflow without clipping digits or changing
-the keyboard sequence. Require 4.5:1 contrast for enabled text and 3:1
-for focus and essential control boundaries, including search when at
-rest. Use text and, when helpful, an icon to communicate status.
+Use project-authored line icons with a common 16 DIP grid, stroke and
+optical weight. A smaller icon may accompany tab labels or disclosure
+controls. Keep visible command labels and accessible names, including
+Undo/Redo descriptions. Use subdued boundaries at rest, strengthen them
+on hover and show a distinct focus ring. Reserve blue for selection, focus
+and primary actions. Keep text and status icons for errors and warnings.
+Require 4.5:1 contrast for enabled text and 3:1 for focus and essential
+control boundaries, including search when at rest.
 
-**R3. Information hierarchy and chooser.** Show the selected object name
-above component groups. Show asset names before type labels and identifiers
-in list and reference rows. Use names from asset data already available in
-the current session; fall back to a labeled reference or short identifier
-if unavailable. Add no lookups, prefetch or snapshot changes for labels.
-Put full paths, GUIDs and existing metadata in secondary details: allow
-selection and copying of complete text, and retain raw GUID editing
-where the Inspector already permits it. Keep Choose and existing Clear
-guards on the primary reference row. Give raw editing a labeled,
-keyboard-reachable disclosure; preserve the same field bindings, validation
-and draft settlement on ordinary blur, Enter, Escape and chooser opening.
-Keep long names discoverable in full. A disclosure or reflow must not
-silently discard a draft or trigger a second commit.
+Use one set of X/Y/Z column headings for the Transform group. Align
+Position, Rotation and Scale against those headings and use tabular,
+right-aligned values. Keep each field's property and axis available to
+assistive technology. When columns cannot fit, repeat the axis labels in
+the reflow and preserve value precision, the draft and keyboard order.
 
-Use one chooser layout for search, candidate selection, optional preview
-and Confirm/Cancel. Keep search and the action footer outside the scrolling
-body. Show the selected asset name next to its type and keep **Asset
-details** collapsed by default; retain existing identifiers, schemas and
-dependency actions inside the disclosure, with their existing guards. Put
-normal guidance on a line of secondary text. Give the existing material
-combination path a dedicated preview area (about 296 DIP square at the
-standard size), with the opening mesh label and explicit **Preview with
-material** action above the image. Keep the full opening mesh identity
-available in secondary details. Below 720 DIP, stack the preview below
-results/details in the scrollable body. Other references keep the same
-layout without the preview column. Keep Confirm independent of preview
-admission, success or failure.
+**R3. Information hierarchy and chooser.** Give the Inspector a distinct
+selected-object header, then group editable fields by component. Keep
+asset names primary in references and list rows, with type and technical
+details secondary. Derive a short label from data already available in
+the session and fall back to a labeled reference or short identifier.
+Keep long values discoverable in full. Use a keyboard-reachable disclosure
+for raw GUID editing where the Inspector already permits it. Keep Choose
+and Clear and their existing guards near the reference value. At compact
+widths, wrap those actions below the value so the name retains usable
+width. Reflow and
+disclosure preserve the existing field binding, draft and focus rules.
+
+In Assets, pin search, type filter and **Reload view** above the scrollable
+results and selected asset area. Group existing geometry and combination
+preview, material selection and **Add to Scene** around that selected
+asset. Place Copy GUID, complete identifiers, paths and dependency
+actions in **Asset details**. Group existing Rebuild and Import controls
+in labeled sections within the same pane. Keep active and failed outcomes
+and their next actions discoverable when a section is collapsed.
+Keep the catalog snapshot guidance reachable, including when a Runtime
+restart is needed.
+
+In Saved Scenes, group the local unit list, optional managed import root,
+Build/Open and current outcome. Keep Refresh and build configuration
+with the panel header. Show whether the current result permits Open and
+put complete checkout, build directory, executable and log text in
+selectable details. Preserve local authorization, build inputs, result
+invalidation and separate Editor process ownership.
+
+In the chooser, give search and the Confirm/Cancel footer stable positions.
+Use roughly equal result and preview columns at the standard size, with
+slightly more room for the material preview. Show the opening mesh and
+explicit **Preview with material** action above a contained image. Give the
+selected candidate and Confirm a clear relationship through the footer.
+Keep identifiers, the full opening mesh identity, schemas and dependency
+actions in secondary details. Keep normal compatibility guidance as
+secondary text. Below 720 DIP stack preview below results in the scrollable
+body. The generic chooser uses the same structure without the preview.
+Confirm continues to use its existing guard independently of preview.
 
 **R4. Results and interaction.** Use existing session and operation results
 to show text for empty, loading or busy, success, disabled and failed states.
@@ -138,35 +152,36 @@ background requests, polling, or Runtime frame work.
 
 ## Proposed Design
 
-Both main window studies use the same Bistro capture, selected object,
-field values and status. They show a normal field, a selected tree row,
-an independently focused X field, and a Runtime reload error alongside
-an accepted edit. Open the PNG at original size to review type and lines.
+The revised design uses layout A. It keeps the full-height
+Hierarchy and right workspace and makes the Viewport the largest surface.
+The compact layout narrows the side panes and lets the active workspace
+scroll while the panel header and relevant filters stay in place.
 
-| Study | 100% | 150% | Tradeoff |
+| View | Before at the same size | Revised at 100% | Revised at 150% |
 | --- | --- | --- | --- |
-| **A. Three panes (recommended)** | [1400 × 860](../images/0093-editor-visual-layout/main-window.png) | [2100 × 1290](../images/0093-editor-visual-layout/main-window-150.png) | Full-height tree and Inspector support scanning and long edit sessions. At this size the Viewport gets 834 DIP, without changing the existing pane order. |
-| **B. Wide Viewport with stacked workspace (comparison)** | [1400 × 860](../images/0093-editor-visual-layout/main-window-alt.png) | [2100 × 1290](../images/0093-editor-visual-layout/main-window-alt-150.png) | Puts the tree beside the Inspector on one side and widens the Viewport to 1021 DIP. The stack splits vertical space, so the tree and property groups scroll sooner. |
-| **Material chooser (shared direction)** | [900 × 630](../images/0093-editor-visual-layout/reference-chooser.png) | [1350 × 945](../images/0093-editor-visual-layout/reference-chooser-150.png) | Search leads to a selected candidate, a large labeled preview and a fixed confirmation footer. Metadata and normal guidance stay secondary. |
+| Main window and Inspector | [1400 × 860](../images/0093-editor-visual-layout/main-window-before.png) | [1400 × 860](../images/0093-editor-visual-layout/main-window.png) | [2100 × 1290](../images/0093-editor-visual-layout/main-window-150.png) · [1440 × 900, compact](../images/0093-editor-visual-layout/main-window-compact-150.png) |
+| Assets | — | [1400 × 860](../images/0093-editor-visual-layout/assets.png) | [1440 × 900, compact](../images/0093-editor-visual-layout/assets-compact-150.png) |
+| Saved Scenes | — | [1400 × 860, build ready](../images/0093-editor-visual-layout/saved-scenes.png) | [1440 × 900, compact and stale](../images/0093-editor-visual-layout/saved-scenes-compact-150.png) |
+| Material chooser | [900 × 630](../images/0093-editor-visual-layout/reference-chooser-before.png) | [900 × 630](../images/0093-editor-visual-layout/reference-chooser.png) | [1350 × 945](../images/0093-editor-visual-layout/reference-chooser-150.png) · [900 × 900, compact](../images/0093-editor-visual-layout/reference-chooser-compact-150.png) |
 
-Recommend A for the first delivery: it preserves useful height in both
-side panes at small window sizes and requires less change to pane order,
-resizing and keyboard traversal. B is for review only. If preferred,
-revise and approve the plan for that layout before implementation.
-Only one layout ships.
+The matched comparisons re-render the preceding A and chooser layouts
+using the same scene, sample values, candidate list and actual preview as
+the revised designs. The 2044 × 1411 Bistro scene capture is shared across
+all main window images. Geometry and combination images come from the
+existing Runtime preview calls for Bistro mesh `5dcf249d-1d02-8cb1-b6c8-e1006682c68b`.
+The combination uses the catalog's Showcase wood reddish stain material
+`057d2d26-8bb6-4a8a-a05a-39ec65a84857`. Both are the existing 256 × 256
+PNG output. Scene capture and preview retain their colors. UI states and
+Saved Scenes examples are staged for design review. The mockups render
+each display scale independently on Windows with Segoe UI.
 
-The mockups render each scale independently on Windows with Segoe UI.
-Both main views use the same 2044 × 1411 Atlantis Runtime capture, cropped
-to fit each Viewport. The chooser uses the existing 256 × 256 Atlantis
-combination-preview golden as an illustrative sample in its larger display
-area; this changes neither capture resolution nor golden files.
-
-Use graphite `#17191D`, pane `#202226`, raised surface `#23262B`,
-field `#191B20`, text `#ECEEF1` and secondary text `#ADB3BE`. Use
-`#2A3B51` with a `#86B9F6` marker for selection, `#A6CEFF` for focus,
-and `#84B8F3` with `#121C29` text for the primary action.
-Use `#6B737F` for essential outlines; semantic foregrounds include
-`#91C7AE` success, `#E4BE81` warning and `#F3A4A7` failure.
+Use `#181819` for the canvas, `#202022` for panes, `#262628` for headers,
+`#2D2D30` for raised controls, `#1B1B1D` for insets and `#39393D`
+for separators. Use `#EFF0F2` for primary and `#AFB0B5` for secondary text.
+Use `#283B54` with a `#9CC7FF` marker for selection, `#B0D4FF` for
+focus, and `#A5CAFF` with `#142032` text for a primary action. Use
+`#74747B` for essential outlines. Use `#A2D3BB` for success,
+`#F1C990` for warnings and `#FFC0BF` for failure.
 
 | Official reference | Rule adopted for Atlantis |
 | --- | --- |
@@ -191,10 +206,11 @@ Runtime, native rendering and build inputs remain unchanged.
 
 ## Alternatives Considered
 
-The two layouts above compare different panel placement at the same density.
-Changing only colors and spacing would leave command placement and metadata
-hierarchy unresolved. A new theme dependency or docking system would add
-integration and behavior beyond this design.
+The earlier wide Viewport study stacked Hierarchy over Inspector and
+reduced the height available to each. The three-pane layout better
+supports sustained tree and property work at compact sizes. Colors and
+spacing alone would leave property scanning, action placement and result
+hierarchy unresolved. Keep the present window and Fluent architecture.
 
 ## Testing & Verification Plan
 
@@ -206,8 +222,8 @@ nor engine image baselines.
 
 ## Risks & Open Questions
 
-Choose A or B and approve the visual and information hierarchy before
-implementation. The main risks are keeping the native child HWND aligned
+Review the refined three-pane direction, typography, panel grouping and
+compact behavior before implementation. The main risks are keeping the native child HWND aligned
 during resize and preserving field focus and draft settlement through
 disclosures and reflow. The Plan tests both explicitly.
 
