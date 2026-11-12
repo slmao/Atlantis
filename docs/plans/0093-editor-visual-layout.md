@@ -1,9 +1,9 @@
 # Plan 0093: Editor Visual Layout and Controls
 
 - **Spec:** [Spec 0093](../specs/0093-editor-visual-layout.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending review of the Spec, Plan and visual direction
+- **Joint Human Review:** The owner approved J1–J4 and Spec/Plan 0093 at `cfcd78de` on 2026-11-13, including layout A and neutral dark gray. [PR #349](https://github.com/slmao/Atlantis/pull/349) was manually merged as `b1d09255`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Final merge remains human.
 
 ## Objective
 

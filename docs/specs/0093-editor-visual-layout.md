@@ -1,10 +1,10 @@
 # Spec 0093: Editor Visual Layout and Controls
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-12
 - **Related Plan(s):** [Plan 0093](../plans/0093-editor-visual-layout.md)
-- **Approval:** Pending joint human review, including visual approval
+- **Approval:** Jointly approved at `cfcd78de` of [PR #349](https://github.com/slmao/Atlantis/pull/349), 2026-11-13. See Plan 0093.
 - **Related ADR(s):** None. See Architectural Impact.
 
 ## Summary

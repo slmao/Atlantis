@@ -329,7 +329,8 @@ public sealed class EditorWorker : IDisposable
     private long _meshDocumentLifetime;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
-    public event Action<string>? ApplyStateChanged;
+    private ApplyStatus? _postedApplyStatus;
+    public event Action<ApplyStatus, string>? ApplyStateChanged;
     public event Action<bool, bool>? ApplyControlsChanged;
     // Plan 0068 M6: whether the Runtime is playing (false: paused).
     public event Action<bool>? PlayStateChanged;
@@ -752,8 +753,8 @@ public sealed class EditorWorker : IDisposable
             {
                 _apply?.LostApplyAcceptance();
                 string? applyText = _apply?.Text;
-                if (applyText is not null)
-                    _post(() => { if (MeshDocumentLifetime == lifetime) ApplyStateChanged?.Invoke(applyText); });
+                if (applyText is not null && _apply?.Status is ApplyStatus status)
+                    _post(() => { if (MeshDocumentLifetime == lifetime) ApplyStateChanged?.Invoke(status, applyText); });
             }
             Report(null, committed
                 ? $"Added {attempted}. {(applying ? "Apply outcome unknown." : "History unavailable.")}"
@@ -1185,10 +1186,12 @@ public sealed class EditorWorker : IDisposable
             if (_previewSession is RemoteSession session) SendOverlay(session);
         }
         string text = _apply.Text + (_playing ? PlayNote : "");
-        if (text == _applyText) return;
+        ApplyStatus status = _apply.Status;
+        if (text == _applyText && status == _postedApplyStatus) return;
+        _postedApplyStatus = status;
         _applyText = text;
         _log.Write("apply: " + text);
-        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(text); });
+        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(status, text); });
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.

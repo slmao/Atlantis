@@ -123,8 +123,7 @@ public static partial class Program
         await NameUiWait(() => assetsImage.Source is Bitmap, "real Assets pair renders", 120);
         Check("Assets shows both requested GUIDs and a 256×256 PNG", Shown(assetsImage, assetsState, offSceneMesh, baseMaterial));
 
-        Grid MaterialRow() => Field<StackPanel>("_inspectorPanel").Children.OfType<Grid>()
-            .Single(row => row.Children.OfType<TextBlock>().Any(text => text.Text == "materialAsset"));
+        Grid MaterialRow() => InspectorRow(window, "Renderable.materialAsset");
         Button Launcher() => MaterialRow().Children.OfType<Button>().Single(b => b.Content?.ToString() == "Choose…");
         bool Active() => typeof(AssetPreviewRequests).GetField("_active", BindingFlags.Instance | BindingFlags.NonPublic)!
             .GetValue(Field<AssetPreviewRequests>("_previewRequests")) is not null;
@@ -133,7 +132,7 @@ public static partial class Program
         {
             tabs.SelectedIndex = 0;
             await NameUiWait(() => Launcher().IsEnabled && window.IsEffectivelyEnabled, "material chooser launcher is enabled");
-            var box = MaterialRow().Children.OfType<TextBox>().Single();
+            var box = RevealGuidBox(MaterialRow());
             await NameUiWait(() => box.Focus() && box.IsFocused, "Inspector field accepts keyboard focus");
             if (!NameUiKey(box, Key.F4)) throw new InvalidOperationException("material chooser F4 was not routed");
             await NameUiWait(() => Picker() is { } picker && PickerField<AssetBrowser>(picker, "_browser").State == "Ready",
@@ -202,7 +201,7 @@ public static partial class Program
         tabs.SelectedIndex = 0;
         Check("chooser labels the exact same-node mesh read at opening",
             chooser.Target.OpeningMesh == openingMesh && PickerField<TextBlock>(chooser, "_openingMesh").Text?.Contains(
-                "Mesh at opening:", StringComparison.Ordinal) == true && PickerField<TextBlock>(chooser, "_openingMesh").Text!
+                "Mesh at opening:", StringComparison.Ordinal) == true && PickerField<SelectableTextBlock>(chooser, "_openingMeshDetail").Text!
                     .Contains(openingMesh.ToString(), StringComparison.Ordinal));
         await Select(chooser, baseMaterial);
         Click(chooserPreview);
@@ -300,7 +299,7 @@ public static partial class Program
             await NameUiWait(async () => (await Read(meshAddress)).AsAsset() == offSceneMesh, "external sibling mesh change visible");
             await HoldPair(PickerControl<Button>(chooser, "PreviewButton"), openingMesh, baseMaterial, () => Task.CompletedTask);
             Check("chooser still sends and labels its opening mesh after an external sibling change",
-                chooser.Target.OpeningMesh == openingMesh && PickerField<TextBlock>(chooser, "_openingMesh").Text!
+                chooser.Target.OpeningMesh == openingMesh && PickerField<SelectableTextBlock>(chooser, "_openingMeshDetail").Text!
                     .Contains(openingMesh.ToString(), StringComparison.Ordinal));
         }
         finally
