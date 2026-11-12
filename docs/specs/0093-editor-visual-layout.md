@@ -9,10 +9,10 @@
 
 ## Summary
 
-Refine the Windows Atlantis Editor App's three-pane layout in neutral dark gray. Put scene
-commands next to the work they affect, make selection and keyboard focus
-easy to distinguish, and put object names, asset names and previews ahead
-of identifiers and diagnostics.
+Refine the Windows Atlantis Editor App's three-pane layout in neutral
+dark gray. Put scene commands next to the work they affect, make selection
+and keyboard focus easy to distinguish, and put object names, asset names
+and previews ahead of identifiers and diagnostics.
 
 ## Motivation / Problem Statement
 
@@ -55,14 +55,19 @@ panes, and the existing Inspector, Assets and conditional Saved Scenes tabs.
 Put Save and Undo/Redo at the left of a common command row, and group
 Play/Pause/Step at its center. Keep Create child near the tree and put the
 other existing structural actions in an inline **Actions** disclosure. Group
-transform mode, coordinate space, snap and scene camera at the Viewport.
+transform mode, coordinate space, snap and the existing **Scene camera**
+reset action at the Viewport.
 Place New Scene / Save As in an inline **Scene files** section with their
 existing permission and result states. Give measurement and detailed
 diagnostics a labeled **Diagnostics** section below the workspace, open
 by default for explicit diagnostic modes. Keep ordinary connection,
-document and Runtime results visible in a compact strip. Reflow within the
-same panes at small widths. Keep managed controls and feedback outside the
-native child Viewport's bounds.
+document and Runtime results visible in a compact strip. Keep the existing
+explicit Apply action available beside the apply status whenever its guard
+allows, including recovery and external edits that require apply.
+Use the width of each pane after splitter moves to choose its compact
+form. Wrap the Viewport controls in their header if necessary. Keep a
+usable Viewport at supported client sizes and keep controls and feedback
+outside the native child Viewport's bounds.
 
 **R2. Type, surfaces and states.** Use the existing Fluent controls and the
 Windows-installed Segoe UI family with system fallback. Start with 13 DIP
@@ -84,10 +89,17 @@ Require 4.5:1 contrast for enabled text and 3:1 for focus and essential
 control boundaries, including search when at rest.
 
 Use one set of X/Y/Z column headings for the Transform group. Align
-Position, Rotation and Scale against those headings and use tabular,
-right-aligned values. Keep each field's property and axis available to
-assistive technology. When columns cannot fit, repeat the axis labels in
-the reflow and preserve value precision, the draft and keyboard order.
+the unfocused Position, Rotation and Scale summaries against those
+headings using tabular values. Each row retains one vector text editor
+and one tab stop. Focus opens the whole existing space-separated vector
+draft in place. Keep the existing parser, precision and units, including
+radians for Rotation. Label the editor for accessibility with its
+property, unit when applicable and X/Y/Z order. When columns cannot fit,
+wrap the labeled summary and keep the same editor and draft. Enter,
+Escape and ordinary blur retain their existing behavior. One accepted
+edit of a vector remains one property transaction and one history step.
+Keep the other schema-derived fields and Add/Remove component actions
+with their existing guards.
 
 **R3. Information hierarchy and chooser.** Give the Inspector a distinct
 selected-object header, then group editable fields by component. Keep
@@ -98,36 +110,53 @@ Keep long values discoverable in full. Use a keyboard-reachable disclosure
 for raw GUID editing where the Inspector already permits it. Keep Choose
 and Clear and their existing guards near the reference value. At compact
 widths, wrap those actions below the value so the name retains usable
-width. Reflow and
-disclosure preserve the existing field binding, draft and focus rules.
+width. Preserve existing field binding, draft and focus rules across
+reflow and disclosure changes. Pointer Choose and F4 from the GUID
+editor discard the uncommitted raw GUID draft as they do today. Keep
+ordinary blur and Enter commits, Escape cancellation, and focus return
+to the same still-valid launcher after chooser settlement when the user
+has not moved focus elsewhere.
 
 In Assets, pin search, type filter and **Reload view** above the scrollable
 results and selected asset area. Group existing geometry and combination
 preview, material selection and **Add to Scene** around that selected
-asset. Place Copy GUID, complete identifiers, paths and dependency
-actions in **Asset details**. Group existing Rebuild and Import controls
-in labeled sections within the same pane. Keep active and failed outcomes
+asset. Bound the result list within the pane so users can scroll results
+or reach the selected asset and operation controls directly. Use the
+existing list and catalog data. Place Copy GUID, complete identifiers,
+paths and dependency actions in **Asset details**. Group existing Rebuild
+and Import controls in labeled sections within the same pane. Keep active and failed outcomes
 and their next actions discoverable when a section is collapsed.
-Keep the catalog snapshot guidance reachable, including when a Runtime
-restart is needed.
+Describe **Reload view** as a refresh of the current Runtime snapshot.
+Show restart or generation guidance with the corresponding failure or
+publication result. Keep the existing selection and detail refresh
+behavior, including suppression of responses invalidated by a reload.
 
 In Saved Scenes, group the local unit list, optional managed import root,
 Build/Open and current outcome. Keep Refresh and build configuration
 with the panel header. Show whether the current result permits Open and
 put complete checkout, build directory, executable and log text in
-selectable details. Preserve local authorization, build inputs, result
-invalidation and separate Editor process ownership.
+selectable details. Keep the authorized checkout discoverable before
+Build. Keep a New Scene or Save As receipt and its source separate from
+the local list and its selection. Show missing units, discovery errors,
+build phase and stale results with the existing recovery action. Report
+a successful Open as the start of a separate Editor. Document readiness
+is reported in that Editor. Preserve local authorization, build inputs,
+result invalidation and process ownership.
 
 In the chooser, give search and the Confirm/Cancel footer stable positions.
 Use roughly equal result and preview columns at the standard size, with
-slightly more room for the material preview. Show the opening mesh and
-explicit **Preview with material** action above a contained image. Give the
-selected candidate and Confirm a clear relationship through the footer.
-Keep identifiers, the full opening mesh identity, schemas and dependency
-actions in secondary details. Keep normal compatibility guidance as
-secondary text. Below 720 DIP stack preview below results in the scrollable
-body. The generic chooser uses the same structure without the preview.
-Confirm continues to use its existing guard independently of preview.
+slightly more room for the material preview. Show the current field
+reference separately from the candidate, including absent, outside-snapshot
+and wrong-type states. Show the opening mesh and explicit **Preview with
+material** action above a contained image. Give the selected candidate
+and Confirm a clear relationship through the footer. Keep identifiers,
+the full opening mesh identity, schemas and dependency actions in
+secondary details. Keep normal compatibility and catalog snapshot
+guidance reachable. Below 720 client DIP stack preview below a bounded
+result list in the scrollable body. The generic chooser uses the same
+structure without the preview and retains the existing type filter when
+the field has no target type. Confirm uses its existing guard
+independently of preview, including during pending or failed previews.
 
 **R4. Results and interaction.** Use existing session and operation results
 to show text for empty, loading or busy, success, disabled and failed states.
@@ -147,7 +176,8 @@ owning action or growing the command row.
 Use device-independent dimensions and existing per-monitor DPI support.
 Target a 1400 × 860 DIP client area and compact sizes down to 960 × 600 DIP
 where the work area permits. Keep the same controls and event bindings
-through reflow. No new packages, font files, third-party icon assets,
+through reflow, and preserve scroll reachability for keyboard and pointer
+users. No new packages, font files, third-party icon assets,
 background requests, polling, or Runtime frame work.
 
 ## Proposed Design
@@ -217,15 +247,15 @@ hierarchy unresolved. Keep the present window and Fluent architecture.
 [Plan 0093](../plans/0093-editor-visual-layout.md#verification-checklist)
 requires actual Windows Editor windows with the embedded Runtime, a size
 and DPI matrix, long content and representative interaction states. The
-mockups support design review; they are neither implementation evidence
-nor engine image baselines.
+mockups are visual references. The actual Windows session supplies
+implementation evidence and the existing engine baselines govern rendering.
 
 ## Risks & Open Questions
 
 Review the refined three-pane direction, typography, panel grouping and
-compact behavior before implementation. The main risks are keeping the native child HWND aligned
-during resize and preserving field focus and draft settlement through
-disclosures and reflow. The Plan tests both explicitly.
+compact behavior before implementation. The main risks are keeping the
+native child HWND aligned during resize and preserving field focus and
+draft settlement through disclosures and reflow. The Plan tests both explicitly.
 
 ## Out of Scope / Future Work
 
