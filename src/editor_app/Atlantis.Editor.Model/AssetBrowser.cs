@@ -143,6 +143,7 @@ public sealed class AssetPreviewRequests
 // The Assets session owns the receipt even after the material window closes.
 public sealed class MaterialSettlement
 {
+    private MaterialJob? _previousCommittedJob;
     public MaterialTarget? Target { get; private set; }
     public MaterialJobId? Id { get; private set; }
     public MaterialJob? Job { get; private set; }
@@ -151,12 +152,30 @@ public sealed class MaterialSettlement
     public bool NeedsRepair { get; private set; }
     public bool InFlight => AwaitingAdmission || !Unknown && Job?.State == RebuildState.Running;
     public bool BlocksSave => InFlight || Unknown || NeedsRepair || Job?.State == RebuildState.Succeeded ||
-        Job?.Failure?.SourceState is RegistrationState.Committed or RegistrationState.Unknown;
+        Job?.Failure?.SourceState is RegistrationState.Committed or RegistrationState.Unknown ||
+        _previousCommittedJob is not null;
+    public AssetGuid? ResumableMaterial => InFlight || Unknown || NeedsRepair ||
+        Job?.Failure?.SourceState == RegistrationState.Unknown ? null :
+        CommittedJob?.Failure?.SavedMaterial;
+    private MaterialJob? CommittedJob => Job?.Failure?.SourceState == RegistrationState.Committed
+        ? Job : _previousCommittedJob;
     public void Begin(MaterialTarget target)
     {
+        var committed = CommittedJob;
+        _previousCommittedJob = target.Mode == MaterialMode.Resume &&
+            committed?.Failure?.SavedMaterial == target.Material ? committed : null;
         Target = target; Id = null; Job = null; AwaitingAdmission = true; Unknown = false;
     }
-    public void Refused() => AwaitingAdmission = false;
+    public void Refused()
+    {
+        if (!AwaitingAdmission) return;
+        AwaitingAdmission = false;
+        if (_previousCommittedJob is { } previous)
+        {
+            Target = previous.Target; Id = previous.Id; Job = previous;
+        }
+        _previousCommittedJob = null;
+    }
     public bool Admit(MaterialJob job)
     {
         if (!AwaitingAdmission || job.Target != Target || job.State != RebuildState.Running) return false;
@@ -167,6 +186,8 @@ public sealed class MaterialSettlement
     {
         if (Id is not MaterialJobId id || status.Job is not { } job || job.Id != id || job.Target != Target) return false;
         Job = job; Unknown = false; NeedsRepair = status.WorkspaceNeedsRepair;
+        if (job.State == RebuildState.Succeeded || job.Failure?.SourceState == RegistrationState.Committed)
+            _previousCommittedJob = null;
         return true;
     }
     public void LoseReceipt()

@@ -60,6 +60,25 @@ public static partial class Program
             MaterialFailureCode.PublishFailed, "failed", null, RegistrationState.Committed, b) };
         Check(settlement.Observe(new(null, failed, false)) && settlement.BlocksSave && !settlement.Unknown,
             "material: committed failure requires resume, not another save");
+        var resume = new MaterialTarget(MaterialMode.Resume, Material: b);
+        settlement.Begin(resume);
+        settlement.Refused();
+        Check(settlement.Job == failed && settlement.Target == target && settlement.Id == receipt.Id &&
+            settlement.BlocksSave && settlement.ResumableMaterial == b,
+            "material: a definitive Resume refusal preserves the committed receipt and keeps Save blocked");
+        settlement.Begin(resume);
+        var resumeReceipt = new MaterialJob(new(b), resume, RebuildState.Running);
+        Check(settlement.Admit(resumeReceipt), "material: Resume admission is tracked separately");
+        var resumeRefusal = resumeReceipt with { State = RebuildState.Failed, Failure = new(MaterialStage.Source,
+            MaterialFailureCode.ActivationRequired, "another change is ahead", null, RegistrationState.NotCommitted, null) };
+        Check(settlement.Observe(new(null, resumeRefusal, false)) && settlement.Job == resumeRefusal &&
+            settlement.BlocksSave && settlement.ResumableMaterial == b,
+            "material: failed Resume reports the new diagnostic without discarding the committed source state");
+        settlement.Begin(resume);
+        settlement.LoseReceipt();
+        settlement.Refused();
+        Check(settlement.Unknown && settlement.Target == resume && settlement.BlocksSave,
+            "material: losing Resume admission remains unknown even with a prior committed receipt");
 
         var draftPreviews = new AssetPreviewRequests();
         var recipe = new MaterialRecipe(new(b, 1f, 1f, 1f, 0f, 0.5f), MaterialFilter.Linear, MaterialAddress.Repeat);

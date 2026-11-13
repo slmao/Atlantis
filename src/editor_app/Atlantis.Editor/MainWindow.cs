@@ -1226,8 +1226,7 @@ public sealed class MainWindow : Window
         _copyMaterial.IsEnabled = open && _materialCanWrite && !_materialSettlement.BlocksSave && _selectedMaterial is not null;
         _editMaterial.IsEnabled = _copyMaterial.IsEnabled && _selectedMaterial?.Editable == true;
         _materialRefresh.IsEnabled = connected && !_materialPolling && !_materialSettlement.AwaitingAdmission;
-        _materialResume.IsVisible = _materialCanWrite && !_materialSettlement.NeedsRepair && !_materialSettlement.Unknown &&
-            _materialSettlement.Job?.Failure is { SourceState: RegistrationState.Committed, SavedMaterial: not null };
+        _materialResume.IsVisible = _materialCanWrite && _materialSettlement.ResumableMaterial is not null;
         _materialResume.IsEnabled = _materialResume.IsVisible && !_materialSettlement.InFlight;
     }
 
@@ -1283,7 +1282,7 @@ public sealed class MainWindow : Window
 
     private void ResumeMaterial()
     {
-        if (_materialResume.IsEnabled && _materialSettlement.Job?.Failure?.SavedMaterial is AssetGuid saved)
+        if (_materialResume.IsEnabled && _materialSettlement.ResumableMaterial is AssetGuid saved)
             SubmitMaterial(new MaterialSave.Resume(saved));
     }
 
@@ -1343,6 +1342,9 @@ public sealed class MainWindow : Window
             if (job?.Failure is { } failure)
                 text += $" {failure.Stage}/{failure.Code}: {failure.Diagnostic} Source: {failure.SourceState}." +
                     (failure.SavedMaterial is AssetGuid guid ? $" Material {guid}. Resume publication after correction." : "");
+            if (job?.Failure?.SourceState == RegistrationState.NotCommitted &&
+                _materialSettlement.ResumableMaterial is AssetGuid previous)
+                text += $" The previous material {previous} is still committed. Resume publication after correction.";
             if (_materialSettlement.NeedsRepair) text += " Workspace needs repair before any further writes.";
         }
         _materialState.Text = text;
