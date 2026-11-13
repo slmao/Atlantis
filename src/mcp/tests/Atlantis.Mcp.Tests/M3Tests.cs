@@ -41,8 +41,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 44 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 44,
-            "43 unique approved tools including mesh preview, asset rebuild, import, Save As and Create Scene");
+        Check(ToolRegistry.AllMappings.Length == 48 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 48,
+            "48 unique approved tools including the four managed material operations");
         foreach (var c in CompositionCases)
         {
             FakeSession session = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };

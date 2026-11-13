@@ -10,6 +10,13 @@ class Assets final : public atlantis::connection::AssetConnection {
   bool unavailable = false;
   int previews = 0;
   int pairPreviews = 0;
+  ca::MaterialStatusResult materialStatus(std::optional<ca::MaterialJobId> id) const override {
+    if (!id || id->value != guid) return ca::MaterialStatusResult::Err(ca::MaterialError::UnknownJob);
+    ca::MaterialJob job{*id, {ca::MaterialMode::Edit, {}, material}, ca::RebuildState::Failed, {}, {},
+        ca::MaterialFailure{ca::MaterialStage::Publication, ca::MaterialFailureCode::PublishFailed,
+            "source committed; publication failed", {}, ca::RegistrationState::Committed, material}};
+    return ca::MaterialStatusResult::Ok({{}, job, false});
+  }
   atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> listAssets() const override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     return unavailable ? R::Err(ca::AssetError::CatalogUnavailable) : R::Ok({{guid, ca::AssetType::Mesh, "assets:mesh.txt"}});
@@ -153,4 +160,22 @@ TEST_CASE("asset CLI: human JSON REPL and exec use injected shared queries", "[c
   assets.unavailable = true;
   const std::vector<std::string> args{"asset", "list"};
   CHECK(failed.run(args) == 3);  // Transport failure overrides the catalog sentinel.
+}
+
+TEST_CASE("material CLI: terminal failure exits nonzero and retains the exact receipt", "[cli][assets][asset-material]") {
+  using namespace atlantis::cli::test;
+  Assets assets;
+  Cli cli(true);
+  cli.invocation->setAssets([&] { return &assets; });
+  REQUIRE(cli.run("assets material-status " + atlantis::asset_system::toString(assets.guid)) == 1);
+  auto output = atlantis::connection::json::parse(cli.out.str());
+  REQUIRE(output.isOk());
+  const auto* payload = output.value().find("result");
+  REQUIRE(payload);
+  auto status = ca::decodeMaterialStatus(*payload);
+  REQUIRE(status);
+  REQUIRE(status->job);
+  REQUIRE(status->job->failure);
+  CHECK(status->job->failure->sourceState == ca::RegistrationState::Committed);
+  CHECK(status->job->failure->material == assets.material);
 }

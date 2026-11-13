@@ -416,12 +416,19 @@ endfunction()
 # GUIDs in the material source and are recorded as catalog dependencies from
 # the cooked content, so no TEXTURE/NORMAL_MAP argument exists (Plan 0047 P16).
 function(atlantis_add_material_asset)
-  set(options "")
+  set(options MANAGED)
   set(oneValueArgs NAME SOURCE)
   set(multiValueArgs "")
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(root_name assets)
+  set(source_option "")
+  if(ARG_MANAGED)
+    set(asset_root "${CMAKE_CURRENT_BINARY_DIR}/managed-material-sources")
+    set(root_name content)
+    set(source_option "--catalog-id=content:${ARG_SOURCE}")
+  endif()
   set(source_path "${asset_root}/${ARG_SOURCE}")
   set(output_dir "${CMAKE_BINARY_DIR}/assets")
 
@@ -435,15 +442,15 @@ function(atlantis_add_material_asset)
     BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
     COMMAND atlantis_asset_cooker
       --kind=material --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
+      --output-dir=${output_dir} --stamp=${stamp} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE} ${source_option}
     DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
     COMMENT "Cooking material asset: ${ARG_NAME} (${ARG_SOURCE})"
     VERBATIM
   )
   add_custom_target(${ARG_NAME}_asset ALL DEPENDS "${stamp}")
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\tassets\t${ARG_SOURCE}")
-  _atlantis_register_asset_producer(material assets "${ARG_SOURCE}" "${stamp}" "")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "material\t${root_name}\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(material "${root_name}" "${ARG_SOURCE}" "${stamp}" "")
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_TARGET "${ARG_NAME}_asset" PARENT_SCOPE)

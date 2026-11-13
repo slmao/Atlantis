@@ -86,7 +86,7 @@ public static partial class Codec
 
     // The protocol reader keeps duplicate JSON members. The pair operation checks
     // exact counts without changing the existing first-member behavior for other calls.
-    internal static int CountMember(JsonValue value, string key)
+    public static int CountMember(JsonValue value, string key)
     {
         int count = 0;
         if (value.IsObject)
@@ -319,4 +319,174 @@ public static partial class Codec
     public static JsonValue Encode(A.ImportStatus status) => JsonValue.NewObject()
         .Set("activeGeneration", status.ActiveGeneration is A.GenerationId gen ? Encode(gen.Value) : JsonValue.Null())
         .Set("job", status.Job is A.ImportJob job ? Encode(job) : JsonValue.Null());
+
+    private static bool Exact(JsonValue value, int count) => value.IsObject && value.Members.Count == count;
+
+    internal static bool ValidMaterialValues(A.MaterialValues values) =>
+        !values.Texture.IsNil && Factor(values.Red) && Factor(values.Green) && Factor(values.Blue) &&
+        Factor(values.Metallic) && Factor(values.Roughness);
+
+    private static bool Factor(float value) => float.IsFinite(value) && value >= 0f && value <= 1f;
+    private static float? ReadFactor(JsonValue? value) =>
+        value is not null && value.TryGetFloat(out float number) && Factor(number) ? number : null;
+
+    private static JsonValue EncodeMaterialValues(A.MaterialValues values) => JsonValue.NewObject()
+        .Set("texture", Encode(values.Texture))
+        .Set("color", JsonValue.NewArray().Push(JsonValue.Number(values.Red)).Push(JsonValue.Number(values.Green))
+            .Push(JsonValue.Number(values.Blue)))
+        .Set("metallic", JsonValue.Number(values.Metallic)).Set("roughness", JsonValue.Number(values.Roughness));
+
+    private static A.MaterialValues? DecodeMaterialValues(JsonValue value)
+    {
+        if (!Exact(value, 4) || RebuildGuid(value.Find("texture")) is not AssetGuid texture ||
+            value.Find("color") is not { IsArray: true } color || color.Items.Count != 3 ||
+            ReadFactor(color.Items[0]) is not float red || ReadFactor(color.Items[1]) is not float green ||
+            ReadFactor(color.Items[2]) is not float blue || ReadFactor(value.Find("metallic")) is not float metallic ||
+            ReadFactor(value.Find("roughness")) is not float roughness) return null;
+        return new(texture, red, green, blue, metallic, roughness);
+    }
+
+    public static JsonValue EncodeMaterialRecipe(A.MaterialRecipe recipe) => JsonValue.NewObject()
+        .Set("values", EncodeMaterialValues(recipe.Values)).Set("filter", JsonValue.String(recipe.Filter.ToString()))
+        .Set("address", JsonValue.String(recipe.Address.ToString()));
+
+    public static A.MaterialRecipe? DecodeMaterialRecipe(JsonValue value)
+    {
+        if (!Exact(value, 3) || value.Find("values") is not JsonValue fields ||
+            DecodeMaterialValues(fields) is not A.MaterialValues values ||
+            RebuildToken<A.MaterialFilter>(value.Find("filter")) is not A.MaterialFilter filter ||
+            RebuildToken<A.MaterialAddress>(value.Find("address")) is not A.MaterialAddress address) return null;
+        return new(values, filter, address);
+    }
+
+    internal static JsonValue? EncodeMaterialSave(A.MaterialSave request)
+    {
+        var target = request.Target;
+        if (target.Name is string name && !ValidImportName(name) || target.Material is { IsNil: true }) return null;
+        if ((target.Mode is A.MaterialMode.Create or A.MaterialMode.Copy) && target.Name is null) return null;
+        var parameters = JsonValue.NewObject().Set("mode", JsonValue.String(target.Mode.ToString()));
+        if (target.Name is string validName) parameters.Set("name", JsonValue.String(validName));
+        if (target.Material is AssetGuid material) parameters.Set("material", Encode(material));
+        A.MaterialValues values;
+        switch (request)
+        {
+            case A.MaterialSave.Create create: values = create.Values; break;
+            case A.MaterialSave.Copy copy: values = copy.Values; break;
+            case A.MaterialSave.Edit edit:
+                if (edit.ActiveGeneration is { Value.IsNil: true } || !ValidMaterialValues(edit.Expected)) return null;
+                parameters.Set("activeGeneration", edit.ActiveGeneration is A.GenerationId generation
+                    ? Encode(generation.Value) : JsonValue.Null());
+                parameters.Set("expected", EncodeMaterialValues(edit.Expected));
+                values = edit.Values;
+                break;
+            case A.MaterialSave.Resume: return parameters;
+            default: return null;
+        }
+        return ValidMaterialValues(values) ? parameters.Set("values", EncodeMaterialValues(values)) : null;
+    }
+
+    public static A.MaterialSave? DecodeMaterialSave(JsonValue parameters)
+    {
+        var mode = RebuildToken<A.MaterialMode>(parameters.Find("mode"));
+        var name = parameters.Find("name");
+        var material = RebuildGuid(parameters.Find("material"));
+        var fields = parameters.Find("values");
+        var values = fields is null ? null : DecodeMaterialValues(fields);
+        if (mode == A.MaterialMode.Resume && Exact(parameters, 2) && material is AssetGuid resume)
+            return new A.MaterialSave.Resume(resume);
+        if (values is not A.MaterialValues replacement) return null;
+        if (mode == A.MaterialMode.Create && Exact(parameters, 3) && name is { IsString: true } && ValidImportName(name.AsString))
+            return new A.MaterialSave.Create(name.AsString, replacement);
+        if (mode == A.MaterialMode.Copy && Exact(parameters, 4) && name is { IsString: true } &&
+            ValidImportName(name.AsString) && material is AssetGuid copy)
+            return new A.MaterialSave.Copy(name.AsString, copy, replacement);
+        if (mode == A.MaterialMode.Edit && Exact(parameters, 5) && material is AssetGuid edit &&
+            DecodeMaterialGeneration(parameters.Find("activeGeneration"), out var generation) &&
+            parameters.Find("expected") is JsonValue expected && DecodeMaterialValues(expected) is A.MaterialValues original)
+            return new A.MaterialSave.Edit(edit, generation, original, replacement);
+        return null;
+    }
+
+    private static bool DecodeMaterialGeneration(JsonValue? value, out A.GenerationId? generation)
+    {
+        generation = null;
+        if (value is null) return false;
+        if (value.IsNull) return true;
+        if (RebuildGuid(value) is not AssetGuid guid) return false;
+        generation = new(guid);
+        return true;
+    }
+
+    public static A.MaterialRead? DecodeMaterialRead(JsonValue value)
+    {
+        if (!Exact(value, 4) || RebuildGuid(value.Find("material")) is not AssetGuid material ||
+            value.Find("recipe") is not JsonValue recipe || DecodeMaterialRecipe(recipe) is not A.MaterialRecipe decoded ||
+            value.Find("editable") is not { IsBool: true } editable ||
+            !DecodeMaterialGeneration(value.Find("activeGeneration"), out var generation)) return null;
+        return new(material, decoded, editable.AsBool, generation);
+    }
+
+    public static A.MaterialJob? DecodeMaterialJob(JsonValue value)
+    {
+        if (!value.IsObject || RebuildGuid(value.Find("jobId")) is not AssetGuid id ||
+            RebuildToken<A.MaterialMode>(value.Find("mode")) is not A.MaterialMode mode ||
+            RebuildToken<A.RebuildState>(value.Find("state")) is not A.RebuildState state) return null;
+        bool named = mode is A.MaterialMode.Create or A.MaterialMode.Copy;
+        bool addressed = mode is not A.MaterialMode.Create;
+        var name = value.Find("name");
+        var material = value.Find("material");
+        var guid = RebuildGuid(material);
+        if (named ? name is not { IsString: true } || !ValidImportName(name.AsString) : name is not null) return null;
+        if (addressed ? guid is null : material is not null) return null;
+        var target = new A.MaterialTarget(mode, name?.AsString, guid);
+        int count = 3 + (named ? 1 : 0) + (addressed ? 1 : 0);
+        if (state == A.RebuildState.Running) return Exact(value, count) ? new(new(id), target, state) : null;
+        if (state == A.RebuildState.Succeeded)
+        {
+            var saved = RebuildGuid(value.Find("savedMaterial"));
+            if (!Exact(value, count + 2) || saved is null ||
+                !DecodeMaterialGeneration(value.Find("generation"), out var generation) || generation is null ||
+                (mode is A.MaterialMode.Edit or A.MaterialMode.Resume) && saved != guid) return null;
+            return new(new(id), target, state, saved, generation);
+        }
+        if (!Exact(value, count + 1) || value.Find("failure") is not { IsObject: true } failure ||
+            RebuildToken<A.MaterialStage>(failure.Find("stage")) is not A.MaterialStage stage ||
+            RebuildToken<A.MaterialFailureCode>(failure.Find("code")) is not A.MaterialFailureCode code ||
+            RebuildToken<A.RegistrationState>(failure.Find("sourceState")) is not A.RegistrationState source ||
+            failure.Find("diagnostic") is not { IsString: true } diagnostic ||
+            System.Text.Encoding.UTF8.GetByteCount(diagnostic.AsString) > 4096) return null;
+        var exit = failure.Find("exitCode");
+        uint? exitCode = null;
+        if (exit is not null)
+        {
+            if (!exit.TryGetUInt64(out ulong parsed) || parsed > uint.MaxValue) return null;
+            exitCode = (uint)parsed;
+        }
+        var savedValue = failure.Find("savedMaterial");
+        var durable = RebuildGuid(savedValue);
+        if (!Exact(failure, 4 + (exit is null ? 0 : 1) + (savedValue is null ? 0 : 1)) ||
+            savedValue is not null && durable is null || (durable is not null) != (source == A.RegistrationState.Committed) ||
+            durable is not null && (mode is A.MaterialMode.Edit or A.MaterialMode.Resume) && durable != guid) return null;
+        return new(new(id), target, state, Failure: new(stage, code, diagnostic.AsString, exitCode, source, durable));
+    }
+
+    public static A.MaterialStatus? DecodeMaterialStatus(JsonValue value)
+    {
+        var job = value.Find("job");
+        if (!Exact(value, job is null ? 2 : 3) || value.Find("workspaceNeedsRepair") is not { IsBool: true } repair ||
+            !DecodeMaterialGeneration(value.Find("activeGeneration"), out var generation)) return null;
+        var decoded = job is null ? null : DecodeMaterialJob(job);
+        if (job is not null && decoded is null) return null;
+        return new(generation, decoded, repair.AsBool);
+    }
+
+    public static A.MaterialDraftPreview? DecodeMaterialDraftPreview(JsonValue value, AssetGuid mesh, A.MaterialRecipe recipe)
+    {
+        if (!Exact(value, 6) || RebuildGuid(value.Find("mesh")) != mesh ||
+            value.Find("recipe") is not JsonValue fields || DecodeMaterialRecipe(fields) != recipe) return null;
+        var bytes = DecodePreviewPng(value);
+        return bytes is null ? null : new(mesh, recipe, PreviewDimension, PreviewDimension, bytes);
+    }
+
+    public static A.MaterialError? DecodeMaterialError(JsonValue value) => RebuildToken<A.MaterialError>(value);
 }

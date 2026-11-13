@@ -23,6 +23,10 @@ internal static partial class Program
     internal static readonly string PreviewMetadata = $$$"""{"ok":{"guid":"{{{Entity}}}","width":256,"height":256,"mimeType":"image/png"}}""";
     internal static readonly string PairPreviewArgs = $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}"}""";
     internal static readonly string PairPreviewMetadata = $$$"""{"ok":{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}","width":256,"height":256,"mimeType":"image/png"}}""";
+    private static readonly string DraftValues = $$$"""{"texture":"{{{Material}}}","color":[1,0.5,1],"metallic":0,"roughness":0.5}""";
+    private static readonly string DraftRecipe = $$$"""{"values":{{{DraftValues}}},"filter":"Linear","address":"Repeat"}""";
+    private static readonly string DraftArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{DraftRecipe}}}}""";
+    private static readonly string DraftMetadata = $$$"""{"ok":{"mesh":"{{{Entity}}}","recipe":{{{DraftRecipe}}},"width":256,"height":256,"mimeType":"image/png"}}""";
     private const string TypeId = "0x123456789abcdef0";
     private const string FieldId = "0xfedcba9876543210";
     private static readonly string WorldAddress = $$$"""{"entity":"{{{Entity}}}","component":"{{{TypeId}}}","field":"{{{FieldId}}}"}""";
@@ -38,6 +42,12 @@ internal static partial class Program
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
         ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
         ("assets.preview_mesh_material", "assets.previewMeshMaterial", PairPreviewArgs, PairPreviewMetadata),
+        ("assets.material_read", "assets.materialRead", $$$"""{"material":"{{{Material}}}"}""",
+            $$$"""{"ok":{"material":"{{{Material}}}","recipe":{{{DraftRecipe}}},"editable":false,"activeGeneration":null}}"""),
+        ("assets.material_save", "assets.materialSave", $$$"""{"mode":"Create","name":"sample","values":{{{DraftValues}}}}""",
+            $$$"""{"ok":{"mode":"Create","name":"sample","jobId":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.material_status", "assets.materialStatus", "{}", """{"ok":{"activeGeneration":null,"workspaceNeedsRepair":false}}"""),
+        ("assets.preview_material_draft", "assets.previewMaterialDraft", DraftArgs, DraftMetadata),
         ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -134,7 +144,7 @@ internal static partial class Program
         Check(ToolRegistry.Mappings.Select(m => m.Method).Distinct().Count() == Cases.Length, "one distinct wire method per tool");
         foreach (var c in Cases)
         {
-            FakeSession session = new() { Response = "{\"id\":7,\"result\":" + c.Result + "}" };
+            FakeSession session = new() { Response = FixtureEnvelope(c.Method, c.Result) };
             CallToolResult result = new ToolRegistry(session).Invoke(Request(c.Tool, c.Args));
             Check(result.IsError != true, c.Tool + " succeeds");
             Check(session.Calls.Count == 1 && session.Calls[0].Method == c.Method, c.Tool + " exact method and one round trip");
@@ -143,6 +153,8 @@ internal static partial class Program
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
+                c.Tool == "assets.material_save" ? description.Contains("before retrying") && description.Contains("Runtime restart") :
+                c.Tool == "assets.material_status" ? description.Contains("not a receipt") && description.Contains("Runtime restart") :
                 c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
                 description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
                 ? description.Contains("document") : description.Contains("disposable")), c.Tool + " editing model stated");
@@ -160,6 +172,13 @@ internal static partial class Program
         CheckForward(failedResult, failedJob, "failed rebuild preserves job payload");
     }
 
+    private static string FixtureEnvelope(string method, string result)
+    {
+        if (method == "assets.previewMaterialDraft")
+            result = result.Insert(result.Length - 2, ",\"pngBase64\":\"" + Convert.ToBase64String(PreviewPng) + "\"");
+        return "{\"id\":7,\"result\":" + result + "}";
+    }
+
     private static void CheckForward(CallToolResult result, string expected, string context)
     {
         Check(result.Content.Count == 1 && result.Content[0] is TextContentBlock text && text.Text == expected,
@@ -173,7 +192,7 @@ internal static partial class Program
 
     private static void CheckAssetResult(CallToolResult result, string method, string expected, string context)
     {
-        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial")) { CheckForward(result, expected, context); return; }
+        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial" or "assets.previewMaterialDraft")) { CheckForward(result, expected, context); return; }
         CheckPreviewImage(result, context);
         CheckForward(new CallToolResult { Content = [result.Content[0]], StructuredContent = result.StructuredContent },
             expected, context + " metadata without duplicated PNG");
@@ -399,7 +418,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
+            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;
@@ -460,7 +479,7 @@ internal static partial class Program
             if (Failure is not null) throw Failure;
             if (method == "connection.subscribe") return Json.Parse("{\"result\":41}");
             if (method == "authoring.subscribe") return Json.Parse("{\"result\":73}");
-            if (FixtureResults) return Json.Parse("{\"result\":" + Cases.Single(c => c.Method == method).Result + "}");
+            if (FixtureResults) return Json.Parse(FixtureEnvelope(method, Cases.Single(c => c.Method == method).Result));
             return Echo ? JsonValue.NewObject().Set("result", JsonValue.NewObject()
                 .Set("method", JsonValue.String(method)).Set("params", parameters)) : Json.Parse(Response);
         }

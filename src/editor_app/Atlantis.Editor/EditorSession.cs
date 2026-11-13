@@ -384,6 +384,17 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
 
+    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>> done) =>
+        Enqueue(session => { var result = session.Assets.MaterialRead(guid); _post(() => done(result)); });
+
+    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request,
+        Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
+        Enqueue(session => { var result = session.Assets.MaterialSave(request); _post(() => done(result)); });
+
+    public void QueryMaterial(Atlantis.Gameplay.Assets.MaterialJobId? id,
+        Action<Outcome<Atlantis.Gameplay.Assets.MaterialStatus, Atlantis.Gameplay.Assets.MaterialError>> done) =>
+        Enqueue(session => { var result = session.Assets.MaterialStatus(id); _post(() => done(result)); });
+
     public void Start() => _thread.Start();
 
     public void SetCamera(ViewportCamera? camera, long inputTicks)

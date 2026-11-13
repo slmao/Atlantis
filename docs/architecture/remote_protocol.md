@@ -353,6 +353,53 @@ new methods only, typed clients recognize the pinned legacy
 `Unsupported` and keep the shared session usable. Unexpected responses
 follow existing protocol-error handling.
 
+### 5.2.2 Managed materials (Spec 0094 / ADR-0153)
+
+| Method | Parameters | Success |
+|---|---|---|
+| `assets.materialRead` | `{material}` | `{material,recipe,editable,activeGeneration}` |
+| `assets.materialSave` | One of the four exact request arms below | A job in state `Running` |
+| `assets.materialStatus` | `{}` or `{jobId}` | `{activeGeneration,workspaceNeedsRepair,job?}` |
+| `assets.previewMaterialDraft` | `{mesh,recipe}` | `{mesh,recipe,mimeType,width,height,pngBase64}` |
+
+All success payloads are in `{"ok":...}`; typed refusals use
+`{"err":"<MaterialError>"}`. All IDs are canonical non-nil asset GUID
+strings. Active generation is explicitly nullable for a seed. A recipe is
+`{values,filter,address}` where `values` is `{texture,color,metallic,roughness}`,
+`color` is three linear RGB float32 values, and all five numeric fields are
+finite and in [0,1]. The sampler tokens are `Nearest` / `Linear` and
+`Repeat` / `ClampToEdge`.
+
+| Mode | Members in addition to `mode` |
+|---|---|
+| `Create` | `name,values` |
+| `Copy` | `name,material,values` |
+| `Edit` | `material,activeGeneration,expected,values`; `expected` is the original editable values |
+| `Resume` | `material` |
+
+A job contains `jobId`, `state`, `mode`, and the requested name and/or
+material GUID as appropriate for that mode. `Succeeded` adds
+`savedMaterial` and `generation`. `Failed` adds `failure` with `stage`,
+`code`, a diagnostic of at most 4096 UTF-8 bytes, optional unsigned
+32-bit `exitCode`, and `sourceState`. Only `Committed` adds
+`savedMaterial` to the failure. `Unknown` requires workspace inspection
+before another mutation. The other source state is `NotCommitted`.
+One active and the last 16 terminal material receipts are retained in
+memory. `UnknownJob` for an explicit ID does not determine its outcome.
+A lost or invalid admission receipt is an unknown outcome. The latest
+job is a diagnostic hint; verify the durable target and settle the
+previous request before retrying. Nothing is retried automatically.
+
+Bad request shapes are outer `BadRequest`; only the exact legacy
+`BadRequest` / `unknown or malformed asset query` refusal maps to
+`Unsupported` for well-formed requests. Save and Status without a
+trusted project profile return `Unavailable`. Draft preview uses the
+same bounded PNG and admission slot as the other previews, and has no
+persistent material GUID or write side effect. A successful publication
+does not change the active generation. See
+[Spec 0094](../specs/0094-basic-material-authoring.md) and
+[ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

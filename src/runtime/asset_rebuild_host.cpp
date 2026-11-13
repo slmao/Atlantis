@@ -1,4 +1,5 @@
 #include "asset_rebuild_host.h"
+#include "material_authoring.h"
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -19,9 +20,11 @@
 #include <iterator>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -42,6 +45,8 @@ constexpr std::string_view kManagedProject = "assets/managed-project.txt";
 constexpr std::string_view kPendingSelection = "assets/managed-pending.txt";
 constexpr std::string_view kManagedSource = "assets/managed-catalog-source.txt";
 constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
+constexpr std::string_view kMaterialSources = "assets/managed-material-sources";
+constexpr std::string_view kMaterialLeaf = "source.material.txt";
 
 class Handle {
  public:
@@ -219,6 +224,75 @@ bool retainsIdentity(const as::AssetCatalog& a, const as::AssetCatalog& b) {
 
 using Registrations = std::map<std::string, as::AssetGuid, std::less<>>;
 
+struct MaterialUnit {
+  as::AssetGuid guid;
+  std::string source;
+  friend bool operator==(const MaterialUnit&, const MaterialUnit&) = default;
+};
+using Materials = std::map<std::string, MaterialUnit, std::less<>>;
+std::string materialKey(std::string_view name) {
+  return "content:material_" + std::string(name) + "/source.material.txt";
+}
+std::optional<std::string_view> materialName(std::string_view key) {
+  constexpr std::string_view prefix = "content:material_";
+  constexpr std::string_view suffix = "/source.material.txt";
+  if (!key.starts_with(prefix) || !key.ends_with(suffix) || key.size() <= prefix.size() + suffix.size())
+    return std::nullopt;
+  const auto name = key.substr(prefix.size(), key.size() - prefix.size() - suffix.size());
+  return ca::validImportName(name) ? std::optional{name} : std::nullopt;
+}
+fs::path materialDirectory(std::string_view name) { return fromUtf8("material_" + std::string(name)); }
+std::optional<std::string> readMaterialText(const fs::path& root, const fs::path& relative) {
+  if (!safeRelative(root, relative)) return std::nullopt;
+  std::ifstream in(root / relative, std::ios::binary);
+  if (!in) return std::nullopt;
+  std::string bytes(64 * 1024 + 1, '\0');
+  in.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  if (!in.eof() || in.bad()) return std::nullopt;
+  bytes.resize(static_cast<std::size_t>(in.gcount()));
+  return bytes;
+}
+std::optional<Materials> materialInputs(const fs::path& root, const Producers& producers) {
+  Materials result;
+  for (const auto& [key, producer] : producers) {
+    const auto name = materialName(key);
+    if (!name) continue;
+    const auto source = readMaterialText(root, fs::path(kMaterialSources) / materialDirectory(*name) / kMaterialLeaf);
+    if (!source || producer.type != as::CatalogAssetType::Material ||
+        as::parseMaterialSource(*source).isErr()) return std::nullopt;
+    result.emplace(*name, MaterialUnit{producer.root, *source});
+  }
+  return result;
+}
+std::optional<Materials> registeredMaterials(const fs::path& root) {
+  const auto registry = root / "registered";
+  if (!realDirectory(registry)) return std::nullopt;
+  Materials result;
+  std::set<as::AssetGuid> identities;
+  std::error_code ec;
+  for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
+    const auto leaf = utf8(at->path().filename());
+    if (!leaf.starts_with("material_")) continue;
+    const auto name = std::string_view(leaf).substr(9);
+    const auto source = readMaterialText(registry, fromUtf8(leaf) / kMaterialLeaf);
+    const auto fragment = readMaterialText(registry, fromUtf8(leaf) / "catalog-source.txt");
+    if (!ca::validImportName(name) || !source || !fragment) return std::nullopt;
+    const auto parsed = as::parseAssetCatalogSource(*fragment);
+    if (parsed.isErr() || parsed.value().entries().size() != 1) return std::nullopt;
+    const auto& entry = parsed.value().entries().front();
+    if (entry.root != as::CatalogRoot::Content || entry.type != as::CatalogAssetType::Material ||
+        "content:" + entry.path != materialKey(name) || !identities.insert(entry.guid).second) return std::nullopt;
+    result.emplace(name, MaterialUnit{entry.guid, *source});
+  }
+  return ec ? std::nullopt : std::optional{std::move(result)};
+}
+
+bool matchesFrozenMaterials(const as::AssetCatalog& catalog, const Materials& materials) {
+  return std::ranges::all_of(materials, [&](const auto& row) {
+    return material_authoring::matchesFrozen(catalog, row.second.guid, row.second.source);
+  });
+}
+
 std::string managedSourceKey(std::string_view name) {
   return "content:managed_" + std::string(name) + "/source.gltf";
 }
@@ -237,7 +311,7 @@ Registrations managedRegistrations(const Producers& producers) {
   return result;
 }
 Producers baseProducers(Producers producers) {
-  std::erase_if(producers, [](const auto& row) { return managedName(row.first).has_value(); });
+  std::erase_if(producers, [](const auto& row) { return managedName(row.first) || materialName(row.first); });
   return producers;
 }
 std::string_view inventoryHeader(std::string_view data) {
@@ -252,6 +326,7 @@ std::optional<Registrations> readRegistrations(const fs::path& root) {
   for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
     const auto dir = at->path();
     const auto leaf = utf8(dir.filename());
+    if (leaf.starts_with("material_")) continue;  // Validated by registeredMaterials.
     if (!leaf.starts_with("managed_") || !ca::validImportName(std::string_view(leaf).substr(8)) ||
         !realDirectory(dir) || !safeRelative(dir, "source.gltf") || !safeRelative(dir, "catalog-source.txt"))
       return std::nullopt;
@@ -301,6 +376,17 @@ bool matchesManagedCatalog(const as::AssetCatalog& catalog, const Producers& pro
       if (root == registered.end() || record.source.subKey.empty() ||
           as::deriveAssetGuid(root->second, record.source.subKey) != record.guid) return false;
     }
+    if (materialName(source)) {
+      const auto producer = producers.find(source);
+      if (producer == producers.end() || producer->second.type != as::CatalogAssetType::Material ||
+          record.type != as::CatalogAssetType::Material || !record.source.subKey.empty() ||
+          producer->second.root != record.guid) return false;
+    }
+  }
+  for (const auto& [key, producer] : producers) {
+    if (!materialName(key)) continue;
+    const auto* record = catalog.find(producer.root);
+    if (!record || record->type != as::CatalogAssetType::Material || as::toString(record->source) != key) return false;
   }
   return true;
 }
@@ -348,15 +434,20 @@ json::Value generatedSources(const Producers& producers) {
   return value;
 }
 json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers,
-                     const fs::path& managedInventory = {}) {
+                     const fs::path& managedInventory = {}, const Materials& materials = {}) {
   auto value = json::Value::object();
   value.set("profile", json::Value::string(std::string(owner)));
   value.set("generation", json::Value::string(as::toString(id.value)));
   value.set("importedSources", generatedSources(producers));
   if (!managedInventory.empty()) {
-    value.set("version", json::Value::number(std::uint64_t{2}));
+    value.set("version", json::Value::number(std::uint64_t{materials.empty() ? 2u : 3u}));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
     value.set("producers", json::Value::string(utf8(managedInventory)));
+  }
+  if (!materials.empty()) {
+    auto sources = json::Value::object();
+    for (const auto& [name, unit] : materials) sources.set(materialKey(name), json::Value::string(unit.source));
+    value.set("materialSources", std::move(sources));
   }
   return value;
 }
@@ -520,6 +611,12 @@ struct AssetRebuildHost::State {
     std::shared_ptr<const as::AssetCatalog> catalog;
     Clock::time_point deadline;
   };
+  struct MaterialWork {
+    ca::MaterialJob job;
+    ca::MaterialSave request;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    Clock::time_point deadline;
+  };
 
   Config config;
   fs::path staging, publication, active, inventoryPath, inventoryRelative, project;
@@ -527,6 +624,9 @@ struct AssetRebuildHost::State {
   Registrations registered, activeRegistered;
   std::optional<ImportWork> importing;
   std::deque<ca::ImportJob> imported;
+  Materials activeMaterials, committedMaterials;
+  std::optional<MaterialWork> materialWork;
+  std::deque<ca::MaterialJob> materialJobs;
   std::string inventory, owner;
   Producers producers;
   Handle writer;
@@ -552,25 +652,34 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
-    if (!writer || (!project.empty() && !projectWriter) || running || importing) return ca::RebuildError::Busy;
+    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork)
+      return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
     return std::nullopt;
   }
 
   std::optional<ca::RebuildError> admissionLocked() const {
     if (auto error = slotError()) return error;
-    if (!project.empty() && registered != activeRegistered) return ca::RebuildError::Unavailable;
+    if (!project.empty() && (registered != activeRegistered || committedMaterials != activeMaterials))
+      return ca::RebuildError::Unavailable;
     return std::nullopt;
   }
 
   struct Prepared { ca::GenerationId id; fs::path directory; };
   template<class Interrupted>
-  std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted) {
+  std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted,
+                                      std::optional<Prepared>* ownedStaging = nullptr) {
     auto files = outputFiles(staging, catalog, view);
     if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
+    Materials materials;
     if (!project.empty()) {
       files->push_back(inventoryRelative);
       files->push_back(fs::path(kManagedSource));
+      auto inputs = materialInputs(staging, view);
+      if (!inputs) return fail(Stage::Validation, Code::InvalidOutput, "Invalid staged material inputs.", true);
+      materials = std::move(*inputs);
+      for (const auto& [name, unit] : materials)
+        files->push_back(fs::path(kMaterialSources) / materialDirectory(name) / kMaterialLeaf);
     }
     if (interrupted()) return timedOut(Stage::Validation);
     const auto guid = newGuid();
@@ -580,12 +689,13 @@ struct AssetRebuildHost::State {
     std::error_code ec;
     if (!fs::create_directory(temp, ec) || ec)
       return fail(Stage::Publication, Code::PublishFailed, "Cannot create publication staging.");
+    if (ownedStaging) ownedStaging->emplace(Prepared{id, temp});
     for (const auto& file : *files) {
       if (!copyOutput(staging / file, temp / file, interrupted))
         return interrupted() ? timedOut(Stage::Publication)
                              : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
     }
-    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative);
+    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials);
     if (!writeText(temp / kManifest, json::write(data)))
       return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
     return Prepared{id, temp};
@@ -599,6 +709,8 @@ struct AssetRebuildHost::State {
   std::variant<ca::GenerationId, End> build(const Work& work) {
     const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
     if (interrupted()) return timedOut(Stage::Launch);
+    if (!project.empty() && registeredMaterials(project) != activeMaterials)
+      return fail(Stage::Validation, Code::IdentityChanged, "Managed material source differs from the active build.");
     const fs::path marker = staging / kDirty;
     Handle marked(CreateFileW(marker.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_NEW, 0, nullptr));
     if (!marked) return fail(Stage::Launch, Code::LaunchFailed, "Cannot record staging ownership.", true);
@@ -622,7 +734,8 @@ struct AssetRebuildHost::State {
     const auto after = readText(inventoryPath);
     const auto view = project.empty() ? std::optional{producers} : readManagedView(staging, inventoryRelative);
     if (!catalog || !after || !view || (project.empty() ? *after != inventory :
-        inventoryHeader(*after) != inventoryHeader(inventory) || *view != producers))
+        inventoryHeader(*after) != inventoryHeader(inventory) || *view != producers ||
+        materialInputs(staging, *view) != activeMaterials || registeredMaterials(project) != activeMaterials))
       return fail(Stage::Validation, Code::InvalidOutput, "Staging catalog or producer inventory is invalid.", true);
     if (work.catalog->size() != catalog->size() || !retainsIdentity(*work.catalog, *catalog))
       return fail(Stage::Validation, Code::IdentityChanged, "Rebuild changed the catalog identity set.");
@@ -656,6 +769,8 @@ struct AssetRebuildHost::State {
       return ImportOutcome{{}, ca::ImportFailure{stage, code, std::move(message), exit,
         work.registeredRoot ? RS::Committed : RS::NotCommitted, work.registeredRoot}, repair};
     };
+    if (registeredMaterials(project) != activeMaterials)
+      return failed(IS::Validation, IC::IdentityConflict, "Managed material source differs from the active build.");
     const fs::path name = fromUtf8("managed_" + work.job.name);
     const fs::path pendingParent = fs::path(".pending") / as::toString(work.job.id.value);
     const fs::path pending = pendingParent / name;
@@ -721,6 +836,7 @@ struct AssetRebuildHost::State {
     expected.emplace(work.job.name, root);
     const auto producer = view->find(key);
     if (baseProducers(*view) != baseProducers(producers) || managedRegistrations(*view) != expected ||
+        materialInputs(staging, *view) != activeMaterials || registeredMaterials(project) != activeMaterials ||
         producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
         !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
       return failed(IS::Validation, IC::IdentityConflict, "Staged identity delta differs from this import.");
@@ -795,16 +911,276 @@ struct AssetRebuildHost::State {
     importing.reset();
   }
 
+  void settleMaterial(MaterialWork& work) {
+    using MS = ca::MaterialStage;
+    using MC = ca::MaterialFailureCode;
+    using RS = ca::RegistrationState;
+    auto& job = work.job;
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto pending = fs::path(".pending") / as::toString(job.id.value);
+    auto sourceState = RS::NotCommitted;
+    std::optional<as::AssetGuid> saved;
+    std::optional<Materials> before;
+    bool repair = false;
+    bool marked = false;
+    bool ownsPending = false;
+    bool sourceRenameStarted = false;
+    fs::path candidate;
+    std::optional<Prepared> prepared;
+    const auto failJob = [&](MS stage, MC code, std::string diagnostic,
+                             std::optional<std::uint32_t> exit = {}) {
+      job.failure = ca::MaterialFailure{stage, code, std::move(diagnostic), exit, sourceState,
+                                        sourceState == RS::Committed ? saved : std::nullopt};
+    };
+    const auto execute = [&] {
+      before = registeredMaterials(project);
+      const auto imports = readRegistrations(project);
+      if (!before || !imports) {
+        repair = true;
+        return failJob(MS::Source, MC::InvalidSource, "Cannot verify the project registry.");
+      }
+      if (*imports != activeRegistered)
+        return failJob(MS::Source, MC::ActivationRequired, "Activate the committed import changes first.");
+      std::string name = job.target.name;
+      ca::MaterialRecipe recipe;
+      bool create = job.target.mode == ca::MaterialMode::Create || job.target.mode == ca::MaterialMode::Copy;
+      const bool resume = job.target.mode == ca::MaterialMode::Resume;
+      if (resume) {
+        const auto found = std::ranges::find_if(*before, [&](const auto& row) {
+          return row.second.guid == job.target.material;
+        });
+        if (found == before->end())
+          return failJob(MS::Source, MC::NothingToResume, "No committed material matches this GUID.");
+        name = found->first;
+        saved = found->second.guid;
+        const auto previous = activeMaterials.find(name);
+        create = previous == activeMaterials.end();
+        if (!create && (previous->second.guid != *saved || previous->second == found->second))
+          return failJob(MS::Source, MC::NothingToResume, "The source is already active or has a different identity.");
+        auto expected = activeMaterials;
+        expected.insert_or_assign(name, found->second);
+        if (expected != *before)
+          return failJob(MS::Source, MC::ActivationRequired, "More than one committed change is ahead.");
+        sourceState = RS::Committed;
+        const auto parsed = as::parseMaterialSource(found->second.source);
+        if (parsed.isErr()) return failJob(MS::Source, MC::InvalidSource, "The committed source is malformed.");
+        const auto& input = parsed.value();
+        recipe = {{input.textureAsset, {input.baseColorFactor[0], input.baseColorFactor[1],
+                   input.baseColorFactor[2]}, input.metallicFactor, input.roughnessFactor},
+                  input.filter == as::MaterialSamplerFilter::Linear ? ca::MaterialFilter::Linear
+                                                                     : ca::MaterialFilter::Nearest,
+                  input.addressMode == as::MaterialSamplerAddressMode::Repeat ? ca::MaterialAddress::Repeat
+                                                                              : ca::MaterialAddress::ClampToEdge};
+        if (!ca::validMaterialRecipe(recipe) ||
+            as::serializeMaterialSource(input) != as::serializeMaterialSource(material_authoring::source(recipe)))
+          return failJob(MS::Source, MC::InvalidRecipe, "The committed source is outside the authoring subset.");
+      } else {
+        if (create && before->contains(name))
+          return failJob(MS::Source, MC::NameConflict, "This material name is already registered.");
+        if (*before != activeMaterials)
+          return failJob(MS::Source, MC::ActivationRequired, "Activate or recover the committed materials first.");
+        if (const auto* input = std::get_if<ca::CreateMaterial>(&work.request)) recipe.values = input->values;
+        if (const auto* input = std::get_if<ca::CopyMaterial>(&work.request)) {
+          auto read = material_authoring::read(*work.catalog, input->material);
+          if (read.isErr()) return failJob(MS::Source, MC::InvalidRecipe, std::string(ca::toString(read.error())));
+          recipe = read.value();
+          recipe.values = input->values;
+        }
+        if (const auto* input = std::get_if<ca::EditMaterial>(&work.request)) {
+          const auto found = std::ranges::find_if(*before, [&](const auto& row) {
+            return row.second.guid == input->material;
+          });
+          if (found == before->end())
+            return failJob(MS::Source, MC::NotEditable, "Only project-owned materials can be edited.");
+          name = found->first;
+          saved = input->material;
+          auto read = material_authoring::read(*work.catalog, input->material);
+          if (read.isErr()) return failJob(MS::Source, MC::InvalidRecipe, std::string(ca::toString(read.error())));
+          recipe = read.value();
+          if (input->activeGeneration != config.generation || input->expected != recipe.values)
+            return failJob(MS::Source, MC::StaleEdit, "The active material differs from the original read.");
+          if (input->values == recipe.values)
+            return failJob(MS::Source, MC::Unchanged, "The replacement values are unchanged.");
+          recipe.values = input->values;
+        }
+        if (create) saved = as::mintAssetGuids(1).front();
+      }
+      if (create && (work.catalog->find(*saved) || work.catalog->find(as::assetKey(*saved))))
+        return failJob(MS::Validation, MC::IdentityConflict, "The material identity collides with an existing asset.");
+      if (auto texture = material_authoring::texture(*work.catalog, recipe.values.texture); texture.isErr())
+        return failJob(MS::Source, MC::DependencyUnavailable, std::string(ca::toString(texture.error())));
+      const auto unit = materialDirectory(name);
+      const auto expectedSource = resume ? before->at(name).source
+          : as::serializeMaterialSource(material_authoring::source(recipe));
+      auto expected = *before;
+      expected.insert_or_assign(name, MaterialUnit{*saved, expectedSource});
+      if (interrupted()) return failJob(MS::Source, MC::TimedOut, "Material job stopped before staging.");
+      const auto ownerPaths = utf8(staging) + "\n" + utf8(publication) + "\n";
+      if (!createMarker(staging / kDirty, {}) || !createMarker(project / kProjectDirty, ownerPaths)) {
+        repair = true;
+        return failJob(MS::Source, MC::InvalidSource, "Cannot mark workspace ownership.");
+      }
+      marked = true;
+      if (!safeBuildTree(staging, interrupted) || !safeRelative(staging, fs::path(kPendingSelection))) {
+        repair = true;
+        return failJob(MS::Source, MC::InvalidSource, "Unsafe staging workspace.");
+      }
+      std::error_code ec;
+      if (!resume) {
+        candidate = pending / unit;
+        const auto parent = project / ".pending";
+        if ((!fs::exists(parent, ec) && !fs::create_directory(parent, ec)) || ec ||
+            !realDirectory(parent) || !fs::create_directory(project / pending, ec) || ec)
+          return failJob(MS::Source, MC::InvalidSource, "Cannot create private material staging.");
+        ownsPending = true;
+        const std::string fragment = "atlantis_asset_catalog_source_version: 1\nentry_count: 1\nasset: guid=" +
+            as::toString(*saved) + " type=material root=content path=" + utf8(unit / kMaterialLeaf) + "\n";
+        if (!fs::create_directory(project / candidate, ec) || ec ||
+            !writeText(project / candidate / kMaterialLeaf, expectedSource) ||
+            !writeText(project / candidate / "catalog-source.txt", fragment) ||
+            !writeText(staging / kPendingSelection, utf8(candidate))) {
+          return failJob(MS::Source, MC::InvalidSource, "Cannot stage the material source.");
+        }
+      }
+      const auto stamp = fs::path("assets") / unit / "source.stamp";
+      if (!safeRelative(staging, stamp, true)) {
+        repair = true;
+        return failJob(MS::Source, MC::InvalidSource, "Unsafe material producer stamp.");
+      }
+      fs::remove(staging / stamp, ec);
+      if (ec && ec != std::errc::no_such_file_or_directory)
+        return failJob(MS::Pipeline, MC::LaunchFailed, "Cannot invalidate the material producer stamp.");
+      auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true);
+      if (!error) error = runBuild(config.cmake, staging, config.configuration, interrupted);
+      if (error) {
+        repair = error->repair;
+        const auto code = error->failure.code == Code::TimedOut ? MC::TimedOut :
+            error->failure.code == Code::LaunchFailed ? MC::LaunchFailed : MC::BuildFailed;
+        return failJob(MS::Pipeline, code, error->failure.diagnostic, error->failure.exitCode);
+      }
+      auto built = readCatalog(staging);
+      const auto view = readManagedView(staging, inventoryRelative);
+      const auto inventoryBytes = readText(inventoryPath);
+      if (!built || !view || !inventoryBytes || inventoryHeader(*inventoryBytes) != inventoryHeader(inventory) ||
+          baseProducers(*view) != baseProducers(producers) || managedRegistrations(*view) != activeRegistered ||
+          materialInputs(staging, *view) != expected || !matchesManagedCatalog(*built, *view) ||
+          !matchesFrozenMaterials(*built, expected))
+        return failJob(MS::Validation, MC::InvalidOutput, "The staged material producer view is inconsistent.");
+      if (built->size() != work.catalog->size() + (create ? 1 : 0) || !retainsIdentity(*work.catalog, *built))
+        return failJob(MS::Validation, MC::IdentityConflict, "The material build changed unrelated catalog identities.");
+      const auto* builtRecord = built->find(*saved);
+      auto cooked = material_authoring::read(*built, *saved);
+      if (!builtRecord || as::toString(builtRecord->source) != materialKey(name) ||
+          cooked.isErr() || cooked.value() != recipe)
+        return failJob(MS::Validation, MC::InvalidOutput, "The cooked material differs from its intended recipe.");
+      auto generation = prepare(*built, *view, interrupted, &prepared);
+      if (const auto* prepareError = std::get_if<End>(&generation)) {
+        repair = prepareError->repair;
+        return failJob(prepareError->failure.stage == Stage::Validation ? MS::Validation : MS::Publication,
+            prepareError->failure.code == Code::TimedOut ? MC::TimedOut :
+            prepareError->failure.stage == Stage::Validation ? MC::InvalidOutput : MC::PublishFailed,
+            prepareError->failure.diagnostic);
+      }
+      prepared = std::get<Prepared>(std::move(generation));
+      std::lock_guard commit(publicationCommit);
+      if (interrupted()) return failJob(MS::SourceCommit, MC::TimedOut, "Material job stopped before commit.");
+      if (registeredMaterials(project) != before || readRegistrations(project) != imports) {
+        repair = true;
+        return failJob(MS::SourceCommit, MC::CommitFailed, "The project registry changed during the job.");
+      }
+      if (!resume) {
+        const auto destination = project / "registered" / unit;
+        const auto source = project / candidate;
+        sourceRenameStarted = true;
+        const bool committed = create ? MoveFileExW(source.c_str(), destination.c_str(), 0) != 0 :
+            MoveFileExW((source / kMaterialLeaf).c_str(), (destination / kMaterialLeaf).c_str(),
+                        MOVEFILE_REPLACE_EXISTING) != 0;
+        const auto disk = registeredMaterials(project);
+        if (disk != expected) {
+          if (disk != before || committed) sourceState = RS::Unknown;
+          repair = sourceState != RS::NotCommitted;
+          return failJob(MS::SourceCommit, MC::CommitFailed, "Cannot verify the expected source commit.");
+        }
+        sourceState = RS::Committed;
+      }
+      if (!publish(*prepared)) {
+        const auto destination = publication / as::toString(prepared->id.value);
+        const auto manifestPath = destination / kManifest;
+        const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected);
+        if (realDirectory(destination) && safeRelative(destination, fs::path(kManifest)) &&
+            readJson(manifestPath) == expectedManifest &&
+            !realDirectory(prepared->directory)) {
+          job.generation = prepared->id;
+        } else {
+          const DWORD attributes = GetFileAttributesW(destination.c_str());
+          repair = attributes != INVALID_FILE_ATTRIBUTES || GetLastError() != ERROR_FILE_NOT_FOUND ||
+                   !realDirectory(prepared->directory);
+          return failJob(MS::Publication, MC::PublishFailed, "Cannot publish the saved material generation.");
+        }
+      } else {
+        job.generation = prepared->id;
+      }
+      job.material = saved;
+    };
+    try {
+      execute();
+    } catch (const std::exception&) {
+      repair = marked;
+      if (sourceRenameStarted && sourceState == RS::NotCommitted) sourceState = RS::Unknown;
+      failJob(MS::Source, MC::InvalidSource, "Material job could not settle its workspace.");
+    }
+    if (marked && !repair) {
+      std::error_code ec;
+      if (ownsPending) {
+        if (realDirectory(project / pending) && realDirectory(project / candidate)) {
+          const auto sourcePath = candidate / kMaterialLeaf;
+          const auto fragmentPath = candidate / "catalog-source.txt";
+          if (!safeRelative(project, sourcePath, true) || !safeRelative(project, fragmentPath, true)) {
+            ec = std::make_error_code(std::errc::permission_denied);
+          } else {
+            fs::remove(project / sourcePath, ec);
+            if (!ec) fs::remove(project / fragmentPath, ec);
+            if (!ec) fs::remove(project / candidate, ec);
+          }
+        }
+        if (!ec && realDirectory(project / pending)) fs::remove(project / pending, ec);
+        else if (!ec) ec = std::make_error_code(std::errc::permission_denied);
+      }
+      if (!ec && prepared && !job.generation && realDirectory(prepared->directory))
+        fs::remove_all(prepared->directory, ec);
+      repair = ec || !writeText(staging / kPendingSelection, {});
+      if (!repair) {
+        fs::remove(staging / kDirty, ec);
+        if (!ec) fs::remove(project / kProjectDirty, ec);
+        repair = static_cast<bool>(ec);
+      }
+    }
+    const auto disk = registeredMaterials(project);
+    job.state = job.generation ? ca::RebuildState::Succeeded : ca::RebuildState::Failed;
+    std::lock_guard lock(mutex);
+    if (disk) committedMaterials = *disk;
+    dirty = repair || !disk;
+    materialJobs.push_front(std::move(job));
+    if (materialJobs.size() > 16) materialJobs.pop_back();
+    materialWork.reset();
+  }
+
   void run() {
     for (;;) {
       std::optional<Work> work;
       std::optional<ImportWork> import;
+      std::optional<MaterialWork> material;
       {
         std::unique_lock lock(mutex);
-        changed.wait(lock, [&] { return stopping || running || importing; });
-        if (stopping && !running && !importing) return;
+        changed.wait(lock, [&] { return stopping || running || importing || materialWork; });
+        if (stopping && !running && !importing && !materialWork) return;
         work = running;
         import = importing;
+        material = materialWork;
+      }
+      if (material) {
+        settleMaterial(*material);
+        continue;
       }
       if (import) {
         settleImport(*import);
@@ -886,7 +1262,8 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     return R::Err("Cannot read the configured producer inventories.");
   auto producers = stageInventory ? readProducers(*stageInventory) : std::nullopt;
   if (state->project.empty()) {
-    if (!producers || *seedInventory != *stageInventory || !managedRegistrations(*producers).empty())
+    if (!producers || *seedInventory != *stageInventory || !managedRegistrations(*producers).empty() ||
+        baseProducers(*producers) != *producers)
       return R::Err("Staging must use the same checkout, generator, configuration and asset declarations.");
   } else {
     const auto seedHeader = columns(std::string(inventoryHeader(*seedInventory)));
@@ -897,6 +1274,9 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
         inventoryHeader(*seedInventory) != inventoryHeader(*stageInventory) ||
         baseProducers(*seedView) != baseProducers(*producers))))
       return R::Err("Managed staging must match the seed's base producers and build configuration.");
+    auto materials = materialInputs(seed, *seedView);
+    if (!materials) return R::Err("Seed managed material sources are missing or invalid.");
+    state->activeMaterials = std::move(*materials);
     producers = std::move(seedView);
   }
   state->inventory = *seedInventory;
@@ -956,10 +1336,14 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       if (!frozen || !frozenInventory || inventoryHeader(*frozenInventory) != inventoryHeader(state->inventory) ||
           baseProducers(*frozen) != baseProducers(state->producers) || !matchesManagedCatalog(*catalog, *frozen))
         return R::Err("Invalid managed generation metadata.");
+      auto materials = materialInputs(selected, *frozen);
+      if (!materials || !matchesFrozenMaterials(*catalog, *materials))
+        return R::Err("Managed generation material sources are missing or invalid.");
+      state->activeMaterials = std::move(*materials);
       state->producers = std::move(*frozen);
     }
     const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
-    if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory))
+    if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory, state->activeMaterials))
       return R::Err("Unknown, incomplete or foreign asset generation.");
     if (!outputFiles(selected, *catalog, state->producers))
       return R::Err("Incomplete asset generation files.");
@@ -973,7 +1357,8 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     state->activeRegistered = managedRegistrations(state->producers);
     if (!state->config.generation) {
       const auto catalog = readCatalog(seed);
-      if (!catalog || !matchesManagedCatalog(*catalog, state->producers))
+      if (!catalog || !matchesManagedCatalog(*catalog, state->producers) ||
+          !matchesFrozenMaterials(*catalog, state->activeMaterials))
         return R::Err("Seed catalog does not match its frozen managed producer view.");
     }
     if (state->writer) {
@@ -990,12 +1375,14 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
         fs::exists(*stage / kDirty, ec) || static_cast<bool>(ec);
     if (!state->project.empty()) {
       auto registered = readRegistrations(state->project);
+      auto materials = registeredMaterials(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
           ? readText(*stage / kPendingSelection) : std::nullopt;
-      state->dirty = state->dirty || !registered ||
+      state->dirty = state->dirty || !registered || !materials ||
           !safeRelative(state->project, fs::path(kProjectDirty), true) ||
           fs::exists(state->project / kProjectDirty, ec) || ec || !pending || !pending->empty();
       if (registered) state->registered = std::move(*registered);
+      if (materials) state->committedMaterials = std::move(*materials);
     }
     auto* workState = state.get();
     try {
@@ -1072,13 +1459,15 @@ ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::I
   if (mode == ca::ImportMode::Register) {
     if (committed != state_->registered.end() || state_->producers.contains(managedSourceKey(name)))
       return R::Err(E::NameConflict);
-    if (state_->registered != state_->activeRegistered) return R::Err(E::ActivationRequired);
+    if (state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials)
+      return R::Err(E::ActivationRequired);
   } else {
     if (committed == state_->registered.end() || state_->activeRegistered.contains(name))
       return R::Err(E::NothingToResume);
     auto expected = state_->activeRegistered;
     expected.emplace(committed->first, committed->second);
-    if (expected != state_->registered) return R::Err(E::ActivationRequired);
+    if (expected != state_->registered || state_->committedMaterials != state_->activeMaterials)
+      return R::Err(E::ActivationRequired);
     root = committed->second;
   }
   const auto guid = newGuid();
@@ -1098,6 +1487,61 @@ ca::ImportStatusResult AssetRebuildHost::importStatus(std::optional<ca::ImportId
     if (!id || job.id == *id) { status.job = job; break; }
   }
   if (id && !status.job) return R::Err(ca::ImportError::UnknownJob);
+  return R::Ok(std::move(status));
+}
+bool AssetRebuildHost::ownsMaterial(const as::AssetGuid& guid) const {
+  return !state_->project.empty() && std::ranges::any_of(state_->activeMaterials, [&](const auto& row) {
+    return row.second.guid == guid;
+  });
+}
+std::optional<ca::GenerationId> AssetRebuildHost::activeGeneration() const {
+  return state_->config.generation;
+}
+ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& request,
+                                                      std::shared_ptr<const as::AssetCatalog> catalog) {
+  using R = ca::MaterialSaveResult;
+  using E = ca::MaterialError;
+  const auto target = ca::materialTarget(request);
+  const bool valid = std::visit([](const auto& input) {
+    using T = std::decay_t<decltype(input)>;
+    if constexpr (std::is_same_v<T, ca::CreateMaterial>)
+      return ca::validImportName(input.name) && ca::validMaterialValues(input.values);
+    else if constexpr (std::is_same_v<T, ca::CopyMaterial>)
+      return ca::validImportName(input.name) && input.material != as::AssetGuid{} && ca::validMaterialValues(input.values);
+    else if constexpr (std::is_same_v<T, ca::EditMaterial>)
+      return input.material != as::AssetGuid{} && (!input.activeGeneration || input.activeGeneration->value != as::AssetGuid{}) &&
+          ca::validMaterialValues(input.expected) && ca::validMaterialValues(input.values);
+    else
+      return input.material != as::AssetGuid{};
+  }, request);
+  if (!valid) return R::Err(E::InvalidRecipe);
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty()) return R::Err(E::Unavailable);
+  if (auto error = state_->slotError()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::Unavailable);
+  }
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto id = newGuid();
+  if (!id) return R::Err(E::Unavailable);
+  ca::MaterialJob job{{*id}, target, ca::RebuildState::Running, {}, {}, {}};
+  state_->materialWork.emplace(State::MaterialWork{job, request, std::move(catalog),
+                                                  Clock::now() + state_->config.timeout});
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+ca::MaterialStatusResult AssetRebuildHost::materialStatus(std::optional<ca::MaterialJobId> id) const {
+  using R = ca::MaterialStatusResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty()) return R::Err(ca::MaterialError::Unavailable);
+  ca::MaterialStatus status{state_->config.generation, {}, state_->dirty};
+  if (state_->materialWork && (!id || state_->materialWork->job.id == *id))
+    status.job = state_->materialWork->job;
+  else for (const auto& job : state_->materialJobs) {
+    if (!id || job.id == *id) { status.job = job; break; }
+  }
+  if (id && !status.job) return R::Err(ca::MaterialError::UnknownJob);
   return R::Ok(std::move(status));
 }
 }  // namespace atlantis::runtime

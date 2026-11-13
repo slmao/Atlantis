@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
+using A = Atlantis.Gameplay.Assets;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -48,6 +49,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.preview_mesh_material", "assets.previewMeshMaterial",
             "Render one cooked mesh with one supported opaque PBR material under fixed preview lighting.",
             AssetModel, ToolSchemas.Parameters(("meshGuid", ToolSchemas.String), ("materialGuid", ToolSchemas.String))),
+        Declare("assets.material_read", "assets.materialRead", "Read an eligible cooked material recipe and edit authority.",
+            AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
+        Declare("assets.material_save", "assets.materialSave", "Admit Create, Copy, Edit or Resume. Keep the job ID. " +
+            "On a missing receipt verify the durable target and settlement before retrying.", RebuildModel, ToolSchemas.MaterialSaveParameters()),
+        Declare("assets.material_status", "assets.materialStatus", "Query a retained material job. Latest is a hint, not a receipt.",
+            RebuildModel, ToolSchemas.RebuildStatusParameters()),
+        Declare("assets.preview_material_draft", "assets.previewMaterialDraft", "Render an unsaved material recipe with a cooked mesh.",
+            AssetModel, ToolSchemas.MaterialDraftParameters()),
         Declare("assets.import", "assets.import", "Register a project inbox source or resume a committed import.", RebuildModel,
             ToolSchemas.ImportParameters()),
         Declare("assets.import_status", "assets.importStatus", "Read-only status for a retained import job or the latest admission.", RebuildModel,
@@ -140,6 +149,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
+            if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
+                "assets.previewMaterialDraft") return MaterialOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
@@ -210,6 +221,53 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult MaterialOperation(string method, JsonValue parameters)
+    {
+        AssetGuid? GuidMember(string name) => parameters.Find(name) is { IsString: true } value &&
+            AssetGuid.TryParse(value.AsString, out var guid) && !guid.IsNil ? guid : null;
+        var material = GuidMember("material");
+        var mesh = GuidMember("mesh");
+        var job = GuidMember("jobId");
+        var request = method == "assets.materialSave" ? Codec.DecodeMaterialSave(parameters) : null;
+        var recipe = parameters.Find("recipe") is JsonValue fields ? Codec.DecodeMaterialRecipe(fields) : null;
+        if (method == "assets.materialRead" && material is null || method == "assets.materialSave" && request is null ||
+            method == "assets.materialStatus" && parameters.Find("jobId") is not null && job is null ||
+            method == "assets.previewMaterialDraft" && (mesh is null || recipe is null))
+            return Error("InvalidArguments: invalid material operation parameters");
+        string Target() => request?.Target.Name ?? request?.Target.Material?.ToString() ?? "";
+        CallToolResult Malformed() => Error(request is null ? "ProtocolError: malformed material reply" :
+            "ProtocolError: material save outcome unknown for " + Target() +
+            ". Verify durable source and generation and confirm settlement before retrying.");
+        JsonValue response;
+        try { response = session.Request(method, parameters); }
+        catch (RemoteException e) when (request is not null)
+        {
+            return Error(new RemoteException(e.Error, $"{e.Message}; material save outcome unknown for {Target()}. " +
+                "Latest status is a hint. Verify durable source and generation and confirm settlement before retrying.").Message);
+        }
+        if (Codec.CountMember(response, "id") != 1 ||
+            Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1) return Malformed();
+        if (response.Find("error") is JsonValue error)
+            return Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                Codec.IsLegacyAssetRebuildRefusal(response)
+                ? Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true) : Malformed();
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1) return Malformed();
+        if (result.Find("err") is JsonValue refused)
+            return Codec.DecodeMaterialError(refused) is not null ? Forward(result, true) : Malformed();
+        if (result.Find("ok") is not JsonValue ok) return Malformed();
+        if (method == "assets.materialRead")
+            return Codec.DecodeMaterialRead(ok)?.Material == material ? Forward(result, false) : Malformed();
+        if (request is not null)
+            return Codec.DecodeMaterialJob(ok) is { State: A.RebuildState.Running } receipt && receipt.Target == request.Target
+                ? Forward(result, false) : Malformed();
+        if (method == "assets.materialStatus")
+            return Codec.DecodeMaterialStatus(ok) is A.MaterialStatus status && (job is null || status.Job?.Id.Value == job)
+                ? Forward(result, status.Job?.State == A.RebuildState.Failed) : Malformed();
+        var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!);
+        return image is null ? Malformed() : ForwardPreview(JsonValue.NewObject().Set("mesh", Codec.Encode(image.Mesh))
+            .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe)), image.Width, image.Height, image.PngBytes);
     }
 
     private CallToolResult PreviewMesh(JsonValue parameters)

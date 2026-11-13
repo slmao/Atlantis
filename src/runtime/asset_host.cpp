@@ -1,5 +1,6 @@
 #include "asset_host.h"
 #include "asset_rebuild_host.h"
+#include "material_authoring.h"
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
@@ -50,9 +51,7 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
     for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source});
-    if (rebuild_ || preview_.render || preview_.renderPair) {
-      catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
-    }
+    catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override {
@@ -151,6 +150,50 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
     return rebuild_ ? rebuild_->importStatus(id) : ac::ImportStatusResult::Err(ac::ImportError::Unavailable);
   }
+  ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
+    using R = ac::MaterialReadResult;
+    initialize();
+    if (!catalog_) return R::Err(ac::MaterialError::CatalogUnavailable);
+    auto recipe = material_authoring::read(*catalog_, guid);
+    if (recipe.isErr()) return R::Err(recipe.error());
+    return R::Ok({guid, recipe.value(), rebuild_ && rebuild_->ownsMaterial(guid),
+                  rebuild_ ? rebuild_->activeGeneration() : std::nullopt});
+  }
+  ac::MaterialSaveResult materialSave(const ac::MaterialSave& request) override {
+    if (!rebuild_) return ac::MaterialSaveResult::Err(ac::MaterialError::Unavailable);
+    initialize();
+    return rebuild_->saveMaterial(request, catalog_);
+  }
+  ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
+    return rebuild_ ? rebuild_->materialStatus(id) : ac::MaterialStatusResult::Err(ac::MaterialError::Unavailable);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraft(const as::AssetGuid& guid,
+                                                     const ac::MaterialRecipe& recipe) override {
+    using E = ac::MaterialError;
+    using R = ac::MaterialDraftPreviewResult;
+    if (guid == as::AssetGuid{} || !ac::validMaterialRecipe(recipe)) return R::Err(E::InvalidRecipe);
+    if (!preview_.renderPair) return R::Err(E::Unsupported);
+    if (!preview_.available || !preview_.available()) return R::Err(E::Unavailable);
+    if (std::exchange(previewAdmitted_, true)) return R::Err(E::Busy);
+    initialize();
+    if (!catalog_) return R::Err(E::CatalogUnavailable);
+    const auto* record = catalog_->find(guid);
+    if (!record) return R::Err(E::UnknownMesh);
+    if (record->type != as::CatalogAssetType::Mesh) return R::Err(E::NotMesh);
+    auto mesh = as::loadStaticMeshPreviewAsset(*record);
+    if (mesh.isErr())
+      return R::Err(mesh.error() == as::MeshPreviewLoadError::TooLarge ? E::TooLarge : E::InvalidMesh);
+    auto texture = material_authoring::texture(*catalog_, recipe.values.texture);
+    if (texture.isErr()) return R::Err(texture.error());
+    // The pair renderer uses the ID for request-local resource labels only.
+    // A draft has no persistent material identity.
+    auto image = preview_.renderPair(guid, {}, mesh.value(), material_authoring::previewData(recipe), texture.value());
+    if (image.isOk()) return R::Ok({guid, recipe, std::move(image.value().png)});
+    using Pair = ac::MeshMaterialPreviewError;
+    if (image.error() == Pair::Unavailable) return R::Err(E::Unavailable);
+    if (image.error() == Pair::IncompatiblePair) return R::Err(E::IncompatiblePair);
+    return R::Err(E::RenderFailed);
+  }
 };
 namespace {
 class BorrowedAssets final : public connection::AssetConnection {
@@ -170,6 +213,15 @@ class BorrowedAssets final : public connection::AssetConnection {
   }
   ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
     return host_.importStatus(id);
+  }
+  ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override { return host_.materialRead(guid); }
+  ac::MaterialSaveResult materialSave(const ac::MaterialSave& request) override { return host_.materialSave(request); }
+  ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
+    return host_.materialStatus(id);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraft(const as::AssetGuid& guid,
+                                                     const ac::MaterialRecipe& recipe) override {
+    return host_.previewMaterialDraft(guid, recipe);
   }
  private:
   connection::AssetConnection& host_;

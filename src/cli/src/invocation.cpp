@@ -41,6 +41,8 @@ constexpr std::string_view kUsage =
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
+    "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
+    "  assets preview-material-draft <MeshGuid> <RecipeJSON>   read-only PNG (--json for bytes)\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
@@ -359,6 +361,17 @@ int Invocation::finish(Reply reply) {
     }
     if (checked.command == "assets import" || checked.command == "assets import-status") {
       failure->message += checked.command == "assets import" ? "; import admission unknown" : "; import outcome unknown";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets material-save" && checked.result.find("target")) {
+      failure->subject = checked.result;
+      failure->message += "; material save outcome unknown for " + checked.result.find("target")->asString() +
+          ". Verify the durable source and generation, and confirm the previous request settled before retrying.";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets material-status" && checked.error) {
+      failure->subject = checked.result;
+      failure->message += "; material job outcome unknown; retain the job ID and query it after reconnecting";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {

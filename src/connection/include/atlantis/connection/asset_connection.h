@@ -4,12 +4,14 @@
 #include <atlantis/connection/json.h>
 #include <atlantis/result.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
+#include <variant>
 
 namespace atlantis::connection {
 namespace assets {
@@ -177,6 +179,118 @@ struct ImportStatus {
 };
 using ImportStartResult = Result<ImportJob, ImportError>;
 using ImportStatusResult = Result<ImportStatus, ImportError>;
+
+struct MaterialValues {
+  asset_system::AssetGuid texture;
+  std::array<float, 3> color{1, 1, 1};
+  float metallic = 0;
+  float roughness = 0.5f;
+  friend bool operator==(const MaterialValues&, const MaterialValues&) = default;
+};
+enum class MaterialFilter : std::uint8_t { Nearest, Linear };
+enum class MaterialAddress : std::uint8_t { Repeat, ClampToEdge };
+struct MaterialRecipe {
+  MaterialValues values;
+  MaterialFilter filter = MaterialFilter::Linear;
+  MaterialAddress address = MaterialAddress::Repeat;
+  friend bool operator==(const MaterialRecipe&, const MaterialRecipe&) = default;
+};
+struct MaterialRead {
+  asset_system::AssetGuid material;
+  MaterialRecipe recipe;
+  bool editable = false;
+  std::optional<GenerationId> activeGeneration;
+  friend bool operator==(const MaterialRead&, const MaterialRead&) = default;
+};
+struct CreateMaterial { std::string name; MaterialValues values; };
+struct CopyMaterial { std::string name; asset_system::AssetGuid material; MaterialValues values; };
+struct EditMaterial {
+  asset_system::AssetGuid material;
+  std::optional<GenerationId> activeGeneration;
+  MaterialValues expected;
+  MaterialValues values;
+};
+struct ResumeMaterial { asset_system::AssetGuid material; };
+using MaterialSave = std::variant<CreateMaterial, CopyMaterial, EditMaterial, ResumeMaterial>;
+enum class MaterialMode : std::uint8_t { Create, Copy, Edit, Resume };
+struct MaterialTarget {
+  MaterialMode mode;
+  std::string name;
+  std::optional<asset_system::AssetGuid> material;
+  friend bool operator==(const MaterialTarget&, const MaterialTarget&) = default;
+};
+struct MaterialJobId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const MaterialJobId&, const MaterialJobId&) = default;
+};
+enum class MaterialError : std::uint8_t {
+  Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownMaterial,
+  NotMaterial, InvalidMaterial, UnsupportedMaterial, DependencyUnavailable, InvalidRecipe,
+  UnknownMesh, NotMesh, InvalidMesh, IncompatiblePair, TooLarge, RenderFailed,
+  NameConflict, StaleEdit, ActivationRequired, NothingToResume, Unchanged, UnknownJob, NotEditable,
+};
+enum class MaterialStage : std::uint8_t { Source, Pipeline, Validation, SourceCommit, Publication };
+enum class MaterialFailureCode : std::uint8_t {
+  InvalidSource, InvalidRecipe, DependencyUnavailable, NotEditable, NameConflict, StaleEdit, ActivationRequired,
+  NothingToResume, Unchanged, LaunchFailed, BuildFailed, InvalidOutput, IdentityConflict, CommitFailed,
+  PublishFailed, TimedOut,
+};
+struct MaterialFailure {
+  MaterialStage stage;
+  MaterialFailureCode code;
+  std::string diagnostic;
+  std::optional<std::uint32_t> exitCode;
+  RegistrationState sourceState = RegistrationState::NotCommitted;
+  std::optional<asset_system::AssetGuid> material;
+  friend bool operator==(const MaterialFailure&, const MaterialFailure&) = default;
+};
+struct MaterialJob {
+  MaterialJobId id;
+  MaterialTarget target;
+  RebuildState state = RebuildState::Running;
+  std::optional<asset_system::AssetGuid> material;
+  std::optional<GenerationId> generation;
+  std::optional<MaterialFailure> failure;
+  friend bool operator==(const MaterialJob&, const MaterialJob&) = default;
+};
+struct MaterialStatus {
+  std::optional<GenerationId> activeGeneration;
+  std::optional<MaterialJob> job;
+  bool workspaceNeedsRepair = false;
+  friend bool operator==(const MaterialStatus&, const MaterialStatus&) = default;
+};
+struct MaterialDraftPreview {
+  asset_system::AssetGuid mesh;
+  MaterialRecipe recipe;
+  std::vector<std::uint8_t> png;
+};
+using MaterialReadResult = Result<MaterialRead, MaterialError>;
+using MaterialSaveResult = Result<MaterialJob, MaterialError>;
+using MaterialStatusResult = Result<MaterialStatus, MaterialError>;
+using MaterialDraftPreviewResult = Result<MaterialDraftPreview, MaterialError>;
+[[nodiscard]] std::string_view toString(MaterialMode value) noexcept;
+[[nodiscard]] std::string_view toString(MaterialError value) noexcept;
+[[nodiscard]] std::string_view toString(MaterialStage value) noexcept;
+[[nodiscard]] std::string_view toString(MaterialFailureCode value) noexcept;
+[[nodiscard]] bool validMaterialValues(const MaterialValues& values) noexcept;
+[[nodiscard]] bool validMaterialRecipe(const MaterialRecipe& recipe) noexcept;
+[[nodiscard]] MaterialTarget materialTarget(const MaterialSave& request);
+[[nodiscard]] json::Value encodeMaterialValues(const MaterialValues& values);
+[[nodiscard]] std::optional<MaterialValues> decodeMaterialValues(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialRecipe(const MaterialRecipe& recipe);
+[[nodiscard]] std::optional<MaterialRecipe> decodeMaterialRecipe(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialSave(const MaterialSave& input);
+[[nodiscard]] std::optional<MaterialSave> decodeMaterialSave(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialRead(const MaterialRead& value);
+[[nodiscard]] std::optional<MaterialRead> decodeMaterialRead(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialJob(const MaterialJob& value);
+[[nodiscard]] std::optional<MaterialJob> decodeMaterialJob(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialStatus(const MaterialStatus& value);
+[[nodiscard]] std::optional<MaterialStatus> decodeMaterialStatus(const json::Value& value);
+[[nodiscard]] std::optional<MaterialError> decodeMaterialError(const json::Value& value);
+[[nodiscard]] std::optional<json::Value> encodeMaterialDraftPreview(const MaterialDraftPreview& image);
+[[nodiscard]] std::optional<MaterialDraftPreview> decodeMaterialDraftPreview(
+    const json::Value& payload, const asset_system::AssetGuid& mesh, const MaterialRecipe& recipe);
 }  // namespace assets
 
 // Spec 0081 / ADR-0143: read-only cooked-catalog facts, not GPU residency.
@@ -217,6 +331,21 @@ class AssetConnection {
   }
   [[nodiscard]] virtual assets::ImportStatusResult importStatus(std::optional<assets::ImportId>) const {
     return assets::ImportStatusResult::Err(assets::ImportError::Unavailable);
+  }
+  // Spec 0094 / ADR-0153. Read and preview use the retained cooked catalog.
+  // Save returns admission only. A transport failure leaves settlement unknown.
+  [[nodiscard]] virtual assets::MaterialReadResult materialRead(const asset_system::AssetGuid&) const {
+    return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialSaveResult materialSave(const assets::MaterialSave&) {
+    return assets::MaterialSaveResult::Err(assets::MaterialError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::MaterialStatusResult materialStatus(std::optional<assets::MaterialJobId>) const {
+    return assets::MaterialStatusResult::Err(assets::MaterialError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraft(
+      const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
+    return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }
 };
 }  // namespace atlantis::connection

@@ -130,7 +130,7 @@ file(WRITE "assets/materials/material.stamp" "fixture stamp")
   AssetRebuildHost::Config config() const { return {profile, seed / "asset_catalog.txt", cmake, "Debug", {}, 15s}; }
   std::unique_ptr<AssetRebuildHost> host() const {
     auto opened = AssetRebuildHost::open(config());
-    if (opened.isErr()) INFO(opened.error());
+    INFO((opened.isErr() ? opened.error() : std::string{}));
     REQUIRE(opened.isOk());
     return std::move(opened.value());
   }
@@ -321,6 +321,7 @@ TEST_CASE("asset import: resume rejects an invalid catalog delta before publicat
   const auto project = f.base / "project";
   const auto registered = project / "registered/managed_sample";
   REQUIRE(fs::create_directories(registered));
+  const auto canonicalProject = fs::canonical(project);
   const auto root = as::parseAssetGuid("00860086-0086-4086-8086-008600860086").value();
   const as::CatalogSourceEntry baseEntry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Assets, "a.material.txt"};
   const as::CatalogSourceEntry importEntry{root, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content,
@@ -328,9 +329,9 @@ TEST_CASE("asset import: resume rejects an invalid catalog delta before publicat
   write(registered / "source.gltf", "fixture");
   write(registered / "catalog-source.txt", as::serializeAssetCatalogSource({importEntry}));
   write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
-      f.published.generic_string() + "\",\"importProject\":\"" + project.generic_string() + "\"}");
+      f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
   for (const auto& build : {f.seed, f.staging})
-    write(build / "assets/managed-project.txt", project.generic_string());
+    write(build / "assets/managed-project.txt", canonicalProject.generic_string());
   write(f.staging / "assets/managed-pending.txt", {});
   write(f.seed / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry}));
   write(f.staging / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry, importEntry}));

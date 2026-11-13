@@ -24,6 +24,7 @@ public static class LiveAssetSuite
     {
         PreviewContract(t);
         PairPreviewContract(t);
+        MaterialContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -194,8 +195,43 @@ public static class LiveAssetSuite
         }, material: material);
     }
 
+    private static void MaterialContract(TestContext t)
+    {
+        AssetGuid material = AssetCodecSuite.PreviewMaterial;
+        var values = new A.MaterialValues(material, 1f, 0.25f, 0f, 0.5f, 0.75f);
+        var save = new A.MaterialSave.Create("shared_material", values);
+        var parameters = Json.Parse("{\"mode\":\"Create\",\"name\":\"shared_material\",\"values\":{\"texture\":\"" +
+            material + "\",\"color\":[1,0.25,0],\"metallic\":0.5,\"roughness\":0.75}}");
+        var legacy = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        WithPeer(t, material, _ => legacy, client =>
+        {
+            var outcome = client.Assets.MaterialSave(save);
+            t.Check(!outcome.IsOk && outcome.Error == A.MaterialError.Unsupported && client.Failure is null,
+                "material: exact old refusal remains in-band");
+        }, materialParameters: parameters);
+        foreach (var (reply, category) in new (JsonValue?, RemoteError)[]
+        {
+            (null, RemoteError.Disconnected),
+            (Json.Parse("{\"result\":{\"ok\":{\"mode\":\"Create\",\"name\":\"other\",\"jobId\":\"" +
+                material + "\",\"state\":\"Running\"}}}"), RemoteError.ProtocolError),
+            (Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query","message":"other"}}"""),
+                RemoteError.ProtocolError),
+        })
+        {
+            WithPeer(t, material, _ => reply, client =>
+            {
+                var error = t.Throws<RemoteException>(() => client.Assets.MaterialSave(save), "material: invalid or lost receipt throws");
+                t.Check(error?.Error == category && client.Failure == category &&
+                    error.Message.Contains("outcome unknown", StringComparison.Ordinal) &&
+                    error.Message.Contains("shared_material", StringComparison.Ordinal) &&
+                    error.Message.Contains("settled", StringComparison.Ordinal),
+                    "material: original failure category and durable target retained with explicit retry guidance");
+            }, materialParameters: parameters);
+        }
+    }
+
     private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,
-        int expectedPreviews = 1, AssetGuid? material = null)
+        int expectedPreviews = 1, AssetGuid? material = null, JsonValue? materialParameters = null)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -217,12 +253,13 @@ public static class LiveAssetSuite
                     "connection.schema" => JsonValue.NewObject().Set("result", JsonValue.NewArray()),
                     _ => reply(method),
                 };
-                if (method == (material is null ? "assets.previewMesh" : "assets.previewMeshMaterial"))
+                if (method == (materialParameters is not null ? "assets.materialSave" :
+                    material is null ? "assets.previewMesh" : "assets.previewMeshMaterial"))
                 {
                     ++requests;
-                    var parameters = material is AssetGuid asset
+                    var parameters = materialParameters ?? (material is AssetGuid asset
                         ? JsonValue.NewObject().Set("meshGuid", Codec.Encode(guid)).Set("materialGuid", Codec.Encode(asset))
-                        : JsonValue.NewObject().Set("guid", Codec.Encode(guid));
+                        : JsonValue.NewObject().Set("guid", Codec.Encode(guid)));
                     if (Json.Write(request.Find("params")!) != Json.Write(parameters))
                         throw new InvalidOperationException("preview did not send the exact expected GUID parameters");
                 }

@@ -64,3 +64,56 @@ public sealed record ImportFailure(ImportStage Stage, ImportFailureCode Code, st
 public sealed record ImportJob(ImportId Id, string Name, ImportMode Mode, RebuildState State,
                                 AssetGuid? RootGuid = null, GenerationId? Generation = null, ImportFailure? Failure = null);
 public sealed record ImportStatus(GenerationId? ActiveGeneration, ImportJob? Job);
+
+
+// Spec 0094: the editable subset of one opaque direct-lit PBR material.
+public readonly record struct MaterialValues(AssetGuid Texture, float Red, float Green, float Blue,
+                                             float Metallic, float Roughness);
+public enum MaterialFilter { Nearest, Linear }
+public enum MaterialAddress { Repeat, ClampToEdge }
+public sealed record MaterialRecipe(MaterialValues Values, MaterialFilter Filter, MaterialAddress Address);
+public sealed record MaterialRead(AssetGuid Material, MaterialRecipe Recipe, bool Editable, GenerationId? ActiveGeneration);
+
+public enum MaterialMode { Create, Copy, Edit, Resume }
+public sealed record MaterialTarget(MaterialMode Mode, string? Name = null, AssetGuid? Material = null);
+public abstract record MaterialSave
+{
+    private MaterialSave() { }
+    public sealed record Create(string Name, MaterialValues Values) : MaterialSave;
+    public sealed record Copy(string Name, AssetGuid Material, MaterialValues Values) : MaterialSave;
+    public sealed record Edit(AssetGuid Material, GenerationId? ActiveGeneration, MaterialValues Expected,
+                              MaterialValues Values) : MaterialSave;
+    public sealed record Resume(AssetGuid Material) : MaterialSave;
+    public MaterialTarget Target => this switch
+    {
+        Create x => new(MaterialMode.Create, x.Name),
+        Copy x => new(MaterialMode.Copy, x.Name, x.Material),
+        Edit x => new(MaterialMode.Edit, Material: x.Material),
+        Resume x => new(MaterialMode.Resume, Material: x.Material),
+        _ => throw new System.InvalidOperationException(),
+    };
+}
+public readonly record struct MaterialJobId(AssetGuid Value)
+{
+    public override string ToString() => Value.ToString();
+}
+public enum MaterialError
+{
+    Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownMaterial,
+    NotMaterial, InvalidMaterial, UnsupportedMaterial, DependencyUnavailable, InvalidRecipe,
+    UnknownMesh, NotMesh, InvalidMesh, IncompatiblePair, TooLarge, RenderFailed,
+    NameConflict, StaleEdit, ActivationRequired, NothingToResume, Unchanged, UnknownJob, NotEditable,
+}
+public enum MaterialStage { Source, Pipeline, Validation, SourceCommit, Publication }
+public enum MaterialFailureCode
+{
+    InvalidSource, InvalidRecipe, DependencyUnavailable, NotEditable, NameConflict, StaleEdit, ActivationRequired,
+    NothingToResume, Unchanged, LaunchFailed, BuildFailed, InvalidOutput, IdentityConflict, CommitFailed,
+    PublishFailed, TimedOut,
+}
+public sealed record MaterialFailure(MaterialStage Stage, MaterialFailureCode Code, string Diagnostic,
+    uint? ExitCode, RegistrationState SourceState, AssetGuid? SavedMaterial);
+public sealed record MaterialJob(MaterialJobId Id, MaterialTarget Target, RebuildState State,
+    AssetGuid? SavedMaterial = null, GenerationId? Generation = null, MaterialFailure? Failure = null);
+public sealed record MaterialStatus(GenerationId? ActiveGeneration, MaterialJob? Job, bool WorkspaceNeedsRepair);
+public sealed record MaterialDraftPreview(AssetGuid Mesh, MaterialRecipe Recipe, int Width, int Height, byte[] PngBytes);
