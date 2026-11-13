@@ -1,9 +1,9 @@
 # ADR 0153: Managed Material Authoring and Draft Preview
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-13
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-13, [PR #353](https://github.com/slmao/Atlantis/pull/353) at `9bc75f0f`
 - **Related Spec:** [Spec 0094](../specs/0094-basic-material-authoring.md)
 
 ## Context

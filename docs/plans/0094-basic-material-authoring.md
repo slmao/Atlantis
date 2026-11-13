@@ -1,10 +1,10 @@
 # Plan: Basic Material Creation and Editing
 
 - **Spec:** [Spec 0094](../specs/0094-basic-material-authoring.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md) (Proposed)
+- **Joint Human Review:** The maintainer approved J1–J4 and Spec/Plan 0094 at `9bc75f0f` on 2026-11-13. [PR #353](https://github.com/slmao/Atlantis/pull/353) was manually merged as `67aa7743`. Authorization covers S2–S4, scoped fixes, applicable verification, valid evidence reuse and a review-ready implementation PR. Final merge remains human.
+- **ADR:** [ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md) (Accepted)
 
 ## Objective
 
