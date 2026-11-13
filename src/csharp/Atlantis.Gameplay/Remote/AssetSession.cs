@@ -107,6 +107,74 @@ public sealed class AssetSession
                 Codec.DecodeImportStatus(value) is A.ImportStatus status && (jobId is null || status.Job?.Id == jobId)
                     ? status : null);
     }
+    public Outcome<A.MaterialRead, A.MaterialError> MaterialRead(AssetGuid material)
+    {
+        if (material.IsNil) throw new ArgumentException("a non-nil material GUID is required", nameof(material));
+        return MaterialRequest("assets.materialRead", JsonValue.NewObject().Set("material", Codec.Encode(material)),
+            value => Codec.DecodeMaterialRead(value) is { } read && read.Material == material ? read : null);
+    }
+
+    /// <summary>Admits one job without waiting or retrying. A lost receipt retains its transport or protocol category.</summary>
+    public Outcome<A.MaterialJob, A.MaterialError> MaterialSave(A.MaterialSave request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var parameters = Codec.EncodeMaterialSave(request);
+        if (parameters is null) return Outcome<A.MaterialJob, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
+        _session.ThrowIfFailed();
+        var target = request.Target;
+        try
+        {
+            return MaterialRequest("assets.materialSave", parameters,
+                value => Codec.DecodeMaterialJob(value) is { State: A.RebuildState.Running } job &&
+                    job.Target == target ? job : null);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Material {target.Mode} outcome unknown for {target.Name ?? target.Material?.ToString()}. " +
+                "Use the job ID if known. Latest status is only a hint; verify the durable source and generation " +
+                "and confirm the previous request has settled before explicitly retrying.");
+        }
+    }
+
+    public Outcome<A.MaterialStatus, A.MaterialError> MaterialStatus(A.MaterialJobId? jobId = null)
+    {
+        if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
+        var parameters = JsonValue.NewObject();
+        if (jobId is A.MaterialJobId id) parameters.Set("jobId", Codec.Encode(id.Value));
+        return MaterialRequest("assets.materialStatus", parameters, value =>
+            Codec.DecodeMaterialStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
+    }
+
+    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraft(AssetGuid mesh, A.MaterialRecipe recipe)
+    {
+        ArgumentNullException.ThrowIfNull(recipe);
+        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values) || !Enum.IsDefined(recipe.Filter) ||
+            !Enum.IsDefined(recipe.Address))
+            return Outcome<A.MaterialDraftPreview, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
+        return MaterialRequest("assets.previewMaterialDraft",
+            JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe)),
+            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe));
+    }
+
+    private Outcome<T, A.MaterialError> MaterialRequest<T>(string method, JsonValue parameters, Func<JsonValue, T?> decode)
+        where T : class
+    {
+        var response = _session.AwaitResponse(_session.Send(method, parameters));
+        if (Codec.CountMember(response, "id") != 1 ||
+            Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1)
+            throw _session.Malformed(method);
+        if (response.Find("error") is JsonValue error)
+        {
+            if (Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                Codec.IsLegacyAssetRebuildRefusal(response))
+                return Outcome<T, A.MaterialError>.Err(A.MaterialError.Unsupported);
+            throw _session.Malformed(method);
+        }
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            throw _session.Malformed(method);
+        return _session.InBand<T, A.MaterialError>(result, method, decode, Codec.DecodeMaterialError);
+    }
+
     private Outcome<T, E> AssetRequest<T, E>(string method, JsonValue parameters, E unsupported,
         Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode) where T : class where E : struct, Enum
     {

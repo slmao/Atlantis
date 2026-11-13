@@ -151,6 +151,19 @@ public sealed class MainWindow : Window
     private IReadOnlyList<AssetSummary>? _previewCatalog;
     private SessionInfo? _previewSession;
     private bool _previewRetry, _previewUnavailable, _previewWithMaterial;
+    private readonly Button _newMaterial = new() { Content = "New material", IsEnabled = false };
+    private readonly Button _copyMaterial = new() { Content = "Duplicate", IsEnabled = false };
+    private readonly Button _editMaterial = new() { Content = "Edit material", IsEnabled = false };
+    private readonly Button _materialRefresh = new() { Content = "Refresh material status", IsEnabled = false };
+    private readonly Button _materialResume = new() { Content = "Resume publication", IsVisible = false };
+    private readonly SelectableTextBlock _materialState = EditorVisuals.Details("");
+    private readonly DispatcherTimer _materialPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private MaterialSettlement _materialSettlement = new();
+    private MaterialEditorWindow? _materialWindow;
+    private MaterialRead? _selectedMaterial;
+    private AssetGuid? _materialReadTarget;
+    private bool _materialPolling, _materialCanWrite, _materialSupported;
+    private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
@@ -408,8 +421,11 @@ public sealed class MainWindow : Window
             // Lists and the type filters also raise SelectionChanged.
             if (!ReferenceEquals(e.Source, _assetTabs)) return;
             SyncPreviewSelection();
-            if (_assetTabs.SelectedIndex == 1 &&
-                _assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+            if (_assetTabs.SelectedIndex == 1)
+            {
+                if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+                QueryMaterial();
+            }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
 
@@ -528,6 +544,10 @@ public sealed class MainWindow : Window
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         EndPreviewSession();
+        _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
+        _materialSettlement.LoseReceipt();
+        _materialPolling = _materialCanWrite = _materialSupported = false;
+        _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
         _worker?.Stop();
         ++_saveAsRequest;
         _saveAsPending = false;
@@ -581,13 +601,16 @@ public sealed class MainWindow : Window
             _newSceneSessionReady = true;
             UpdateNewSceneButton();
             UpdateRebuildButtons();
-            if (_assetTabs.SelectedIndex == 1) LoadAssets();
+            if (_assetTabs.SelectedIndex == 1) { QueryMaterial(); LoadAssets(); }
         };
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
             EndPreviewSession();
             _referenceSessionFailed = true;
+            _materialSettlement.LoseReceipt();
+            _materialPolling = _materialCanWrite = _materialSupported = false; _materialPoll.Stop();
+            ShowMaterialState();
             if (_newScenePendingName is not null)
             {
                 _newSceneState.Text = "New Scene was not sent: the authoring session disconnected.";
@@ -1086,7 +1109,16 @@ public sealed class MainWindow : Window
         _importRefresh.Click += (_, _) => ReadImportStatus();
         _importPoll.Tick += (_, _) => ReadImportStatus();
 
-        var body = EditorVisuals.Stack(7, _assetsList, selected,
+        _newMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Create, _newMaterial);
+        _copyMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Copy, _copyMaterial);
+        _editMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Edit, _editMaterial);
+        _materialRefresh.Click += (_, _) => QueryMaterial();
+        _materialResume.Click += (_, _) => ResumeMaterial();
+        _materialPoll.Tick += (_, _) => QueryMaterial();
+        var material = EditorVisuals.Disclosure("Materials", EditorVisuals.Stack(5,
+            EditorVisuals.Actions(_newMaterial, _copyMaterial, _editMaterial),
+            EditorVisuals.Actions(_materialRefresh, _materialResume), _materialState), expanded: true);
+        var body = EditorVisuals.Stack(7, _assetsList, selected, material,
             EditorVisuals.Disclosure("Rebuild", EditorVisuals.Actions(_rebuildStart, _rebuildRefresh)),
             _rebuildState,
             EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
@@ -1156,6 +1188,7 @@ public sealed class MainWindow : Window
         UpdateAddMeshButton();
         UpdateRebuildButtons();
         UpdateImportButtons();
+        ReadSelectedMaterial();
         _assetDetails.Children.Clear();
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
@@ -1163,6 +1196,162 @@ public sealed class MainWindow : Window
             "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
         foreach (AssetGuid guid in d.Dependencies)
         { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+    }
+
+    private void ReadSelectedMaterial()
+    {
+        var target = _assetBrowser.State == "Ready" && _assetsList.SelectedItem is AssetSummary { Type: AssetType.Material } row
+            ? row.Guid : (AssetGuid?)null;
+        if (!_materialSupported || _materialReadTarget == target) { UpdateMaterialButtons(); return; }
+        _materialReadTarget = target; _selectedMaterial = null;
+        long epoch = ++_materialReadEpoch;
+        UpdateMaterialButtons();
+        if (target is not AssetGuid guid || _worker is not { } worker || _referenceSessionFailed) return;
+        worker.ReadMaterial(guid, result =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || epoch != _materialReadEpoch ||
+                _materialReadTarget != guid) return;
+            if (result.IsOk) _selectedMaterial = result.Value;
+            else if (result.Error != MaterialError.Unsupported && !_materialSettlement.BlocksSave)
+                ShowMaterialState("Selected material: " + result.Error);
+            UpdateMaterialButtons();
+        });
+    }
+
+    private void UpdateMaterialButtons()
+    {
+        bool connected = _worker is not null && !_referenceSessionFailed;
+        bool open = connected && _materialWindow is null && _referenceWindow is null && _assetBrowser.State == "Ready";
+        _newMaterial.IsEnabled = open && _materialCanWrite && !_materialSettlement.BlocksSave;
+        _copyMaterial.IsEnabled = open && _materialCanWrite && !_materialSettlement.BlocksSave && _selectedMaterial is not null;
+        _editMaterial.IsEnabled = _copyMaterial.IsEnabled && _selectedMaterial?.Editable == true;
+        _materialRefresh.IsEnabled = connected && !_materialPolling && !_materialSettlement.AwaitingAdmission;
+        _materialResume.IsVisible = _materialCanWrite && _materialSettlement.ResumableMaterial is not null;
+        _materialResume.IsEnabled = _materialResume.IsVisible && !_materialSettlement.InFlight;
+    }
+
+    private void OpenMaterial(MaterialMode mode, Button origin)
+    {
+        if (!origin.IsEnabled || _materialWindow is not null) return;
+        var original = mode == MaterialMode.Create ? null : _selectedMaterial;
+        if (mode != MaterialMode.Create && original is null) return;
+        var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
+        var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items);
+        _materialWindow = dialog;
+        dialog.DraftChanged += () => SyncPreviewSelection(invalidate: true);
+        dialog.PreviewRequested += () =>
+        {
+            if (!_previewRequests.RequestDraft()) return;
+            dialog.ShowPreview(null, "Rendering draft preview...");
+            UpdatePreviewButton();
+            StartNextPreview();
+        };
+        dialog.SaveRequested += request => SubmitMaterial(request);
+        dialog.ResumeRequested += ResumeMaterial;
+        dialog.Closed += (_, _) =>
+        {
+            if (_materialWindow != dialog) return;
+            _materialWindow = null; SyncPreviewSelection(invalidate: true);
+            UpdateMaterialButtons(); origin.Focus();
+        };
+        dialog.ShowSettlement("", false, false, false);
+        SyncPreviewSelection(invalidate: true); UpdateMaterialButtons();
+        _ = dialog.ShowDialog(this);
+    }
+
+    private void SubmitMaterial(MaterialSave request)
+    {
+        if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
+            (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
+        _materialSettlement.Begin(request.Target);
+        ShowMaterialState();
+        worker.SaveMaterial(request, result =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _materialSettlement.Target != request.Target) return;
+            if (!result.IsOk)
+            {
+                _materialSettlement.Refused();
+                if (result.Error is MaterialError.Unsupported or MaterialError.Unavailable) _materialCanWrite = false;
+                ShowMaterialState("Material save refused: " + result.Error);
+                return;
+            }
+            if (!_materialSettlement.Admit(result.Value)) return;
+            ShowMaterialState(); _materialPoll.Start();
+        });
+    }
+
+    private void ResumeMaterial()
+    {
+        if (_materialResume.IsEnabled && _materialSettlement.ResumableMaterial is AssetGuid saved)
+            SubmitMaterial(new MaterialSave.Resume(saved));
+    }
+
+    private void QueryMaterial()
+    {
+        if (_materialPolling || _materialSettlement.AwaitingAdmission || _referenceSessionFailed || _worker is not { } worker) return;
+        _materialPolling = true;
+        var id = _materialSettlement.Id;
+        UpdateMaterialButtons();
+        worker.QueryMaterial(id, result =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
+            _materialPolling = false;
+            if (id != _materialSettlement.Id) { UpdateMaterialButtons(); return; }
+            if (!result.IsOk)
+            {
+                _materialPoll.Stop();
+                if (id is not null) _materialSettlement.LoseReceipt();
+                _materialSupported = result.Error != MaterialError.Unsupported;
+                _materialCanWrite = result.Error is not (MaterialError.Unavailable or MaterialError.Unsupported);
+                ShowMaterialState(_materialSettlement.Unknown ? null : "Material status: " + result.Error);
+                return;
+            }
+            var status = result.Value;
+            _materialSupported = true;
+            _materialCanWrite = !status.WorkspaceNeedsRepair;
+            if (id is not null) _materialSettlement.Observe(status);
+            if (_materialSettlement.Job?.Generation is GenerationId published && status.ActiveGeneration == published)
+                _materialSettlement = new();
+            if (_materialSettlement.InFlight) _materialPoll.Start(); else _materialPoll.Stop();
+            if (id is null && _materialSettlement.Unknown && status.Job is { } latest)
+            {
+                ShowMaterialState($"Latest job {latest.Id} ({latest.State}) is only a hint. " +
+                    "Verify the intended durable target and confirm settlement before retrying.");
+                return;
+            }
+            ShowMaterialState(status.WorkspaceNeedsRepair && id is null ? "Material workspace needs repair." : null);
+            ReadSelectedMaterial();
+        });
+    }
+
+    private void ShowMaterialState(string? message = null)
+    {
+        var job = _materialSettlement.Job;
+        bool error = _materialSettlement.Unknown || _materialSettlement.NeedsRepair || job?.Failure is not null || message is not null;
+        string target = _materialSettlement.Target is { } subject ? subject.Name ?? subject.Material?.ToString() ?? "" : "";
+        string text = message ?? (_materialSettlement.Unknown
+            ? $"Material outcome unknown for {target}. " +
+                (_materialSettlement.Id is MaterialJobId id ? $"Keep and query job {id}. " : "") +
+                "Inspect durable source and generation and confirm settlement before retrying."
+            : _materialSettlement.AwaitingAdmission ? $"Requesting material save for {target}..."
+            : job is null ? "" : $"Material job {job.Id}: {job.State}.");
+        if (message is null && !_materialSettlement.Unknown)
+        {
+            if (job?.Generation is GenerationId generation)
+                text += $" Material {job.SavedMaterial}. Restart Runtime explicitly with --asset-generation {generation}.";
+            if (job?.Failure is { } failure)
+                text += $" {failure.Stage}/{failure.Code}: {failure.Diagnostic} Source: {failure.SourceState}." +
+                    (failure.SavedMaterial is AssetGuid guid ? $" Material {guid}. Resume publication after correction." : "");
+            if (job?.Failure?.SourceState == RegistrationState.NotCommitted &&
+                _materialSettlement.ResumableMaterial is AssetGuid previous)
+                text += $" The previous material {previous} is still committed. Resume publication after correction.";
+            if (_materialSettlement.NeedsRepair) text += " Workspace needs repair before any further writes.";
+        }
+        _materialState.Text = text;
+        _materialState.Foreground = error ? EditorVisuals.Error : EditorVisuals.Muted;
+        UpdateMaterialButtons();
+        _materialWindow?.ShowSettlement(text, _materialSettlement.BlocksSave || !_materialCanWrite,
+            _materialResume.IsEnabled, error);
     }
 
     private void SyncPreviewSelection(bool invalidate = false)
@@ -1174,7 +1363,8 @@ public sealed class MainWindow : Window
         AssetPreviewInputs? inputs = null;
         if (_previewSession is not null)
         {
-            if (_referenceWindow is { } chooser) inputs = chooser.PreviewInputs;
+            if (_materialWindow is { } materialWindow) inputs = materialWindow.Inputs;
+            else if (_referenceWindow is { } chooser) inputs = chooser.PreviewInputs;
             else if (_assetTabs.SelectedIndex == 1 && visibleMesh && _assetsList.SelectedItem is AssetSummary mesh)
                 inputs = new(mesh.Guid, (_previewMaterial.SelectedItem as AssetSummary)?.Guid);
         }
@@ -1199,6 +1389,7 @@ public sealed class MainWindow : Window
             previous?.Dispose();
             state.Text = "";
         }
+        _materialWindow?.ClearPreview();
         Clear(_previewImage, _previewState);
         if (_referenceWindow is { } chooser) Clear(chooser.PreviewImage, chooser.PreviewState);
         _previewRetry = _previewUnavailable = false;
@@ -1216,6 +1407,7 @@ public sealed class MainWindow : Window
         Update(_previewMesh, false, _referenceWindow is null, "Preview geometry");
         Update(_previewPair, true, _referenceWindow is null, "Preview with material");
         if (_referenceWindow is { } chooser) Update(chooser.PreviewButton, true, true, "Preview with material");
+        _materialWindow?.SetPreviewEnabled(_previewRequests.CanRequestDraft());
     }
 
     private void RequestPreview(bool withMaterial)
@@ -1239,8 +1431,15 @@ public sealed class MainWindow : Window
         var result = await Task.Run(() => ReadPreview(session, intent));
         var chooser = _referenceWindow;
         if (_previewRequests.Settle(intent) && ReferenceEquals(_previewSession, session) &&
-            intent.Surface == (chooser?.Target.Request ?? 0))
+            intent.Surface == (_materialWindow?.Surface ?? chooser?.Target.Request ?? 0))
         {
+            if (_materialWindow is { } draftWindow)
+            {
+                draftWindow.ShowPreview(result.Png, result.Message);
+                UpdatePreviewButton();
+                StartNextPreview();
+                return;
+            }
             var image = chooser?.PreviewImage ?? _previewImage;
             var state = chooser?.PreviewState ?? _previewState;
             if (result.Png is { } png)
@@ -1279,6 +1478,12 @@ public sealed class MainWindow : Window
             if (!_previewRequests.CanSend(intent)) return default;
             using var preview = RemoteSession.Connect(session);
             if (!_previewRequests.CanSend(intent)) return default;
+            if (intent.Draft is MaterialRecipe recipe)
+            {
+                var draft = preview.Assets.PreviewMaterialDraft(intent.Guid, recipe);
+                return draft.IsOk ? (draft.Value.PngBytes, null, false) :
+                    (null, "Draft preview failed: " + draft.Error + ". Check the mesh and base texture or retry.", true);
+            }
             if (intent.Material is AssetGuid material)
             {
                 var pair = preview.Assets.PreviewMeshMaterial(intent.Guid, material);
@@ -2093,6 +2298,7 @@ public sealed class MainWindow : Window
     {
         EndPreviewSession();
         _uiTicker.Stop();
+        _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _importPoll.Stop();
         _rebuildPoll.Stop();
         ++_referenceLaunch; _referenceWindow?.Close(); _referenceWindow = null;

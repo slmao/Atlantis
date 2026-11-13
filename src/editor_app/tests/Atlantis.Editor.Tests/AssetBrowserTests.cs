@@ -47,6 +47,53 @@ public static partial class Program
         Check(!reloadModel.CompleteDetail(pendingDetail, a, Outcome<AssetDetails, AssetError>.Ok(detail)) &&
               ReferenceEquals(reloadModel.Details, refreshed), "assets: late old reply for the same GUID cannot overwrite reload result");
 
+        var settlement = new MaterialSettlement();
+        var target = new MaterialTarget(MaterialMode.Edit, Material: b);
+        settlement.Begin(target);
+        var receipt = new MaterialJob(new(a), target, RebuildState.Running);
+        Check(settlement.Admit(receipt) && settlement.BlocksSave, "material: matching admitted job blocks duplicate submission");
+        settlement.LoseReceipt();
+        Check(settlement.Unknown && settlement.Id == receipt.Id &&
+            !settlement.Observe(new(null, receipt with { Id = new(b) }, false)),
+            "material: dropped status retains the job and an unrelated latest cannot settle it");
+        var failed = receipt with { State = RebuildState.Failed, Failure = new(MaterialStage.Publication,
+            MaterialFailureCode.PublishFailed, "failed", null, RegistrationState.Committed, b) };
+        Check(settlement.Observe(new(null, failed, false)) && settlement.BlocksSave && !settlement.Unknown,
+            "material: committed failure requires resume, not another save");
+        var resume = new MaterialTarget(MaterialMode.Resume, Material: b);
+        settlement.Begin(resume);
+        settlement.Refused();
+        Check(settlement.Job == failed && settlement.Target == target && settlement.Id == receipt.Id &&
+            settlement.BlocksSave && settlement.ResumableMaterial == b,
+            "material: a definitive Resume refusal preserves the committed receipt and keeps Save blocked");
+        settlement.Begin(resume);
+        var resumeReceipt = new MaterialJob(new(b), resume, RebuildState.Running);
+        Check(settlement.Admit(resumeReceipt), "material: Resume admission is tracked separately");
+        var resumeRefusal = resumeReceipt with { State = RebuildState.Failed, Failure = new(MaterialStage.Source,
+            MaterialFailureCode.ActivationRequired, "another change is ahead", null, RegistrationState.NotCommitted, null) };
+        Check(settlement.Observe(new(null, resumeRefusal, false)) && settlement.Job == resumeRefusal &&
+            settlement.BlocksSave && settlement.ResumableMaterial == b,
+            "material: failed Resume reports the new diagnostic without discarding the committed source state");
+        settlement.Begin(resume);
+        settlement.LoseReceipt();
+        settlement.Refused();
+        Check(settlement.Unknown && settlement.Target == resume && settlement.BlocksSave,
+            "material: losing Resume admission remains unknown even with a prior committed receipt");
+
+        var draftPreviews = new AssetPreviewRequests();
+        var recipe = new MaterialRecipe(new(b, 1f, 1f, 1f, 0f, 0.5f), MaterialFilter.Linear, MaterialAddress.Repeat);
+        draftPreviews.SetInputs(new(a, null, -1, recipe));
+        Check(draftPreviews.RequestDraft(), "material: explicit draft preview starts");
+        var staleDraft = draftPreviews.TakeNext()!;
+        draftPreviews.SetInputs(new(a, null, -1, recipe with { Values = recipe.Values with { Red = 0.25f } }));
+        draftPreviews.SetInputs(new(a, null, -1, recipe));
+        Check(draftPreviews.RequestDraft() && !draftPreviews.CanSend(staleDraft) && !draftPreviews.Settle(staleDraft),
+            "material: A to B to A ignores stale draft image and preserves the newer intent");
+        var currentDraft = draftPreviews.TakeNext()!;
+        draftPreviews.SetInputs(new(a, b));
+        Check(!draftPreviews.Settle(currentDraft) && draftPreviews.CanRequest(true),
+            "material: closing the modal discards its reply and restores the shared pair preview");
+
         var preview = new AssetPreviewRequests();
         Check(!preview.Request() && preview.TakeNext() is null, "preview: no visible mesh cannot request");
         preview.SetInputs(new(a, null));

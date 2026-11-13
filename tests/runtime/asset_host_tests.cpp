@@ -257,3 +257,39 @@ TEST_CASE("a pair-only provider keeps the first full catalog and validates both 
     CHECK(host.connect()->listAssets().value().size() == 1);
   }
 }
+
+TEST_CASE("material draft shares preview admission and does not change the cooked recipe", "[runtime][assets][asset-material]") {
+  using E = ac::MaterialError;
+  const auto mesh = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();
+  const auto material = as::parseAssetGuid("1542b95d-74b5-48ba-82be-eddbe2843129").value();
+  int rendered = 0;
+  AssetHost host(ATLANTIS_ASSET_CATALOG_PATH, nullptr, {
+      .available = [] { return true; },
+      .render = [](const as::AssetGuid& id, as::StaticMeshAssetData) {
+        return ac::MeshPreviewResult::Ok({id, 256, 256, {}});
+      },
+      .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
+                        const as::StaticMeshAssetData&, const as::MaterialAssetData& mat,
+                        const as::TextureAssetData&) {
+        ++rendered;
+        CHECK(meshId == mesh);
+        CHECK(materialId == as::AssetGuid{});
+        CHECK(mat.baseColorFactor[0] == 0.125f);
+        return ac::MeshMaterialPreviewResult::Ok({meshId, materialId, 256, 256, {}});
+      }});
+  auto first = host.connect(), second = host.connect();
+  const auto cooked = first->materialRead(material);
+  REQUIRE(cooked.isOk());
+  CHECK_FALSE(cooked.value().editable);
+  auto draft = cooked.value().recipe;
+  draft.values.color[0] = 0.125f;
+  auto invalid = draft;
+  invalid.values.roughness = -1.0f;
+  CHECK(first->previewMaterialDraft(mesh, invalid).error() == E::InvalidRecipe);
+  REQUIRE(first->previewMaterialDraft(mesh, draft).isOk());
+  CHECK(second->previewMesh(mesh).error() == ac::PreviewError::Busy);
+  CHECK(second->previewMeshMaterial(mesh, material).error() == ac::MeshMaterialPreviewError::Busy);
+  CHECK(second->materialRead(material).value() == cooked.value());
+  CHECK(second->materialStatus({}).error() == E::Unavailable);
+  CHECK(rendered == 1);
+}

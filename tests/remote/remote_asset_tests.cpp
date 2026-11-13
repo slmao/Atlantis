@@ -337,3 +337,27 @@ TEST_CASE("asset import: committed failure remains observable on a separate sess
   CHECK_FALSE(b->failure());
   CHECK(b->assets().listAssets().isOk());
 }
+
+TEST_CASE("managed material codec: closed Edit arms and distinct terminal outcomes", "[remote][assets][asset-material]") {
+  ca::MaterialValues values{guid(), {0.125f, 0.25f, 1.0f}, 0.0f, 0.5f};
+  auto edit = ca::MaterialSave{ca::EditMaterial{materialGuid(), {}, values, values}};
+  auto wire = ca::encodeMaterialSave(edit);
+  REQUIRE(ca::decodeMaterialSave(wire));
+  CHECK(std::get<ca::EditMaterial>(*ca::decodeMaterialSave(wire)).expected == values);
+  auto duplicate = wire.asObject();
+  duplicate.emplace_back("activeGeneration", Value{});
+  CHECK_FALSE(ca::decodeMaterialSave(Value::object(std::move(duplicate))));
+  auto missing = wire.asObject();
+  std::erase_if(missing, [](const auto& field) { return field.first == "activeGeneration"; });
+  CHECK_FALSE(ca::decodeMaterialSave(Value::object(std::move(missing))));
+  ca::MaterialJob job{{guid()}, ca::materialTarget(edit), ca::RebuildState::Failed, {}, {},
+      ca::MaterialFailure{ca::MaterialStage::Publication, ca::MaterialFailureCode::PublishFailed,
+          "committed", {}, ca::RegistrationState::Committed, materialGuid()}};
+  CHECK(ca::decodeMaterialJob(ca::encodeMaterialJob(job)) == job);
+  job.failure->material = guid();
+  CHECK_FALSE(ca::decodeMaterialJob(ca::encodeMaterialJob(job)));
+  job.failure->sourceState = ca::RegistrationState::Unknown;
+  job.failure->material.reset();
+  const ca::MaterialStatus repair{{}, job, true};
+  CHECK(ca::decodeMaterialStatus(ca::encodeMaterialStatus(repair)) == repair);
+}

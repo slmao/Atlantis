@@ -130,7 +130,10 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 
   const std::string relativePath = computeRelativePathString(request.sourcePath, request.assetRoot);
   const auto logicalPath = normalizeLogicalPath(relativePath);
+  const auto source = request.catalogId.empty() ? std::optional<CatalogSourceId>{}
+                                                 : parseCatalogSourceId(request.catalogId);
   const atlantis::asset_system::CatalogSourceEntry* entry =
+      source ? catalog.value().find(source->root, source->path) :
       logicalPath.isOk() ? catalog.value().find(CatalogRoot::Assets, logicalPath.value()) : nullptr;
   if (entry == nullptr) {
     std::cerr << "atlantis_asset_cooker: SourceNotInCatalog: assets:" << relativePath << " has no entry in "
@@ -1174,8 +1177,15 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
     err << "atlantis_asset_cooker: --catalog= is accepted only with --kind=lookup\n";
     return false;
   }
-  if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine)) {
-    err << "atlantis_asset_cooker: --catalog-id= is accepted only on a cook-manifest line\n";
+  const auto managedMaterial = request.kind == AssetKind::Material && source == CookArgumentSource::CommandLine
+      ? parseCatalogSourceId(request.catalogId) : std::nullopt;
+  const bool managedMaterialSource = managedMaterial && managedMaterial->root == CatalogRoot::Content &&
+      managedMaterial->subKey.empty() && managedMaterial->path.starts_with("material_") &&
+      managedMaterial->path.ends_with("/source.material.txt") &&
+      managedMaterial->path == computeRelativePathString(request.sourcePath, request.assetRoot);
+  if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine) &&
+      !managedMaterialSource) {
+    err << "atlantis_asset_cooker: --catalog-id= requires a cook-manifest line or a matching managed material source\n";
     return false;
   }
   if (isCookKind && source == CookArgumentSource::CookManifestLine &&

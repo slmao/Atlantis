@@ -758,6 +758,98 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   if (t[0] == "assets") {
     namespace ca = connection::assets;
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
+    if (t.size() > 1 && (t[1] == "material-read" || t[1] == "material-save" ||
+        t[1] == "material-status" || t[1] == "preview-material-draft")) {
+      const auto verb = t[1];
+      const auto usage = [&] { return failed(command, usageError(
+          "assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>] | "
+          "assets preview-material-draft <MeshGuid> <RecipeJSON>")); };
+      const auto refusal = [&](ca::MaterialError error) {
+        const std::string token(ca::toString(error));
+        return failed(command, plainError(token, ErrorCategory::Refused, token));
+      };
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      const auto payload = [&](std::size_t first) -> std::optional<Value> {
+        if (t.size() <= first) return {};
+        std::string encoded;
+        for (auto field : t.subspan(first)) {
+          if (!encoded.empty()) encoded += ' ';
+          encoded += field;
+        }
+        auto value = json::parse(encoded);
+        return value.isOk() ? std::optional{std::move(value.value())} : std::nullopt;
+      };
+      const auto result = [&](Value body) {
+        auto human = json::write(body) + "\n";
+        return done(command, std::move(human), std::move(body));
+      };
+      if (verb == "material-save") {
+        const auto encoded = payload(2);
+        auto request = encoded ? ca::decodeMaterialSave(*encoded) : std::nullopt;
+        if (!request) return usage();
+        if (!endpoint) return refusal(ca::MaterialError::Unavailable);
+        auto saved = endpoint->materialSave(*request);
+        if (saved.isOk()) return result(ca::encodeMaterialJob(saved.value()));
+        auto reply = refusal(saved.error());
+        if (saved.error() == ca::MaterialError::Unavailable) {
+          const auto target = ca::materialTarget(*request);
+          auto context = Value::object();
+          context.set("mode", Value::string(std::string(ca::toString(target.mode))));
+          context.set("target", Value::string(target.name.empty()
+              ? asset_system::toString(*target.material) : target.name));
+          reply.result = std::move(context);
+        }
+        return reply;
+      }
+      if (verb == "material-status") {
+        if (t.size() > 3) return usage();
+        std::optional<ca::MaterialJobId> id;
+        if (t.size() == 3) {
+          auto guid = asset_system::parseAssetGuid(t[2]);
+          if (guid.isErr()) return usage();
+          id = ca::MaterialJobId{guid.value()};
+        }
+        if (!endpoint) return refusal(ca::MaterialError::Unavailable);
+        const auto status = endpoint->materialStatus(id);
+        if (status.isErr()) {
+          auto reply = refusal(status.error());
+          if (id) {
+            reply.result = Value::object();
+            reply.result.set("jobId", Value::string(asset_system::toString(id->value)));
+          }
+          return reply;
+        }
+        auto jsonStatus = ca::encodeMaterialStatus(status.value());
+        if (status.value().job && status.value().job->failure) {
+          const auto& failure = *status.value().job->failure;
+          auto reply = failed(command, plainError(std::string(ca::toString(failure.code)),
+                                                  ErrorCategory::Refused, failure.diagnostic));
+          reply.text = json::write(jsonStatus) + "\n";
+          reply.result = std::move(jsonStatus);
+          return reply;
+        }
+        return result(std::move(jsonStatus));
+      }
+      if (t.size() < 3) return usage();
+      const auto guid = asset_system::parseAssetGuid(t[2]);
+      if (guid.isErr()) return usage();
+      if (verb == "material-read") {
+        if (t.size() != 3) return usage();
+        if (!endpoint) return refusal(ca::MaterialError::CatalogUnavailable);
+        auto read = endpoint->materialRead(guid.value());
+        return read.isOk() ? result(ca::encodeMaterialRead(read.value())) : refusal(read.error());
+      }
+      const auto encoded = payload(3);
+      auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded) : std::nullopt;
+      if (!recipe) return usage();
+      if (!endpoint) return refusal(ca::MaterialError::Unsupported);
+      auto image = endpoint->previewMaterialDraft(guid.value(), *recipe);
+      if (image.isErr()) return refusal(image.error());
+      auto png = ca::encodeMaterialDraftPreview(image.value());
+      if (!png) return refusal(ca::MaterialError::RenderFailed);
+      return done(command, "Draft material preview: " + std::to_string(image.value().png.size()) +
+                           " bytes (image/png; use --json for bytes)\n", std::move(*png));
+    }
     const bool rebuild = t.size() > 1 && t[1] == "rebuild";
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
     const bool import = t.size() > 1 && t[1] == "import";

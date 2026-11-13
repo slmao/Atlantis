@@ -1689,6 +1689,18 @@ Runtime selects a frozen generation for discovery and authoring. Clients
 share the same operations through Connection and Remote. See
 [ADR-0147](../adr/0147-managed-import-registration-and-publication.md).
 
+[Spec 0094](../specs/0094-basic-material-authoring.md) and
+[ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md)
+extend the same private Windows asset worker with Create, Copy, Edit and
+Resume for the basic PBR subset. The worker owns source settlement,
+freezes the exact managed source bytes with a generation, and reuses
+the existing locks, slot and catalog build. Connection owns the typed
+values; Remote, CLI, both SDKs and MCP expose the same four operations.
+The Editor holds only its local draft and receipt. Draft preview uses
+the 0092 isolated render path and shared permit; it creates no
+persistent asset identity and changes neither scene nor active catalog.
+
+
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws
 the clients' Viewport overlay:

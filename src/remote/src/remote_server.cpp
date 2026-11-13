@@ -633,6 +633,64 @@ struct RemoteServer::State {
       const auto error = result.isErr() ? result.error() : ca::MeshMaterialPreviewError::RenderFailed;
       return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
     }
+    if (name == "assets.materialRead" || name == "assets.materialSave" || name == "assets.materialStatus" ||
+        name == "assets.previewMaterialDraft") {
+      namespace ca = connection::assets;
+      using Guid = asset_system::AssetGuid;
+      const auto bad = [&] { return errorResponse(requestId, "BadRequest", "invalid material operation parameters"); };
+      const auto guid = [&](std::string_view field) -> std::optional<Guid> {
+        const auto* member = p.find(field);
+        auto value = member ? codec::decodeAsset(*member) : std::nullopt;
+        return value && *value != Guid{} ? value : std::nullopt;
+      };
+      const auto open = [&] {
+        if (!client.assets && openAssets) client.assets = openAssets();
+        return client.assets.get();
+      };
+      const auto reply = [&](const auto& result, auto encode) {
+        return response(requestId, result.isOk() ? codec::ok(encode(result.value()))
+            : codec::err(Value::string(std::string(ca::toString(result.error())))));
+      };
+      const auto count = [&](std::string_view key) {
+        return std::ranges::count_if(request.asObject(), [key](const auto& member) { return member.first == key; });
+      };
+      std::uint64_t materialRequestId = 0;
+      if (!p.isObject() || !id || !id->toUInt64(materialRequestId) || materialRequestId == 0 ||
+          count("id") != 1 || count("method") != 1 || count("params") > 1) return bad();
+      if (name == "assets.materialRead") {
+        const auto material = guid("material");
+        if (!material || p.asObject().size() != 1) return bad();
+        auto* provider = open();
+        return reply(provider ? provider->materialRead(*material)
+                              : ca::MaterialReadResult::Err(ca::MaterialError::CatalogUnavailable), ca::encodeMaterialRead);
+      }
+      if (name == "assets.materialSave") {
+        const auto materialSave = ca::decodeMaterialSave(p);
+        if (!materialSave) return bad();
+        auto* provider = open();
+        return reply(provider ? provider->materialSave(*materialSave)
+                              : ca::MaterialSaveResult::Err(ca::MaterialError::Unavailable), ca::encodeMaterialJob);
+      }
+      if (name == "assets.materialStatus") {
+        const auto job = guid("jobId");
+        if (p.asObject().size() != (job ? 1u : 0u)) return bad();
+        auto* provider = open();
+        return reply(provider ? provider->materialStatus(job ? std::optional{ca::MaterialJobId{*job}} : std::nullopt)
+                              : ca::MaterialStatusResult::Err(ca::MaterialError::Unavailable), ca::encodeMaterialStatus);
+      }
+      const auto mesh = guid("mesh");
+      const auto* member = p.find("recipe");
+      const auto recipe = member ? ca::decodeMaterialRecipe(*member) : std::nullopt;
+      if (!mesh || !recipe || p.asObject().size() != 2) return bad();
+      auto* provider = open();
+      auto result = provider ? provider->previewMaterialDraft(*mesh, *recipe)
+                             : ca::MaterialDraftPreviewResult::Err(ca::MaterialError::Unsupported);
+      if (result.isOk())
+        if (auto png = ca::encodeMaterialDraftPreview(result.value()))
+          return response(requestId, codec::ok(std::move(*png)));
+      return response(requestId, codec::err(Value::string(std::string(
+          ca::toString(result.isErr() ? result.error() : ca::MaterialError::RenderFailed)))));
+    }
     if (name.starts_with("assets.")) {
       std::optional<asset_system::AssetGuid> guid;
       if (!p.isObject() || (name != "assets.list" && name != "assets.get"))

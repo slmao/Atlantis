@@ -315,6 +315,31 @@ registered unit and any complete generation. Recreate or validate staging,
 clear its pending selection, and remove both dirty markers only after
 settlement is known. See [Spec 0086](docs/specs/0086-new-asset-import.md).
 
+#### Create and edit a basic material
+
+Start the Editor's Runtime with the trusted managed asset build profile.
+In **Assets → Materials**, choose **New material**, **Duplicate** for an
+eligible PBR material, or **Edit material** for a managed material. Select
+an existing sRGB base texture, set linear RGB, metallic and roughness, and
+choose a mesh for an optional **Preview draft**. **Save & Publish** starts
+an asset job; it does not edit, apply, or save the current scene. Wait for
+its matching receipt. Restart the Runtime explicitly with the returned
+`--asset-generation <GUID>` before referencing the new material or doing
+another write. Editing preserves existing material GUID references.
+
+The same contract is available as `atlantis assets material-read <GUID>`,
+`assets material-save <JSON>`, `assets material-status [<JobId>]`, and
+`assets preview-material-draft <MeshGuid> <RecipeJSON>` (use `--json` for PNG
+bytes), through both SDKs, and through the corresponding `assets.*` MCP
+tools. Use the [wire request shapes](docs/architecture/remote_protocol.md#522-managed-materials-spec-0094--adr-0153).
+A clean precommit failure allows an explicit retry. If source committed
+but publication failed, retain its GUID and use **Resume publication**
+or `{"mode":"Resume","material":"<GUID>"}` after correction. If admission or
+settlement is unknown, keep the job ID if known and confirm settlement
+and the durable state before retrying. See
+[Spec 0094](docs/specs/0094-basic-material-authoring.md).
+
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

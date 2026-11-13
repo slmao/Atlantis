@@ -69,6 +69,21 @@ internal static class ToolSchemas
     internal static JsonElement ImportParameters() =>
         Parameters(("name", String), ("mode", Enum("Register", "Resume")));
 
+    private static readonly JsonNode MaterialValues = Object(("texture", String), ("color", Vector(Number, 3)),
+        ("metallic", Number), ("roughness", Number));
+
+    internal static JsonElement MaterialDraftParameters() => Parameters(("mesh", String),
+        ("recipe", Object(("values", MaterialValues), ("filter", Enum("Nearest", "Linear")),
+                          ("address", Enum("Repeat", "ClampToEdge")))));
+
+    internal static JsonElement MaterialSaveParameters() => JsonSerializer.SerializeToElement(
+        new JsonObject { ["type"] = "object", ["oneOf"] = Choice(
+            Object(("mode", Enum("Create")), ("name", String), ("values", MaterialValues)),
+            Object(("mode", Enum("Copy")), ("name", String), ("material", String), ("values", MaterialValues)),
+            Object(("mode", Enum("Edit")), ("material", String), ("activeGeneration", Nullable(String)),
+                ("expected", MaterialValues), ("values", MaterialValues)),
+            Object(("mode", Enum("Resume")), ("material", String)))["oneOf"]!.DeepClone() });
+
     internal static JsonElement RebuildStatusParameters()
     {
         JsonObject shape = Object(("jobId", String));

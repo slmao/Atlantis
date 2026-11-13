@@ -1,11 +1,11 @@
 # Spec: Basic Material Creation and Editing
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-13
 - **Related Plan:** [Plan 0094](../plans/0094-basic-material-authoring.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md) (Proposed)
+- **Approval:** See [Plan 0094](../plans/0094-basic-material-authoring.md)
+- **Related ADR:** [ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md) (Accepted)
 
 ## Summary
 
