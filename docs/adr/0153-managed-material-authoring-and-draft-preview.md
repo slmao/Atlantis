@@ -27,14 +27,16 @@ the retained catalog, which cannot represent unsaved values.
    stable catalog registration. A copy reads an eligible cooked recipe from
    the selected catalog. Managed edit changes the source only. Freeze the
    exact managed material source inputs with the selected build's producer
-   view so an old Runtime can detect an ahead registry even when all GUIDs
-   and source keys still match. Older generation metadata has an empty
+   view so a supporting Runtime started on an older generation can detect
+   an ahead registry even when all GUIDs and source keys still match.
+   Earlier generation metadata has an empty
    managed-material set. Its existing import and catalog validation still
    applies.
 3. Prepare and validate before committing source, then publish with the
    existing generation rename. The two commit points remain observable for
-   repair. Recover a committed source by explicit resume or selection of
-   the already-published generation. Runtime activation remains an explicit
+   repair. Report uncertain source settlement explicitly and keep writes
+   blocked pending repair. Recover a known committed source by explicit
+   resume or selection of an already-published generation. Activation remains an explicit
    local restart. See [Spec 0094 R3](../specs/0094-basic-material-authoring.md#functional).
 4. Preview a value-only draft against a mesh and existing texture from the
    retained catalog. Share the fixed pair render path, admission and lifetime
