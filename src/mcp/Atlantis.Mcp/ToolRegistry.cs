@@ -307,7 +307,11 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 ? Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true) : Malformed();
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1) return Malformed();
         if (result.Find("err") is JsonValue refused)
-            return Codec.DecodeMaterialError(refused) is not null ? Forward(result, true) : Malformed();
+        {
+            var refusal = Codec.DecodeMaterialError(refused);
+            return refusal is not null && (!withMaps || refusal != A.MaterialError.Unsupported)
+                ? Forward(result, true) : Malformed();
+        }
         if (result.Find("ok") is not JsonValue ok) return Malformed();
         if (read)
             return Codec.DecodeMaterialRead(ok, withMaps)?.Material == material ? Forward(result, false) : Malformed();

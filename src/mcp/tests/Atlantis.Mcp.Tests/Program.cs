@@ -325,6 +325,12 @@ internal static partial class Program
         Check(pairError.IsError == true && pairError.Content.Count == 1 &&
             pairError.Content[0] is TextContentBlock pairErrorText && pairErrorText.Text == malformedPair.Failure.Message &&
             malformedPair.Calls.Count == 1, "malformed pair preview stays an SDK error without image or retry");
+        var maps = Request("assets.preview_material_draft_with_maps", MapArgs);
+        FakeSession lookalike = new() { Response = """{"result":{"err":"Unsupported"}}""" };
+        CallToolResult malformedMaps = new ToolRegistry(lookalike).Invoke(maps);
+        Check(malformedMaps.IsError == true &&
+            malformedMaps.Content[0] is TextContentBlock mapsText && mapsText.Text.Contains("ProtocolError") &&
+            lookalike.Calls.Count == 1, "in-band Unsupported does not trigger extended material downgrade");
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
         foreach (string reason in Enum.GetNames<A.AuthoringError>())

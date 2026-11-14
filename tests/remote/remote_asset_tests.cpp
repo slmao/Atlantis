@@ -408,3 +408,14 @@ TEST_CASE("PBR map recipe retains optional slots and rejects malformed extended 
   CHECK(ca::decodeMaterialRead(readWire, maps) == read);
   CHECK_FALSE(ca::decodeMaterialRead(readWire));
 }
+
+TEST_CASE("PBR maps do not treat an in-band Unsupported as a legacy refusal", "[remote][assets][asset-material]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets provider;
+  // Borrow implements the asset surface, but its default material methods return an in-band Unsupported.
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(provider); });
+  auto client = served.attach();
+  CHECK(client->assets().materialReadWithMaps(materialGuid()).error() == ca::MaterialError::Unavailable);
+  CHECK(client->failure() == atlantis::remote::RemoteError::ProtocolError);
+}

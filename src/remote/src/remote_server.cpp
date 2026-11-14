@@ -719,7 +719,8 @@ struct RemoteServer::State {
       auto* provider = open();
       auto result = provider ? (withMaps ? provider->previewMaterialDraftWithMaps(*mesh, *recipe)
                                          : provider->previewMaterialDraft(*mesh, *recipe))
-                             : ca::MaterialDraftPreviewResult::Err(ca::MaterialError::Unsupported);
+                             : ca::MaterialDraftPreviewResult::Err(withMaps ? ca::MaterialError::Unavailable
+                                                                           : ca::MaterialError::Unsupported);
       if (result.isOk())
         if (auto png = ca::encodeMaterialDraftPreview(result.value(), version))
           return response(requestId, codec::ok(std::move(*png)));

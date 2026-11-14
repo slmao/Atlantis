@@ -691,7 +691,8 @@ class RemoteAssets final : public connection::AssetConnection {
           if (const auto* ok = result->find("ok")) {
             if (auto value = decode(*ok)) return R::Ok(std::move(*value));
           } else if (const auto* err = result->find("err")) {
-            if (auto error = ca::decodeMaterialError(*err)) return R::Err(*error);
+            if (auto error = ca::decodeMaterialError(*err);
+                error && (*error != E::Unsupported || !method.ends_with("WithMaps"))) return R::Err(*error);
           }
         }
       } else if (const auto* error = envelope->find("error"); error &&

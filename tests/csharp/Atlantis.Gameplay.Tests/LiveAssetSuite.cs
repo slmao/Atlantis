@@ -295,6 +295,20 @@ public static class LiveAssetSuite
             t.Check(!refused.IsOk && refused.Error == A.MaterialError.Unsupported && client.Failure is null,
                 "maps: exact older Runtime refusal preserves the session and avoids replay");
         }, expectedPreviews: 0);
+        var lookalike = Json.Parse("""{"result":{"err":"Unsupported"}}""");
+        WithPeer(t, id, method => method == "assets.previewMaterialDraftWithMaps" ? lookalike :
+            throw new InvalidOperationException(method), client =>
+        {
+            try
+            {
+                _ = client.Assets.PreviewMaterialDraftWithMaps(id, recipe);
+                t.Check(false, "maps: in-band Unsupported is malformed");
+            }
+            catch (RemoteException e)
+            {
+                t.Check(e.Error == RemoteError.ProtocolError, "maps: in-band Unsupported is malformed");
+            }
+        }, expectedPreviews: 0);
     }
 
     private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,

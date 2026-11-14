@@ -229,8 +229,8 @@ public sealed class AssetSession
         return _session.InBand<T, A.MaterialError>(result, method, decode, value =>
         {
             var error = Codec.DecodeMaterialError(value);
-            return error == A.MaterialError.Unsupported &&
-                method is "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" ? null : error;
+            return error == A.MaterialError.Unsupported && method.EndsWith("WithMaps", StringComparison.Ordinal)
+                ? null : error;
         });
     }
 
