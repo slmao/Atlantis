@@ -27,6 +27,7 @@ public static class LiveAssetSuite
         MaterialContract(t);
         TextureContract(t);
         MaterialMapsContract(t);
+        PackedMaterialContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -320,6 +321,58 @@ public static class LiveAssetSuite
             catch (RemoteException e)
             {
                 t.Check(e.Error == RemoteError.ProtocolError, "maps: in-band Unsupported is malformed");
+            }
+        }, expectedPreviews: 0);
+    }
+
+    private static void PackedMaterialContract(TestContext t)
+    {
+        AssetGuid id = AssetCodecSuite.PreviewMaterial;
+        var values = new A.MaterialValues(id, 1, 1, 1, .64f, .81f) { MetallicRoughnessMap = id };
+        var recipe = new A.MaterialRecipe(values, A.MaterialFilter.Linear, A.MaterialAddress.Repeat);
+        var read = JsonValue.NewObject().Set("material", Codec.Encode(id)).Set("editable", JsonValue.Bool(true))
+            .Set("activeGeneration", JsonValue.Null())
+            .Set("recipe", Codec.EncodeMaterialRecipe(recipe, withMetallicRoughness: true));
+        WithPeer(t, id, method => method == "assets.materialReadWithMetallicRoughness"
+            ? JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("ok", read))
+            : throw new InvalidOperationException(method), client =>
+        {
+            t.Check(client.Assets.MaterialReadWithMetallicRoughness(id).Value.Recipe == recipe,
+                "packed: complete recipe is retained");
+            var save = new A.MaterialSave.Create("draft", values);
+            t.Check(client.Assets.MaterialSave(save).Error == A.MaterialError.InvalidRecipe &&
+                    client.Assets.MaterialSaveWithMaps(save).Error == A.MaterialError.InvalidRecipe,
+                "packed: both legacy SDK shapes refuse a lossy write before sending");
+        }, expectedPreviews: 0);
+
+        var unsupported = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        WithPeer(t, id, method => method is "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus"
+                or "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness"
+                or "assets.previewMaterialDraftWithMetallicRoughness" ? unsupported : throw new InvalidOperationException(method),
+            client =>
+            {
+                t.Check(client.Assets.MetallicRoughnessImport("draft").Error == A.ImportError.Unsupported &&
+                        client.Assets.MetallicRoughnessImportStatus().Error == A.ImportError.Unsupported &&
+                        client.Assets.MaterialReadWithMetallicRoughness(id).Error == A.MaterialError.Unsupported &&
+                        client.Assets.MaterialSaveWithMetallicRoughness(new A.MaterialSave.Create("draft", values)).Error ==
+                            A.MaterialError.Unsupported &&
+                        client.Assets.PreviewMaterialDraftWithMetallicRoughness(id, recipe).Error ==
+                            A.MaterialError.Unsupported && client.Failure is null,
+                    "packed: correlated old peer refusal is the only compatibility fallback");
+            }, expectedPreviews: 0);
+
+        var lookalike = Json.Parse("""{"result":{"err":"Unsupported"}}""");
+        WithPeer(t, id, method => method == "assets.previewMaterialDraftWithMetallicRoughness" ? lookalike :
+            throw new InvalidOperationException(method), client =>
+        {
+            try
+            {
+                _ = client.Assets.PreviewMaterialDraftWithMetallicRoughness(id, recipe);
+                t.Check(false, "packed: in-band Unsupported is malformed");
+            }
+            catch (RemoteException e)
+            {
+                t.Check(e.Error == RemoteError.ProtocolError, "packed: in-band Unsupported is malformed");
             }
         }, expectedPreviews: 0);
     }
