@@ -6,6 +6,9 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+#include <functional>
+#endif
 
 namespace atlantis::runtime {
 
@@ -20,6 +23,9 @@ class AssetRebuildHost {
     std::string configuration;
     std::optional<connection::assets::GenerationId> generation;
     std::chrono::steady_clock::duration timeout = std::chrono::minutes(30);
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+    std::function<void(const std::filesystem::path&)> afterMaterialPreparation{};
+#endif
   };
 
   [[nodiscard]] static Result<std::unique_ptr<AssetRebuildHost>, std::string> open(Config config);

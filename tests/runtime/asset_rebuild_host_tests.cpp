@@ -1,4 +1,8 @@
 #include "../../src/runtime/asset_rebuild_host.h"
+#include "../../src/runtime/material_authoring.h"
+
+#include <atlantis/asset_system/cook_material.h>
+#include <atlantis/asset_system/material_artifact.h>
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -10,6 +14,7 @@
 #include <atomic>
 #include <fstream>
 #include <iterator>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -398,4 +403,138 @@ TEST_CASE("asset import: resume rejects an invalid catalog delta before publicat
   const bool repair = expectedCode == ca::ImportFailureCode::InvalidOutput;
   CHECK(fs::exists(project / ".atlantis-import-dirty") == repair);
   CHECK(fs::exists(f.marker) == repair);
+}
+
+TEST_CASE("material edit verifies the prepared generation before committing source", "[runtime][asset-material]") {
+  Fixture f;
+  namespace material = atlantis::runtime::material_authoring;
+  const auto guid = [](const char* value) { return as::parseAssetGuid(value).value(); };
+  const auto baseColor = guid("859a82af-a31e-457d-bc46-274c1a80ffba");
+  const auto normal = guid("5e99757a-d524-4aaf-b665-0d308aa7ae99");
+  const auto project = f.base / "project";
+  const auto registered = project / "registered/material_sample";
+  const fs::path frozenSource = "assets/managed-material-sources/material_sample/source.material.txt";
+  const fs::path artifact = "material.amaterial", metadata = "material.amaterial.meta.txt";
+  const std::string key = "material_sample/source.material.txt";
+  const auto staging = f.staging;
+  const auto materialGuid = f.guid;
+  auto config = f.config();
+  bool corrupt = true;
+  SECTION("unchanged prepared files can commit and publish") { corrupt = false; }
+  SECTION("changed frozen source bytes") {
+    config.afterMaterialPreparation = [=](const fs::path& dir) {
+      auto bytes = read(dir / frozenSource);
+      const auto end = bytes.find('\n');
+      if (end != std::string::npos) bytes.insert(end, 1, '\r');
+      std::ofstream(dir / frozenSource, std::ios::binary) << bytes;
+    };
+  }
+  SECTION("changed cooked recipe with the same dependency edges") {
+    config.afterMaterialPreparation = [=](const fs::path& dir) {
+      fs::copy_file(staging / "other.amaterial", dir / artifact, fs::copy_options::overwrite_existing);
+      fs::copy_file(staging / "other.amaterial.meta.txt", dir / metadata, fs::copy_options::overwrite_existing);
+    };
+  }
+  SECTION("missing normal map catalog edge") {
+    config.afterMaterialPreparation = [=](const fs::path& dir) {
+      const auto file = dir / "asset_catalog.txt";
+      auto catalog = as::parseAssetCatalogRecords(read(file));
+      if (catalog.isErr()) throw std::runtime_error("prepared fixture catalog is unreadable");
+      for (auto& record : catalog.value())
+        if (record.guid == materialGuid) std::erase(record.dependencies, normal);
+      std::ofstream(file, std::ios::binary) << as::serializeAssetCatalog(std::move(catalog.value()));
+    };
+  }
+
+  REQUIRE(fs::create_directories(registered));
+  const auto canonicalProject = fs::canonical(project);
+  write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
+      f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
+  const as::CatalogSourceEntry entry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Content, key};
+  const auto fragment = as::serializeAssetCatalogSource({entry});
+  write(registered / "catalog-source.txt", fragment);
+  ca::MaterialRecipe original{{baseColor}};
+  auto updated = original;
+  updated.values.normalMap = normal;
+  updated.values.emissiveTexture = baseColor;
+  updated.values.emissiveFactor = {0.5f, 0.25f, 0.125f};
+  const auto originalSource = as::serializeMaterialSource(material::source(original));
+  write(registered / "source.material.txt", originalSource);
+  write(f.staging / "assets/managed-pending.txt", {});
+  write(f.base / "producer.cmake", "# This fixture supplies finished producer outputs.\n");
+  const auto fixtureCatalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  REQUIRE(fixtureCatalog.isOk());
+  const auto inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tcontent\t" + key + "\t" +
+      as::toString(f.guid) + "\tassets/material_sample/source.stamp\t-\n";
+  for (const auto& root : {f.seed, f.staging}) {
+    write(root / "assets/producers-Debug.txt", inventory);
+    write(root / "assets/managed-project.txt", canonicalProject.generic_string());
+    write(root / "assets/managed-catalog-source.txt", fragment);
+    REQUIRE(fs::create_directories((root / frozenSource).parent_path()));
+    const auto& recipe = root == f.seed ? original : updated;
+    write(root / frozenSource, as::serializeMaterialSource(material::source(recipe)));
+    REQUIRE(as::cookMaterial((root / frozenSource).string(), key, f.guid, (root / artifact).string(),
+                             (root / metadata).string()).isOk());
+    auto target = as::parseAssetCatalogRecords(read(root / "asset_catalog.txt")).value().front();
+    target.source = {as::CatalogRoot::Content, key, {}};
+    target.artifact = artifact.generic_string();
+    target.metadata = metadata.generic_string();
+    target.artifactSchema = as::kMaterialArtifactSchemaVersion;
+    target.dependencies = {baseColor};
+    if (recipe.values.normalMap) target.dependencies.push_back(normal);
+    std::vector records{std::move(target)};
+    for (const auto& id : {baseColor, normal}) {
+      const auto* texture = fixtureCatalog.value().find(id);
+      REQUIRE(texture != nullptr);
+      auto copy = *texture;
+      copy.artifact = as::toString(id) + ".atex";
+      copy.metadata = copy.artifact + ".meta.txt";
+      REQUIRE(fs::copy_file(texture->artifact, root / copy.artifact));
+      REQUIRE(fs::copy_file(texture->metadata, root / copy.metadata));
+      records.push_back(std::move(copy));
+    }
+    write(root / "asset_catalog.txt", as::serializeAssetCatalog(std::move(records)));
+  }
+  auto other = updated;
+  other.values.emissiveFactor[0] = 0.75f;
+  write(f.staging / "other.material.txt", as::serializeMaterialSource(material::source(other)));
+  REQUIRE(as::cookMaterial((f.staging / "other.material.txt").string(), key, f.guid,
+      (f.staging / "other.amaterial").string(), (f.staging / "other.amaterial.meta.txt").string()).isOk());
+  auto catalog = as::loadAssetCatalog(config.seedCatalog.string());
+  REQUIRE(catalog.isOk());
+  auto opened = AssetRebuildHost::open(config);
+  INFO((opened.isErr() ? opened.error() : std::string{}));
+  REQUIRE(opened.isOk());
+  const auto accepted = opened.value()->saveMaterial(ca::EditMaterial{f.guid, {}, original.values, updated.values},
+      std::make_shared<const as::AssetCatalog>(std::move(catalog.value())), ca::MaterialRecipeVersion::WithMaps);
+  REQUIRE(accepted.isOk());
+  const auto limit = std::chrono::steady_clock::now() + 20s;
+  auto status = opened.value()->materialStatus(accepted.value().id);
+  while (status.isOk() && status.value().job && status.value().job->state == ca::RebuildState::Running &&
+         std::chrono::steady_clock::now() < limit) {
+    std::this_thread::sleep_for(20ms);
+    status = opened.value()->materialStatus(accepted.value().id);
+  }
+  REQUIRE(status.isOk());
+  REQUIRE(status.value().job);
+  const auto& job = *status.value().job;
+  INFO((job.failure ? job.failure->diagnostic : "no failure"));
+  CHECK_FALSE(status.value().workspaceNeedsRepair);
+  if (corrupt) {
+    REQUIRE(job.state == ca::RebuildState::Failed);
+    REQUIRE(job.failure);
+    CHECK(job.failure->stage == ca::MaterialStage::Validation);
+    CHECK(job.failure->code == ca::MaterialFailureCode::InvalidOutput);
+    CHECK(job.failure->sourceState == ca::RegistrationState::NotCommitted);
+    CHECK_FALSE(job.generation);
+    CHECK(read(registered / "source.material.txt") == originalSource);
+    for (const auto& file : fs::directory_iterator(f.published)) CHECK_FALSE(file.is_directory());
+  } else {
+    REQUIRE(job.state == ca::RebuildState::Succeeded);
+    REQUIRE(job.generation);
+    CHECK(job.material == f.guid);
+    CHECK(read(registered / "source.material.txt") == as::serializeMaterialSource(material::source(updated)));
+    CHECK(read(f.published / as::toString(job.generation->value) / frozenSource) ==
+          read(registered / "source.material.txt"));
+  }
 }

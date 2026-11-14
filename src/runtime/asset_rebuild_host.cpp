@@ -1286,11 +1286,14 @@ struct AssetRebuildHost::State {
       const auto textureView = textureInputs(staging, *view, *built);
       if (!textureView || textureRegistrations(*view, *textureView) != activeTextures)
         return failJob(MS::Validation, MC::InvalidOutput, "Material save changed the managed texture view.");
-      if (built->size() != work.catalog->size() + (create ? 1 : 0) || !retainsIdentity(*work.catalog, *built) ||
-          !std::ranges::all_of(work.catalog->records(), [&](const auto& record) {
-            return record.guid == *saved ||
-                std::ranges::is_permutation(record.dependencies, built->find(record.guid)->dependencies);
-          }))
+      const auto expectedDelta = [&](const as::AssetCatalog& catalog) {
+        return catalog.size() == work.catalog->size() + (create ? 1 : 0) && retainsIdentity(*work.catalog, catalog) &&
+            std::ranges::all_of(work.catalog->records(), [&](const auto& record) {
+              return record.guid == *saved ||
+                  std::ranges::is_permutation(record.dependencies, catalog.find(record.guid)->dependencies);
+            });
+      };
+      if (!expectedDelta(*built))
         return failJob(MS::Validation, MC::IdentityConflict, "The material build changed unrelated catalog identities.");
       const auto* builtRecord = built->find(*saved);
       auto cooked = material_authoring::read(*built, *saved);
@@ -1306,7 +1309,21 @@ struct AssetRebuildHost::State {
             prepareError->failure.diagnostic);
       }
       prepared = std::get<Prepared>(std::move(generation));
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.afterMaterialPreparation) config.afterMaterialPreparation(prepared->directory);
+#endif
       std::lock_guard commit(publicationCommit);
+      const auto& directory = prepared->directory;
+      const auto frozen = realDirectory(directory) ? readManagedView(directory, inventoryRelative) : std::nullopt;
+      const auto publishedCatalog = frozen ? readCatalog(directory) : std::nullopt;
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView);
+      // Verify the files the rename will publish, including the copied material
+      // artifacts and catalog edges, before mutating the committed registry.
+      if (!frozen || *frozen != *view || !publishedCatalog || !outputFiles(directory, *publishedCatalog, *frozen) ||
+          materialInputs(directory, *frozen) != expected || !matchesManagedCatalog(*publishedCatalog, *frozen) ||
+          !matchesFrozenMaterials(*publishedCatalog, expected) || !expectedDelta(*publishedCatalog) ||
+          !safeRelative(directory, fs::path(kManifest)) || readJson(directory / kManifest) != expectedManifest)
+        return failJob(MS::Validation, MC::InvalidOutput, "The prepared generation differs from the intended material source or catalog.");
       if (interrupted()) return failJob(MS::SourceCommit, MC::TimedOut, "Material job stopped before commit.");
       if (registeredMaterials(project) != before || readRegistrations(project) != imports ||
           registeredTextures(project) != activeTextures) {
@@ -1331,7 +1348,6 @@ struct AssetRebuildHost::State {
       if (!publish(*prepared)) {
         const auto destination = publication / as::toString(prepared->id.value);
         const auto manifestPath = destination / kManifest;
-        const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView);
         if (realDirectory(destination) && safeRelative(destination, fs::path(kManifest)) &&
             readJson(manifestPath) == expectedManifest &&
             !realDirectory(prepared->directory)) {
