@@ -35,8 +35,8 @@ preview, publication recovery and both supported reopens.
   role and catalog validation. `src/tools/asset_cooker/` cook and
   catalog producer validation. No glTF importer change.
 - Runtime asset and material hosts, scene load, material realization,
-  mesh preview, environment input wiring and shader startup/deployment
-  declarations. Reuse the environment realization helpers.
+  mesh preview, bounded built-in studio load and shader startup/deployment
+  declarations. Reuse environment decode, realization and upload helpers.
 - `src/renderer/` descriptor/pipeline selection, one opt-in variant of
   the existing `shaders/pbr_ibl/` shader and shader build/deployment
   declarations including the existing Android packaging path. No
@@ -60,9 +60,9 @@ resources and UI.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1. Lighting and first slice** | Linear R for diffuse and specular IBL at fixed strength 1. Clear is neutral. One opt-in opaque permutation with neither normal nor packed metallic–roughness while AO is bound. Existing direct path in scenes without IBL. |
-| **J2. Durable state and recovery** | Canonical Occlusion leaf, manifest v7 only when needed, bound-only material source v12 and artifact/metadata v11. Reuse same-role Resume, complete frozen rechecks, explicit activation and older format emission. |
-| **J3. Shared clients and preview** | Five additive methods, version-aware legacy write guards and the shared preview permit. Fixed built-in studio IBL for bound cooked pairs and AO-compatible complete draft calls, including null AO as the comparison control. |
+| **J1. Lighting and first slice** | Linear R for both IBL terms at fixed strength 1. Clear is neutral. Require empty normal and packed metallic–roughness slots while AO is bound, with explicit clear in either direction. Keep the existing direct path without IBL. |
+| **J2. Durable state and recovery** | Canonical Occlusion leaf, manifest v7 only when needed, bound-only material source v12 and artifact/metadata v11. Reuse sole-ahead same-role Resume, complete frozen rechecks at commit and uncertain settlement, explicit activation and older format emission. |
+| **J3. Shared clients and preview** | Five additive methods, version-aware legacy guards and one shared admission per service interval. Bounded built-in studio IBL for bound cooked pairs and AO-compatible complete draft calls, including null AO as the comparison control. |
 | **J4. Acceptance** | Verify channel math and no-map controls, recovery and compatibility, 100% Windows UI and both independent reopens. Keep applicable Vulkan, golden and performance gates. No dedicated Android acceptance for this class; preserve existing Vulkan packaging and ordinary CI. |
 
 Recommended authorization is one joint approval for S2–S4 after manual
@@ -79,51 +79,68 @@ acceptance and final merge.
   malformed/bounded inputs, colliding names or keys, cross-role leaves and
   inconsistent evidence with unchanged bytes and GUID. Exercise v4–v6
   compatible controls, v7 with all roles, an older builder refusing
-  the new leaf and an otherwise compatible older Runtime rejecting v7.
-  Validate the live prior snapshot while the registry is ahead. Inject
-  producer-header, original Register-fragment and frozen texture faults.
-  Verify no source commit or publication for precommit failures and
-  verify intact versus damaged destinations after an uncertain rename.
+  the new leaf and an older Runtime rejecting v7 under the same otherwise
+  compatible profile, with an earlier accepted generation as control.
+  Verify a supporting Runtime can read its compatible prior snapshot
+  while unsafe registry writes remain unavailable or activation-gated. Inject
+  complete-header, noncanonical Register-fragment, same-bytes role/key
+  and frozen texture evidence faults. Verify no source commit or
+  publication for precommit failures. Compare intact and damaged
+  destinations after an uncertain rename.
 - [ ] **R2. Material and rendering.** Check bound round-trip and exact
   earlier bytes on clear, catalog schema versions, dependency identity
   and edge changes, invalid role/format/schema/length, cache-hit validation,
-  missing dependency, legacy artifact refusal and explicit conflicting
-  normal/packed/alpha refusals. Verify reflected layout and a matched
-  IBL image series with R=0, a non-extreme R and R=255; vary only G/B/A.
-  Use controlled linear HDR evidence before output transform for the
-  attenuation math and a regular output PNG for preview. Exercise diffuse-
+  missing dependency, legacy artifact refusal isolated from the v7 gate
+  using a cooked-catalog build without the generation profile,
+  and explicit conflicting normal/packed/alpha refusals. After an
+  ordinary apply that reuses the AO material, check the texture remains
+  live. Verify reflected layout and a matched IBL image series with
+  R bytes 0, midrange and 255. Include a pair varying only G/B/A.
+  In geometry pixels, check `C(R) − C(0) = R × (C(1) − C(0))` within
+  existing numeric tolerances in linear HDR. Compare clear and R=1 under
+  the same IBL. Use a regular output PNG for preview. Exercise diffuse-
   and specular-dominant fixtures, unchanged direct/shadow and emissive
   contributions, and the no-IBL path. Compare bound cooked and draft
   under the same studio inputs and null draft against R=255. Keep current
   goldens. Obtain human review for new or changed golden images.
 - [ ] **R3. Clients and recovery.** Check CLI, both SDKs and MCP on the
   candidate and precise unsupported mapping on the 0098 peer. Include
-  malformed and mismatched refusals, transport errors and lost write
-  receipts without replay. Run compatible old calls on the new Runtime.
-  Refuse legacy Read/Copy/Edit of an active AO recipe and legacy Resume
-  of an ahead AO source. Verify older active Read and ahead write blocks.
+  malformed and mismatched refusals, transport errors and lost Register
+  and Save receipts without replay. Verify a missing or evicted receipt
+  leaves the write outcome unknown. Run compatible old calls and reject
+  missing or malformed new `occlusionMap` fields and mismatched draft
+  echoes. Check Basic, WithMaps and WithMetallicRoughness Read/Copy/Edit
+  on a bound active recipe and Resume on an ahead committed recipe.
+  Verify older active Read, stale complete Edit and ahead write guards.
   Test role-filtered latest, wrong-kind/evicted ID, shared worker and
   history, permission/lock/repair, wrong-kind or missing target and
-  multiple ahead edits. Inject failures before source commit, after
-  texture registration and after material commit. Resume only with the
-  eligible method, retaining exact bytes, recipe, dependencies and
-  GUIDs. Exercise revalidation before material Save and Resume and
-  on both sides of ambiguous publication settlement.
+  multiple ahead edits, including cross-operation changes. Inject
+  failures before source commit, after texture registration and after
+  material commit. Remove the texture inbox before same-role Resume.
+  Verify the eligible Resume retains exact committed bytes, recipe,
+  dependencies and GUIDs. Check frozen revalidation before material Save
+  and Resume and at uncertain publication settlement.
 - [ ] **R4. Windows, preview and both reopens.** At native Windows 100%
   use standard and compact windows. Verify import mode, long diagnostics,
-  select/replace/clear, conflict feedback, stable focus, pending/failure,
-  and explicit activation guidance. Capture native evidence. Exercise
-  two clients sharing one permit, rapid mesh/draft/catalog changes,
-  late errors/results, forced studio resource failure and GPU release
-  at success/failure settlement. Verify preview and Save & Publish
-  preserve the source scene, current projection, catalog and undo
-  history. Run the IBL fixture sequence from Spec 0099. Compare
+  select/replace/clear, explicit conflict resolution in both directions,
+  stable focus, pending/failure and activation guidance. Capture native
+  evidence. Exercise two clients and an early failed request that spends
+  the shared permit for the interval. Verify legacy preview lighting,
+  AO-bound cooked and draft agreement and the matched null-AO control
+  even with live IBL disabled. Cover rapid mesh/draft/catalog changes,
+  late errors/results, oversized or missing studio input, pre-submit
+  refusal and release after successful completion or terminal drain.
+  Verify preview and Save & Publish preserve the source scene, current
+  projection, catalog and undo history. Run the IBL fixture sequence from Spec 0099. Compare
   named-generation and formal 0090 second-Editor outcomes for the same
-  committed edit under fixed camera/size and the configured environment.
-  Record launch arguments, active generation or saved-slot build,
-  distinct scene identities, unchanged scene source hashes, unchanged
-  node/material references, exact texture GUID/edge and visible effect.
-  Check the saved slot refuses an ordinary generation override.
+  committed edit against its unbound control, with fixed camera, output
+  size and studio environment. Record ordinary startup arguments and the
+  active generation. Record the second Editor's explicit managed root,
+  saved-slot configure/build and launch arguments. Verify distinct scene
+  GUIDs, unchanged scene source hashes and node/material references, one
+  AO dependency edge, the same material source digest and AO texture
+  GUID, and matching visible effect. Check the saved slot refuses an
+  ordinary generation override.
 - [ ] **Gates.** Relevant Windows builds, native/managed checks, Vulkan
   Validation Layers and impacted goldens. Evaluate the final diff using
   `--gate --applies` and use the existing performance protocol if selected,

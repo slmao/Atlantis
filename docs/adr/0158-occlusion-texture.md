@@ -23,15 +23,18 @@ and validates both sides of that boundary.
    Occlusion leaf and the shared Texture GUID namespace. Use a one-mip
    RGBA8 UNORM artifact. Manifest v7 adds the role to the existing frozen
    evidence vocabulary. Only views with that role emit v7. Locking,
-   receipts, revalidation, Resume and activation follow the shared
-   registration and publication contract.
+   receipts and explicit activation follow the shared contract. Resume
+   is source-preserving and requires the sole ahead change. Use the same
+   frozen checks before durable writes and when settling an uncertain
+   publication destination.
 2. Apply linear red to the sum of diffuse and specular IBL at fixed
    strength 1. Adopt UV0 and the existing material sampler. Require
    opaque `PbrDirectLit` and empty normal and metallic–roughness slots
-   for a bound recipe. Use binding 6 in one opt-in IBL variant.
-   With no environment use the current direct-lit path. Clear restores
-   the current unoccluded path. Preserve the existing recipe factor and
-   direct and emissive terms.
+   for a bound recipe. Normal-mapped IBL already uses all six bindings
+   and packed materials have no IBL variant. Use binding 6 in one opt-in
+   IBL fragment permutation. With no environment use the current
+   direct-lit path. Clear restores the current unoccluded path. Preserve
+   the existing scalar factors and the direct and emissive terms.
 3. Serialize a bound AO GUID as source v12 and its key as artifact and
    sidecar v11. Keep prior compatible formats when AO is absent. Catalog,
    cooker, frozen generation, scene load and preview agree on the
@@ -39,12 +42,14 @@ and validates both sides of that boundary.
    role-specific import and status to the shared clients. Older writers
    refuse an unrepresentable recipe before mutation and leave ahead
    committed bytes recoverable through compatible Resume.
-4. Reuse the bounded synchronous PNG template and one shared preview
-   permit. Use the built-in studio environment with request-owned
+4. Reuse the bounded synchronous PNG contract and one admission per
+   service interval across preview methods. Load the fixed built-in
+   studio bake under fixed byte and shape limits. Use request-owned IBL
    realization in AO-bound cooked and AO-compatible new draft previews,
-   including a null-AO comparison in the latter. Keep prior lighting for
-   unbound cooked pairs and older draft methods. Use existing RenderGraph
-   upload, synchronization and cleanup rules.
+   including a null-AO comparison for the latter. Keep prior lighting
+   for unbound cooked pairs and older draft methods. Preserve the
+   background and keep the live environment out of the preview. Use the
+   existing RenderGraph submission, completion and terminal drain.
 
 ## Consequences
 
@@ -61,7 +66,8 @@ and validates both sides of that boundary.
 
 - The map has visible scene effect only with configured IBL.
 - A material needs an explicit clear of a conflicting map before AO
-  can be bound. Combined ORM and normal+AO require another review.
+  can be bound. AO with normal mapping or packed metallic–roughness
+  requires another review.
 - New generations and bound materials need compatible tools. Studio
   preview incurs bounded environment work only on qualifying requests.
 
