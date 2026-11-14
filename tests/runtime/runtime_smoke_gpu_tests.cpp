@@ -166,7 +166,8 @@ struct RuntimeSmokeTestAccess {
   static connection::assets::MeshMaterialPreviewResult failPairPreviewCompletion(
       RuntimeApplication& app, const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid,
       const asset_system::AssetGuid& materialGuid, const asset_system::StaticMeshAssetData& mesh,
-      const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture) {
+      const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture,
+      const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive) {
     return app.previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture,
         [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); }, normal, emissive);
   }
