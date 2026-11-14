@@ -380,3 +380,31 @@ TEST_CASE("managed texture receipt is closed and repair is independent of succes
   invalid.set("jobId", codec::encodeAsset(guid()));
   CHECK_FALSE(codec::decodeTextureImportJob(invalid));
 }
+
+TEST_CASE("PBR map recipe retains optional slots and rejects malformed extended arms", "[remote][assets][asset-material]") {
+  constexpr auto maps = ca::MaterialRecipeVersion::WithMaps;
+  ca::MaterialValues values{guid()};
+  values.normalMap = materialGuid();
+  values.emissiveTexture = guid();
+  values.emissiveFactor = {0.0f, 2.0f, 65504.0f};
+  CHECK_FALSE(ca::basicMaterialValues(values));
+  auto request = ca::MaterialSave{ca::EditMaterial{materialGuid(), {}, values, values}};
+  const auto wire = ca::encodeMaterialSave(request, maps);
+  const auto decoded = ca::decodeMaterialSave(wire, maps);
+  REQUIRE(decoded);
+  CHECK(std::get<ca::EditMaterial>(*decoded).values == values);
+  CHECK(std::get<ca::EditMaterial>(*decoded).expected == values);
+  CHECK_FALSE(ca::decodeMaterialSave(wire));
+  CHECK_FALSE(ca::decodeMaterialSave(ca::encodeMaterialSave(request), maps));
+
+  auto malformed = wire;
+  auto bad = *wire.find("values");
+  bad.set("normalMap", Value::string("00000000-0000-0000-0000-000000000000"));
+  malformed.set("values", std::move(bad));
+  CHECK_FALSE(ca::decodeMaterialSave(malformed, maps));
+
+  const auto read = ca::MaterialRead{materialGuid(), {values}, true, {}};
+  const auto readWire = ca::encodeMaterialRead(read, maps);
+  CHECK(ca::decodeMaterialRead(readWire, maps) == read);
+  CHECK_FALSE(ca::decodeMaterialRead(readWire));
+}

@@ -420,6 +420,21 @@ The resulting Texture is an ordinary catalog record after explicit
 activation and is bound with the existing material methods. See
 [Spec 0095](../specs/0095-texture-import-and-base-color-binding.md).
 
+### 5.2.4 PBR material maps (Spec 0096 / ADR-0155)
+
+`assets.materialReadWithMaps`, `assets.materialSaveWithMaps` and
+`assets.previewMaterialDraftWithMaps` use the ordinary material shapes
+above with three additional required keys in each values object.
+`normalMap` and `emissiveTexture` are a non-nil canonical GUID or null.
+`emissiveFactor` is a finite, linear RGB triple with components 0–65504.
+Draft preview echoes the full recipe. Both save methods use
+`assets.materialStatus` and the same job history. The basic read/write
+subset rejects extended recipes, including legacy Resume of committed
+extended source. That refusal retains the `Committed` source state and
+GUID. Both preview forms, the cooked pair and geometry share one permit.
+See [Spec 0096](../specs/0096-pbr-texture-editing.md) and
+[ADR-0155](../adr/0155-pbr-material-map-authoring.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

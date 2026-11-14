@@ -662,14 +662,18 @@ struct RemoteServer::State {
       return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
     }
     if (name == "assets.materialRead" || name == "assets.materialSave" || name == "assets.materialStatus" ||
-        name == "assets.previewMaterialDraft") {
+        name == "assets.previewMaterialDraft" || name == "assets.materialReadWithMaps" ||
+        name == "assets.materialSaveWithMaps" || name == "assets.previewMaterialDraftWithMaps") {
+      const bool withMaps = name.ends_with("WithMaps");
       namespace ca = connection::assets;
       using Guid = asset_system::AssetGuid;
+      const auto version = withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto bad = [&] { return errorResponse(requestId, "BadRequest", "invalid material operation parameters"); };
       const auto guid = [&](std::string_view field) -> std::optional<Guid> {
         const auto* member = p.find(field);
         auto value = member ? codec::decodeAsset(*member) : std::nullopt;
-        return value && *value != Guid{} ? value : std::nullopt;
+        return value && *value != Guid{} && (!withMaps || (member->isString() &&
+            member->asString() == asset_system::toString(*value))) ? value : std::nullopt;
       };
       const auto open = [&] {
         if (!client.assets && openAssets) client.assets = openAssets();
@@ -684,19 +688,21 @@ struct RemoteServer::State {
       };
       std::uint64_t materialRequestId = 0;
       if (!p.isObject() || !id || !id->toUInt64(materialRequestId) || materialRequestId == 0 ||
-          count("id") != 1 || count("method") != 1 || count("params") > 1) return bad();
-      if (name == "assets.materialRead") {
+          count("id") != 1 || count("method") != 1 || count("params") > 1 ||
+          (withMaps && (count("params") != 1 || request.asObject().size() != 3))) return bad();
+      if (name == "assets.materialRead" || name == "assets.materialReadWithMaps") {
         const auto material = guid("material");
         if (!material || p.asObject().size() != 1) return bad();
         auto* provider = open();
-        return reply(provider ? provider->materialRead(*material)
-                              : ca::MaterialReadResult::Err(ca::MaterialError::CatalogUnavailable), ca::encodeMaterialRead);
+        return reply(provider ? (withMaps ? provider->materialReadWithMaps(*material) : provider->materialRead(*material))
+                              : ca::MaterialReadResult::Err(ca::MaterialError::CatalogUnavailable),
+                     [version](const auto& value) { return ca::encodeMaterialRead(value, version); });
       }
-      if (name == "assets.materialSave") {
-        const auto materialSave = ca::decodeMaterialSave(p);
+      if (name == "assets.materialSave" || name == "assets.materialSaveWithMaps") {
+        const auto materialSave = ca::decodeMaterialSave(p, version);
         if (!materialSave) return bad();
         auto* provider = open();
-        return reply(provider ? provider->materialSave(*materialSave)
+        return reply(provider ? (withMaps ? provider->materialSaveWithMaps(*materialSave) : provider->materialSave(*materialSave))
                               : ca::MaterialSaveResult::Err(ca::MaterialError::Unavailable), ca::encodeMaterialJob);
       }
       if (name == "assets.materialStatus") {
@@ -708,13 +714,14 @@ struct RemoteServer::State {
       }
       const auto mesh = guid("mesh");
       const auto* member = p.find("recipe");
-      const auto recipe = member ? ca::decodeMaterialRecipe(*member) : std::nullopt;
+      const auto recipe = member ? ca::decodeMaterialRecipe(*member, version) : std::nullopt;
       if (!mesh || !recipe || p.asObject().size() != 2) return bad();
       auto* provider = open();
-      auto result = provider ? provider->previewMaterialDraft(*mesh, *recipe)
+      auto result = provider ? (withMaps ? provider->previewMaterialDraftWithMaps(*mesh, *recipe)
+                                         : provider->previewMaterialDraft(*mesh, *recipe))
                              : ca::MaterialDraftPreviewResult::Err(ca::MaterialError::Unsupported);
       if (result.isOk())
-        if (auto png = ca::encodeMaterialDraftPreview(result.value()))
+        if (auto png = ca::encodeMaterialDraftPreview(result.value(), version))
           return response(requestId, codec::ok(std::move(*png)));
       return response(requestId, codec::err(Value::string(std::string(
           ca::toString(result.isErr() ? result.error() : ca::MaterialError::RenderFailed)))));

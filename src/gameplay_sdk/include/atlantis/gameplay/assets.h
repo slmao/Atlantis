@@ -55,6 +55,16 @@ class Assets {
   [[nodiscard]] connection::assets::MaterialSaveResult materialSave(const connection::assets::MaterialSave& request) {
     return connection_.materialSave(request);
   }
+  [[nodiscard]] connection::assets::MaterialReadResult materialReadWithMaps(const asset_system::AssetGuid& guid) const {
+    return connection_.materialReadWithMaps(guid);
+  }
+  [[nodiscard]] connection::assets::MaterialSaveResult materialSaveWithMaps(const connection::assets::MaterialSave& request) {
+    return connection_.materialSaveWithMaps(request);
+  }
+  [[nodiscard]] connection::assets::MaterialDraftPreviewResult previewMaterialDraftWithMaps(
+      const asset_system::AssetGuid& mesh, const connection::assets::MaterialRecipe& recipe) {
+    return connection_.previewMaterialDraftWithMaps(mesh, recipe);
+  }
   [[nodiscard]] connection::assets::MaterialStatusResult materialStatus(
       std::optional<connection::assets::MaterialJobId> id = std::nullopt) const {
     return connection_.materialStatus(id);

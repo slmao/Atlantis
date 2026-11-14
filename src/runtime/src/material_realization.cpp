@@ -826,40 +826,76 @@ atlantis::Result<DefaultEmissiveTexture, MaterialRealizationError> createDefault
 atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPreviewPbrMaterial(
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& list, atlantis::rhi::PipelineCreateParams shader,
     atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
-    const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture& whiteEmissive) {
+    const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture* whiteEmissive,
+    const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive) {
   using E = MaterialRealizationError;
   using R = atlantis::Result<RealizedMaterialCandidate, E>;
   namespace rg = atlantis::render_graph;
   ATLANTIS_CHECK(material.kind == atlantis::asset_system::MaterialKind::PbrDirectLit &&
-                 material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque &&
-                 material.normalMapTexture == 0 && material.emissiveTexture == 0);
+                 material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque);
+  const auto sharedColor = material.emissiveTexture && material.emissiveTexture == material.textureAsset;
+  ATLANTIS_CHECK((normal != nullptr) == (material.normalMapTexture != 0));
+  ATLANTIS_CHECK(emissive || sharedColor || whiteEmissive);
   RealizedMaterialCandidate candidate;
   candidate.materialAssetId = materialId;
   candidate.textureAssetId = material.textureAsset;
   if (const auto error = createBaseColorUpload(device, texture, candidate)) return R::Err(*error);
-  auto sampler = createMaterialSampler(device, material, candidate, texture.mipCount - 1);
+
+  if (normal) {
+    RealizedMaterialCandidate upload;
+    upload.textureAssetId = material.normalMapTexture;
+    if (const auto error = createBaseColorUpload(device, *normal, upload)) return R::Err(*error);
+    candidate.newNormalMapTexture = std::move(upload.newSampledTexture);
+    candidate.normalMapStagingBuffer = std::move(upload.stagingBuffer);
+    candidate.normalMapUploadRegions = std::move(upload.uploadRegions);
+  }
+  if (emissive) {
+    RealizedMaterialCandidate upload;
+    upload.textureAssetId = material.emissiveTexture;
+    if (const auto error = createBaseColorUpload(device, *emissive, upload)) return R::Err(*error);
+    candidate.newEmissiveTexture = std::move(upload.newSampledTexture);
+    candidate.emissiveStagingBuffer = std::move(upload.stagingBuffer);
+    candidate.emissiveUploadRegions = std::move(upload.uploadRegions);
+  }
+  const auto deepest = std::max({texture.mipCount, normal ? normal->mipCount : 1u,
+                                emissive ? emissive->mipCount : 1u});
+  auto sampler = createMaterialSampler(device, material, candidate, deepest - 1);
   if (sampler.isErr()) return R::Err(E::SamplerCreateFailed);
   candidate.sampler = std::move(sampler.value());
 
   shader.colorFormat = atlantis::rhi::HdrFormat::Rgba16Float;
   shader.depthFormat = DepthFormat::D32Sfloat;
   shader.pushConstantSizeBytes = pushConstantSizeBytesFor(material.kind);
-  shader.sampledTextureBindingCount = sampledTextureBindingCountFor(material.kind, false, false);
+  shader.sampledTextureBindingCount = sampledTextureBindingCountFor(material.kind, false, normal != nullptr);
+  const auto* emission = emissive ? candidate.newEmissiveTexture.get() :
+      sharedColor ? candidate.newSampledTexture.get() : whiteEmissive;
   auto made = createMaterial(
       device, shader, candidate.newSampledTexture.get(), candidate.sampler.get(), pushConstantLayoutFor(material.kind),
       {material.baseColorFactor[0], material.baseColorFactor[1], material.baseColorFactor[2], material.baseColorFactor[3]},
       material.metallicFactor, material.roughnessFactor, atlantis::renderer::MaterialEnvironmentBinding::None,
-      nullptr, 0.0f, 0.0f, {}, 0.0f, 0.0f, 0.0f, {}, atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, &whiteEmissive);
+      candidate.newNormalMapTexture.get(), 0.0f, 0.0f, {}, 0.0f, 0.0f, 0.0f,
+      {material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]},
+      atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, emission);
   if (made.isErr()) return R::Err(E::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(made.value()));
 
   rg::RenderGraphBuilder upload;
-  buildTextureUploadPass(upload, **candidate.stagingBuffer, *candidate.newSampledTexture, candidate.uploadRegions);
+  std::vector<atlantis::rhi::SampledTexture*> textures;
+  const auto record = [&](const auto& resource, const auto& staging, const auto& regions) {
+    if (!resource) return;
+    buildTextureUploadPass(upload, **staging, *resource, regions);
+    textures.push_back(resource.get());
+  };
+  record(candidate.newSampledTexture, candidate.stagingBuffer, candidate.uploadRegions);
+  record(candidate.newNormalMapTexture, candidate.normalMapStagingBuffer, candidate.normalMapUploadRegions);
+  record(candidate.newEmissiveTexture, candidate.emissiveStagingBuffer, candidate.emissiveUploadRegions);
   const auto compiled = upload.compile();
-  ATLANTIS_CHECK_MSG(compiled.isOk(), "a one-pass preview upload graph always compiles");
-  const std::vector<rg::ResourceBinding> bindings{
-      {.resource = compiled.value().resourceAt(0), .sampledTexture = candidate.newSampledTexture.get(),
-       .finalState = atlantis::rhi::ResourceState::ShaderRead}};
+  ATLANTIS_CHECK_MSG(compiled.isOk(), "Independent preview uploads form a valid graph");
+  std::vector<rg::ResourceBinding> bindings;
+  for (std::size_t i = 0; i < textures.size(); ++i) {
+    bindings.push_back({.resource = compiled.value().resourceAt(i), .sampledTexture = textures[i],
+                        .finalState = atlantis::rhi::ResourceState::ShaderRead});
+  }
   rg::execute(compiled.value(), bindings, list);
   return R::Ok(std::move(candidate));
 }

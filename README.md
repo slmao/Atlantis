@@ -359,6 +359,15 @@ If the result is unknown, inspect the registered PNG, its fragment and
 seal, and complete generations before retrying. See
 [Spec 0095](docs/specs/0095-texture-import-and-base-color-binding.md).
 
+In the material editor, choose a cooked RGBA8 UNORM normal map and an
+optional RGBA8 sRGB emissive texture. The emissive RGB factor is linear.
+Clearing the normal map restores geometric normals. Clearing the
+emissive texture keeps the factor and samples white. Preview the draft on
+a mesh, then use **Save & Publish** and restart into the reported generation.
+CLI uses `assets material-read-with-maps`, `assets material-save-with-maps`
+and `assets preview-material-draft-with-maps`. Query the same receipt via
+`assets material-status`. [Spec 0096](docs/specs/0096-pbr-texture-editing.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

@@ -19,4 +19,5 @@ inline constexpr std::string_view kPreviewAshWoodGuid = "ce676321-102e-4f55-91c4
 [[nodiscard]] std::optional<PixelBuffer> renderMeshPreviewPixels(std::string_view guid);
 [[nodiscard]] std::optional<PixelBuffer> renderMeshMaterialPreviewPixels(std::string_view materialGuid,
                                                                         bool multiMipFixture = false);
+[[nodiscard]] std::optional<PixelBuffer> renderPbrMapPreviewPixels(bool normal, bool emissive, float emission);
 }  // namespace atlantis::image_regression

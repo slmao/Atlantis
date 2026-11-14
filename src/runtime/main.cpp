@@ -427,8 +427,10 @@ int main(int argc, char** argv) {
                                     const atlantis::asset_system::AssetGuid& materialGuid,
                                     const atlantis::asset_system::StaticMeshAssetData& mesh,
                                     const atlantis::asset_system::MaterialAssetData& material,
-                                    const atlantis::asset_system::TextureAssetData& texture) {
-         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture);
+                                    const atlantis::asset_system::TextureAssetData& texture,
+                       const atlantis::asset_system::TextureAssetData* normal,
+                       const atlantis::asset_system::TextureAssetData* emissive) {
+         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive);
        }});
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks

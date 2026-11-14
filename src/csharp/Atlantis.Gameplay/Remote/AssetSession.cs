@@ -55,11 +55,11 @@ public sealed class AssetSession
         const string method = "assets.previewMeshMaterial";
         var parameters = JsonValue.NewObject().Set("meshGuid", Codec.Encode(meshGuid)).Set("materialGuid", Codec.Encode(materialGuid));
         JsonValue response = _session.AwaitResponse(_session.Send(method, parameters));
-        if (Codec.CountMember(response, "id") != 1 || Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1)
+        if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1 || Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1)
             throw _session.Malformed(method);
         if (response.Find("error") is JsonValue error)
         {
-            if (Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+            if (error.IsObject && error.Members.Count == 2 && Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
                 Codec.IsLegacyAssetRebuildRefusal(response))
                 return Outcome<A.MeshMaterialPreview, A.MeshMaterialPreviewError>.Err(A.MeshMaterialPreviewError.Unsupported);
             throw _session.Malformed(method);
@@ -107,11 +107,14 @@ public sealed class AssetSession
                 Codec.DecodeImportStatus(value) is A.ImportStatus status && (jobId is null || status.Job?.Id == jobId)
                     ? status : null);
     }
-    public Outcome<A.MaterialRead, A.MaterialError> MaterialRead(AssetGuid material)
+    public Outcome<A.MaterialRead, A.MaterialError> MaterialRead(AssetGuid material) => ReadMaterial(material, false);
+    public Outcome<A.MaterialRead, A.MaterialError> MaterialReadWithMaps(AssetGuid material) => ReadMaterial(material, true);
+
+    private Outcome<A.MaterialRead, A.MaterialError> ReadMaterial(AssetGuid material, bool withMaps)
     {
         if (material.IsNil) throw new ArgumentException("a non-nil material GUID is required", nameof(material));
-        return MaterialRequest("assets.materialRead", JsonValue.NewObject().Set("material", Codec.Encode(material)),
-            value => Codec.DecodeMaterialRead(value) is { } read && read.Material == material ? read : null);
+        return MaterialRequest(withMaps ? "assets.materialReadWithMaps" : "assets.materialRead", JsonValue.NewObject().Set("material", Codec.Encode(material)),
+            value => Codec.DecodeMaterialRead(value, withMaps) is { } read && read.Material == material ? read : null);
     }
 
     /// <summary>Admits a managed PNG job. A missing admission receipt does not determine the durable outcome.</summary>
@@ -158,16 +161,19 @@ public sealed class AssetSession
     }
 
     /// <summary>Admits one job without waiting or retrying. A lost receipt retains its transport or protocol category.</summary>
-    public Outcome<A.MaterialJob, A.MaterialError> MaterialSave(A.MaterialSave request)
+    public Outcome<A.MaterialJob, A.MaterialError> MaterialSave(A.MaterialSave request) => SaveMaterial(request, false);
+    public Outcome<A.MaterialJob, A.MaterialError> MaterialSaveWithMaps(A.MaterialSave request) => SaveMaterial(request, true);
+
+    private Outcome<A.MaterialJob, A.MaterialError> SaveMaterial(A.MaterialSave request, bool withMaps)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var parameters = Codec.EncodeMaterialSave(request);
+        var parameters = Codec.EncodeMaterialSave(request, withMaps);
         if (parameters is null) return Outcome<A.MaterialJob, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
         _session.ThrowIfFailed();
         var target = request.Target;
         try
         {
-            return MaterialRequest("assets.materialSave", parameters,
+            return MaterialRequest(withMaps ? "assets.materialSaveWithMaps" : "assets.materialSave", parameters,
                 value => Codec.DecodeMaterialJob(value) is { State: A.RebuildState.Running } job &&
                     job.Target == target ? job : null);
         }
@@ -188,34 +194,44 @@ public sealed class AssetSession
             Codec.DecodeMaterialStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
     }
 
-    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraft(AssetGuid mesh, A.MaterialRecipe recipe)
+    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraft(AssetGuid mesh, A.MaterialRecipe recipe) =>
+        PreviewDraft(mesh, recipe, false);
+    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraftWithMaps(AssetGuid mesh, A.MaterialRecipe recipe) =>
+        PreviewDraft(mesh, recipe, true);
+
+    private Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewDraft(AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps)
     {
         ArgumentNullException.ThrowIfNull(recipe);
-        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values) || !Enum.IsDefined(recipe.Filter) ||
+        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values, withMaps) || !Enum.IsDefined(recipe.Filter) ||
             !Enum.IsDefined(recipe.Address))
             return Outcome<A.MaterialDraftPreview, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
-        return MaterialRequest("assets.previewMaterialDraft",
-            JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe)),
-            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe));
+        return MaterialRequest(withMaps ? "assets.previewMaterialDraftWithMaps" : "assets.previewMaterialDraft",
+            JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe, withMaps)),
+            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe, withMaps));
     }
 
     private Outcome<T, A.MaterialError> MaterialRequest<T>(string method, JsonValue parameters, Func<JsonValue, T?> decode)
         where T : class
     {
         var response = _session.AwaitResponse(_session.Send(method, parameters));
-        if (Codec.CountMember(response, "id") != 1 ||
+        if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1 ||
             Codec.CountMember(response, "result") + Codec.CountMember(response, "error") != 1)
             throw _session.Malformed(method);
         if (response.Find("error") is JsonValue error)
         {
-            if (Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+            if (error.IsObject && error.Members.Count == 2 && Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
                 Codec.IsLegacyAssetRebuildRefusal(response))
                 return Outcome<T, A.MaterialError>.Err(A.MaterialError.Unsupported);
             throw _session.Malformed(method);
         }
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
             throw _session.Malformed(method);
-        return _session.InBand<T, A.MaterialError>(result, method, decode, Codec.DecodeMaterialError);
+        return _session.InBand<T, A.MaterialError>(result, method, decode, value =>
+        {
+            var error = Codec.DecodeMaterialError(value);
+            return error == A.MaterialError.Unsupported &&
+                method is "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" ? null : error;
+        });
     }
 
     private Outcome<T, E> AssetRequest<T, E>(string method, JsonValue parameters, E unsupported,

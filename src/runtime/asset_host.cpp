@@ -108,30 +108,24 @@ struct AssetHost::State final : connection::AssetConnection {
       return R::Err(material.error() == as::PreviewArtifactLoadError::TooLarge ? E::TooLarge : E::InvalidMaterial);
     }
     const auto& mat = material.value();
-    if (mat.kind != as::MaterialKind::PbrDirectLit || mat.alphaMode != as::MaterialAlphaMode::Opaque ||
-        mat.normalMapTexture != 0 || mat.emissiveTexture != 0 ||
-        std::ranges::any_of(mat.emissiveFactor, [](float value) { return value != 0.0f; })) {
+    if (mat.kind != as::MaterialKind::PbrDirectLit || mat.alphaMode != as::MaterialAlphaMode::Opaque)
       return R::Err(E::UnsupportedMaterial);
-    }
-
-    const auto* textureRecord = catalog_->find(mat.textureAsset);
-    const auto& dependencies = materialRecord->dependencies;
-    if (!textureRecord || textureRecord->type != as::CatalogAssetType::Texture || !textureRecord->dependencies.empty() ||
-        dependencies.size() != 1 || dependencies.front() != textureRecord->guid) {
-      return R::Err(E::DependencyUnavailable);
-    }
+    const auto values = material_authoring::cookedValues(*catalog_, *materialRecord, mat);
+    if (!values) return R::Err(E::DependencyUnavailable);
     auto mesh = as::loadStaticMeshPreviewAsset(*meshRecord);
     if (mesh.isErr()) {
       return R::Err(mesh.error() == as::MeshPreviewLoadError::TooLarge ? E::TooLarge : E::InvalidMesh);
     }
-    auto texture = as::loadPreviewBaseColorTexture(*textureRecord);
-    if (texture.isErr()) {
-      return R::Err(texture.error() == as::PreviewArtifactLoadError::TooLarge ? E::TooLarge : E::DependencyUnavailable);
+    auto textures = material_authoring::textures(*catalog_, *values);
+    if (textures.isErr()) {
+      using M = ac::MaterialError;
+      if (textures.error() == M::TooLarge) return R::Err(E::TooLarge);
+      if (textures.error() == M::UnsupportedMaterial) return R::Err(E::UnsupportedMaterial);
+      return R::Err(E::DependencyUnavailable);
     }
-    if (texture.value().colorSpace != as::TextureColorSpace::Srgb || texture.value().layout != as::TextureDataLayout::Rgba8) {
-      return R::Err(E::UnsupportedMaterial);
-    }
-    return preview_.renderPair(meshGuid, materialGuid, mesh.value(), mat, texture.value());
+    const auto& maps = textures.value();
+    return preview_.renderPair(meshGuid, materialGuid, mesh.value(), mat, maps.base,
+                               maps.normal ? &*maps.normal : nullptr, maps.emissive ? &*maps.emissive : nullptr);
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
@@ -159,10 +153,16 @@ struct AssetHost::State final : connection::AssetConnection {
     return rebuild_ ? rebuild_->textureImportStatus(id) : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
   }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
+    return readMaterial(guid, ac::MaterialRecipeVersion::Basic);
+  }
+  ac::MaterialReadResult materialReadWithMaps(const as::AssetGuid& guid) const override {
+    return readMaterial(guid, ac::MaterialRecipeVersion::WithMaps);
+  }
+  ac::MaterialReadResult readMaterial(const as::AssetGuid& guid, ac::MaterialRecipeVersion version) const {
     using R = ac::MaterialReadResult;
     initialize();
     if (!catalog_) return R::Err(ac::MaterialError::CatalogUnavailable);
-    auto recipe = material_authoring::read(*catalog_, guid);
+    auto recipe = material_authoring::read(*catalog_, guid, version);
     if (recipe.isErr()) return R::Err(recipe.error());
     return R::Ok({guid, recipe.value(), rebuild_ && rebuild_->ownsMaterial(guid),
                   rebuild_ ? rebuild_->activeGeneration() : std::nullopt});
@@ -172,11 +172,22 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->saveMaterial(request, catalog_);
   }
+  ac::MaterialSaveResult materialSaveWithMaps(const ac::MaterialSave& request) override {
+    if (!rebuild_) return ac::MaterialSaveResult::Err(ac::MaterialError::Unavailable);
+    initialize();
+    return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithMaps);
+  }
   ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
     return rebuild_ ? rebuild_->materialStatus(id) : ac::MaterialStatusResult::Err(ac::MaterialError::Unavailable);
   }
   ac::MaterialDraftPreviewResult previewMaterialDraft(const as::AssetGuid& guid,
                                                      const ac::MaterialRecipe& recipe) override {
+    if (!ac::basicMaterialValues(recipe.values))
+      return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
+    return previewMaterialDraftWithMaps(guid, recipe);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
     using E = ac::MaterialError;
     using R = ac::MaterialDraftPreviewResult;
     if (guid == as::AssetGuid{} || !ac::validMaterialRecipe(recipe)) return R::Err(E::InvalidRecipe);
@@ -191,11 +202,14 @@ struct AssetHost::State final : connection::AssetConnection {
     auto mesh = as::loadStaticMeshPreviewAsset(*record);
     if (mesh.isErr())
       return R::Err(mesh.error() == as::MeshPreviewLoadError::TooLarge ? E::TooLarge : E::InvalidMesh);
-    auto texture = material_authoring::texture(*catalog_, recipe.values.texture);
-    if (texture.isErr()) return R::Err(texture.error());
+    auto textures = material_authoring::textures(*catalog_, recipe.values);
+    if (textures.isErr()) return R::Err(textures.error());
+    const auto& maps = textures.value();
     // The pair renderer uses the ID for request-local resource labels only.
     // A draft has no persistent material identity.
-    auto image = preview_.renderPair(guid, {}, mesh.value(), material_authoring::previewData(recipe), texture.value());
+    auto image = preview_.renderPair(guid, {}, mesh.value(), material_authoring::previewData(recipe), maps.base,
+                                     maps.normal ? &*maps.normal : nullptr,
+                                     maps.emissive ? &*maps.emissive : nullptr);
     if (image.isOk()) return R::Ok({guid, recipe, std::move(image.value().png)});
     using Pair = ac::MeshMaterialPreviewError;
     if (image.error() == Pair::Unavailable) return R::Err(E::Unavailable);
@@ -236,6 +250,16 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::MaterialDraftPreviewResult previewMaterialDraft(const as::AssetGuid& guid,
                                                      const ac::MaterialRecipe& recipe) override {
     return host_.previewMaterialDraft(guid, recipe);
+  }
+  ac::MaterialReadResult materialReadWithMaps(const as::AssetGuid& guid) const override {
+    return host_.materialReadWithMaps(guid);
+  }
+  ac::MaterialSaveResult materialSaveWithMaps(const ac::MaterialSave& request) override {
+    return host_.materialSaveWithMaps(request);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return host_.previewMaterialDraftWithMaps(guid, recipe);
   }
  private:
   connection::AssetConnection& host_;

@@ -342,44 +342,77 @@ public static partial class Codec
 
     private static bool Exact(JsonValue value, int count) => value.IsObject && value.Members.Count == count;
 
-    internal static bool ValidMaterialValues(A.MaterialValues values) =>
+    internal static bool ValidMaterialValues(A.MaterialValues values, bool withMaps = false) =>
         !values.Texture.IsNil && Factor(values.Red) && Factor(values.Green) && Factor(values.Blue) &&
-        Factor(values.Metallic) && Factor(values.Roughness);
+        Factor(values.Metallic) && Factor(values.Roughness) &&
+        (withMaps ? values.NormalMap is not { IsNil: true } && values.EmissiveTexture is not { IsNil: true } &&
+            EmissiveComponent(values.EmissiveRed) && EmissiveComponent(values.EmissiveGreen) &&
+            EmissiveComponent(values.EmissiveBlue) :
+            values.NormalMap is null && values.EmissiveTexture is null &&
+            values.EmissiveRed == 0 && values.EmissiveGreen == 0 && values.EmissiveBlue == 0);
+
+    private static bool EmissiveComponent(float value) => float.IsFinite(value) && value is >= 0f and <= 65504f;
 
     private static bool Factor(float value) => float.IsFinite(value) && value >= 0f && value <= 1f;
     private static float? ReadFactor(JsonValue? value) =>
         value is not null && value.TryGetFloat(out float number) && Factor(number) ? number : null;
 
-    private static JsonValue EncodeMaterialValues(A.MaterialValues values) => JsonValue.NewObject()
-        .Set("texture", Encode(values.Texture))
-        .Set("color", JsonValue.NewArray().Push(JsonValue.Number(values.Red)).Push(JsonValue.Number(values.Green))
-            .Push(JsonValue.Number(values.Blue)))
-        .Set("metallic", JsonValue.Number(values.Metallic)).Set("roughness", JsonValue.Number(values.Roughness));
-
-    private static A.MaterialValues? DecodeMaterialValues(JsonValue value)
+    private static JsonValue EncodeMaterialValues(A.MaterialValues values, bool withMaps)
     {
-        if (!Exact(value, 4) || RebuildGuid(value.Find("texture")) is not AssetGuid texture ||
+        var encoded = JsonValue.NewObject().Set("texture", Encode(values.Texture))
+            .Set("color", JsonValue.NewArray().Push(JsonValue.Number(values.Red)).Push(JsonValue.Number(values.Green))
+                .Push(JsonValue.Number(values.Blue)))
+            .Set("metallic", JsonValue.Number(values.Metallic)).Set("roughness", JsonValue.Number(values.Roughness));
+        if (withMaps)
+            encoded.Set("normalMap", values.NormalMap is AssetGuid normal ? Encode(normal) : JsonValue.Null())
+                .Set("emissiveTexture", values.EmissiveTexture is AssetGuid emissive ? Encode(emissive) : JsonValue.Null())
+                .Set("emissiveFactor", JsonValue.NewArray().Push(JsonValue.Number(values.EmissiveRed))
+                    .Push(JsonValue.Number(values.EmissiveGreen)).Push(JsonValue.Number(values.EmissiveBlue)));
+        return encoded;
+    }
+
+    private static bool MaterialSlot(JsonValue? value, out AssetGuid? slot)
+    {
+        slot = null;
+        if (value is null) return false;
+        if (value.IsNull) return true;
+        slot = RebuildGuid(value);
+        return slot is not null;
+    }
+
+    private static A.MaterialValues? DecodeMaterialValues(JsonValue value, bool withMaps)
+    {
+        if (!Exact(value, withMaps ? 7 : 4) || RebuildGuid(value.Find("texture")) is not AssetGuid texture ||
             value.Find("color") is not { IsArray: true } color || color.Items.Count != 3 ||
             ReadFactor(color.Items[0]) is not float red || ReadFactor(color.Items[1]) is not float green ||
             ReadFactor(color.Items[2]) is not float blue || ReadFactor(value.Find("metallic")) is not float metallic ||
             ReadFactor(value.Find("roughness")) is not float roughness) return null;
-        return new(texture, red, green, blue, metallic, roughness);
+        var values = new A.MaterialValues(texture, red, green, blue, metallic, roughness);
+        if (!withMaps) return values;
+        if (!MaterialSlot(value.Find("normalMap"), out var normal) ||
+            !MaterialSlot(value.Find("emissiveTexture"), out var emissive) ||
+            value.Find("emissiveFactor") is not { IsArray: true } factor || factor.Items.Count != 3 ||
+            !factor.Items[0].TryGetFloat(out float er) || !factor.Items[1].TryGetFloat(out float eg) ||
+            !factor.Items[2].TryGetFloat(out float eb)) return null;
+        values = values with { NormalMap = normal, EmissiveTexture = emissive,
+            EmissiveRed = er, EmissiveGreen = eg, EmissiveBlue = eb };
+        return ValidMaterialValues(values, true) ? values : null;
     }
 
-    public static JsonValue EncodeMaterialRecipe(A.MaterialRecipe recipe) => JsonValue.NewObject()
-        .Set("values", EncodeMaterialValues(recipe.Values)).Set("filter", JsonValue.String(recipe.Filter.ToString()))
+    public static JsonValue EncodeMaterialRecipe(A.MaterialRecipe recipe, bool withMaps = false) => JsonValue.NewObject()
+        .Set("values", EncodeMaterialValues(recipe.Values, withMaps)).Set("filter", JsonValue.String(recipe.Filter.ToString()))
         .Set("address", JsonValue.String(recipe.Address.ToString()));
 
-    public static A.MaterialRecipe? DecodeMaterialRecipe(JsonValue value)
+    public static A.MaterialRecipe? DecodeMaterialRecipe(JsonValue value, bool withMaps = false)
     {
         if (!Exact(value, 3) || value.Find("values") is not JsonValue fields ||
-            DecodeMaterialValues(fields) is not A.MaterialValues values ||
+            DecodeMaterialValues(fields, withMaps) is not A.MaterialValues values ||
             RebuildToken<A.MaterialFilter>(value.Find("filter")) is not A.MaterialFilter filter ||
             RebuildToken<A.MaterialAddress>(value.Find("address")) is not A.MaterialAddress address) return null;
         return new(values, filter, address);
     }
 
-    internal static JsonValue? EncodeMaterialSave(A.MaterialSave request)
+    internal static JsonValue? EncodeMaterialSave(A.MaterialSave request, bool withMaps = false)
     {
         var target = request.Target;
         if (target.Name is string name && !ValidImportName(name) || target.Material is { IsNil: true }) return null;
@@ -393,25 +426,25 @@ public static partial class Codec
             case A.MaterialSave.Create create: values = create.Values; break;
             case A.MaterialSave.Copy copy: values = copy.Values; break;
             case A.MaterialSave.Edit edit:
-                if (edit.ActiveGeneration is { Value.IsNil: true } || !ValidMaterialValues(edit.Expected)) return null;
+                if (edit.ActiveGeneration is { Value.IsNil: true } || !ValidMaterialValues(edit.Expected, withMaps)) return null;
                 parameters.Set("activeGeneration", edit.ActiveGeneration is A.GenerationId generation
                     ? Encode(generation.Value) : JsonValue.Null());
-                parameters.Set("expected", EncodeMaterialValues(edit.Expected));
+                parameters.Set("expected", EncodeMaterialValues(edit.Expected, withMaps));
                 values = edit.Values;
                 break;
             case A.MaterialSave.Resume: return parameters;
             default: return null;
         }
-        return ValidMaterialValues(values) ? parameters.Set("values", EncodeMaterialValues(values)) : null;
+        return ValidMaterialValues(values, withMaps) ? parameters.Set("values", EncodeMaterialValues(values, withMaps)) : null;
     }
 
-    public static A.MaterialSave? DecodeMaterialSave(JsonValue parameters)
+    public static A.MaterialSave? DecodeMaterialSave(JsonValue parameters, bool withMaps = false)
     {
         var mode = RebuildToken<A.MaterialMode>(parameters.Find("mode"));
         var name = parameters.Find("name");
         var material = RebuildGuid(parameters.Find("material"));
         var fields = parameters.Find("values");
-        var values = fields is null ? null : DecodeMaterialValues(fields);
+        var values = fields is null ? null : DecodeMaterialValues(fields, withMaps);
         if (mode == A.MaterialMode.Resume && Exact(parameters, 2) && material is AssetGuid resume)
             return new A.MaterialSave.Resume(resume);
         if (values is not A.MaterialValues replacement) return null;
@@ -422,7 +455,7 @@ public static partial class Codec
             return new A.MaterialSave.Copy(name.AsString, copy, replacement);
         if (mode == A.MaterialMode.Edit && Exact(parameters, 5) && material is AssetGuid edit &&
             DecodeMaterialGeneration(parameters.Find("activeGeneration"), out var generation) &&
-            parameters.Find("expected") is JsonValue expected && DecodeMaterialValues(expected) is A.MaterialValues original)
+            parameters.Find("expected") is JsonValue expected && DecodeMaterialValues(expected, withMaps) is A.MaterialValues original)
             return new A.MaterialSave.Edit(edit, generation, original, replacement);
         return null;
     }
@@ -437,10 +470,10 @@ public static partial class Codec
         return true;
     }
 
-    public static A.MaterialRead? DecodeMaterialRead(JsonValue value)
+    public static A.MaterialRead? DecodeMaterialRead(JsonValue value, bool withMaps = false)
     {
         if (!Exact(value, 4) || RebuildGuid(value.Find("material")) is not AssetGuid material ||
-            value.Find("recipe") is not JsonValue recipe || DecodeMaterialRecipe(recipe) is not A.MaterialRecipe decoded ||
+            value.Find("recipe") is not JsonValue recipe || DecodeMaterialRecipe(recipe, withMaps) is not A.MaterialRecipe decoded ||
             value.Find("editable") is not { IsBool: true } editable ||
             !DecodeMaterialGeneration(value.Find("activeGeneration"), out var generation)) return null;
         return new(material, decoded, editable.AsBool, generation);
@@ -500,10 +533,10 @@ public static partial class Codec
         return new(generation, decoded, repair.AsBool);
     }
 
-    public static A.MaterialDraftPreview? DecodeMaterialDraftPreview(JsonValue value, AssetGuid mesh, A.MaterialRecipe recipe)
+    public static A.MaterialDraftPreview? DecodeMaterialDraftPreview(JsonValue value, AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps = false)
     {
         if (!Exact(value, 6) || RebuildGuid(value.Find("mesh")) != mesh ||
-            value.Find("recipe") is not JsonValue fields || DecodeMaterialRecipe(fields) != recipe) return null;
+            value.Find("recipe") is not JsonValue fields || DecodeMaterialRecipe(fields, withMaps) != recipe) return null;
         var bytes = DecodePreviewPng(value);
         return bytes is null ? null : new(mesh, recipe, PreviewDimension, PreviewDimension, bytes);
     }

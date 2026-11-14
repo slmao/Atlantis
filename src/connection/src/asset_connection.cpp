@@ -211,10 +211,19 @@ std::string_view toString(MaterialFailureCode value) noexcept {
       "NameConflict", "StaleEdit", "ActivationRequired", "NothingToResume", "Unchanged", "LaunchFailed",
       "BuildFailed", "InvalidOutput", "IdentityConflict", "CommitFailed", "PublishFailed", "TimedOut"});
 }
+bool basicMaterialValues(const MaterialValues& values) noexcept {
+  return !values.normalMap && !values.emissiveTexture &&
+         std::ranges::all_of(values.emissiveFactor, [](float value) { return value == 0.0f; });
+}
 bool validMaterialValues(const MaterialValues& values) noexcept {
   const auto factor = [](float value) { return std::isfinite(value) && value >= 0.0f && value <= 1.0f; };
   return values.texture != asset_system::AssetGuid{} && std::ranges::all_of(values.color, factor) &&
-         factor(values.metallic) && factor(values.roughness);
+         factor(values.metallic) && factor(values.roughness) &&
+         (!values.normalMap || *values.normalMap != asset_system::AssetGuid{}) &&
+         (!values.emissiveTexture || *values.emissiveTexture != asset_system::AssetGuid{}) &&
+         std::ranges::all_of(values.emissiveFactor, [](float value) {
+           return std::isfinite(value) && value >= 0.0f && value <= 65504.0f;
+         });
 }
 bool validMaterialRecipe(const MaterialRecipe& recipe) noexcept {
   return validMaterialValues(recipe.values) &&
@@ -230,7 +239,7 @@ MaterialTarget materialTarget(const MaterialSave& request) {
     if constexpr (std::is_same_v<T, ResumeMaterial>) return {MaterialMode::Resume, {}, value.material};
   }, request);
 }
-json::Value encodeMaterialValues(const MaterialValues& values) {
+json::Value encodeMaterialValues(const MaterialValues& values, MaterialRecipeVersion version) {
   auto out = json::Value::object();
   out.set("texture", json::Value::string(asset_system::toString(values.texture)));
   auto color = json::Value::array();
@@ -238,10 +247,21 @@ json::Value encodeMaterialValues(const MaterialValues& values) {
   out.set("color", std::move(color));
   out.set("metallic", json::Value::number(values.metallic));
   out.set("roughness", json::Value::number(values.roughness));
+  if (version == MaterialRecipeVersion::WithMaps) {
+    const auto slot = [](const auto& guid) {
+      return guid ? json::Value::string(asset_system::toString(*guid)) : json::Value{};
+    };
+    out.set("normalMap", slot(values.normalMap));
+    out.set("emissiveTexture", slot(values.emissiveTexture));
+    auto factor = json::Value::array();
+    for (float component : values.emissiveFactor) factor.push(json::Value::number(component));
+    out.set("emissiveFactor", std::move(factor));
+  }
   return out;
 }
-std::optional<MaterialValues> decodeMaterialValues(const json::Value& value) {
-  if (!value.isObject() || value.asObject().size() != 4) return std::nullopt;
+std::optional<MaterialValues> decodeMaterialValues(const json::Value& value, MaterialRecipeVersion version) {
+  const bool withMaps = version == MaterialRecipeVersion::WithMaps;
+  if (!value.isObject() || value.asObject().size() != (withMaps ? 7u : 4u)) return std::nullopt;
   const auto* texture = value.find("texture");
   const auto* color = value.find("color");
   const auto* metallic = value.find("metallic");
@@ -253,24 +273,41 @@ std::optional<MaterialValues> decodeMaterialValues(const json::Value& value) {
   MaterialValues out{guid.value()};
   for (std::size_t i = 0; i < out.color.size(); ++i)
     if (!color->asArray()[i].toFloat(out.color[i])) return std::nullopt;
-  if (!metallic->toFloat(out.metallic) || !roughness->toFloat(out.roughness) ||
-      !validMaterialValues(out)) return std::nullopt;
+  if (!metallic->toFloat(out.metallic) || !roughness->toFloat(out.roughness)) return std::nullopt;
+  if (withMaps) {
+    const auto slot = [&](std::string_view name, std::optional<asset_system::AssetGuid>& dst) {
+      const auto* field = value.find(name);
+      if (!field) return false;
+      if (field->isNull()) return true;
+      if (!field->isString()) return false;
+      auto parsed = asset_system::parseAssetGuid(field->asString());
+      if (parsed.isErr() || field->asString() != asset_system::toString(parsed.value())) return false;
+      dst = parsed.value();
+      return true;
+    };
+    const auto* factor = value.find("emissiveFactor");
+    if (!slot("normalMap", out.normalMap) || !slot("emissiveTexture", out.emissiveTexture) ||
+        !factor || !factor->isArray() || factor->asArray().size() != out.emissiveFactor.size()) return std::nullopt;
+    for (std::size_t i = 0; i < out.emissiveFactor.size(); ++i)
+      if (!factor->asArray()[i].toFloat(out.emissiveFactor[i])) return std::nullopt;
+  }
+  if (!validMaterialValues(out)) return std::nullopt;
   return out;
 }
-json::Value encodeMaterialRecipe(const MaterialRecipe& recipe) {
+json::Value encodeMaterialRecipe(const MaterialRecipe& recipe, MaterialRecipeVersion version) {
   auto value = json::Value::object();
-  value.set("values", encodeMaterialValues(recipe.values));
+  value.set("values", encodeMaterialValues(recipe.values, version));
   value.set("filter", json::Value::string(recipe.filter == MaterialFilter::Linear ? "Linear" : "Nearest"));
   value.set("address", json::Value::string(recipe.address == MaterialAddress::Repeat ? "Repeat" : "ClampToEdge"));
   return value;
 }
-std::optional<MaterialRecipe> decodeMaterialRecipe(const json::Value& value) {
+std::optional<MaterialRecipe> decodeMaterialRecipe(const json::Value& value, MaterialRecipeVersion version) {
   if (!value.isObject() || value.asObject().size() != 3) return std::nullopt;
   const auto* values = value.find("values");
   const auto* filter = value.find("filter");
   const auto* address = value.find("address");
   if (!values || !filter || !filter->isString() || !address || !address->isString()) return std::nullopt;
-  auto fields = decodeMaterialValues(*values);
+  auto fields = decodeMaterialValues(*values, version);
   const auto& f = filter->asString();
   const auto& a = address->asString();
   if (!fields || (f != "Linear" && f != "Nearest") || (a != "Repeat" && a != "ClampToEdge")) return std::nullopt;
@@ -324,26 +361,26 @@ J encodeTarget(const MaterialTarget& target) {
   return value;
 }
 }
-json::Value encodeMaterialSave(const MaterialSave& input) {
+json::Value encodeMaterialSave(const MaterialSave& input, MaterialRecipeVersion version) {
   auto value = encodeTarget(materialTarget(input));
   std::visit([&](const auto& request) {
     using T = std::decay_t<decltype(request)>;
-    if constexpr (!std::is_same_v<T, ResumeMaterial>) value.set("values", encodeMaterialValues(request.values));
+    if constexpr (!std::is_same_v<T, ResumeMaterial>) value.set("values", encodeMaterialValues(request.values, version));
     if constexpr (std::is_same_v<T, EditMaterial>) {
       value.set("activeGeneration", generationValue(request.activeGeneration));
-      value.set("expected", encodeMaterialValues(request.expected));
+      value.set("expected", encodeMaterialValues(request.expected, version));
     }
   }, input);
   return value;
 }
-std::optional<MaterialSave> decodeMaterialSave(const json::Value& value) {
+std::optional<MaterialSave> decodeMaterialSave(const json::Value& value, MaterialRecipeVersion version) {
   const auto target = decodeTarget(value);
   if (!target) return {};
   const auto count = value.asObject().size();
   if (target->mode == MaterialMode::Resume)
     return count == 2 ? std::optional<MaterialSave>{ResumeMaterial{*target->material}} : std::nullopt;
   const auto* member = value.find("values");
-  auto values = member ? decodeMaterialValues(*member) : std::nullopt;
+  auto values = member ? decodeMaterialValues(*member, version) : std::nullopt;
   if (!values) return {};
   if (target->mode == MaterialMode::Create && count == 3) return CreateMaterial{target->name, *values};
   if (target->mode == MaterialMode::Copy && count == 4)
@@ -352,19 +389,19 @@ std::optional<MaterialSave> decodeMaterialSave(const json::Value& value) {
     const auto* expected = value.find("expected");
     std::optional<GenerationId> generation;
     if (expected && generationMember(value.find("activeGeneration"), generation))
-      if (auto fields = decodeMaterialValues(*expected)) return EditMaterial{*target->material, generation, *fields, *values};
+      if (auto fields = decodeMaterialValues(*expected, version)) return EditMaterial{*target->material, generation, *fields, *values};
   }
   return {};
 }
-json::Value encodeMaterialRead(const MaterialRead& value) {
+json::Value encodeMaterialRead(const MaterialRead& value, MaterialRecipeVersion version) {
   auto out = J::object();
   out.set("material", guidValue(value.material));
-  out.set("recipe", encodeMaterialRecipe(value.recipe));
+  out.set("recipe", encodeMaterialRecipe(value.recipe, version));
   out.set("editable", J::boolean(value.editable));
   out.set("activeGeneration", generationValue(value.activeGeneration));
   return out;
 }
-std::optional<MaterialRead> decodeMaterialRead(const json::Value& value) {
+std::optional<MaterialRead> decodeMaterialRead(const json::Value& value, MaterialRecipeVersion version) {
   if (!value.isObject() || value.asObject().size() != 4) return {};
   const auto material = guidMember(value.find("material"));
   const auto* recipe = value.find("recipe");
@@ -372,7 +409,7 @@ std::optional<MaterialRead> decodeMaterialRead(const json::Value& value) {
   std::optional<GenerationId> generation;
   if (!material || !recipe || !editable || !editable->isBool() ||
       !generationMember(value.find("activeGeneration"), generation)) return {};
-  auto decoded = decodeMaterialRecipe(*recipe);
+  auto decoded = decodeMaterialRecipe(*recipe, version);
   if (!decoded) return {};
   return MaterialRead{*material, *decoded, editable->asBool(), generation};
 }
@@ -456,21 +493,21 @@ std::optional<MaterialStatus> decodeMaterialStatus(const json::Value& value) {
 std::optional<MaterialError> decodeMaterialError(const json::Value& value) {
   return enumMember(&value, MaterialError::NotEditable);
 }
-std::optional<json::Value> encodeMaterialDraftPreview(const MaterialDraftPreview& image) {
+std::optional<json::Value> encodeMaterialDraftPreview(const MaterialDraftPreview& image, MaterialRecipeVersion version) {
   if (image.mesh == asset_system::AssetGuid{} || !validMaterialRecipe(image.recipe) ||
       !hasPreviewHeader(image.png)) return std::nullopt;
   auto value = json::Value::object();
   value.set("mesh", json::Value::string(asset_system::toString(image.mesh)));
-  value.set("recipe", encodeMaterialRecipe(image.recipe));
+  value.set("recipe", encodeMaterialRecipe(image.recipe, version));
   encodePreviewImage(value, image.png);
   return value;
 }
 std::optional<MaterialDraftPreview> decodeMaterialDraftPreview(const json::Value& payload,
-    const asset_system::AssetGuid& mesh, const MaterialRecipe& recipe) {
+    const asset_system::AssetGuid& mesh, const MaterialRecipe& recipe, MaterialRecipeVersion version) {
   if (!payload.isObject() || payload.asObject().size() != 6 ||
       !matchesPreviewGuid(payload.find("mesh"), mesh)) return std::nullopt;
   const auto* returned = payload.find("recipe");
-  if (!returned || decodeMaterialRecipe(*returned) != recipe) return std::nullopt;
+  if (!returned || decodeMaterialRecipe(*returned, version) != recipe) return std::nullopt;
   auto png = decodePreviewImage(payload);
   if (!png) return std::nullopt;
   return MaterialDraftPreview{mesh, recipe, std::move(*png)};

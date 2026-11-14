@@ -172,7 +172,7 @@ public sealed class MainWindow : Window
     private MaterialEditorWindow? _materialWindow;
     private MaterialRead? _selectedMaterial;
     private AssetGuid? _materialReadTarget;
-    private bool _materialPolling, _materialCanWrite, _materialSupported;
+    private bool _materialPolling, _materialCanWrite, _materialSupported, _materialLegacy;
     private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
@@ -558,7 +558,7 @@ public sealed class MainWindow : Window
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _materialSettlement.LoseReceipt();
-        _materialPolling = _materialCanWrite = _materialSupported = false;
+        _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false;
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
         _worker?.Stop();
         ++_saveAsRequest;
@@ -622,7 +622,7 @@ public sealed class MainWindow : Window
             _referenceSessionFailed = true;
             LoseTextureConnection();
             _materialSettlement.LoseReceipt();
-            _materialPolling = _materialCanWrite = _materialSupported = false; _materialPoll.Stop();
+            _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialPoll.Stop();
             ShowMaterialState();
             if (_newScenePendingName is not null)
             {
@@ -1230,10 +1230,11 @@ public sealed class MainWindow : Window
         long epoch = ++_materialReadEpoch;
         UpdateMaterialButtons();
         if (target is not AssetGuid guid || _worker is not { } worker || _referenceSessionFailed) return;
-        worker.ReadMaterial(guid, result =>
+        worker.ReadMaterial(guid, (result, legacy) =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || epoch != _materialReadEpoch ||
                 _materialReadTarget != guid) return;
+            _materialLegacy = legacy;
             if (result.IsOk) _selectedMaterial = result.Value;
             else if (result.Error != MaterialError.Unsupported && !_materialSettlement.BlocksSave)
                 ShowMaterialState("Selected material: " + result.Error);
@@ -1259,7 +1260,7 @@ public sealed class MainWindow : Window
         var original = mode == MaterialMode.Create ? null : _selectedMaterial;
         if (mode != MaterialMode.Create && original is null) return;
         var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
-        var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items);
+        var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items, !_materialLegacy);
         _materialWindow = dialog;
         dialog.DraftChanged += () => SyncPreviewSelection(invalidate: true);
         dialog.PreviewRequested += () =>
@@ -1269,7 +1270,7 @@ public sealed class MainWindow : Window
             UpdatePreviewButton();
             StartNextPreview();
         };
-        dialog.SaveRequested += request => SubmitMaterial(request);
+        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps);
         dialog.ResumeRequested += ResumeMaterial;
         dialog.Closed += (_, _) =>
         {
@@ -1408,18 +1409,25 @@ public sealed class MainWindow : Window
         UpdateTextureButtons();
     }
 
-    private void SubmitMaterial(MaterialSave request)
+    private void SubmitMaterial(MaterialSave request, bool withMaps)
     {
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
         _materialSettlement.Begin(request.Target);
         ShowMaterialState();
-        worker.SaveMaterial(request, result =>
+        worker.SaveMaterial(request, withMaps, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _materialSettlement.Target != request.Target) return;
             if (!result.IsOk)
             {
                 _materialSettlement.Refused();
+                if (withMaps && result.Error == MaterialError.Unsupported)
+                {
+                    _materialLegacy = true;
+                    _materialWindow?.OfferBasicEditing();
+                    ShowMaterialState("This Runtime supports basic material editing. Choose basic editing explicitly or reconnect.");
+                    return;
+                }
                 if (result.Error is MaterialError.Unsupported or MaterialError.Unavailable) _materialCanWrite = false;
                 ShowMaterialState("Material save refused: " + result.Error);
                 return;
@@ -1432,7 +1440,7 @@ public sealed class MainWindow : Window
     private void ResumeMaterial()
     {
         if (_materialResume.IsEnabled && _materialSettlement.ResumableMaterial is AssetGuid saved)
-            SubmitMaterial(new MaterialSave.Resume(saved));
+            SubmitMaterial(new MaterialSave.Resume(saved), !_materialLegacy);
     }
 
     private void QueryMaterial()
@@ -1629,7 +1637,8 @@ public sealed class MainWindow : Window
             if (!_previewRequests.CanSend(intent)) return default;
             if (intent.Draft is MaterialRecipe recipe)
             {
-                var draft = preview.Assets.PreviewMaterialDraft(intent.Guid, recipe);
+                var draft = intent.WithMaps ? preview.Assets.PreviewMaterialDraftWithMaps(intent.Guid, recipe)
+                    : preview.Assets.PreviewMaterialDraft(intent.Guid, recipe);
                 return draft.IsOk ? (draft.Value.PngBytes, null, false) :
                     (null, "Draft preview failed: " + draft.Error + ". Check the mesh and base texture or retry.", true);
             }

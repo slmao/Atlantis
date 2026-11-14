@@ -51,12 +51,13 @@ struct MeshPreviewReadOnly {
     PreviewCompletion complete = nullptr, const MeshPreviewReadOnly* readOnly = nullptr);
 
 // Spec 0092 R3. The same frame and lifetime path with a validated opaque
-// PBR material and its one cooked base-color texture.
+// PBR material and its validated cooked textures.
 [[nodiscard]] MeshMaterialPreviewExecution renderMeshMaterialPreview(
     rhi::Device& device, const BootstrapConfig& config, const asset_system::StaticMeshAssetData& mesh,
     const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture,
     const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     std::shared_ptr<MeshPreviewResources>& incompleteSubmission,
-    PreviewCompletion complete = nullptr, const MeshPreviewReadOnly* readOnly = nullptr);
+    PreviewCompletion complete = nullptr, const MeshPreviewReadOnly* readOnly = nullptr,
+    const asset_system::TextureAssetData* normal = nullptr, const asset_system::TextureAssetData* emissive = nullptr);
 
 }  // namespace atlantis::runtime::detail

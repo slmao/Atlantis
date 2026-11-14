@@ -47,7 +47,8 @@ class AssetRebuildHost {
   [[nodiscard]] bool ownsMaterial(const asset_system::AssetGuid& guid) const;
   [[nodiscard]] std::optional<connection::assets::GenerationId> activeGeneration() const;
   [[nodiscard]] connection::assets::MaterialSaveResult saveMaterial(
-      const connection::assets::MaterialSave& request, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+      const connection::assets::MaterialSave& request, std::shared_ptr<const asset_system::AssetCatalog> catalog,
+      connection::assets::MaterialRecipeVersion version = connection::assets::MaterialRecipeVersion::Basic);
   [[nodiscard]] connection::assets::MaterialStatusResult materialStatus(
       std::optional<connection::assets::MaterialJobId> id) const;
   void stop();

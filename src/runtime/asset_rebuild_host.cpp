@@ -779,6 +779,7 @@ struct AssetRebuildHost::State {
   struct MaterialWork {
     ca::MaterialJob job;
     ca::MaterialSave request;
+    ca::MaterialRecipeVersion version;
     std::shared_ptr<const as::AssetCatalog> catalog;
     Clock::time_point deadline;
   };
@@ -1177,11 +1178,14 @@ struct AssetRebuildHost::State {
         if (parsed.isErr()) return failJob(MS::Source, MC::InvalidSource, "The committed source is malformed.");
         const auto& input = parsed.value();
         recipe = {{input.textureAsset, {input.baseColorFactor[0], input.baseColorFactor[1],
-                   input.baseColorFactor[2]}, input.metallicFactor, input.roughnessFactor},
+                   input.baseColorFactor[2]}, input.metallicFactor, input.roughnessFactor, input.normalMapAsset,
+                   input.emissiveTextureAsset, {input.emissiveFactor[0], input.emissiveFactor[1], input.emissiveFactor[2]}},
                   input.filter == as::MaterialSamplerFilter::Linear ? ca::MaterialFilter::Linear
                                                                      : ca::MaterialFilter::Nearest,
                   input.addressMode == as::MaterialSamplerAddressMode::Repeat ? ca::MaterialAddress::Repeat
                                                                               : ca::MaterialAddress::ClampToEdge};
+        if (work.version == ca::MaterialRecipeVersion::Basic && !ca::basicMaterialValues(recipe.values))
+          return failJob(MS::Source, MC::InvalidRecipe, "Resume the committed recipe with a client that supports material maps.");
         if (!ca::validMaterialRecipe(recipe) ||
             as::serializeMaterialSource(input) != as::serializeMaterialSource(material_authoring::source(recipe)))
           return failJob(MS::Source, MC::InvalidRecipe, "The committed source is outside the authoring subset.");
@@ -1192,7 +1196,7 @@ struct AssetRebuildHost::State {
           return failJob(MS::Source, MC::ActivationRequired, "Activate or recover the committed materials first.");
         if (const auto* input = std::get_if<ca::CreateMaterial>(&work.request)) recipe.values = input->values;
         if (const auto* input = std::get_if<ca::CopyMaterial>(&work.request)) {
-          auto read = material_authoring::read(*work.catalog, input->material);
+          auto read = material_authoring::read(*work.catalog, input->material, work.version);
           if (read.isErr()) return failJob(MS::Source, MC::InvalidRecipe, std::string(ca::toString(read.error())));
           recipe = read.value();
           recipe.values = input->values;
@@ -1205,7 +1209,7 @@ struct AssetRebuildHost::State {
             return failJob(MS::Source, MC::NotEditable, "Only project-owned materials can be edited.");
           name = found->first;
           saved = input->material;
-          auto read = material_authoring::read(*work.catalog, input->material);
+          auto read = material_authoring::read(*work.catalog, input->material, work.version);
           if (read.isErr()) return failJob(MS::Source, MC::InvalidRecipe, std::string(ca::toString(read.error())));
           recipe = read.value();
           if (input->activeGeneration != config.generation || input->expected != recipe.values)
@@ -1218,8 +1222,10 @@ struct AssetRebuildHost::State {
       }
       if (create && (work.catalog->find(*saved) || work.catalog->find(as::assetKey(*saved))))
         return failJob(MS::Validation, MC::IdentityConflict, "The material identity collides with an existing asset.");
-      if (auto texture = material_authoring::texture(*work.catalog, recipe.values.texture); texture.isErr())
-        return failJob(MS::Source, MC::DependencyUnavailable, std::string(ca::toString(texture.error())));
+      std::string_view slot;
+      if (auto textures = material_authoring::textures(*work.catalog, recipe.values, &slot); textures.isErr())
+        return failJob(MS::Source, MC::DependencyUnavailable,
+                       std::string(slot) + ": " + std::string(ca::toString(textures.error())));
       const auto unit = materialDirectory(name);
       const auto expectedSource = resume ? before->at(name).source
           : as::serializeMaterialSource(material_authoring::source(recipe));
@@ -1280,7 +1286,11 @@ struct AssetRebuildHost::State {
       const auto textureView = textureInputs(staging, *view, *built);
       if (!textureView || textureRegistrations(*view, *textureView) != activeTextures)
         return failJob(MS::Validation, MC::InvalidOutput, "Material save changed the managed texture view.");
-      if (built->size() != work.catalog->size() + (create ? 1 : 0) || !retainsIdentity(*work.catalog, *built))
+      if (built->size() != work.catalog->size() + (create ? 1 : 0) || !retainsIdentity(*work.catalog, *built) ||
+          !std::ranges::all_of(work.catalog->records(), [&](const auto& record) {
+            return record.guid == *saved ||
+                std::ranges::is_permutation(record.dependencies, built->find(record.guid)->dependencies);
+          }))
         return failJob(MS::Validation, MC::IdentityConflict, "The material build changed unrelated catalog identities.");
       const auto* builtRecord = built->find(*saved);
       auto cooked = material_authoring::read(*built, *saved);
@@ -1943,20 +1953,24 @@ bool AssetRebuildHost::ownsMaterial(const as::AssetGuid& guid) const {
 std::optional<ca::GenerationId> AssetRebuildHost::activeGeneration() const {
   return state_->config.generation;
 }
-ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& request,
-                                                      std::shared_ptr<const as::AssetCatalog> catalog) {
+ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& request, std::shared_ptr<const as::AssetCatalog> catalog,
+    ca::MaterialRecipeVersion version) {
   using R = ca::MaterialSaveResult;
   using E = ca::MaterialError;
   const auto target = ca::materialTarget(request);
-  const bool valid = std::visit([](const auto& input) {
+  const auto validValues = [version](const auto& values) {
+    return ca::validMaterialValues(values) &&
+        (version == ca::MaterialRecipeVersion::WithMaps || ca::basicMaterialValues(values));
+  };
+  const bool valid = std::visit([&](const auto& input) {
     using T = std::decay_t<decltype(input)>;
     if constexpr (std::is_same_v<T, ca::CreateMaterial>)
-      return ca::validImportName(input.name) && ca::validMaterialValues(input.values);
+      return ca::validImportName(input.name) && validValues(input.values);
     else if constexpr (std::is_same_v<T, ca::CopyMaterial>)
-      return ca::validImportName(input.name) && input.material != as::AssetGuid{} && ca::validMaterialValues(input.values);
+      return ca::validImportName(input.name) && input.material != as::AssetGuid{} && validValues(input.values);
     else if constexpr (std::is_same_v<T, ca::EditMaterial>)
       return input.material != as::AssetGuid{} && (!input.activeGeneration || input.activeGeneration->value != as::AssetGuid{}) &&
-          ca::validMaterialValues(input.expected) && ca::validMaterialValues(input.values);
+          validValues(input.expected) && validValues(input.values);
     else
       return input.material != as::AssetGuid{};
   }, request);
@@ -1972,7 +1986,7 @@ ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& re
   const auto id = newGuid();
   if (!id) return R::Err(E::Unavailable);
   ca::MaterialJob job{{*id}, target, ca::RebuildState::Running, {}, {}, {}};
-  state_->materialWork.emplace(State::MaterialWork{job, request, std::move(catalog),
+  state_->materialWork.emplace(State::MaterialWork{job, request, version, std::move(catalog),
                                                   Clock::now() + state_->config.timeout});
   state_->changed.notify_one();
   return R::Ok(job);

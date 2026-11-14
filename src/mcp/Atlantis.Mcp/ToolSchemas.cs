@@ -72,17 +72,24 @@ internal static class ToolSchemas
     private static readonly JsonNode MaterialValues = Object(("texture", String), ("color", Vector(Number, 3)),
         ("metallic", Number), ("roughness", Number));
 
-    internal static JsonElement MaterialDraftParameters() => Parameters(("mesh", String),
-        ("recipe", Object(("values", MaterialValues), ("filter", Enum("Nearest", "Linear")),
+    private static readonly JsonNode MaterialValuesWithMaps = Object(("texture", String), ("color", Vector(Number, 3)),
+        ("metallic", Number), ("roughness", Number), ("normalMap", Nullable(String)),
+        ("emissiveTexture", Nullable(String)), ("emissiveFactor", Vector(Number, 3)));
+
+    internal static JsonElement MaterialDraftParameters(bool withMaps = false) => Parameters(("mesh", String),
+        ("recipe", Object(("values", withMaps ? MaterialValuesWithMaps : MaterialValues), ("filter", Enum("Nearest", "Linear")),
                           ("address", Enum("Repeat", "ClampToEdge")))));
 
-    internal static JsonElement MaterialSaveParameters() => JsonSerializer.SerializeToElement(
-        new JsonObject { ["type"] = "object", ["oneOf"] = Choice(
-            Object(("mode", Enum("Create")), ("name", String), ("values", MaterialValues)),
-            Object(("mode", Enum("Copy")), ("name", String), ("material", String), ("values", MaterialValues)),
+    internal static JsonElement MaterialSaveParameters(bool withMaps = false)
+    {
+        var values = withMaps ? MaterialValuesWithMaps : MaterialValues;
+        return JsonSerializer.SerializeToElement(new JsonObject { ["type"] = "object", ["oneOf"] = Choice(
+            Object(("mode", Enum("Create")), ("name", String), ("values", values)),
+            Object(("mode", Enum("Copy")), ("name", String), ("material", String), ("values", values)),
             Object(("mode", Enum("Edit")), ("material", String), ("activeGeneration", Nullable(String)),
-                ("expected", MaterialValues), ("values", MaterialValues)),
+                ("expected", values), ("values", values)),
             Object(("mode", Enum("Resume")), ("material", String)))["oneOf"]!.DeepClone() });
+    }
 
     internal static JsonElement RebuildStatusParameters()
     {

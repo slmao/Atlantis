@@ -44,6 +44,8 @@ constexpr std::string_view kUsage =
     "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
     "  assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]\n"
     "  assets preview-material-draft <MeshGuid> <RecipeJSON>   read-only PNG (--json for bytes)\n"
+    "  assets material-read-with-maps <GUID> | assets material-save-with-maps <JSON>\n"
+    "  assets preview-material-draft-with-maps <MeshGuid> <RecipeJSON>\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
@@ -372,7 +374,8 @@ int Invocation::finish(Reply reply) {
           : "; texture job outcome unknown. Retain the job ID and query after reconnecting.";
       failure->text = "error: " + failure->message;
     }
-    if (checked.command == "assets material-save" && checked.result.find("target")) {
+    if ((checked.command == "assets material-save" || checked.command == "assets material-save-with-maps") &&
+        checked.result.find("target")) {
       failure->subject = checked.result;
       failure->message += "; material save outcome unknown for " + checked.result.find("target")->asString() +
           ". Verify the durable source and generation, and confirm the previous request settled before retrying.";

@@ -25,6 +25,9 @@ runtime::BootstrapConfig previewConfig() {
   config.pbrDirectLitVertexShaderSpirvPath = ATLANTIS_PREVIEW_PBR_DIR "/pbr_direct_lit.vert.spv";
   config.pbrDirectLitVertexShaderReflectionPath = ATLANTIS_PREVIEW_PBR_DIR "/pbr_direct_lit.vert.refl.json";
   config.pbrDirectLitFragmentShaderSpirvPath = ATLANTIS_PREVIEW_PBR_DIR "/pbr_direct_lit.frag.spv";
+  config.pbrDirectLitNormalMapVertexShaderSpirvPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.vert.spv";
+  config.pbrDirectLitNormalMapVertexShaderReflectionPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.vert.refl.json";
+  config.pbrDirectLitNormalMapFragmentShaderSpirvPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.frag.spv";
   config.shadowCastVertexShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.spv";
   config.shadowCastVertexShaderReflectionPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.refl.json";
   config.shadowCastFragmentShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.frag.spv";
@@ -97,6 +100,40 @@ std::optional<PixelBuffer> renderMeshMaterialPreviewPixels(std::string_view mate
   return renderPreviewPixels([&](auto& device, const auto& config, auto& incomplete) {
     return runtime::detail::renderMeshMaterialPreview(device, config, mesh.value(), material.value(), texture.value(),
                                                       meshGuid.value(), materialGuid.value(), incomplete);
+  });
+}
+std::optional<PixelBuffer> renderPbrMapPreviewPixels(bool normal, bool emissive, float emission) {
+  namespace as = asset_system;
+  const auto meshId = as::parseAssetGuid(kPreviewQuadGuid).value();
+  const auto materialId = as::parseAssetGuid(kPreviewDielectricGuid).value();
+  const auto normalId = as::parseAssetGuid("5e99757a-d524-4aaf-b665-0d308aa7ae99").value();
+  auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
+  if (catalog.isErr()) return {};
+  const auto* meshRecord = catalog.value().find(meshId);
+  const auto* materialRecord = catalog.value().find(materialId);
+  const auto* normalRecord = catalog.value().find(normalId);
+  if (!meshRecord || !materialRecord || !normalRecord) return {};
+  auto mesh = as::loadStaticMeshPreviewAsset(*meshRecord);
+  auto material = as::loadPreviewMaterialAsset(*materialRecord);
+  if (mesh.isErr() || material.isErr()) return {};
+  const auto* baseRecord = catalog.value().find(material.value().textureAsset);
+  if (!baseRecord) return {};
+  auto base = as::loadPreviewBaseColorTexture(*baseRecord);
+  auto normalTexture = as::loadPreviewBaseColorTexture(*normalRecord);
+  if (base.isErr() || normalTexture.isErr()) return {};
+  auto lightMask = base.value();
+  lightMask.width = lightMask.height = lightMask.mipCount = 1;
+  lightMask.pixelBytes.assign({128, 64, 32, 255});
+  auto& recipe = material.value();
+  recipe.normalMapTexture = normal ? normalRecord->assetId : 0;
+  recipe.emissiveTexture = emissive ? as::assetKey(materialId) : 0;
+  recipe.emissiveFactor[0] = emission;
+  recipe.emissiveFactor[1] = emission;
+  recipe.emissiveFactor[2] = emission;
+  return renderPreviewPixels([&](auto& device, const auto& config, auto& incomplete) {
+    return runtime::detail::renderMeshMaterialPreview(device, config, mesh.value(), recipe, base.value(),
+        meshId, materialId, incomplete, nullptr, nullptr, normal ? &normalTexture.value() : nullptr,
+        emissive ? &lightMask : nullptr);
   });
 }
 }  // namespace atlantis::image_regression
