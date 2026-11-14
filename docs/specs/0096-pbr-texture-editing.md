@@ -1,11 +1,11 @@
 # Spec: PBR Normal and Emissive Texture Editing
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-14
 - **Related Plan:** [Plan 0096](../plans/0096-pbr-texture-editing.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0155](../adr/0155-pbr-material-map-authoring.md) (Proposed)
+- **Approval:** Atlantis maintainer, 2026-11-14, [PR #357](https://github.com/slmao/Atlantis/pull/357) at `610591f7`
+- **Related ADR:** [ADR-0155](../adr/0155-pbr-material-map-authoring.md) (Accepted)
 
 ## Summary
 

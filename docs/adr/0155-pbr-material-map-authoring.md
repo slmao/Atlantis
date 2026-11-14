@@ -1,9 +1,9 @@
 # ADR 0155: Author Existing PBR Map Slots Through the Shared Asset Interface
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-14, [PR #357](https://github.com/slmao/Atlantis/pull/357) at `610591f7`
 - **Related Spec:** [Spec 0096](../specs/0096-pbr-texture-editing.md)
 
 ## Context
