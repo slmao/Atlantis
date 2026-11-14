@@ -538,3 +538,147 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
           read(registered / "source.material.txt"));
   }
 }
+
+TEST_CASE("normal import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
+  Fixture f;
+  const auto project = f.base / "project";
+  const auto registered = project / "registered";
+  const auto inbox = project / "inbox/sample/source.png";
+  const fs::path inventory = "assets/producers-Debug.txt";
+  constexpr auto kind = AssetRebuildHost::TextureKind::Normal;
+  REQUIRE(fs::create_directories(registered));
+  REQUIRE(fs::create_directories(inbox.parent_path()));
+  const auto canonicalProject = fs::canonical(project);
+  // A one-pixel RGBA8 neutral normal.
+  constexpr unsigned char png[] = {
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x68, 0x68, 0xf8, 0xff,
+      0x1f, 0x00, 0x06, 0x82, 0x02, 0xff, 0xb3, 0xbe, 0x51, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+      0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+  const std::string_view pngBytes{reinterpret_cast<const char*>(png), sizeof(png)};
+  write(inbox, pngBytes);
+  const as::CatalogSourceEntry baseEntry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Assets, "a.material.txt"};
+  write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
+      f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
+  for (const auto& build : {f.seed, f.staging}) {
+    write(build / "assets/managed-project.txt", canonicalProject.generic_string());
+    write(build / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry}));
+  }
+  write(f.staging / "assets/managed-pending.txt", {});
+  write(f.staging / "cooker-path.txt", ATLANTIS_REBUILD_TEST_COOKER);
+  write(f.staging / "evidence-path.txt", ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE);
+  write(f.base / "producer.cmake", R"cmake(
+file(READ "assets/managed-project.txt" project)
+file(READ "assets/managed-pending.txt" pending)
+file(READ "cooker-path.txt" cooker)
+set(frozen "${CMAKE_CURRENT_BINARY_DIR}/assets/managed-texture-sources")
+set(asset "${CMAKE_CURRENT_BINARY_DIR}/assets/texture_sample")
+set(key "texture_sample/normal.png")
+file(MAKE_DIRECTORY "${frozen}/texture_sample")
+file(COPY_FILE "${project}/${pending}/normal.png" "${frozen}/${key}")
+file(STRINGS "${project}/${pending}/catalog-source.txt" fragment)
+list(GET fragment 2 texture)
+string(REGEX MATCH "guid=([0-9a-f-]+)" matched "${texture}")
+set(guid "${CMAKE_MATCH_1}")
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/seed/assets/managed-catalog-source.txt" base)
+list(GET base 2 material)
+file(WRITE "assets/managed-catalog-source.txt"
+     "atlantis_asset_catalog_source_version: 1\nentry_count: 2\n${material}\n${texture}\n")
+file(READ "${CMAKE_CURRENT_LIST_DIR}/seed/assets/producers-Debug.txt" inventory)
+execute_process(COMMAND "${cooker}" --kind=texture "--source=${frozen}/${key}" "--asset-root=${frozen}"
+  "--output-dir=${CMAKE_CURRENT_BINARY_DIR}/assets" "--stamp=${asset}.stamp" --color-space=unorm
+  "--catalog-source=${CMAKE_CURRENT_BINARY_DIR}/assets/managed-catalog-source.txt" "--catalog-id=content:${key}"
+  COMMAND_ERROR_IS_FATAL ANY)
+file(STRINGS "${asset}.atex.catalog.txt" texture_catalog REGEX "^record:")
+string(REPLACE "${CMAKE_CURRENT_BINARY_DIR}/assets/" "assets/" texture_catalog "${texture_catalog}")
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/seed/asset_catalog.txt" material_catalog REGEX "^record:")
+set(records "${texture_catalog}" "${material_catalog}")
+list(SORT records)
+list(JOIN records "\n" records)
+file(CONFIGURE OUTPUT "asset_catalog.txt" CONTENT "atlantis_asset_catalog_version: 1\nrecord_count: 2\n${records}\n"
+  @ONLY NEWLINE_STYLE UNIX)
+file(CONFIGURE OUTPUT "assets/producers-Debug.txt" CONTENT
+  "${inventory}texture\tcontent\t${key}\t${guid}\tassets/texture_sample.stamp\t-\n" @ONLY NEWLINE_STYLE UNIX)
+file(READ "evidence-path.txt" script)
+execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=${asset}.atex"
+  "-Dmetadata=${asset}.atex.meta.txt" "-Devidence=${asset}.texture-evidence" "-Dstamp=${asset}.stamp"
+  -P "${script}" COMMAND_ERROR_IS_FATAL ANY)
+)cmake");
+
+  auto config = f.config();
+  const auto changeHeader = [inventory](const fs::path& root) {
+    const auto path = root / inventory;
+    auto bytes = read(path);
+    bytes.replace(bytes.find("\tfixture"), sizeof("\tfixture") - 1, "\tdifferent-checkout");
+    if (!(std::ofstream(path, std::ios::binary) << bytes)) throw std::runtime_error("Cannot change test header");
+  };
+  auto stage = ca::ImportStage::Validation;
+  auto code = ca::ImportFailureCode::InvalidOutput;
+  bool moved = false;
+  bool succeeds = false;
+  SECTION("unchanged inputs publish and activate") { succeeds = true; }
+  SECTION("changed prepared header refuses both renames") {
+    config.afterTexturePreparation = [&](const fs::path& dir, const fs::path&) { changeHeader(dir); };
+  }
+  SECTION("changed original fragment refuses both renames even when the entry still parses") {
+    stage = ca::ImportStage::Registration;
+    code = ca::ImportFailureCode::RegisterFailed;
+    config.afterTexturePreparation = [](const fs::path&, const fs::path& fragment) {
+      auto bytes = read(fragment);
+      bytes.replace(bytes.find("entry_count: 1"), sizeof("entry_count: 1") - 1, "entry_count: 01");
+      if (!(std::ofstream(fragment, std::ios::binary) << bytes)) throw std::runtime_error("Cannot change test fragment");
+    };
+  }
+  SECTION("ambiguous rename with an intact destination confirms publication") {
+    config.beforeTexturePublication = [&](const fs::path& from, const fs::path& to) { fs::rename(from, to); };
+    succeeds = true;
+  }
+  SECTION("ambiguous rename with a changed destination header refuses confirmation") {
+    config.beforeTexturePublication = [&](const fs::path& from, const fs::path& to) {
+      fs::rename(from, to);
+      changeHeader(to);
+    };
+    stage = ca::ImportStage::Publication;
+    code = ca::ImportFailureCode::PublishFailed;
+    moved = true;
+  }
+  auto opened = AssetRebuildHost::open(config);
+  INFO((opened.isErr() ? opened.error() : std::string{}));
+  REQUIRE(opened.isOk());
+  const auto admission = opened.value()->startTextureImport("sample", ca::ImportMode::Register, f.snapshot, kind);
+  REQUIRE(admission.isOk());
+  const auto limit = std::chrono::steady_clock::now() + 20s;
+  auto status = opened.value()->textureImportStatus(admission.value().id, kind);
+  while (status.isOk() && status.value().job && status.value().job->state == ca::RebuildState::Running &&
+         std::chrono::steady_clock::now() < limit) {
+    std::this_thread::sleep_for(20ms);
+    status = opened.value()->textureImportStatus(admission.value().id, kind);
+  }
+  REQUIRE(status.isOk());
+  REQUIRE(status.value().job);
+  const auto& job = *status.value().job;
+  INFO((job.failure ? job.failure->diagnostic : "no failure"));
+  CHECK(read(inbox) == pngBytes);
+  CHECK(fs::exists(registered / "texture_sample") == (moved || succeeds));
+  if (succeeds) {
+    REQUIRE(job.state == ca::RebuildState::Succeeded);
+    REQUIRE(job.generation);
+    CHECK_FALSE(status.value().workspaceNeedsRepair);
+    opened.value().reset();
+    config.generation = job.generation;
+    const auto activated = AssetRebuildHost::open(config);
+    INFO((activated.isErr() ? activated.error() : std::string{}));
+    REQUIRE(activated.isOk());
+  } else {
+    REQUIRE(job.state == ca::RebuildState::Failed);
+    REQUIRE(job.failure);
+    CHECK(job.failure->stage == stage);
+    CHECK(job.failure->code == code);
+    CHECK(job.failure->registration == (moved ? ca::RegistrationState::Committed : ca::RegistrationState::NotCommitted));
+    CHECK_FALSE(job.generation);
+    if (moved) CHECK(status.value().workspaceNeedsRepair);
+    else for (const auto& file : fs::directory_iterator(f.published))
+      CHECK_FALSE((file.is_directory() && !file.path().filename().string().starts_with(".pending-")));
+  }
+}

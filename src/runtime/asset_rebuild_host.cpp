@@ -1485,6 +1485,8 @@ struct AssetRebuildHost::State {
         return failJob(IS::Source, interrupted() ? IC::TimedOut : IC::InvalidSource, "Cannot access safe texture staging.");
       }
       std::error_code ec;
+      const auto fragmentPath = candidate / "catalog-source.txt";
+      std::string registrationFragment;
       if (!resume) {
         const auto inbox = fs::path("inbox") / fromUtf8(job.name) / "source.png";
         if (!exactTexturePath(project, inbox))
@@ -1507,9 +1509,9 @@ struct AssetRebuildHost::State {
         guid = newGuid();
         if (!guid) return failJob(IS::Registration, IC::RegisterFailed, "Cannot allocate the texture GUID.");
         expected.emplace(job.name, TextureUnit{*guid, *digest, work.kind});
-        const auto fragment = as::serializeAssetCatalogSource(
+        registrationFragment = as::serializeAssetCatalogSource(
             {{*guid, as::CatalogAssetType::Texture, as::CatalogRoot::Content, utf8(unit / leaf)}});
-        if (!writeText(project / candidate / "catalog-source.txt", fragment) ||
+        if (!writeText(project / fragmentPath, registrationFragment) ||
             !writeText(project / candidate / "source.sha256", *digest + "\n") ||
             !writeText(staging / kPendingSelection, utf8(candidate)))
           return failJob(IS::Source, IC::InvalidSource, "Cannot write private texture inputs.");
@@ -1558,9 +1560,14 @@ struct AssetRebuildHost::State {
             validating ? IC::InvalidOutput : IC::PublishFailed, preparation->failure.diagnostic);
       }
       prepared = std::get<Prepared>(std::move(result));
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.afterTexturePreparation) config.afterTexturePreparation(prepared->directory, project / fragmentPath);
+#endif
       const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs);
       const auto matchesPrepared = [&](const fs::path& directory) {
-        if (!realDirectory(directory)) return false;
+        if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
+        const auto frozenInventory = readText(directory / inventoryRelative);
+        if (!frozenInventory || inventoryHeader(*frozenInventory) != inventoryHeader(inventory)) return false;
         const auto frozen = readManagedView(directory, inventoryRelative);
         const auto catalog = readCatalog(directory);
         if (!frozen || *frozen != *view || !catalog || !outputFiles(directory, *catalog, *frozen) ||
@@ -1578,7 +1585,8 @@ struct AssetRebuildHost::State {
         registration = RS::Unknown;
       if (current != before || readRegistrations(project) != imports ||
           registeredMaterials(project) != materials ||
-          (!resume && readTextureUnit(project, candidate, job.name) != expected.at(job.name))) {
+          (!resume && (readTextureUnit(project, candidate, job.name) != expected.at(job.name) ||
+                       readMaterialText(project, fragmentPath) != registrationFragment))) {
         repair = true;
         return failJob(IS::Registration, IC::RegisterFailed, "The registered or private texture input changed.");
       }
@@ -1598,6 +1606,10 @@ struct AssetRebuildHost::State {
         }
         registration = RS::Committed;
       }
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.beforeTexturePublication)
+        config.beforeTexturePublication(prepared->directory, publication / as::toString(prepared->id.value));
+#endif
       if (!publish(*prepared)) {
         const auto destination = publication / as::toString(prepared->id.value);
         const auto attributes = GetFileAttributesW(destination.c_str());
