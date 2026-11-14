@@ -53,17 +53,23 @@ Resolve only the fixed, ordinary inbox file in the project. Reject unsafe
 paths, reparse points and noncanonical unit or file names. Copy bounded
 bytes to the job's private staging unit and cook that copy. The operator
 provides sRGB-authored color values. The managed cooker accepts actual
-8-bit RGB or RGBA single-image PNG, 1–2048 pixels on each axis, at most
-24 MiB encoded.
-Check the signature and header bounds before decoding, verify the decoded
-shape and reject malformed or unsupported inputs, including APNG. PNG profile and gamma
-chunks do not select a different output or trigger conversion. Preserve
-RGB sample values and RGBA alpha, supplying 255 for RGB. The existing
-opaque 0094 slot does not acquire transparency. Use the existing PNG
-decoder/cooker and its one-mip RGBA8 artifact with explicit `Srgb`.
+8-bit single-image PNG with IHDR color type 2 (RGB) or 6 (RGBA), 1–2048
+pixels on each axis and at most 24 MiB encoded. Validate signature, header,
+dimension and bounded chunk framing on the copied bytes before decoding.
+Reject APNG, CgBI and `tRNS` inputs. Use the existing decoder for pixels and
+reject decode failure or a decoded shape different from the checked header.
+ICC, gamma and other color description chunks are ignored for color
+interpretation. Preserve straight RGBA alpha and supply 255 for RGB.
+The existing opaque 0094 slot does not acquire transparency. Preserve
+encoded RGB samples in the one-mip RGBA8 artifact tagged `Srgb`.
+Vulkan samples RGB through the existing sRGB format. The 0094 base color
+factor stays linear.
 
 Commit an ordinary `registered/texture_<name>` unit containing
-`source.png` and a one-entry v1 catalog-source fragment. Its stable source
+`source.png`, a one-entry v1 catalog-source fragment and a private
+`source.sha256` seal containing the 64 lowercase hexadecimal digits of
+the PNG digest followed by a newline. Prepare all three before the
+directory rename. Its stable source
 key is `content:texture_<name>/source.png`. Mint one non-nil GUID at the
 host for Register and persist it in the fragment. Reject an occupied
 texture name without overwriting; same bytes under different names are
@@ -84,23 +90,36 @@ edges and add exactly one Texture with no dependencies on Register or
 Resume against a snapshot missing that unit. Verify the candidate's
 logical source key, GUID, producer, stamp, metadata, `Srgb`, RGBA8 layout,
 one mip and preview bounds, and tie the cooked result to the exact bounded
-PNG snapshot used by the producer. Reject unexpected catalog deltas.
+PNG snapshot used by the producer. Compare existing dependency sets as
+well as identity. The current identity-only check is insufficient.
 
 The opt-in build freezes the PNG it actually uses. Private manifest v4
-adds the frozen texture units, their producer membership and
-generation-relative input locations alongside the existing glTF and
-material information. Emit v4 when managed textures are present. Older manifests and
-seeds without texture metadata describe an empty managed texture set and
-retain their prior validation. Verify membership, path and cooked catalog
-agreement at activation. Use the same frozen PNG for cooking and
-publication and verify producer completion against that input. Keep
-frozen files generation-relative and compare contents in bounded chunks
-on the worker. Compare registered source bytes, keys and GUIDs against
-the selected snapshot before mutations and recheck at commit. A source change
-under an unchanged GUID is still an ahead or invalid registry. Committed
-texture sources are immutable in this feature. Managed Texture GUIDs
-refuse targeted rebuild with `UnsupportedProducer`; a clean build still
-cooks them from the committed source. A fresh opt-in build reads
+adds the frozen texture units alongside the existing glTF and material
+information. Each texture entry binds its logical key, GUID, safe
+generation-relative PNG path and SHA-256 to the completed producer and
+its cooked artifact and metadata digests. The producer records these
+digests after a successful cook and completes its stamp last. Missing or
+stale producer evidence fails validation. Use the frozen copy for cooking
+and verify the prepared generation's files before either rename. Emit v4
+when managed textures are present. Earlier manifests and seeds without
+texture metadata describe an empty managed texture set only when their
+producer view contains no managed textures. Preserve their prior
+validation. At activation, verify the selected generation or seed's
+membership, safe paths, digests and catalog using its own files,
+including when the current registry is ahead or requires repair. The
+configured seed build emits the same per-texture producer evidence
+without a publication manifest.
+
+Compare registered source contents, keys and GUIDs with the selected
+snapshot and verify the registered seal before mutations and at commit.
+The worker performs the streaming reads after admission and before build
+or disk mutation. Existing inexpensive admission checks may still refuse
+early; an ahead change discovered on the worker settles with the
+corresponding existing failure. A digest identifies checked
+content and never replaces the catalog GUID. An edited source under an
+unchanged GUID is an ahead or invalid registry. Registered sources are
+immutable in this feature. For a current, writable view, targeted rebuild
+of a managed Texture returns `UnsupportedProducer`. A fresh opt-in build cooks
 committed units only, including texture dependencies of managed materials.
 
 Publish via the existing no-replace registration and generation renames.
@@ -109,12 +128,15 @@ known registration commit, attempt publication even on orderly stop or
 deadline, under the existing commit guard. Use the existing offline repair
 procedure for uncertain settlement. Keep markers until the child settles
 and the private candidate/selection is retired. Incomplete generations
-are never selectable.
+are never selectable. A failed rename result must be reconciled under
+the locks against the expected registered unit or prepared generation.
+Return a generation ID only once the intended complete generation has
+been confirmed.
 
 | Outcome | Recovery |
 | --- | --- |
 | Clean refusal before registration | Retain the inbox input. After correction allow explicit Register retry. No source registration or selectable generation was added. |
-| Registered, publication failed | Return the original GUID. Resume reads the sole new committed texture ahead of the selected snapshot, never the inbox. It keeps the GUID, verifies the original registered unit and does not rewrite it. |
+| Registered, publication failed | Return the original GUID. After clean settlement or offline repair, Resume reads the sole new committed texture, verifies its registered seal, keeps its GUID and leaves the inbox and registration untouched. |
 | Publication confirmed | Return the selectable generation and original GUID. Cleanup failure retains success and blocks future writes until repair. |
 | Settlement unknown or process lost | Keep dirty markers when settlement is unverified. Use the retained job ID when available and inspect the registered unit and completed generations offline before any retry. |
 
@@ -131,11 +153,15 @@ existing profile and generation arguments.
 **R3. Shared import contract.** Add `assets.textureImport {name,mode}`
 with exact `Register` and `Resume` arms, and
 `assets.textureImportStatus {}` or `{jobId}` on `atlantis.remote/1`.
-Reuse 0086's typed import values and envelopes with a separate texture
-operation and receipt history. Start returns `Running` with canonical
-non-nil `jobId`, name and mode or a typed refusal. Status returns
-`activeGeneration` and `job`, both nullable. Keep one running and 16
-terminal texture receipts in memory. `Succeeded` adds `rootGuid` (the
+Reuse 0086's import job payload with a separately typed texture job ID
+and receipt history. A request uses `jobId`; the job payload uses `id`
+in all states, as in the existing glTF codec. Start returns `Running`
+with canonical non-nil `id`, name and mode or a typed refusal. Texture
+status returns nullable `activeGeneration` and `job` plus required
+`workspaceNeedsRepair`. The flag can accompany `Succeeded` when
+publication is confirmed but cleanup fails. Keep one running and 16
+terminal texture receipts in memory. An explicit missing ID returns
+`UnknownJob`, including after eviction or host restart. `Succeeded` adds `rootGuid` (the
 Texture GUID) and `generation`. `Failed` adds the existing import
 failure fields with the registered Texture GUID only for `Committed`.
 Keep 0086's error vocabulary, stage/code pairs, retry behavior and
@@ -143,8 +169,12 @@ Keep 0086's error vocabulary, stage/code pairs, retry behavior and
 missing input, `Pipeline/BuildFailed` for decoder rejection, and
 `Validation/InvalidOutput` or `Validation/IdentityConflict` for an
 invalid producer or catalog delta. Name/mode and explicit job ID
-correlation are mandatory. Latest is a hint, not a receipt. Disconnect
-does not cancel an admitted job and no client retries automatically.
+correlation are mandatory. A known ID remains the lookup key after a
+status transport failure. An invalid or lost admission reply leaves
+the result unknown and retains the texture name and mode for
+reconciliation. Latest can guide inspection and cannot establish
+ownership. Disconnect does not cancel an admitted job and no client
+retries automatically.
 After lock and repair checks, Register of an occupied texture name returns
 `NameConflict` before the ahead-registry check. Resume with no matching
 new registration returns `NothingToResume`. An otherwise eligible
@@ -153,19 +183,30 @@ registration with additional ahead changes returns `ActivationRequired`.
 Expose typed operations in both SDKs, `assets texture-import <name>
 [--resume]` and `assets texture-import-status [<JobId>]` in CLI, and
 `assets.texture_import` and `assets.texture_import_status` in MCP
-through the C# SDK. Preserve the terminal failure payload while returning
-a nonzero CLI or MCP tool error. Only the exact existing legacy
-`BadRequest` / `unknown or malformed asset query` for either well-formed
-new call maps to `Unsupported`. Old clients continue to use unchanged
+through the C# SDK. Preserve the terminal failure payload and use a
+nonzero CLI exit code or MCP tool error. Reject missing, extra or repeated
+members and incorrect reply IDs or outcome arms for the new operations.
+Only the exact existing legacy `BadRequest` /
+`unknown or malformed asset query` in a valid correlated envelope for
+either well-formed new call maps to `Unsupported` and keeps the connection
+usable. Other invalid or lost replies keep the existing transport or
+protocol error category. Old clients continue to use unchanged
 methods and discover activated textures as ordinary Texture records.
-A host without the opt-in returns `Unavailable`; there is no implicit
-conversion to glTF import or fallback to another mutating call.
+This client compatibility does not make v4 generations readable by
+pre-0095 executables. A host without the opt-in returns `Unavailable`.
+There is no implicit conversion to glTF import or fallback to another
+mutating call.
 
 **R4. Bind, preview and reopen.** Add an Import Texture action in Assets
 using logical inbox name, explicit Register/Resume, correlated status and
 restart guidance. Follow 0093's layout and status styles. Explain the fixed
-sRGB interpretation. Reuse the disposal and replaced-session guards from
-the existing import UI. Keep the material chooser on `assets.list/get`.
+sRGB interpretation. Retain the known texture job ID or unknown target
+when leaving the Assets tab. Ignore replaced-session or unrelated job
+callbacks. A known failed registration may be retried explicitly.
+Committed failure offers Resume only when the status allows writes.
+Unknown results direct the user to durable inspection and a repair
+flag takes precedence over mutation. Keep the material chooser on
+`assets.list/get`.
 A Texture row is a candidate. The existing shared material preview and
 save checks determine base color eligibility from the cooked dependency.
 No bulk decoding, new metadata query or Editor-only eligibility rule is
@@ -176,10 +217,11 @@ does not bind it or modify the scene, Runtime or history.
 After activating the texture generation, choose its GUID in the existing
 0094 Base texture field on a managed material. Use the existing draft preview
 with one compatible mesh. The Save & Publish action uses the existing
-material write with its original recipe/generation guard; Edit preserves
-the material GUID and replaces its sole direct texture dependency with the
-chosen GUID. Verify both the saved recipe and catalog edge in the published
-generation. Existing preview admission, late reply guards, cancel and
+material write with its original recipe/generation guard. Edit preserves
+the material GUID, sampler and other recipe values when only the texture
+is changed. It replaces the old direct dependency with the chosen GUID.
+Verify the saved recipe and catalog edge in the published generation.
+Existing preview admission, late reply guards, cancel and
 failure behavior apply. Explicitly restart into the material generation.
 Reopen a saved scene referencing that material and verify its unchanged
 reference and changed rendered appearance. Independently build and open
@@ -190,9 +232,12 @@ generation override.
 
 Windows opt-in publishing only. Keep source I/O and cook/build/publication
 off the frame thread. Reuse existing preview GPU work, isolation and
-terminal drain. Add no idle work, external dependency, texture/material/scene
-artifact format, shader changes or RenderGraph/RHI interface. The changed
-private manifest is versioned separately.
+terminal drain. Use the existing CMake SHA-256 operation in the managed
+producer and the Windows SDK's CNG SHA-256 in the executable-private
+verifier. Keep the cooker and Asset System free of Windows APIs.
+Add no idle work, third-party dependency, texture/material/scene artifact
+format, shader changes or RenderGraph/RHI interface. The private
+manifest is versioned separately.
 
 ## Proposed Design
 

@@ -35,10 +35,10 @@ generation and in an independent saved-scene build.
   Reuse Asset System's texture and metadata support. Changes to Asset
   System headers or source, if needed, are limited to CPU-side input or
   cooked texture validation.
-- Executable-private `src/runtime/{asset_rebuild_host.*,asset_host.*}`
-  and a private helper if needed for bounded PNG preparation, registry and
-  manifest checks. Existing RuntimeHost renderer and frame loop need no
-  changes.
+- Executable-private `src/runtime/{asset_rebuild_host.*,asset_host.*,CMakeLists.txt}`
+  and a private helper if needed for bounded PNG preparation, CNG verification,
+  registry and manifest checks. Existing RuntimeHost renderer and frame loop
+  need no changes.
 - Connection asset interface/values, Remote client/server, native SDK
   asset facade, CLI assets commands, C# SDK assets API and codec, and MCP
   tool registry/schema. Use current package and protocol policies.
@@ -62,7 +62,7 @@ open, and [0092](../specs/0092-mesh-material-preview.md),
 | Decision | Recommendation |
 | --- | --- |
 | **J1. Source and color** | Approve one logical inbox PNG, 8-bit RGB/RGBA, up to 2048 per axis and 24 MiB, with fixed sRGB interpretation and the existing one-mip output. |
-| **J2. Identity and recovery** | Approve immutable texture registration with a stable GUID, versioned frozen sources, one worker slot, registration before publication and explicit Resume or offline repair. |
+| **J2. Identity and recovery** | Approve a sealed immutable registration with a stable GUID, v4 producer evidence, one worker slot, registration before publication and explicit Resume or offline repair. |
 | **J3. Shared contract and binding** | Approve the two additive import methods and reuse of the 0094 base texture field, preview and material save. Require explicit activation after each publication. |
 | **J4. Acceptance and delivery** | Approve real Windows 100% UI acceptance, an independent saved-scene build, both client version directions and the applicable GPU and performance gates. |
 
@@ -75,30 +75,38 @@ implementation PR. Final merge remains human.
 
 - [ ] **R1. Input and producer.** Cook known RGB/RGBA fixtures and verify
   sample bytes, alpha, sRGB metadata, one mip and preview eligibility.
-  Check invalid signature/contents, unsupported channel or bit depth,
-  input and dimension bounds before decoding, and unsafe/noncanonical
+  Use an intermediate RGB value to distinguish sRGB sampling from linear
+  sampling. Check metadata tags leave sample bytes unchanged. Cover RGB
+  alpha 255 and RGBA alpha preservation in an opaque material.
+  Check invalid/truncated framing, unsupported channel or bit depth,
+  APNG, CgBI and tRNS, input and dimension bounds before decoding, and unsafe/noncanonical
   inbox paths. Verify clean configure-only staging, stable GUID/key across
   clean builds, separate namespaces and collision refusal against
   checked-in, managed and generated identities. Exercise normal opt-in and
   Saved Scenes configuration with registered texture and material units.
 - [ ] **R2. Publication and recovery.** Verify exact whole-catalog identity
-  and dependency deltas, frozen-source agreement and historical generation
-  compatibility. Check job contention with glTF, material and rebuild, and
+  and dependency deltas. Swap or change the frozen PNG, artifact and
+  metadata independently and verify seed/generation rejection. Check a
+  pre-v4 generation against a workspace that has since added textures.
+  Check job contention with glTF, material and rebuild, and
   with a second workspace owner. Exercise refusal before registration,
   interruption around registration, known committed failure before
   publication, unverified settlement, and confirmed publication with
   cleanup failure. Verify repair markers, lost receipt recovery, explicit
-  Resume from committed source with the inbox removed, rejection of
-  multiple ahead units or changed active bytes, refusal of a targeted
+  Resume from committed source with the inbox removed, refusal for changed
+  bytes after registration even before first activation, rejection of
+  multiple ahead changes including glTF/material Resume while a texture
+  is ahead, refusal of a targeted
   managed texture rebuild, and activation under the same GUID. Check old
   Runtime artifacts and the first old catalog query
   after publication. Test malformed frozen paths/metadata and unexpected
   dependency changes.
 - [ ] **R3. Shared compatibility.** Check exact request/reply shapes,
-  name/mode/job correlation, unknown versus evicted receipt behavior,
-  independently retained glTF and texture status, legacy exact fallback
-  and lookalike failures. Run all four shared clients against a supported
-  Runtime for typed read, admission, status and refusal. Verify unchanged
+  name/mode/job correlation, lost admission and status transport errors,
+  evicted receipt behavior, independently retained glTF and texture
+  status, success with repair required, legacy exact fallback and lookalike
+  failures. Run CLI, both SDKs and MCP against a supported Runtime for
+  discovery and matching admission, status and refusal. Verify unchanged
   older-client discovery and legacy operations against the new Runtime, and
   new-client refusals against the older Runtime and a host without opt-in.
 - [ ] **R4. Windows workflow.** In an opted-in Editor, import a PNG whose
@@ -107,13 +115,19 @@ implementation PR. Final merge remains human.
   history. Explicitly activate, select the texture in the existing Base
   texture field, preview and compare to the previous texture. Exercise a
   missing or incompatible dependency, keep the draft and retry explicitly.
-  Publish the edit, verify the new catalog edge preserves the material
-  GUID, restart and reopen a saved scene referencing it. Verify the stored
-  GUID and rendered result. Build the same scene through Saved Scenes
+  Use a saved scene with an existing material reference. Publish the edit
+  and verify the previous texture edge is absent, the new one is present
+  and the material GUID and other recipe values are unchanged. Restart and
+  reopen the scene without editing its material reference. Compare the
+  rendered result with the pre-edit scene at the same camera and settings.
+  Build the same scene through Saved Scenes
   using the committed root, open in an independent Editor and verify the
   recipe/edge and rendered result from its own build without a generation
-  override. At actual Windows 100% scaling, capture standard and compact
-  layouts and check focus, long diagnostics, waiting and failure.
+  override. At actual Windows 100% scaling, capture the standard and
+  compact Assets import and material layouts. In both sizes check keyboard
+  focus, long diagnostics, Save/Register/Resume reachability and controls
+  during waiting and failure. Record the scale, size and status with the
+  screenshots.
 - [ ] **Applicable gates.** Build and run affected Windows native and
   managed suites. Build Android if shared Asset System changes. Run
   windowed and headless affected Vulkan paths cleanly, retain existing
