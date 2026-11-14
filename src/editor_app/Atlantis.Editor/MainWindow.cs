@@ -1166,7 +1166,7 @@ public sealed class MainWindow : Window
                 EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
             _importState,
             EditorVisuals.Disclosure("Import Texture", EditorVisuals.Stack(4,
-                EditorVisuals.Secondary("Place one base color PNG in inbox/<name>/source.png. RGB is interpreted as sRGB."),
+                EditorVisuals.Secondary("Place one PNG in inbox/<name>/source.png."),
                 _textureKind, _textureFormat, _textureName,
                 EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
                 _textureState)),
