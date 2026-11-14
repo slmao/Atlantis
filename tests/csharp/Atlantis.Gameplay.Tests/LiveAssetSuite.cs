@@ -361,6 +361,26 @@ public static class LiveAssetSuite
                     "packed: correlated old peer refusal is the only compatibility fallback");
             }, expectedPreviews: 0);
 
+        WithPeer(t, id, method => method == "assets.materialSaveWithMetallicRoughness" ? null :
+            throw new InvalidOperationException(method), client =>
+        {
+            var error = t.Throws<RemoteException>(() =>
+                client.Assets.MaterialSaveWithMetallicRoughness(new A.MaterialSave.Create("packed_material", values)),
+                "packed: lost save receipt throws");
+            t.Check(error?.Error == RemoteError.Disconnected && error.Message.Contains("packed_material") &&
+                error.Message.Contains("outcome unknown") && error.Message.Contains("settled"),
+                "packed: lost save preserves category, target and recovery guidance");
+        }, expectedPreviews: 0);
+        WithPeer(t, id, method => method == "assets.metallicRoughnessImport" ? null :
+            throw new InvalidOperationException(method), client =>
+        {
+            var error = t.Throws<RemoteException>(() => client.Assets.MetallicRoughnessImport("packed_texture"),
+                "packed: lost registration receipt throws");
+            t.Check(error?.Error == RemoteError.Disconnected && error.Message.Contains("packed_texture") &&
+                error.Message.Contains("outcome unknown") && error.Message.Contains("settlement"),
+                "packed: lost registration preserves category, target and recovery guidance");
+        }, expectedPreviews: 0);
+
         var lookalike = Json.Parse("""{"result":{"err":"Unsupported"}}""");
         WithPeer(t, id, method => method == "assets.previewMaterialDraftWithMetallicRoughness" ? lookalike :
             throw new InvalidOperationException(method), client =>
