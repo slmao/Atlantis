@@ -26,6 +26,7 @@ class AssetRebuildHost {
     std::chrono::steady_clock::duration timeout = std::chrono::minutes(30);
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
     std::function<void(const std::filesystem::path&)> afterMaterialPreparation{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeMaterialPublication{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTexturePreparation{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeTexturePublication{};
 #endif

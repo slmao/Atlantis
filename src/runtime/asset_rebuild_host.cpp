@@ -1357,18 +1357,25 @@ struct AssetRebuildHost::State {
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.afterMaterialPreparation) config.afterMaterialPreparation(prepared->directory);
 #endif
-      std::lock_guard commit(publicationCommit);
-      const auto& directory = prepared->directory;
-      const auto frozen = realDirectory(directory) ? readManagedView(directory, inventoryRelative) : std::nullopt;
-      const auto publishedCatalog = frozen ? readCatalog(directory) : std::nullopt;
       const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView);
-      // Verify the files the rename will publish, including the copied material
-      // artifacts and catalog edges, before mutating the committed registry.
-      if (!frozen || *frozen != *view || !publishedCatalog || !outputFiles(directory, *publishedCatalog, *frozen) ||
-          materialInputs(directory, *frozen) != expected || !matchesManagedCatalog(*publishedCatalog, *frozen) ||
-          !matchesFrozenMaterials(*publishedCatalog, expected) || !expectedDelta(*publishedCatalog) ||
-          !safeRelative(directory, fs::path(kManifest)) || readJson(directory / kManifest) != expectedManifest)
-        return failJob(MS::Validation, MC::InvalidOutput, "The prepared generation differs from the intended material source or catalog.");
+      const auto matchesPrepared = [&](const fs::path& directory) {
+        if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
+        const auto frozenInventory = readText(directory / inventoryRelative);
+        if (!frozenInventory || inventoryHeader(*frozenInventory) != inventoryHeader(inventory)) return false;
+        const auto frozen = readManagedView(directory, inventoryRelative);
+        const auto catalog = frozen ? readCatalog(directory) : std::nullopt;
+        if (!frozen || *frozen != *view || !catalog || !outputFiles(directory, *catalog, *frozen) ||
+            materialInputs(directory, *frozen) != expected || !matchesManagedCatalog(*catalog, *frozen) ||
+            !matchesFrozenMaterials(*catalog, expected) || !expectedDelta(*catalog)) return false;
+        const auto copied = textureInputs(directory, *frozen, *catalog);
+        return copied && safeRelative(directory, fs::path(kManifest)) &&
+            readJson(directory / kManifest) == expectedManifest &&
+            manifest(owner, prepared->id, *frozen, inventoryRelative, expected, *copied) == expectedManifest;
+      };
+
+      std::lock_guard commit(publicationCommit);
+      if (!matchesPrepared(prepared->directory))
+        return failJob(MS::Validation, MC::InvalidOutput, "The prepared generation differs from the intended material source, catalog or texture evidence.");
       if (interrupted()) return failJob(MS::SourceCommit, MC::TimedOut, "Material job stopped before commit.");
       if (registeredMaterials(project) != before || readRegistrations(project) != imports ||
           registeredTextures(project) != activeTextures) {
@@ -1390,12 +1397,13 @@ struct AssetRebuildHost::State {
         }
         sourceState = RS::Committed;
       }
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.beforeMaterialPublication)
+        config.beforeMaterialPublication(prepared->directory, publication / as::toString(prepared->id.value));
+#endif
       if (!publish(*prepared)) {
         const auto destination = publication / as::toString(prepared->id.value);
-        const auto manifestPath = destination / kManifest;
-        if (realDirectory(destination) && safeRelative(destination, fs::path(kManifest)) &&
-            readJson(manifestPath) == expectedManifest &&
-            !realDirectory(prepared->directory)) {
+        if (!realDirectory(prepared->directory) && matchesPrepared(destination)) {
           job.generation = prepared->id;
         } else {
           const DWORD attributes = GetFileAttributesW(destination.c_str());
