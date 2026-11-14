@@ -166,10 +166,7 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
-  // Plan 0042 Milestone 1, moved by Plan 0046 Milestone 1: this literal
-  // must name a value still genuinely unsupported now that 9 (this round's
-  // own bump) is valid -- 10 here, not 9.
-  bytes[8] = std::byte{0x0A};  // schemaVersion's low byte, offset 8: 9 -> 10 (unsupported)
+  bytes[8] = std::byte{0x0B};  // schemaVersion's low byte, offset 8
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnsupportedSchemaVersion);

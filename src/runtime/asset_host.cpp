@@ -125,7 +125,8 @@ struct AssetHost::State final : connection::AssetConnection {
     }
     const auto& maps = textures.value();
     return preview_.renderPair(meshGuid, materialGuid, mesh.value(), mat, maps.base,
-                               maps.normal ? &*maps.normal : nullptr, maps.emissive ? &*maps.emissive : nullptr);
+                               maps.normal ? &*maps.normal : nullptr, maps.emissive ? &*maps.emissive : nullptr,
+                               maps.packed ? &*maps.packed : nullptr);
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
@@ -161,11 +162,23 @@ struct AssetHost::State final : connection::AssetConnection {
     return rebuild_ ? rebuild_->textureImportStatus(id, AssetRebuildHost::TextureKind::Normal)
                     : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
   }
+  ac::TextureImportStartResult metallicRoughnessImport(std::string_view name, ac::ImportMode mode) override {
+    if (!rebuild_) return ac::TextureImportStartResult::Err(ac::ImportError::Unavailable);
+    initialize();
+    return rebuild_->startTextureImport(name, mode, catalog_, AssetRebuildHost::TextureKind::MetallicRoughness);
+  }
+  ac::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return rebuild_ ? rebuild_->textureImportStatus(id, AssetRebuildHost::TextureKind::MetallicRoughness)
+                    : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
+  }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
     return readMaterial(guid, ac::MaterialRecipeVersion::Basic);
   }
   ac::MaterialReadResult materialReadWithMaps(const as::AssetGuid& guid) const override {
     return readMaterial(guid, ac::MaterialRecipeVersion::WithMaps);
+  }
+  ac::MaterialReadResult materialReadWithMetallicRoughness(const as::AssetGuid& guid) const override {
+    return readMaterial(guid, ac::MaterialRecipeVersion::WithMetallicRoughness);
   }
   ac::MaterialReadResult readMaterial(const as::AssetGuid& guid, ac::MaterialRecipeVersion version) const {
     using R = ac::MaterialReadResult;
@@ -186,6 +199,11 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithMaps);
   }
+  ac::MaterialSaveResult materialSaveWithMetallicRoughness(const ac::MaterialSave& request) override {
+    if (!rebuild_) return ac::MaterialSaveResult::Err(ac::MaterialError::Unavailable);
+    initialize();
+    return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithMetallicRoughness);
+  }
   ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
     return rebuild_ ? rebuild_->materialStatus(id) : ac::MaterialStatusResult::Err(ac::MaterialError::Unavailable);
   }
@@ -193,14 +211,21 @@ struct AssetHost::State final : connection::AssetConnection {
                                                      const ac::MaterialRecipe& recipe) override {
     if (!ac::basicMaterialValues(recipe.values))
       return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
-    return previewMaterialDraftWithMaps(guid, recipe);
+    if (!preview_.renderPair) return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::Unsupported);
+    return previewMaterialDraftWithMetallicRoughness(guid, recipe);
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    if (recipe.values.metallicRoughnessMap)
+      return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
+    return previewMaterialDraftWithMetallicRoughness(guid, recipe);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
     using E = ac::MaterialError;
     using R = ac::MaterialDraftPreviewResult;
     if (guid == as::AssetGuid{} || !ac::validMaterialRecipe(recipe)) return R::Err(E::InvalidRecipe);
-    if (!preview_.renderPair) return R::Err(E::Unsupported);
+    if (!preview_.renderPair) return R::Err(E::Unavailable);
     if (!preview_.available || !preview_.available()) return R::Err(E::Unavailable);
     if (std::exchange(previewAdmitted_, true)) return R::Err(E::Busy);
     initialize();
@@ -218,7 +243,8 @@ struct AssetHost::State final : connection::AssetConnection {
     // A draft has no persistent material identity.
     auto image = preview_.renderPair(guid, {}, mesh.value(), material_authoring::previewData(recipe), maps.base,
                                      maps.normal ? &*maps.normal : nullptr,
-                                     maps.emissive ? &*maps.emissive : nullptr);
+                                     maps.emissive ? &*maps.emissive : nullptr,
+                                     maps.packed ? &*maps.packed : nullptr);
     if (image.isOk()) return R::Ok({guid, recipe, std::move(image.value().png)});
     using Pair = ac::MeshMaterialPreviewError;
     if (image.error() == Pair::Unavailable) return R::Err(E::Unavailable);
@@ -275,6 +301,22 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
     return host_.previewMaterialDraftWithMaps(guid, recipe);
+  }
+  ac::TextureImportStartResult metallicRoughnessImport(std::string_view name, ac::ImportMode mode) override {
+    return host_.metallicRoughnessImport(name, mode);
+  }
+  ac::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return host_.metallicRoughnessImportStatus(id);
+  }
+  ac::MaterialReadResult materialReadWithMetallicRoughness(const as::AssetGuid& guid) const override {
+    return host_.materialReadWithMetallicRoughness(guid);
+  }
+  ac::MaterialSaveResult materialSaveWithMetallicRoughness(const ac::MaterialSave& request) override {
+    return host_.materialSaveWithMetallicRoughness(request);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return host_.previewMaterialDraftWithMetallicRoughness(guid, recipe);
   }
  private:
   connection::AssetConnection& host_;

@@ -124,6 +124,10 @@ void android_main(struct android_app* app) {
       assetManager, internalDataPath, "shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.vert.spv");
   config.pbrDirectLitNormalMapVertexShaderReflectionPath = extractAsset(
       assetManager, internalDataPath, "shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.vert.refl.json");
+  config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_direct_lit_metallic_roughness/pbr_direct_lit_metallic_roughness.frag.spv");
+  config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath = extractAsset(
+      assetManager, internalDataPath, "shaders/pbr_direct_lit_normal_map_metallic_roughness/pbr_direct_lit_normal_map_metallic_roughness.frag.spv");
   config.pbrDirectLitNormalMapFragmentShaderSpirvPath = extractAsset(
       assetManager, internalDataPath, "shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.frag.spv");
   config.pbrDirectLitNormalMapFragmentShaderReflectionPath = extractAsset(

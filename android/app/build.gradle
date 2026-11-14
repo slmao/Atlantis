@@ -47,6 +47,8 @@ def namedAssetRelativePaths = [
   'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.vert.refl.json',
   'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.frag.spv',
   'shaders/pbr_direct_lit_normal_map/pbr_direct_lit_normal_map.frag.refl.json',
+  'shaders/pbr_direct_lit_metallic_roughness/pbr_direct_lit_metallic_roughness.frag.spv',
+  'shaders/pbr_direct_lit_normal_map_metallic_roughness/pbr_direct_lit_normal_map_metallic_roughness.frag.spv',
   'assets/ibl_studio.aenv',
   'assets/ibl_studio.aenv.meta.txt',
   'shaders/pbr_ibl/pbr_ibl.vert.spv',

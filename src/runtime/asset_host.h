@@ -25,7 +25,7 @@ class AssetHost {
         const asset_system::AssetGuid&, const asset_system::AssetGuid&,
         const asset_system::StaticMeshAssetData&, const asset_system::MaterialAssetData&,
         const asset_system::TextureAssetData&, const asset_system::TextureAssetData*,
-        const asset_system::TextureAssetData*)> renderPair{};
+        const asset_system::TextureAssetData*, const asset_system::TextureAssetData*)> renderPair{};
   };
   explicit AssetHost(std::string catalogPath, AssetRebuildHost* rebuild = nullptr, PreviewProvider preview = {});
   ~AssetHost();

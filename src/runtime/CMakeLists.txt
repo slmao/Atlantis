@@ -225,6 +225,8 @@ target_compile_definitions(atlantis_runtime PRIVATE
   # ATLANTIS_RUNTIME_PBR_DIRECT_LIT_SHADER_DIR/ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR's
   # own sourcing exactly.
   ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_METALLIC_ROUGHNESS_SHADER_DIR="${ATLANTIS_pbr_direct_lit_metallic_roughness_SHADER_OUTPUT_DIR}"
+  ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_METALLIC_ROUGHNESS_SHADER_DIR="${ATLANTIS_pbr_direct_lit_normal_map_metallic_roughness_SHADER_OUTPUT_DIR}"
   ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR="${ATLANTIS_pbr_ibl_normal_map_SHADER_OUTPUT_DIR}"
   # Plan 0035 Milestone 2 (ADR-0081): PbrClearcoat's own two IBL-lit
   # shader pairs' own output directories -- reuse the already-exported
@@ -312,6 +314,7 @@ target_compile_definitions(atlantis_runtime PRIVATE
 add_dependencies(atlantis_runtime minimal_mesh_shaders textured_quad_shaders lit_textured_shaders
   pbr_direct_lit_shaders pbr_ibl_shaders output_transform_unorm_shaders output_transform_srgb_shaders sky_shaders
   shadow_cast_shaders pbr_direct_lit_normal_map_shaders pbr_ibl_normal_map_shaders
+  pbr_direct_lit_metallic_roughness_shaders pbr_direct_lit_normal_map_metallic_roughness_shaders
   pbr_clearcoat_ibl_shaders pbr_clearcoat_ibl_normal_map_shaders
   pbr_sheen_ibl_shaders pbr_sheen_ibl_normal_map_shaders
   pbr_anisotropic_ibl_shaders pbr_anisotropic_ibl_normal_map_shaders

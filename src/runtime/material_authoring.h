@@ -34,6 +34,7 @@ struct RecipeTextures {
   as::TextureAssetData base;
   std::optional<as::TextureAssetData> normal;
   std::optional<as::TextureAssetData> emissive;
+  std::optional<as::TextureAssetData> packed;
 };
 
 inline Result<RecipeTextures, ca::MaterialError> textures(
@@ -41,20 +42,37 @@ inline Result<RecipeTextures, ca::MaterialError> textures(
   using E = ca::MaterialError;
   using R = Result<RecipeTextures, E>;
   if (slot) *slot = "Base color";
+  const auto isPacked = [&](const as::AssetGuid& guid) {
+    const auto* record = catalog.find(guid);
+    return record && as::isMetallicRoughnessSource(record->source);
+  };
+  if (isPacked(values.texture)) return R::Err(E::UnsupportedMaterial);
   auto base = texture(catalog, values.texture);
   if (base.isErr()) return R::Err(base.error());
-  RecipeTextures result{std::move(base.value()), {}, {}};
+  RecipeTextures result{std::move(base.value()), {}, {}, {}};
   if (values.normalMap) {
     if (slot) *slot = "Normal map";
+    if (isPacked(*values.normalMap)) return R::Err(E::UnsupportedMaterial);
     auto normal = texture(catalog, *values.normalMap, as::TextureColorSpace::Unorm);
     if (normal.isErr()) return R::Err(normal.error());
     result.normal = std::move(normal.value());
   }
   if (values.emissiveTexture && *values.emissiveTexture != values.texture) {
     if (slot) *slot = "Emissive texture";
+    if (isPacked(*values.emissiveTexture)) return R::Err(E::UnsupportedMaterial);
     auto emissive = texture(catalog, *values.emissiveTexture);
     if (emissive.isErr()) return R::Err(emissive.error());
     result.emissive = std::move(emissive.value());
+  }
+  if (values.metallicRoughnessMap) {
+    if (slot) *slot = "Metallic–Roughness map";
+    const auto& guid = *values.metallicRoughnessMap;
+    if (!catalog.find(guid)) return R::Err(E::DependencyUnavailable);
+    if (!isPacked(guid)) return R::Err(E::UnsupportedMaterial);
+    auto packed = texture(catalog, guid, as::TextureColorSpace::Unorm);
+    if (packed.isErr()) return R::Err(packed.error());
+    if (packed.value().mipCount != 1) return R::Err(E::UnsupportedMaterial);
+    result.packed = std::move(packed.value());
   }
   return R::Ok(std::move(result));
 }
@@ -64,20 +82,25 @@ inline std::optional<ca::MaterialValues> cookedValues(
   const auto* base = catalog.find(mat.textureAsset);
   const auto* normal = mat.normalMapTexture ? catalog.find(mat.normalMapTexture) : nullptr;
   const auto* emissive = mat.emissiveTexture ? catalog.find(mat.emissiveTexture) : nullptr;
-  if (!base || (mat.normalMapTexture && !normal) || (mat.emissiveTexture && !emissive)) return {};
+  const auto* packed = mat.metallicRoughnessMap ? catalog.find(mat.metallicRoughnessMap) : nullptr;
+  if (!base || (mat.normalMapTexture && !normal) || (mat.emissiveTexture && !emissive) ||
+      (mat.metallicRoughnessMap && !packed)) return {};
   std::vector<as::AssetGuid> dependencies{base->guid};
   if (normal) dependencies.push_back(normal->guid);
   if (emissive && emissive->guid != base->guid) dependencies.push_back(emissive->guid);
+  if (packed) dependencies.push_back(packed->guid);
+  std::ranges::sort(dependencies);
+  dependencies.erase(std::unique(dependencies.begin(), dependencies.end()), dependencies.end());
   if (!std::ranges::is_permutation(record.dependencies, dependencies)) return {};
   return ca::MaterialValues{base->guid, {mat.baseColorFactor[0], mat.baseColorFactor[1], mat.baseColorFactor[2]},
       mat.metallicFactor, mat.roughnessFactor, normal ? std::optional{normal->guid} : std::nullopt,
       emissive ? std::optional{emissive->guid} : std::nullopt,
-      {mat.emissiveFactor[0], mat.emissiveFactor[1], mat.emissiveFactor[2]}};
+      {mat.emissiveFactor[0], mat.emissiveFactor[1], mat.emissiveFactor[2]}, packed ? std::optional{packed->guid} : std::nullopt};
 }
 
 inline Result<ca::MaterialRecipe, ca::MaterialError> read(
     const as::AssetCatalog& catalog, const as::AssetGuid& guid,
-    ca::MaterialRecipeVersion version = ca::MaterialRecipeVersion::WithMaps) {
+    ca::MaterialRecipeVersion version = ca::MaterialRecipeVersion::WithMetallicRoughness) {
   using E = ca::MaterialError;
   using R = Result<ca::MaterialRecipe, E>;
   const auto* record = catalog.find(guid);
@@ -96,6 +119,7 @@ inline Result<ca::MaterialRecipe, ca::MaterialError> read(
     return R::Err(E::UnsupportedMaterial);
   const auto values = cookedValues(catalog, *record, mat);
   if (!values) return R::Err(E::DependencyUnavailable);
+  if (!ca::representsMaterialValues(*values, version)) return R::Err(E::UnsupportedMaterial);
   if (auto loadedTextures = textures(catalog, *values); loadedTextures.isErr()) return R::Err(loadedTextures.error());
   const ca::MaterialRecipe recipe{*values,
       mat.filter == as::MaterialSamplerFilter::Linear ? ca::MaterialFilter::Linear : ca::MaterialFilter::Nearest,
@@ -117,6 +141,7 @@ inline as::ParsedMaterialSource source(const ca::MaterialRecipe& recipe) {
   out.roughnessFactor = recipe.values.roughness;
   out.normalMapAsset = recipe.values.normalMap;
   out.emissiveTextureAsset = recipe.values.emissiveTexture;
+  out.metallicRoughnessMapAsset = recipe.values.metallicRoughnessMap;
   std::ranges::copy(recipe.values.emissiveFactor, out.emissiveFactor);
   return out;
 }
@@ -140,6 +165,7 @@ inline as::MaterialAssetData previewData(const ca::MaterialRecipe& recipe) {
   out.roughnessFactor = input.roughnessFactor;
   if (input.normalMapAsset) out.normalMapTexture = as::assetKey(*input.normalMapAsset);
   if (input.emissiveTextureAsset) out.emissiveTexture = as::assetKey(*input.emissiveTextureAsset);
+  if (input.metallicRoughnessMapAsset) out.metallicRoughnessMap = as::assetKey(*input.metallicRoughnessMapAsset);
   std::ranges::copy(recipe.values.emissiveFactor, out.emissiveFactor);
   return out;
 }

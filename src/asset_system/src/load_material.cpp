@@ -54,8 +54,7 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   const DecodedMaterialArtifact& artifact = artifactResult.value();
   const MaterialMetadata& metadata = metadataResult.value();
 
-  // A successful decode proves the artifact has the current schema.
-  if (expected && (expected->artifactSchema != kMaterialArtifactSchemaVersion ||
+  if (expected && (expected->artifactSchema != artifact.schemaVersion ||
                    expected->guid != metadata.assetGuid || expected->assetId != metadata.assetId)) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
@@ -113,7 +112,8 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   }
   // Plan 0046 Milestone 1 (ADR-0096): emissiveTexture cross-validated
   // identically.
-  if (artifact.emissiveTexture != metadata.emissiveTexture) {
+  if (artifact.emissiveTexture != metadata.emissiveTexture ||
+      artifact.metallicRoughnessMap != metadata.metallicRoughnessMap) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
 
@@ -143,20 +143,22 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   data.alphaMode = artifact.alphaMode;
   data.alphaCutoff = artifact.alphaCutoff;
   data.emissiveTexture = artifact.emissiveTexture;
+  data.metallicRoughnessMap = artifact.metallicRoughnessMap;
   return ResultT::Ok(std::move(data));
 }
 
 }  // namespace
 
 atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(
-    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath,
+    const AssetCatalogRecord* expected) {
   using ResultT = atlantis::Result<MaterialAssetData, MaterialLoadError>;
   std::vector<std::byte> artifactBytes;
   if (!readFileBytes(artifactPath, artifactBytes)) return ResultT::Err(MaterialLoadError::ArtifactFileUnreadable);
 
   std::string metadataText;
   if (!readFileText(metadataPath, metadataText)) return ResultT::Err(MaterialLoadError::MetadataFileUnreadable);
-  return decodeLoadedMaterial(artifactBytes, metadataText);
+  return decodeLoadedMaterial(artifactBytes, metadataText, expected);
 }
 
 atlantis::Result<MaterialAssetData, PreviewArtifactLoadError> loadPreviewMaterialAsset(

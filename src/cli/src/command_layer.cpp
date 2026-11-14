@@ -759,12 +759,15 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     namespace ca = connection::assets;
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
     auto verb = t.size() > 1 ? t[1] : std::string_view{};
-    constexpr std::string_view suffix = "-with-maps";
-    const bool withMaps = verb.ends_with(suffix);
-    if (withMaps) verb.remove_suffix(suffix.size());
+    constexpr std::string_view mapsSuffix = "-with-maps", packedSuffix = "-with-metallic-roughness";
+    const bool withMaps = verb.ends_with(mapsSuffix);
+    const bool withPacked = verb.ends_with(packedSuffix);
+    if (withMaps) verb.remove_suffix(mapsSuffix.size());
+    if (withPacked) verb.remove_suffix(packedSuffix.size());
     if (verb == "material-read" || verb == "material-save" || verb == "preview-material-draft" ||
-        (!withMaps && verb == "material-status")) {
-      const auto version = withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
+        (!withMaps && !withPacked && verb == "material-status")) {
+      const auto version = withPacked ? ca::MaterialRecipeVersion::WithMetallicRoughness :
+          withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto usage = [&] { return failed(command, usageError(
           "assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>] | "
           "assets preview-material-draft <MeshGuid> <RecipeJSON>")); };
@@ -792,7 +795,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         auto request = encoded ? ca::decodeMaterialSave(*encoded, version) : std::nullopt;
         if (!request) return usage();
         if (!endpoint) return refusal(ca::MaterialError::Unavailable);
-        auto saved = withMaps ? endpoint->materialSaveWithMaps(*request) : endpoint->materialSave(*request);
+        const auto saved = withPacked ? endpoint->materialSaveWithMetallicRoughness(*request) :
+            withMaps ? endpoint->materialSaveWithMaps(*request) : endpoint->materialSave(*request);
         if (saved.isOk()) return result(ca::encodeMaterialJob(saved.value()));
         auto reply = refusal(saved.error());
         if (saved.error() == ca::MaterialError::Unavailable) {
@@ -840,15 +844,17 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       if (verb == "material-read") {
         if (t.size() != 3) return usage();
         if (!endpoint) return refusal(ca::MaterialError::CatalogUnavailable);
-        auto read = withMaps ? endpoint->materialReadWithMaps(guid.value()) : endpoint->materialRead(guid.value());
+        const auto read = withPacked ? endpoint->materialReadWithMetallicRoughness(guid.value()) :
+            withMaps ? endpoint->materialReadWithMaps(guid.value()) : endpoint->materialRead(guid.value());
         return read.isOk() ? result(ca::encodeMaterialRead(read.value(), version)) : refusal(read.error());
       }
       const auto encoded = payload(3);
       auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded, version) : std::nullopt;
       if (!recipe) return usage();
       if (!endpoint) return refusal(ca::MaterialError::Unsupported);
-      auto image = withMaps ? endpoint->previewMaterialDraftWithMaps(guid.value(), *recipe)
-                            : endpoint->previewMaterialDraft(guid.value(), *recipe);
+      const auto image = withPacked ? endpoint->previewMaterialDraftWithMetallicRoughness(guid.value(), *recipe) :
+          withMaps ? endpoint->previewMaterialDraftWithMaps(guid.value(), *recipe)
+                   : endpoint->previewMaterialDraft(guid.value(), *recipe);
       if (image.isErr()) return refusal(image.error());
       auto png = ca::encodeMaterialDraftPreview(image.value(), version);
       if (!png) return refusal(ca::MaterialError::RenderFailed);
@@ -861,8 +867,10 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool importStatus = t.size() > 1 && t[1] == "import-status";
     const bool normalImport = t.size() > 1 && t[1] == "normal-map-import";
     const bool normalStatus = t.size() > 1 && t[1] == "normal-map-import-status";
-    const bool texture = normalImport || (t.size() > 1 && t[1] == "texture-import");
-    const bool textureStatus = normalStatus || (t.size() > 1 && t[1] == "texture-import-status");
+    const bool packedImport = t.size() > 1 && t[1] == "metallic-roughness-import";
+    const bool packedStatus = t.size() > 1 && t[1] == "metallic-roughness-import-status";
+    const bool texture = normalImport || packedImport || (t.size() > 1 && t[1] == "texture-import");
+    const bool textureStatus = normalStatus || packedStatus || (t.size() > 1 && t[1] == "texture-import-status");
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
     if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
           ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
@@ -940,7 +948,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     if (import) return renderStart(endpoint->importAsset(t[2], mode));
     if (importStatus) return renderStatus(endpoint->importStatus(id ? std::optional{ca::ImportId{*id}} : std::nullopt));
     if (texture) {
-      auto reply = renderStart(normalImport ? endpoint->normalMapImport(t[2], mode) : endpoint->textureImport(t[2], mode));
+      auto reply = renderStart(packedImport ? endpoint->metallicRoughnessImport(t[2], mode) :
+          normalImport ? endpoint->normalMapImport(t[2], mode) : endpoint->textureImport(t[2], mode));
       if (reply.error) {
         reply.result = Value::object();
         reply.result.set("target", Value::string(std::string(t[2])));
@@ -950,7 +959,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     }
     if (textureStatus) {
       const auto job = id ? std::optional{ca::TextureImportId{*id}} : std::nullopt;
-      auto reply = renderStatus(normalStatus ? endpoint->normalMapImportStatus(job) : endpoint->textureImportStatus(job));
+      auto reply = renderStatus(packedStatus ? endpoint->metallicRoughnessImportStatus(job) :
+          normalStatus ? endpoint->normalMapImportStatus(job) : endpoint->textureImportStatus(job));
       if (reply.error && id && !reply.result.isObject()) {
         reply.result = Value::object();
         reply.result.set("id", Value::string(asset_system::toString(*id)));

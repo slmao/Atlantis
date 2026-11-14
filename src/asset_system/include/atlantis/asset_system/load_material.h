@@ -9,6 +9,8 @@
 
 namespace atlantis::asset_system {
 
+struct AssetCatalogRecord;
+
 // Plan 0018 Section P4: reads the runtime material artifact at
 // artifactPath and its metadata sidecar at metadataPath, decodes/parses
 // both, cross-checks that they agree (kind, texture_asset_id --
@@ -20,9 +22,8 @@ namespace atlantis::asset_system {
 // resolving textureAsset (via loadTextureAsset()) and constructing any
 // RHI Sampler/SampledTexture/Material from the result.
 [[nodiscard]] atlantis::Result<MaterialAssetData, MaterialLoadError> loadMaterialAsset(
-    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
-
-struct AssetCatalogRecord;
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath,
+    const AssetCatalogRecord* expected = nullptr);
 enum class PreviewArtifactLoadError;
 inline constexpr std::size_t kPreviewMaterialMaxArtifactBytes = 64 * 1024;
 

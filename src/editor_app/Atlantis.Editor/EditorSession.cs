@@ -39,6 +39,8 @@ using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
 
+internal enum TextureImportKind { Color, Normal, MetallicRoughness }
+
 public sealed record EntityRow(EntityGuid Guid, string Label)
 {
     public override string ToString() => Label;
@@ -384,36 +386,49 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
 
-    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool> done) =>
+    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool, bool> done) =>
         Enqueue(session =>
         {
-            var result = session.Assets.MaterialReadWithMaps(guid);
+            var result = session.Assets.MaterialReadWithMetallicRoughness(guid);
+            bool packed = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
+            if (!packed) result = session.Assets.MaterialReadWithMaps(guid);
             bool basic = !result.IsOk && result.Error == Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (basic) result = session.Assets.MaterialRead(guid);
-            _post(() => done(result, basic));
+            _post(() => done(result, basic, packed));
         });
 
-    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps,
+    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
         Enqueue(session =>
         {
-            var result = withMaps ? session.Assets.MaterialSaveWithMaps(request) : session.Assets.MaterialSave(request);
+            var result = withMetallicRoughness ? session.Assets.MaterialSaveWithMetallicRoughness(request) :
+                withMaps ? session.Assets.MaterialSaveWithMaps(request) : session.Assets.MaterialSave(request);
             _post(() => done(result));
         });
 
-    public void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode, bool normalMap,
+    internal void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode, TextureImportKind kind,
         Action<Outcome<Atlantis.Gameplay.Assets.TextureImportJob, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session =>
         {
-            var result = normalMap ? session.Assets.NormalMapImport(name, mode) : session.Assets.TextureImport(name, mode);
+            var result = kind switch
+            {
+                TextureImportKind.MetallicRoughness => session.Assets.MetallicRoughnessImport(name, mode),
+                TextureImportKind.Normal => session.Assets.NormalMapImport(name, mode),
+                _ => session.Assets.TextureImport(name, mode)
+            };
             _post(() => done(result));
         });
 
-    public void QueryTexture(Atlantis.Gameplay.Assets.TextureImportId? id, bool normalMap,
+    internal void QueryTexture(Atlantis.Gameplay.Assets.TextureImportId? id, TextureImportKind kind,
         Action<Outcome<Atlantis.Gameplay.Assets.TextureImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session =>
         {
-            var result = normalMap ? session.Assets.NormalMapImportStatus(id) : session.Assets.TextureImportStatus(id);
+            var result = kind switch
+            {
+                TextureImportKind.MetallicRoughness => session.Assets.MetallicRoughnessImportStatus(id),
+                TextureImportKind.Normal => session.Assets.NormalMapImportStatus(id),
+                _ => session.Assets.TextureImportStatus(id)
+            };
             _post(() => done(result));
         });
 

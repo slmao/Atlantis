@@ -13,6 +13,8 @@ namespace {
 // Plan 0047 P9: version 10 makes texture:, normal_map: and
 // emissive_texture: AssetGuid references.
 constexpr std::string_view kVersionLine = "atlantis_material_source_version: 10";
+constexpr std::string_view kMappedVersionLine = "atlantis_material_source_version: 11";
+constexpr std::string_view kMetallicRoughnessMapPrefix = "metallic_roughness_map_asset: ";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
 constexpr std::string_view kFilterPrefix = "filter: ";
@@ -241,6 +243,17 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   using ResultT = atlantis::Result<ParsedMaterialSource, MaterialSourceParseError>;
 
   std::vector<std::string_view> lines = splitLines(text);
+  std::optional<AssetGuid> packedMap;
+  if (!lines.empty() && lines.front() == kMappedVersionLine) {
+    std::string_view guidText;
+    if (!matchField(lines.back(), kMetallicRoughnessMapPrefix, guidText))
+      return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    const auto guid = parseAssetGuid(guidText);
+    if (guid.isErr()) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+    packedMap = guid.value();
+    lines.pop_back();
+    lines.front() = kVersionLine;
+  }
 
   // Plan 0042 Milestone 1 (Plan 0042 P1), generalizing Plan 0041 P1: the
   // optional lines are recognised by their prefixes, parsed, and REMOVED
@@ -513,12 +526,16 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   parsed.alphaMode = optionalValues.alphaMode;
   parsed.alphaCutoff = optionalValues.alphaCutoff;
   parsed.emissiveTextureAsset = optionalValues.emissiveTexture;
+  if (packedMap && (parsed.kind != MaterialKind::PbrDirectLit || parsed.alphaMode != MaterialAlphaMode::Opaque ||
+                    parsed.baseColorFactor[3] != 1.0f || parsed.alphaCutoff != 0.5f))
+    return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+  parsed.metallicRoughnessMapAsset = packedMap;
   return ResultT::Ok(std::move(parsed));
 }
 
 std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   std::string out;
-  out += kVersionLine;
+  out += source.metallicRoughnessMapAsset ? kMappedVersionLine : kVersionLine;
   out += '\n';
   out += kKindPrefix;
   // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening,
@@ -629,6 +646,11 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   if (source.normalMapAsset.has_value()) {
     out += kNormalMapPrefix;
     out += toString(*source.normalMapAsset);
+    out += '\n';
+  }
+  if (source.metallicRoughnessMapAsset) {
+    out += kMetallicRoughnessMapPrefix;
+    out += toString(*source.metallicRoughnessMapAsset);
     out += '\n';
   }
   return out;

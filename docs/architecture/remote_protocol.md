@@ -448,6 +448,27 @@ leaves the outcome unknown. See
 [Spec 0097](../specs/0097-linear-normal-map-import.md) and
 [ADR-0156](../adr/0156-managed-linear-normal-map-import.md).
 
+### 5.2.6 Packed metallic-roughness map (Spec 0098 / ADR-0157)
+
+`assets.metallicRoughnessImport` and `assets.metallicRoughnessImportStatus`
+use the texture job shapes and share the same worker and receipt history
+with the two earlier roles. Each status operation accepts only IDs from
+its role. The packed source key is
+`content:texture_<name>/metallic-roughness.png`, with RGBA8 UNORM samples.
+
+`assets.materialReadWithMetallicRoughness`,
+`assets.materialSaveWithMetallicRoughness` and
+`assets.previewMaterialDraftWithMetallicRoughness` use the complete
+material recipe with required `metallicRoughnessMap` (GUID or null).
+Edit includes the same member in `expected`. Settlement uses
+`assets.materialStatus`. Cooked pair preview keeps its existing shape.
+Earlier recipe methods refuse any recipe they cannot represent, and the
+ahead registry still guards writes through an older active snapshot.
+Only the exact correlated unknown-asset-query refusal indicates an older
+peer. A lost write receipt leaves the outcome unknown. See
+[Spec 0098](../specs/0098-metallic-roughness-texture.md) and
+[ADR-0157](../adr/0157-metallic-roughness-texture.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

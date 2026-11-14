@@ -286,6 +286,7 @@ constexpr std::string_view kEnvironmentAuthoringExtension = ".hdr";
 constexpr std::uint32_t kMeshSourceSchema = 3;
 constexpr std::uint32_t kSceneSourceSchema = 7;
 constexpr std::uint32_t kMaterialSourceSchema = 10;
+constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
 
 // The mesh format is the one with two schemas (u16 and u32 indices), so a
 // mesh record reads its schema back from the artifact the cook wrote.
@@ -360,15 +361,29 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
 }
 
 // The texture GUIDs a material source references.
-[[nodiscard]] std::optional<std::vector<AssetGuid>> materialDependencies(const std::string& sourcePath) {
+[[nodiscard]] std::optional<ParsedMaterialSource> readMaterialSource(const std::string& sourcePath) {
   const auto text = readTextFile(sourcePath);
   if (!text) return std::nullopt;
-  const auto parsed = parseMaterialSource(*text);
+  auto parsed = parseMaterialSource(*text);
   if (parsed.isErr()) return std::nullopt;
-  std::vector<AssetGuid> dependencies{parsed.value().textureAsset};
-  if (parsed.value().normalMapAsset) dependencies.push_back(*parsed.value().normalMapAsset);
-  if (parsed.value().emissiveTextureAsset) dependencies.push_back(*parsed.value().emissiveTextureAsset);
-  return dependencies;
+  return std::move(parsed.value());
+}
+
+[[nodiscard]] bool validPackedMapRoles(const CookCommandRequest& request, const ParsedMaterialSource& material) {
+  if (request.catalogSourcePath.empty()) return !material.metallicRoughnessMapAsset;
+  const auto text = readTextFile(request.catalogSourcePath);
+  if (!text) return false;
+  const auto source = parseAssetCatalogSource(*text);
+  if (source.isErr()) return false;
+  const auto isPacked = [&](const AssetGuid& id) {
+    const auto* entry = source.value().find(id);
+    return entry && entry->type == CatalogAssetType::Texture &&
+        isMetallicRoughnessSource(entry->root, entry->path, {});
+  };
+  return !isPacked(material.textureAsset) &&
+      (!material.normalMapAsset || !isPacked(*material.normalMapAsset)) &&
+      (!material.emissiveTextureAsset || !isPacked(*material.emissiveTextureAsset)) &&
+      (!material.metallicRoughnessMapAsset || isPacked(*material.metallicRoughnessMapAsset));
 }
 
 // Where a per-asset cook writes its artifact -- the same names each cook
@@ -793,19 +808,25 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
 
   const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Material);
   if (!guid) return 1;
+  const auto material = readMaterialSource(request.sourcePath);
+  if (!material || !validPackedMapRoles(request, *material)) {
+    std::cerr << "atlantis_asset_cooker: invalid material source or metallic-roughness texture role\n";
+    return 1;
+  }
   const auto result =
       cookMaterial(request.sourcePath, relativePath, *guid, artifactPath.string(), metadataPath.string());
   if (result.isErr()) {
     std::cerr << "atlantis_asset_cooker: cook failed: " << materialCookErrorMessage(result.error()) << "\n";
     return 1;
   }
-  auto dependencies = materialDependencies(request.sourcePath);
-  if (!dependencies) {
-    std::cerr << "atlantis_asset_cooker: cannot re-read the cooked material source: " << request.sourcePath << "\n";
-    return 1;
-  }
+  std::vector<AssetGuid> dependencies{material->textureAsset};
+  if (material->normalMapAsset) dependencies.push_back(*material->normalMapAsset);
+  if (material->emissiveTextureAsset) dependencies.push_back(*material->emissiveTextureAsset);
+  const bool mapped = material->metallicRoughnessMapAsset.has_value();
+  if (mapped) dependencies.push_back(*material->metallicRoughnessMapAsset);
   if (!writeCookFragment(request, CatalogAssetType::Material, *guid, artifactPath, metadataPath,
-                         kMaterialArtifactSchemaVersion, kMaterialSourceSchema, std::move(*dependencies))) {
+      mapped ? kMappedMaterialArtifactSchemaVersion : kMaterialArtifactSchemaVersion,
+      mapped ? kMappedMaterialSourceSchema : kMaterialSourceSchema, std::move(dependencies))) {
     return 1;
   }
 
@@ -1266,7 +1287,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   const bool managedTextureSource = managedTexture && managedTexture->root == CatalogRoot::Content &&
       managedTexture->subKey.empty() && managedTexture->path.starts_with("texture_") &&
       ((managedTexture->path.ends_with("/source.png") && request.colorSpace == "srgb") ||
-       (managedTexture->path.ends_with("/normal.png") && request.colorSpace == "unorm")) &&
+       ((managedTexture->path.ends_with("/normal.png") || isMetallicRoughnessSource(*managedTexture)) &&
+        request.colorSpace == "unorm")) &&
       managedTexture->path == computeRelativePathString(request.sourcePath, request.assetRoot);
   if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine) &&
       !managedMaterialSource && !managedTextureSource) {

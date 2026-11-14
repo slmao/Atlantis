@@ -129,6 +129,7 @@ struct MaterialAssetData {
   // Runtime then binds its 1x1 white default). Legal (non-zero) only for
   // the four PBR kinds -- enforced at parse time, never here.
   AssetId emissiveTexture = 0;
+  AssetId metallicRoughnessMap = 0;
 };
 
 }  // namespace atlantis::asset_system

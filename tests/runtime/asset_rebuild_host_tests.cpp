@@ -2,13 +2,16 @@
 #include "../../src/runtime/material_authoring.h"
 
 #include <atlantis/asset_system/cook_material.h>
+#include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/material_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -35,6 +38,15 @@ std::string read(const fs::path& path) {
   return {std::istreambuf_iterator<char>(in), {}};
 }
 std::wstring quoted(const fs::path& path) { return L"\"" + path.wstring() + L"\""; }
+
+// One RGBA8 texel for either linear texture role.
+constexpr unsigned char kLinearPng[] = {
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+      0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x68, 0x68, 0xf8, 0xff,
+      0x1f, 0x00, 0x06, 0x82, 0x02, 0xff, 0xb3, 0xbe, 0x51, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+      0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
+const std::string_view kLinearPngBytes{reinterpret_cast<const char*>(kLinearPng), sizeof(kLinearPng)};
 
 struct Fixture {
   static inline std::atomic<unsigned> next = 0;
@@ -89,7 +101,11 @@ file(MAKE_DIRECTORY "assets/materials")
 file(WRITE "assets/materials/material.stamp" "fixture stamp")
 )");
     mode("ok");
-    auto cmd = quoted(cmake) + L" -S " + quoted(base) + L" -B " + quoted(staging);
+    runCmake(L"-S " + quoted(base) + L" -B " + quoted(staging));
+  }
+
+  void runCmake(const std::wstring& args) const {
+    auto cmd = quoted(cmake) + L" " + args;
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};
@@ -405,12 +421,19 @@ TEST_CASE("asset import: resume rejects an invalid catalog delta before publicat
   CHECK(fs::exists(f.marker) == repair);
 }
 
-TEST_CASE("material edit verifies the prepared generation before committing source", "[runtime][asset-material]") {
+TEST_CASE("material edit and Resume verify the prepared and published generation", "[runtime][asset-material]") {
   Fixture f;
   namespace material = atlantis::runtime::material_authoring;
   const auto guid = [](const char* value) { return as::parseAssetGuid(value).value(); };
   const auto baseColor = guid("859a82af-a31e-457d-bc46-274c1a80ffba");
   const auto normal = guid("5e99757a-d524-4aaf-b665-0d308aa7ae99");
+  const auto packed = as::deriveAssetGuid(f.guid, "metallic-roughness");
+  const std::string packedKey = "texture_sample/metallic-roughness.png";
+  const fs::path packedPng = fs::path("assets/managed-texture-sources") / packedKey;
+  const fs::path packedArtifact = "assets/texture_sample.atex";
+  const fs::path packedMetadata = "assets/texture_sample.atex.meta.txt";
+  const fs::path packedEvidence = "assets/texture_sample.texture-evidence";
+  const fs::path packedStamp = "assets/texture_sample.stamp";
   const auto project = f.base / "project";
   const auto registered = project / "registered/material_sample";
   const fs::path frozenSource = "assets/managed-material-sources/material_sample/source.material.txt";
@@ -419,8 +442,19 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
   const auto staging = f.staging;
   const auto materialGuid = f.guid;
   auto config = f.config();
-  bool corrupt = true;
-  SECTION("unchanged prepared files can commit and publish") { corrupt = false; }
+  using Mode = ca::MaterialMode;
+  using Stage = ca::MaterialStage;
+  using Code = ca::MaterialFailureCode;
+  const auto mode = GENERATE(Mode::Edit, Mode::Resume);
+  CAPTURE(ca::toString(mode));
+  const bool resume = mode == Mode::Resume;
+  std::optional<Stage> failureStage = Stage::Validation;
+  fs::path destination;
+  const auto damagePng = [packedPng](const fs::path& dir) {
+    std::ofstream file(dir / packedPng, std::ios::binary | std::ios::app);
+    if (!(file << 'x')) throw std::runtime_error("Cannot damage the frozen PNG");
+  };
+  SECTION("unchanged prepared files can commit and publish") { failureStage.reset(); }
   SECTION("changed frozen source bytes") {
     config.afterMaterialPreparation = [=](const fs::path& dir) {
       auto bytes = read(dir / frozenSource);
@@ -446,7 +480,28 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
     };
   }
 
+  SECTION("changed frozen texture before commit") {
+    config.afterMaterialPreparation = damagePng;
+  }
+  SECTION("uncertain publication with intact destination") {
+    failureStage.reset();
+    config.beforeMaterialPublication = [](const fs::path& from, const fs::path& to) { fs::rename(from, to); };
+  }
+  SECTION("uncertain publication with damaged destination") {
+    failureStage = Stage::Publication;
+    config.beforeMaterialPublication = [&](const fs::path& from, const fs::path& to) {
+      fs::rename(from, to);
+      destination = to;
+      damagePng(to);
+    };
+  }
+
   REQUIRE(fs::create_directories(registered));
+  const auto registeredTexture = project / "registered/texture_sample";
+  REQUIRE(fs::create_directories(registeredTexture));
+  const as::CatalogSourceEntry textureEntry{packed, as::CatalogAssetType::Texture, as::CatalogRoot::Content, packedKey};
+  write(registeredTexture / "catalog-source.txt", as::serializeAssetCatalogSource({textureEntry}));
+  write(registeredTexture / "metallic-roughness.png", kLinearPngBytes);
   const auto canonicalProject = fs::canonical(project);
   write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
       f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
@@ -456,20 +511,32 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
   ca::MaterialRecipe original{{baseColor}};
   auto updated = original;
   updated.values.normalMap = normal;
+  updated.values.metallicRoughnessMap = packed;
   updated.values.emissiveTexture = baseColor;
   updated.values.emissiveFactor = {0.5f, 0.25f, 0.125f};
   const auto originalSource = as::serializeMaterialSource(material::source(original));
-  write(registered / "source.material.txt", originalSource);
+  const auto updatedSource = as::serializeMaterialSource(material::source(updated));
+  const auto& committedSource = resume ? updatedSource : originalSource;
+  write(registered / "source.material.txt", committedSource);
   write(f.staging / "assets/managed-pending.txt", {});
   write(f.base / "producer.cmake", "# This fixture supplies finished producer outputs.\n");
   const auto fixtureCatalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
   REQUIRE(fixtureCatalog.isOk());
   const auto inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tcontent\t" + key + "\t" +
-      as::toString(f.guid) + "\tassets/material_sample/source.stamp\t-\n";
+      as::toString(f.guid) + "\tassets/material_sample/source.stamp\t-\ntexture\tcontent\t" + packedKey + "\t" +
+      as::toString(packed) + "\t" + packedStamp.generic_string() + "\t-\n";
   for (const auto& root : {f.seed, f.staging}) {
     write(root / "assets/producers-Debug.txt", inventory);
     write(root / "assets/managed-project.txt", canonicalProject.generic_string());
-    write(root / "assets/managed-catalog-source.txt", fragment);
+    write(root / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({entry, textureEntry}));
+    REQUIRE(fs::create_directories((root / packedPng).parent_path()));
+    write(root / packedPng, kLinearPngBytes);
+    constexpr std::uint8_t rgba[] = {128, 128, 255, 255};
+    REQUIRE(as::cookTexture(rgba, 1, 1, 4, as::TextureColorSpace::Unorm, packedKey, packed,
+                            root / packedArtifact, root / packedMetadata).isOk());
+    f.runCmake(L"-Dpng=" + quoted(root / packedPng) + L" -Dartifact=" + quoted(root / packedArtifact) +
+               L" -Dmetadata=" + quoted(root / packedMetadata) + L" -Devidence=" + quoted(root / packedEvidence) +
+               L" -Dstamp=" + quoted(root / packedStamp) + L" -P " + quoted(ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE));
     REQUIRE(fs::create_directories((root / frozenSource).parent_path()));
     const auto& recipe = root == f.seed ? original : updated;
     write(root / frozenSource, as::serializeMaterialSource(material::source(recipe)));
@@ -479,10 +546,15 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
     target.source = {as::CatalogRoot::Content, key, {}};
     target.artifact = artifact.generic_string();
     target.metadata = metadata.generic_string();
-    target.artifactSchema = as::kMaterialArtifactSchemaVersion;
+    target.artifactSchema = recipe.values.metallicRoughnessMap ? as::kMappedMaterialArtifactSchemaVersion :
+                                                                as::kMaterialArtifactSchemaVersion;
     target.dependencies = {baseColor};
     if (recipe.values.normalMap) target.dependencies.push_back(normal);
-    std::vector records{std::move(target)};
+    if (recipe.values.metallicRoughnessMap) target.dependencies.push_back(packed);
+    std::vector records{std::move(target),
+        as::AssetCatalogRecord{packed, as::assetKey(packed), as::CatalogAssetType::Texture,
+            {as::CatalogRoot::Content, packedKey, {}}, packedArtifact.generic_string(),
+            packedMetadata.generic_string(), as::kTextureArtifactSchemaVersion, {}, "fixture/1", {}}};
     for (const auto& id : {baseColor, normal}) {
       const auto* texture = fixtureCatalog.value().find(id);
       REQUIRE(texture != nullptr);
@@ -495,6 +567,7 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
     }
     write(root / "asset_catalog.txt", as::serializeAssetCatalog(std::move(records)));
   }
+  write(registeredTexture / "source.sha256", read(f.seed / packedEvidence).substr(0, 65));
   auto other = updated;
   other.values.emissiveFactor[0] = 0.75f;
   write(f.staging / "other.material.txt", as::serializeMaterialSource(material::source(other)));
@@ -505,8 +578,11 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
   auto opened = AssetRebuildHost::open(config);
   INFO((opened.isErr() ? opened.error() : std::string{}));
   REQUIRE(opened.isOk());
-  const auto accepted = opened.value()->saveMaterial(ca::EditMaterial{f.guid, {}, original.values, updated.values},
-      std::make_shared<const as::AssetCatalog>(std::move(catalog.value())), ca::MaterialRecipeVersion::WithMaps);
+  const ca::MaterialSave request = resume ? ca::MaterialSave{ca::ResumeMaterial{f.guid}} :
+      ca::MaterialSave{ca::EditMaterial{f.guid, {}, original.values, updated.values}};
+  const auto accepted = opened.value()->saveMaterial(request,
+      std::make_shared<const as::AssetCatalog>(std::move(catalog.value())),
+      ca::MaterialRecipeVersion::WithMetallicRoughness);
   REQUIRE(accepted.isOk());
   const auto limit = std::chrono::steady_clock::now() + 20s;
   auto status = opened.value()->materialStatus(accepted.value().id);
@@ -519,45 +595,59 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
   REQUIRE(status.value().job);
   const auto& job = *status.value().job;
   INFO((job.failure ? job.failure->diagnostic : "no failure"));
-  CHECK_FALSE(status.value().workspaceNeedsRepair);
-  if (corrupt) {
+  CHECK_FALSE(status.value().activeGeneration);
+  const bool publicationFailed = failureStage == Stage::Publication;
+  CHECK(status.value().workspaceNeedsRepair == publicationFailed);
+  if (failureStage) {
     REQUIRE(job.state == ca::RebuildState::Failed);
     REQUIRE(job.failure);
-    CHECK(job.failure->stage == ca::MaterialStage::Validation);
-    CHECK(job.failure->code == ca::MaterialFailureCode::InvalidOutput);
-    CHECK(job.failure->sourceState == ca::RegistrationState::NotCommitted);
+    CHECK(job.failure->stage == *failureStage);
+    CHECK(job.failure->code == (publicationFailed ? Code::PublishFailed : Code::InvalidOutput));
+    const bool committed = resume || publicationFailed;
+    CHECK(job.failure->sourceState ==
+          (committed ? ca::RegistrationState::Committed : ca::RegistrationState::NotCommitted));
+    if (committed) CHECK(job.failure->material == f.guid);
     CHECK_FALSE(job.generation);
-    CHECK(read(registered / "source.material.txt") == originalSource);
-    for (const auto& file : fs::directory_iterator(f.published)) CHECK_FALSE(file.is_directory());
+    CHECK(read(registered / "source.material.txt") == (publicationFailed ? updatedSource : committedSource));
+    if (publicationFailed) {
+      REQUIRE(fs::is_directory(destination));
+      CHECK(read(destination / packedPng) == std::string(kLinearPngBytes) + 'x');
+      opened.value().reset();
+      config.generation = ca::GenerationId{as::parseAssetGuid(destination.filename().string()).value()};
+      const auto reopened = AssetRebuildHost::open(config);
+      REQUIRE(reopened.isErr());
+      CHECK(reopened.error() == "Managed generation texture evidence is missing or invalid.");
+    } else {
+      for (const auto& file : fs::directory_iterator(f.published)) CHECK_FALSE(file.is_directory());
+    }
   } else {
     REQUIRE(job.state == ca::RebuildState::Succeeded);
     REQUIRE(job.generation);
     CHECK(job.material == f.guid);
-    CHECK(read(registered / "source.material.txt") == as::serializeMaterialSource(material::source(updated)));
-    CHECK(read(f.published / as::toString(job.generation->value) / frozenSource) ==
-          read(registered / "source.material.txt"));
+    CHECK(read(registered / "source.material.txt") == updatedSource);
+    CHECK(read(f.published / as::toString(job.generation->value) / frozenSource) == updatedSource);
+    opened.value().reset();
+    config.generation = job.generation;
+    const auto reopened = AssetRebuildHost::open(config);
+    INFO((reopened.isErr() ? reopened.error() : std::string{}));
+    REQUIRE(reopened.isOk());
   }
 }
 
-TEST_CASE("normal import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
+TEST_CASE("linear texture import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
   Fixture f;
   const auto project = f.base / "project";
   const auto registered = project / "registered";
   const auto inbox = project / "inbox/sample/source.png";
   const fs::path inventory = "assets/producers-Debug.txt";
-  constexpr auto kind = AssetRebuildHost::TextureKind::Normal;
+  const bool packed = GENERATE(false, true);
+  CAPTURE(packed);
+  const auto kind = packed ? AssetRebuildHost::TextureKind::MetallicRoughness : AssetRebuildHost::TextureKind::Normal;
+  const std::string leaf = packed ? "metallic-roughness.png" : "normal.png";
   REQUIRE(fs::create_directories(registered));
   REQUIRE(fs::create_directories(inbox.parent_path()));
   const auto canonicalProject = fs::canonical(project);
-  // A one-pixel RGBA8 neutral normal.
-  constexpr unsigned char png[] = {
-      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-      0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
-      0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x68, 0x68, 0xf8, 0xff,
-      0x1f, 0x00, 0x06, 0x82, 0x02, 0xff, 0xb3, 0xbe, 0x51, 0x33, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-      0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
-  const std::string_view pngBytes{reinterpret_cast<const char*>(png), sizeof(png)};
-  write(inbox, pngBytes);
+  write(inbox, kLinearPngBytes);
   const as::CatalogSourceEntry baseEntry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Assets, "a.material.txt"};
   write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
       f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
@@ -568,15 +658,17 @@ TEST_CASE("normal import validates frozen inventory and original fragment at set
   write(f.staging / "assets/managed-pending.txt", {});
   write(f.staging / "cooker-path.txt", ATLANTIS_REBUILD_TEST_COOKER);
   write(f.staging / "evidence-path.txt", ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE);
+  write(f.staging / "leaf.txt", leaf);
   write(f.base / "producer.cmake", R"cmake(
 file(READ "assets/managed-project.txt" project)
 file(READ "assets/managed-pending.txt" pending)
 file(READ "cooker-path.txt" cooker)
 set(frozen "${CMAKE_CURRENT_BINARY_DIR}/assets/managed-texture-sources")
 set(asset "${CMAKE_CURRENT_BINARY_DIR}/assets/texture_sample")
-set(key "texture_sample/normal.png")
+file(READ "leaf.txt" leaf)
+set(key "texture_sample/${leaf}")
 file(MAKE_DIRECTORY "${frozen}/texture_sample")
-file(COPY_FILE "${project}/${pending}/normal.png" "${frozen}/${key}")
+file(COPY_FILE "${project}/${pending}/${leaf}" "${frozen}/${key}")
 file(STRINGS "${project}/${pending}/catalog-source.txt" fragment)
 list(GET fragment 2 texture)
 string(REGEX MATCH "guid=([0-9a-f-]+)" matched "${texture}")
@@ -659,12 +751,15 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
   REQUIRE(status.value().job);
   const auto& job = *status.value().job;
   INFO((job.failure ? job.failure->diagnostic : "no failure"));
-  CHECK(read(inbox) == pngBytes);
+  CHECK(read(inbox) == kLinearPngBytes);
   CHECK(fs::exists(registered / "texture_sample") == (moved || succeeds));
   if (succeeds) {
     REQUIRE(job.state == ca::RebuildState::Succeeded);
     REQUIRE(job.generation);
     CHECK_FALSE(status.value().workspaceNeedsRepair);
+    CHECK(read(registered / "texture_sample" / leaf) == kLinearPngBytes);
+    const auto wrong = packed ? AssetRebuildHost::TextureKind::Normal : AssetRebuildHost::TextureKind::MetallicRoughness;
+    CHECK(opened.value()->textureImportStatus(admission.value().id, wrong).error() == ca::ImportError::UnknownJob);
     opened.value().reset();
     config.generation = job.generation;
     const auto activated = AssetRebuildHost::open(config);

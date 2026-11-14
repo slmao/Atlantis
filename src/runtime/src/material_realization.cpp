@@ -415,7 +415,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
     const atlantis::asset_system::TextureAssetData* emissiveTextureData,
     const std::unordered_map<atlantis::asset_system::AssetId, const atlantis::rhi::SampledTexture*>&
         effectiveSampledTextures,
-    const atlantis::rhi::SampledTexture& defaultEmissiveTexture) {
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
+    const atlantis::asset_system::TextureAssetData* packedTextureData) {
   using ResultT = atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError>;
   const bool hasNormalMap = materialData.normalMapTexture != 0;
 
@@ -537,6 +538,25 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
   if (samplerResult.isErr()) return ResultT::Err(MaterialRealizationError::SamplerCreateFailed);
   candidate.sampler = std::move(samplerResult.value());
 
+  const auto packedId = materialData.metallicRoughnessMap;
+  const atlantis::rhi::SampledTexture* packedTexture = nullptr;
+  if (packedId) {
+    ATLANTIS_CHECK(packedTextureData != nullptr && !environmentEnabled);
+    candidate.packedTextureAssetId = packedId;
+    const auto existingPacked = effectiveSampledTextures.find(packedId);
+    if (existingPacked != effectiveSampledTextures.end()) {
+      packedTexture = existingPacked->second;
+    } else {
+      RealizedMaterialCandidate upload;
+      upload.textureAssetId = packedId;
+      if (const auto error = createBaseColorUpload(device, *packedTextureData, upload)) return ResultT::Err(*error);
+      candidate.newPackedTexture = std::move(upload.newSampledTexture);
+      candidate.packedStagingBuffer = std::move(upload.stagingBuffer);
+      candidate.packedUploadRegions = std::move(upload.uploadRegions);
+      packedTexture = candidate.newPackedTexture.get();
+    }
+  }
+
   const ShaderPairRef shaderPair =
       selectShaderPair(materialData.kind, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv,
                         unlitTexturedFragmentSpirv, litTexturedVertexInputLayout, litTexturedVertexSpirv,
@@ -576,7 +596,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
        .depthFormat = DepthFormat::D32Sfloat,
        .pushConstantSizeBytes = pushConstantSizeBytesFor(materialData.kind),
        .sampledTextureBindingCount =
-           sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap),
+           sampledTextureBindingCountFor(materialData.kind, environmentEnabled, hasNormalMap) + (packedTexture ? 1u : 0u),
        // Plan 0042 Milestone 1 (ADR-0090 Decisions 1/3).
        .depthWriteEnabled = alphaRealization.depthWriteEnabled,
        .colorBlendMode = alphaRealization.colorBlendMode,
@@ -609,7 +629,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> realizeOne
       // Plan 0042 Milestone 2 (Spec 0042 R6): pushed as 0 unless Mask, so
       // Opaque/Blend never discard.
       materialData.alphaMode == atlantis::asset_system::MaterialAlphaMode::Mask ? materialData.alphaCutoff : 0.0f,
-      emissiveTexturePtr);
+      emissiveTexturePtr, packedTexture);
   if (materialResult.isErr()) return ResultT::Err(MaterialRealizationError::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(materialResult.value()));
 
@@ -679,7 +699,9 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
         materialDataMap,
     const std::unordered_map<atlantis::asset_system::AssetId, atlantis::asset_system::TextureAssetData>&
         textureDataMap,
-    const atlantis::rhi::SampledTexture& defaultEmissiveTexture) {
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
+    const std::vector<std::uint32_t>& packedFragmentSpirv,
+    const std::vector<std::uint32_t>& packedNormalFragmentSpirv) {
   namespace render_graph = atlantis::render_graph;
 
   // Seeded from the persistent map; extended below with each new
@@ -728,21 +750,30 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
       emissiveTextureData = &emissiveTextureIt->second;
     }
 
+    const auto packedId = materialIt->second.metallicRoughnessMap;
+    const auto* packedData = packedId ? &textureDataMap.at(packedId) : nullptr;
+    if (packedData && (normalMapTextureData ? packedNormalFragmentSpirv : packedFragmentSpirv).empty()) {
+      ATLANTIS_LOG_ERROR("Missing metallic-roughness shader");
+      continue;
+    }
     auto candidateResult = realizeOneMaterialCandidate(
         device, unlitTexturedVertexInputLayout, unlitTexturedVertexSpirv, unlitTexturedFragmentSpirv,
         litTexturedVertexInputLayout, litTexturedVertexSpirv, litTexturedFragmentSpirv, pbrDirectLitVertexInputLayout,
-        pbrDirectLitVertexSpirv, pbrDirectLitFragmentSpirv, pbrIblVertexInputLayout, pbrIblVertexSpirv,
+        pbrDirectLitVertexSpirv, packedData ? packedFragmentSpirv : pbrDirectLitFragmentSpirv,
+        pbrIblVertexInputLayout, pbrIblVertexSpirv,
         pbrIblFragmentSpirv, pbrDirectLitNormalMapVertexInputLayout, pbrDirectLitNormalMapVertexSpirv,
-        pbrDirectLitNormalMapFragmentSpirv, pbrIblNormalMapVertexInputLayout, pbrIblNormalMapVertexSpirv,
+        packedData ? packedNormalFragmentSpirv : pbrDirectLitNormalMapFragmentSpirv,
+        pbrIblNormalMapVertexInputLayout, pbrIblNormalMapVertexSpirv,
         pbrIblNormalMapFragmentSpirv, pbrClearcoatIblVertexInputLayout, pbrClearcoatIblVertexSpirv,
         pbrClearcoatIblFragmentSpirv, pbrClearcoatIblNormalMapVertexInputLayout, pbrClearcoatIblNormalMapVertexSpirv,
         pbrClearcoatIblNormalMapFragmentSpirv, pbrSheenIblVertexInputLayout, pbrSheenIblVertexSpirv,
         pbrSheenIblFragmentSpirv, pbrSheenIblNormalMapVertexInputLayout, pbrSheenIblNormalMapVertexSpirv,
         pbrSheenIblNormalMapFragmentSpirv, pbrAnisotropicIblVertexInputLayout, pbrAnisotropicIblVertexSpirv,
         pbrAnisotropicIblFragmentSpirv, pbrAnisotropicIblNormalMapVertexInputLayout,
-        pbrAnisotropicIblNormalMapVertexSpirv, pbrAnisotropicIblNormalMapFragmentSpirv, environmentEnabled, id,
+        pbrAnisotropicIblNormalMapVertexSpirv, pbrAnisotropicIblNormalMapFragmentSpirv,
+        environmentEnabled && !packedData, id,
         materialIt->second, textureIt->second, normalMapTextureData, emissiveTextureData, effectiveSampledTextures,
-        defaultEmissiveTexture);
+        defaultEmissiveTexture, packedData);
     if (candidateResult.isErr()) {
       ATLANTIS_LOG_ERROR("realizeOneMaterialCandidate() failed -- material stays pending, retried next frame");
       continue;
@@ -766,6 +797,12 @@ std::unordered_map<atlantis::asset_system::AssetId, RealizedMaterialCandidate> r
                              candidate.emissiveUploadRegions);
       effectiveSampledTextures.emplace(candidate.emissiveTextureAssetId, candidate.newEmissiveTexture.get());
       uploadedTextures.push_back(candidate.newEmissiveTexture.get());
+    }
+    if (candidate.newPackedTexture) {
+      buildTextureUploadPass(uploadBuilder, **candidate.packedStagingBuffer, *candidate.newPackedTexture,
+                             candidate.packedUploadRegions);
+      effectiveSampledTextures.emplace(candidate.packedTextureAssetId, candidate.newPackedTexture.get());
+      uploadedTextures.push_back(candidate.newPackedTexture.get());
     }
     realized.emplace(id, std::move(candidate));
   }
@@ -827,7 +864,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& list, atlantis::rhi::PipelineCreateParams shader,
     atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
     const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture* whiteEmissive,
-    const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive) {
+    const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive,
+    const atlantis::asset_system::TextureAssetData* packed) {
   using E = MaterialRealizationError;
   using R = atlantis::Result<RealizedMaterialCandidate, E>;
   namespace rg = atlantis::render_graph;
@@ -835,6 +873,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
                  material.alphaMode == atlantis::asset_system::MaterialAlphaMode::Opaque);
   const auto sharedColor = material.emissiveTexture && material.emissiveTexture == material.textureAsset;
   ATLANTIS_CHECK((normal != nullptr) == (material.normalMapTexture != 0));
+  ATLANTIS_CHECK((packed != nullptr) == (material.metallicRoughnessMap != 0));
   ATLANTIS_CHECK(emissive || sharedColor || whiteEmissive);
   RealizedMaterialCandidate candidate;
   candidate.materialAssetId = materialId;
@@ -857,6 +896,14 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
     candidate.emissiveStagingBuffer = std::move(upload.stagingBuffer);
     candidate.emissiveUploadRegions = std::move(upload.uploadRegions);
   }
+  if (packed) {
+    RealizedMaterialCandidate upload;
+    upload.textureAssetId = material.metallicRoughnessMap;
+    if (const auto error = createBaseColorUpload(device, *packed, upload)) return R::Err(*error);
+    candidate.newPackedTexture = std::move(upload.newSampledTexture);
+    candidate.packedStagingBuffer = std::move(upload.stagingBuffer);
+    candidate.packedUploadRegions = std::move(upload.uploadRegions);
+  }
   const auto deepest = std::max({texture.mipCount, normal ? normal->mipCount : 1u,
                                 emissive ? emissive->mipCount : 1u});
   auto sampler = createMaterialSampler(device, material, candidate, deepest - 1);
@@ -866,7 +913,8 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
   shader.colorFormat = atlantis::rhi::HdrFormat::Rgba16Float;
   shader.depthFormat = DepthFormat::D32Sfloat;
   shader.pushConstantSizeBytes = pushConstantSizeBytesFor(material.kind);
-  shader.sampledTextureBindingCount = sampledTextureBindingCountFor(material.kind, false, normal != nullptr);
+  shader.sampledTextureBindingCount =
+      sampledTextureBindingCountFor(material.kind, false, normal != nullptr) + (packed ? 1u : 0u);
   const auto* emission = emissive ? candidate.newEmissiveTexture.get() :
       sharedColor ? candidate.newSampledTexture.get() : whiteEmissive;
   auto made = createMaterial(
@@ -875,7 +923,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
       material.metallicFactor, material.roughnessFactor, atlantis::renderer::MaterialEnvironmentBinding::None,
       candidate.newNormalMapTexture.get(), 0.0f, 0.0f, {}, 0.0f, 0.0f, 0.0f,
       {material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]},
-      atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, emission);
+      atlantis::renderer::MaterialAlphaMode::Opaque, 0.0f, emission, candidate.newPackedTexture.get());
   if (made.isErr()) return R::Err(E::MaterialCreateFailed);
   candidate.material = std::make_unique<atlantis::renderer::Material>(std::move(made.value()));
 
@@ -889,6 +937,7 @@ atlantis::Result<RealizedMaterialCandidate, MaterialRealizationError> recordPrev
   record(candidate.newSampledTexture, candidate.stagingBuffer, candidate.uploadRegions);
   record(candidate.newNormalMapTexture, candidate.normalMapStagingBuffer, candidate.normalMapUploadRegions);
   record(candidate.newEmissiveTexture, candidate.emissiveStagingBuffer, candidate.emissiveUploadRegions);
+  record(candidate.newPackedTexture, candidate.packedStagingBuffer, candidate.packedUploadRegions);
   const auto compiled = upload.compile();
   ATLANTIS_CHECK_MSG(compiled.isOk(), "Independent preview uploads form a valid graph");
   std::vector<rg::ResourceBinding> bindings;

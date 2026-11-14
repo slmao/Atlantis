@@ -52,9 +52,17 @@ class Assets {
       std::string_view name, connection::assets::ImportMode mode = connection::assets::ImportMode::Register) {
     return connection_.normalMapImport(name, mode);
   }
+  [[nodiscard]] connection::assets::TextureImportStartResult metallicRoughnessImport(
+      std::string_view name, connection::assets::ImportMode mode = connection::assets::ImportMode::Register) {
+    return connection_.metallicRoughnessImport(name, mode);
+  }
   [[nodiscard]] connection::assets::TextureImportStatusResult normalMapImportStatus(
       std::optional<connection::assets::TextureImportId> id = std::nullopt) const {
     return connection_.normalMapImportStatus(id);
+  }
+  [[nodiscard]] connection::assets::TextureImportStatusResult metallicRoughnessImportStatus(
+      std::optional<connection::assets::TextureImportId> id = std::nullopt) const {
+    return connection_.metallicRoughnessImportStatus(id);
   }
 
   [[nodiscard]] connection::assets::MaterialReadResult materialRead(const asset_system::AssetGuid& guid) const {
@@ -66,12 +74,22 @@ class Assets {
   [[nodiscard]] connection::assets::MaterialReadResult materialReadWithMaps(const asset_system::AssetGuid& guid) const {
     return connection_.materialReadWithMaps(guid);
   }
+  [[nodiscard]] connection::assets::MaterialReadResult materialReadWithMetallicRoughness(const asset_system::AssetGuid& guid) const {
+    return connection_.materialReadWithMetallicRoughness(guid);
+  }
   [[nodiscard]] connection::assets::MaterialSaveResult materialSaveWithMaps(const connection::assets::MaterialSave& request) {
     return connection_.materialSaveWithMaps(request);
+  }
+  [[nodiscard]] connection::assets::MaterialSaveResult materialSaveWithMetallicRoughness(const connection::assets::MaterialSave& request) {
+    return connection_.materialSaveWithMetallicRoughness(request);
   }
   [[nodiscard]] connection::assets::MaterialDraftPreviewResult previewMaterialDraftWithMaps(
       const asset_system::AssetGuid& mesh, const connection::assets::MaterialRecipe& recipe) {
     return connection_.previewMaterialDraftWithMaps(mesh, recipe);
+  }
+  [[nodiscard]] connection::assets::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(
+      const asset_system::AssetGuid& mesh, const connection::assets::MaterialRecipe& recipe) {
+    return connection_.previewMaterialDraftWithMetallicRoughness(mesh, recipe);
   }
   [[nodiscard]] connection::assets::MaterialStatusResult materialStatus(
       std::optional<connection::assets::MaterialJobId> id = std::nullopt) const {

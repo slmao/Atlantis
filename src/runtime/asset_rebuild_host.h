@@ -16,7 +16,7 @@ namespace atlantis::runtime {
 // on the frame thread. Only the worker mutates staging or publishes outputs.
 class AssetRebuildHost {
  public:
-  enum class TextureKind { Color, Normal };
+  enum class TextureKind { Color, Normal, MetallicRoughness };
   struct Config {
     std::filesystem::path profile;
     std::filesystem::path seedCatalog;
@@ -26,6 +26,7 @@ class AssetRebuildHost {
     std::chrono::steady_clock::duration timeout = std::chrono::minutes(30);
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
     std::function<void(const std::filesystem::path&)> afterMaterialPreparation{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeMaterialPublication{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTexturePreparation{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeTexturePublication{};
 #endif

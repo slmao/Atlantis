@@ -110,22 +110,32 @@ public sealed class AssetSession
     public Outcome<A.MaterialRead, A.MaterialError> MaterialRead(AssetGuid material) => ReadMaterial(material, false);
     public Outcome<A.MaterialRead, A.MaterialError> MaterialReadWithMaps(AssetGuid material) => ReadMaterial(material, true);
 
-    private Outcome<A.MaterialRead, A.MaterialError> ReadMaterial(AssetGuid material, bool withMaps)
+    public Outcome<A.MaterialRead, A.MaterialError> MaterialReadWithMetallicRoughness(AssetGuid material) =>
+        ReadMaterial(material, false, withMetallicRoughness: true);
+
+    private static string MaterialMethod(string member, bool withMaps, bool withMetallicRoughness) =>
+        member + (withMetallicRoughness ? "WithMetallicRoughness" : withMaps ? "WithMaps" : "");
+
+    private Outcome<A.MaterialRead, A.MaterialError> ReadMaterial(AssetGuid material, bool withMaps, bool withMetallicRoughness = false)
     {
         if (material.IsNil) throw new ArgumentException("a non-nil material GUID is required", nameof(material));
-        return MaterialRequest(withMaps ? "assets.materialReadWithMaps" : "assets.materialRead", JsonValue.NewObject().Set("material", Codec.Encode(material)),
-            value => Codec.DecodeMaterialRead(value, withMaps) is { } read && read.Material == material ? read : null);
+        return MaterialRequest(MaterialMethod("assets.materialRead", withMaps, withMetallicRoughness), JsonValue.NewObject().Set("material", Codec.Encode(material)),
+            value => Codec.DecodeMaterialRead(value, withMaps, withMetallicRoughness) is { } read && read.Material == material ? read : null);
     }
 
     /// <summary>Admits a managed PNG job. A missing admission receipt does not determine the durable outcome.</summary>
     public Outcome<A.TextureImportJob, A.ImportError> TextureImport(string name, A.ImportMode mode = A.ImportMode.Register) =>
-        ImportTexture(name, mode, normalMap: false);
+        ImportTexture(name, mode, "assets.textureImport", "Texture");
 
     /// <summary>Admits a managed linear +Y PNG job. Verify durable registration and settlement if the receipt is lost.</summary>
     public Outcome<A.TextureImportJob, A.ImportError> NormalMapImport(string name, A.ImportMode mode = A.ImportMode.Register) =>
-        ImportTexture(name, mode, normalMap: true);
+        ImportTexture(name, mode, "assets.normalMapImport", "Normal map");
 
-    private Outcome<A.TextureImportJob, A.ImportError> ImportTexture(string name, A.ImportMode mode, bool normalMap)
+    /// <summary>Admits a managed linear PNG with G roughness and B metallic.</summary>
+    public Outcome<A.TextureImportJob, A.ImportError> MetallicRoughnessImport(string name, A.ImportMode mode = A.ImportMode.Register) =>
+        ImportTexture(name, mode, "assets.metallicRoughnessImport", "Metallic-roughness map");
+
+    private Outcome<A.TextureImportJob, A.ImportError> ImportTexture(string name, A.ImportMode mode, string method, string kind)
     {
         if (!Codec.ValidImportName(name)) throw new ArgumentException("invalid texture import name", nameof(name));
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
@@ -133,38 +143,40 @@ public sealed class AssetSession
         var parameters = JsonValue.NewObject().Set("name", JsonValue.String(name)).Set("mode", JsonValue.String(mode.ToString()));
         try
         {
-            return TextureRequest(normalMap ? "assets.normalMapImport" : "assets.textureImport", parameters, true, value =>
+            return TextureRequest(method, parameters, true, value =>
                 Codec.DecodeTextureImportJob(value) is { State: A.RebuildState.Running } job && job.Name == name &&
                 job.Mode == mode ? job : null);
         }
         catch (RemoteException error)
         {
-            string kind = normalMap ? "Normal map" : "Texture";
             throw new RemoteException(error, $"{kind} {mode} outcome unknown for {name}. " +
                 "Inspect the registered texture and complete generations and confirm settlement before retrying.");
         }
     }
 
     public Outcome<A.TextureImportStatus, A.ImportError> TextureImportStatus(A.TextureImportId? jobId = null) =>
-        ReadTextureStatus(jobId, normalMap: false);
+        ReadTextureStatus(jobId, "assets.textureImportStatus");
 
     /// <summary>Reads a normal map job by ID, or the latest normal map job, and the shared repair flag.</summary>
     public Outcome<A.TextureImportStatus, A.ImportError> NormalMapImportStatus(A.TextureImportId? jobId = null) =>
-        ReadTextureStatus(jobId, normalMap: true);
+        ReadTextureStatus(jobId, "assets.normalMapImportStatus", "Normal map");
 
-    private Outcome<A.TextureImportStatus, A.ImportError> ReadTextureStatus(A.TextureImportId? jobId, bool normalMap)
+    public Outcome<A.TextureImportStatus, A.ImportError> MetallicRoughnessImportStatus(A.TextureImportId? jobId = null) =>
+        ReadTextureStatus(jobId, "assets.metallicRoughnessImportStatus", "Metallic-roughness map");
+
+    private Outcome<A.TextureImportStatus, A.ImportError> ReadTextureStatus(A.TextureImportId? jobId, string method, string? kind = null)
     {
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         var parameters = JsonValue.NewObject();
         if (jobId is A.TextureImportId id) parameters.Set("jobId", Codec.Encode(id.Value));
         try
         {
-            return TextureRequest(normalMap ? "assets.normalMapImportStatus" : "assets.textureImportStatus", parameters, false, value =>
+            return TextureRequest(method, parameters, false, value =>
                 Codec.DecodeTextureImportStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
         }
-        catch (RemoteException error) when (normalMap && jobId is A.TextureImportId)
+        catch (RemoteException error) when (kind is not null && jobId is A.TextureImportId)
         {
-            throw new RemoteException(error, $"Normal map job {jobId.Value.Value} outcome unknown. Query the retained ID after reconnecting.");
+            throw new RemoteException(error, $"{kind} job {jobId.Value.Value} outcome unknown. Query the retained ID after reconnecting.");
         }
     }
 
@@ -186,16 +198,19 @@ public sealed class AssetSession
     public Outcome<A.MaterialJob, A.MaterialError> MaterialSave(A.MaterialSave request) => SaveMaterial(request, false);
     public Outcome<A.MaterialJob, A.MaterialError> MaterialSaveWithMaps(A.MaterialSave request) => SaveMaterial(request, true);
 
-    private Outcome<A.MaterialJob, A.MaterialError> SaveMaterial(A.MaterialSave request, bool withMaps)
+    public Outcome<A.MaterialJob, A.MaterialError> MaterialSaveWithMetallicRoughness(A.MaterialSave request) =>
+        SaveMaterial(request, false, withMetallicRoughness: true);
+
+    private Outcome<A.MaterialJob, A.MaterialError> SaveMaterial(A.MaterialSave request, bool withMaps, bool withMetallicRoughness = false)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var parameters = Codec.EncodeMaterialSave(request, withMaps);
+        var parameters = Codec.EncodeMaterialSave(request, withMaps, withMetallicRoughness);
         if (parameters is null) return Outcome<A.MaterialJob, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
         _session.ThrowIfFailed();
         var target = request.Target;
         try
         {
-            return MaterialRequest(withMaps ? "assets.materialSaveWithMaps" : "assets.materialSave", parameters,
+            return MaterialRequest(MaterialMethod("assets.materialSave", withMaps, withMetallicRoughness), parameters,
                 value => Codec.DecodeMaterialJob(value) is { State: A.RebuildState.Running } job &&
                     job.Target == target ? job : null);
         }
@@ -221,15 +236,18 @@ public sealed class AssetSession
     public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraftWithMaps(AssetGuid mesh, A.MaterialRecipe recipe) =>
         PreviewDraft(mesh, recipe, true);
 
-    private Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewDraft(AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps)
+    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraftWithMetallicRoughness(AssetGuid mesh, A.MaterialRecipe recipe) =>
+        PreviewDraft(mesh, recipe, false, withMetallicRoughness: true);
+
+    private Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewDraft(AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps, bool withMetallicRoughness = false)
     {
         ArgumentNullException.ThrowIfNull(recipe);
-        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values, withMaps) || !Enum.IsDefined(recipe.Filter) ||
+        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values, withMaps, withMetallicRoughness) || !Enum.IsDefined(recipe.Filter) ||
             !Enum.IsDefined(recipe.Address))
             return Outcome<A.MaterialDraftPreview, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
-        return MaterialRequest(withMaps ? "assets.previewMaterialDraftWithMaps" : "assets.previewMaterialDraft",
-            JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe, withMaps)),
-            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe, withMaps));
+        return MaterialRequest(MaterialMethod("assets.previewMaterialDraft", withMaps, withMetallicRoughness),
+            JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe, withMaps, withMetallicRoughness)),
+            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe, withMaps, withMetallicRoughness));
     }
 
     private Outcome<T, A.MaterialError> MaterialRequest<T>(string method, JsonValue parameters, Func<JsonValue, T?> decode)
@@ -251,7 +269,8 @@ public sealed class AssetSession
         return _session.InBand<T, A.MaterialError>(result, method, decode, value =>
         {
             var error = Codec.DecodeMaterialError(value);
-            return error == A.MaterialError.Unsupported && method.EndsWith("WithMaps", StringComparison.Ordinal)
+            return error == A.MaterialError.Unsupported && (method.EndsWith("WithMaps", StringComparison.Ordinal) ||
+                method.EndsWith("WithMetallicRoughness", StringComparison.Ordinal))
                 ? null : error;
         });
     }

@@ -1,6 +1,9 @@
 #include <atlantis/asset_system/cook_material.h>
 
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/load_material.h>
+#include <atlantis/asset_system/material_source.h>
 #include <atlantis/asset_system/material_artifact.h>
 #include <atlantis/asset_system/material_metadata.h>
 
@@ -497,4 +500,58 @@ TEST_CASE("cookMaterial rejects an emissive_texture that is not a GUID (Plan 004
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialCookError::SourceParseFailed);
   CHECK_FALSE(fs::exists(dir.path / "a.amaterial"));
+}
+
+TEST_CASE("packed material versions match the binding and catalog", "[asset_system][material]") {
+  TempDirGuard dir("packed_versions");
+  const auto sourcePath = dir.path / "surface.material.txt";
+  const auto artifactPath = dir.path / "surface.amaterial";
+  const auto metadataPath = dir.path / "surface.amaterial.meta.txt";
+  const auto guid = testAssetGuid("surface");
+  const auto packed = testAssetGuid("packed");
+  auto recipe = parseMaterialSource(kValidPbrSource).value();
+  const auto unbound = serializeMaterialSource(recipe);
+  auto cook = [&](std::string_view source) {
+    writeFile(sourcePath, std::string(source));
+    REQUIRE(cookMaterial(sourcePath.string(), "surface.material.txt", guid, artifactPath.string(),
+                         metadataPath.string()).isOk());
+  };
+  cook(unbound);
+  const auto oldArtifact = readFile(artifactPath);
+  const auto oldMetadata = readFile(metadataPath);
+  CHECK(oldArtifact.size() == kMaterialArtifactHeaderSizeBytes);
+  CHECK(oldMetadata.starts_with("atlantis_material_metadata_version: 9"));
+  recipe.metallicRoughnessMapAsset = packed;
+  const auto bound = serializeMaterialSource(recipe);
+  CHECK(bound.starts_with("atlantis_material_source_version: 11"));
+  CHECK(bound.ends_with("metallic_roughness_map_asset: " + toString(packed) + "\n"));
+  CHECK(parseMaterialSource(bound).value().metallicRoughnessMapAsset == packed);
+  CHECK(parseMaterialSource(bound + "roughness_factor: 1\n").isErr());
+
+  cook(bound);
+  const auto newArtifact = readFile(artifactPath);
+  const auto newMetadata = readFile(metadataPath);
+  CHECK(newArtifact.size() == oldArtifact.size() + sizeof(AssetId));
+  CHECK(newMetadata.starts_with("atlantis_material_metadata_version: 10"));
+  CHECK(newMetadata.find("metallic_roughness_map_asset_id: ") != std::string::npos);
+  AssetCatalogRecord record;
+  record.guid = guid;
+  record.assetId = assetKey(guid);
+  record.type = CatalogAssetType::Material;
+  record.artifactSchema = kMappedMaterialArtifactSchemaVersion;
+  const auto loaded = loadMaterialAsset(artifactPath, metadataPath, &record);
+  REQUIRE(loaded.isOk());
+  CHECK(loaded.value().metallicRoughnessMap == assetKey(packed));
+  record.artifactSchema = kMaterialArtifactSchemaVersion;
+  CHECK(loadMaterialAsset(artifactPath, metadataPath, &record).isErr());
+
+  writeFile(metadataPath, oldMetadata);
+  CHECK(loadMaterialAsset(artifactPath, metadataPath).isErr());
+  writeFile(artifactPath, oldArtifact);
+  writeFile(metadataPath, newMetadata);
+  CHECK(loadMaterialAsset(artifactPath, metadataPath).isErr());
+  recipe.metallicRoughnessMapAsset.reset();
+  cook(serializeMaterialSource(recipe));
+  CHECK(readFile(artifactPath) == oldArtifact);
+  CHECK(readFile(metadataPath) == oldMetadata);
 }

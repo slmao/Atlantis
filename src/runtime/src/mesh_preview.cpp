@@ -177,6 +177,7 @@ struct PbrPreviewInputs {
   as::AssetId materialId;
   const as::TextureAssetData* normal;
   const as::TextureAssetData* emissive;
+  const as::TextureAssetData* packed;
 };
 
 using PreviewPngResult = Result<std::vector<std::uint8_t>, ac::PreviewError>;
@@ -238,11 +239,15 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
       return readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
                       {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
     if (pbr->normal)
-      return readPair(config.pbrDirectLitNormalMapVertexShaderSpirvPath, config.pbrDirectLitNormalMapFragmentShaderSpirvPath,
+      return readPair(config.pbrDirectLitNormalMapVertexShaderSpirvPath,
+                      pbr->packed ? config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath
+                                  : config.pbrDirectLitNormalMapFragmentShaderSpirvPath,
                       config.pbrDirectLitNormalMapVertexShaderReflectionPath,
                       {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
                        {2, as::kMeshArtifactNormalOffsetBytes}, {3, as::kMeshArtifactTangentOffsetBytes}}, stride);
-    return readPair(config.pbrDirectLitVertexShaderSpirvPath, config.pbrDirectLitFragmentShaderSpirvPath,
+    return readPair(config.pbrDirectLitVertexShaderSpirvPath,
+                    pbr->packed ? config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath
+                                : config.pbrDirectLitFragmentShaderSpirvPath,
                     config.pbrDirectLitVertexShaderReflectionPath,
                     {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
                      {2, as::kMeshArtifactNormalOffsetBytes}}, stride);
@@ -348,7 +353,7 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
     auto candidate = recordPreviewPbrMaterial(device, *list.value(), geometry->parameters(),
                                               pbr->materialId, pbr->material, pbr->texture,
                                               r.whiteEmissive ? r.whiteEmissive->texture.get() : nullptr,
-                                              pbr->normal, pbr->emissive);
+                                              pbr->normal, pbr->emissive, pbr->packed);
     if (candidate.isErr()) return deviceCreationFailed("PBR material creation");
     r.pbrMaterial.emplace(std::move(candidate.value()));
   }
@@ -406,10 +411,11 @@ MeshMaterialPreviewExecution renderMeshMaterialPreview(
     const as::MaterialAssetData& material, const as::TextureAssetData& texture,
     const as::AssetGuid& meshGuid, const as::AssetGuid& materialGuid,
     std::shared_ptr<MeshPreviewResources>& incompleteSubmission, PreviewCompletion complete,
-    const MeshPreviewReadOnly* readOnly, const as::TextureAssetData* normal, const as::TextureAssetData* emissive) {
+    const MeshPreviewReadOnly* readOnly, const as::TextureAssetData* normal, const as::TextureAssetData* emissive,
+    const as::TextureAssetData* packed) {
   using E = ac::MeshMaterialPreviewError;
   using R = ac::MeshMaterialPreviewResult;
-  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid), normal, emissive};
+  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid), normal, emissive, packed};
   auto execution = renderPreviewPng(device, config, mesh, &pbr, incompleteSubmission, complete, readOnly);
   if (execution.result.isErr()) {
     return {R::Err(execution.result.error() == ac::PreviewError::InvalidMesh ? E::IncompatiblePair : E::RenderFailed),
@@ -452,21 +458,22 @@ connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMat
     const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
     const asset_system::TextureAssetData& texture, const asset_system::TextureAssetData* normal,
-    const asset_system::TextureAssetData* emissive) {
-  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr, normal, emissive);
+    const asset_system::TextureAssetData* emissive, const asset_system::TextureAssetData* packed) {
+  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr, normal, emissive, packed);
 }
 
 connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterialWithCompletion(
     const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
     const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete,
-    const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive) {
+    const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive,
+    const asset_system::TextureAssetData* packed) {
   using namespace connection::assets;
   if (!meshPreviewAvailable()) return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);
   const detail::MeshPreviewReadOnly readOnly{*fullscreenTriangleVertexBuffer_, *fullscreenTriangleIndexBuffer_,
                                             *outputTransformSampler_, *shadowMapSampler_};
   auto execution = detail::renderMeshMaterialPreview(*device_, config, mesh, material, texture, meshGuid, materialGuid,
-                                                     incompleteMeshPreview_, complete, &readOnly, normal, emissive);
+                                                     incompleteMeshPreview_, complete, &readOnly, normal, emissive, packed);
   if (execution.fatal) {
     lifecycle_.markFailed();
     return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);

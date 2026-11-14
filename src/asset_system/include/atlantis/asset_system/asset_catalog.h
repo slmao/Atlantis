@@ -35,6 +35,13 @@ struct CatalogSourceId {
 [[nodiscard]] std::optional<CatalogSourceId> parseCatalogSourceId(std::string_view text);
 [[nodiscard]] std::string toString(const CatalogSourceId& id);
 
+// This registered source key carries the packed-map role independently of pixel format.
+[[nodiscard]] bool isMetallicRoughnessSource(CatalogRoot root, std::string_view path,
+                                             std::string_view subKey) noexcept;
+inline bool isMetallicRoughnessSource(const CatalogSourceId& source) noexcept {
+  return isMetallicRoughnessSource(source.root, source.path, source.subKey);
+}
+
 struct AssetCatalogRecord {
   AssetGuid guid;
   AssetId assetId = 0;

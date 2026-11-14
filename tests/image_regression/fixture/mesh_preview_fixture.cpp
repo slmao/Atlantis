@@ -28,6 +28,10 @@ runtime::BootstrapConfig previewConfig() {
   config.pbrDirectLitNormalMapVertexShaderSpirvPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.vert.spv";
   config.pbrDirectLitNormalMapVertexShaderReflectionPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.vert.refl.json";
   config.pbrDirectLitNormalMapFragmentShaderSpirvPath = ATLANTIS_PREVIEW_NORMAL_DIR "/pbr_direct_lit_normal_map.frag.spv";
+  config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath =
+      ATLANTIS_PREVIEW_PACKED_DIR "/pbr_direct_lit_metallic_roughness.frag.spv";
+  config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath =
+      ATLANTIS_PREVIEW_NORMAL_PACKED_DIR "/pbr_direct_lit_normal_map_metallic_roughness.frag.spv";
   config.shadowCastVertexShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.spv";
   config.shadowCastVertexShaderReflectionPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.refl.json";
   config.shadowCastFragmentShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.frag.spv";
@@ -102,7 +106,9 @@ std::optional<PixelBuffer> renderMeshMaterialPreviewPixels(std::string_view mate
                                                       meshGuid.value(), materialGuid.value(), incomplete);
   });
 }
-std::optional<PixelBuffer> renderPbrMapPreviewPixels(bool normal, bool emissive, float emission) {
+std::optional<PixelBuffer> renderPbrMapPreviewPixels(
+    bool normal, bool emissive, float emission, float metallic, float roughness,
+    std::optional<std::array<std::uint8_t, 4>> packed) {
   namespace as = asset_system;
   const auto meshId = as::parseAssetGuid(kPreviewQuadGuid).value();
   const auto materialId = as::parseAssetGuid(kPreviewDielectricGuid).value();
@@ -130,10 +136,18 @@ std::optional<PixelBuffer> renderPbrMapPreviewPixels(bool normal, bool emissive,
   recipe.emissiveFactor[0] = emission;
   recipe.emissiveFactor[1] = emission;
   recipe.emissiveFactor[2] = emission;
+  recipe.metallicFactor = metallic;
+  recipe.roughnessFactor = roughness;
+  as::TextureAssetData packedTexture;
+  if (packed) {
+    recipe.metallicRoughnessMap = as::assetKey(materialId) + 1;
+    packedTexture.width = packedTexture.height = packedTexture.mipCount = 1;
+    packedTexture.pixelBytes.assign(packed->begin(), packed->end());
+  }
   return renderPreviewPixels([&](auto& device, const auto& config, auto& incomplete) {
     return runtime::detail::renderMeshMaterialPreview(device, config, mesh.value(), recipe, base.value(),
         meshId, materialId, incomplete, nullptr, nullptr, normal ? &normalTexture.value() : nullptr,
-        emissive ? &lightMask : nullptr);
+        emissive ? &lightMask : nullptr, packed ? &packedTexture : nullptr);
   });
 }
 }  // namespace atlantis::image_regression

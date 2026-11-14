@@ -43,7 +43,8 @@ using atlantis::asset_system::CatalogAssetType;
     case CatalogAssetType::Texture:
       return schema == atlantis::asset_system::kTextureArtifactSchemaVersion;
     case CatalogAssetType::Material:
-      return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion;
+      return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kMappedMaterialArtifactSchemaVersion;
     case CatalogAssetType::Scene:
       return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
     case CatalogAssetType::Environment:
@@ -247,15 +248,29 @@ struct LoadedDependencies {
       referenceTexture(reused.textureAsset);
       referenceTexture(reused.normalMapTexture);
       referenceTexture(reused.emissiveTexture);
+      referenceTexture(reused.metallicRoughnessMap);
       continue;
     }
-    auto materialAssetResult = atlantis::asset_system::loadMaterialAsset(resolvedMaterialEntries[i]->artifact,
-                                                                          resolvedMaterialEntries[i]->metadata);
+    const auto& materialEntry = *resolvedMaterialEntries[i];
+    auto materialAssetResult = atlantis::asset_system::loadMaterialAsset(materialEntry.artifact, materialEntry.metadata,
+                                                                          &materialEntry);
     if (materialAssetResult.isErr()) {
       ATLANTIS_LOG_ERROR("loadMaterialAsset() failed for a scene dependency");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
     }
     const atlantis::asset_system::MaterialAssetData& materialAssetData = materialAssetResult.value();
+
+    namespace as = atlantis::asset_system;
+    const auto usesPackedInOtherSlot = [&](as::AssetId id) {
+      const auto* record = id ? catalog.find(id) : nullptr;
+      return record && as::isMetallicRoughnessSource(record->source);
+    };
+    if (usesPackedInOtherSlot(materialAssetData.textureAsset) ||
+        usesPackedInOtherSlot(materialAssetData.normalMapTexture) ||
+        usesPackedInOtherSlot(materialAssetData.emissiveTexture)) {
+      ATLANTIS_LOG_ERROR("Packed metallic-roughness texture is used in another material slot");
+      return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+    }
 
     if (!haveTexture(materialAssetData.textureAsset)) {
       auto textureResolved = resolveDependency(catalog, materialAssetData.textureAsset, CatalogAssetType::Texture);
@@ -334,6 +349,29 @@ struct LoadedDependencies {
       textureDataMap.emplace(materialAssetData.emissiveTexture, std::move(emissiveResult.value()));
     }
 
+    if (const auto packedId = materialAssetData.metallicRoughnessMap) {
+      const auto resolved = resolveDependency(catalog, packedId, CatalogAssetType::Texture);
+      if (resolved.isErr()) return ResultT::Err(resolved.error());
+      const auto& packed = *resolved.value();
+      if (!as::isMetallicRoughnessSource(packed.source) || !packed.dependencies.empty() ||
+          std::find(materialEntry.dependencies.begin(), materialEntry.dependencies.end(), packed.guid) ==
+              materialEntry.dependencies.end()) {
+        ATLANTIS_LOG_ERROR("Packed metallic-roughness texture has no matching role and dependency edge");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+      if (!haveTexture(packedId)) {
+        auto decoded = as::loadPreviewBaseColorTexture(packed);
+        if (decoded.isErr()) return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+        textureDataMap.emplace(packedId, std::move(decoded.value()));
+      }
+      const auto& texture = textureOf(packedId);
+      if (texture.colorSpace != as::TextureColorSpace::Unorm || texture.layout != as::TextureDataLayout::Rgba8 ||
+          texture.mipCount != 1) {
+        ATLANTIS_LOG_ERROR("Packed metallic-roughness texture must be single-mip RGBA8 UNORM");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+    }
+    referenceTexture(materialAssetData.metallicRoughnessMap);
     referenceTexture(materialAssetData.textureAsset);
     referenceTexture(materialAssetData.normalMapTexture);
     referenceTexture(materialAssetData.emissiveTexture);

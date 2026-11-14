@@ -186,6 +186,8 @@ struct BootstrapConfig {
   // (the default) means a top-level window, as ever. Only atlantis_runtime's
   // `--parent-window` sets it.
   std::optional<std::uint64_t> parentWindow;
+  std::string pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath;
+  std::string pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath;
 };
 
 // GPU/window-independent validation for the optional environment portion.

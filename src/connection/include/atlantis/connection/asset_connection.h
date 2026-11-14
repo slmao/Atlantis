@@ -201,7 +201,7 @@ struct TextureImportStatus {
 using TextureImportStartResult = Result<TextureImportJob, ImportError>;
 using TextureImportStatusResult = Result<TextureImportStatus, ImportError>;
 
-enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps };
+enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps, WithMetallicRoughness };
 
 struct MaterialValues {
   asset_system::AssetGuid texture;
@@ -211,6 +211,7 @@ struct MaterialValues {
   std::optional<asset_system::AssetGuid> normalMap{};
   std::optional<asset_system::AssetGuid> emissiveTexture{};
   std::array<float, 3> emissiveFactor{};
+  std::optional<asset_system::AssetGuid> metallicRoughnessMap{};
   friend bool operator==(const MaterialValues&, const MaterialValues&) = default;
 };
 enum class MaterialFilter : std::uint8_t { Nearest, Linear };
@@ -299,6 +300,7 @@ using MaterialDraftPreviewResult = Result<MaterialDraftPreview, MaterialError>;
 [[nodiscard]] std::string_view toString(MaterialStage value) noexcept;
 [[nodiscard]] std::string_view toString(MaterialFailureCode value) noexcept;
 [[nodiscard]] bool basicMaterialValues(const MaterialValues& values) noexcept;
+[[nodiscard]] bool representsMaterialValues(const MaterialValues& values, MaterialRecipeVersion version) noexcept;
 [[nodiscard]] bool validMaterialValues(const MaterialValues& values) noexcept;
 [[nodiscard]] bool validMaterialRecipe(const MaterialRecipe& recipe) noexcept;
 [[nodiscard]] MaterialTarget materialTarget(const MaterialSave& request);
@@ -383,6 +385,12 @@ class AssetConnection {
   [[nodiscard]] virtual assets::TextureImportStatusResult normalMapImportStatus(std::optional<assets::TextureImportId>) const {
     return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
   }
+  [[nodiscard]] virtual assets::TextureImportStartResult metallicRoughnessImport(std::string_view, assets::ImportMode) {
+    return assets::TextureImportStartResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<assets::TextureImportId>) const {
+    return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
+  }
   // Spec 0094 / ADR-0153. Read and preview use the retained cooked catalog.
   // Save returns admission only. A transport failure leaves settlement unknown.
   [[nodiscard]] virtual assets::MaterialReadResult materialRead(const asset_system::AssetGuid&) const {
@@ -405,6 +413,18 @@ class AssetConnection {
     return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
   }
   [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithMaps(
+      const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
+    return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
+  }
+
+  // Spec 0098 / ADR-0157. Complete recipe on the same snapshot and worker.
+  [[nodiscard]] virtual assets::MaterialReadResult materialReadWithMetallicRoughness(const asset_system::AssetGuid&) const {
+    return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithMetallicRoughness(const assets::MaterialSave&) {
+    return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(
       const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
     return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }

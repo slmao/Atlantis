@@ -113,6 +113,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   // M1) are `0` when absent.
   const AssetId textureAssetId = assetKey(parsed.textureAsset);
   const AssetId normalMapTextureAssetId = parsed.normalMapAsset.has_value() ? assetKey(*parsed.normalMapAsset) : 0;
+  const AssetId packedMap = parsed.metallicRoughnessMapAsset ? assetKey(*parsed.metallicRoughnessMapAsset) : 0;
   const AssetId emissiveTextureAssetId =
       parsed.emissiveTextureAsset.has_value() ? assetKey(*parsed.emissiveTextureAsset) : 0;
 
@@ -170,7 +171,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
       parsed.kind, textureAssetId, parsed.filter, parsed.addressMode, parsed.baseColorFactor, parsed.metallicFactor,
       parsed.roughnessFactor, normalMapTextureAssetId, parsed.clearcoatFactor, parsed.clearcoatRoughness,
       parsed.sheenColor, parsed.sheenRoughness, parsed.anisotropyFactor, parsed.anisotropyRotation,
-      parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff, emissiveTextureAssetId);
+      parsed.emissiveFactor, parsed.alphaMode, parsed.alphaCutoff, emissiveTextureAssetId, packedMap);
 
   MaterialMetadata metadata;
   metadata.assetGuid = assetGuid;
@@ -192,6 +193,7 @@ atlantis::Result<std::monostate, MaterialCookError> cookMaterial(const std::stri
   metadata.alphaMode = parsed.alphaMode;
   metadata.alphaCutoff = parsed.alphaCutoff;
   metadata.emissiveTexture = emissiveTextureAssetId;
+  metadata.metallicRoughnessMap = packedMap;
   const std::string metadataText = serializeMaterialMetadata(metadata);
 
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),

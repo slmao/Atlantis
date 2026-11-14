@@ -84,6 +84,7 @@ struct ParsedMaterialSource {
   // none. PBR kinds only (EmissiveNotSupportedForKind otherwise), resolved
   // to an AssetId by cookMaterial(), like normalMapLogicalPath.
   std::optional<AssetGuid> emissiveTextureAsset;
+  std::optional<AssetGuid> metallicRoughnessMapAsset;
 };
 
 // Plan 0018 Section P2/P4: parse/decode-error conditions specific to the

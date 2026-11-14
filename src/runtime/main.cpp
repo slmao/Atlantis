@@ -230,6 +230,10 @@ int main(int argc, char** argv) {
   config.pbrDirectLitNormalMapVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) +
       "/pbr_direct_lit_normal_map.vert.refl.json";
+  config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_METALLIC_ROUGHNESS_SHADER_DIR) + "/pbr_direct_lit_metallic_roughness.frag.spv";
+  config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_METALLIC_ROUGHNESS_SHADER_DIR) + "/pbr_direct_lit_normal_map_metallic_roughness.frag.spv";
   config.pbrDirectLitNormalMapFragmentShaderSpirvPath =
       std::string(ATLANTIS_RUNTIME_PBR_DIRECT_LIT_NORMAL_MAP_SHADER_DIR) + "/pbr_direct_lit_normal_map.frag.spv";
   config.pbrDirectLitNormalMapFragmentShaderReflectionPath =
@@ -429,8 +433,9 @@ int main(int argc, char** argv) {
                                     const atlantis::asset_system::MaterialAssetData& material,
                                     const atlantis::asset_system::TextureAssetData& texture,
                        const atlantis::asset_system::TextureAssetData* normal,
-                       const atlantis::asset_system::TextureAssetData* emissive) {
-         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive);
+                       const atlantis::asset_system::TextureAssetData* emissive,
+                       const atlantis::asset_system::TextureAssetData* packed) {
+         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed);
        }});
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks

@@ -181,6 +181,37 @@ TEST_CASE("Headless PBR maps alter independent contributions and retain white fa
   CHECK(white->rgba8 != both->rgba8);
 }
 
+TEST_CASE("Packed PBR maps multiply the right linear channels before shading",
+          "[image_regression][gpu][mesh_material_preview]") {
+  constexpr float metallic = 0.64f, roughness = 0.81f;
+  using Texel = std::array<std::uint8_t, 4>;
+  for (bool normal : {false, true}) {
+    const auto mapped = renderPbrMapPreviewPixels(normal, false, 0, metallic, roughness, Texel{0, 97, 213, 255});
+    const auto noMap = renderPbrMapPreviewPixels(normal, false, 0, metallic, roughness);
+    const auto reference = renderPbrMapPreviewPixels(normal, false, 0,
+        metallic * (213.0f / 255.0f), roughness * (97.0f / 255.0f));
+    const auto ignored = renderPbrMapPreviewPixels(normal, false, 0, metallic, roughness, Texel{243, 97, 213, 8});
+    const auto differentG = renderPbrMapPreviewPixels(normal, false, 0, metallic, roughness, Texel{0, 219, 213, 255});
+    const auto differentB = renderPbrMapPreviewPixels(normal, false, 0, metallic, roughness, Texel{0, 97, 42, 255});
+    const auto zeroB = renderPbrMapPreviewPixels(normal, false, 0, 0, roughness, Texel{0, 97, 213, 255});
+    const auto zeroBReference = renderPbrMapPreviewPixels(normal, false, 0, 0, roughness * (97.0f / 255.0f));
+    REQUIRE(mapped);
+    REQUIRE(noMap);
+    REQUIRE(reference);
+    REQUIRE(ignored);
+    REQUIRE(differentG);
+    REQUIRE(differentB);
+    REQUIRE(zeroB);
+    REQUIRE(zeroBReference);
+    CHECK(mapped->rgba8 == reference->rgba8);
+    CHECK(mapped->rgba8 == ignored->rgba8);
+    CHECK(mapped->rgba8 != noMap->rgba8);
+    CHECK(mapped->rgba8 != differentG->rgba8);
+    CHECK(mapped->rgba8 != differentB->rgba8);
+    CHECK(zeroB->rgba8 == zeroBReference->rgba8);
+  }
+}
+
 TEST_CASE("Headless material preview samples an uploaded nonzero RGBA8 mip",
           "[image_regression][gpu][mesh_material_preview]") {
   const auto mipped = renderMeshMaterialPreviewPixels(kPreviewDielectricGuid, true);

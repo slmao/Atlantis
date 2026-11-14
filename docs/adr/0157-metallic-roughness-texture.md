@@ -1,9 +1,9 @@
 # ADR 0157: Packed Metallic–Roughness Texture Contract
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
-- **Deciders:** Pending joint review
-- **Acceptance:** Pending joint review
+- **Deciders:** Atlantis maintainer
+- **Acceptance:** Atlantis maintainer, 2026-11-14, [PR #361](https://github.com/slmao/Atlantis/pull/361) at `8241daab`
 - **Related Spec:** [Spec 0098](../specs/0098-metallic-roughness-texture.md)
 
 ## Context
