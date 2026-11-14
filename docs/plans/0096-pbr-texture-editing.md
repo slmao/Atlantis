@@ -1,10 +1,10 @@
 # Plan: PBR Normal and Emissive Texture Editing
 
 - **Spec:** [Spec 0096](../specs/0096-pbr-texture-editing.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0155](../adr/0155-pbr-material-map-authoring.md) (Proposed)
+- **Joint Human Review:** The Atlantis maintainer approved J1–J4 and Spec/Plan 0096 on 2026-11-14 at `610591f7`. [PR #357](https://github.com/slmao/Atlantis/pull/357) was manually merged as `6e531d06`. Authorization covers S2–S4, ordinary in-scope fixes, applicable verification, valid evidence reuse and a review-ready PR. Windows DPI acceptance uses actual 100%. Final merge remains human.
+- **ADR:** [ADR-0155](../adr/0155-pbr-material-map-authoring.md) (Accepted)
 
 ## Objective
 

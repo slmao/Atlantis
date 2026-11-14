@@ -166,9 +166,10 @@ struct RuntimeSmokeTestAccess {
   static connection::assets::MeshMaterialPreviewResult failPairPreviewCompletion(
       RuntimeApplication& app, const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid,
       const asset_system::AssetGuid& materialGuid, const asset_system::StaticMeshAssetData& mesh,
-      const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture) {
+      const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture,
+      const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive) {
     return app.previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture,
-        [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); });
+        [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); }, normal, emissive);
   }
 
   [[nodiscard]] static atlantis::world::access::RuntimeWorldAccess& worldAccess(RuntimeApplication& app) {
@@ -983,10 +984,19 @@ TEST_CASE("Runtime retains pair upload and draw resources through its terminal d
   REQUIRE(textureRecord);
   const auto texture = as::loadPreviewBaseColorTexture(*textureRecord);
   REQUIRE(texture.isOk());
+  const auto normalGuid = as::parseAssetGuid("5e99757a-d524-4aaf-b665-0d308aa7ae99").value();
+  const auto* normalRecord = catalog.value().find(normalGuid);
+  REQUIRE(normalRecord);
+  const auto normal = as::loadPreviewBaseColorTexture(*normalRecord);
+  REQUIRE(normal.isOk());
+  auto mapped = material.value();
+  mapped.normalMapTexture = normalRecord->assetId;
+  mapped.emissiveTexture = as::assetKey(materialGuid);
+  mapped.emissiveFactor[0] = 0.5f;
   app.runFrame();
   REQUIRE(app.shouldContinue());
   const auto failed = RuntimeSmokeTestAccess::failPairPreviewCompletion(
-      app, config, meshGuid, materialGuid, mesh.value(), material.value(), texture.value());
+      app, config, meshGuid, materialGuid, mesh.value(), mapped, texture.value(), &normal.value(), &texture.value());
   CHECK(failed.error() == ac::MeshMaterialPreviewError::Unavailable);
   CHECK_FALSE(app.shouldContinue());
   CHECK(RuntimeSmokeTestAccess::hasIncompletePreview(app));

@@ -175,6 +175,8 @@ struct PbrPreviewInputs {
   const as::MaterialAssetData& material;
   const as::TextureAssetData& texture;
   as::AssetId materialId;
+  const as::TextureAssetData* normal;
+  const as::TextureAssetData* emissive;
 };
 
 using PreviewPngResult = Result<std::vector<std::uint8_t>, ac::PreviewError>;
@@ -231,13 +233,20 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
   if (!framed) return {R::Err(E::InvalidMesh), false};
 
   constexpr auto stride = as::kMeshArtifactVertexStrideBytes;
-  const auto geometry = pbr
-      ? readPair(config.pbrDirectLitVertexShaderSpirvPath, config.pbrDirectLitFragmentShaderSpirvPath,
-                 config.pbrDirectLitVertexShaderReflectionPath,
-                 {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
-                  {2, as::kMeshArtifactNormalOffsetBytes}}, stride)
-      : readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
-                 {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
+  const auto geometry = [&] {
+    if (!pbr)
+      return readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
+                      {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
+    if (pbr->normal)
+      return readPair(config.pbrDirectLitNormalMapVertexShaderSpirvPath, config.pbrDirectLitNormalMapFragmentShaderSpirvPath,
+                      config.pbrDirectLitNormalMapVertexShaderReflectionPath,
+                      {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
+                       {2, as::kMeshArtifactNormalOffsetBytes}, {3, as::kMeshArtifactTangentOffsetBytes}}, stride);
+    return readPair(config.pbrDirectLitVertexShaderSpirvPath, config.pbrDirectLitFragmentShaderSpirvPath,
+                    config.pbrDirectLitVertexShaderReflectionPath,
+                    {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
+                     {2, as::kMeshArtifactNormalOffsetBytes}}, stride);
+  }();
   const auto shadowShader = readPair(config.shadowCastVertexShaderSpirvPath, config.shadowCastFragmentShaderSpirvPath,
                                      config.shadowCastVertexShaderReflectionPath,
                                      {{0, as::kMeshArtifactPositionOffsetBytes}}, stride);
@@ -331,12 +340,15 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
   auto list = device.createCommandList();
   if (list.isErr()) return deviceCreationFailed("command list creation");
   if (pbr) {
-    auto white = createDefaultEmissiveTexture(device, *list.value());
-    if (white.isErr()) return deviceCreationFailed("white emissive upload creation");
-    r.whiteEmissive.emplace(std::move(white.value()));
+    if (!pbr->material.emissiveTexture) {
+      auto white = createDefaultEmissiveTexture(device, *list.value());
+      if (white.isErr()) return deviceCreationFailed("white emissive upload creation");
+      r.whiteEmissive.emplace(std::move(white.value()));
+    }
     auto candidate = recordPreviewPbrMaterial(device, *list.value(), geometry->parameters(),
                                               pbr->materialId, pbr->material, pbr->texture,
-                                              *r.whiteEmissive->texture);
+                                              r.whiteEmissive ? r.whiteEmissive->texture.get() : nullptr,
+                                              pbr->normal, pbr->emissive);
     if (candidate.isErr()) return deviceCreationFailed("PBR material creation");
     r.pbrMaterial.emplace(std::move(candidate.value()));
   }
@@ -394,10 +406,10 @@ MeshMaterialPreviewExecution renderMeshMaterialPreview(
     const as::MaterialAssetData& material, const as::TextureAssetData& texture,
     const as::AssetGuid& meshGuid, const as::AssetGuid& materialGuid,
     std::shared_ptr<MeshPreviewResources>& incompleteSubmission, PreviewCompletion complete,
-    const MeshPreviewReadOnly* readOnly) {
+    const MeshPreviewReadOnly* readOnly, const as::TextureAssetData* normal, const as::TextureAssetData* emissive) {
   using E = ac::MeshMaterialPreviewError;
   using R = ac::MeshMaterialPreviewResult;
-  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid)};
+  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid), normal, emissive};
   auto execution = renderPreviewPng(device, config, mesh, &pbr, incompleteSubmission, complete, readOnly);
   if (execution.result.isErr()) {
     return {R::Err(execution.result.error() == ac::PreviewError::InvalidMesh ? E::IncompatiblePair : E::RenderFailed),
@@ -439,20 +451,22 @@ connection::assets::MeshPreviewResult RuntimeApplication::previewMeshWithComplet
 connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterial(
     const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
-    const asset_system::TextureAssetData& texture) {
-  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr);
+    const asset_system::TextureAssetData& texture, const asset_system::TextureAssetData* normal,
+    const asset_system::TextureAssetData* emissive) {
+  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr, normal, emissive);
 }
 
 connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterialWithCompletion(
     const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
-    const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete) {
+    const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete,
+    const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive) {
   using namespace connection::assets;
   if (!meshPreviewAvailable()) return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);
   const detail::MeshPreviewReadOnly readOnly{*fullscreenTriangleVertexBuffer_, *fullscreenTriangleIndexBuffer_,
                                             *outputTransformSampler_, *shadowMapSampler_};
   auto execution = detail::renderMeshMaterialPreview(*device_, config, mesh, material, texture, meshGuid, materialGuid,
-                                                     incompleteMeshPreview_, complete, &readOnly);
+                                                     incompleteMeshPreview_, complete, &readOnly, normal, emissive);
   if (execution.fatal) {
     lifecycle_.markFailed();
     return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);

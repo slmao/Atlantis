@@ -201,11 +201,16 @@ struct TextureImportStatus {
 using TextureImportStartResult = Result<TextureImportJob, ImportError>;
 using TextureImportStatusResult = Result<TextureImportStatus, ImportError>;
 
+enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps };
+
 struct MaterialValues {
   asset_system::AssetGuid texture;
   std::array<float, 3> color{1, 1, 1};
   float metallic = 0;
   float roughness = 0.5f;
+  std::optional<asset_system::AssetGuid> normalMap{};
+  std::optional<asset_system::AssetGuid> emissiveTexture{};
+  std::array<float, 3> emissiveFactor{};
   friend bool operator==(const MaterialValues&, const MaterialValues&) = default;
 };
 enum class MaterialFilter : std::uint8_t { Nearest, Linear };
@@ -293,25 +298,36 @@ using MaterialDraftPreviewResult = Result<MaterialDraftPreview, MaterialError>;
 [[nodiscard]] std::string_view toString(MaterialError value) noexcept;
 [[nodiscard]] std::string_view toString(MaterialStage value) noexcept;
 [[nodiscard]] std::string_view toString(MaterialFailureCode value) noexcept;
+[[nodiscard]] bool basicMaterialValues(const MaterialValues& values) noexcept;
 [[nodiscard]] bool validMaterialValues(const MaterialValues& values) noexcept;
 [[nodiscard]] bool validMaterialRecipe(const MaterialRecipe& recipe) noexcept;
 [[nodiscard]] MaterialTarget materialTarget(const MaterialSave& request);
-[[nodiscard]] json::Value encodeMaterialValues(const MaterialValues& values);
-[[nodiscard]] std::optional<MaterialValues> decodeMaterialValues(const json::Value& value);
-[[nodiscard]] json::Value encodeMaterialRecipe(const MaterialRecipe& recipe);
-[[nodiscard]] std::optional<MaterialRecipe> decodeMaterialRecipe(const json::Value& value);
-[[nodiscard]] json::Value encodeMaterialSave(const MaterialSave& input);
-[[nodiscard]] std::optional<MaterialSave> decodeMaterialSave(const json::Value& value);
-[[nodiscard]] json::Value encodeMaterialRead(const MaterialRead& value);
-[[nodiscard]] std::optional<MaterialRead> decodeMaterialRead(const json::Value& value);
+[[nodiscard]] json::Value encodeMaterialValues(const MaterialValues& values,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] std::optional<MaterialValues> decodeMaterialValues(const json::Value& value,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] json::Value encodeMaterialRecipe(const MaterialRecipe& recipe,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] std::optional<MaterialRecipe> decodeMaterialRecipe(const json::Value& value,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] json::Value encodeMaterialSave(const MaterialSave& input,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] std::optional<MaterialSave> decodeMaterialSave(const json::Value& value,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] json::Value encodeMaterialRead(const MaterialRead& value,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
+[[nodiscard]] std::optional<MaterialRead> decodeMaterialRead(const json::Value& value,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
 [[nodiscard]] json::Value encodeMaterialJob(const MaterialJob& value);
 [[nodiscard]] std::optional<MaterialJob> decodeMaterialJob(const json::Value& value);
 [[nodiscard]] json::Value encodeMaterialStatus(const MaterialStatus& value);
 [[nodiscard]] std::optional<MaterialStatus> decodeMaterialStatus(const json::Value& value);
 [[nodiscard]] std::optional<MaterialError> decodeMaterialError(const json::Value& value);
-[[nodiscard]] std::optional<json::Value> encodeMaterialDraftPreview(const MaterialDraftPreview& image);
+[[nodiscard]] std::optional<json::Value> encodeMaterialDraftPreview(const MaterialDraftPreview& image,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
 [[nodiscard]] std::optional<MaterialDraftPreview> decodeMaterialDraftPreview(
-    const json::Value& payload, const asset_system::AssetGuid& mesh, const MaterialRecipe& recipe);
+    const json::Value& payload, const asset_system::AssetGuid& mesh, const MaterialRecipe& recipe,
+    MaterialRecipeVersion version = MaterialRecipeVersion::Basic);
 }  // namespace assets
 
 // Spec 0081 / ADR-0143: read-only cooked-catalog facts, not GPU residency.
@@ -371,6 +387,16 @@ class AssetConnection {
     return assets::MaterialStatusResult::Err(assets::MaterialError::Unavailable);
   }
   [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraft(
+      const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
+    return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialReadResult materialReadWithMaps(const asset_system::AssetGuid&) const {
+    return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithMaps(const assets::MaterialSave&) {
+    return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithMaps(
       const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
     return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }

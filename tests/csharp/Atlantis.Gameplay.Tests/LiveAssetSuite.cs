@@ -26,6 +26,7 @@ public static class LiveAssetSuite
         PairPreviewContract(t);
         MaterialContract(t);
         TextureContract(t);
+        MaterialMapsContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -265,6 +266,48 @@ public static class LiveAssetSuite
             var value = client.Assets.TextureImportStatus(new A.TextureImportId(id)).Value;
             t.Check(value.WorkspaceNeedsRepair && value.Job?.State == A.RebuildState.Succeeded,
                 "texture: repair required does not downgrade confirmed publication");
+        }, expectedPreviews: 0);
+    }
+
+    private static void MaterialMapsContract(TestContext t)
+    {
+        AssetGuid id = AssetCodecSuite.PreviewMaterial;
+        var basic = new A.MaterialValues(id, 1, 1, 1, 0, .5f);
+        var values = basic with { NormalMap = id, EmissiveTexture = id, EmissiveRed = 4 };
+        var recipe = new A.MaterialRecipe(values, A.MaterialFilter.Linear, A.MaterialAddress.Repeat);
+        var read = JsonValue.NewObject().Set("material", Codec.Encode(id)).Set("editable", JsonValue.Bool(true))
+            .Set("activeGeneration", JsonValue.Null()).Set("recipe", Codec.EncodeMaterialRecipe(recipe, true));
+        WithPeer(t, id, method => method == "assets.materialReadWithMaps"
+            ? JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("ok", read))
+            : throw new InvalidOperationException(method), client =>
+        {
+            t.Check(client.Assets.MaterialReadWithMaps(id).Value.Recipe == recipe,
+                "maps: complete recipe is retained");
+            var refused = client.Assets.MaterialSave(new A.MaterialSave.Create("draft", values));
+            t.Check(!refused.IsOk && refused.Error == A.MaterialError.InvalidRecipe,
+                "maps: SDK legacy save refuses a lossy projection before sending");
+        }, expectedPreviews: 0);
+        var unsupported = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        WithPeer(t, id, method => method == "assets.materialSaveWithMaps" ? unsupported :
+            throw new InvalidOperationException(method), client =>
+        {
+            var refused = client.Assets.MaterialSaveWithMaps(new A.MaterialSave.Create("draft", values));
+            t.Check(!refused.IsOk && refused.Error == A.MaterialError.Unsupported && client.Failure is null,
+                "maps: exact older Runtime refusal preserves the session and avoids replay");
+        }, expectedPreviews: 0);
+        var lookalike = Json.Parse("""{"result":{"err":"Unsupported"}}""");
+        WithPeer(t, id, method => method == "assets.previewMaterialDraftWithMaps" ? lookalike :
+            throw new InvalidOperationException(method), client =>
+        {
+            try
+            {
+                _ = client.Assets.PreviewMaterialDraftWithMaps(id, recipe);
+                t.Check(false, "maps: in-band Unsupported is malformed");
+            }
+            catch (RemoteException e)
+            {
+                t.Check(e.Error == RemoteError.ProtocolError, "maps: in-band Unsupported is malformed");
+            }
         }, expectedPreviews: 0);
     }
 

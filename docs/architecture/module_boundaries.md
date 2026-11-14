@@ -1708,6 +1708,13 @@ evidence. The cooker owns PNG decoding and output formatting. The
 material editor binds the activated Texture through the existing GUID
 dependency and preview path.
 
+[Spec 0096](../specs/0096-pbr-texture-editing.md) adds an exact shared
+recipe for existing normal and emissive slots. Runtime validates the
+complete frozen material independently of the client version. Editor
+and the other clients use the same authoring worker and receipt history.
+The bounded between-frame preview uses the existing shader variants with
+request-owned normal and emissive resources. [ADR-0155](../adr/0155-pbr-material-map-authoring.md).
+
 
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws

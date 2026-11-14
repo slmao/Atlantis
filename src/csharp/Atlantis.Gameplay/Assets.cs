@@ -76,7 +76,14 @@ public sealed record TextureImportStatus(GenerationId? ActiveGeneration, Texture
 
 // Spec 0094: the editable subset of one opaque direct-lit PBR material.
 public readonly record struct MaterialValues(AssetGuid Texture, float Red, float Green, float Blue,
-                                             float Metallic, float Roughness);
+                                             float Metallic, float Roughness)
+{
+    public AssetGuid? NormalMap { get; init; }
+    public AssetGuid? EmissiveTexture { get; init; }
+    public float EmissiveRed { get; init; }
+    public float EmissiveGreen { get; init; }
+    public float EmissiveBlue { get; init; }
+}
 public enum MaterialFilter { Nearest, Linear }
 public enum MaterialAddress { Repeat, ClampToEdge }
 public sealed record MaterialRecipe(MaterialValues Values, MaterialFilter Filter, MaterialAddress Address);

@@ -492,7 +492,7 @@ class RemoteAssets final : public connection::AssetConnection {
     params.set("meshGuid", codec::encodeAsset(meshGuid));
     params.set("materialGuid", codec::encodeAsset(materialGuid));
     const auto envelope = state_.awaitResponse(state_.send("assets.previewMeshMaterial", std::move(params)));
-    if (envelope && memberCount(*envelope, "id") == 1 &&
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1 &&
         memberCount(*envelope, "result") + memberCount(*envelope, "error") == 1) {
       if (const auto* result = envelope->find("result")) {
         if (memberCount(*result, "ok") + memberCount(*result, "err") == 1) {
@@ -503,7 +503,8 @@ class RemoteAssets final : public connection::AssetConnection {
           }
         }
       } else if (const auto* error = envelope->find("error");
-                 error && memberCount(*error, "code") == 1 && memberCount(*error, "message") == 1 &&
+                 error && error->isObject() && error->asObject().size() == 2 &&
+                 memberCount(*error, "code") == 1 && memberCount(*error, "message") == 1 &&
                  legacyAssetRefusal(*error)) {
         return R::Err(E::Unsupported);
       }
@@ -571,29 +572,47 @@ class RemoteAssets final : public connection::AssetConnection {
     });
   }
   ca::MaterialReadResult materialRead(const AssetGuid& material) const override {
+    return readMaterial(material, ca::MaterialRecipeVersion::Basic);
+  }
+  ca::MaterialReadResult materialReadWithMaps(const AssetGuid& material) const override {
+    return readMaterial(material, ca::MaterialRecipeVersion::WithMaps);
+  }
+  ca::MaterialReadResult readMaterial(const AssetGuid& material, ca::MaterialRecipeVersion version) const {
     if (material == AssetGuid{}) return ca::MaterialReadResult::Err(ca::MaterialError::UnknownMaterial);
     auto params = Value::object();
     params.set("material", codec::encodeAsset(material));
-    return materialRequest<ca::MaterialRead>("assets.materialRead", std::move(params), [material](const Value& v) {
-      auto read = ca::decodeMaterialRead(v);
+    const auto method = version == ca::MaterialRecipeVersion::Basic ? "assets.materialRead" : "assets.materialReadWithMaps";
+    return materialRequest<ca::MaterialRead>(method, std::move(params), [material, version](const Value& v) {
+      auto read = ca::decodeMaterialRead(v, version);
       return read && read->material == material ? read : std::nullopt;
     });
   }
   ca::MaterialSaveResult materialSave(const ca::MaterialSave& request) override {
-    const bool valid = std::visit([](const auto& input) {
+    return saveMaterial(request, ca::MaterialRecipeVersion::Basic);
+  }
+  ca::MaterialSaveResult materialSaveWithMaps(const ca::MaterialSave& request) override {
+    return saveMaterial(request, ca::MaterialRecipeVersion::WithMaps);
+  }
+  ca::MaterialSaveResult saveMaterial(const ca::MaterialSave& request, ca::MaterialRecipeVersion version) {
+    const auto validValues = [version](const auto& values) {
+      return ca::validMaterialValues(values) &&
+          (version == ca::MaterialRecipeVersion::WithMaps || ca::basicMaterialValues(values));
+    };
+    const bool valid = std::visit([&](const auto& input) {
       using T = std::decay_t<decltype(input)>;
       if constexpr (std::is_same_v<T, ca::EditMaterial>)
-        return ca::validMaterialValues(input.values) && ca::validMaterialValues(input.expected);
+        return validValues(input.values) && validValues(input.expected);
       else if constexpr (!std::is_same_v<T, ca::ResumeMaterial>)
-        return ca::validMaterialValues(input.values);
+        return validValues(input.values);
       else
         return true;
     }, request);
     if (!valid) return ca::MaterialSaveResult::Err(ca::MaterialError::InvalidRecipe);
-    auto params = ca::encodeMaterialSave(request);
-    if (!ca::decodeMaterialSave(params)) return ca::MaterialSaveResult::Err(ca::MaterialError::InvalidRecipe);
+    auto params = ca::encodeMaterialSave(request, version);
+    if (!ca::decodeMaterialSave(params, version)) return ca::MaterialSaveResult::Err(ca::MaterialError::InvalidRecipe);
     const auto target = ca::materialTarget(request);
-    return materialRequest<ca::MaterialJob>("assets.materialSave", std::move(params), [&target](const Value& v) {
+    const auto method = version == ca::MaterialRecipeVersion::Basic ? "assets.materialSave" : "assets.materialSaveWithMaps";
+    return materialRequest<ca::MaterialJob>(method, std::move(params), [&target](const Value& v) {
       auto job = ca::decodeMaterialJob(v);
       return job && job->target == target && job->state == ca::RebuildState::Running ? job : std::nullopt;
     });
@@ -608,13 +627,23 @@ class RemoteAssets final : public connection::AssetConnection {
     });
   }
   ca::MaterialDraftPreviewResult previewMaterialDraft(const AssetGuid& mesh, const ca::MaterialRecipe& recipe) override {
-    if (mesh == AssetGuid{} || !ca::validMaterialRecipe(recipe))
+    return previewDraft(mesh, recipe, ca::MaterialRecipeVersion::Basic);
+  }
+  ca::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const AssetGuid& mesh,
+      const ca::MaterialRecipe& recipe) override {
+    return previewDraft(mesh, recipe, ca::MaterialRecipeVersion::WithMaps);
+  }
+  ca::MaterialDraftPreviewResult previewDraft(const AssetGuid& mesh, const ca::MaterialRecipe& recipe,
+      ca::MaterialRecipeVersion version) {
+    if (mesh == AssetGuid{} || !ca::validMaterialRecipe(recipe) ||
+        (version == ca::MaterialRecipeVersion::Basic && !ca::basicMaterialValues(recipe.values)))
       return ca::MaterialDraftPreviewResult::Err(ca::MaterialError::InvalidRecipe);
     auto params = Value::object();
     params.set("mesh", codec::encodeAsset(mesh));
-    params.set("recipe", ca::encodeMaterialRecipe(recipe));
-    return materialRequest<ca::MaterialDraftPreview>("assets.previewMaterialDraft", std::move(params),
-        [&](const Value& v) { return ca::decodeMaterialDraftPreview(v, mesh, recipe); });
+    params.set("recipe", ca::encodeMaterialRecipe(recipe, version));
+    const auto method = version == ca::MaterialRecipeVersion::Basic ? "assets.previewMaterialDraft" : "assets.previewMaterialDraftWithMaps";
+    return materialRequest<ca::MaterialDraftPreview>(method, std::move(params),
+        [&](const Value& v) { return ca::decodeMaterialDraftPreview(v, mesh, recipe, version); });
   }
  private:
   static std::size_t memberCount(const Value& value, std::string_view key) {
@@ -655,17 +684,19 @@ class RemoteAssets final : public connection::AssetConnection {
     using E = ca::MaterialError;
     using R = Result<T, E>;
     const auto envelope = state_.awaitResponse(state_.send(method, std::move(params)));
-    if (envelope && memberCount(*envelope, "id") == 1 &&
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1 &&
         memberCount(*envelope, "result") + memberCount(*envelope, "error") == 1) {
       if (const auto* result = envelope->find("result")) {
         if (result->isObject() && result->asObject().size() == 1) {
           if (const auto* ok = result->find("ok")) {
             if (auto value = decode(*ok)) return R::Ok(std::move(*value));
           } else if (const auto* err = result->find("err")) {
-            if (auto error = ca::decodeMaterialError(*err)) return R::Err(*error);
+            if (auto error = ca::decodeMaterialError(*err);
+                error && (*error != E::Unsupported || !method.ends_with("WithMaps"))) return R::Err(*error);
           }
         }
       } else if (const auto* error = envelope->find("error"); error &&
+                 error->isObject() && error->asObject().size() == 2 &&
                  memberCount(*error, "code") == 1 && memberCount(*error, "message") == 1 &&
                  legacyAssetRefusal(*error)) {
         return R::Err(E::Unsupported);

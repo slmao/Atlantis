@@ -94,6 +94,20 @@ public static partial class Program
         Check(!draftPreviews.Settle(currentDraft) && draftPreviews.CanRequest(true),
             "material: closing the modal discards its reply and restores the shared pair preview");
 
+        var mapped = recipe with { Values = recipe.Values with { NormalMap = a, EmissiveTexture = b, EmissiveRed = 0.5f } };
+        draftPreviews.SetInputs(new(a, null, 8, mapped, true));
+        Check(draftPreviews.RequestDraft(), "material maps: explicit preview admits a full recipe");
+        var staleMapped = draftPreviews.TakeNext()!;
+        var cleared = mapped with { Values = mapped.Values with { NormalMap = null, EmissiveTexture = null } };
+        draftPreviews.SetInputs(new(a, null, 8, cleared, true));
+        Check(!draftPreviews.Settle(staleMapped) && draftPreviews.TakeNext() is null,
+            "material maps: Clear rejects a late reply without requesting another preview");
+        draftPreviews.SetInputs(new(a, null, 9, mapped, true));
+        Check(draftPreviews.RequestDraft(), "material maps: reopened modal can request the same recipe explicitly");
+        var reopenedMapped = draftPreviews.TakeNext()!;
+        Check(!draftPreviews.Settle(staleMapped) && draftPreviews.Settle(reopenedMapped),
+            "material maps: only the reopened modal can settle its preview");
+
         var preview = new AssetPreviewRequests();
         Check(!preview.Request() && preview.TakeNext() is null, "preview: no visible mesh cannot request");
         preview.SetInputs(new(a, null));

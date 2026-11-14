@@ -164,6 +164,23 @@ TEST_CASE("Headless mesh material preview matches its golden and distinguishes t
   CHECK(differentFactors);
 }
 
+TEST_CASE("Headless PBR maps alter independent contributions and retain white fallback", "[image-regression][gpu]") {
+  const auto basic = renderPbrMapPreviewPixels(false, false, 0);
+  const auto normal = renderPbrMapPreviewPixels(true, false, 0);
+  const auto alsoInert = renderPbrMapPreviewPixels(true, true, 0);
+  const auto both = renderPbrMapPreviewPixels(true, true, 0.5f);
+  const auto white = renderPbrMapPreviewPixels(true, false, 0.5f);
+  REQUIRE(basic);
+  REQUIRE(normal);
+  REQUIRE(alsoInert);
+  REQUIRE(both);
+  REQUIRE(white);
+  CHECK(basic->rgba8 != normal->rgba8);
+  CHECK(normal->rgba8 == alsoInert->rgba8);
+  CHECK(both->rgba8 != normal->rgba8);
+  CHECK(white->rgba8 != both->rgba8);
+}
+
 TEST_CASE("Headless material preview samples an uploaded nonzero RGBA8 mip",
           "[image_regression][gpu][mesh_material_preview]") {
   const auto mipped = renderMeshMaterialPreviewPixels(kPreviewDielectricGuid, true);

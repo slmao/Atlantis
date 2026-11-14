@@ -22,7 +22,12 @@ internal sealed class MaterialEditorWindow : Window
     private readonly MaterialDraft _draft;
     private readonly TextBox _name = new() { PlaceholderText = "e.g. brushed_metal" };
     private readonly ComboBox _texture = AssetChoice("Base texture"), _mesh = AssetChoice("Preview mesh");
-    private readonly TextBox[] _values = new TextBox[5];
+    private readonly ComboBox _normal = AssetChoice("Normal map"), _emissive = AssetChoice("Emissive texture");
+    private readonly TextBox[] _values = new TextBox[8];
+    private readonly Button _clearNormal = new() { Content = "Clear" }, _clearEmissive = new() { Content = "Clear" };
+    private readonly Button _basic = new() { Content = "Use basic editing", IsVisible = false };
+    private readonly TextBlock _emissiveHint = EditorVisuals.Secondary("");
+    private readonly Control _maps;
     private readonly Button _save = new() { Content = "Save & Publish" };
     private readonly Button _preview = new() { Content = "Preview draft" };
     private readonly Button _resume = new() { Content = "Resume publication", IsVisible = false };
@@ -33,13 +38,15 @@ internal sealed class MaterialEditorWindow : Window
     private bool _saveBlocked;
     private readonly string _assetName;
     internal long Surface { get; }
+    internal bool WithMaps { get; private set; }
     internal event Action? DraftChanged;
     internal event Action? PreviewRequested;
     internal event Action<MaterialSave>? SaveRequested;
     internal event Action? ResumeRequested;
 
-    internal MaterialEditorWindow(long surface, MaterialDraft draft, string name, IReadOnlyList<AssetSummary> catalog)
+    internal MaterialEditorWindow(long surface, MaterialDraft draft, string name, IReadOnlyList<AssetSummary> catalog, bool withMaps = true)
     {
+        WithMaps = withMaps;
         Surface = surface; _draft = draft; _assetName = name;
         Title = draft.Mode switch { MaterialMode.Create => "New material", MaterialMode.Copy => "Duplicate material", _ => "Edit material" };
         Width = 760; Height = 610; MinWidth = 410; MinHeight = 420;
@@ -48,14 +55,25 @@ internal sealed class MaterialEditorWindow : Window
         AutomationProperties.SetName(_name, "Material name");
         _name.IsReadOnly = draft.Mode == MaterialMode.Edit;
         _name.Text = draft.Mode == MaterialMode.Create ? "" : _name.IsReadOnly ? name : "";
-        _texture.ItemsSource = catalog.Where(x => x.Type == AssetType.Texture).ToArray();
+        var textures = catalog.Where(x => x.Type == AssetType.Texture).ToArray();
+        _texture.ItemsSource = _normal.ItemsSource = _emissive.ItemsSource = textures;
         _mesh.ItemsSource = catalog.Where(x => x.Type == AssetType.Mesh).ToArray();
         _texture.SelectedItem = ((IEnumerable<AssetSummary>)_texture.ItemsSource).FirstOrDefault(x => x.Guid == draft.Initial.Texture);
+        _normal.SelectedItem = textures.FirstOrDefault(x => x.Guid == draft.Initial.NormalMap);
+        _emissive.SelectedItem = textures.FirstOrDefault(x => x.Guid == draft.Initial.EmissiveTexture);
+        _normal.SelectionChanged += (_, _) => Changed();
+        _emissive.SelectionChanged += (_, _) => Changed();
+        AutomationProperties.SetName(_clearNormal, "Clear normal map");
+        AutomationProperties.SetName(_clearEmissive, "Clear emissive texture");
+        _clearNormal.Click += (_, _) => { _normal.SelectedItem = null; _normal.Focus(); };
+        _clearEmissive.Click += (_, _) => { _emissive.SelectedItem = null; _emissive.Focus(); };
         _texture.SelectionChanged += (_, _) => Changed();
         _mesh.SelectionChanged += (_, _) => Changed();
-        string[] labels = ["Red", "Green", "Blue", "Metallic", "Roughness"];
-        float[] initial = [draft.Initial.Red, draft.Initial.Green, draft.Initial.Blue, draft.Initial.Metallic, draft.Initial.Roughness];
-        var inputs = new Control[5];
+        string[] labels = ["Red", "Green", "Blue", "Metallic", "Roughness",
+            "Emissive red", "Emissive green", "Emissive blue"];
+        float[] initial = [draft.Initial.Red, draft.Initial.Green, draft.Initial.Blue, draft.Initial.Metallic, draft.Initial.Roughness,
+            draft.Initial.EmissiveRed, draft.Initial.EmissiveGreen, draft.Initial.EmissiveBlue];
+        var inputs = new Control[_values.Length];
         for (int i = 0; i < _values.Length; ++i)
         {
             var input = new TextBox { Text = initial[i].ToString("G", CultureInfo.InvariantCulture) };
@@ -63,7 +81,7 @@ internal sealed class MaterialEditorWindow : Window
             input.TextChanged += (_, _) => Changed();
             _values[i] = input;
             inputs[i] = EditorVisuals.Stack(3, EditorVisuals.Secondary(labels[i]), input);
-            inputs[i].Margin = new Thickness(0, 0, i is 2 or 4 ? 0 : 6, 0);
+            inputs[i].Margin = new Thickness(0, 0, i is 2 or 4 or 7 ? 0 : 6, 0);
         }
         _name.TextChanged += (_, _) => Refresh();
         _save.Click += (_, _) => { if (TryValues(out var values)) SaveRequested?.Invoke(_draft.Save(_name.Text ?? "", values)); };
@@ -71,12 +89,28 @@ internal sealed class MaterialEditorWindow : Window
         _resume.Click += (_, _) => ResumeRequested?.Invoke();
         var close = new Button { Content = "Close" };
         close.Click += (_, _) => Close();
+        _maps = EditorVisuals.Group(EditorVisuals.Heading("Texture maps"), EditorVisuals.Stack(5,
+            EditorVisuals.Secondary("Normal map · linear UNORM, +Y"), EditorVisuals.Columns("*,Auto", _normal, _clearNormal),
+            EditorVisuals.Secondary("Emissive texture · sRGB"), EditorVisuals.Columns("*,Auto", _emissive, _clearEmissive),
+            EditorVisuals.Secondary("Linear emissive RGB · 0–65504"),
+            EditorVisuals.Columns("*,*,*", inputs[5], inputs[6], inputs[7]), _emissiveHint));
+        _maps.IsVisible = WithMaps;
+        _basic.Click += (_, _) =>
+        {
+            if (!TryValues(out var values) || !IsBasic(values)) return;
+            WithMaps = false;
+            _maps.IsVisible = _basic.IsVisible = false;
+            ShowSettlement("Basic material editing", false, false, false);
+            Changed();
+            if (_name.IsReadOnly) _texture.Focus(); else _name.Focus();
+        };
         _form = EditorVisuals.Stack(10,
             EditorVisuals.Group(EditorVisuals.Heading("Material"), EditorVisuals.Stack(5,
                 EditorVisuals.Secondary("Name"), _name, EditorVisuals.Secondary("Base texture"), _texture)),
             EditorVisuals.Group(EditorVisuals.Heading("Surface"), EditorVisuals.Stack(6,
                 EditorVisuals.Secondary("Linear base color"), EditorVisuals.Columns("*,*,*", inputs[0], inputs[1], inputs[2]),
                 EditorVisuals.Columns("*,*", inputs[3], inputs[4]), EditorVisuals.Secondary("Factors accept values from 0 to 1."))),
+            _maps,
             EditorVisuals.Disclosure("Details", EditorVisuals.Details(
                 (draft.Original is { } origin ? origin.Material + "\n" : "") +
                 $"{draft.Recipe(draft.Initial).Filter} · {draft.Recipe(draft.Initial).Address}")));
@@ -92,7 +126,7 @@ internal sealed class MaterialEditorWindow : Window
         }
         Arrange(false);
         SizeChanged += (_, args) => Arrange(args.NewSize.Width < 640);
-        var footer = EditorVisuals.Bar(EditorVisuals.Stack(5, _state, EditorVisuals.Actions(_save, _resume, close)));
+        var footer = EditorVisuals.Bar(EditorVisuals.Stack(5, _state, EditorVisuals.Actions(_save, _resume, _basic, close)));
         var layout = new DockPanel();
         DockPanel.SetDock(footer, Dock.Bottom); layout.Children.Add(footer); layout.Children.Add(EditorVisuals.Scroll(content));
         Content = layout;
@@ -110,17 +144,24 @@ internal sealed class MaterialEditorWindow : Window
     }
 
     internal AssetPreviewInputs? Inputs => _mesh.SelectedItem is AssetSummary mesh && TryValues(out var values)
-        ? new(mesh.Guid, null, Surface, _draft.Recipe(values)) : null;
+        ? new(mesh.Guid, null, Surface, _draft.Recipe(values), WithMaps) : null;
 
     private bool TryValues(out MaterialValues values)
     {
         values = default;
         if (_texture.SelectedItem is not AssetSummary texture) return false;
-        Span<float> numbers = stackalloc float[5];
-        for (int i = 0; i < numbers.Length; ++i)
+        Span<float> numbers = stackalloc float[8];
+        numbers.Clear();
+        int limit = WithMaps ? numbers.Length : 5;
+        for (int i = 0; i < limit; ++i)
             if (!float.TryParse(_values[i].Text, NumberStyles.Float, CultureInfo.InvariantCulture, out numbers[i]) ||
-                !float.IsFinite(numbers[i]) || numbers[i] < 0 || numbers[i] > 1) return false;
-        values = new(texture.Guid, numbers[0], numbers[1], numbers[2], numbers[3], numbers[4]);
+                !float.IsFinite(numbers[i]) || numbers[i] < 0 || numbers[i] > (i < 5 ? 1 : 65504)) return false;
+        values = new(texture.Guid, numbers[0], numbers[1], numbers[2], numbers[3], numbers[4])
+        {
+            NormalMap = WithMaps ? (_normal.SelectedItem as AssetSummary)?.Guid : null,
+            EmissiveTexture = WithMaps ? (_emissive.SelectedItem as AssetSummary)?.Guid : null,
+            EmissiveRed = numbers[5], EmissiveGreen = numbers[6], EmissiveBlue = numbers[7]
+        };
         return true;
     }
 
@@ -132,7 +173,14 @@ internal sealed class MaterialEditorWindow : Window
 
     private void Refresh()
     {
-        _save.IsEnabled = !_saveBlocked && TryValues(out var values) && (_name.IsReadOnly
+        bool valid = TryValues(out var values);
+        _clearNormal.IsEnabled = _normal.SelectedItem is not null;
+        _clearEmissive.IsEnabled = _emissive.SelectedItem is not null;
+        _basic.IsEnabled = valid && IsBasic(values);
+        _emissiveHint.Text = valid && values.EmissiveRed == 0 && values.EmissiveGreen == 0 && values.EmissiveBlue == 0
+            ? "The current factor produces no emission."
+            : "Clearing the texture retains the factor and uses white.";
+        _save.IsEnabled = !_saveBlocked && valid && (_name.IsReadOnly
             ? values != _draft.Initial : Codec.ValidImportName(_name.Text));
         _preview.IsEnabled = Inputs is not null;
     }
@@ -143,6 +191,15 @@ internal sealed class MaterialEditorWindow : Window
         _state.Text = text;
         _state.Foreground = error ? EditorVisuals.Error : EditorVisuals.Muted;
         _resume.IsVisible = resume;
+        Refresh();
+    }
+
+    private static bool IsBasic(MaterialValues values) => values.NormalMap is null && values.EmissiveTexture is null &&
+        values.EmissiveRed == 0 && values.EmissiveGreen == 0 && values.EmissiveBlue == 0;
+
+    internal void OfferBasicEditing()
+    {
+        _basic.IsVisible = WithMaps;
         Refresh();
     }
 

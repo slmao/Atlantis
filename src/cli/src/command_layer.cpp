@@ -758,9 +758,13 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   if (t[0] == "assets") {
     namespace ca = connection::assets;
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
-    if (t.size() > 1 && (t[1] == "material-read" || t[1] == "material-save" ||
-        t[1] == "material-status" || t[1] == "preview-material-draft")) {
-      const auto verb = t[1];
+    auto verb = t.size() > 1 ? t[1] : std::string_view{};
+    constexpr std::string_view suffix = "-with-maps";
+    const bool withMaps = verb.ends_with(suffix);
+    if (withMaps) verb.remove_suffix(suffix.size());
+    if (verb == "material-read" || verb == "material-save" || verb == "preview-material-draft" ||
+        (!withMaps && verb == "material-status")) {
+      const auto version = withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto usage = [&] { return failed(command, usageError(
           "assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>] | "
           "assets preview-material-draft <MeshGuid> <RecipeJSON>")); };
@@ -785,10 +789,10 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       };
       if (verb == "material-save") {
         const auto encoded = payload(2);
-        auto request = encoded ? ca::decodeMaterialSave(*encoded) : std::nullopt;
+        auto request = encoded ? ca::decodeMaterialSave(*encoded, version) : std::nullopt;
         if (!request) return usage();
         if (!endpoint) return refusal(ca::MaterialError::Unavailable);
-        auto saved = endpoint->materialSave(*request);
+        auto saved = withMaps ? endpoint->materialSaveWithMaps(*request) : endpoint->materialSave(*request);
         if (saved.isOk()) return result(ca::encodeMaterialJob(saved.value()));
         auto reply = refusal(saved.error());
         if (saved.error() == ca::MaterialError::Unavailable) {
@@ -836,16 +840,17 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       if (verb == "material-read") {
         if (t.size() != 3) return usage();
         if (!endpoint) return refusal(ca::MaterialError::CatalogUnavailable);
-        auto read = endpoint->materialRead(guid.value());
-        return read.isOk() ? result(ca::encodeMaterialRead(read.value())) : refusal(read.error());
+        auto read = withMaps ? endpoint->materialReadWithMaps(guid.value()) : endpoint->materialRead(guid.value());
+        return read.isOk() ? result(ca::encodeMaterialRead(read.value(), version)) : refusal(read.error());
       }
       const auto encoded = payload(3);
-      auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded) : std::nullopt;
+      auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded, version) : std::nullopt;
       if (!recipe) return usage();
       if (!endpoint) return refusal(ca::MaterialError::Unsupported);
-      auto image = endpoint->previewMaterialDraft(guid.value(), *recipe);
+      auto image = withMaps ? endpoint->previewMaterialDraftWithMaps(guid.value(), *recipe)
+                            : endpoint->previewMaterialDraft(guid.value(), *recipe);
       if (image.isErr()) return refusal(image.error());
-      auto png = ca::encodeMaterialDraftPreview(image.value());
+      auto png = ca::encodeMaterialDraftPreview(image.value(), version);
       if (!png) return refusal(ca::MaterialError::RenderFailed);
       return done(command, "Draft material preview: " + std::to_string(image.value().png.size()) +
                            " bytes (image/png; use --json for bytes)\n", std::move(*png));

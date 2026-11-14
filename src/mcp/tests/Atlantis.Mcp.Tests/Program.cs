@@ -27,6 +27,10 @@ internal static partial class Program
     private static readonly string DraftRecipe = $$$"""{"values":{{{DraftValues}}},"filter":"Linear","address":"Repeat"}""";
     private static readonly string DraftArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{DraftRecipe}}}}""";
     private static readonly string DraftMetadata = $$$"""{"ok":{"mesh":"{{{Entity}}}","recipe":{{{DraftRecipe}}},"width":256,"height":256,"mimeType":"image/png"}}""";
+    private static readonly string MapValues = $$$"""{"texture":"{{{Material}}}","color":[1,0.5,1],"metallic":0,"roughness":0.5,"normalMap":null,"emissiveTexture":"{{{Material}}}","emissiveFactor":[2,0,1]}""";
+    private static readonly string MapRecipe = $$$"""{"values":{{{MapValues}}},"filter":"Linear","address":"Repeat"}""";
+    private static readonly string MapArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{MapRecipe}}}}""";
+    private static readonly string MapMetadata = $$$"""{"ok":{"mesh":"{{{Entity}}}","recipe":{{{MapRecipe}}},"width":256,"height":256,"mimeType":"image/png"}}""";
     private const string TypeId = "0x123456789abcdef0";
     private const string FieldId = "0xfedcba9876543210";
     private static readonly string WorldAddress = $$$"""{"entity":"{{{Entity}}}","component":"{{{TypeId}}}","field":"{{{FieldId}}}"}""";
@@ -48,6 +52,11 @@ internal static partial class Program
             $$$"""{"ok":{"mode":"Create","name":"sample","jobId":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.material_status", "assets.materialStatus", "{}", """{"ok":{"activeGeneration":null,"workspaceNeedsRepair":false}}"""),
         ("assets.preview_material_draft", "assets.previewMaterialDraft", DraftArgs, DraftMetadata),
+        ("assets.material_read_with_maps", "assets.materialReadWithMaps", $$$"""{"material":"{{{Material}}}"}""",
+            $$$"""{"ok":{"material":"{{{Material}}}","recipe":{{{MapRecipe}}},"editable":false,"activeGeneration":null}}"""),
+        ("assets.material_save_with_maps", "assets.materialSaveWithMaps", $$$"""{"mode":"Create","name":"sample","values":{{{MapValues}}}}""",
+            $$$"""{"ok":{"mode":"Create","name":"sample","jobId":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.preview_material_draft_with_maps", "assets.previewMaterialDraftWithMaps", MapArgs, MapMetadata),
         ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -158,7 +167,7 @@ internal static partial class Program
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
                 c.Tool == "assets.texture_import" ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
-                c.Tool == "assets.material_save" ? description.Contains("before retrying") && description.Contains("Runtime restart") :
+                (c.Tool is "assets.material_save" or "assets.material_save_with_maps") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
                 c.Tool == "assets.material_status" ? description.Contains("not a receipt") && description.Contains("Runtime restart") :
                 c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
                 description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
@@ -179,7 +188,7 @@ internal static partial class Program
 
     private static string FixtureEnvelope(string method, string result)
     {
-        if (method == "assets.previewMaterialDraft")
+        if (method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps")
             result = result.Insert(result.Length - 2, ",\"pngBase64\":\"" + Convert.ToBase64String(PreviewPng) + "\"");
         return "{\"id\":7,\"result\":" + result + "}";
     }
@@ -197,7 +206,7 @@ internal static partial class Program
 
     private static void CheckAssetResult(CallToolResult result, string method, string expected, string context)
     {
-        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial" or "assets.previewMaterialDraft")) { CheckForward(result, expected, context); return; }
+        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial" or "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps")) { CheckForward(result, expected, context); return; }
         CheckPreviewImage(result, context);
         CheckForward(new CallToolResult { Content = [result.Content[0]], StructuredContent = result.StructuredContent },
             expected, context + " metadata without duplicated PNG");
@@ -316,6 +325,12 @@ internal static partial class Program
         Check(pairError.IsError == true && pairError.Content.Count == 1 &&
             pairError.Content[0] is TextContentBlock pairErrorText && pairErrorText.Text == malformedPair.Failure.Message &&
             malformedPair.Calls.Count == 1, "malformed pair preview stays an SDK error without image or retry");
+        var maps = Request("assets.preview_material_draft_with_maps", MapArgs);
+        FakeSession lookalike = new() { Response = """{"result":{"err":"Unsupported"}}""" };
+        CallToolResult malformedMaps = new ToolRegistry(lookalike).Invoke(maps);
+        Check(malformedMaps.IsError == true &&
+            malformedMaps.Content[0] is TextContentBlock mapsText && mapsText.Text.Contains("ProtocolError") &&
+            lookalike.Calls.Count == 1, "in-band Unsupported does not trigger extended material downgrade");
         Refusals<AccessError>("world.get_property");
         Refusals<A.AuthoringError>("authoring.get_property");
         foreach (string reason in Enum.GetNames<A.AuthoringError>())
@@ -423,7 +438,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "authoring.saveAs" or "authoring.createScene")
+            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

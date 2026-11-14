@@ -384,12 +384,22 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
 
-    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>> done) =>
-        Enqueue(session => { var result = session.Assets.MaterialRead(guid); _post(() => done(result)); });
+    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool> done) =>
+        Enqueue(session =>
+        {
+            var result = session.Assets.MaterialReadWithMaps(guid);
+            bool basic = !result.IsOk && result.Error == Atlantis.Gameplay.Assets.MaterialError.Unsupported;
+            if (basic) result = session.Assets.MaterialRead(guid);
+            _post(() => done(result, basic));
+        });
 
-    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request,
+    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
-        Enqueue(session => { var result = session.Assets.MaterialSave(request); _post(() => done(result)); });
+        Enqueue(session =>
+        {
+            var result = withMaps ? session.Assets.MaterialSaveWithMaps(request) : session.Assets.MaterialSave(request);
+            _post(() => done(result));
+        });
 
     public void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode,
         Action<Outcome<Atlantis.Gameplay.Assets.TextureImportJob, Atlantis.Gameplay.Assets.ImportError>> done) =>
