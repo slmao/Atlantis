@@ -21,18 +21,23 @@ resumes from the registry, and when a fresh build cooks only committed units.
    and its matching logical source key determine the interpretation. Use
    `normal.png` for RGBA8 UNORM and keep `source.png` for RGBA8 sRGB. Share
    the namespace, immutable seal, GUID minting, producer and catalog type.
-   Store a matching explicit color space in frozen v5 texture evidence when
-   a generation contains normal units. Exact older color-only forms remain
-   supported. The old build path rejects the normal registration shape.
+   The source key participates in registry equality even when GUID and PNG
+   bytes match. Store matching explicit color space in the frozen v5
+   texture evidence only when a generation contains normal units. Exact
+   older color-only forms remain supported. The old build path rejects the
+   normal registration shape. Validate the prepared copy at the commit
+   boundary so inconsistent files cannot be registered or published.
 2. Add closed normal import and status methods on the shared client surface.
    Scope status to each kind over one texture job worker and bounded history.
    Existing color clients continue seeing color receipts. The worker verifies
    the durable kind on Resume, then follows the existing commit and recovery
-   rules. No material or scene edit is implicit in registration.
+   rules. Both Editor choices observe the same workspace write guard.
+   No material or scene edit is implicit in registration.
 3. Reuse ADR-0155 for binding and GPU preview, and
    [ADR-0150](0150-local-saved-scene-build-launch.md) for the independent
    Saved Scenes build and open. Ordinary named-generation activation and
-   saved-slot launch remain separate supported entry points.
+   saved-slot launch remain separate supported entry points, using the
+   original managed scene and its independently built Save As copy.
 
 ## Consequences
 

@@ -55,10 +55,10 @@ dual-version exercises before relying on the Editor flow.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1. PNG and convention** | Approve the unchanged 0095 PNG subset, native RGB samples in one-mip RGBA8 UNORM and explicit tangent-space +Y. |
-| **J2. Registration and recovery** | Approve the `normal.png` registered leaf/key in the shared namespace, private v5 only when normals are present, and explicit same-kind Resume through the existing worker. |
-| **J3. Client contract and Editor** | Approve two additive normal methods and kind-specific status over one bounded history, explicit kind selection in Assets and reuse of 0096's slot validation and preview. |
-| **J4. Acceptance** | Approve Windows 100% and the separate named-generation activation and independent saved-slot reopen checks below. Keep applicable Vulkan, golden and performance gates. |
+| **J1. PNG and convention** | Approve the 0095 PNG subset, unchanged sample bytes in one-mip RGBA8 UNORM, and +Y toward the existing positive tangent-space bitangent. |
+| **J2. Registration and recovery** | Approve the `normal.png` leaf/key in the shared namespace, role-aware identity comparisons, v5 only for normal-bearing views, prepared-directory verification, and explicit same-kind Resume. |
+| **J3. Client contract and Editor** | Approve the two closed normal methods, exact old-host refusal, kind-specific status over one bounded history, and one workspace-wide write guard across both Editor choices. |
+| **J4. Acceptance** | Approve Windows 100%, ordinary named-generation restart of the original scene without rebinding, and independent saved-copy reopen under 0090. Keep applicable Vulkan, golden and performance gates. |
 
 Suggested one-time authorization after joint approval and manual design
 merge: run S2–S4 from current `main`, including ordinary in-scope fixes,
@@ -70,35 +70,50 @@ Final merge remains human.
 - [ ] **R1. Cook and format.** Check exact RGB/RGBA bytes, RGB alpha fill,
   RGBA alpha preservation, one mip and UNORM sidecar/artifact. Check tagged
   and untagged inputs against the same output and verify non-extreme channel
-  values, including positive green. Run representative 0095 invalid inputs
-  through the new operation and retain the color path's byte results.
+  values. Run representative 0095 invalid inputs through the new operation,
+  including malformed CRC, APNG, CgBI, `tRNS` and over-limit inputs, and retain
+  the color path's byte results. Refuse a contradictory managed cooker
+  key/color-space pair even when the PNG is otherwise valid.
   Confirm that a strict old builder refuses a normal registration before
   cooking. Reject mixed leaves, noncanonical units and clashes between color
   and normal names. Prove both kinds' GUIDs survive fresh opt-in builds.
-- [ ] **R2. Generation and recovery.** Check a color-only v4 and mixed v5,
-  first catalog access after publication, a configure-only workspace, and
-  GUID/key/edge preservation. Test independent mutations of frozen leaf/key,
-  role, PNG, artifact and metadata, and refusal of invalid or mislabeled
-  generation formats. A wrong-format cook must fail before registration.
+- [ ] **R2. Generation and recovery.** Check earlier compatible views,
+  color-only v4 and mixed v5, including activation while the registry is
+  ahead, old-host refusal of v5 and first catalog access after publication.
+  Exercise a configure-only workspace and GUID/key/edge preservation.
+  Change the frozen leaf/key, role, PNG, artifact and metadata independently.
+  Cover a role-only registry change with identical PNG bytes and GUID, and
+  invalid or mislabeled manifest versions. Change the private fragment or
+  prepared directory after preparation and verify that neither rename
+  occurs. A wrong-format cook must fail before registration.
   Force a postcommit failure, then confirm same-kind Resume with no inbox
-  and byte-identical committed source, seal and stable GUID. Check wrong-kind
-  Resume, extra ahead changes, contention, unknown settlement, and a cleanup
-  fault on confirmed publication. Reuse only unchanged 0095 worker evidence.
+  and byte-identical committed source/fragment/seal and stable GUID. Check
+  wrong-kind Resume in both directions, a cached correct kind changed before
+  the worker runs, extra ahead changes, contention, unknown settlement, and
+  a cleanup fault on confirmed publication. Reuse only valid 0095 evidence
+  for unchanged behavior and inputs.
 - [ ] **R3. Cross-version clients.** Run new CLI, SDKs and MCP against a
   0095 host, and exercise legacy color import/status and normal discovery
-  against the new host. Test exact legacy refusal, malformed/lookalike and
-  lost replies, wrong-kind explicit IDs, per-kind latest, shared history
-  eviction, repair with no matching job, and correct exit/error behavior.
+  against the new host. Test exact legacy refusal, extra and duplicate fields,
+  in-band lookalikes, mismatched correlations and lost replies. Check
+  wrong-kind explicit IDs, per-kind latest during opposite-kind work,
+  shared history eviction across kinds, repair with no matching job, and
+  correct exit/error behavior.
 - [ ] **R4. Windows Editor and Vulkan.** At 100% use Assets to register a
   +Y fixture and follow restart guidance. Exercise a refusal and explicit
-  recovery, and a kind switch while a job is pending. At a standard and
-  compact size check focus, status and reachable actions. Retain native UI
+  recovery, and a kind switch while admission or settlement is pending.
+  Confirm the original receipt, no second write and correct Resume routing
+  after switching back. At standard and compact sizes check focus, status
+  and reachable actions. Retain native UI
   captures separately from engine PNGs. Activate, discover, bind and
   preview the new GUID. Check cross-slot refusals. Compare a fixed-camera
   capture before and after activation with a known asymmetric green-channel
-  normal; verify direction agrees with the existing +Y shader and that
-  draft and cooked pair previews agree. Prove preview and publication leave
-  the original document and history intact. Save & Publish the material.
+  normal. With fixed geometry, tangent handedness, lighting and exposure,
+  use a neutral-normal control and lit-region or pixel expectations that
+  distinguish the exported +Y sign from flipped green and an sRGB decode.
+  Verify draft and cooked pair previews agree. Save & Publish the material
+  and verify preview and publication leave the original document and
+  history intact.
   Restart the ordinary opted-in Runtime with the material generation and
   verify the persisted material reference, recipe, edge and visible effect
   with no scene write or Apply to recreate the binding. For this leg use an
@@ -106,11 +121,14 @@ Final merge remains human.
   the fixture scene with its managed material reference at an existing
   ordinary scene slot before configuring seed and staging. Retain that
   scene GUID and source hash across publication and restart. After the texture
-  generation activates and before the material edit, use Save As to create a
-  saved unit from that scene, then independently
-  build and open the same saved copy through 0090 from committed sources
-  in a second Editor without profile or generation override. Verify the
-  same node/material binding and matching fixed-camera appearance. Check the
+  generation activates and before the material edit, use Save As to create
+  one saved unit from that scene. Record its distinct scene GUID, both saved
+  file hashes, and the shared node and material GUIDs. After publication,
+  independently build and open that saved unit through 0090 from committed
+  sources in a second Editor without profile or generation override.
+  Verify the saved unit's own identity, unchanged file hashes, original
+  node/material reference, persisted recipe and matching fixed-camera
+  appearance. Record the actual startup arguments for both legs. Check the
   production saved-slot launch still refuses a generation override.
 - [ ] **Applicable gates.** Build and run affected Windows native and
   managed suites. Build Android if portable Asset System or RuntimeHost
