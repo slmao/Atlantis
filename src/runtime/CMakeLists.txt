@@ -165,6 +165,7 @@ target_link_libraries(atlantis_runtime
     # Plan 0065 P5 (ADR-0130 D2): the executable hosts Atlantis Authoring.
     Atlantis::Authoring
     ole32
+    bcrypt
     atlantis_compiler_warnings
 )
 

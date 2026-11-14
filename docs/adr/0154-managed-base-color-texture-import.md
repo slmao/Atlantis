@@ -1,9 +1,9 @@
 # ADR 0154: Managed Base Color Texture Import
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-14, [PR #355](https://github.com/slmao/Atlantis/pull/355) at `95e0186b`
 - **Related Spec:** [Spec 0095](../specs/0095-texture-import-and-base-color-binding.md)
 
 ## Context

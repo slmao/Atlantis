@@ -1700,6 +1700,14 @@ The Editor holds only its local draft and receipt. Draft preview uses
 the 0092 isolated render path and shared permit; it creates no
 persistent asset identity and changes neither scene nor active catalog.
 
+[Spec 0095](../specs/0095-texture-import-and-base-color-binding.md) and
+[ADR-0154](../adr/0154-managed-base-color-texture-import.md) add a shared
+standalone PNG import and status pair. The Windows asset worker owns
+registration, publication and bounded verification of frozen producer
+evidence. The cooker owns PNG decoding and output formatting. The
+material editor binds the activated Texture through the existing GUID
+dependency and preview path.
+
 
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws

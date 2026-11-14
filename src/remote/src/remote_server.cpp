@@ -571,6 +571,34 @@ struct RemoteServer::State {
       return reply(client.assets ? client.assets->rebuildStatus(guid ? std::optional{ca::RebuildId{*guid}} : std::nullopt)
                                  : ca::RebuildStatusResult::Err(ca::RebuildError::Unavailable));
     }
+    if (name == "assets.textureImport" || name == "assets.textureImportStatus") {
+      namespace ca = connection::assets;
+      const auto invalid = [&] { return errorResponse(requestId, "BadRequest", "invalid texture import parameters"); };
+      std::uint64_t numericId = 0;
+      if (!id || !id->toUInt64(numericId) || !params || request.asObject().size() != 3 || !p.isObject()) return invalid();
+      const auto reply = [&](const auto& result) {
+        return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+            : codec::err(Value::string(std::string(ca::toString(result.error())))));
+      };
+      if (name == "assets.textureImport") {
+        const auto* slug = p.find("name");
+        const auto* mode = p.find("mode");
+        if (p.asObject().size() != 2 || !slug || !slug->isString() || !ca::validImportName(slug->asString()) ||
+            !mode || !mode->isString() || (mode->asString() != "Register" && mode->asString() != "Resume"))
+          return invalid();
+        if (!client.assets && openAssets) client.assets = openAssets();
+        return reply(client.assets ? client.assets->textureImport(slug->asString(), mode->asString() == "Register"
+                        ? ca::ImportMode::Register : ca::ImportMode::Resume)
+            : ca::TextureImportStartResult::Err(ca::ImportError::Unavailable));
+      }
+      const auto* member = p.find("jobId");
+      const auto guid = member ? codec::decodeAsset(*member) : std::nullopt;
+      if (p.asObject().size() != (member ? 1u : 0u) || (member && (!guid || *guid == asset_system::AssetGuid{})))
+        return invalid();
+      if (!client.assets && openAssets) client.assets = openAssets();
+      return reply(client.assets ? client.assets->textureImportStatus(guid ? std::optional{ca::TextureImportId{*guid}} : std::nullopt)
+                                 : ca::TextureImportStatusResult::Err(ca::ImportError::Unavailable));
+    }
     if (name == "assets.import" || name == "assets.importStatus") {
       namespace ca = connection::assets;
       if (!p.isObject()) return errorResponse(requestId, "BadRequest", "malformed asset import request");

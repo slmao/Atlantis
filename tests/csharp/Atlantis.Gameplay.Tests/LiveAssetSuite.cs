@@ -25,6 +25,7 @@ public static class LiveAssetSuite
         PreviewContract(t);
         PairPreviewContract(t);
         MaterialContract(t);
+        TextureContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -228,6 +229,43 @@ public static class LiveAssetSuite
                     "material: original failure category and durable target retained with explicit retry guidance");
             }, materialParameters: parameters);
         }
+    }
+
+    private static void TextureContract(TestContext t)
+    {
+        AssetGuid id = AssetCodecSuite.PreviewMaterial;
+        var legacy = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        WithPeer(t, id, _ => legacy, client =>
+        {
+            var result = client.Assets.TextureImport("albedo");
+            t.Check(!result.IsOk && result.Error == A.ImportError.Unsupported && client.Failure is null,
+                "texture: exact legacy response does not fail the session");
+        }, expectedPreviews: 0);
+        foreach (var (reply, kind) in new (JsonValue?, RemoteError)[]
+        {
+            (null, RemoteError.Disconnected),
+            (Json.Parse("""{"result":{"ok":{"id":"GUID","name":"other","mode":"Register","state":"Running"}}}"""
+                .Replace("GUID", id.ToString(), StringComparison.Ordinal)),
+                RemoteError.ProtocolError),
+            (Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query ","extra":1}}"""),
+                RemoteError.ProtocolError),
+        })
+            WithPeer(t, id, _ => reply, client =>
+            {
+                var error = t.Throws<RemoteException>(() => client.Assets.TextureImport("albedo"), "texture: lost or invalid receipt");
+                t.Check(error?.Error == kind && error.Message.Contains("outcome unknown for albedo"),
+                    "texture: original category and admitted target retained");
+            }, expectedPreviews: 0);
+        var status = Json.Parse("""
+            {"result":{"ok":{"activeGeneration":null,"job":{"id":"GUID","name":"albedo","mode":"Register","state":"Succeeded",
+            "rootGuid":"GUID","generation":"GUID"},"workspaceNeedsRepair":true}}}
+            """.Replace("GUID", id.ToString(), StringComparison.Ordinal));
+        WithPeer(t, id, _ => status, client =>
+        {
+            var value = client.Assets.TextureImportStatus(new A.TextureImportId(id)).Value;
+            t.Check(value.WorkspaceNeedsRepair && value.Job?.State == A.RebuildState.Succeeded,
+                "texture: repair required does not downgrade confirmed publication");
+        }, expectedPreviews: 0);
     }
 
     private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,

@@ -61,6 +61,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.ImportParameters()),
         Declare("assets.import_status", "assets.importStatus", "Read-only status for a retained import job or the latest admission.", RebuildModel,
             ToolSchemas.RebuildStatusParameters()),
+        Declare("assets.texture_import", "assets.textureImport", "Register one managed sRGB inbox PNG or resume its committed registration.",
+            RebuildModel, ToolSchemas.ImportParameters()),
+        Declare("assets.texture_import_status", "assets.textureImportStatus", "Read-only status for a texture job and its independent workspace repair state.",
+            RebuildModel, ToolSchemas.RebuildStatusParameters()),
         Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String))),
         Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
@@ -151,6 +155,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
             if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
                 "assets.previewMaterialDraft") return MaterialOperation(mapping.Method, wireParameters);
+            if (mapping.Method is "assets.textureImport" or "assets.textureImportStatus")
+                return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
@@ -221,6 +227,39 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult TextureOperation(string method, JsonValue parameters)
+    {
+        bool start = method == "assets.textureImport";
+        string? name = parameters.Find("name")?.AsString, mode = parameters.Find("mode")?.AsString;
+        if (start && !Codec.ValidImportName(name)) return Error("InvalidArguments: invalid texture import name");
+        AssetGuid? id = null;
+        if (parameters.Find("jobId") is { } field)
+        {
+            if (!field.IsString || !AssetGuid.TryParse(field.AsString, out var guid) || guid.IsNil)
+                return Error("InvalidArguments: expected a non-nil canonical GUID");
+            id = guid;
+        }
+        string unknown = $"Texture {mode} outcome unknown for {name}. Inspect registered source and complete generations before retrying.";
+        CallToolResult Malformed() => Error(start ? "ProtocolError: " + unknown : "ProtocolError: invalid texture job status");
+        JsonValue response;
+        try { response = session.Request(method, parameters); }
+        catch (RemoteException e) when (start) { return Error(e.Error + ": " + unknown); }
+        if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
+            return Malformed();
+        if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+            Codec.IsLegacyAssetRebuildRefusal(response))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1) return Malformed();
+        if (result.Find("err") is { } refused)
+            return Codec.DecodeImportError(refused, start) is not null ? Forward(result, true) : Malformed();
+        if (result.Find("ok") is not { } ok) return Malformed();
+        if (start)
+            return Codec.DecodeTextureImportJob(ok) is { State: Gameplay.Assets.RebuildState.Running } admitted &&
+                   admitted.Name == name && admitted.Mode.ToString() == mode ? Forward(result, false) : Malformed();
+        return Codec.DecodeTextureImportStatus(ok) is { } status && (id is null || status.Job?.Id.Value == id)
+            ? Forward(result, status.Job?.State == Gameplay.Assets.RebuildState.Failed) : Malformed();
     }
 
     private CallToolResult MaterialOperation(string method, JsonValue parameters)

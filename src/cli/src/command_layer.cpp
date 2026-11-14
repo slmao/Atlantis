@@ -854,13 +854,16 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
     const bool import = t.size() > 1 && t[1] == "import";
     const bool importStatus = t.size() > 1 && t[1] == "import-status";
+    const bool texture = t.size() > 1 && t[1] == "texture-import";
+    const bool textureStatus = t.size() > 1 && t[1] == "texture-import-status";
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
-    if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus) && t.size() <= 3) ||
-          (import && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
+    if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
+          ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
       return failed(command, usageError("assets rebuild <GUID> | assets rebuild-status [<JobId>] | "
-                                         "assets import <name> [--resume] | assets import-status [<JobId>]"));
+                                         "assets import <name> [--resume] | assets import-status [<JobId>] | "
+                                         "assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]"));
     std::optional<asset_system::AssetGuid> id;
-    if (!import && t.size() == 3) {
+    if (!import && !texture && t.size() == 3) {
       const auto parsed = asset_system::parseAssetGuid(t[2]);
       if (parsed.isErr()) return failed(command, usageError("expected a non-nil canonical GUID"));
       id = parsed.value();
@@ -912,6 +915,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       result.set("activeGeneration", status.activeGeneration
           ? Value::string(asset_system::toString(status.activeGeneration->value)) : Value());
       result.set("job", status.job ? jobJson(*status.job) : Value());
+      if constexpr (requires { status.workspaceNeedsRepair; })
+        result.set("workspaceNeedsRepair", Value::boolean(status.workspaceNeedsRepair));
       auto human = json::write(result) + "\n";
       if (status.job && status.job->failure) {
         const auto& failure = *status.job->failure;
@@ -926,6 +931,23 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     if (rebuild) return renderStart(endpoint->rebuild(*id));
     if (import) return renderStart(endpoint->importAsset(t[2], mode));
     if (importStatus) return renderStatus(endpoint->importStatus(id ? std::optional{ca::ImportId{*id}} : std::nullopt));
+    if (texture) {
+      auto reply = renderStart(endpoint->textureImport(t[2], mode));
+      if (reply.error) {
+        reply.result = Value::object();
+        reply.result.set("target", Value::string(std::string(t[2])));
+        reply.result.set("mode", Value::string(std::string(ca::toString(mode))));
+      }
+      return reply;
+    }
+    if (textureStatus) {
+      auto reply = renderStatus(endpoint->textureImportStatus(id ? std::optional{ca::TextureImportId{*id}} : std::nullopt));
+      if (reply.error && id && !reply.result.isObject()) {
+        reply.result = Value::object();
+        reply.result.set("id", Value::string(asset_system::toString(*id)));
+      }
+      return reply;
+    }
     return renderStatus(endpoint->rebuildStatus(id ? std::optional{ca::RebuildId{*id}} : std::nullopt));
   }
   if (t[0] == "asset") {

@@ -260,6 +260,45 @@ std::optional<ca::ImportStatus> decodeImportStatus(const Value& value) {
   if (!job->isNull() && !(status.job = decodeImportJob(*job))) return std::nullopt;
   return status;
 }
+Value encode(const ca::TextureImportJob& job) {
+  return encode(ca::ImportJob{{job.id.value}, job.name, job.mode, job.state, job.rootGuid, job.generation, job.failure});
+}
+Value encode(const ca::TextureImportStatus& status) {
+  Value out = Value::object();
+  out.set("activeGeneration", status.activeGeneration ? encodeAsset(status.activeGeneration->value) : Value());
+  out.set("job", status.job ? encode(*status.job) : Value());
+  out.set("workspaceNeedsRepair", Value::boolean(status.workspaceNeedsRepair));
+  return out;
+}
+std::optional<ca::TextureImportJob> decodeTextureImportJob(const Value& value) {
+  auto job = decodeImportJob(value);
+  if (!job || !value.isObject() || value.asObject().size() !=
+      (job->state == ca::RebuildState::Running ? 4u : job->state == ca::RebuildState::Succeeded ? 6u : 5u))
+    return std::nullopt;
+  if (job->failure) {
+    const auto* failure = value.find("failure");
+    if (!failure->isObject() || failure->asObject().size() !=
+        (4u + (job->failure->exitCode ? 1u : 0u) + (job->failure->registeredRootGuid ? 1u : 0u)))
+      return std::nullopt;
+  }
+  return ca::TextureImportJob{{job->id.value}, std::move(job->name), job->mode, job->state,
+                              job->rootGuid, job->generation, std::move(job->failure)};
+}
+std::optional<ca::TextureImportStatus> decodeTextureImportStatus(const Value& value) {
+  if (!value.isObject() || value.asObject().size() != 3) return std::nullopt;
+  const auto* repair = value.find("workspaceNeedsRepair");
+  const auto* job = value.find("job");
+  const auto* generation = value.find("activeGeneration");
+  if (!repair || !repair->isBool() || !job || !generation) return std::nullopt;
+  ca::TextureImportStatus out{{}, {}, repair->asBool()};
+  if (!generation->isNull()) {
+    auto id = nonNilAsset(generation);
+    if (!id) return std::nullopt;
+    out.activeGeneration = ca::GenerationId{*id};
+  }
+  if (!job->isNull() && !(out.job = decodeTextureImportJob(*job))) return std::nullopt;
+  return out;
+}
 std::optional<ca::ImportError> decodeImportError(const Value& value, bool start) {
   const auto error = rebuildToken(&value, ca::ImportError::UnknownJob);
   if (!error || *error == ca::ImportError::Unavailable) return error;

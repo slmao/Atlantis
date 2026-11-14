@@ -40,6 +40,14 @@ class Assets {
       std::optional<connection::assets::ImportId> id = std::nullopt) const {
     return connection_.importStatus(id);
   }
+  [[nodiscard]] connection::assets::TextureImportStartResult textureImport(
+      std::string_view name, connection::assets::ImportMode mode = connection::assets::ImportMode::Register) {
+    return connection_.textureImport(name, mode);
+  }
+  [[nodiscard]] connection::assets::TextureImportStatusResult textureImportStatus(
+      std::optional<connection::assets::TextureImportId> id = std::nullopt) const {
+    return connection_.textureImportStatus(id);
+  }
 
   [[nodiscard]] connection::assets::MaterialReadResult materialRead(const asset_system::AssetGuid& guid) const {
     return connection_.materialRead(guid);

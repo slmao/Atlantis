@@ -44,6 +44,10 @@ namespace atlantis::remote::codec {
 [[nodiscard]] connection::json::Value encode(const connection::assets::ImportStatus& value);
 [[nodiscard]] std::optional<connection::assets::ImportJob> decodeImportJob(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::ImportStatus> decodeImportStatus(const connection::json::Value& value);
+[[nodiscard]] connection::json::Value encode(const connection::assets::TextureImportJob& value);
+[[nodiscard]] connection::json::Value encode(const connection::assets::TextureImportStatus& value);
+[[nodiscard]] std::optional<connection::assets::TextureImportJob> decodeTextureImportJob(const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::TextureImportStatus> decodeTextureImportStatus(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::ImportError> decodeImportError(const connection::json::Value& value,
                                                                              bool start);
 [[nodiscard]] connection::json::Value encode(const connection::assets::RebuildJob& value);

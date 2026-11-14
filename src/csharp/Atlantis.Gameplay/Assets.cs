@@ -65,6 +65,14 @@ public sealed record ImportJob(ImportId Id, string Name, ImportMode Mode, Rebuil
                                 AssetGuid? RootGuid = null, GenerationId? Generation = null, ImportFailure? Failure = null);
 public sealed record ImportStatus(GenerationId? ActiveGeneration, ImportJob? Job);
 
+public readonly record struct TextureImportId(AssetGuid Value)
+{
+    public override string ToString() => Value.ToString();
+}
+public sealed record TextureImportJob(TextureImportId Id, string Name, ImportMode Mode, RebuildState State,
+    AssetGuid? RootGuid, GenerationId? Generation, ImportFailure? Failure);
+public sealed record TextureImportStatus(GenerationId? ActiveGeneration, TextureImportJob? Job, bool WorkspaceNeedsRepair);
+
 
 // Spec 0094: the editable subset of one opaque direct-lit PBR material.
 public readonly record struct MaterialValues(AssetGuid Texture, float Red, float Green, float Blue,

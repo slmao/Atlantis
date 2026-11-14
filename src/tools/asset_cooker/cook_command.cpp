@@ -22,6 +22,7 @@
 #include <atlantis/asset_system/scene_source.h>
 #include <atlantis/asset_system/texture_types.h>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <filesystem>
@@ -558,6 +559,57 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
   return 0;
 }
 
+// The managed producer admits a narrower PNG subset than legacy cooker calls.
+[[nodiscard]] bool managedPng(const std::vector<unsigned char>& bytes, int& width, int& height, int& channels) {
+  constexpr std::array<unsigned char, 8> signature{137, 80, 78, 71, 13, 10, 26, 10};
+  if (bytes.size() < 33 || !std::equal(signature.begin(), signature.end(), bytes.begin())) return false;
+  const auto be32 = [&](std::size_t p) {
+    return (std::uint32_t{bytes[p]} << 24) | (std::uint32_t{bytes[p + 1]} << 16) |
+           (std::uint32_t{bytes[p + 2]} << 8) | std::uint32_t{bytes[p + 3]};
+  };
+  constexpr auto crcTable = [] {
+    std::array<std::uint32_t, 256> table{};
+    for (std::uint32_t i = 0; i < table.size(); ++i) {
+      auto crc = i;
+      for (int bit = 0; bit < 8; ++bit) crc = (crc >> 1) ^ ((crc & 1) ? 0xedb88320u : 0u);
+      table[i] = crc;
+    }
+    return table;
+  }();
+  bool sawData = false, endedData = false;
+  for (std::size_t p = 8; bytes.size() - p >= 12;) {
+    const auto length = be32(p);
+    if (length > bytes.size() - p - 12) return false;
+    const std::string_view kind(reinterpret_cast<const char*>(bytes.data() + p + 4), 4);
+    std::uint32_t crc = 0xffffffffu;
+    for (auto i = p + 4; i < p + 8 + length; ++i)
+      crc = (crc >> 8) ^ crcTable[(crc ^ bytes[i]) & 255];
+    if ((crc ^ 0xffffffffu) != be32(p + 8 + length)) return false;
+    if (p == 8) {
+      if (kind != "IHDR" || length != 13) return false;
+      const auto w = be32(p + 8), h = be32(p + 12);
+      if (w == 0 || h == 0 || w > 2048 || h > 2048 || bytes[p + 16] != 8 ||
+          (bytes[p + 17] != 2 && bytes[p + 17] != 6) ||
+          bytes[p + 18] != 0 || bytes[p + 19] != 0 || bytes[p + 20] > 1) return false;
+      width = static_cast<int>(w);
+      height = static_cast<int>(h);
+      channels = bytes[p + 17] == 2 ? 3 : 4;
+    } else if (kind == "IHDR" || kind == "acTL" || kind == "fcTL" ||
+               kind == "fdAT" || kind == "CgBI" || kind == "tRNS") {
+      return false;
+    }
+    if (kind == "IDAT") {
+      if (endedData) return false;
+      sawData = true;
+    } else if (sawData) {
+      endedData = true;
+    }
+    p += 12 + length;
+    if (kind == "IEND") return length == 0 && sawData && p == bytes.size();
+  }
+  return false;
+}
+
 [[nodiscard]] int runCookTextureMode(const CookCommandRequest& request) {
   using atlantis::asset_system::cookTexture;
   using atlantis::asset_system::TextureColorSpace;
@@ -588,7 +640,29 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
   int width = 0;
   int height = 0;
   int channelsInFile = 0;
-  unsigned char* decoded = stbi_load(request.sourcePath.c_str(), &width, &height, &channelsInFile, 4);
+  const bool managed = request.guid.empty() && request.catalogId.starts_with("content:texture_");
+  unsigned char* decoded = nullptr;
+  if (managed) {
+    constexpr auto limit = 24 * 1024 * 1024;
+    std::ifstream file(request.sourcePath, std::ios::binary | std::ios::ate);
+    const auto size = file.tellg();
+    if (size > 0 && size <= limit) {
+      std::vector<unsigned char> input(static_cast<std::size_t>(size));
+      file.seekg(0);
+      int expectedWidth = 0, expectedHeight = 0, expectedChannels = 0;
+      if (file.read(reinterpret_cast<char*>(input.data()), static_cast<std::streamsize>(input.size())) &&
+          file.peek() == std::char_traits<char>::eof() &&
+          managedPng(input, expectedWidth, expectedHeight, expectedChannels)) {
+        decoded = stbi_load_from_memory(input.data(), static_cast<int>(input.size()), &width, &height, &channelsInFile, 4);
+        if (width != expectedWidth || height != expectedHeight || channelsInFile != expectedChannels) {
+          stbi_image_free(decoded);
+          decoded = nullptr;
+        }
+      }
+    }
+  } else {
+    decoded = stbi_load(request.sourcePath.c_str(), &width, &height, &channelsInFile, 4);
+  }
   if (decoded == nullptr) {
     std::cerr << "atlantis_asset_cooker: failed to decode PNG source: " << request.sourcePath << "\n";
     return 1;
@@ -599,7 +673,10 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
   const fs::path metadataPath = fs::path(request.outputDir) / (base + ".atex.meta.txt");
 
   const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Texture);
-  if (!guid) return 1;
+  if (!guid) {
+    stbi_image_free(decoded);
+    return 1;
+  }
   const auto result = cookTexture(decoded, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
                                    channelsInFile, colorSpace, relativePath, *guid, artifactPath, metadataPath);
   stbi_image_free(decoded);
@@ -612,7 +689,8 @@ constexpr std::uint32_t kMaterialSourceSchema = 10;
     return 1;
   }
 
-  if (!writeStamp(request.stampPath)) {
+  // The managed build writes provenance before completing the stamp.
+  if (!managed && !writeStamp(request.stampPath)) {
     std::cerr << "atlantis_asset_cooker: failed to write stamp file: " << request.stampPath << "\n";
     return 1;
   }
@@ -1183,9 +1261,15 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       managedMaterial->subKey.empty() && managedMaterial->path.starts_with("material_") &&
       managedMaterial->path.ends_with("/source.material.txt") &&
       managedMaterial->path == computeRelativePathString(request.sourcePath, request.assetRoot);
+  const auto managedTexture = request.kind == AssetKind::Texture && source == CookArgumentSource::CommandLine
+      ? parseCatalogSourceId(request.catalogId) : std::nullopt;
+  const bool managedTextureSource = managedTexture && managedTexture->root == CatalogRoot::Content &&
+      managedTexture->subKey.empty() && managedTexture->path.starts_with("texture_") &&
+      managedTexture->path.ends_with("/source.png") && request.colorSpace == "srgb" &&
+      managedTexture->path == computeRelativePathString(request.sourcePath, request.assetRoot);
   if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine) &&
-      !managedMaterialSource) {
-    err << "atlantis_asset_cooker: --catalog-id= requires a cook-manifest line or a matching managed material source\n";
+      !managedMaterialSource && !managedTextureSource) {
+    err << "atlantis_asset_cooker: --catalog-id= requires a cook-manifest line or a matching managed source\n";
     return false;
   }
   if (isCookKind && source == CookArgumentSource::CookManifestLine &&

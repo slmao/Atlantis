@@ -391,6 +391,14 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
         Enqueue(session => { var result = session.Assets.MaterialSave(request); _post(() => done(result)); });
 
+    public void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode,
+        Action<Outcome<Atlantis.Gameplay.Assets.TextureImportJob, Atlantis.Gameplay.Assets.ImportError>> done) =>
+        Enqueue(session => { var result = session.Assets.TextureImport(name, mode); _post(() => done(result)); });
+
+    public void QueryTexture(Atlantis.Gameplay.Assets.TextureImportId? id,
+        Action<Outcome<Atlantis.Gameplay.Assets.TextureImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
+        Enqueue(session => { var result = session.Assets.TextureImportStatus(id); _post(() => done(result)); });
+
     public void QueryMaterial(Atlantis.Gameplay.Assets.MaterialJobId? id,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialStatus, Atlantis.Gameplay.Assets.MaterialError>> done) =>
         Enqueue(session => { var result = session.Assets.MaterialStatus(id); _post(() => done(result)); });

@@ -80,6 +80,7 @@ target_link_libraries(atlantis_runtime_tests
     Atlantis::Editor
     Catch2::Catch2WithMain
     ole32
+    bcrypt
     atlantis_compiler_warnings
 )
 

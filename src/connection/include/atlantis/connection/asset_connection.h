@@ -180,6 +180,27 @@ struct ImportStatus {
 using ImportStartResult = Result<ImportJob, ImportError>;
 using ImportStatusResult = Result<ImportStatus, ImportError>;
 
+struct TextureImportId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const TextureImportId&, const TextureImportId&) = default;
+};
+struct TextureImportJob {
+  TextureImportId id;
+  std::string name;
+  ImportMode mode;
+  RebuildState state;
+  std::optional<asset_system::AssetGuid> rootGuid;
+  std::optional<GenerationId> generation;
+  std::optional<ImportFailure> failure;
+};
+struct TextureImportStatus {
+  std::optional<GenerationId> activeGeneration;
+  std::optional<TextureImportJob> job;
+  bool workspaceNeedsRepair = false;
+};
+using TextureImportStartResult = Result<TextureImportJob, ImportError>;
+using TextureImportStatusResult = Result<TextureImportStatus, ImportError>;
+
 struct MaterialValues {
   asset_system::AssetGuid texture;
   std::array<float, 3> color{1, 1, 1};
@@ -331,6 +352,12 @@ class AssetConnection {
   }
   [[nodiscard]] virtual assets::ImportStatusResult importStatus(std::optional<assets::ImportId>) const {
     return assets::ImportStatusResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::TextureImportStartResult textureImport(std::string_view, assets::ImportMode) {
+    return assets::TextureImportStartResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::TextureImportStatusResult textureImportStatus(std::optional<assets::TextureImportId>) const {
+    return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
   }
   // Spec 0094 / ADR-0153. Read and preview use the retained cooked catalog.
   // Save returns admission only. A transport failure leaves settlement unknown.

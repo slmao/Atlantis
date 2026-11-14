@@ -551,6 +551,25 @@ class RemoteAssets final : public connection::AssetConnection {
           return status && (!id || (status->job && status->job->id == *id)) ? status : std::nullopt;
         });
   }
+  ca::TextureImportStartResult textureImport(std::string_view name, ca::ImportMode mode) override {
+    ATLANTIS_CHECK(ca::validImportName(name));
+    auto params = Value::object();
+    params.set("name", Value::string(std::string(name)));
+    params.set("mode", Value::string(std::string(ca::toString(mode))));
+    return textureRequest<ca::TextureImportJob>("assets.textureImport", std::move(params), true, [name, mode](const Value& v) {
+      auto job = codec::decodeTextureImportJob(v);
+      return job && job->name == name && job->mode == mode && job->state == ca::RebuildState::Running ? job : std::nullopt;
+    });
+  }
+  ca::TextureImportStatusResult textureImportStatus(std::optional<ca::TextureImportId> id) const override {
+    ATLANTIS_CHECK(!id || id->value != AssetGuid{});
+    auto params = Value::object();
+    if (id) params.set("jobId", codec::encodeAsset(id->value));
+    return textureRequest<ca::TextureImportStatus>("assets.textureImportStatus", std::move(params), false, [id](const Value& v) {
+      auto status = codec::decodeTextureImportStatus(v);
+      return status && (!id || (status->job && status->job->id == *id)) ? status : std::nullopt;
+    });
+  }
   ca::MaterialReadResult materialRead(const AssetGuid& material) const override {
     if (material == AssetGuid{}) return ca::MaterialReadResult::Err(ca::MaterialError::UnknownMaterial);
     auto params = Value::object();
@@ -609,6 +628,26 @@ class RemoteAssets final : public connection::AssetConnection {
     const auto* message = error.find("message");
     return code && code->isString() && code->asString() == "BadRequest" &&
            message && message->isString() && message->asString() == "unknown or malformed asset query";
+  }
+
+  template<class T, class Decode>
+  Result<T, ca::ImportError> textureRequest(std::string_view method, Value params, bool start, Decode decode) const {
+    using R = Result<T, ca::ImportError>;
+    const auto envelope = state_.awaitResponse(state_.send(method, std::move(params)));
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
+      if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+        if (const auto* ok = result->find("ok")) {
+          if (auto value = decode(*ok)) return R::Ok(std::move(*value));
+        } else if (const auto* err = result->find("err")) {
+          if (auto error = codec::decodeImportError(*err, start)) return R::Err(*error);
+        }
+      } else if (const auto* error = envelope->find("error"); error && error->isObject() &&
+                 error->asObject().size() == 2 && legacyAssetRefusal(*error)) {
+        return R::Err(ca::ImportError::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(ca::ImportError::Unavailable);
   }
 
   template<class T, class Decode>

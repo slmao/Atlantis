@@ -114,6 +114,49 @@ public sealed class AssetSession
             value => Codec.DecodeMaterialRead(value) is { } read && read.Material == material ? read : null);
     }
 
+    /// <summary>Admits a managed PNG job. A missing admission receipt does not determine the durable outcome.</summary>
+    public Outcome<A.TextureImportJob, A.ImportError> TextureImport(string name, A.ImportMode mode = A.ImportMode.Register)
+    {
+        if (!Codec.ValidImportName(name)) throw new ArgumentException("invalid texture import name", nameof(name));
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        _session.ThrowIfFailed();
+        var parameters = JsonValue.NewObject().Set("name", JsonValue.String(name)).Set("mode", JsonValue.String(mode.ToString()));
+        try
+        {
+            return TextureRequest("assets.textureImport", parameters, true, value =>
+                Codec.DecodeTextureImportJob(value) is { State: A.RebuildState.Running } job && job.Name == name &&
+                job.Mode == mode ? job : null);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Texture {mode} outcome unknown for {name}. " +
+                "Inspect the registered texture and complete generations and confirm settlement before retrying.");
+        }
+    }
+
+    public Outcome<A.TextureImportStatus, A.ImportError> TextureImportStatus(A.TextureImportId? jobId = null)
+    {
+        if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
+        var parameters = JsonValue.NewObject();
+        if (jobId is A.TextureImportId id) parameters.Set("jobId", Codec.Encode(id.Value));
+        return TextureRequest("assets.textureImportStatus", parameters, false, value =>
+            Codec.DecodeTextureImportStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
+    }
+
+    private Outcome<T, A.ImportError> TextureRequest<T>(string method, JsonValue parameters, bool start,
+        Func<JsonValue, T?> decode) where T : class
+    {
+        var response = _session.AwaitResponse(_session.Send(method, parameters));
+        if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
+            throw _session.Malformed(method);
+        if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+            Codec.IsLegacyAssetRebuildRefusal(response))
+            return Outcome<T, A.ImportError>.Err(A.ImportError.Unsupported);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            throw _session.Malformed(method);
+        return _session.InBand<T, A.ImportError>(result, method, decode, v => Codec.DecodeImportError(v, start));
+    }
+
     /// <summary>Admits one job without waiting or retrying. A lost receipt retains its transport or protocol category.</summary>
     public Outcome<A.MaterialJob, A.MaterialError> MaterialSave(A.MaterialSave request)
     {

@@ -1,10 +1,10 @@
 # Plan: Texture Import and Base Color Binding
 
 - **Spec:** [Spec 0095](../specs/0095-texture-import-and-base-color-binding.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0154](../adr/0154-managed-base-color-texture-import.md) (Proposed)
+- **Joint Human Review:** The Atlantis maintainer approved J1–J4 and Spec/Plan 0095 on 2026-11-14 at `95e0186b`. [PR #355](https://github.com/slmao/Atlantis/pull/355) was manually merged as `e355bed5`. Authorization covers S2–S4, fixes within scope, applicable verification, valid evidence reuse and a review-ready implementation PR. Windows DPI acceptance uses actual 100%. Final merge remains human.
+- **ADR:** [ADR-0154](../adr/0154-managed-base-color-texture-import.md) (Accepted)
 
 ## Objective
 

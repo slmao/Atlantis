@@ -400,6 +400,26 @@ does not change the active generation. See
 [Spec 0094](../specs/0094-basic-material-authoring.md) and
 [ADR-0153](../adr/0153-managed-material-authoring-and-draft-preview.md).
 
+### 5.2.3 Managed base color texture import (Spec 0095 / ADR-0154)
+
+| Method | Parameters | Success |
+|---|---|---|
+| `assets.textureImport` | `{name,mode}` where mode is `Register` or `Resume` | An import job in state `Running` |
+| `assets.textureImportStatus` | `{}` or `{jobId}` | `{activeGeneration,job,workspaceNeedsRepair}` |
+
+The existing import job shape carries `id`, and `rootGuid` identifies the
+registered Texture on success. A committed failure includes
+`registeredRootGuid`. The job and active generation fields can be null.
+The required repair flag may accompany a successful publication.
+The texture history is independent of glTF and material job history.
+An explicit evicted or unknown ID returns `UnknownJob`.
+
+The decoder requires exact members and correlated replies. Only the
+exact legacy unknown-asset-query refusal maps to `Unsupported`.
+The resulting Texture is an ordinary catalog record after explicit
+activation and is bound with the existing material methods. See
+[Spec 0095](../specs/0095-texture-import-and-base-color-binding.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |
