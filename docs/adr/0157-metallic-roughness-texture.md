@@ -28,19 +28,22 @@ also changes persisted and GPU-visible material data.
    [Khronos channel convention](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_pbrmetallicroughness_metallicroughnesstexture).
    Multiply the existing scalars by G roughness and B metallic. Clear
    restores the scalar path. Persist only bound recipes in the new
-   material source/artifact versions. Load earlier versions with an empty
-   slot. Keep the existing no-map descriptor and shader path and add one
-   sampled binding at the next free slot to the opt-in variants with and
-   without normal mapping. Reuse Runtime scene/preview ownership and
+   material source, artifact and metadata versions. Pair the artifact and
+   metadata checks with the catalog's declared version. Load the existing
+   formats with an empty slot. Keep the existing no-map descriptor and
+   shader path. Add one sampled binding at the next free slot in each
+   opt-in variant, with or without normal mapping. Reuse Runtime scene/preview ownership and
    RenderGraph, including texture upload and retirement. This extends the
    [direct-lit descriptor contract](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
    for the new mapped variants.
 3. Add a third exact recipe shape and role-specific import/status over
    the shared surface. Use the same worker, material status, settlement
    and cooked pair preview. Guard all older recipe paths against
-   projection or mutation of a recipe they cannot represent, including
-   ahead committed Resume. Keep Runtime scene activation and separate
-   Saved Scenes Build/Open governed by
+   projection or mutation of a recipe they cannot represent. Reads use
+   the active snapshot. The ahead registry guards writes, and Resume
+   validates the durable recipe against the calling method's shape.
+   Keep Runtime scene activation and separate Saved Scenes Build/Open
+   governed by
    [ADR-0150](0150-local-saved-scene-build-launch.md).
 
 ## Consequences

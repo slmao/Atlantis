@@ -54,17 +54,23 @@ texture namespace uses the new canonical leaf
 `registered/texture_<name>/metallic-roughness.png`, its matching source key
 and the existing seal and ordinary Texture fragment. Reject multiple or
 misnamed leaves, inconsistent keys and seals, name and identity collisions.
-Use the logical key, GUID and PNG digest in registry comparisons. GUID and
-input stay stable on Resume and rebuild. Catalog discovery remains
-`assets.list/get`.
+The canonical registered key is `content:texture_<name>/metallic-roughness.png`.
+Share the registry's name, GUID and derived-key collision rules. Include
+the complete logical key, GUID and PNG digest in registry comparisons.
+The GUID and inputs stay stable on Resume and fresh builds. Targeted
+rebuild of a managed texture remains unsupported. Catalog discovery
+continues through `assets.list/get`.
 
 Generate a private v6 manifest only when the frozen view contains this
 role. Keep v5's color-space field and add required `role` to each texture
-entry in v6, using exactly `BaseColor`, `Normal` or `MetallicRoughness`,
-derived from the canonical source key and checked against producer,
-artifact and metadata. Keep exact v1–v5 shapes for compatible views.
-Independently validate the selected view and the ahead registry. An older
-builder refuses the new registration shape, and an older Runtime refuses
+entry in v6, using exactly `BaseColor`, `Normal` or `MetallicRoughness`.
+Derive the role from the canonical producer and catalog keys. Check
+`Srgb` for BaseColor and `Unorm` for both linear roles against the
+artifact and metadata. Require the exact frozen texture membership and
+reject missing, extra or inconsistent evidence. Keep exact v1–v5 shapes
+for compatible views. Validate the selected generation or configured seed
+against its own frozen view and check registry readiness separately.
+An older builder refuses the new registration shape, and an older Runtime refuses
 its v6 generation. Older Runtime can keep a compatible earlier snapshot
 readable and refuses unsafe workspace mutation. Registration uses the
 current writer, pending unit, exact catalog delta and both renames.
@@ -76,8 +82,11 @@ the destination recheck when publication is uncertain.
 the existing material filter and addressing. Use `G` as the linear
 roughness multiplier and `B` as the linear metallic multiplier. `R`
 and `A` have no effect. Keep existing factors unchanged on select, replace
-and clear. Feed clamped `metallicFactor × B` and
-`roughnessFactor × G` into the existing BRDF and keep its existing minimum BRDF alpha.
+and clear. With UNORM samples in [0, 1], compute
+`metallic = clamp(metallicFactor × B, 0, 1)` and
+`roughness = clamp(roughnessFactor × G, 0, 1)`.
+Then compute the existing BRDF alpha from the effective roughness
+using `max(roughness², kMinAlpha)`.
 Clear returns to the existing scalar path, equivalent to G and B both 1.
 A metallic factor of zero still yields zero after binding. Use the same
 ordinary Texture GUID throughout. Require a dependency-free RGBA8 UNORM,
@@ -88,23 +97,30 @@ normal, base-color and emissive slots, including through older recipe
 methods on the new Runtime. Keep previously supported normal sources
 eligible for their existing slot. Show which role failed.
 
-For a bound recipe, append the `metallic_roughness_map_asset` field to
-material source v11 and the texture AssetId to the v9 payload for cooked
-material v10.
-Emit the new source/artifact versions only for recipes that bind the slot,
-with a required non-nil GUID/nonzero key in those versions. Use the
-existing v10 source and v9 artifact formats when the slot is empty.
-Read historical supported formats with an empty new slot. Refuse the
-extension on recipes outside the existing opaque direct-lit authoring
-subset. Add precisely the unique dependency edge and preserve the
+For a bound recipe emit material source v11 with a final
+`metallic_roughness_map_asset` GUID, cooked artifact v10 with the
+corresponding AssetId appended to the v9 payload, and material metadata
+v10 with a final `metallic_roughness_map_asset_id` field. The new formats
+require a non-nil GUID or a nonzero key, respectively. Emit the current
+source v10, artifact v9 and metadata v9 byte formats with an empty slot.
+The loader accepts the two complete artifact/metadata pairs and checks
+the catalog's declared artifact version against the decoded header.
+Reject mixed pairs, mismatched keys and extra payload. The cooker writes
+the actual source and artifact schema versions into the catalog record.
+Restrict use of the slot to the existing authoring subset of
+`PbrDirectLit` with opaque alpha mode, base alpha 1 and cutoff 0.5.
+Other recipes continue through their existing load and render paths.
+Add precisely the unique dependency edge and preserve the
 material GUID, other fields and unrelated edges. Clear removes that edge.
 The cooker validates the slot's catalog identity and canonical role,
 including the rejection of this role in older slots. Runtime scene
 loading and preview independently require compatible cooked metadata and
-a valid edge before realization. A new cooked record advertises the new
+a valid edge before realization. Check slot role even when the texture
+is already in the scene cache. A new cooked record advertises the new
 artifact schema. An older Runtime refuses scenes that require the new
-schema. Keep the existing unmapped rendering paths, including layout and push constants. Add one sampled binding only in the
-two opt-in direct-lit shader permutations. Use set 0 binding 4 without a
+schema. Keep the existing unmapped rendering paths, including layout
+and push constants. Add one sampled binding only in the two opt-in
+direct-lit shader permutations. Use set 0 binding 4 without a
 normal map and binding 5 with one. Keep existing bindings, the shared
 material sampler and shadow selection. Use the same RenderGraph upload
 and lifetime rules. Release request-owned GPU resources at the existing
@@ -119,7 +135,7 @@ their meanings.
 | Method | Shape |
 | --- | --- |
 | `assets.metallicRoughnessImport` | 0097 texture admission shape `{name,mode}` and texture job receipt. The method fixes the role. |
-| `assets.metallicRoughnessImportStatus` | 0097 texture status shape, filtered to this role. |
+| `assets.metallicRoughnessImportStatus` | 0097 texture status shape `{activeGeneration,job,workspaceNeedsRepair}`, filtered to this role. |
 | `assets.materialReadWithMetallicRoughness` | 0096 read shape with the complete recipe. |
 | `assets.materialSaveWithMetallicRoughness` | 0096 Create, Copy, Edit and Resume arms using the complete values and complete Edit `expected` where applicable. Use existing `assets.materialStatus`. |
 | `assets.previewMaterialDraftWithMetallicRoughness` | 0096 bounded draft PNG shape with the complete recipe echoed. |
@@ -127,14 +143,22 @@ their meanings.
 Complete values extend the exact 0096 values by required
 `metallicRoughnessMap`, a canonical non-nil GUID or null. The cooked
 `assets.previewMeshMaterial` pair keeps its existing wire shape. Exact
-well-formed correlated legacy refusal is the only `Unsupported` mapping
-for new calls. Retain transport/protocol categories and known target/ID.
-A new client can explicitly use an older representable recipe after
-capability detection. A lost response or a refusal never retries a write
-or falls back to a smaller recipe. On the new Runtime, every older Read,
-Copy or Edit path refuses an unrepresentable recipe before projection or
-staging. Resume checks the ahead committed source using the calling
-method's version. A legacy Resume that cannot represent it returns
+well-formed correlated outer `BadRequest` with message
+`unknown or malformed asset query` is the only `Unsupported` mapping
+for new calls. Require one matching response ID, exact error members
+and no result arm. Use `Unavailable` for writes on a supporting Runtime
+without the write profile. Retain transport/protocol categories and
+known target/ID. The Editor may offer a separate legacy flow after the
+exact refusal on the current connection. Writes require explicit
+submission in that flow. A lost response never retries a write.
+
+On the new Runtime, each older Read, Copy or Edit path refuses an active
+recipe it cannot represent before projection or staging. A legacy Read
+may still return an older recipe from the active snapshot while the
+registry is ahead. The existing ahead guard refuses new material writes,
+including an Edit using the old `expected`, until the caller settles or
+activates the committed changes. Resume checks the ahead committed
+source using the calling method's version. A legacy Resume that cannot represent it returns
 `Source/InvalidRecipe` with committed state and GUID, preserves disk, and
 points to a compatible explicit Resume. Existing source permissions,
 complete expected-value concurrency checks, separate publication receipts
@@ -142,10 +166,15 @@ and workspace repair rules apply.
 
 All texture kinds share the worker slot and 16 terminal texture receipts.
 Latest status filters by role, wrong-role or evicted IDs yield
-`UnknownJob`, and repair state is workspace-wide. A known committed
-texture failure may Resume only the sole new committed registration of
-the requested role, without inbox. Recheck original interpretation and
-source through worker validation and commit. Resume after a committed
+`UnknownJob`, and repair state is workspace-wide. After host, lock and
+repair checks, Resume returns `NothingToResume` for a missing, active
+or wrong-role target and `ActivationRequired` when a matching ahead
+target is accompanied by other committed changes. Only the sole new
+registration of the requested role can Resume, using its registered
+PNG, fragment and seal. Compare the admitted role, key, GUID and digest
+against disk before cook and again before commit. A prepublication
+mismatch leaves the active view intact. Retain committed state and GUID
+only after confirming the intended registration. Resume after a committed
 material failure preserves raw committed source and the complete recipe.
 Keep checks against altered prepared inputs, typed precommit, committed
 and unknown outcomes, confirmed publication despite cleanup failure,
@@ -159,21 +188,27 @@ shared service. Retain status by import role and block other texture
 writes during unresolved admission, running, committed failure or ahead
 success. Keep receipt and restart guidance with its original role.
 Reuse the fixed camera, lighting, PNG bounds and one shared preview
-permit. Cooked/draft preview and the scene use the same sampling
-semantics. An asynchronous completion applies only to the current
-session, retained snapshot, selected mesh and draft revision. Preview
-must preserve catalog, Runtime projection, scene document and undo/redo.
+permit across mesh, cooked pair and every draft recipe version.
+Cooked/draft preview and the scene use the same sampling semantics.
+Resolve all inputs from the retained snapshot before acquiring GPU
+resources. Reuse the existing decoded texture caps and release rules.
+An asynchronous completion applies only to the current session,
+retained snapshot, surface, selected mesh and material or draft revision.
+Discard stale success and failure responses. Preview preserves catalog,
+Runtime projection, scene document and undo/redo.
 
 Save & Publish leaves the active Runtime view, document and undo/redo
-unchanged. First activate the texture generation, then edit an existing
-registered material used by the fixture scene and activate the material's
-new named generation through ordinary Runtime restart. Verify appearance
-and persisted dependency with the same existing scene/node/material
-reference and no scene transaction, rebinding or Apply. Save As a
-separate fixture before the material edit and independently Build/Open
-it via [0090](0090-saved-scene-build-open.md), using committed sources
-and no profile or generation override in the second Editor. Keep saved
-scene and node identity rules, and retain the saved-slot launch guards.
+unchanged. Use an ordinary opted-in fixture with the intended material
+reference already in the scene source before configuring seed and staging.
+After activating the texture generation, Save As a separate scene before
+editing the material. Edit the material in place, publish, then restart
+the original scene on the named material generation. Independently
+Build/Open the saved copy via [0090](0090-saved-scene-build-open.md) from
+the same committed sources. The second Editor uses its saved-slot build
+without profile or generation override. Both legs use the same published
+material edit and must preserve the original node/material reference and
+show the packed-map effect without a scene write, rebinding or Apply.
+Keep distinct scene identities and the saved-slot launch guards.
 
 ### Non-functional
 
