@@ -1,11 +1,11 @@
 # Spec: Texture Import and Base Color Binding
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-14
 - **Related Plan:** [Plan 0095](../plans/0095-texture-import-and-base-color-binding.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0154](../adr/0154-managed-base-color-texture-import.md) (Proposed)
+- **Approval:** Atlantis maintainer, 2026-11-14, [PR #355](https://github.com/slmao/Atlantis/pull/355) at `95e0186b`
+- **Related ADR:** [ADR-0154](../adr/0154-managed-base-color-texture-import.md) (Accepted)
 
 ## Summary
 
