@@ -327,12 +327,29 @@ endfunction()
 # shape -- see the Plan's own Correction for why that original design
 # silently shared one AssetId across two genuinely different artifacts.
 function(atlantis_add_texture_asset)
-  set(options "")
+  set(options MANAGED)
   set(oneValueArgs NAME SOURCE COLOR_SPACE)
   set(multiValueArgs "")
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   set(asset_root "${CMAKE_SOURCE_DIR}/assets")
+  set(root_name assets)
+  set(source_option "")
+  set(evidence "")
+  set(finish "")
+  set(extra_inputs "")
+  if(ARG_MANAGED)
+    set(asset_root "${CMAKE_CURRENT_BINARY_DIR}/managed-texture-sources")
+    set(root_name content)
+    set(source_option "--catalog-id=content:${ARG_SOURCE}")
+    set(evidence "${CMAKE_BINARY_DIR}/assets/${ARG_NAME}.texture-evidence")
+    set(extra_inputs "${CMAKE_SOURCE_DIR}/cmake/AtlantisTextureEvidence.cmake")
+    set(finish COMMAND "${CMAKE_COMMAND}" "-Dpng=${asset_root}/${ARG_SOURCE}"
+      "-Dartifact=${CMAKE_BINARY_DIR}/assets/${ARG_NAME}.atex"
+      "-Dmetadata=${CMAKE_BINARY_DIR}/assets/${ARG_NAME}.atex.meta.txt"
+      "-Devidence=${evidence}" "-Dstamp=${CMAKE_BINARY_DIR}/assets/${ARG_NAME}.stamp"
+      -P "${extra_inputs}")
+  endif()
   set(source_path "${asset_root}/${ARG_SOURCE}")
   set(output_dir "${CMAKE_BINARY_DIR}/assets")
 
@@ -353,11 +370,12 @@ function(atlantis_add_texture_asset)
 
   add_custom_command(
     OUTPUT "${stamp}"
-    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt"
+    BYPRODUCTS "${artifact_path}" "${metadata_path}" "${artifact_path}.catalog.txt" ${evidence}
     COMMAND atlantis_asset_cooker
       --kind=texture --source=${source_path} --asset-root=${asset_root}
-      --output-dir=${output_dir} --stamp=${stamp} ${color_space_args} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE}
-    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker
+      --output-dir=${output_dir} --stamp=${stamp} ${color_space_args} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE} ${source_option}
+    ${finish}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker ${extra_inputs}
     COMMENT "Cooking texture asset: ${ARG_NAME} (${ARG_SOURCE}, ${ARG_COLOR_SPACE})"
     VERBATIM
   )
@@ -368,8 +386,8 @@ function(atlantis_add_texture_asset)
   # design) cooks twice under one catalog GUID, which the catalog assembly
   # rejects as DuplicateGuid (Plan 0047 P13).
   _atlantis_register_catalog_fragment(${ARG_NAME}_asset "${artifact_path}.catalog.txt")
-  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "texture\tassets\t${ARG_SOURCE}")
-  _atlantis_register_asset_producer(texture assets "${ARG_SOURCE}" "${stamp}" "")
+  set_property(GLOBAL APPEND PROPERTY ATLANTIS_ASSET_DECLARATIONS "texture\t${root_name}\t${ARG_SOURCE}")
+  _atlantis_register_asset_producer(texture "${root_name}" "${ARG_SOURCE}" "${stamp}" "")
 
   set(ATLANTIS_${ARG_NAME}_ARTIFACT_PATH "${artifact_path}" PARENT_SCOPE)
   set(ATLANTIS_${ARG_NAME}_METADATA_PATH "${metadata_path}" PARENT_SCOPE)

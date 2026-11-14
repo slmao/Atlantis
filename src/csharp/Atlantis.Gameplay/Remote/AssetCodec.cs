@@ -298,6 +298,26 @@ public static partial class Codec
         return new(id is AssetGuid guid ? new A.GenerationId(guid) : null, decoded);
     }
 
+    public static A.TextureImportJob? DecodeTextureImportJob(JsonValue value)
+    {
+        if (DecodeImportJob(value) is not { } job || !Exact(value,
+            job.State == A.RebuildState.Running ? 4 : job.State == A.RebuildState.Succeeded ? 6 : 5)) return null;
+        if (job.Failure is { } failure &&
+            !Exact(value.Find("failure")!, 4 + (failure.ExitCode.HasValue ? 1 : 0) +
+                (failure.RegisteredRootGuid.HasValue ? 1 : 0))) return null;
+        return new(new(job.Id.Value), job.Name, job.Mode, job.State, job.RootGuid, job.Generation, job.Failure);
+    }
+
+    public static A.TextureImportStatus? DecodeTextureImportStatus(JsonValue value)
+    {
+        if (!Exact(value, 3) || value.Find("workspaceNeedsRepair") is not { IsBool: true } repair ||
+            value.Find("activeGeneration") is not JsonValue active || value.Find("job") is not JsonValue job) return null;
+        AssetGuid? id = active.IsNull ? null : RebuildGuid(active);
+        var decoded = job.IsNull ? null : DecodeTextureImportJob(job);
+        if ((!active.IsNull && id is null) || (!job.IsNull && decoded is null)) return null;
+        return new(id is AssetGuid guid ? new A.GenerationId(guid) : null, decoded, repair.AsBool);
+    }
+
     public static JsonValue Encode(A.ImportJob job)
     {
         JsonValue value = JsonValue.NewObject().Set("id", Encode(job.Id.Value)).Set("name", JsonValue.String(job.Name))

@@ -340,6 +340,25 @@ and the durable state before retrying. See
 [Spec 0094](docs/specs/0094-basic-material-authoring.md).
 
 
+#### Import a base color texture
+
+Place an 8-bit RGB or RGBA PNG at `inbox/<name>/source.png` in the opted-in
+managed project. In **Assets → Import Texture**, enter the inbox name and
+choose **Register**. The producer interprets the RGB samples as sRGB.
+Restart into the reported generation to find the texture in Assets and
+choose it in the material's **Base texture** field. Preview on a mesh,
+choose **Save & Publish**, then restart into the material generation.
+The edited material keeps its GUID, so a saved scene keeps its reference.
+Saved Scenes builds use the committed managed project root.
+
+Use `assets texture-import <name> [--resume]` and
+`assets texture-import-status [<jobId>]` from the CLI. The same operation
+is available from both SDKs and MCP. If registration succeeded but
+publication failed, use **Resume** after settlement or offline repair.
+If the result is unknown, inspect the registered PNG, its fragment and
+seal, and complete generations before retrying. See
+[Spec 0095](docs/specs/0095-texture-import-and-base-color-binding.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

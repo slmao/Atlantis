@@ -39,6 +39,11 @@ class AssetRebuildHost {
       std::string_view name, connection::assets::ImportMode mode,
       std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::ImportStatusResult importStatus(std::optional<connection::assets::ImportId> id) const;
+  [[nodiscard]] connection::assets::TextureImportStartResult startTextureImport(
+      std::string_view name, connection::assets::ImportMode mode,
+      std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::TextureImportStatusResult textureImportStatus(
+      std::optional<connection::assets::TextureImportId> id) const;
   [[nodiscard]] bool ownsMaterial(const asset_system::AssetGuid& guid) const;
   [[nodiscard]] std::optional<connection::assets::GenerationId> activeGeneration() const;
   [[nodiscard]] connection::assets::MaterialSaveResult saveMaterial(

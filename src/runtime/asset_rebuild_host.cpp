@@ -4,6 +4,7 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <bcrypt.h>
 #include <objbase.h>
 
 #include <atlantis/asset_system/guid_mint.h>
@@ -47,6 +48,8 @@ constexpr std::string_view kManagedSource = "assets/managed-catalog-source.txt";
 constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
 constexpr std::string_view kMaterialSources = "assets/managed-material-sources";
 constexpr std::string_view kMaterialLeaf = "source.material.txt";
+constexpr std::string_view kTextureSources = "assets/managed-texture-sources";
+constexpr DWORD kPngBytes = 24 * 1024 * 1024;
 
 class Handle {
  public:
@@ -293,6 +296,151 @@ bool matchesFrozenMaterials(const as::AssetCatalog& catalog, const Materials& ma
   });
 }
 
+struct TextureUnit {
+  as::AssetGuid guid;
+  std::string digest;
+  friend bool operator==(const TextureUnit&, const TextureUnit&) = default;
+};
+using Textures = std::map<std::string, TextureUnit, std::less<>>;
+struct TextureEvidence {
+  fs::path png, record;
+  std::string digest, artifact, metadata;
+};
+using TextureInputs = std::map<std::string, TextureEvidence, std::less<>>;
+
+std::string textureKey(std::string_view name) {
+  return "content:texture_" + std::string(name) + "/source.png";
+}
+std::optional<std::string_view> textureName(std::string_view key) {
+  constexpr std::string_view prefix = "content:texture_", suffix = "/source.png";
+  if (!key.starts_with(prefix) || !key.ends_with(suffix) || key.size() <= prefix.size() + suffix.size()) return {};
+  const auto name = key.substr(prefix.size(), key.size() - prefix.size() - suffix.size());
+  return ca::validImportName(name) ? std::optional{name} : std::nullopt;
+}
+fs::path textureDirectory(std::string_view name) { return fromUtf8("texture_" + std::string(name)); }
+
+bool exactTexturePath(const fs::path& root, const fs::path& relative) {
+  if (!safeRelative(root, relative)) return false;
+  auto path = root;
+  for (const auto& component : relative) {
+    WIN32_FIND_DATAW data{};
+    const auto next = path / component;
+    const auto found = FindFirstFileW(next.c_str(), &data);
+    if (found == INVALID_HANDLE_VALUE) return false;
+    FindClose(found);
+    if (component.native() != data.cFileName) return false;
+    path = next;
+  }
+  return true;
+}
+
+std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit) {
+  if (!exactTexturePath(root, relative)) return {};
+  const auto path = root / relative;
+  Handle file(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                          FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+  BY_HANDLE_FILE_INFORMATION info{};
+  if (!file || !GetFileInformationByHandle(file.get(), &info) || info.nFileSizeHigh || !info.nFileSizeLow ||
+      info.nFileSizeLow > limit || info.nNumberOfLinks != 1 ||
+      (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
+    return {};
+  struct Sha {
+    BCRYPT_ALG_HANDLE provider = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    ~Sha() {
+      if (hash) BCryptDestroyHash(hash);
+      if (provider) BCryptCloseAlgorithmProvider(provider, 0);
+    }
+  } sha;
+  if (BCryptOpenAlgorithmProvider(&sha.provider, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0 ||
+      BCryptCreateHash(sha.provider, &sha.hash, nullptr, 0, nullptr, 0, 0) < 0) return {};
+  std::array<unsigned char, 64 * 1024> block{};
+  DWORD remaining = info.nFileSizeLow;
+  while (remaining) {
+    DWORD got = 0;
+    if (!ReadFile(file.get(), block.data(), std::min(remaining, static_cast<DWORD>(block.size())), &got, nullptr) ||
+        got == 0 || BCryptHashData(sha.hash, block.data(), got, 0) < 0) return {};
+    remaining -= got;
+  }
+  std::array<unsigned char, 32> digest{};
+  if (BCryptFinishHash(sha.hash, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) return {};
+  std::string hex;
+  for (const auto byte : digest) {
+    constexpr std::string_view alphabet = "0123456789abcdef";
+    hex.push_back(alphabet[byte >> 4]);
+    hex.push_back(alphabet[byte & 15]);
+  }
+  return hex;
+}
+
+std::optional<Textures> registeredTextures(const fs::path& root) {
+  const auto registry = root / "registered";
+  if (!realDirectory(registry)) return {};
+  Textures out;
+  std::set<as::AssetGuid> identities;
+  std::error_code ec;
+  for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
+    const auto leaf = utf8(at->path().filename());
+    if (!leaf.starts_with("texture_")) continue;
+    const auto name = std::string_view(leaf).substr(8);
+    const auto unit = fromUtf8(leaf);
+    if (!exactTexturePath(registry, unit / "source.sha256") ||
+        !exactTexturePath(registry, unit / "catalog-source.txt")) return {};
+    const auto digest = fileDigest(registry, unit / "source.png", kPngBytes);
+    const auto seal = readMaterialText(registry, unit / "source.sha256");
+    const auto fragment = readMaterialText(registry, unit / "catalog-source.txt");
+    if (!ca::validImportName(name) || !digest || !seal || *seal != *digest + "\n" || !fragment) return {};
+    const auto parsed = as::parseAssetCatalogSource(*fragment);
+    if (parsed.isErr() || parsed.value().entries().size() != 1) return {};
+    const auto& entry = parsed.value().entries().front();
+    if (entry.type != as::CatalogAssetType::Texture || entry.root != as::CatalogRoot::Content ||
+        "content:" + entry.path != textureKey(name) || !identities.insert(entry.guid).second) return {};
+    out.emplace(name, TextureUnit{entry.guid, *digest});
+  }
+  return ec ? std::nullopt : std::optional{std::move(out)};
+}
+
+std::optional<TextureInputs> textureInputs(const fs::path& root, const Producers& producers,
+                                          const as::AssetCatalog& catalog) {
+  TextureInputs out;
+  for (const auto& [key, producer] : producers) {
+    const auto name = textureName(key);
+    if (!name) continue;
+    const auto* record = catalog.find(producer.root);
+    if (!record || producer.type != as::CatalogAssetType::Texture || record->type != producer.type ||
+        as::toString(record->source) != key || !record->dependencies.empty()) return {};
+    const auto base = fs::path("assets") / textureDirectory(*name);
+    const auto png = fs::path(kTextureSources) / textureDirectory(*name) / "source.png";
+    auto evidence = base;
+    evidence += ".texture-evidence";
+    auto stamp = base;
+    stamp += ".stamp";
+    if (!exactTexturePath(root, evidence)) return {};
+    const auto payload = readMaterialText(root, evidence);
+    if (utf8(producer.stamp) != utf8(stamp) || !exactTexturePath(root, stamp) || !payload || payload->size() != 195) return {};
+    const auto digest = fileDigest(root, png, kPngBytes);
+    const auto artifact = fileDigest(root, fromUtf8(record->artifact).lexically_relative(root), as::kPreviewBaseColorMaxArtifactBytes);
+    const auto metadata = fileDigest(root, fromUtf8(record->metadata).lexically_relative(root), 64 * 1024);
+    if (!digest || !artifact || !metadata || *payload != *digest + "\n" + *artifact + "\n" + *metadata + "\n")
+      return {};
+    auto loaded = material_authoring::texture(catalog, producer.root);
+    if (loaded.isErr() || loaded.value().mipCount != 1) return {};
+    out.emplace(key, TextureEvidence{png, evidence, *digest, *artifact, *metadata});
+  }
+  for (const auto& record : catalog.records()) {
+    const auto key = as::toString({record.source.root, record.source.path, {}});
+    if (textureName(key) && !out.contains(as::toString(record.source))) return {};
+  }
+  return out;
+}
+
+Textures textureRegistrations(const Producers& producers, const TextureInputs& inputs) {
+  Textures out;
+  for (const auto& [key, entry] : inputs)
+    out.emplace(*textureName(key), TextureUnit{producers.at(key).root, entry.digest});
+  return out;
+}
+
 std::string managedSourceKey(std::string_view name) {
   return "content:managed_" + std::string(name) + "/source.gltf";
 }
@@ -311,7 +459,7 @@ Registrations managedRegistrations(const Producers& producers) {
   return result;
 }
 Producers baseProducers(Producers producers) {
-  std::erase_if(producers, [](const auto& row) { return managedName(row.first) || materialName(row.first); });
+  std::erase_if(producers, [](const auto& row) { return managedName(row.first) || materialName(row.first) || textureName(row.first); });
   return producers;
 }
 std::string_view inventoryHeader(std::string_view data) {
@@ -326,7 +474,7 @@ std::optional<Registrations> readRegistrations(const fs::path& root) {
   for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
     const auto dir = at->path();
     const auto leaf = utf8(dir.filename());
-    if (leaf.starts_with("material_")) continue;  // Validated by registeredMaterials.
+    if (leaf.starts_with("material_") || leaf.starts_with("texture_")) continue;
     if (!leaf.starts_with("managed_") || !ca::validImportName(std::string_view(leaf).substr(8)) ||
         !realDirectory(dir) || !safeRelative(dir, "source.gltf") || !safeRelative(dir, "catalog-source.txt"))
       return std::nullopt;
@@ -355,6 +503,10 @@ std::optional<Producers> readManagedView(const fs::path& root, const fs::path& i
     const auto key = as::parseCatalogSourceId(source);
     const auto* entry = key ? catalog.value().find(key->root, key->path) : nullptr;
     if (!entry || entry->guid != producer.root || entry->type != producer.type) return std::nullopt;
+  }
+  for (const auto& entry : catalog.value().entries()) {
+    const auto key = "content:" + entry.path;
+    if (entry.root == as::CatalogRoot::Content && textureName(key) && !producers->contains(key)) return {};
   }
   return producers;
 }
@@ -434,13 +586,14 @@ json::Value generatedSources(const Producers& producers) {
   return value;
 }
 json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers,
-                     const fs::path& managedInventory = {}, const Materials& materials = {}) {
+                     const fs::path& managedInventory = {}, const Materials& materials = {},
+                     const TextureInputs& textures = {}) {
   auto value = json::Value::object();
   value.set("profile", json::Value::string(std::string(owner)));
   value.set("generation", json::Value::string(as::toString(id.value)));
   value.set("importedSources", generatedSources(producers));
   if (!managedInventory.empty()) {
-    value.set("version", json::Value::number(std::uint64_t{materials.empty() ? 2u : 3u}));
+    value.set("version", json::Value::number(std::uint64_t{!textures.empty() ? 4u : materials.empty() ? 2u : 3u}));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
     value.set("producers", json::Value::string(utf8(managedInventory)));
   }
@@ -448,6 +601,19 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
     auto sources = json::Value::object();
     for (const auto& [name, unit] : materials) sources.set(materialKey(name), json::Value::string(unit.source));
     value.set("materialSources", std::move(sources));
+  }
+  if (!textures.empty()) {
+    auto sources = json::Value::object();
+    for (const auto& [key, input] : textures) {
+      auto entry = json::Value::object();
+      entry.set("guid", json::Value::string(as::toString(producers.at(key).root)));
+      entry.set("png", json::Value::string(utf8(input.png)));
+      entry.set("inputSha256", json::Value::string(input.digest));
+      entry.set("artifactSha256", json::Value::string(input.artifact));
+      entry.set("metadataSha256", json::Value::string(input.metadata));
+      sources.set(key, std::move(entry));
+    }
+    value.set("textureSources", std::move(sources));
   }
   return value;
 }
@@ -574,11 +740,10 @@ bool createMarker(const fs::path& path, std::string_view text) {
 }
 
 template<class Interrupted>
-bool copyInbox(const fs::path& from, const fs::path& to, Interrupted interrupted) {
+bool copyInbox(const fs::path& from, const fs::path& to, Interrupted interrupted, DWORD maxSize = 16 * 1024 * 1024) {
   Handle input(CreateFileW(from.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                            FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
   BY_HANDLE_FILE_INFORMATION info{};
-  constexpr DWORD maxSize = 16 * 1024 * 1024;
   if (!input || !GetFileInformationByHandle(input.get(), &info) || info.nFileSizeHigh ||
       !info.nFileSizeLow || info.nFileSizeLow > maxSize || info.nNumberOfLinks != 1 ||
       (info.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))) return false;
@@ -617,6 +782,11 @@ struct AssetRebuildHost::State {
     std::shared_ptr<const as::AssetCatalog> catalog;
     Clock::time_point deadline;
   };
+  struct TextureWork {
+    ca::TextureImportJob job;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    Clock::time_point deadline;
+  };
 
   Config config;
   fs::path staging, publication, active, inventoryPath, inventoryRelative, project;
@@ -627,6 +797,10 @@ struct AssetRebuildHost::State {
   Materials activeMaterials, committedMaterials;
   std::optional<MaterialWork> materialWork;
   std::deque<ca::MaterialJob> materialJobs;
+  Textures activeTextures, committedTextures;
+  bool textureRegistryChanged = false;
+  std::optional<TextureWork> textureWork;
+  std::deque<ca::TextureImportJob> textureJobs;
   std::string inventory, owner;
   Producers producers;
   Handle writer;
@@ -652,7 +826,7 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
-    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork)
+    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork)
       return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
     return std::nullopt;
@@ -660,7 +834,7 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> admissionLocked() const {
     if (auto error = slotError()) return error;
-    if (!project.empty() && (registered != activeRegistered || committedMaterials != activeMaterials))
+    if (!project.empty() && (registered != activeRegistered || committedMaterials != activeMaterials || textureRegistryChanged))
       return ca::RebuildError::Unavailable;
     return std::nullopt;
   }
@@ -672,6 +846,7 @@ struct AssetRebuildHost::State {
     auto files = outputFiles(staging, catalog, view);
     if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
     Materials materials;
+    TextureInputs textures;
     if (!project.empty()) {
       files->push_back(inventoryRelative);
       files->push_back(fs::path(kManagedSource));
@@ -680,6 +855,14 @@ struct AssetRebuildHost::State {
       materials = std::move(*inputs);
       for (const auto& [name, unit] : materials)
         files->push_back(fs::path(kMaterialSources) / materialDirectory(name) / kMaterialLeaf);
+      auto input = textureInputs(staging, view, catalog);
+      if (!input) return fail(Stage::Validation, Code::InvalidOutput, "Invalid staged texture evidence.", true);
+      textures = std::move(*input);
+      for (const auto& [key, texture] : textures) {
+        files->push_back(texture.png);
+        files->push_back(texture.record);
+        files->push_back(view.at(key).stamp);
+      }
     }
     if (interrupted()) return timedOut(Stage::Validation);
     const auto guid = newGuid();
@@ -695,9 +878,15 @@ struct AssetRebuildHost::State {
         return interrupted() ? timedOut(Stage::Publication)
                              : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
     }
-    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials);
+    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials, textures);
     if (!writeText(temp / kManifest, json::write(data)))
       return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
+    if (!textures.empty()) {
+      const auto copiedCatalog = readCatalog(temp);
+      const auto copiedInput = copiedCatalog ? textureInputs(temp, view, *copiedCatalog) : std::nullopt;
+      if (!copiedInput || manifest(owner, id, view, inventoryRelative, materials, *copiedInput) != data)
+        return fail(Stage::Validation, Code::InvalidOutput, "Prepared texture generation differs from staging.", true);
+    }
     return Prepared{id, temp};
   }
 
@@ -709,6 +898,11 @@ struct AssetRebuildHost::State {
   std::variant<ca::GenerationId, End> build(const Work& work) {
     const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
     if (interrupted()) return timedOut(Stage::Launch);
+    if (!project.empty()) {
+      const auto textures = registeredTextures(project);
+      if (!textures || *textures != activeTextures)
+        return fail(Stage::Validation, Code::IdentityChanged, "Managed texture source differs from the active build.", !textures);
+    }
     if (!project.empty() && registeredMaterials(project) != activeMaterials)
       return fail(Stage::Validation, Code::IdentityChanged, "Managed material source differs from the active build.");
     const fs::path marker = staging / kDirty;
@@ -739,6 +933,11 @@ struct AssetRebuildHost::State {
       return fail(Stage::Validation, Code::InvalidOutput, "Staging catalog or producer inventory is invalid.", true);
     if (work.catalog->size() != catalog->size() || !retainsIdentity(*work.catalog, *catalog))
       return fail(Stage::Validation, Code::IdentityChanged, "Rebuild changed the catalog identity set.");
+    if (!project.empty()) {
+      const auto inputs = textureInputs(staging, *view, *catalog);
+      if (!inputs || textureRegistrations(*view, *inputs) != activeTextures || registeredTextures(project) != activeTextures)
+        return fail(Stage::Validation, Code::IdentityChanged, "Rebuild changed the managed texture view.");
+    }
     auto prepared = prepare(*catalog, *view, interrupted);
     if (const auto* error = std::get_if<End>(&prepared)) return *error;
     const auto& generation = std::get<Prepared>(prepared);
@@ -771,6 +970,9 @@ struct AssetRebuildHost::State {
     };
     if (registeredMaterials(project) != activeMaterials)
       return failed(IS::Validation, IC::IdentityConflict, "Managed material source differs from the active build.");
+    const auto initialTextures = registeredTextures(project);
+    if (!initialTextures || *initialTextures != activeTextures)
+      return failed(IS::Validation, IC::IdentityConflict, "Managed texture source differs from the active build.", !initialTextures);
     const fs::path name = fromUtf8("managed_" + work.job.name);
     const fs::path pendingParent = fs::path(".pending") / as::toString(work.job.id.value);
     const fs::path pending = pendingParent / name;
@@ -835,7 +1037,9 @@ struct AssetRebuildHost::State {
     auto expected = activeRegistered;
     expected.emplace(work.job.name, root);
     const auto producer = view->find(key);
+    const auto textures = textureInputs(staging, *view, *catalog);
     if (baseProducers(*view) != baseProducers(producers) || managedRegistrations(*view) != expected ||
+        !textures || textureRegistrations(*view, *textures) != activeTextures ||
         materialInputs(staging, *view) != activeMaterials || registeredMaterials(project) != activeMaterials ||
         producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
         !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
@@ -852,6 +1056,8 @@ struct AssetRebuildHost::State {
     if (interrupted())
       return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
                     "Import stopped before the commit point.", true);
+    if (registeredTextures(project) != activeTextures)
+      return failed(IS::Validation, IC::IdentityConflict, "Managed texture registry changed during import.", true);
     if (!work.registeredRoot) {
       if (!MoveFileExW((project / pending).c_str(), (project / "registered" / name).c_str(), 0)) {
         const auto disk = readRegistrations(project);
@@ -941,6 +1147,11 @@ struct AssetRebuildHost::State {
       }
       if (*imports != activeRegistered)
         return failJob(MS::Source, MC::ActivationRequired, "Activate the committed import changes first.");
+      const auto registryTextures = registeredTextures(project);
+      if (!registryTextures || *registryTextures != activeTextures) {
+        repair = !registryTextures;
+        return failJob(MS::Source, MC::ActivationRequired, "Activate or repair the committed texture changes first.");
+      }
       std::string name = job.target.name;
       ca::MaterialRecipe recipe;
       bool create = job.target.mode == ca::MaterialMode::Create || job.target.mode == ca::MaterialMode::Copy;
@@ -1066,6 +1277,9 @@ struct AssetRebuildHost::State {
           materialInputs(staging, *view) != expected || !matchesManagedCatalog(*built, *view) ||
           !matchesFrozenMaterials(*built, expected))
         return failJob(MS::Validation, MC::InvalidOutput, "The staged material producer view is inconsistent.");
+      const auto textureView = textureInputs(staging, *view, *built);
+      if (!textureView || textureRegistrations(*view, *textureView) != activeTextures)
+        return failJob(MS::Validation, MC::InvalidOutput, "Material save changed the managed texture view.");
       if (built->size() != work.catalog->size() + (create ? 1 : 0) || !retainsIdentity(*work.catalog, *built))
         return failJob(MS::Validation, MC::IdentityConflict, "The material build changed unrelated catalog identities.");
       const auto* builtRecord = built->find(*saved);
@@ -1084,7 +1298,8 @@ struct AssetRebuildHost::State {
       prepared = std::get<Prepared>(std::move(generation));
       std::lock_guard commit(publicationCommit);
       if (interrupted()) return failJob(MS::SourceCommit, MC::TimedOut, "Material job stopped before commit.");
-      if (registeredMaterials(project) != before || readRegistrations(project) != imports) {
+      if (registeredMaterials(project) != before || readRegistrations(project) != imports ||
+          registeredTextures(project) != activeTextures) {
         repair = true;
         return failJob(MS::SourceCommit, MC::CommitFailed, "The project registry changed during the job.");
       }
@@ -1106,7 +1321,7 @@ struct AssetRebuildHost::State {
       if (!publish(*prepared)) {
         const auto destination = publication / as::toString(prepared->id.value);
         const auto manifestPath = destination / kManifest;
-        const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected);
+        const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView);
         if (realDirectory(destination) && safeRelative(destination, fs::path(kManifest)) &&
             readJson(manifestPath) == expectedManifest &&
             !realDirectory(prepared->directory)) {
@@ -1165,18 +1380,232 @@ struct AssetRebuildHost::State {
     materialWork.reset();
   }
 
+  void settleTexture(TextureWork& work) {
+    using IS = ca::ImportStage;
+    using IC = ca::ImportFailureCode;
+    using RS = ca::RegistrationState;
+    auto& job = work.job;
+    auto registration = RS::NotCommitted;
+    std::optional<as::AssetGuid> guid;
+    std::optional<Prepared> prepared;
+    bool repair = false, marked = false, ownsPending = false, committing = false;
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto unit = textureDirectory(job.name);
+    const auto pending = fs::path(".pending") / as::toString(job.id.value);
+    const auto candidate = pending / unit;
+    const auto failJob = [&](IS stage, IC code, std::string reason, std::optional<std::uint32_t> exit = {}) {
+      job.failure = ca::ImportFailure{stage, code, std::move(reason), exit, registration,
+                                     registration == RS::Committed ? guid : std::nullopt};
+    };
+    const auto execute = [&] {
+      const auto before = registeredTextures(project);
+      const auto imports = readRegistrations(project);
+      const auto materials = registeredMaterials(project);
+      if (!before || !imports || !materials) {
+        repair = true;
+        return failJob(IS::Source, IC::InvalidSource, "Cannot verify the managed registry and texture seals.");
+      }
+      auto expected = activeTextures;
+      const auto found = before->find(job.name);
+      const bool resume = job.mode == ca::ImportMode::Resume;
+      if (resume && found != before->end() && !activeTextures.contains(job.name)) {
+        guid = found->second.guid;
+        expected.emplace(job.name, found->second);
+        registration = RS::Committed;
+      }
+      if (*before != expected || *imports != activeRegistered || *materials != activeMaterials)
+        return failJob(IS::Validation, IC::IdentityConflict, "Activate or repair other committed asset changes first.");
+      if ((resume && !guid) || (!resume && found != before->end()))
+        return failJob(IS::Source, IC::InvalidSource, "The requested texture registration is no longer eligible.");
+      if (interrupted()) return failJob(IS::Source, IC::TimedOut, "Texture import stopped before staging.");
+      const auto ownerPaths = utf8(staging) + "\n" + utf8(publication) + "\n";
+      if (!createMarker(staging / kDirty, {}) || !createMarker(project / kProjectDirty, ownerPaths)) {
+        repair = true;
+        return failJob(IS::Source, IC::InvalidSource, "Cannot mark texture workspace ownership.");
+      }
+      marked = true;
+      if (!safeBuildTree(staging, interrupted) || !safeRelative(staging, fs::path(kPendingSelection))) {
+        repair = true;
+        return failJob(IS::Source, interrupted() ? IC::TimedOut : IC::InvalidSource, "Cannot access safe texture staging.");
+      }
+      std::error_code ec;
+      if (!resume) {
+        const auto inbox = fs::path("inbox") / fromUtf8(job.name) / "source.png";
+        if (!exactTexturePath(project, inbox))
+          return failJob(IS::Source, IC::InvalidSource, "The fixed inbox source.png is missing or unsafe.");
+        const auto parent = project / ".pending";
+        if ((!fs::exists(parent, ec) && !fs::create_directory(parent, ec)) || ec || !realDirectory(parent)) {
+          repair = true;
+          return failJob(IS::Source, IC::InvalidSource, "Cannot create private texture staging.");
+        }
+        if (!fs::create_directory(project / pending, ec) || ec) {
+          repair = true;
+          return failJob(IS::Source, IC::InvalidSource, "Cannot allocate a new private texture directory.");
+        }
+        ownsPending = true;
+        if (!fs::create_directory(project / candidate, ec) || ec ||
+            !copyInbox(project / inbox, project / candidate / "source.png", interrupted, kPngBytes))
+          return failJob(IS::Source, interrupted() ? IC::TimedOut : IC::InvalidSource, "Cannot copy the bounded texture.");
+        const auto digest = fileDigest(project, candidate / "source.png", kPngBytes);
+        if (!digest) return failJob(IS::Source, IC::InvalidSource, "Cannot seal the copied texture source.");
+        guid = newGuid();
+        if (!guid) return failJob(IS::Registration, IC::RegisterFailed, "Cannot allocate the texture GUID.");
+        expected.emplace(job.name, TextureUnit{*guid, *digest});
+        const auto fragment = as::serializeAssetCatalogSource(
+            {{*guid, as::CatalogAssetType::Texture, as::CatalogRoot::Content, utf8(unit / "source.png")}});
+        if (!writeText(project / candidate / "catalog-source.txt", fragment) ||
+            !writeText(project / candidate / "source.sha256", *digest + "\n") ||
+            !writeText(staging / kPendingSelection, utf8(candidate)))
+          return failJob(IS::Source, IC::InvalidSource, "Cannot write private texture inputs.");
+      }
+      if (work.catalog->find(*guid) || work.catalog->find(as::assetKey(*guid)))
+        return failJob(IS::Validation, IC::IdentityConflict, "The texture identity collides with the active catalog.");
+      auto stamp = fs::path("assets") / unit;
+      stamp += ".stamp";
+      if (!safeRelative(staging, stamp, true)) {
+        repair = true;
+        return failJob(IS::Pipeline, IC::LaunchFailed, "Unsafe texture producer stamp.");
+      }
+      fs::remove(staging / stamp, ec);
+      if (ec) return failJob(IS::Pipeline, IC::LaunchFailed, "Cannot invalidate the texture producer stamp.");
+      auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true);
+      if (!error) error = runBuild(config.cmake, staging, config.configuration, interrupted);
+      if (error) {
+        repair = error->repair;
+        const auto code = error->failure.code == Code::TimedOut ? IC::TimedOut :
+            error->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
+        return failJob(IS::Pipeline, code, error->failure.diagnostic, error->failure.exitCode);
+      }
+      const auto built = readCatalog(staging);
+      const auto view = readManagedView(staging, inventoryRelative);
+      const auto inventoryBytes = readText(inventoryPath);
+      const auto inputs = built && view ? textureInputs(staging, *view, *built) : std::nullopt;
+      if (!built || !view || !inputs || !inventoryBytes || inventoryHeader(*inventoryBytes) != inventoryHeader(inventory) ||
+          baseProducers(*view) != baseProducers(producers) || managedRegistrations(*view) != *imports ||
+          materialInputs(staging, *view) != *materials || !matchesManagedCatalog(*built, *view) ||
+          !matchesFrozenMaterials(*built, *materials) || textureRegistrations(*view, *inputs) != expected)
+        return failJob(IS::Validation, IC::InvalidOutput, "Staged texture producer evidence is inconsistent.");
+      if (built->size() != work.catalog->size() + 1 || !retainsIdentity(*work.catalog, *built) ||
+          !std::ranges::all_of(work.catalog->records(), [&](const auto& record) {
+            return std::ranges::is_permutation(record.dependencies, built->find(record.guid)->dependencies);
+          }))
+        return failJob(IS::Validation, IC::IdentityConflict, "Texture import changed an unrelated catalog record.");
+      auto result = prepare(*built, *view, interrupted, &prepared);
+      if (const auto* preparation = std::get_if<End>(&result)) {
+        repair = preparation->repair;
+        const bool validating = preparation->failure.stage == Stage::Validation;
+        return failJob(validating ? IS::Validation : IS::Publication,
+            preparation->failure.code == Code::TimedOut ? IC::TimedOut :
+            validating ? IC::InvalidOutput : IC::PublishFailed, preparation->failure.diagnostic);
+      }
+      prepared = std::get<Prepared>(std::move(result));
+      std::lock_guard commit(publicationCommit);
+      if (interrupted()) return failJob(IS::Registration, IC::TimedOut, "Texture import stopped before commit.");
+      if (registeredTextures(project) != before || readRegistrations(project) != imports ||
+          registeredMaterials(project) != materials ||
+          (!resume && fileDigest(project, candidate / "source.png", kPngBytes) != expected.at(job.name).digest)) {
+        repair = true;
+        return failJob(IS::Registration, IC::RegisterFailed, "The registered or private texture input changed.");
+      }
+      if (!resume) {
+        committing = true;
+        const bool moved = MoveFileExW((project / candidate).c_str(), (project / "registered" / unit).c_str(), 0) != 0;
+        const auto disk = registeredTextures(project);
+        if (disk != expected) {
+          if (moved || disk != before) {
+            repair = true;
+            registration = RS::Unknown;
+          }
+          return failJob(IS::Registration, IC::RegisterFailed, "Cannot verify the texture registration.");
+        }
+        registration = RS::Committed;
+      }
+      if (!publish(*prepared)) {
+        const auto destination = publication / as::toString(prepared->id.value);
+        const auto attributes = GetFileAttributesW(destination.c_str());
+        const auto missing = attributes == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
+        const auto completed = realDirectory(destination) ? readCatalog(destination) : std::nullopt;
+        const auto copied = completed ? textureInputs(destination, *view, *completed) : std::nullopt;
+        const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs);
+        const auto completedView = readManagedView(destination, inventoryRelative);
+        if (!copied || !completedView || *completedView != *view || !outputFiles(destination, *completed, *view) ||
+            !retainsIdentity(*built, *completed) || completed->size() != built->size() ||
+            realDirectory(prepared->directory) ||
+            !safeRelative(destination, fs::path(kManifest)) || readJson(destination / kManifest) != expectedManifest ||
+            manifest(owner, prepared->id, *view, inventoryRelative, *materials, *copied) != expectedManifest) {
+          repair = !missing || !realDirectory(prepared->directory);
+          return failJob(IS::Publication, IC::PublishFailed, "Cannot confirm texture generation publication.");
+        }
+      }
+      job.generation = prepared->id;
+      job.rootGuid = guid;
+    };
+    try {
+      execute();
+    } catch (const std::exception&) {
+      repair = marked;
+      if (committing && registration == RS::NotCommitted) registration = RS::Unknown;
+      failJob(IS::Source, IC::InvalidSource, "Cannot settle the texture workspace.");
+    }
+    if (marked && !repair) {
+      std::error_code ec;
+      if (ownsPending) {
+        if (realDirectory(project / candidate)) {
+          for (const auto* name : {"source.png", "source.sha256", "catalog-source.txt"}) {
+            const auto relative = candidate / name;
+            if (!safeRelative(project, relative, true)) {
+              ec = std::make_error_code(std::errc::permission_denied);
+              break;
+            }
+            fs::remove(project / relative, ec);
+            if (ec) break;
+          }
+          if (!ec) fs::remove(project / candidate, ec);
+        }
+        if (!ec) fs::remove(project / pending, ec);
+      }
+      if (!ec && prepared && !job.generation) {
+        if (realDirectory(prepared->directory) && safeBuildTree(prepared->directory, [] { return false; }))
+          fs::remove_all(prepared->directory, ec);
+        else
+          ec = std::make_error_code(std::errc::permission_denied);
+      }
+      repair = ec || !writeText(staging / kPendingSelection, {});
+      if (!repair) {
+        fs::remove(staging / kDirty, ec);
+        if (!ec) fs::remove(project / kProjectDirty, ec);
+        repair = static_cast<bool>(ec);
+      }
+    }
+    const auto disk = registeredTextures(project);
+    job.state = job.generation ? ca::RebuildState::Succeeded : ca::RebuildState::Failed;
+    std::lock_guard lock(mutex);
+    dirty = dirty || repair || !disk;
+    if (disk) committedTextures = *disk;
+    textureRegistryChanged = committedTextures != activeTextures;
+    textureJobs.push_front(std::move(job));
+    if (textureJobs.size() > 16) textureJobs.pop_back();
+    textureWork.reset();
+  }
+
   void run() {
     for (;;) {
       std::optional<Work> work;
       std::optional<ImportWork> import;
       std::optional<MaterialWork> material;
+      std::optional<TextureWork> texture;
       {
         std::unique_lock lock(mutex);
-        changed.wait(lock, [&] { return stopping || running || importing || materialWork; });
-        if (stopping && !running && !importing && !materialWork) return;
+        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork; });
+        if (stopping && !running && !importing && !materialWork && !textureWork) return;
         work = running;
         import = importing;
         material = materialWork;
+        texture = textureWork;
+      }
+      if (texture) {
+        settleTexture(*texture);
+        continue;
       }
       if (material) {
         settleMaterial(*material);
@@ -1320,6 +1749,12 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     state->owner = json::write(*recorded);
   }
   state->active = seed / kCatalog;
+  if (!state->project.empty() && !state->config.generation) {
+    const auto catalog = readCatalog(seed);
+    const auto textures = catalog ? textureInputs(seed, state->producers, *catalog) : std::nullopt;
+    if (!textures) return R::Err("Seed managed texture evidence is missing or invalid.");
+    state->activeTextures = textureRegistrations(state->producers, *textures);
+  }
   if (const auto generation = state->config.generation) {
     const fs::path selected = *publication / as::toString(generation->value);
     if (!realDirectory(selected) || !safeRelative(selected, fs::path(kManifest)))
@@ -1330,6 +1765,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       return R::Err("Unknown, incomplete or foreign asset generation.");
     const auto catalog = readCatalog(selected);
     if (!catalog) return R::Err("Incomplete asset generation files.");
+    TextureInputs selectedTextures;
     if (!state->project.empty()) {
       auto frozen = readManagedView(selected, inventory);
       const auto frozenInventory = readText(selected / inventory);
@@ -1339,11 +1775,16 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       auto materials = materialInputs(selected, *frozen);
       if (!materials || !matchesFrozenMaterials(*catalog, *materials))
         return R::Err("Managed generation material sources are missing or invalid.");
+      auto textures = textureInputs(selected, *frozen, *catalog);
+      if (!textures) return R::Err("Managed generation texture evidence is missing or invalid.");
+      state->activeTextures = textureRegistrations(*frozen, *textures);
+      selectedTextures = std::move(*textures);
       state->activeMaterials = std::move(*materials);
       state->producers = std::move(*frozen);
     }
     const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
-    if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory, state->activeMaterials))
+    if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory,
+                                     state->activeMaterials, selectedTextures))
       return R::Err("Unknown, incomplete or foreign asset generation.");
     if (!outputFiles(selected, *catalog, state->producers))
       return R::Err("Incomplete asset generation files.");
@@ -1376,13 +1817,16 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     if (!state->project.empty()) {
       auto registered = readRegistrations(state->project);
       auto materials = registeredMaterials(state->project);
+      auto textures = registeredTextures(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
           ? readText(*stage / kPendingSelection) : std::nullopt;
-      state->dirty = state->dirty || !registered || !materials ||
+      state->dirty = state->dirty || !registered || !materials || !textures ||
           !safeRelative(state->project, fs::path(kProjectDirty), true) ||
           fs::exists(state->project / kProjectDirty, ec) || ec || !pending || !pending->empty();
       if (registered) state->registered = std::move(*registered);
       if (materials) state->committedMaterials = std::move(*materials);
+      if (textures) state->committedTextures = std::move(*textures);
+      state->textureRegistryChanged = state->committedTextures != state->activeTextures;
     }
     auto* workState = state.get();
     try {
@@ -1412,7 +1856,7 @@ ca::RebuildStartResult AssetRebuildHost::start(as::AssetGuid asset, std::shared_
   if (!record) return R::Err(ca::RebuildError::UnknownAsset);
   const auto producer = state_->producers.find(as::toString({record->source.root, record->source.path, {}}));
   const bool derived = !record->source.subKey.empty();
-  if (producer == state_->producers.end() ||
+  if (producer == state_->producers.end() || textureName(producer->first) ||
       (derived ? producer->second.type != as::CatalogAssetType::GltfImport ||
                      as::deriveAssetGuid(producer->second.root, record->source.subKey) != asset
                : producer->second.type != record->type || producer->second.root != asset))
@@ -1459,14 +1903,16 @@ ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::I
   if (mode == ca::ImportMode::Register) {
     if (committed != state_->registered.end() || state_->producers.contains(managedSourceKey(name)))
       return R::Err(E::NameConflict);
-    if (state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials)
+    if (state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
+        state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
   } else {
     if (committed == state_->registered.end() || state_->activeRegistered.contains(name))
       return R::Err(E::NothingToResume);
     auto expected = state_->activeRegistered;
     expected.emplace(committed->first, committed->second);
-    if (expected != state_->registered || state_->committedMaterials != state_->activeMaterials)
+    if (expected != state_->registered || state_->committedMaterials != state_->activeMaterials ||
+        state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
     root = committed->second;
   }
@@ -1542,6 +1988,51 @@ ca::MaterialStatusResult AssetRebuildHost::materialStatus(std::optional<ca::Mate
     if (!id || job.id == *id) { status.job = job; break; }
   }
   if (id && !status.job) return R::Err(ca::MaterialError::UnknownJob);
+  return R::Ok(std::move(status));
+}
+ca::TextureImportStartResult AssetRebuildHost::startTextureImport(
+    std::string_view name, ca::ImportMode mode, std::shared_ptr<const as::AssetCatalog> catalog) {
+  using E = ca::ImportError;
+  using R = ca::TextureImportStartResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty() || !ca::validImportName(name)) return R::Err(E::Unavailable);
+  if (auto error = state_->slotError()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::Unavailable);
+  }
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto found = state_->committedTextures.find(name);
+  if (mode == ca::ImportMode::Register) {
+    if (found != state_->committedTextures.end()) return R::Err(E::NameConflict);
+    if (state_->textureRegistryChanged) return R::Err(E::ActivationRequired);
+  } else {
+    if (found == state_->committedTextures.end() || state_->activeTextures.contains(name)) return R::Err(E::NothingToResume);
+    if (state_->committedTextures.size() != state_->activeTextures.size() + 1 ||
+        !std::ranges::all_of(state_->activeTextures, [&](const auto& entry) {
+          auto current = state_->committedTextures.find(entry.first);
+          return current != state_->committedTextures.end() && current->second == entry.second;
+        })) return R::Err(E::ActivationRequired);
+  }
+  if (state_->activeRegistered != state_->registered || state_->activeMaterials != state_->committedMaterials)
+    return R::Err(E::ActivationRequired);
+  const auto id = newGuid();
+  if (!id) return R::Err(E::Unavailable);
+  ca::TextureImportJob job{{*id}, std::string(name), mode, ca::RebuildState::Running, {}, {}, {}};
+  state_->textureWork.emplace(State::TextureWork{job, std::move(catalog), Clock::now() + state_->config.timeout});
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+ca::TextureImportStatusResult AssetRebuildHost::textureImportStatus(std::optional<ca::TextureImportId> id) const {
+  using R = ca::TextureImportStatusResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty()) return R::Err(ca::ImportError::Unavailable);
+  ca::TextureImportStatus status{state_->config.generation, {}, state_->dirty};
+  if (state_->textureWork && (!id || state_->textureWork->job.id == *id)) status.job = state_->textureWork->job;
+  else for (const auto& job : state_->textureJobs) {
+    if (!id || job.id == *id) { status.job = job; break; }
+  }
+  if (id && !status.job) return R::Err(ca::ImportError::UnknownJob);
   return R::Ok(std::move(status));
 }
 }  // namespace atlantis::runtime

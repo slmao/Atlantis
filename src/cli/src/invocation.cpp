@@ -42,6 +42,7 @@ constexpr std::string_view kUsage =
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
     "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
+    "  assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]\n"
     "  assets preview-material-draft <MeshGuid> <RecipeJSON>   read-only PNG (--json for bytes)\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
@@ -361,6 +362,14 @@ int Invocation::finish(Reply reply) {
     }
     if (checked.command == "assets import" || checked.command == "assets import-status") {
       failure->message += checked.command == "assets import" ? "; import admission unknown" : "; import outcome unknown";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets texture-import" || checked.command == "assets texture-import-status") {
+      failure->subject = checked.result;
+      const auto* target = checked.result.find("target");
+      failure->message += target ? "; texture import outcome unknown for " + target->asString() +
+          ". Inspect the registered texture and complete generations before retrying."
+          : "; texture job outcome unknown. Retain the job ID and query after reconnecting.";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets material-save" && checked.result.find("target")) {

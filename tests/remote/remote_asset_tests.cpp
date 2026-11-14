@@ -361,3 +361,22 @@ TEST_CASE("managed material codec: closed Edit arms and distinct terminal outcom
   const ca::MaterialStatus repair{{}, job, true};
   CHECK(ca::decodeMaterialStatus(ca::encodeMaterialStatus(repair)) == repair);
 }
+
+TEST_CASE("managed texture receipt is closed and repair is independent of success", "[remote][assets][asset-texture]") {
+  const ca::TextureImportJob job{{guid()}, "albedo", ca::ImportMode::Resume, ca::RebuildState::Succeeded,
+      materialGuid(), ca::GenerationId{guid()}, {}};
+  auto wire = codec::encode(ca::TextureImportStatus{{}, job, true});
+  const auto status = codec::decodeTextureImportStatus(wire);
+  REQUIRE(status);
+  REQUIRE(status->job);
+  CHECK(status->workspaceNeedsRepair);
+  CHECK(status->job->id == job.id);
+  CHECK(status->job->rootGuid == job.rootGuid);
+  CHECK(status->job->generation == job.generation);
+  auto duplicates = wire.asObject();
+  duplicates.emplace_back("workspaceNeedsRepair", Value::boolean(false));
+  CHECK_FALSE(codec::decodeTextureImportStatus(Value::object(std::move(duplicates))));
+  auto invalid = codec::encode(job);
+  invalid.set("jobId", codec::encodeAsset(guid()));
+  CHECK_FALSE(codec::decodeTextureImportJob(invalid));
+}

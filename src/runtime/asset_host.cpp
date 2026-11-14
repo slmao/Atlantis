@@ -150,6 +150,14 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
     return rebuild_ ? rebuild_->importStatus(id) : ac::ImportStatusResult::Err(ac::ImportError::Unavailable);
   }
+  ac::TextureImportStartResult textureImport(std::string_view name, ac::ImportMode mode) override {
+    if (!rebuild_) return ac::TextureImportStartResult::Err(ac::ImportError::Unavailable);
+    initialize();
+    return rebuild_->startTextureImport(name, mode, catalog_);
+  }
+  ac::TextureImportStatusResult textureImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return rebuild_ ? rebuild_->textureImportStatus(id) : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
+  }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
     using R = ac::MaterialReadResult;
     initialize();
@@ -213,6 +221,12 @@ class BorrowedAssets final : public connection::AssetConnection {
   }
   ac::ImportStatusResult importStatus(std::optional<ac::ImportId> id) const override {
     return host_.importStatus(id);
+  }
+  ac::TextureImportStartResult textureImport(std::string_view name, ac::ImportMode mode) override {
+    return host_.textureImport(name, mode);
+  }
+  ac::TextureImportStatusResult textureImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return host_.textureImportStatus(id);
   }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override { return host_.materialRead(guid); }
   ac::MaterialSaveResult materialSave(const ac::MaterialSave& request) override { return host_.materialSave(request); }

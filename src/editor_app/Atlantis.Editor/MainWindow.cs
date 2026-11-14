@@ -140,6 +140,16 @@ public sealed class MainWindow : Window
     private InspectorSnapshot? _inspectorDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
+    private readonly TextBox _textureName = new() { PlaceholderText = "Inbox texture name" };
+    private readonly Button _textureRegister = new() { Content = "Register", IsEnabled = false };
+    private readonly Button _textureResume = new() { Content = "Resume", IsEnabled = false };
+    private readonly Button _textureRefresh = new() { Content = "Refresh", IsEnabled = false };
+    private readonly SelectableTextBlock _textureState = EditorVisuals.Details("");
+    private readonly DispatcherTimer _texturePoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private TextureImportJob? _textureJob;
+    private (string Name, ImportMode Mode)? _textureTarget;
+    private bool _textureAdmission, _texturePolling, _textureUnknown, _textureWritable, _textureRepair;
+    private TextureImportId? _textureLookup;
     private readonly ListBox _assetsList = new() { Height = 128 };
     private readonly TextBlock _assetsState = new();
     private readonly AssetPreviewRequests _previewRequests = new();
@@ -425,6 +435,7 @@ public sealed class MainWindow : Window
             {
                 if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
                 QueryMaterial();
+                QueryTexture();
             }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
@@ -544,6 +555,7 @@ public sealed class MainWindow : Window
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         EndPreviewSession();
+        LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _materialSettlement.LoseReceipt();
         _materialPolling = _materialCanWrite = _materialSupported = false;
@@ -601,13 +613,14 @@ public sealed class MainWindow : Window
             _newSceneSessionReady = true;
             UpdateNewSceneButton();
             UpdateRebuildButtons();
-            if (_assetTabs.SelectedIndex == 1) { QueryMaterial(); LoadAssets(); }
+            if (_assetTabs.SelectedIndex == 1) { QueryMaterial(); QueryTexture(); LoadAssets(); }
         };
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
             EndPreviewSession();
             _referenceSessionFailed = true;
+            LoseTextureConnection();
             _materialSettlement.LoseReceipt();
             _materialPolling = _materialCanWrite = _materialSupported = false; _materialPoll.Stop();
             ShowMaterialState();
@@ -1108,6 +1121,12 @@ public sealed class MainWindow : Window
         _importResume.Click += (_, _) => StartImport(ImportMode.Resume);
         _importRefresh.Click += (_, _) => ReadImportStatus();
         _importPoll.Tick += (_, _) => ReadImportStatus();
+        _textureName.TextChanged += (_, _) => UpdateTextureButtons();
+        _textureRegister.Click += (_, _) => StartTexture(ImportMode.Register);
+        _textureResume.Click += (_, _) => StartTexture(ImportMode.Resume);
+        _textureRefresh.Click += (_, _) => QueryTexture();
+        _texturePoll.Tick += (_, _) => QueryTexture();
+        AutomationProperties.SetName(_textureName, "Texture inbox name");
 
         _newMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Create, _newMaterial);
         _copyMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Copy, _copyMaterial);
@@ -1124,6 +1143,10 @@ public sealed class MainWindow : Window
             EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
                 EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
             _importState,
+            EditorVisuals.Disclosure("Import Texture", EditorVisuals.Stack(4,
+                EditorVisuals.Secondary("Place one base color PNG in inbox/<name>/source.png. RGB is interpreted as sRGB."),
+                _textureName, EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
+                _textureState)),
             EditorVisuals.Secondary("Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk."));
         body.Margin = new Thickness(8);
         var panel = new DockPanel();
@@ -1257,6 +1280,132 @@ public sealed class MainWindow : Window
         dialog.ShowSettlement("", false, false, false);
         SyncPreviewSelection(invalidate: true); UpdateMaterialButtons();
         _ = dialog.ShowDialog(this);
+    }
+
+    private void LoseTextureConnection()
+    {
+        if (_textureAdmission || _textureJob?.State == RebuildState.Running) _textureUnknown = true;
+        _textureAdmission = _texturePolling = _textureWritable = false;
+        _texturePoll.Stop();
+        RenderTextureStatus();
+    }
+
+    private void UpdateTextureButtons()
+    {
+        bool ready = _worker is not null && !_referenceSessionFailed && _textureWritable && !_textureRepair &&
+            !_textureAdmission && !_texturePolling && !_textureUnknown && _textureJob?.State != RebuildState.Running &&
+            _textureJob?.State != RebuildState.Succeeded;
+        var committed = _textureJob is { Failure.Registration: RegistrationState.Committed };
+        _textureRegister.IsEnabled = ready && !committed && Codec.ValidImportName(_textureName.Text);
+        _textureResume.IsEnabled = ready && (committed || Codec.ValidImportName(_textureName.Text));
+        _textureRefresh.IsEnabled = _worker is not null && !_referenceSessionFailed && !_textureAdmission && !_texturePolling;
+    }
+
+    private void StartTexture(ImportMode mode)
+    {
+        if (_worker is not { } worker || !(mode == ImportMode.Resume ? _textureResume : _textureRegister).IsEnabled)
+            return;
+        var prior = _textureJob;
+        string name = mode == ImportMode.Resume && prior?.Failure?.Registration == RegistrationState.Committed
+            ? prior.Name : _textureName.Text!;
+        _textureTarget = (name, mode);
+        _textureAdmission = true;
+        _textureLookup = null;
+        RenderTextureStatus();
+        worker.ImportTexture(name, mode, result =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _textureTarget != (name, mode)) return;
+            _textureAdmission = false;
+            if (!result.IsOk)
+            {
+                _textureLookup = prior?.Id;
+                _textureRepair = result.Error == ImportError.WorkspaceNeedsRepair;
+                _textureWritable = result.Error is not (ImportError.Unsupported or ImportError.Unavailable);
+                RenderTextureStatus("Texture import refused: " + result.Error);
+                return;
+            }
+            if (result.Value.Name != name || result.Value.Mode != mode || result.Value.State != RebuildState.Running)
+            {
+                _textureJob = null;
+                _textureUnknown = true;
+                RenderTextureStatus();
+                return;
+            }
+            _textureJob = result.Value;
+            _textureLookup = result.Value.Id;
+            RenderTextureStatus();
+            _texturePoll.Start();
+        });
+    }
+
+    private void QueryTexture()
+    {
+        if (_worker is not { } worker || _referenceSessionFailed || _texturePolling || _textureAdmission) return;
+        var id = _textureLookup;
+        _texturePolling = true;
+        UpdateTextureButtons();
+        worker.QueryTexture(id, result =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
+            _texturePolling = false;
+            if (_textureAdmission || id != _textureLookup) { UpdateTextureButtons(); return; }
+            if (!result.IsOk)
+            {
+                _texturePoll.Stop();
+                if (id is not null && result.Error == ImportError.UnknownJob) _textureUnknown = true;
+                _textureWritable = false;
+                RenderTextureStatus(_textureUnknown ? null : "Texture status: " + result.Error);
+                return;
+            }
+            var status = result.Value;
+            _textureRepair = status.WorkspaceNeedsRepair;
+            _textureWritable = true;
+            if (id is not null)
+            {
+                if (status.Job is { } job && job.Id == id && _textureJob is { } previous &&
+                    (job.Name, job.Mode) == (previous.Name, previous.Mode))
+                {
+                    _textureJob = job;
+                    _textureUnknown = false;
+                }
+                else
+                {
+                    _textureUnknown = true;
+                }
+            }
+            if (!_textureUnknown && _textureJob?.Generation is { } generation && generation == status.ActiveGeneration)
+            {
+                _textureJob = null;
+                _textureTarget = null;
+                _textureLookup = null;
+            }
+            if (_textureJob?.State != RebuildState.Running || _textureUnknown) _texturePoll.Stop();
+            RenderTextureStatus();
+        });
+    }
+
+    private void RenderTextureStatus(string? overrideText = null)
+    {
+        string text = overrideText ?? (_textureUnknown
+            ? $"Texture {_textureTarget?.Mode} outcome unknown for {_textureTarget?.Name}. " +
+              "Inspect the registered texture and complete generations and verify settlement before retry." +
+              (_textureLookup is { } known ? $" Retained job: {known}." : "")
+            : _textureAdmission ? $"Requesting texture {_textureTarget?.Mode} for {_textureTarget?.Name}…"
+            : _textureJob is { } job ? $"Texture {job.Name} · job {job.Id} · {job.State}."
+            : "");
+        if (!_textureUnknown && !_textureAdmission && _textureJob is { } settled)
+        {
+            if (settled.Generation is { } generation)
+                text += $" Texture {settled.RootGuid}. Restart Runtime with --asset-generation {generation}.";
+            if (settled.Failure is { } failure)
+                text += $" {failure.Stage}/{failure.Code}: {failure.Diagnostic} Registration: {failure.Registration}." +
+                        (failure.RegisteredRootGuid is { } guid ? $" Texture {guid}. Resume after correction." : "");
+        }
+        if (_textureRepair) text += " Workspace needs repair before any new write.";
+        _textureState.Text = text;
+        _textureState.Foreground = overrideText is not null || _textureUnknown || _textureRepair || _textureJob?.Failure is not null
+            ? EditorVisuals.Error : EditorVisuals.Muted;
+        UpdateTextureButtons();
     }
 
     private void SubmitMaterial(MaterialSave request)
@@ -2298,6 +2447,7 @@ public sealed class MainWindow : Window
     {
         EndPreviewSession();
         _uiTicker.Stop();
+        _texturePoll.Stop();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _importPoll.Stop();
         _rebuildPoll.Stop();
