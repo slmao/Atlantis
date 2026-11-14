@@ -286,7 +286,16 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   auto invalid = draft;
   invalid.values.roughness = -1.0f;
   CHECK(first->previewMaterialDraft(mesh, invalid).error() == E::InvalidRecipe);
+  auto missingMap = draft;
+  missingMap.values.normalMap = guid("missing normal texture");
+  CHECK(first->previewMaterialDraftWithMaps(mesh, missingMap).error() == E::DependencyUnavailable);
+  CHECK(second->previewMaterialDraft(mesh, draft).error() == E::Busy);
+  CHECK(second->previewMesh(mesh).error() == ac::PreviewError::Busy);
+  CHECK(second->previewMeshMaterial(mesh, material).error() == ac::MeshMaterialPreviewError::Busy);
+  CHECK(rendered == 0);
+  host.beginServiceInterval();
   REQUIRE(first->previewMaterialDraft(mesh, draft).isOk());
+  CHECK(second->previewMaterialDraftWithMaps(mesh, draft).error() == E::Busy);
   CHECK(second->previewMesh(mesh).error() == ac::PreviewError::Busy);
   CHECK(second->previewMeshMaterial(mesh, material).error() == ac::MeshMaterialPreviewError::Busy);
   CHECK(second->materialRead(material).value() == cooked.value());
