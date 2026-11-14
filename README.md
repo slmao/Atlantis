@@ -368,6 +368,15 @@ CLI uses `assets material-read-with-maps`, `assets material-save-with-maps`
 and `assets preview-material-draft-with-maps`. Query the same receipt via
 `assets material-status`. [Spec 0096](docs/specs/0096-pbr-texture-editing.md).
 
+To import a tangent-space +Y normal map, use the same inbox layout and
+choose **Normal map** in Assets, or use `assets normal-map-import <name>`
+with `assets normal-map-import-status [<JobId>]`. The cooker preserves
+the PNG samples as one-mip RGBA8 UNORM. Activate the named generation
+before assigning the resulting GUID to the material's Normal map slot.
+If publication failed after registration, use the same import with
+`--resume`. [Spec 0097](docs/specs/0097-linear-normal-map-import.md).
+
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

@@ -72,6 +72,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             RebuildModel, ToolSchemas.ImportParameters()),
         Declare("assets.texture_import_status", "assets.textureImportStatus", "Read-only status for a texture job and its independent workspace repair state.",
             RebuildModel, ToolSchemas.RebuildStatusParameters()),
+        Declare("assets.normal_map_import", "assets.normalMapImport", "Register one managed linear +Y inbox PNG or resume its committed registration.",
+            RebuildModel, ToolSchemas.ImportParameters()),
+        Declare("assets.normal_map_import_status", "assets.normalMapImportStatus", "Read-only status for a normal map job and the independent workspace repair state.",
+            RebuildModel, ToolSchemas.RebuildStatusParameters()),
         Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String))),
         Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
@@ -163,7 +167,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
                 "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or
                 "assets.previewMaterialDraftWithMaps") return MaterialOperation(mapping.Method, wireParameters);
-            if (mapping.Method is "assets.textureImport" or "assets.textureImportStatus")
+            if (mapping.Method is "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus")
                 return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
@@ -239,7 +243,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
 
     private CallToolResult TextureOperation(string method, JsonValue parameters)
     {
-        bool start = method == "assets.textureImport";
+        bool start = method is "assets.textureImport" or "assets.normalMapImport";
+        string kind = method.StartsWith("assets.normalMap", StringComparison.Ordinal) ? "Normal map" : "Texture";
         string? name = parameters.Find("name")?.AsString, mode = parameters.Find("mode")?.AsString;
         if (start && !Codec.ValidImportName(name)) return Error("InvalidArguments: invalid texture import name");
         AssetGuid? id = null;
@@ -249,11 +254,17 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return Error("InvalidArguments: expected a non-nil canonical GUID");
             id = guid;
         }
-        string unknown = $"Texture {mode} outcome unknown for {name}. Inspect registered source and complete generations before retrying.";
-        CallToolResult Malformed() => Error(start ? "ProtocolError: " + unknown : "ProtocolError: invalid texture job status");
+        string unknown = $"{kind} {mode} outcome unknown for {name}. Inspect registered source and complete generations and confirm settlement before retrying.";
+        string unknownStatus = id is { } retained
+            ? $"{kind} job {retained} outcome unknown. Query the retained ID after reconnecting."
+            : $"Invalid {kind.ToLowerInvariant()} status.";
+        CallToolResult Malformed() => Error("ProtocolError: " + (start ? unknown : unknownStatus));
         JsonValue response;
         try { response = session.Request(method, parameters); }
-        catch (RemoteException e) when (start) { return Error(e.Error + ": " + unknown); }
+        catch (RemoteException e) when (start || id is not null)
+        {
+            return Error(e.Error + ": " + (start ? unknown : unknownStatus));
+        }
         if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
             return Malformed();
         if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&

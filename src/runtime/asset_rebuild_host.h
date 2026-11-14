@@ -16,6 +16,7 @@ namespace atlantis::runtime {
 // on the frame thread. Only the worker mutates staging or publishes outputs.
 class AssetRebuildHost {
  public:
+  enum class TextureKind { Color, Normal };
   struct Config {
     std::filesystem::path profile;
     std::filesystem::path seedCatalog;
@@ -47,9 +48,9 @@ class AssetRebuildHost {
   [[nodiscard]] connection::assets::ImportStatusResult importStatus(std::optional<connection::assets::ImportId> id) const;
   [[nodiscard]] connection::assets::TextureImportStartResult startTextureImport(
       std::string_view name, connection::assets::ImportMode mode,
-      std::shared_ptr<const asset_system::AssetCatalog> catalog);
+      std::shared_ptr<const asset_system::AssetCatalog> catalog, TextureKind kind = TextureKind::Color);
   [[nodiscard]] connection::assets::TextureImportStatusResult textureImportStatus(
-      std::optional<connection::assets::TextureImportId> id) const;
+      std::optional<connection::assets::TextureImportId> id, TextureKind kind = TextureKind::Color) const;
   [[nodiscard]] bool ownsMaterial(const asset_system::AssetGuid& guid) const;
   [[nodiscard]] std::optional<connection::assets::GenerationId> activeGeneration() const;
   [[nodiscard]] connection::assets::MaterialSaveResult saveMaterial(

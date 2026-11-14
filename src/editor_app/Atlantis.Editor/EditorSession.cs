@@ -401,13 +401,21 @@ public sealed class EditorWorker : IDisposable
             _post(() => done(result));
         });
 
-    public void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode,
+    public void ImportTexture(string name, Atlantis.Gameplay.Assets.ImportMode mode, bool normalMap,
         Action<Outcome<Atlantis.Gameplay.Assets.TextureImportJob, Atlantis.Gameplay.Assets.ImportError>> done) =>
-        Enqueue(session => { var result = session.Assets.TextureImport(name, mode); _post(() => done(result)); });
+        Enqueue(session =>
+        {
+            var result = normalMap ? session.Assets.NormalMapImport(name, mode) : session.Assets.TextureImport(name, mode);
+            _post(() => done(result));
+        });
 
-    public void QueryTexture(Atlantis.Gameplay.Assets.TextureImportId? id,
+    public void QueryTexture(Atlantis.Gameplay.Assets.TextureImportId? id, bool normalMap,
         Action<Outcome<Atlantis.Gameplay.Assets.TextureImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
-        Enqueue(session => { var result = session.Assets.TextureImportStatus(id); _post(() => done(result)); });
+        Enqueue(session =>
+        {
+            var result = normalMap ? session.Assets.NormalMapImportStatus(id) : session.Assets.TextureImportStatus(id);
+            _post(() => done(result));
+        });
 
     public void QueryMaterial(Atlantis.Gameplay.Assets.MaterialJobId? id,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialStatus, Atlantis.Gameplay.Assets.MaterialError>> done) =>

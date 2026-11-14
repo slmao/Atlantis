@@ -859,14 +859,17 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
     const bool import = t.size() > 1 && t[1] == "import";
     const bool importStatus = t.size() > 1 && t[1] == "import-status";
-    const bool texture = t.size() > 1 && t[1] == "texture-import";
-    const bool textureStatus = t.size() > 1 && t[1] == "texture-import-status";
+    const bool normalImport = t.size() > 1 && t[1] == "normal-map-import";
+    const bool normalStatus = t.size() > 1 && t[1] == "normal-map-import-status";
+    const bool texture = normalImport || (t.size() > 1 && t[1] == "texture-import");
+    const bool textureStatus = normalStatus || (t.size() > 1 && t[1] == "texture-import-status");
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
     if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
           ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
       return failed(command, usageError("assets rebuild <GUID> | assets rebuild-status [<JobId>] | "
                                          "assets import <name> [--resume] | assets import-status [<JobId>] | "
-                                         "assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]"));
+                                         "assets texture-import <name> [--resume] | assets texture-import-status [<JobId>] | "
+                                         "assets normal-map-import <name> [--resume] | assets normal-map-import-status [<JobId>]"));
     std::optional<asset_system::AssetGuid> id;
     if (!import && !texture && t.size() == 3) {
       const auto parsed = asset_system::parseAssetGuid(t[2]);
@@ -937,7 +940,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     if (import) return renderStart(endpoint->importAsset(t[2], mode));
     if (importStatus) return renderStatus(endpoint->importStatus(id ? std::optional{ca::ImportId{*id}} : std::nullopt));
     if (texture) {
-      auto reply = renderStart(endpoint->textureImport(t[2], mode));
+      auto reply = renderStart(normalImport ? endpoint->normalMapImport(t[2], mode) : endpoint->textureImport(t[2], mode));
       if (reply.error) {
         reply.result = Value::object();
         reply.result.set("target", Value::string(std::string(t[2])));
@@ -946,7 +949,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return reply;
     }
     if (textureStatus) {
-      auto reply = renderStatus(endpoint->textureImportStatus(id ? std::optional{ca::TextureImportId{*id}} : std::nullopt));
+      const auto job = id ? std::optional{ca::TextureImportId{*id}} : std::nullopt;
+      auto reply = renderStatus(normalStatus ? endpoint->normalMapImportStatus(job) : endpoint->textureImportStatus(job));
       if (reply.error && id && !reply.result.isObject()) {
         reply.result = Value::object();
         reply.result.set("id", Value::string(asset_system::toString(*id)));

@@ -64,6 +64,10 @@ internal static partial class Program
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.texture_import_status", "assets.textureImportStatus", "{}",
             """{"ok":{"activeGeneration":null,"job":null,"workspaceNeedsRepair":true}}"""),
+        ("assets.normal_map_import", "assets.normalMapImport", """{"name":"sample","mode":"Register"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
+        ("assets.normal_map_import_status", "assets.normalMapImportStatus", "{}",
+            """{"ok":{"activeGeneration":null,"job":null,"workspaceNeedsRepair":true}}"""),
         ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.rebuild_status", "assets.rebuildStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -166,7 +170,7 @@ internal static partial class Program
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
-                c.Tool == "assets.texture_import" ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
+                (c.Tool is "assets.texture_import" or "assets.normal_map_import") ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
                 (c.Tool is "assets.material_save" or "assets.material_save_with_maps") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
                 c.Tool == "assets.material_status" ? description.Contains("not a receipt") && description.Contains("Runtime restart") :
                 c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
@@ -438,7 +442,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "authoring.saveAs" or "authoring.createScene")
+            if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

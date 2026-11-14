@@ -553,20 +553,32 @@ class RemoteAssets final : public connection::AssetConnection {
         });
   }
   ca::TextureImportStartResult textureImport(std::string_view name, ca::ImportMode mode) override {
+    return importTexture("assets.textureImport", name, mode);
+  }
+  ca::TextureImportStartResult normalMapImport(std::string_view name, ca::ImportMode mode) override {
+    return importTexture("assets.normalMapImport", name, mode);
+  }
+  ca::TextureImportStartResult importTexture(std::string_view method, std::string_view name, ca::ImportMode mode) {
     ATLANTIS_CHECK(ca::validImportName(name));
     auto params = Value::object();
     params.set("name", Value::string(std::string(name)));
     params.set("mode", Value::string(std::string(ca::toString(mode))));
-    return textureRequest<ca::TextureImportJob>("assets.textureImport", std::move(params), true, [name, mode](const Value& v) {
+    return textureRequest<ca::TextureImportJob>(method, std::move(params), true, [name, mode](const Value& v) {
       auto job = codec::decodeTextureImportJob(v);
       return job && job->name == name && job->mode == mode && job->state == ca::RebuildState::Running ? job : std::nullopt;
     });
   }
   ca::TextureImportStatusResult textureImportStatus(std::optional<ca::TextureImportId> id) const override {
+    return importTextureStatus("assets.textureImportStatus", id);
+  }
+  ca::TextureImportStatusResult normalMapImportStatus(std::optional<ca::TextureImportId> id) const override {
+    return importTextureStatus("assets.normalMapImportStatus", id);
+  }
+  ca::TextureImportStatusResult importTextureStatus(std::string_view method, std::optional<ca::TextureImportId> id) const {
     ATLANTIS_CHECK(!id || id->value != AssetGuid{});
     auto params = Value::object();
     if (id) params.set("jobId", codec::encodeAsset(id->value));
-    return textureRequest<ca::TextureImportStatus>("assets.textureImportStatus", std::move(params), false, [id](const Value& v) {
+    return textureRequest<ca::TextureImportStatus>(method, std::move(params), false, [id](const Value& v) {
       auto status = codec::decodeTextureImportStatus(v);
       return status && (!id || (status->job && status->job->id == *id)) ? status : std::nullopt;
     });
@@ -671,7 +683,8 @@ class RemoteAssets final : public connection::AssetConnection {
           if (auto error = codec::decodeImportError(*err, start)) return R::Err(*error);
         }
       } else if (const auto* error = envelope->find("error"); error && error->isObject() &&
-                 error->asObject().size() == 2 && legacyAssetRefusal(*error)) {
+                 error->asObject().size() == 2 && memberCount(*error, "code") == 1 &&
+                 memberCount(*error, "message") == 1 && legacyAssetRefusal(*error)) {
         return R::Err(ca::ImportError::Unsupported);
       }
     }

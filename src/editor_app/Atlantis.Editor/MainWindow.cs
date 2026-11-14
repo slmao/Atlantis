@@ -140,16 +140,30 @@ public sealed class MainWindow : Window
     private InspectorSnapshot? _inspectorDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
+    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map" }, SelectedIndex = 0 };
+    private readonly SelectableTextBlock _textureFormat = EditorVisuals.Details("");
     private readonly TextBox _textureName = new() { PlaceholderText = "Inbox texture name" };
     private readonly Button _textureRegister = new() { Content = "Register", IsEnabled = false };
     private readonly Button _textureResume = new() { Content = "Resume", IsEnabled = false };
     private readonly Button _textureRefresh = new() { Content = "Refresh", IsEnabled = false };
     private readonly SelectableTextBlock _textureState = EditorVisuals.Details("");
     private readonly DispatcherTimer _texturePoll = new() { Interval = TimeSpan.FromSeconds(1) };
-    private TextureImportJob? _textureJob;
-    private (string Name, ImportMode Mode)? _textureTarget;
-    private bool _textureAdmission, _texturePolling, _textureUnknown, _textureWritable, _textureRepair;
-    private TextureImportId? _textureLookup;
+    private sealed class TextureImportView(bool normalMap)
+    {
+        public bool NormalMap { get; } = normalMap;
+        public string Kind => NormalMap ? "Normal map" : "Base color";
+        public TextureImportJob? Job;
+        public (string Name, ImportMode Mode)? Target;
+        public bool Admission, Polling, Unknown, Writable;
+        public ImportError? Error;
+        public bool Committed => Job?.Failure?.Registration == RegistrationState.Committed;
+        public bool Running => Job?.State == RebuildState.Running;
+        public bool BlocksOtherWrites => Admission || Unknown || Running || Committed ||
+            Job?.State == RebuildState.Succeeded;
+    }
+    private readonly TextureImportView _colorImport = new(false), _normalImport = new(true);
+    private TextureImportView SelectedTextureImport => _textureKind.SelectedIndex == 1 ? _normalImport : _colorImport;
+    private bool _textureRepair;
     private readonly ListBox _assetsList = new() { Height = 128 };
     private readonly TextBlock _assetsState = new();
     private readonly AssetPreviewRequests _previewRequests = new();
@@ -435,7 +449,8 @@ public sealed class MainWindow : Window
             {
                 if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
                 QueryMaterial();
-                QueryTexture();
+                QueryTexture(_colorImport);
+                QueryTexture(_normalImport);
             }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
@@ -1125,7 +1140,14 @@ public sealed class MainWindow : Window
         _textureRegister.Click += (_, _) => StartTexture(ImportMode.Register);
         _textureResume.Click += (_, _) => StartTexture(ImportMode.Resume);
         _textureRefresh.Click += (_, _) => QueryTexture();
-        _texturePoll.Tick += (_, _) => QueryTexture();
+        _texturePoll.Tick += (_, _) =>
+        {
+            if (_colorImport.Running && !_colorImport.Unknown) QueryTexture(_colorImport);
+            if (_normalImport.Running && !_normalImport.Unknown) QueryTexture(_normalImport);
+        };
+        _textureKind.SelectionChanged += (_, _) => { RenderTextureStatus(); QueryTexture(); };
+        AutomationProperties.SetName(_textureKind, "Texture import kind");
+        RenderTextureStatus();
         AutomationProperties.SetName(_textureName, "Texture inbox name");
 
         _newMaterial.Click += (_, _) => OpenMaterial(MaterialMode.Create, _newMaterial);
@@ -1145,7 +1167,8 @@ public sealed class MainWindow : Window
             _importState,
             EditorVisuals.Disclosure("Import Texture", EditorVisuals.Stack(4,
                 EditorVisuals.Secondary("Place one base color PNG in inbox/<name>/source.png. RGB is interpreted as sRGB."),
-                _textureName, EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
+                _textureKind, _textureFormat, _textureName,
+                EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
                 _textureState)),
             EditorVisuals.Secondary("Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk."));
         body.Margin = new Thickness(8);
@@ -1285,126 +1308,137 @@ public sealed class MainWindow : Window
 
     private void LoseTextureConnection()
     {
-        if (_textureAdmission || _textureJob?.State == RebuildState.Running) _textureUnknown = true;
-        _textureAdmission = _texturePolling = _textureWritable = false;
+        foreach (var state in new[] { _colorImport, _normalImport })
+        {
+            if (state.Admission || state.Running) state.Unknown = true;
+            state.Admission = state.Polling = state.Writable = false;
+        }
         _texturePoll.Stop();
         RenderTextureStatus();
     }
 
     private void UpdateTextureButtons()
     {
-        bool ready = _worker is not null && !_referenceSessionFailed && _textureWritable && !_textureRepair &&
-            !_textureAdmission && !_texturePolling && !_textureUnknown && _textureJob?.State != RebuildState.Running &&
-            _textureJob?.State != RebuildState.Succeeded;
-        var committed = _textureJob is { Failure.Registration: RegistrationState.Committed };
-        _textureRegister.IsEnabled = ready && !committed && Codec.ValidImportName(_textureName.Text);
-        _textureResume.IsEnabled = ready && (committed || Codec.ValidImportName(_textureName.Text));
-        _textureRefresh.IsEnabled = _worker is not null && !_referenceSessionFailed && !_textureAdmission && !_texturePolling;
+        var state = SelectedTextureImport;
+        var other = state.NormalMap ? _colorImport : _normalImport;
+        bool connected = _worker is not null && !_referenceSessionFailed;
+        bool ready = connected && state.Writable && !_textureRepair && !other.BlocksOtherWrites &&
+            !state.Admission && !state.Polling && !state.Unknown && !state.Running &&
+            state.Job?.State != RebuildState.Succeeded;
+        _textureRegister.IsEnabled = ready && !state.Committed && Codec.ValidImportName(_textureName.Text);
+        _textureResume.IsEnabled = ready && (state.Committed || Codec.ValidImportName(_textureName.Text));
+        _textureRefresh.IsEnabled = connected && !state.Admission && !state.Polling;
     }
 
     private void StartTexture(ImportMode mode)
     {
         if (_worker is not { } worker || !(mode == ImportMode.Resume ? _textureResume : _textureRegister).IsEnabled)
             return;
-        var prior = _textureJob;
-        string name = mode == ImportMode.Resume && prior?.Failure?.Registration == RegistrationState.Committed
-            ? prior.Name : _textureName.Text!;
-        _textureTarget = (name, mode);
-        _textureAdmission = true;
-        _textureLookup = null;
+        var state = SelectedTextureImport;
+        string name = mode == ImportMode.Resume && state.Committed ? state.Job!.Name : _textureName.Text!;
+        state.Target = (name, mode);
+        state.Admission = true;
+        state.Error = null;
         RenderTextureStatus();
-        worker.ImportTexture(name, mode, result =>
+        worker.ImportTexture(name, mode, state.NormalMap, result =>
         {
-            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _textureTarget != (name, mode)) return;
-            _textureAdmission = false;
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || state.Target != (name, mode)) return;
+            state.Admission = false;
             if (!result.IsOk)
             {
-                _textureLookup = prior?.Id;
-                _textureRepair = result.Error == ImportError.WorkspaceNeedsRepair;
-                _textureWritable = result.Error is not (ImportError.Unsupported or ImportError.Unavailable);
-                RenderTextureStatus("Texture import refused: " + result.Error);
-                return;
+                _textureRepair |= result.Error == ImportError.WorkspaceNeedsRepair;
+                state.Writable = result.Error is not (ImportError.Unsupported or ImportError.Unavailable);
+                state.Error = result.Error;
             }
-            if (result.Value.Name != name || result.Value.Mode != mode || result.Value.State != RebuildState.Running)
+            else
             {
-                _textureJob = null;
-                _textureUnknown = true;
-                RenderTextureStatus();
-                return;
+                state.Job = result.Value;
+                _texturePoll.Start();
             }
-            _textureJob = result.Value;
-            _textureLookup = result.Value.Id;
             RenderTextureStatus();
-            _texturePoll.Start();
         });
     }
 
-    private void QueryTexture()
+    private void QueryTexture() => QueryTexture(SelectedTextureImport);
+
+    private void QueryTexture(TextureImportView state)
     {
-        if (_worker is not { } worker || _referenceSessionFailed || _texturePolling || _textureAdmission) return;
-        var id = _textureLookup;
-        _texturePolling = true;
+        if (_worker is not { } worker || _referenceSessionFailed || state.Polling || state.Admission) return;
+        // Latest status can confirm active generation, but only an explicit ID can settle a known running job.
+        var id = state.Running ? state.Job?.Id : null;
+        state.Polling = true;
         UpdateTextureButtons();
-        worker.QueryTexture(id, result =>
+        worker.QueryTexture(id, state.NormalMap, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
-            _texturePolling = false;
-            if (_textureAdmission || id != _textureLookup) { UpdateTextureButtons(); return; }
+            state.Polling = false;
+            if (state.Admission) { UpdateTextureButtons(); return; }
             if (!result.IsOk)
             {
+                if (id is not null) state.Unknown = true;
+                state.Writable = false;
+                state.Error = result.Error;
+            }
+            else
+            {
+                var status = result.Value;
+                _textureRepair = status.WorkspaceNeedsRepair;
+                state.Writable = true;
+                state.Error = null;
+                if (id is not null)
+                {
+                    if (status.Job is { } job && job.Id == id && state.Job is { } previous &&
+                        (job.Name, job.Mode) == (previous.Name, previous.Mode))
+                    {
+                        state.Job = job;
+                        state.Unknown = false;
+                    }
+                    else
+                    {
+                        state.Unknown = true;
+                    }
+                }
+                if (!state.Unknown && state.Job?.Generation is { } generation && generation == status.ActiveGeneration)
+                {
+                    state.Job = null;
+                    state.Target = null;
+                }
+            }
+            if ((!_colorImport.Running || _colorImport.Unknown) && (!_normalImport.Running || _normalImport.Unknown))
                 _texturePoll.Stop();
-                if (id is not null && result.Error == ImportError.UnknownJob) _textureUnknown = true;
-                _textureWritable = false;
-                RenderTextureStatus(_textureUnknown ? null : "Texture status: " + result.Error);
-                return;
-            }
-            var status = result.Value;
-            _textureRepair = status.WorkspaceNeedsRepair;
-            _textureWritable = true;
-            if (id is not null)
-            {
-                if (status.Job is { } job && job.Id == id && _textureJob is { } previous &&
-                    (job.Name, job.Mode) == (previous.Name, previous.Mode))
-                {
-                    _textureJob = job;
-                    _textureUnknown = false;
-                }
-                else
-                {
-                    _textureUnknown = true;
-                }
-            }
-            if (!_textureUnknown && _textureJob?.Generation is { } generation && generation == status.ActiveGeneration)
-            {
-                _textureJob = null;
-                _textureTarget = null;
-                _textureLookup = null;
-            }
-            if (_textureJob?.State != RebuildState.Running || _textureUnknown) _texturePoll.Stop();
             RenderTextureStatus();
         });
     }
 
-    private void RenderTextureStatus(string? overrideText = null)
+    private void RenderTextureStatus()
     {
-        string text = overrideText ?? (_textureUnknown
-            ? $"Texture {_textureTarget?.Mode} outcome unknown for {_textureTarget?.Name}. " +
-              "Inspect the registered texture and complete generations and verify settlement before retry." +
-              (_textureLookup is { } known ? $" Retained job: {known}." : "")
-            : _textureAdmission ? $"Requesting texture {_textureTarget?.Mode} for {_textureTarget?.Name}…"
-            : _textureJob is { } job ? $"Texture {job.Name} · job {job.Id} · {job.State}."
-            : "");
-        if (!_textureUnknown && !_textureAdmission && _textureJob is { } settled)
+        var state = SelectedTextureImport;
+        var other = state.NormalMap ? _colorImport : _normalImport;
+        _textureFormat.Text = state.NormalMap ? "PNG · linear RGBA8 · tangent space +Y" : "PNG · sRGB";
+        string text = state.Error is { } error ? $"{state.Kind} import: {error}. " : "";
+        if (state.Unknown)
         {
-            if (settled.Generation is { } generation)
-                text += $" Texture {settled.RootGuid}. Restart Runtime with --asset-generation {generation}.";
-            if (settled.Failure is { } failure)
+            text += $"{state.Kind} {state.Target?.Mode} outcome unknown for {state.Target?.Name}. " +
+                    "Inspect the registered texture and complete generations and verify settlement before retrying.";
+            if (state.Job is { } known) text += $" Retained job: {known.Id}.";
+        }
+        else if (state.Admission)
+        {
+            text += $"Requesting {state.Kind} {state.Target?.Mode} for {state.Target?.Name}…";
+        }
+        else if (state.Job is { } job)
+        {
+            text += $"{state.Kind} {job.Name} · job {job.Id} · {job.State}.";
+            if (job.Generation is { } generation)
+                text += $" Texture {job.RootGuid}. Restart Runtime with --asset-generation {generation}.";
+            if (job.Failure is { } failure)
                 text += $" {failure.Stage}/{failure.Code}: {failure.Diagnostic} Registration: {failure.Registration}." +
                         (failure.RegisteredRootGuid is { } guid ? $" Texture {guid}. Resume after correction." : "");
         }
+        if (other.BlocksOtherWrites) text += $" View {other.Kind} to check its pending import or recovery.";
         if (_textureRepair) text += " Workspace needs repair before any new write.";
         _textureState.Text = text;
-        _textureState.Foreground = overrideText is not null || _textureUnknown || _textureRepair || _textureJob?.Failure is not null
+        _textureState.Foreground = state.Error is not null || state.Unknown || _textureRepair || state.Job?.Failure is not null
             ? EditorVisuals.Error : EditorVisuals.Muted;
         UpdateTextureButtons();
     }

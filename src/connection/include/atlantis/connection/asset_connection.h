@@ -375,6 +375,14 @@ class AssetConnection {
   [[nodiscard]] virtual assets::TextureImportStatusResult textureImportStatus(std::optional<assets::TextureImportId>) const {
     return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
   }
+  // Spec 0097 / ADR-0156. Same worker and receipt history as textureImport.
+  // Admission acknowledges a +Y linear PNG request only; status is scoped to that kind.
+  [[nodiscard]] virtual assets::TextureImportStartResult normalMapImport(std::string_view, assets::ImportMode) {
+    return assets::TextureImportStartResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::TextureImportStatusResult normalMapImportStatus(std::optional<assets::TextureImportId>) const {
+    return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
+  }
   // Spec 0094 / ADR-0153. Read and preview use the retained cooked catalog.
   // Save returns admission only. A transport failure leaves settlement unknown.
   [[nodiscard]] virtual assets::MaterialReadResult materialRead(const asset_system::AssetGuid&) const {

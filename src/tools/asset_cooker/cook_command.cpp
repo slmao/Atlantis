@@ -1265,7 +1265,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
       ? parseCatalogSourceId(request.catalogId) : std::nullopt;
   const bool managedTextureSource = managedTexture && managedTexture->root == CatalogRoot::Content &&
       managedTexture->subKey.empty() && managedTexture->path.starts_with("texture_") &&
-      managedTexture->path.ends_with("/source.png") && request.colorSpace == "srgb" &&
+      ((managedTexture->path.ends_with("/source.png") && request.colorSpace == "srgb") ||
+       (managedTexture->path.ends_with("/normal.png") && request.colorSpace == "unorm")) &&
       managedTexture->path == computeRelativePathString(request.sourcePath, request.assetRoot);
   if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine) &&
       !managedMaterialSource && !managedTextureSource) {

@@ -152,6 +152,15 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::TextureImportStatusResult textureImportStatus(std::optional<ac::TextureImportId> id) const override {
     return rebuild_ ? rebuild_->textureImportStatus(id) : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
   }
+  ac::TextureImportStartResult normalMapImport(std::string_view name, ac::ImportMode mode) override {
+    if (!rebuild_) return ac::TextureImportStartResult::Err(ac::ImportError::Unavailable);
+    initialize();
+    return rebuild_->startTextureImport(name, mode, catalog_, AssetRebuildHost::TextureKind::Normal);
+  }
+  ac::TextureImportStatusResult normalMapImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return rebuild_ ? rebuild_->textureImportStatus(id, AssetRebuildHost::TextureKind::Normal)
+                    : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
+  }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
     return readMaterial(guid, ac::MaterialRecipeVersion::Basic);
   }
@@ -241,6 +250,12 @@ class BorrowedAssets final : public connection::AssetConnection {
   }
   ac::TextureImportStatusResult textureImportStatus(std::optional<ac::TextureImportId> id) const override {
     return host_.textureImportStatus(id);
+  }
+  ac::TextureImportStartResult normalMapImport(std::string_view name, ac::ImportMode mode) override {
+    return host_.normalMapImport(name, mode);
+  }
+  ac::TextureImportStatusResult normalMapImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return host_.normalMapImportStatus(id);
   }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override { return host_.materialRead(guid); }
   ac::MaterialSaveResult materialSave(const ac::MaterialSave& request) override { return host_.materialSave(request); }
