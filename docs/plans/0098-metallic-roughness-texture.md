@@ -1,10 +1,10 @@
 # Plan: Metallic–Roughness Texture Import and Binding
 
 - **Spec:** [Spec 0098](../specs/0098-metallic-roughness-texture.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0157](../adr/0157-metallic-roughness-texture.md) (Proposed)
+- **Joint Human Review:** The Atlantis maintainer approved J1–J4 and Spec/Plan 0098 at `8241daab` on 2026-11-14 and authorized S2–S4 after design merge. [PR #361](https://github.com/slmao/Atlantis/pull/361) was merged by the maintainer as `f24618d2`. Windows UI acceptance is 100% DPI. Final merge remains human.
+- **ADR:** [ADR-0157](../adr/0157-metallic-roughness-texture.md) (Accepted)
 
 ## Objective
 

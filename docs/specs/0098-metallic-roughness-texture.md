@@ -1,11 +1,11 @@
 # Spec: Metallic–Roughness Texture Import and Binding
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-14
 - **Related Plan:** [Plan 0098](../plans/0098-metallic-roughness-texture.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0157](../adr/0157-metallic-roughness-texture.md) (Proposed)
+- **Approval:** Atlantis maintainer, 2026-11-14, [PR #361](https://github.com/slmao/Atlantis/pull/361) at `8241daab`
+- **Related ADR:** [ADR-0157](../adr/0157-metallic-roughness-texture.md) (Accepted)
 
 ## Summary
 
