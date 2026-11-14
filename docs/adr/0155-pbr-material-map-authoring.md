@@ -21,8 +21,10 @@ limits offscreen pair preview to the base recipe.
    the shared asset interface for the complete authoring recipe. The two
    wire shapes feed the same retained catalog and managed worker. Reuse
    0094's material receipts, status history, ownership checks and recovery.
-   Legacy mutations refuse any extended material they cannot represent,
-   including Resume. Extend ADR-0153 for the extra fields.
+   Apply the legacy subset at the request boundary, including to the
+   committed source read by Resume. Keep durable settlement and frozen
+   recipe verification independent of client version. Extend ADR-0153
+   for the extra fields.
 2. Extend the existing opaque direct-lit pair realization for cooked and
    draft recipes, partially superseding ADR-0152's one-texture restriction.
    Resolve each declared slot from the same snapshot. Use a bounded
@@ -30,7 +32,9 @@ limits offscreen pair preview to the base recipe.
    admission and terminal drain. Reuse
    [ADR-0074](0074-pbr-normal-map-material-descriptor-and-shader-contract.md)
    and [ADR-0096](0096-emissive-texture-always-bound-slot.md) rendering rules
-   and the existing RenderGraph. The cooked GUID-pair contract is stable.
+   and the existing RenderGraph. Preserve both the cooked GUID-pair
+   contract and the previously eligible 0092 recipes. The authoring
+   subset is narrower.
 3. Keep material format and generation publication under the existing
    producer. Preserve the GUID on Edit and validate all role assignments
    and unique dependency edges against the staged catalog. The existing

@@ -64,20 +64,29 @@ through the bounded CPU loader. Texture names and source paths are labels.
 | Normal map | RGBA8 UNORM carrying linear data. RGB is tangent-space XYZ mapped from [0, 1] to [-1, 1] on UV0. Uses the existing +Y convention and cooked tangent handedness. | Optional. Clear selects the existing geometric-normal path. |
 | Emissive texture | RGBA8 sRGB, RGB sampled on UV0 and multiplied by the linear emissive RGB factor. | Optional. Clear retains the factor and uses the existing white fallback. The factor defaults to (0, 0, 0) and accepts finite components in [0, 65504], the existing cooker range. Binding a texture leaves the factor as authored. A zero factor gives zero emission. |
 
-Opaque shading gives these slots no alpha control. Limit emissive textures to
-sRGB RGBA8 for authoring and preview. The scene renderer also accepts other
-cooked emissive formats. Use the material's existing sampler for all slots. Keep per-file and image bounds from 0092
-and allow at most three unique textures per preview, with at most 32 MiB of
-encoded artifacts per texture and 96 MiB across the set. Metadata retains
-the present per-file bound. Base color and emissive may share a GUID.
-Resolve, load and stage that texture once per request and keep one unique
-catalog dependency edge. The authored slots remain independent.
+Opaque shading gives these slots no alpha control. RGBA8 sRGB is the
+emissive authoring and preview subset. The scene renderer also accepts
+other cooked emissive formats. UNORM and RGBA8 establish the normal slot's
+format eligibility. The caller supplies the tangent-space content, and
+the service uses no filename or pixel-meaning heuristic.
+
+Use the material's existing sampler for all slots, with maximum LOD
+derived from the deepest validated bound mip chain. Keep 0092's opened-file
+limits, 2048 pixels per texture axis, and mip validation. Count at most
+three unique textures per preview, 32 MiB of encoded artifact per texture
+and 96 MiB across the set. Apply those bounds before decoding or uploading
+an over-limit texture. Metadata retains its existing per-file bound.
+Base color and emissive may share a GUID. Resolve, load and stage that
+texture once per request and keep one unique catalog dependency edge.
+Clear removes the chosen slot independently of the other slot.
 
 **R2. Shared authoring and compatibility.** Keep the closed 0094 wire shapes
 and add the following methods to `atlantis.remote/1`. Use the current request
 ID and outcome validation, including exact keys and canonical GUIDs. Native
 and managed clients expose typed equivalents. CLI and MCP surface the same
-requests, refusals and job status using the existing output conventions. CLI uses the existing material command shapes with a `-with-maps` suffix. MCP uses the corresponding `_with_maps` tool suffix.
+requests, refusals and job status using the existing output conventions.
+CLI uses the existing material command shapes with a `-with-maps` suffix.
+MCP uses the corresponding `_with_maps` tool suffix.
 
 | Method | Contract |
 | --- | --- |
@@ -99,42 +108,71 @@ can be edited. Read and preview remain available on supported catalogs
 without write opt-in.
 
 Continue using `assets.materialStatus`, the same worker slot and receipt
-history. Read, Copy, Edit and Resume through 0094 must retain the existing
-subset guard. A material with an optional map or a nonzero emissive factor
-cannot be projected into a writable 0094 recipe. When 0094 Resume sees an
-extended committed recipe, it refuses with the existing `Source/InvalidRecipe`
-failure and preserves the source. An existing 0094 job status remains
-readable regardless of which method admitted the job.
+history. The worker carries the request's recipe version through
+settlement. Evaluate the 0094 subset against the original full recipe
+before projecting values. Legacy Read returns `UnsupportedMaterial` for a
+material with either map or a nonzero emissive factor. Legacy Copy and
+Edit refuse it before staging. Legacy Resume checks the sole ahead
+committed source rather than the active recipe. If it needs the extended
+shape, report `Source/InvalidRecipe` with `sourceState: Committed` and the
+durable material GUID. Preserve the committed bytes, publish nothing, and
+guide the caller to Resume with a supporting client. An active basic
+recipe never authorizes overwriting a different ahead file. Status
+continues to report both versions' jobs with the existing receipt shape.
 
-A new client can expose basic editing on a 0094 Runtime only after a
-well-formed new read receives the exact correlated legacy
-`BadRequest` / `unknown or malformed asset query`. Use a separate, explicit
-basic workflow. Do not replay an extended Save, Resume, or preview as a
-legacy operation. A lost or malformed mutation reply keeps its existing
-transport/protocol error and settlement guidance. The existing cooked
-pair uses the same mesh/material GUID request, response and refusal set.
-An older client can therefore request a supported cooked pair without
-understanding the extended authoring recipe.
+For every new method, only the exact legacy `BadRequest` /
+`unknown or malformed asset query` maps to `Unsupported`. Require a
+well-formed request and a single matching response ID with one error arm,
+exact code and message members and no result arm. A supporting Runtime
+without the write opt-in returns `Unavailable` for mutation. A missing
+asset, unsupported recipe, transport failure or protocol error is an
+operation outcome and supplies no capability decision. The Editor may
+offer a separate basic flow following an exact legacy refusal on that
+connection. A Create flow without a selected material can submit the
+extended request directly and offer an explicit basic Create after an
+exact refusal. Never replay a request or drop fields from a draft.
+A lost or malformed mutation reply retains its error category, target and
+settlement guidance. The cooked pair uses the existing GUID request,
+response and refusal vocabulary.
 
 **R3. Preview and Editor.** Extend the existing offscreen pair path for
 cooked and draft inputs, selecting the current direct-lit shader variant
-with or without normal mapping. Use existing fixed camera, light, exposure,
-PNG limits and tangent-space mesh layout. A normal map requires a valid
-cooked tangent basis on the preview mesh. Use the shared between-frame
-admission permit, RenderGraph upload/readback and terminal drain. Keep
-textures, uploads, pipelines and descriptors local to the request until
-safe release. Report incompatible pairs and typed dependency or size
-failures without returning an image. The exact recipe, mesh, request and
-surface lifetime guard late results, including change or Clear while a
-request is running. Cooked pair preview remains read-only and its success
-does not certify scene apply compatibility.
+with or without normal mapping. Preserve the previously eligible 0092
+cooked subset, including opaque recipes whose unused alpha fields fall
+outside the narrower 0094 authoring subset. Use the same fixed camera,
+light, exposure and PNG limits. A normal map requires the existing
+validated cooked tangent layout on the preview mesh. The bounded loader
+reports malformed mesh data and the preview reports an incompatible
+decoded pair through their existing refusal paths.
+
+Geometry, cooked pair, basic draft and extended draft compete for the same
+0092 permit. The first well-formed request to a usable provider consumes
+it before catalog or file work. Later eligible requests return `Busy`.
+Record uploads, draw and readback through the existing RenderGraph in one
+between-frame submission. Transition uploads before sampling. Each request
+owns its textures, fallback, upload staging, sampler, uniforms, mutable
+descriptors and pipelines, attachments and offscreen target borrow.
+Release local resources on a recoverable pre-submit failure. After
+possibly accepted submission, retain the whole bundle until confirmed
+completion or the terminal drain. Follow the existing stop path and
+surface `Unavailable` if completion remains unconfirmed. Release the
+target borrow before the owning offscreen target. Report refusal without a
+PNG. Keep scene resources and ordinary frame state isolated.
+
+Guard late results by session, modal lifetime, request, mesh and complete
+recipe. Changes or Clear invalidate the pending display and its image.
+They never cause resubmission or extend GPU resource lifetime beyond
+Runtime settlement. A cooked pair is evidence for its fixed preview
+recipe. Scene apply retains its existing validation.
 
 In the 0093-style material modal, group base texture, Normal map and
 Emissive texture with their selectors. Offer explicit Clear for optional
 slots and label the linear emissive RGB factor and zero-emission state.
 Continue using `assets.list/get` to populate choices. Runtime decides role
-eligibility from cooked metadata. Preserve the draft and focus context when
-the user corrects a failed dependency or switches the preview mesh.
+eligibility from cooked metadata. Display the difference between clearing
+the emissive texture and setting its factor to zero. Preserve the draft
+and focus context when the user corrects a failed dependency or switches
+the preview mesh.
 Failing preview clears an obsolete image and leaves a diagnostic. It does
 not block Save solely because the chosen preview mesh was incompatible.
 The save validates the recipe and its dependencies separately. A missing,
@@ -151,13 +189,21 @@ unchanged. Clear removes an edge when no other slot still uses it.
 Source, generation and workspace lock remain under the existing worker.
 Keep 0094's known-uncommitted, committed, confirmed publication and
 unknown settlement rules, including workspace repair and explicit Resume
-for the same material. Resolve the committed recipe for Resume. Retain the
-job ID when known and the operation target when the admission is unknown.
+for the same material. Extended Resume reads the original committed bytes
+for the sole eligible ahead change and republishes without rewriting them
+or minting another GUID. Revalidate the registry and exact frozen input at
+the commit boundary. Keep a published job successful when cleanup raises
+the repair flag. Retain the job ID when known and the operation target
+when admission is unknown. Latest status can guide inspection when the
+receipt is lost. It supplies no proof of ownership or retry safety.
 A loss of transport, generation conflict, or preview failure never causes
 an automatic mutation replay. After a stale edit the user rereads the
 active recipe before retrying. Repair or known committed source takes
 precedence over another Save.
 
+Validate the selected generation or seed against its own complete frozen
+material recipe, including old basic sources. Keep this validation
+independent of the legacy client projection and current ahead registry.
 A saved material does not change the active catalog, World, current
 authoring document or scene undo history. Explicit restart selects the
 published generation. Independent Saved Scenes build and open must read
@@ -181,8 +227,7 @@ Expand the existing material recipe internally and route both wire shapes
 through the same worker and preview path. The existing texture catalog
 supplies sRGB and UNORM assets, and the scene loader continues using the
 same material format. Keep material controls in the existing Assets modal
-and retain the Inspector material reference chooser's confirmation semantics
-in place.
+and retain the Inspector material reference chooser's confirmation semantics.
 
 ## Architectural Impact
 

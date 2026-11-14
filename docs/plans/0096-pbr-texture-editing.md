@@ -52,8 +52,9 @@ normal and emissive slots already consumed by opaque direct-lit PBR.
 Build on merged [0095](../specs/0095-texture-import-and-base-color-binding.md),
 [0094](../specs/0094-basic-material-authoring.md) and
 [0092](../specs/0092-mesh-material-preview.md). Implement the complete recipe
-and settlement semantics before relying on them in the modal. Use the same
-recipe validation in the draft, staged and activated paths.
+and settlement semantics before relying on them in the modal. Reuse
+role validation across draft, staged and activated paths. Preserve the
+distinct cooked-preview and authoring eligibility checks.
 
 | Decision | Recommendation |
 | --- | --- |
@@ -72,50 +73,62 @@ merge remains human.
 - [ ] **R1. Recipe and slots.** Round-trip none, each slot alone and
   both slots. Check known +Y normal samples and existing tangent basis,
   sRGB emission with an intermediate RGB sample, zero-factor behavior,
-  factor-only white fallback and factor range boundaries. Wrong format
-  or role, wrong type, missing or corrupted dependency, exceeded bounds
-  and incomplete recipe fail explicitly. Test shared base/emissive GUID
-  without duplicate dependencies or uploads.
+  factor-only white fallback, retained factor after Clear and numeric
+  boundaries. Wrong format, wrong type, missing or corrupted dependency,
+  exceeded bounds and incomplete recipe fail explicitly. Check mip
+  selection and shared base/emissive GUID without duplicate dependencies
+  or uploads.
 - [ ] **R2. Shared compatibility.** Verify precise request and response
   shape, full-recipe correlation, exact legacy refusal versus lookalikes,
   and lost reply behavior. Run CLI, both SDKs and MCP on new and prior
   Runtime. Legacy clients can still read, create, edit or resume the basic
-  subset on the new Runtime. For extended content check refusals on legacy
-  Read/Copy/Edit/Resume and no lossy write. Check the extended job via
-  legacy Status, syntactic refusals before admission, and edit refusal
-  when only the expected optional slot or emissive factor is stale.
+  subset on the new Runtime. Check explicit basic Create on an older host
+  without a selected material or automatic retry. For an extended target
+  or extended-only ahead source, check legacy Read/Copy/Edit or Resume as
+  applicable. Verify the committed Resume receipt includes the original
+  GUID, the unchanged source bytes and no new generation. Read extended
+  jobs via legacy Status. Check syntactic refusals before admission and
+  Edit when only the expected optional slot or emissive factor is stale.
 - [ ] **R3. GPU and interaction.** Compare decoded draft and cooked pair
   pixels at the same camera and lighting. Check independent visible normal
-  and emissive effects, both slots together and restored defaults after
-  Clear. Include no-map pair and geometry goldens, windowed and headless
-  Vulkan validation, incompatible mesh and failed upload or settlement
-  paths. Check admission across clients and retained resources through
-  terminal drain. Test rapidly replacing or clearing a slot after preview
-  admission, closing/reopening the modal, and correction of a failed
-  dependency with the draft intact.
+  and emissive effects, both slots together, geometric normals after
+  Clear and continued factor-only emission after clearing the emissive
+  map. Include geometry and base-only goldens, a previously eligible 0092
+  cooked material outside the authoring alpha constraint, and clean
+  windowed and headless Vulkan validation. Check all preview variants
+  competing across clients, an invalid dependency consuming the permit,
+  recoverable pre-submit failure, and retained multi-texture upload and
+  draw resources through terminal drain on unconfirmed completion. Cover
+  rapid replacement, Clear and modal reopen with an admitted request,
+  incompatible preview mesh, and correction of a failed dependency with
+  draft and focus intact.
 - [ ] **R4. Persistence and recovery.** Check stable material and scene
-  references, exact expected dependency deltas, shared-edge retention on
-  Clear and a separate saved Clear that removes an unused edge after restart,
-  old snapshot isolation including first access after publication,
-  and compatibility with earlier basic frozen material recipes. Exercise
-  failure before source commit, failure after source commit, unknown
-  receipt, explicit Resume, repair and successful publication even if
-  cleanup fails. Retain prior worker evidence only where inputs and
-  behavior are unchanged. Cover new recipe parsing, settlement and recovery
-  directly.
+  references, exact dependency deltas, shared-edge retention on Clear,
+  and removal of an unused edge from a saved and reactivated recipe.
+  Verify first catalog access after publication still sees the old view.
+  Activate an earlier basic generation while the committed registry is
+  ahead with a new map, and verify the older view stays readable while
+  unrelated writes are blocked. Exercise failure before source commit,
+  failure after source commit, unknown receipt, explicit extended Resume
+  and success with repair needed after cleanup failure. Compare the
+  committed recipe bytes and GUID before and after Resume. Retain prior
+  worker evidence where the inputs and behavior are unchanged.
 - [ ] **R3/R4. Actual Windows Editor at 100%.** Open a saved scene that
   uses a managed opaque material on a compatible mesh. Select an existing
   UNORM normal and a catalog sRGB emissive texture, including one
   0095-registered color asset. Preview, replace and clear each map in the
   draft, including an invalid role selection and an explicit correction.
-  Save and publish the intended recipe, observe the old scene and undo
-  history, then explicitly restart into the published generation. Reopen
-  the saved scene and compare the effect at fixed camera settings. Build
-  the same saved scene from committed sources and open a second Editor
-  without a generation override. Confirm the GUID, recipe, edges and
-  rendered appearance. Capture actual standard and compact windows at
-  100%, with focus, long diagnostic, pending and failed states and action
-  reachability. Record native captures separately from rendered PNGs.
+  Capture the original scene with fixed camera and settings. Save and
+  publish with both slots populated. Verify the original scene and undo
+  history remain intact, then restart into the named generation and reopen
+  the same scene without editing its material reference. Verify the saved
+  GUID, recipe, dependencies and visible normal and emissive effects.
+  Use Saved Scenes Build/Open from the committed root in a second Editor
+  and verify the same result with its own outputs and neither an asset
+  build profile nor a generation override. Capture actual standard and
+  compact windows at 100%, covering focus, long diagnostics, waiting and
+  failure plus Clear, Save and recovery action reachability. Keep native
+  window captures and scene/preview PNGs as separate evidence.
 - [ ] **Applicable gates.** Build and run affected native and managed
   suites. Build Android if shared Asset System or RuntimeHost changes.
   Preserve existing goldens and submit any changed or new golden for
