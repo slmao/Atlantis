@@ -76,6 +76,7 @@ namespace atlantis::asset_system {
 // existing tail, offset 116-123, the normal_map_texture_asset_id
 // precedent. No dual-version reader.
 inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 9;
+inline constexpr std::uint32_t kMappedMaterialArtifactSchemaVersion = 10;
 inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 124;
 
 // The value encodeMaterialArtifact()'s trailing emissive argument
@@ -123,6 +124,8 @@ struct DecodedMaterialArtifact {
   // Plan 0046 Milestone 1 (ADR-0096): offset 116(8), `0` = none. Legal
   // (non-zero) only for the PBR kinds -- enforced at parse time, not here.
   AssetId emissiveTexture = 0;
+  AssetId metallicRoughnessMap = 0;
+  std::uint32_t schemaVersion = kMaterialArtifactSchemaVersion;
 };
 
 // kind/textureAsset/filter/addressMode/baseColorFactor/metallicFactor/
@@ -144,7 +147,8 @@ struct DecodedMaterialArtifact {
                                                              const float (&emissiveFactor)[3] = kNoEmissiveFactor,
                                                              MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque,
                                                              float alphaCutoff = 0.5f,
-                                                             AssetId emissiveTexture = 0);
+                                                             AssetId emissiveTexture = 0,
+                                                             AssetId metallicRoughnessMap = 0);
 
 [[nodiscard]] atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMaterialArtifact(
     const std::vector<std::byte>& bytes);

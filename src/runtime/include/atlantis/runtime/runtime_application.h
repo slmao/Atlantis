@@ -115,7 +115,8 @@ class RuntimeApplication {
       const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
       const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
       const asset_system::TextureAssetData& texture, const asset_system::TextureAssetData* normal = nullptr,
-      const asset_system::TextureAssetData* emissive = nullptr);
+      const asset_system::TextureAssetData* emissive = nullptr,
+      const asset_system::TextureAssetData* packed = nullptr);
 
   // Spec 0059 / ADR-0117 D2: the extent the scene is rendered at -- the
   // swapchain's, or the Viewport's while an overlay is attached -- as last seen
@@ -277,7 +278,8 @@ class RuntimeApplication {
       const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
       const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
       const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete,
-      const asset_system::TextureAssetData* normal = nullptr, const asset_system::TextureAssetData* emissive = nullptr);
+      const asset_system::TextureAssetData* normal = nullptr, const asset_system::TextureAssetData* emissive = nullptr,
+      const asset_system::TextureAssetData* packed = nullptr);
 
   // Plan 0056 P7: the helpers of runFrame()'s named overlay places, called
   // only while overlay_ is set. overlayViewportExtent() (place 2) also brings
@@ -651,6 +653,8 @@ class RuntimeApplication {
   atlantis::rhi::VertexInputLayout pbrDirectLitNormalMapVertexInputLayout_;
   std::vector<std::uint32_t> pbrDirectLitNormalMapVertexSpirv_;
   std::vector<std::uint32_t> pbrDirectLitNormalMapFragmentSpirv_;
+  std::vector<std::uint32_t> packedFragmentSpirv_;
+  std::vector<std::uint32_t> packedNormalFragmentSpirv_;
   atlantis::rhi::VertexInputLayout pbrIblNormalMapVertexInputLayout_;
   std::vector<std::uint32_t> pbrIblNormalMapVertexSpirv_;
   std::vector<std::uint32_t> pbrIblNormalMapFragmentSpirv_;

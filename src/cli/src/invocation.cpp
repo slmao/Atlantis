@@ -47,6 +47,9 @@ constexpr std::string_view kUsage =
     "  assets preview-material-draft <MeshGuid> <RecipeJSON>   read-only PNG (--json for bytes)\n"
     "  assets material-read-with-maps <GUID> | assets material-save-with-maps <JSON>\n"
     "  assets preview-material-draft-with-maps <MeshGuid> <RecipeJSON>\n"
+    "  assets metallic-roughness-import <name> [--resume] | assets metallic-roughness-import-status [<JobId>]\n"
+    "  assets material-read-with-metallic-roughness <GUID> | assets material-save-with-metallic-roughness <JSON>\n"
+    "  assets preview-material-draft-with-metallic-roughness <MeshGuid> <RecipeJSON>\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
@@ -369,8 +372,11 @@ int Invocation::finish(Reply reply) {
     }
     const bool normalTexture = checked.command == "assets normal-map-import" ||
                                checked.command == "assets normal-map-import-status";
-    if (normalTexture || checked.command == "assets texture-import" || checked.command == "assets texture-import-status") {
-      const std::string kind = normalTexture ? "normal map" : "texture";
+    const bool packedTexture = checked.command == "assets metallic-roughness-import" ||
+                               checked.command == "assets metallic-roughness-import-status";
+    if (normalTexture || packedTexture || checked.command == "assets texture-import" ||
+        checked.command == "assets texture-import-status") {
+      const std::string kind = packedTexture ? "metallic-roughness map" : normalTexture ? "normal map" : "texture";
       failure->subject = checked.result;
       const auto* target = checked.result.find("target");
       failure->message += target ? "; " + kind + " import outcome unknown for " + target->asString() +
@@ -378,7 +384,8 @@ int Invocation::finish(Reply reply) {
           : "; " + kind + " job outcome unknown. Retain the job ID and query after reconnecting.";
       failure->text = "error: " + failure->message;
     }
-    if ((checked.command == "assets material-save" || checked.command == "assets material-save-with-maps") &&
+    if ((checked.command == "assets material-save" || checked.command == "assets material-save-with-maps" ||
+         checked.command == "assets material-save-with-metallic-roughness") &&
         checked.result.find("target")) {
       failure->subject = checked.result;
       failure->message += "; material save outcome unknown for " + checked.result.find("target")->asString() +

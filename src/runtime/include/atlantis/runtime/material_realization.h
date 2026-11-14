@@ -89,6 +89,10 @@ struct RealizedMaterialCandidate {
   std::unique_ptr<atlantis::rhi::SampledTexture> newEmissiveTexture;
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> emissiveStagingBuffer;
   std::vector<atlantis::rhi::SampledTextureUploadRegion> emissiveUploadRegions;
+  atlantis::asset_system::AssetId packedTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newPackedTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> packedStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> packedUploadRegions;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };
@@ -221,7 +225,8 @@ struct RealizedMaterialCandidate {
     // Plan 0046 Milestone 1 (ADR-0096, Plan 0046 P3): the caller-held 1x1
     // white texture every PBR material without an emissive texture binds --
     // borrowed, and it must outlive the returned Material.
-    const atlantis::rhi::SampledTexture& defaultEmissiveTexture);
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
+    const atlantis::asset_system::TextureAssetData* packedTextureData = nullptr);
 
 // Step 1 of Spec 0018 D8: the pending set is a pure function of current
 // state, recomputed every frame -- never a persisted queue. Returns a
@@ -319,7 +324,9 @@ struct RealizedMaterialCandidate {
         textureDataMap,
     // Plan 0046 Milestone 1 (ADR-0096): forwarded to every
     // realizeOneMaterialCandidate() call.
-    const atlantis::rhi::SampledTexture& defaultEmissiveTexture);
+    const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
+    const std::vector<std::uint32_t>& packedFragmentSpirv = {},
+    const std::vector<std::uint32_t>& packedNormalFragmentSpirv = {});
 
 // Compatibility overload for every no-environment composition root. It keeps
 // the pre-Spec-0025 call shape and selects pbr_direct_lit exactly.
@@ -393,7 +400,8 @@ struct DefaultEmissiveTexture {
     atlantis::rhi::Device& device, atlantis::rhi::CommandList& list, atlantis::rhi::PipelineCreateParams shader,
     atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
     const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture* whiteEmissive,
-    const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive);
+    const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive,
+    const atlantis::asset_system::TextureAssetData* packed = nullptr);
 
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
 // Implementation -- Human Review direction, chat, 2026-09-01): every

@@ -1721,6 +1721,14 @@ immutable role, and normal-bearing generations record it in v5 frozen
 evidence. The two client surfaces filter one shared receipt history by kind.
 [ADR-0156](../adr/0156-managed-linear-normal-map-import.md).
 
+[Spec 0098](../specs/0098-metallic-roughness-texture.md) adds the managed
+metallic-roughness role and a third exact shared material recipe. Asset
+System owns the source key and compatible cooked format pairs. Runtime
+validates the frozen role, loads the texture and owns resource settlement.
+Renderer uses the extra sampler only for mapped opaque direct-lit
+materials. Editor, CLI, SDKs and MCP use the shared operations.
+See [ADR-0157](../adr/0157-metallic-roughness-texture.md).
+
 
 
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,

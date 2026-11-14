@@ -297,9 +297,11 @@ bool matchesFrozenMaterials(const as::AssetCatalog& catalog, const Materials& ma
 }
 
 using TextureKind = AssetRebuildHost::TextureKind;
-constexpr const char* textureLeaf(TextureKind kind) { return kind == TextureKind::Normal ? "normal.png" : "source.png"; }
+constexpr std::array kTextureLeaves{"source.png", "normal.png", "metallic-roughness.png"};
+constexpr std::array kTextureRoles{"BaseColor", "Normal", "MetallicRoughness"};
+constexpr const char* textureLeaf(TextureKind kind) { return kTextureLeaves[static_cast<std::size_t>(kind)]; }
 constexpr as::TextureColorSpace textureColor(TextureKind kind) {
-  return kind == TextureKind::Normal ? as::TextureColorSpace::Unorm : as::TextureColorSpace::Srgb;
+  return kind == TextureKind::Color ? as::TextureColorSpace::Srgb : as::TextureColorSpace::Unorm;
 }
 
 struct TextureUnit {
@@ -319,10 +321,14 @@ using TextureInputs = std::map<std::string, TextureEvidence, std::less<>>;
 std::string textureKey(std::string_view name, TextureKind kind) {
   return "content:texture_" + std::string(name) + "/" + textureLeaf(kind);
 }
-TextureKind textureKind(std::string_view key) { return key.ends_with("/normal.png") ? TextureKind::Normal : TextureKind::Color; }
+TextureKind textureKind(std::string_view key) {
+  const auto leaf = key.substr(key.find_last_of('/') + 1);
+  const auto found = std::ranges::find(kTextureLeaves, leaf);
+  return found == kTextureLeaves.end() ? TextureKind::Color : static_cast<TextureKind>(found - kTextureLeaves.begin());
+}
 std::optional<std::string_view> textureName(std::string_view key) {
   constexpr std::string_view prefix = "content:texture_";
-  const std::string_view suffix = textureKind(key) == TextureKind::Normal ? "/normal.png" : "/source.png";
+  const auto suffix = std::string("/") + textureLeaf(textureKind(key));
   if (!key.starts_with(prefix) || !key.ends_with(suffix) || key.size() <= prefix.size() + suffix.size()) return {};
   const auto name = key.substr(prefix.size(), key.size() - prefix.size() - suffix.size());
   return ca::validImportName(name) ? std::optional{name} : std::nullopt;
@@ -394,9 +400,11 @@ std::optional<TextureUnit> readTextureUnit(const fs::path& root, const fs::path&
   const auto key = "content:" + entry.path;
   const auto kind = textureKind(key);
   if (entry.type != as::CatalogAssetType::Texture || entry.root != as::CatalogRoot::Content || key != textureKey(name, kind)) return {};
-  const auto other = kind == TextureKind::Normal ? TextureKind::Color : TextureKind::Normal;
-  const DWORD attributes = GetFileAttributesW((root / unit / textureLeaf(other)).c_str());
-  if (attributes != INVALID_FILE_ATTRIBUTES || GetLastError() != ERROR_FILE_NOT_FOUND) return {};
+  for (const auto* leaf : kTextureLeaves) {
+    if (std::string_view(leaf) == textureLeaf(kind)) continue;
+    const DWORD attributes = GetFileAttributesW((root / unit / leaf).c_str());
+    if (attributes != INVALID_FILE_ATTRIBUTES || GetLastError() != ERROR_FILE_NOT_FOUND) return {};
+  }
   const auto digest = fileDigest(root, unit / textureLeaf(kind), kPngBytes);
   const auto seal = readMaterialText(root, unit / "source.sha256");
   if (!digest || !seal || *seal != *digest + "\n") return {};
@@ -618,8 +626,12 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
   const bool hasNormals = std::ranges::any_of(textures, [](const auto& entry) {
     return entry.second.kind == TextureKind::Normal;
   });
+  const bool hasPackedMaps = std::ranges::any_of(textures, [](const auto& entry) {
+    return entry.second.kind == TextureKind::MetallicRoughness;
+  });
   if (!managedInventory.empty()) {
-    value.set("version", json::Value::number(std::uint64_t{hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u}));
+    const std::uint64_t version = hasPackedMaps ? 6u : hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u;
+    value.set("version", json::Value::number(version));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
     value.set("producers", json::Value::string(utf8(managedInventory)));
   }
@@ -637,7 +649,10 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
       entry.set("inputSha256", json::Value::string(input.digest));
       entry.set("artifactSha256", json::Value::string(input.artifact));
       entry.set("metadataSha256", json::Value::string(input.metadata));
-      if (hasNormals) entry.set("colorSpace", json::Value::string(input.kind == TextureKind::Normal ? "Unorm" : "Srgb"));
+      if (hasNormals || hasPackedMaps)
+        entry.set("colorSpace", json::Value::string(input.kind == TextureKind::Color ? "Srgb" : "Unorm"));
+      if (hasPackedMaps)
+        entry.set("role", json::Value::string(kTextureRoles[static_cast<std::size_t>(input.kind)]));
       sources.set(key, std::move(entry));
     }
     value.set("textureSources", std::move(sources));
@@ -1208,13 +1223,14 @@ struct AssetRebuildHost::State {
         const auto& input = parsed.value();
         recipe = {{input.textureAsset, {input.baseColorFactor[0], input.baseColorFactor[1],
                    input.baseColorFactor[2]}, input.metallicFactor, input.roughnessFactor, input.normalMapAsset,
-                   input.emissiveTextureAsset, {input.emissiveFactor[0], input.emissiveFactor[1], input.emissiveFactor[2]}},
+                   input.emissiveTextureAsset, {input.emissiveFactor[0], input.emissiveFactor[1], input.emissiveFactor[2]},
+                   input.metallicRoughnessMapAsset},
                   input.filter == as::MaterialSamplerFilter::Linear ? ca::MaterialFilter::Linear
                                                                      : ca::MaterialFilter::Nearest,
                   input.addressMode == as::MaterialSamplerAddressMode::Repeat ? ca::MaterialAddress::Repeat
                                                                               : ca::MaterialAddress::ClampToEdge};
-        if (work.version == ca::MaterialRecipeVersion::Basic && !ca::basicMaterialValues(recipe.values))
-          return failJob(MS::Source, MC::InvalidRecipe, "Resume the committed recipe with a client that supports material maps.");
+        if (!ca::representsMaterialValues(recipe.values, work.version))
+          return failJob(MS::Source, MC::InvalidRecipe, "Resume the committed recipe with a client that supports all of its material slots.");
         if (!ca::validMaterialRecipe(recipe) ||
             as::serializeMaterialSource(input) != as::serializeMaterialSource(material_authoring::source(recipe)))
           return failJob(MS::Source, MC::InvalidRecipe, "The committed source is outside the authoring subset.");
@@ -2032,7 +2048,7 @@ ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& re
   const auto target = ca::materialTarget(request);
   const auto validValues = [version](const auto& values) {
     return ca::validMaterialValues(values) &&
-        (version == ca::MaterialRecipeVersion::WithMaps || ca::basicMaterialValues(values));
+        ca::representsMaterialValues(values, version);
   };
   const bool valid = std::visit([&](const auto& input) {
     using T = std::decay_t<decltype(input)>;

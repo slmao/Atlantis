@@ -376,6 +376,15 @@ before assigning the resulting GUID to the material's Normal map slot.
 If publication failed after registration, use the same import with
 `--resume`. [Spec 0097](docs/specs/0097-linear-normal-map-import.md).
 
+In Assets choose **Metallic-roughness** to register a linear PNG with
+roughness in G and metallic in B. After activating its generation, choose
+it in the material dialog. The existing factor multiplies each channel.
+Clear removes the binding and restores scalar-only shading. Preview
+the draft, then save, publish and explicitly restart into the reported
+generation. CLI offers `assets metallic-roughness-import <name> [--resume]`,
+`assets metallic-roughness-import-status [<JobId>]`, and the material
+`-with-metallic-roughness` read, save and draft-preview commands.
+[Spec 0098](docs/specs/0098-metallic-roughness-texture.md).
 
 ### Save a hand-authored scene copy
 

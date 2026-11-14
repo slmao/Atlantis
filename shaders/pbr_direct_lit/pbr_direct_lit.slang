@@ -130,6 +130,11 @@ Sampler2D shadowMapSampler;
 [[vk::binding(3, 0)]]
 Sampler2D emissiveSampler;
 
+#ifdef ATLANTIS_METALLIC_ROUGHNESS
+[[vk::binding(4, 0)]]
+Sampler2D metallicRoughnessSampler;
+#endif
+
 // Spec 0019 D6's own precedent, reused verbatim for the point-light
 // distance floor. ADR-0067 D-1/D-2's own new constants for the BRDF
 // itself.
@@ -257,6 +262,11 @@ float4 fragmentMain(Varying input) : SV_Target {
 
     float metallic = clamp(pushConstants.metallicFactor, 0.0, 1.0);
     float roughness = clamp(pushConstants.roughnessFactor, 0.0, 1.0);
+#ifdef ATLANTIS_METALLIC_ROUGHNESS
+    const float2 packedFactors = metallicRoughnessSampler.Sample(input.uv).gb;
+    roughness *= packedFactors.x;
+    metallic *= packedFactors.y;
+#endif
     float alpha = max(roughness * roughness, kMinAlpha);
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
     float3 diffuseColor = baseColor * (1.0 - metallic);

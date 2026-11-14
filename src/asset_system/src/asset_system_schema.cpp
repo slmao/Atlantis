@@ -90,6 +90,7 @@ constexpr std::array kMaterialFields{
     enumField(kMaterial, "alphaMode", kAlphaMode, offsetof(M, alphaMode)),
     primitive(kMaterial, "alphaCutoff", PrimitiveKind::Float32, kData, offsetof(M, alphaCutoff)),
     primitive(kMaterial, "emissiveTexture", PrimitiveKind::UInt64, kAssetRef, offsetof(M, emissiveTexture)),
+    primitive(kMaterial, "metallicRoughnessMap", PrimitiveKind::UInt64, kAssetRef, offsetof(M, metallicRoughnessMap)),
 };
 
 constexpr std::array kMaterialKindConstants{

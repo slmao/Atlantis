@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <atomic>
@@ -539,13 +540,16 @@ TEST_CASE("material edit verifies the prepared generation before committing sour
   }
 }
 
-TEST_CASE("normal import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
+TEST_CASE("linear texture import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
   Fixture f;
   const auto project = f.base / "project";
   const auto registered = project / "registered";
   const auto inbox = project / "inbox/sample/source.png";
   const fs::path inventory = "assets/producers-Debug.txt";
-  constexpr auto kind = AssetRebuildHost::TextureKind::Normal;
+  const bool packed = GENERATE(false, true);
+  CAPTURE(packed);
+  const auto kind = packed ? AssetRebuildHost::TextureKind::MetallicRoughness : AssetRebuildHost::TextureKind::Normal;
+  const std::string leaf = packed ? "metallic-roughness.png" : "normal.png";
   REQUIRE(fs::create_directories(registered));
   REQUIRE(fs::create_directories(inbox.parent_path()));
   const auto canonicalProject = fs::canonical(project);
@@ -568,15 +572,17 @@ TEST_CASE("normal import validates frozen inventory and original fragment at set
   write(f.staging / "assets/managed-pending.txt", {});
   write(f.staging / "cooker-path.txt", ATLANTIS_REBUILD_TEST_COOKER);
   write(f.staging / "evidence-path.txt", ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE);
+  write(f.staging / "leaf.txt", leaf);
   write(f.base / "producer.cmake", R"cmake(
 file(READ "assets/managed-project.txt" project)
 file(READ "assets/managed-pending.txt" pending)
 file(READ "cooker-path.txt" cooker)
 set(frozen "${CMAKE_CURRENT_BINARY_DIR}/assets/managed-texture-sources")
 set(asset "${CMAKE_CURRENT_BINARY_DIR}/assets/texture_sample")
-set(key "texture_sample/normal.png")
+file(READ "leaf.txt" leaf)
+set(key "texture_sample/${leaf}")
 file(MAKE_DIRECTORY "${frozen}/texture_sample")
-file(COPY_FILE "${project}/${pending}/normal.png" "${frozen}/${key}")
+file(COPY_FILE "${project}/${pending}/${leaf}" "${frozen}/${key}")
 file(STRINGS "${project}/${pending}/catalog-source.txt" fragment)
 list(GET fragment 2 texture)
 string(REGEX MATCH "guid=([0-9a-f-]+)" matched "${texture}")
@@ -665,6 +671,9 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     REQUIRE(job.state == ca::RebuildState::Succeeded);
     REQUIRE(job.generation);
     CHECK_FALSE(status.value().workspaceNeedsRepair);
+    CHECK(read(registered / "texture_sample" / leaf) == pngBytes);
+    const auto wrong = packed ? AssetRebuildHost::TextureKind::Normal : AssetRebuildHost::TextureKind::MetallicRoughness;
+    CHECK(opened.value()->textureImportStatus(admission.value().id, wrong).error() == ca::ImportError::UnknownJob);
     opened.value().reset();
     config.generation = job.generation;
     const auto activated = AssetRebuildHost::open(config);

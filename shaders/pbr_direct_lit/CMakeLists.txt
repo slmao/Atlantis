@@ -23,3 +23,14 @@ atlantis_add_slang_shader_pair(
 # CMakeLists.txt), so it needs this second, explicit propagation up to
 # root's own scope.
 set(ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR "${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}" PARENT_SCOPE)
+
+atlantis_add_slang_shader_pair(
+  NAME pbr_direct_lit_metallic_roughness
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/pbr_direct_lit_metallic_roughness.slang
+  VERTEX_ENTRY vertexMain
+  FRAGMENT_ENTRY fragmentMain
+  OUTPUT_DIR ${CMAKE_BINARY_DIR}/shaders/pbr_direct_lit_metallic_roughness
+  EXPECTED_CONTRACT pbr-direct-lit-metallic-roughness
+  SOURCE_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/pbr_direct_lit.slang
+)
+set(ATLANTIS_pbr_direct_lit_metallic_roughness_SHADER_OUTPUT_DIR "${ATLANTIS_pbr_direct_lit_metallic_roughness_SHADER_OUTPUT_DIR}" PARENT_SCOPE)

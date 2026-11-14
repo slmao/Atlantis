@@ -61,7 +61,7 @@ target_link_libraries(atlantis_shader_system_rhi_integration
 # shaders/minimal_renderer/CMakeLists.txt (Section 8).
 function(atlantis_add_slang_shader_pair)
   set(options "")
-  set(oneValueArgs NAME SOURCE VERTEX_ENTRY FRAGMENT_ENTRY OUTPUT_DIR EXPECTED_CONTRACT)
+  set(oneValueArgs NAME SOURCE VERTEX_ENTRY FRAGMENT_ENTRY OUTPUT_DIR EXPECTED_CONTRACT SOURCE_DEPENDENCY)
   set(multiValueArgs "")
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
@@ -77,7 +77,7 @@ function(atlantis_add_slang_shader_pair)
       --source=${ARG_SOURCE} --vertex-entry=${ARG_VERTEX_ENTRY} --fragment-entry=${ARG_FRAGMENT_ENTRY}
       --output-dir=${ARG_OUTPUT_DIR} --expected-contract=${ARG_EXPECTED_CONTRACT}
       --stamp=${stamp}
-    DEPENDS ${ARG_SOURCE} atlantis_shader_compiler
+    DEPENDS ${ARG_SOURCE} ${ARG_SOURCE_DEPENDENCY} atlantis_shader_compiler
     COMMENT "Compiling and validating Slang shader pair: ${ARG_NAME}"
     VERBATIM
   )

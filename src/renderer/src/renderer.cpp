@@ -272,6 +272,10 @@ FrameEndStates Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atla
         if (item.material->normalMapTexture() != nullptr) ++emissiveBinding;
         cmd.bindTexture(emissiveBinding, *item.material->emissiveTexture(), *item.material->sampler());
       }
+      if (const auto* packed = item.material->metallicRoughnessMap()) {
+        const auto binding = item.material->normalMapTexture() ? 5u : 4u;
+        cmd.bindTexture(binding, *packed, *item.material->sampler());
+      }
       // Plan 0023 Milestone 5 (Spec 0023 D9's own Accepted Correction):
       // an exhaustive switch, no default: label -- this repository's own
       // /w14062 /WX already makes a missed MaterialPushConstantLayout

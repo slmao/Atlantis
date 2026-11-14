@@ -60,6 +60,7 @@ struct MaterialMetadata {
   // Plan 0046 Milestone 1 (ADR-0096): always written (`0` = none), the
   // normalMapTexture discipline -- cross-validated identically.
   AssetId emissiveTexture = 0;
+  AssetId metallicRoughnessMap = 0;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

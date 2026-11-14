@@ -471,6 +471,19 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   pbrDirectLitNormalMapFragmentSpirv_ = std::move(pbrDirectLitNormalMapFragmentSpirvOpt.value());
   pbrDirectLitNormalMapVertexInputLayout_ = std::move(pbrDirectLitNormalMapLayoutOpt.value());
 
+  for (const auto& [path, target] : {
+           std::pair{&config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath, &packedFragmentSpirv_},
+           std::pair{&config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath, &packedNormalFragmentSpirv_}}) {
+    if (path->empty()) continue;
+    auto words = loadSpirvFile(*path);
+    if (!words) {
+      ATLANTIS_LOG_ERROR("Failed to load metallic-roughness shader SPIR-V from {}", *path);
+      lifecycle_.markFailed();
+      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
+    }
+    *target = std::move(*words);
+  }
+
   // Step 2e (Plan 0025/M7): the IBL PBR pair is loaded only when an
   // environment is configured; no-environment bootstrap never validates or
   // retains it and therefore preserves the old PBR path structurally.
@@ -1883,7 +1896,7 @@ void RuntimeApplication::runFrame() {
                                  pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
                                  pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                  sampledTextureResourceMap_, materialDataMap_, textureDataMap_,
-                                 *defaultEmissiveTexture_);
+                                 *defaultEmissiveTexture_, packedFragmentSpirv_, packedNormalFragmentSpirv_);
   }
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -2136,6 +2149,9 @@ void RuntimeApplication::runFrame() {
       if (candidate.newEmissiveTexture) {
         sampledTextureResourceMap_.emplace(candidate.emissiveTextureAssetId,
                                             std::move(candidate.newEmissiveTexture));
+      }
+      if (candidate.newPackedTexture) {
+        sampledTextureResourceMap_.emplace(candidate.packedTextureAssetId, std::move(candidate.newPackedTexture));
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));

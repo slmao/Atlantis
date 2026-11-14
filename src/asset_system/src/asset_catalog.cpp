@@ -21,6 +21,21 @@
 
 namespace atlantis::asset_system {
 
+bool isMetallicRoughnessSource(CatalogRoot root, std::string_view path, std::string_view subKey) noexcept {
+  constexpr std::string_view prefix = "texture_", suffix = "/metallic-roughness.png";
+  if (root != CatalogRoot::Content || !subKey.empty() || !path.starts_with(prefix) ||
+      !path.ends_with(suffix) || path.size() <= prefix.size() + suffix.size()) return false;
+
+  const auto name = path.substr(prefix.size(), path.size() - prefix.size() - suffix.size());
+  const auto letter = [](char c) { return c >= 'a' && c <= 'z'; };
+  const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+  if (name.size() > 48 || !letter(name.front()) ||
+      !std::ranges::all_of(name, [&](char c) { return letter(c) || digit(c) || c == '_'; })) return false;
+  if (name == "con" || name == "prn" || name == "aux" || name == "nul") return false;
+  return !(name.size() == 4 && (name.starts_with("com") || name.starts_with("lpt")) && digit(name.back()));
+}
+
+
 namespace {
 
 namespace fs = std::filesystem;

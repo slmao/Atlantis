@@ -162,6 +162,13 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = pbrDirectLitExpectedDescriptorContract();
   } else if (expectedContract == "pbr-ibl") {
     fullContract = pbrIblExpectedDescriptorContract();
+  } else if (expectedContract == "pbr-direct-lit-metallic-roughness" ||
+             expectedContract == "pbr-direct-lit-normal-map-metallic-roughness") {
+    const bool normal = expectedContract == "pbr-direct-lit-normal-map-metallic-roughness";
+    fullContract = normal ? pbrDirectLitNormalMapExpectedDescriptorContract() : pbrDirectLitExpectedDescriptorContract();
+    fullContract.push_back({.set = 0, .binding = normal ? 5u : 4u,
+                            .type = atlantis::shader_system::DescriptorType::Sampler,
+                            .stage = ShaderStage::Fragment});
   } else if (expectedContract == "pbr-direct-lit-normal-map") {
     fullContract = pbrDirectLitNormalMapExpectedDescriptorContract();
   } else if (expectedContract == "pbr-ibl-normal-map") {
@@ -286,6 +293,8 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // cross-checked against PbrAnisotropicPushConstants's own MSVC
     // static_assert (src/renderer/src/pbr_anisotropic_push_constants.h).
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
+                       expectedContract == "pbr-direct-lit-metallic-roughness" ||
+                       expectedContract == "pbr-direct-lit-normal-map-metallic-roughness" ||
                        expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map" ||
                        expectedContract == "pbr-clearcoat-ibl" || expectedContract == "pbr-clearcoat-ibl-normal-map" ||
                        expectedContract == "pbr-anisotropic-ibl" || expectedContract == "pbr-anisotropic-ibl-normal-map";
@@ -484,6 +493,8 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
       validateUniqueVertexInputLocations(vertexResult->metadata) &&
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
   if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl" ||
+                       request.expectedContract == "pbr-direct-lit-metallic-roughness" ||
+                       request.expectedContract == "pbr-direct-lit-normal-map-metallic-roughness" ||
                        request.expectedContract == "pbr-direct-lit-normal-map" ||
                        request.expectedContract == "pbr-ibl-normal-map" ||
                        request.expectedContract == "pbr-clearcoat-ibl" ||

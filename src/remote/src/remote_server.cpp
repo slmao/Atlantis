@@ -572,18 +572,20 @@ struct RemoteServer::State {
                                  : ca::RebuildStatusResult::Err(ca::RebuildError::Unavailable));
     }
     if (name == "assets.textureImport" || name == "assets.textureImportStatus" ||
-        name == "assets.normalMapImport" || name == "assets.normalMapImportStatus") {
+        name == "assets.normalMapImport" || name == "assets.normalMapImportStatus" ||
+        name == "assets.metallicRoughnessImport" || name == "assets.metallicRoughnessImportStatus") {
       namespace ca = connection::assets;
       const bool normal = name.starts_with("assets.normalMap");
+      const bool packed = name.starts_with("assets.metallicRoughness");
       const auto invalid = [&] { return errorResponse(requestId, "BadRequest", "invalid texture import parameters"); };
       std::uint64_t numericId = 0;
       if (!id || !id->toUInt64(numericId) || !params || request.asObject().size() != 3 || !p.isObject() ||
-          (normal && !numericId)) return invalid();
+          ((normal || packed) && !numericId)) return invalid();
       const auto reply = [&](const auto& result) {
         return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
             : codec::err(Value::string(std::string(ca::toString(result.error())))));
       };
-      if (name == "assets.textureImport" || name == "assets.normalMapImport") {
+      if (name == "assets.textureImport" || name == "assets.normalMapImport" || name == "assets.metallicRoughnessImport") {
         const auto* slug = p.find("name");
         const auto* mode = p.find("mode");
         if (p.asObject().size() != 2 || !slug || !slug->isString() || !ca::validImportName(slug->asString()) ||
@@ -592,6 +594,7 @@ struct RemoteServer::State {
         if (!client.assets && openAssets) client.assets = openAssets();
         if (!client.assets) return reply(ca::TextureImportStartResult::Err(ca::ImportError::Unavailable));
         const auto action = mode->asString() == "Register" ? ca::ImportMode::Register : ca::ImportMode::Resume;
+        if (packed) return reply(client.assets->metallicRoughnessImport(slug->asString(), action));
         return reply(normal ? client.assets->normalMapImport(slug->asString(), action)
                             : client.assets->textureImport(slug->asString(), action));
       }
@@ -602,6 +605,7 @@ struct RemoteServer::State {
       if (!client.assets && openAssets) client.assets = openAssets();
       if (!client.assets) return reply(ca::TextureImportStatusResult::Err(ca::ImportError::Unavailable));
       const auto job = guid ? std::optional{ca::TextureImportId{*guid}} : std::nullopt;
+      if (packed) return reply(client.assets->metallicRoughnessImportStatus(job));
       return reply(normal ? client.assets->normalMapImportStatus(job) : client.assets->textureImportStatus(job));
     }
     if (name == "assets.import" || name == "assets.importStatus") {
@@ -668,11 +672,15 @@ struct RemoteServer::State {
     }
     if (name == "assets.materialRead" || name == "assets.materialSave" || name == "assets.materialStatus" ||
         name == "assets.previewMaterialDraft" || name == "assets.materialReadWithMaps" ||
-        name == "assets.materialSaveWithMaps" || name == "assets.previewMaterialDraftWithMaps") {
-      const bool withMaps = name.ends_with("WithMaps");
+        name == "assets.materialSaveWithMaps" || name == "assets.previewMaterialDraftWithMaps" ||
+        name == "assets.materialReadWithMetallicRoughness" || name == "assets.materialSaveWithMetallicRoughness" ||
+        name == "assets.previewMaterialDraftWithMetallicRoughness") {
+      const bool packed = name.ends_with("WithMetallicRoughness");
+      const bool withMaps = packed || name.ends_with("WithMaps");
       namespace ca = connection::assets;
       using Guid = asset_system::AssetGuid;
-      const auto version = withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
+      const auto version = packed ? ca::MaterialRecipeVersion::WithMetallicRoughness :
+          withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto bad = [&] { return errorResponse(requestId, "BadRequest", "invalid material operation parameters"); };
       const auto guid = [&](std::string_view field) -> std::optional<Guid> {
         const auto* member = p.find(field);
@@ -695,19 +703,21 @@ struct RemoteServer::State {
       if (!p.isObject() || !id || !id->toUInt64(materialRequestId) || materialRequestId == 0 ||
           count("id") != 1 || count("method") != 1 || count("params") > 1 ||
           (withMaps && (count("params") != 1 || request.asObject().size() != 3))) return bad();
-      if (name == "assets.materialRead" || name == "assets.materialReadWithMaps") {
+      if (name.starts_with("assets.materialRead")) {
         const auto material = guid("material");
         if (!material || p.asObject().size() != 1) return bad();
         auto* provider = open();
-        return reply(provider ? (withMaps ? provider->materialReadWithMaps(*material) : provider->materialRead(*material))
+        return reply(provider ? (packed ? provider->materialReadWithMetallicRoughness(*material) :
+                                  withMaps ? provider->materialReadWithMaps(*material) : provider->materialRead(*material))
                               : ca::MaterialReadResult::Err(ca::MaterialError::CatalogUnavailable),
                      [version](const auto& value) { return ca::encodeMaterialRead(value, version); });
       }
-      if (name == "assets.materialSave" || name == "assets.materialSaveWithMaps") {
+      if (name.starts_with("assets.materialSave")) {
         const auto materialSave = ca::decodeMaterialSave(p, version);
         if (!materialSave) return bad();
         auto* provider = open();
-        return reply(provider ? (withMaps ? provider->materialSaveWithMaps(*materialSave) : provider->materialSave(*materialSave))
+        return reply(provider ? (packed ? provider->materialSaveWithMetallicRoughness(*materialSave) :
+                                  withMaps ? provider->materialSaveWithMaps(*materialSave) : provider->materialSave(*materialSave))
                               : ca::MaterialSaveResult::Err(ca::MaterialError::Unavailable), ca::encodeMaterialJob);
       }
       if (name == "assets.materialStatus") {
@@ -722,7 +732,8 @@ struct RemoteServer::State {
       const auto recipe = member ? ca::decodeMaterialRecipe(*member, version) : std::nullopt;
       if (!mesh || !recipe || p.asObject().size() != 2) return bad();
       auto* provider = open();
-      auto result = provider ? (withMaps ? provider->previewMaterialDraftWithMaps(*mesh, *recipe)
+      auto result = provider ? (packed ? provider->previewMaterialDraftWithMetallicRoughness(*mesh, *recipe) :
+                               withMaps ? provider->previewMaterialDraftWithMaps(*mesh, *recipe)
                                          : provider->previewMaterialDraft(*mesh, *recipe))
                              : ca::MaterialDraftPreviewResult::Err(withMaps ? ca::MaterialError::Unavailable
                                                                            : ca::MaterialError::Unsupported);

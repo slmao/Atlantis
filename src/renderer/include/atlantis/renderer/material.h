@@ -99,7 +99,8 @@ class Material {
                      float anisotropyRotation = 0.0f,
                      std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
                      MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f,
-                     const atlantis::rhi::SampledTexture* emissiveTexture = nullptr) noexcept;
+                     const atlantis::rhi::SampledTexture* emissiveTexture = nullptr,
+                     const atlantis::rhi::SampledTexture* metallicRoughnessMap = nullptr) noexcept;
   ~Material() = default;
 
   Material(const Material&) = delete;
@@ -153,6 +154,9 @@ class Material {
   // caller's 1x1 white default); null only on the non-PBR layouts
   // (checked at construction) and on renderer-only test doubles.
   [[nodiscard]] const atlantis::rhi::SampledTexture* emissiveTexture() const noexcept { return emissiveTexture_; }
+  [[nodiscard]] const atlantis::rhi::SampledTexture* metallicRoughnessMap() const noexcept {
+    return metallicRoughnessMap_;
+  }
 
  private:
   std::unique_ptr<atlantis::rhi::Pipeline> pipeline_;
@@ -174,6 +178,7 @@ class Material {
   MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
   float alphaCutoff_ = 0.0f;
   const atlantis::rhi::SampledTexture* emissiveTexture_ = nullptr;  // borrowed, never owned
+  const atlantis::rhi::SampledTexture* metallicRoughnessMap_ = nullptr;
 };
 
 enum class CreateMaterialError {
@@ -216,6 +221,7 @@ enum class CreateMaterialError {
     float sheenRoughness = 0.0f, float anisotropyFactor = 0.0f, float anisotropyRotation = 0.0f,
     std::array<float, 3> emissiveFactor = {0.0f, 0.0f, 0.0f},
     MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque, float alphaCutoff = 0.0f,
-    const atlantis::rhi::SampledTexture* emissiveTexture = nullptr);
+    const atlantis::rhi::SampledTexture* emissiveTexture = nullptr,
+    const atlantis::rhi::SampledTexture* metallicRoughnessMap = nullptr);
 
 }  // namespace atlantis::renderer
