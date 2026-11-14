@@ -1,9 +1,9 @@
 # ADR 0156: Managed Linear Normal Map Import
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-14
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-14, [PR #359](https://github.com/slmao/Atlantis/pull/359) at `d81dd9b6`
 - **Related Spec:** [Spec 0097](../specs/0097-linear-normal-map-import.md)
 
 ## Context
