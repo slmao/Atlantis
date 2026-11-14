@@ -217,12 +217,8 @@ TEST_CASE("parseMaterialSource rejects a base_color_factor with the wrong token 
 }
 
 TEST_CASE("parseMaterialSource rejects an unknown source version", "[asset_system][material]") {
-  // Plan 0042 Milestone 1, moved again by Plan 0046 Milestone 1 and Plan
-  // 0047 M3: this literal must name a version still genuinely unrecognized
-  // now that 10 is the real, accepted version -- 11 here (moved by hand,
-  // never by the mechanical 9 -> 10 replace).
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 11\n"
+      "atlantis_material_source_version: 12\n"
       "kind: unlit_textured\n"
       "texture: bbcc8ef4-3e54-8630-853d-5ee9c4ef345f\n"
       "filter: linear\n"
