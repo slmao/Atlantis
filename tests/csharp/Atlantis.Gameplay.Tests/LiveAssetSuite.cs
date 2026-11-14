@@ -234,11 +234,20 @@ public static class LiveAssetSuite
 
     private static void TextureContract(TestContext t)
     {
+        foreach (bool normal in new[] { false, true }) TextureContract(t, normal);
+    }
+
+    private static void TextureContract(TestContext t, bool normal)
+    {
+        string start = normal ? "assets.normalMapImport" : "assets.textureImport";
+        string query = normal ? "assets.normalMapImportStatus" : "assets.textureImportStatus";
+        Outcome<A.TextureImportJob, A.ImportError> Import(RemoteSession client) =>
+            normal ? client.Assets.NormalMapImport("albedo") : client.Assets.TextureImport("albedo");
         AssetGuid id = AssetCodecSuite.PreviewMaterial;
         var legacy = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
-        WithPeer(t, id, _ => legacy, client =>
+        WithPeer(t, id, method => method == start ? legacy : throw new InvalidOperationException(method), client =>
         {
-            var result = client.Assets.TextureImport("albedo");
+            var result = Import(client);
             t.Check(!result.IsOk && result.Error == A.ImportError.Unsupported && client.Failure is null,
                 "texture: exact legacy response does not fail the session");
         }, expectedPreviews: 0);
@@ -250,10 +259,13 @@ public static class LiveAssetSuite
                 RemoteError.ProtocolError),
             (Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query ","extra":1}}"""),
                 RemoteError.ProtocolError),
+            (Json.Parse("""{"result":{"err":"Unsupported"}}"""), RemoteError.ProtocolError),
+            (Json.Parse("""{"error":{"code":"BadRequest","code":"BadRequest","message":"unknown or malformed asset query"}}"""),
+                RemoteError.ProtocolError),
         })
-            WithPeer(t, id, _ => reply, client =>
+            WithPeer(t, id, method => method == start ? reply : throw new InvalidOperationException(method), client =>
             {
-                var error = t.Throws<RemoteException>(() => client.Assets.TextureImport("albedo"), "texture: lost or invalid receipt");
+                var error = t.Throws<RemoteException>(() => Import(client), "texture: lost or invalid receipt");
                 t.Check(error?.Error == kind && error.Message.Contains("outcome unknown for albedo"),
                     "texture: original category and admitted target retained");
             }, expectedPreviews: 0);
@@ -261,9 +273,10 @@ public static class LiveAssetSuite
             {"result":{"ok":{"activeGeneration":null,"job":{"id":"GUID","name":"albedo","mode":"Register","state":"Succeeded",
             "rootGuid":"GUID","generation":"GUID"},"workspaceNeedsRepair":true}}}
             """.Replace("GUID", id.ToString(), StringComparison.Ordinal));
-        WithPeer(t, id, _ => status, client =>
+        WithPeer(t, id, method => method == query ? status : throw new InvalidOperationException(method), client =>
         {
-            var value = client.Assets.TextureImportStatus(new A.TextureImportId(id)).Value;
+            var job = new A.TextureImportId(id);
+            var value = (normal ? client.Assets.NormalMapImportStatus(job) : client.Assets.TextureImportStatus(job)).Value;
             t.Check(value.WorkspaceNeedsRepair && value.Job?.State == A.RebuildState.Succeeded,
                 "texture: repair required does not downgrade confirmed publication");
         }, expectedPreviews: 0);

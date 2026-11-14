@@ -118,7 +118,14 @@ public sealed class AssetSession
     }
 
     /// <summary>Admits a managed PNG job. A missing admission receipt does not determine the durable outcome.</summary>
-    public Outcome<A.TextureImportJob, A.ImportError> TextureImport(string name, A.ImportMode mode = A.ImportMode.Register)
+    public Outcome<A.TextureImportJob, A.ImportError> TextureImport(string name, A.ImportMode mode = A.ImportMode.Register) =>
+        ImportTexture(name, mode, normalMap: false);
+
+    /// <summary>Admits a managed linear +Y PNG job. Verify durable registration and settlement if the receipt is lost.</summary>
+    public Outcome<A.TextureImportJob, A.ImportError> NormalMapImport(string name, A.ImportMode mode = A.ImportMode.Register) =>
+        ImportTexture(name, mode, normalMap: true);
+
+    private Outcome<A.TextureImportJob, A.ImportError> ImportTexture(string name, A.ImportMode mode, bool normalMap)
     {
         if (!Codec.ValidImportName(name)) throw new ArgumentException("invalid texture import name", nameof(name));
         if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
@@ -126,24 +133,39 @@ public sealed class AssetSession
         var parameters = JsonValue.NewObject().Set("name", JsonValue.String(name)).Set("mode", JsonValue.String(mode.ToString()));
         try
         {
-            return TextureRequest("assets.textureImport", parameters, true, value =>
+            return TextureRequest(normalMap ? "assets.normalMapImport" : "assets.textureImport", parameters, true, value =>
                 Codec.DecodeTextureImportJob(value) is { State: A.RebuildState.Running } job && job.Name == name &&
                 job.Mode == mode ? job : null);
         }
         catch (RemoteException error)
         {
-            throw new RemoteException(error, $"Texture {mode} outcome unknown for {name}. " +
+            string kind = normalMap ? "Normal map" : "Texture";
+            throw new RemoteException(error, $"{kind} {mode} outcome unknown for {name}. " +
                 "Inspect the registered texture and complete generations and confirm settlement before retrying.");
         }
     }
 
-    public Outcome<A.TextureImportStatus, A.ImportError> TextureImportStatus(A.TextureImportId? jobId = null)
+    public Outcome<A.TextureImportStatus, A.ImportError> TextureImportStatus(A.TextureImportId? jobId = null) =>
+        ReadTextureStatus(jobId, normalMap: false);
+
+    /// <summary>Reads a normal map job by ID, or the latest normal map job, and the shared repair flag.</summary>
+    public Outcome<A.TextureImportStatus, A.ImportError> NormalMapImportStatus(A.TextureImportId? jobId = null) =>
+        ReadTextureStatus(jobId, normalMap: true);
+
+    private Outcome<A.TextureImportStatus, A.ImportError> ReadTextureStatus(A.TextureImportId? jobId, bool normalMap)
     {
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         var parameters = JsonValue.NewObject();
         if (jobId is A.TextureImportId id) parameters.Set("jobId", Codec.Encode(id.Value));
-        return TextureRequest("assets.textureImportStatus", parameters, false, value =>
-            Codec.DecodeTextureImportStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
+        try
+        {
+            return TextureRequest(normalMap ? "assets.normalMapImportStatus" : "assets.textureImportStatus", parameters, false, value =>
+                Codec.DecodeTextureImportStatus(value) is { } status && (jobId is null || status.Job?.Id == jobId) ? status : null);
+        }
+        catch (RemoteException error) when (normalMap && jobId is A.TextureImportId)
+        {
+            throw new RemoteException(error, $"Normal map job {jobId.Value.Value} outcome unknown. Query the retained ID after reconnecting.");
+        }
     }
 
     private Outcome<T, A.ImportError> TextureRequest<T>(string method, JsonValue parameters, bool start,

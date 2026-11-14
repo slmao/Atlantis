@@ -1,11 +1,11 @@
 # Spec: Linear Normal Map Import
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-14
 - **Related Plan:** [Plan 0097](../plans/0097-linear-normal-map-import.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0156](../adr/0156-managed-linear-normal-map-import.md) (Proposed)
+- **Approval:** Atlantis maintainer, 2026-11-14, [PR #359](https://github.com/slmao/Atlantis/pull/359) at `d81dd9b6`
+- **Related ADR:** [ADR-0156](../adr/0156-managed-linear-normal-map-import.md) (Accepted)
 
 ## Summary
 

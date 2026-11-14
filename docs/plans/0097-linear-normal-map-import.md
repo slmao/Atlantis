@@ -1,10 +1,10 @@
 # Plan: Linear Normal Map Import
 
 - **Spec:** [Spec 0097](../specs/0097-linear-normal-map-import.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0156](../adr/0156-managed-linear-normal-map-import.md) (Proposed)
+- **Joint Human Review:** The Atlantis maintainer approved J1–J4 and Spec/Plan 0097 on 2026-11-14 at `d81dd9b6`. [PR #359](https://github.com/slmao/Atlantis/pull/359) was manually merged as `bde296ab`. Authorization covers S2–S4, ordinary in-scope fixes, applicable verification, valid evidence reuse and a review-ready PR. Windows UI acceptance is 100% DPI. Final merge remains human.
+- **ADR:** [ADR-0156](../adr/0156-managed-linear-normal-map-import.md) (Accepted)
 
 ## Objective
 

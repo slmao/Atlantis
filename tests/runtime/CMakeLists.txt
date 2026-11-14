@@ -70,7 +70,10 @@ add_executable(atlantis_runtime_tests
   # Plan 0062 M3 (ADR-0123 D2): the pick services, GPU-free.
   scene_picking_tests.cpp
 )
-target_compile_definitions(atlantis_runtime_tests PRIVATE ATLANTIS_REBUILD_TEST_CMAKE="${CMAKE_COMMAND}")
+target_compile_definitions(atlantis_runtime_tests PRIVATE
+  ATLANTIS_REBUILD_TEST_CMAKE="${CMAKE_COMMAND}"
+  ATLANTIS_REBUILD_TEST_COOKER="$<TARGET_FILE:atlantis_asset_cooker>"
+  ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE="${CMAKE_SOURCE_DIR}/cmake/AtlantisTextureEvidence.cmake")
 
 # Plan 0062 M1: Atlantis::Editor is linked by this test executable only, for
 # the camera convention cross-check; atlantis_runtime_host never links it.

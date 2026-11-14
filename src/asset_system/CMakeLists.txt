@@ -329,7 +329,7 @@ endfunction()
 function(atlantis_add_texture_asset)
   set(options MANAGED)
   set(oneValueArgs NAME SOURCE COLOR_SPACE)
-  set(multiValueArgs "")
+  set(multiValueArgs INPUTS)
   cmake_parse_arguments(ARG "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   set(asset_root "${CMAKE_SOURCE_DIR}/assets")
@@ -375,7 +375,7 @@ function(atlantis_add_texture_asset)
       --kind=texture --source=${source_path} --asset-root=${asset_root}
       --output-dir=${output_dir} --stamp=${stamp} ${color_space_args} --catalog-source=${ATLANTIS_ASSET_CATALOG_SOURCE} ${source_option}
     ${finish}
-    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker ${extra_inputs}
+    DEPENDS ${source_path} "${ATLANTIS_ASSET_CATALOG_SOURCE}" atlantis_asset_cooker ${extra_inputs} ${ARG_INPUTS}
     COMMENT "Cooking texture asset: ${ARG_NAME} (${ARG_SOURCE}, ${ARG_COLOR_SPACE})"
     VERBATIM
   )

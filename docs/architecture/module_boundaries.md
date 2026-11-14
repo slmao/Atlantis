@@ -1715,6 +1715,13 @@ and the other clients use the same authoring worker and receipt history.
 The bounded between-frame preview uses the existing shader variants with
 request-owned normal and emissive resources. [ADR-0155](../adr/0155-pbr-material-map-authoring.md).
 
+[Spec 0097](../specs/0097-linear-normal-map-import.md) adds managed linear
++Y PNG registration to the same worker. The registered leaf identifies the
+immutable role, and normal-bearing generations record it in v5 frozen
+evidence. The two client surfaces filter one shared receipt history by kind.
+[ADR-0156](../adr/0156-managed-linear-normal-map-import.md).
+
+
 
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,
 [ADR-0133](../adr/0133-attachment-load-after-the-scene.md) D5) Runtime draws

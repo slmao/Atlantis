@@ -29,6 +29,7 @@ struct Assets final : atlantis::connection::AssetConnection {
   ca::MeshMaterialPreview pairImage = pairPreview();
   std::optional<ca::RebuildJob> job;
   std::optional<ca::ImportJob> imported;
+  std::optional<ca::TextureImportJob> normal;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
@@ -74,6 +75,16 @@ struct Assets final : atlantis::connection::AssetConnection {
     if (id && (!imported || imported->id != *id)) return ca::ImportStatusResult::Err(ca::ImportError::UnknownJob);
     return ca::ImportStatusResult::Ok({{}, imported});
   }
+  ca::TextureImportStartResult normalMapImport(std::string_view name, ca::ImportMode mode) override {
+    normal = ca::TextureImportJob{{as::deriveAssetGuid(guid(), "normal")}, std::string(name), mode,
+                                 ca::RebuildState::Running, {}, {}, {}};
+    return ca::TextureImportStartResult::Ok(*normal);
+  }
+  ca::TextureImportStatusResult normalMapImportStatus(std::optional<ca::TextureImportId> id) const override {
+    if (id && (!normal || normal->id != *id))
+      return ca::TextureImportStatusResult::Err(ca::ImportError::UnknownJob);
+    return ca::TextureImportStatusResult::Ok({{}, normal, false});
+  }
 };
 struct Borrow final : atlantis::connection::AssetConnection {
   explicit Borrow(Assets& a) : a_(a) {}
@@ -91,6 +102,12 @@ struct Borrow final : atlantis::connection::AssetConnection {
   }
   ca::ImportStatusResult importStatus(std::optional<ca::ImportId> id) const override {
     return a_.importStatus(id);
+  }
+  ca::TextureImportStartResult normalMapImport(std::string_view name, ca::ImportMode mode) override {
+    return a_.normalMapImport(name, mode);
+  }
+  ca::TextureImportStatusResult normalMapImportStatus(std::optional<ca::TextureImportId> id) const override {
+    return a_.normalMapImportStatus(id);
   }
   Assets& a_;
 };
@@ -360,6 +377,28 @@ TEST_CASE("managed material codec: closed Edit arms and distinct terminal outcom
   job.failure->material.reset();
   const ca::MaterialStatus repair{{}, job, true};
   CHECK(ca::decodeMaterialStatus(ca::encodeMaterialStatus(repair)) == repair);
+}
+
+TEST_CASE("normal map admission and correlation dispatch to the normal endpoint", "[remote][assets][asset-texture]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  auto initial = served.attach();
+  CHECK(initial->assets().normalMapImportStatus({}).error() == ca::ImportError::Unavailable);
+  CHECK_FALSE(initial->failure());
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto session = served.attach();
+  auto admitted = session->assets().normalMapImport("stone_normal", ca::ImportMode::Resume);
+  REQUIRE(admitted.isOk());
+  CHECK(admitted.value().name == "stone_normal");
+  CHECK(admitted.value().mode == ca::ImportMode::Resume);
+  auto status = session->assets().normalMapImportStatus(admitted.value().id);
+  REQUIRE(status.isOk());
+  REQUIRE(status.value().job);
+  CHECK(status.value().job->id == admitted.value().id);
+  CHECK(session->assets().normalMapImportStatus(ca::TextureImportId{guid()}).error() == ca::ImportError::UnknownJob);
+  CHECK(session->assets().textureImportStatus(admitted.value().id).error() == ca::ImportError::Unavailable);
+  CHECK_FALSE(session->failure());
 }
 
 TEST_CASE("managed texture receipt is closed and repair is independent of success", "[remote][assets][asset-texture]") {
