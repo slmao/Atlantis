@@ -43,7 +43,8 @@ using atlantis::asset_system::CatalogAssetType;
     case CatalogAssetType::Texture:
       return schema == atlantis::asset_system::kTextureArtifactSchemaVersion;
     case CatalogAssetType::Material:
-      return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion;
+      return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kMappedMaterialArtifactSchemaVersion;
     case CatalogAssetType::Scene:
       return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
     case CatalogAssetType::Environment:
