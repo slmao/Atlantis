@@ -759,14 +759,18 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     namespace ca = connection::assets;
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
     auto verb = t.size() > 1 ? t[1] : std::string_view{};
-    constexpr std::string_view mapsSuffix = "-with-maps", packedSuffix = "-with-metallic-roughness";
+    constexpr std::string_view mapsSuffix = "-with-maps", packedSuffix = "-with-metallic-roughness",
+                               occlusionSuffix = "-with-occlusion";
     const bool withMaps = verb.ends_with(mapsSuffix);
     const bool withPacked = verb.ends_with(packedSuffix);
     if (withMaps) verb.remove_suffix(mapsSuffix.size());
-    if (withPacked) verb.remove_suffix(packedSuffix.size());
+    const bool withOcclusion = verb.ends_with(occlusionSuffix);
+    if (withOcclusion) verb.remove_suffix(occlusionSuffix.size());
+    else if (withPacked) verb.remove_suffix(packedSuffix.size());
     if (verb == "material-read" || verb == "material-save" || verb == "preview-material-draft" ||
         (!withMaps && !withPacked && verb == "material-status")) {
-      const auto version = withPacked ? ca::MaterialRecipeVersion::WithMetallicRoughness :
+      const auto version = withOcclusion ? ca::MaterialRecipeVersion::WithOcclusion :
+          withPacked ? ca::MaterialRecipeVersion::WithMetallicRoughness :
           withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto usage = [&] { return failed(command, usageError(
           "assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>] | "
@@ -795,7 +799,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         auto request = encoded ? ca::decodeMaterialSave(*encoded, version) : std::nullopt;
         if (!request) return usage();
         if (!endpoint) return refusal(ca::MaterialError::Unavailable);
-        const auto saved = withPacked ? endpoint->materialSaveWithMetallicRoughness(*request) :
+        const auto saved = withOcclusion ? endpoint->materialSaveWithOcclusion(*request) :
+            withPacked ? endpoint->materialSaveWithMetallicRoughness(*request) :
             withMaps ? endpoint->materialSaveWithMaps(*request) : endpoint->materialSave(*request);
         if (saved.isOk()) return result(ca::encodeMaterialJob(saved.value()));
         auto reply = refusal(saved.error());
@@ -844,7 +849,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       if (verb == "material-read") {
         if (t.size() != 3) return usage();
         if (!endpoint) return refusal(ca::MaterialError::CatalogUnavailable);
-        const auto read = withPacked ? endpoint->materialReadWithMetallicRoughness(guid.value()) :
+        const auto read = withOcclusion ? endpoint->materialReadWithOcclusion(guid.value()) :
+            withPacked ? endpoint->materialReadWithMetallicRoughness(guid.value()) :
             withMaps ? endpoint->materialReadWithMaps(guid.value()) : endpoint->materialRead(guid.value());
         return read.isOk() ? result(ca::encodeMaterialRead(read.value(), version)) : refusal(read.error());
       }
@@ -852,7 +858,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded, version) : std::nullopt;
       if (!recipe) return usage();
       if (!endpoint) return refusal(ca::MaterialError::Unsupported);
-      const auto image = withPacked ? endpoint->previewMaterialDraftWithMetallicRoughness(guid.value(), *recipe) :
+      const auto image = withOcclusion ? endpoint->previewMaterialDraftWithOcclusion(guid.value(), *recipe) :
+          withPacked ? endpoint->previewMaterialDraftWithMetallicRoughness(guid.value(), *recipe) :
           withMaps ? endpoint->previewMaterialDraftWithMaps(guid.value(), *recipe)
                    : endpoint->previewMaterialDraft(guid.value(), *recipe);
       if (image.isErr()) return refusal(image.error());
@@ -869,8 +876,10 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool normalStatus = t.size() > 1 && t[1] == "normal-map-import-status";
     const bool packedImport = t.size() > 1 && t[1] == "metallic-roughness-import";
     const bool packedStatus = t.size() > 1 && t[1] == "metallic-roughness-import-status";
-    const bool texture = normalImport || packedImport || (t.size() > 1 && t[1] == "texture-import");
-    const bool textureStatus = normalStatus || packedStatus || (t.size() > 1 && t[1] == "texture-import-status");
+    const bool occlusionImport = t.size() > 1 && t[1] == "occlusion-import";
+    const bool occlusionStatus = t.size() > 1 && t[1] == "occlusion-import-status";
+    const bool texture = occlusionImport || normalImport || packedImport || (t.size() > 1 && t[1] == "texture-import");
+    const bool textureStatus = occlusionStatus || normalStatus || packedStatus || (t.size() > 1 && t[1] == "texture-import-status");
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
     if (!((rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
           ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
@@ -948,7 +957,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     if (import) return renderStart(endpoint->importAsset(t[2], mode));
     if (importStatus) return renderStatus(endpoint->importStatus(id ? std::optional{ca::ImportId{*id}} : std::nullopt));
     if (texture) {
-      auto reply = renderStart(packedImport ? endpoint->metallicRoughnessImport(t[2], mode) :
+      auto reply = renderStart(occlusionImport ? endpoint->occlusionImport(t[2], mode) :
+          packedImport ? endpoint->metallicRoughnessImport(t[2], mode) :
           normalImport ? endpoint->normalMapImport(t[2], mode) : endpoint->textureImport(t[2], mode));
       if (reply.error) {
         reply.result = Value::object();
@@ -959,7 +969,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     }
     if (textureStatus) {
       const auto job = id ? std::optional{ca::TextureImportId{*id}} : std::nullopt;
-      auto reply = renderStatus(packedStatus ? endpoint->metallicRoughnessImportStatus(job) :
+      auto reply = renderStatus(occlusionStatus ? endpoint->occlusionImportStatus(job) :
+          packedStatus ? endpoint->metallicRoughnessImportStatus(job) :
           normalStatus ? endpoint->normalMapImportStatus(job) : endpoint->textureImportStatus(job));
       if (reply.error && id && !reply.result.isObject()) {
         reply.result = Value::object();

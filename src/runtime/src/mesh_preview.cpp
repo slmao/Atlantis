@@ -3,7 +3,9 @@
 #include "frame_capture.h"
 
 #include <atlantis/assert.h>
+#include <atlantis/asset_system/load_environment.h>
 #include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/runtime/environment_realization.h>
 #include <atlantis/log.h>
 #include <atlantis/profile.h>
 #include <atlantis/render_graph/execution.h>
@@ -157,6 +159,7 @@ struct MeshPreviewResources {
   std::unique_ptr<rhi::Pipeline> outputPipeline;
   std::unique_ptr<rhi::Sampler> shadowSampler;
   std::unique_ptr<rhi::Sampler> outputSampler;
+  std::optional<EnvironmentLightingCandidate> studio;
   std::unique_ptr<rhi::Texture> depth;
   std::unique_ptr<rhi::ShadowMap> shadow;
   std::unique_ptr<rhi::HdrColorTarget> hdr;
@@ -178,6 +181,8 @@ struct PbrPreviewInputs {
   const as::TextureAssetData* normal;
   const as::TextureAssetData* emissive;
   const as::TextureAssetData* packed;
+  const as::TextureAssetData* occlusion;
+  bool studioIbl;
 };
 
 using PreviewPngResult = Result<std::vector<std::uint8_t>, ac::PreviewError>;
@@ -206,6 +211,10 @@ void writePreviewLighting(MeshPreviewResources& resources, const FramedMeshPrevi
     std::memcpy(camera + kCameraUniformWorldPositionOffsetBytes, &eye, sizeof(eye));
     std::memset(camera + kCameraUniformIrradianceShOffsetBytes, 0,
                 kCameraUniformLightSpaceOffsetBytes - kCameraUniformIrradianceShOffsetBytes);
+    if (resources.studio) {
+      const auto& irradiance = resources.studio->resources.irradianceSh;
+      std::memcpy(camera + kCameraUniformIrradianceShOffsetBytes, irradiance.data(), sizeof(irradiance));
+    }
     std::memcpy(camera + kCameraUniformLightSpaceOffsetBytes, &lightSpace, sizeof(lightSpace));
     std::memcpy(camera + kCameraUniformFogOffsetBytes, &noFog, sizeof(noFog));
     std::memcpy(camera + kCameraUniformClusterOffsetBytes, &cluster, sizeof(cluster));
@@ -233,11 +242,25 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
   const auto framed = frameMeshPreview(mesh);
   if (!framed) return {R::Err(E::InvalidMesh), false};
 
+  const bool studioIbl = pbr && pbr->studioIbl;
+  std::optional<as::EnvironmentAssetData> studioData;
+  if (studioIbl) {
+    auto studio = as::loadPreviewStudioEnvironment(config.previewStudioArtifactPath, config.previewStudioMetadataPath);
+    if (studio.isErr()) return failed("studio environment inputs");
+    studioData.emplace(std::move(studio.value()));
+  }
   constexpr auto stride = as::kMeshArtifactVertexStrideBytes;
   const auto geometry = [&] {
     if (!pbr)
       return readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
                       {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
+    if (studioIbl)
+      return readPair(config.pbrIblVertexShaderSpirvPath,
+                      pbr->occlusion ? config.pbrIblOcclusionFragmentShaderSpirvPath
+                                     : config.pbrIblFragmentShaderSpirvPath,
+                      config.pbrIblVertexShaderReflectionPath,
+                      {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
+                       {2, as::kMeshArtifactNormalOffsetBytes}}, stride);
     if (pbr->normal)
       return readPair(config.pbrDirectLitNormalMapVertexShaderSpirvPath,
                       pbr->packed ? config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath
@@ -317,6 +340,12 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
       !assign(r.readback, device.createBuffer({.purpose = BufferPurpose::Readback, .sizeBytes = pixelBytes}))) {
     return deviceCreationFailed("buffer creation");
   }
+  if (studioData) {
+    auto studio = realizeEnvironmentCandidate(device, *studioData);
+    if (studio.isErr()) return deviceCreationFailed("studio environment realization");
+    r.studio.emplace(std::move(studio.value()));
+    studioData.reset();
+  }
   writePreviewLighting(r, *framed, pbr != nullptr);
   std::optional<MeshPreviewReadOnly> headlessInputs;
   if (!readOnly) {
@@ -344,6 +373,11 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
   r.target = std::move(target.value());
   auto list = device.createCommandList();
   if (list.isErr()) return deviceCreationFailed("command list creation");
+  std::optional<renderer::EnvironmentLighting> studioView;
+  if (r.studio) {
+    recordEnvironmentUploads(*list.value(), *r.studio);
+    studioView.emplace(r.studio->resources.borrowedView());
+  }
   if (pbr) {
     if (!pbr->material.emissiveTexture) {
       auto white = createDefaultEmissiveTexture(device, *list.value());
@@ -353,7 +387,7 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
     auto candidate = recordPreviewPbrMaterial(device, *list.value(), geometry->parameters(),
                                               pbr->materialId, pbr->material, pbr->texture,
                                               r.whiteEmissive ? r.whiteEmissive->texture.get() : nullptr,
-                                              pbr->normal, pbr->emissive, pbr->packed);
+                                              pbr->normal, pbr->emissive, pbr->packed, pbr->occlusion, studioIbl);
     if (candidate.isErr()) return deviceCreationFailed("PBR material creation");
     r.pbrMaterial.emplace(std::move(candidate.value()));
   }
@@ -363,7 +397,7 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
   renderer::Renderer renderer;
   renderer.drawFrame(*list.value(), *r.target, *r.depth, *r.camera, std::span{&draw, 1}, ResourceState::TransferSource,
                      *r.hdr, readOnly->fullscreenVertices, readOnly->fullscreenIndices, *r.outputPipeline,
-                     readOnly->outputSampler, 0.0f, nullptr, nullptr, *r.shadow, readOnly->shadowSampler,
+                     readOnly->outputSampler, 0.0f, studioView ? &*studioView : nullptr, nullptr, *r.shadow, readOnly->shadowSampler,
                      *r.shadowPipeline, *r.light, {});
 
   render_graph::RenderGraphBuilder copy;
@@ -412,10 +446,10 @@ MeshMaterialPreviewExecution renderMeshMaterialPreview(
     const as::AssetGuid& meshGuid, const as::AssetGuid& materialGuid,
     std::shared_ptr<MeshPreviewResources>& incompleteSubmission, PreviewCompletion complete,
     const MeshPreviewReadOnly* readOnly, const as::TextureAssetData* normal, const as::TextureAssetData* emissive,
-    const as::TextureAssetData* packed) {
+    const as::TextureAssetData* packed, const as::TextureAssetData* occlusion, bool studioIbl) {
   using E = ac::MeshMaterialPreviewError;
   using R = ac::MeshMaterialPreviewResult;
-  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid), normal, emissive, packed};
+  const PbrPreviewInputs pbr{material, texture, as::assetKey(materialGuid), normal, emissive, packed, occlusion, studioIbl};
   auto execution = renderPreviewPng(device, config, mesh, &pbr, incompleteSubmission, complete, readOnly);
   if (execution.result.isErr()) {
     return {R::Err(execution.result.error() == ac::PreviewError::InvalidMesh ? E::IncompatiblePair : E::RenderFailed),
@@ -458,8 +492,9 @@ connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMat
     const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid, const asset_system::AssetGuid& materialGuid,
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
     const asset_system::TextureAssetData& texture, const asset_system::TextureAssetData* normal,
-    const asset_system::TextureAssetData* emissive, const asset_system::TextureAssetData* packed) {
-  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr, normal, emissive, packed);
+    const asset_system::TextureAssetData* emissive, const asset_system::TextureAssetData* packed,
+    const asset_system::TextureAssetData* occlusion, bool studioIbl) {
+  return previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture, nullptr, normal, emissive, packed, occlusion, studioIbl);
 }
 
 connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMaterialWithCompletion(
@@ -467,13 +502,14 @@ connection::assets::MeshMaterialPreviewResult RuntimeApplication::previewMeshMat
     const asset_system::StaticMeshAssetData& mesh, const asset_system::MaterialAssetData& material,
     const asset_system::TextureAssetData& texture, detail::PreviewCompletion complete,
     const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive,
-    const asset_system::TextureAssetData* packed) {
+    const asset_system::TextureAssetData* packed,
+    const asset_system::TextureAssetData* occlusion, bool studioIbl) {
   using namespace connection::assets;
   if (!meshPreviewAvailable()) return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);
   const detail::MeshPreviewReadOnly readOnly{*fullscreenTriangleVertexBuffer_, *fullscreenTriangleIndexBuffer_,
                                             *outputTransformSampler_, *shadowMapSampler_};
   auto execution = detail::renderMeshMaterialPreview(*device_, config, mesh, material, texture, meshGuid, materialGuid,
-                                                     incompleteMeshPreview_, complete, &readOnly, normal, emissive, packed);
+                                                     incompleteMeshPreview_, complete, &readOnly, normal, emissive, packed, occlusion, studioIbl);
   if (execution.fatal) {
     lifecycle_.markFailed();
     return MeshMaterialPreviewResult::Err(MeshMaterialPreviewError::Unavailable);

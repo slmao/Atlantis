@@ -386,6 +386,15 @@ generation. CLI offers `assets metallic-roughness-import <name> [--resume]`,
 `-with-metallic-roughness` read, save and draft-preview commands.
 [Spec 0098](docs/specs/0098-metallic-roughness-texture.md).
 
+In Assets choose **Occlusion map** for a standalone linear RGB/RGBA PNG.
+The red channel scales indirect diffuse and specular light. The material
+requires opaque PBR with empty normal and metallic-roughness map slots.
+Clear restores full indirect light. Preview uses fixed studio lighting.
+After Save & Publish, restart Runtime on the returned generation to see it
+in an IBL scene. CLI offers `assets occlusion-import <name> [--resume]`,
+`assets occlusion-import-status [<JobId>]` and the `-with-occlusion` material
+commands. [Spec 0099](docs/specs/0099-occlusion-texture.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

@@ -10,9 +10,9 @@ namespace atlantis::asset_system::detail {
 
 // Measure and read the same opened handle. Probe EOF after an exact read,
 // so a file growing beyond the cap cannot be silently accepted truncated.
-template <typename ByteContainer>
+template <typename Path, typename ByteContainer>
 [[nodiscard]] std::optional<PreviewArtifactLoadError> readPreviewFile(
-    const std::string& path, std::size_t cap, ByteContainer& out) {
+    const Path& path, std::size_t cap, ByteContainer& out) {
   using E = PreviewArtifactLoadError;
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   if (!file) return E::Invalid;

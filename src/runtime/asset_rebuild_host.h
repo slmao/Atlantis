@@ -16,7 +16,7 @@ namespace atlantis::runtime {
 // on the frame thread. Only the worker mutates staging or publishes outputs.
 class AssetRebuildHost {
  public:
-  enum class TextureKind { Color, Normal, MetallicRoughness };
+  enum class TextureKind { Color, Normal, MetallicRoughness, Occlusion };
   struct Config {
     std::filesystem::path profile;
     std::filesystem::path seedCatalog;

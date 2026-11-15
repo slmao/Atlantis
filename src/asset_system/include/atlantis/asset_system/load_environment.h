@@ -14,4 +14,8 @@ namespace atlantis::asset_system {
 [[nodiscard]] atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsset(
     const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
 
+// Loads the fixed-size studio bake for a synchronous preview.
+[[nodiscard]] atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadPreviewStudioEnvironment(
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
+
 }  // namespace atlantis::asset_system

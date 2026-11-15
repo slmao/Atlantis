@@ -201,7 +201,7 @@ struct TextureImportStatus {
 using TextureImportStartResult = Result<TextureImportJob, ImportError>;
 using TextureImportStatusResult = Result<TextureImportStatus, ImportError>;
 
-enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps, WithMetallicRoughness };
+enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps, WithMetallicRoughness, WithOcclusion };
 
 struct MaterialValues {
   asset_system::AssetGuid texture;
@@ -212,6 +212,7 @@ struct MaterialValues {
   std::optional<asset_system::AssetGuid> emissiveTexture{};
   std::array<float, 3> emissiveFactor{};
   std::optional<asset_system::AssetGuid> metallicRoughnessMap{};
+  std::optional<asset_system::AssetGuid> occlusionMap{};
   friend bool operator==(const MaterialValues&, const MaterialValues&) = default;
 };
 enum class MaterialFilter : std::uint8_t { Nearest, Linear };
@@ -388,7 +389,13 @@ class AssetConnection {
   [[nodiscard]] virtual assets::TextureImportStartResult metallicRoughnessImport(std::string_view, assets::ImportMode) {
     return assets::TextureImportStartResult::Err(assets::ImportError::Unavailable);
   }
+  [[nodiscard]] virtual assets::TextureImportStartResult occlusionImport(std::string_view, assets::ImportMode) {
+    return assets::TextureImportStartResult::Err(assets::ImportError::Unavailable);
+  }
   [[nodiscard]] virtual assets::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<assets::TextureImportId>) const {
+    return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
+  }
+  [[nodiscard]] virtual assets::TextureImportStatusResult occlusionImportStatus(std::optional<assets::TextureImportId>) const {
     return assets::TextureImportStatusResult::Err(assets::ImportError::Unavailable);
   }
   // Spec 0094 / ADR-0153. Read and preview use the retained cooked catalog.
@@ -421,10 +428,20 @@ class AssetConnection {
   [[nodiscard]] virtual assets::MaterialReadResult materialReadWithMetallicRoughness(const asset_system::AssetGuid&) const {
     return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
   }
+  [[nodiscard]] virtual assets::MaterialReadResult materialReadWithOcclusion(const asset_system::AssetGuid&) const {
+    return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
+  }
   [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithMetallicRoughness(const assets::MaterialSave&) {
     return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
   }
+  [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithOcclusion(const assets::MaterialSave&) {
+    return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
+  }
   [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(
+      const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
+    return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(
       const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
     return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }

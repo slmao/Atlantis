@@ -186,7 +186,8 @@ TEST_CASE("geometry and pair previews consume the same permit", "[runtime][asset
       },
       .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
                         const as::StaticMeshAssetData& geometry, const as::MaterialAssetData& mat,
-                        const as::TextureAssetData& texture, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                        const as::TextureAssetData& texture, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool) {
         ++pairs;
         CHECK(meshId == mesh);
         CHECK(materialId == material);
@@ -222,7 +223,8 @@ TEST_CASE("a pair-only provider keeps the first full catalog and validates both 
   const AssetHost::PreviewProvider pairOnly{
       .available = [] { return true; },
       .renderPair = [](const as::AssetGuid&, const as::AssetGuid&, const as::StaticMeshAssetData&,
-                       const as::MaterialAssetData&, const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                       const as::MaterialAssetData&, const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool) {
         FAIL("no cooked files in the snapshot fixture");
         return Pair::Err(E::RenderFailed);
       }};
@@ -270,7 +272,8 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
       },
       .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
                         const as::StaticMeshAssetData&, const as::MaterialAssetData& mat,
-                        const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                        const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool) {
         ++rendered;
         CHECK(meshId == mesh);
         CHECK(materialId == as::AssetGuid{});

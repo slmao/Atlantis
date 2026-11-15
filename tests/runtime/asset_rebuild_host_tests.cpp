@@ -640,10 +640,11 @@ TEST_CASE("linear texture import validates frozen inventory and original fragmen
   const auto registered = project / "registered";
   const auto inbox = project / "inbox/sample/source.png";
   const fs::path inventory = "assets/producers-Debug.txt";
-  const bool packed = GENERATE(false, true);
-  CAPTURE(packed);
-  const auto kind = packed ? AssetRebuildHost::TextureKind::MetallicRoughness : AssetRebuildHost::TextureKind::Normal;
-  const std::string leaf = packed ? "metallic-roughness.png" : "normal.png";
+  using TextureKind = AssetRebuildHost::TextureKind;
+  const auto kind = GENERATE(TextureKind::Normal, TextureKind::MetallicRoughness, TextureKind::Occlusion);
+  const std::string leaf = kind == TextureKind::Occlusion ? "occlusion.png" :
+      kind == TextureKind::MetallicRoughness ? "metallic-roughness.png" : "normal.png";
+  CAPTURE(leaf);
   REQUIRE(fs::create_directories(registered));
   REQUIRE(fs::create_directories(inbox.parent_path()));
   const auto canonicalProject = fs::canonical(project);
@@ -758,7 +759,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     REQUIRE(job.generation);
     CHECK_FALSE(status.value().workspaceNeedsRepair);
     CHECK(read(registered / "texture_sample" / leaf) == kLinearPngBytes);
-    const auto wrong = packed ? AssetRebuildHost::TextureKind::Normal : AssetRebuildHost::TextureKind::MetallicRoughness;
+    const auto wrong = kind == TextureKind::Normal ? TextureKind::Occlusion : TextureKind::Normal;
     CHECK(opened.value()->textureImportStatus(admission.value().id, wrong).error() == ca::ImportError::UnknownJob);
     opened.value().reset();
     config.generation = job.generation;

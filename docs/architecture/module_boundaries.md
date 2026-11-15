@@ -1729,6 +1729,12 @@ Renderer uses the extra sampler only for mapped opaque direct-lit
 materials. Editor, CLI, SDKs and MCP use the shared operations.
 See [ADR-0157](../adr/0157-metallic-roughness-texture.md).
 
+[Spec 0099](../specs/0099-occlusion-texture.md) adds the Occlusion texture
+role and a fourth closed recipe. Runtime validates the frozen inputs and
+realizes AO through RenderGraph with one optional IBL binding. Studio
+preview uses request-owned environment resources under the existing
+shared admission and drain. [ADR-0158](../adr/0158-occlusion-texture.md).
+
 
 
 Since Spec 0066 ([ADR-0132](../adr/0132-viewport-overlay-surface.md) D4,

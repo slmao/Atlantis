@@ -28,6 +28,7 @@ public static class LiveAssetSuite
         TextureContract(t);
         MaterialMapsContract(t);
         PackedMaterialContract(t);
+        OcclusionMaterialContract(t);
         using var server = new FixtureServer(t);
         using RemoteSession a = server.Attach(), b = server.Attach();
         var list = a.Assets.ListAssets();
@@ -393,6 +394,79 @@ public static class LiveAssetSuite
             catch (RemoteException e)
             {
                 t.Check(e.Error == RemoteError.ProtocolError, "packed: in-band Unsupported is malformed");
+            }
+        }, expectedPreviews: 0);
+    }
+
+    private static void OcclusionMaterialContract(TestContext t)
+    {
+        AssetGuid id = AssetCodecSuite.PreviewMaterial;
+        var values = new A.MaterialValues(id, 1, 1, 1, .64f, .81f) { OcclusionMap = id };
+        var recipe = new A.MaterialRecipe(values, A.MaterialFilter.Linear, A.MaterialAddress.Repeat);
+        var read = JsonValue.NewObject().Set("material", Codec.Encode(id)).Set("editable", JsonValue.Bool(true))
+            .Set("activeGeneration", JsonValue.Null())
+            .Set("recipe", Codec.EncodeMaterialRecipe(recipe, withOcclusion: true));
+        WithPeer(t, id, method => method == "assets.materialReadWithOcclusion"
+            ? JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("ok", read))
+            : throw new InvalidOperationException(method), client =>
+        {
+            t.Check(client.Assets.MaterialReadWithOcclusion(id).Value.Recipe == recipe,
+                "occlusion: complete recipe is retained");
+            var save = new A.MaterialSave.Create("draft", values);
+            t.Check(client.Assets.MaterialSave(save).Error == A.MaterialError.InvalidRecipe &&
+                    client.Assets.MaterialSaveWithMaps(save).Error == A.MaterialError.InvalidRecipe &&
+                    client.Assets.MaterialSaveWithMetallicRoughness(save).Error == A.MaterialError.InvalidRecipe,
+                "occlusion: all three legacy SDK shapes refuse a lossy write before sending");
+        }, expectedPreviews: 0);
+
+        var unsupported = Json.Parse("""{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""");
+        WithPeer(t, id, method => method is "assets.occlusionImport" or "assets.occlusionImportStatus"
+                or "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion"
+                or "assets.previewMaterialDraftWithOcclusion" ? unsupported : throw new InvalidOperationException(method),
+            client =>
+            {
+                t.Check(client.Assets.OcclusionImport("draft").Error == A.ImportError.Unsupported &&
+                        client.Assets.OcclusionImportStatus().Error == A.ImportError.Unsupported &&
+                        client.Assets.MaterialReadWithOcclusion(id).Error == A.MaterialError.Unsupported &&
+                        client.Assets.MaterialSaveWithOcclusion(new A.MaterialSave.Create("draft", values)).Error ==
+                            A.MaterialError.Unsupported &&
+                        client.Assets.PreviewMaterialDraftWithOcclusion(id, recipe).Error ==
+                            A.MaterialError.Unsupported && client.Failure is null,
+                    "occlusion: correlated old peer refusal is the only compatibility fallback");
+            }, expectedPreviews: 0);
+
+        WithPeer(t, id, method => method == "assets.materialSaveWithOcclusion" ? null :
+            throw new InvalidOperationException(method), client =>
+        {
+            var error = t.Throws<RemoteException>(() =>
+                client.Assets.MaterialSaveWithOcclusion(new A.MaterialSave.Create("occlusion_material", values)),
+                "occlusion: lost save receipt throws");
+            t.Check(error?.Error == RemoteError.Disconnected && error.Message.Contains("occlusion_material") &&
+                error.Message.Contains("outcome unknown") && error.Message.Contains("settled"),
+                "occlusion: lost save preserves category, target and recovery guidance");
+        }, expectedPreviews: 0);
+        WithPeer(t, id, method => method == "assets.occlusionImport" ? null :
+            throw new InvalidOperationException(method), client =>
+        {
+            var error = t.Throws<RemoteException>(() => client.Assets.OcclusionImport("occlusion_texture"),
+                "occlusion: lost registration receipt throws");
+            t.Check(error?.Error == RemoteError.Disconnected && error.Message.Contains("occlusion_texture") &&
+                error.Message.Contains("outcome unknown") && error.Message.Contains("settlement"),
+                "occlusion: lost registration preserves category, target and recovery guidance");
+        }, expectedPreviews: 0);
+
+        var lookalike = Json.Parse("""{"result":{"err":"Unsupported"}}""");
+        WithPeer(t, id, method => method == "assets.previewMaterialDraftWithOcclusion" ? lookalike :
+            throw new InvalidOperationException(method), client =>
+        {
+            try
+            {
+                _ = client.Assets.PreviewMaterialDraftWithOcclusion(id, recipe);
+                t.Check(false, "occlusion: in-band Unsupported is malformed");
+            }
+            catch (RemoteException e)
+            {
+                t.Check(e.Error == RemoteError.ProtocolError, "occlusion: in-band Unsupported is malformed");
             }
         }, expectedPreviews: 0);
     }

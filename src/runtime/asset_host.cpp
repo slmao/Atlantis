@@ -126,7 +126,8 @@ struct AssetHost::State final : connection::AssetConnection {
     const auto& maps = textures.value();
     return preview_.renderPair(meshGuid, materialGuid, mesh.value(), mat, maps.base,
                                maps.normal ? &*maps.normal : nullptr, maps.emissive ? &*maps.emissive : nullptr,
-                               maps.packed ? &*maps.packed : nullptr);
+                               maps.packed ? &*maps.packed : nullptr,
+                               maps.occlusion ? &*maps.occlusion : nullptr, maps.occlusion.has_value());
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
@@ -167,8 +168,17 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->startTextureImport(name, mode, catalog_, AssetRebuildHost::TextureKind::MetallicRoughness);
   }
+  ac::TextureImportStartResult occlusionImport(std::string_view name, ac::ImportMode mode) override {
+    if (!rebuild_) return ac::TextureImportStartResult::Err(ac::ImportError::Unavailable);
+    initialize();
+    return rebuild_->startTextureImport(name, mode, catalog_, AssetRebuildHost::TextureKind::Occlusion);
+  }
   ac::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<ac::TextureImportId> id) const override {
     return rebuild_ ? rebuild_->textureImportStatus(id, AssetRebuildHost::TextureKind::MetallicRoughness)
+                    : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
+  }
+  ac::TextureImportStatusResult occlusionImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return rebuild_ ? rebuild_->textureImportStatus(id, AssetRebuildHost::TextureKind::Occlusion)
                     : ac::TextureImportStatusResult::Err(ac::ImportError::Unavailable);
   }
   ac::MaterialReadResult materialRead(const as::AssetGuid& guid) const override {
@@ -179,6 +189,9 @@ struct AssetHost::State final : connection::AssetConnection {
   }
   ac::MaterialReadResult materialReadWithMetallicRoughness(const as::AssetGuid& guid) const override {
     return readMaterial(guid, ac::MaterialRecipeVersion::WithMetallicRoughness);
+  }
+  ac::MaterialReadResult materialReadWithOcclusion(const as::AssetGuid& guid) const override {
+    return readMaterial(guid, ac::MaterialRecipeVersion::WithOcclusion);
   }
   ac::MaterialReadResult readMaterial(const as::AssetGuid& guid, ac::MaterialRecipeVersion version) const {
     using R = ac::MaterialReadResult;
@@ -204,6 +217,11 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithMetallicRoughness);
   }
+  ac::MaterialSaveResult materialSaveWithOcclusion(const ac::MaterialSave& request) override {
+    if (!rebuild_) return ac::MaterialSaveResult::Err(ac::MaterialError::Unavailable);
+    initialize();
+    return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithOcclusion);
+  }
   ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
     return rebuild_ ? rebuild_->materialStatus(id) : ac::MaterialStatusResult::Err(ac::MaterialError::Unavailable);
   }
@@ -216,12 +234,22 @@ struct AssetHost::State final : connection::AssetConnection {
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMaps(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
-    if (recipe.values.metallicRoughnessMap)
+    if (recipe.values.metallicRoughnessMap || recipe.values.occlusionMap)
       return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
     return previewMaterialDraftWithMetallicRoughness(guid, recipe);
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
+    if (recipe.values.occlusionMap)
+      return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
+    return previewDraft(guid, recipe, false);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return previewDraft(guid, recipe, !recipe.values.normalMap && !recipe.values.metallicRoughnessMap);
+  }
+  ac::MaterialDraftPreviewResult previewDraft(const as::AssetGuid& guid, const ac::MaterialRecipe& recipe,
+                                               bool studioIbl) {
     using E = ac::MaterialError;
     using R = ac::MaterialDraftPreviewResult;
     if (guid == as::AssetGuid{} || !ac::validMaterialRecipe(recipe)) return R::Err(E::InvalidRecipe);
@@ -244,7 +272,8 @@ struct AssetHost::State final : connection::AssetConnection {
     auto image = preview_.renderPair(guid, {}, mesh.value(), material_authoring::previewData(recipe), maps.base,
                                      maps.normal ? &*maps.normal : nullptr,
                                      maps.emissive ? &*maps.emissive : nullptr,
-                                     maps.packed ? &*maps.packed : nullptr);
+                                     maps.packed ? &*maps.packed : nullptr,
+                                     maps.occlusion ? &*maps.occlusion : nullptr, studioIbl);
     if (image.isOk()) return R::Ok({guid, recipe, std::move(image.value().png)});
     using Pair = ac::MeshMaterialPreviewError;
     if (image.error() == Pair::Unavailable) return R::Err(E::Unavailable);
@@ -305,18 +334,34 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::TextureImportStartResult metallicRoughnessImport(std::string_view name, ac::ImportMode mode) override {
     return host_.metallicRoughnessImport(name, mode);
   }
+  ac::TextureImportStartResult occlusionImport(std::string_view name, ac::ImportMode mode) override {
+    return host_.occlusionImport(name, mode);
+  }
   ac::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<ac::TextureImportId> id) const override {
     return host_.metallicRoughnessImportStatus(id);
+  }
+  ac::TextureImportStatusResult occlusionImportStatus(std::optional<ac::TextureImportId> id) const override {
+    return host_.occlusionImportStatus(id);
   }
   ac::MaterialReadResult materialReadWithMetallicRoughness(const as::AssetGuid& guid) const override {
     return host_.materialReadWithMetallicRoughness(guid);
   }
+  ac::MaterialReadResult materialReadWithOcclusion(const as::AssetGuid& guid) const override {
+    return host_.materialReadWithOcclusion(guid);
+  }
   ac::MaterialSaveResult materialSaveWithMetallicRoughness(const ac::MaterialSave& request) override {
     return host_.materialSaveWithMetallicRoughness(request);
+  }
+  ac::MaterialSaveResult materialSaveWithOcclusion(const ac::MaterialSave& request) override {
+    return host_.materialSaveWithOcclusion(request);
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
     return host_.previewMaterialDraftWithMetallicRoughness(guid, recipe);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return host_.previewMaterialDraftWithOcclusion(guid, recipe);
   }
  private:
   connection::AssetConnection& host_;

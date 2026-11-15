@@ -113,7 +113,8 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   // Plan 0046 Milestone 1 (ADR-0096): emissiveTexture cross-validated
   // identically.
   if (artifact.emissiveTexture != metadata.emissiveTexture ||
-      artifact.metallicRoughnessMap != metadata.metallicRoughnessMap) {
+      artifact.metallicRoughnessMap != metadata.metallicRoughnessMap ||
+      artifact.occlusionMap != metadata.occlusionMap) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
 
@@ -144,6 +145,7 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   data.alphaCutoff = artifact.alphaCutoff;
   data.emissiveTexture = artifact.emissiveTexture;
   data.metallicRoughnessMap = artifact.metallicRoughnessMap;
+  data.occlusionMap = artifact.occlusionMap;
   return ResultT::Ok(std::move(data));
 }
 

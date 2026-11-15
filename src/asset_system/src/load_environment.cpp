@@ -1,6 +1,9 @@
 #include <atlantis/asset_system/load_environment.h>
 
+#include "preview_file.h"
+
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/asset_system/cook_environment.h>
 #include <atlantis/asset_system/environment_artifact.h>
 #include <atlantis/asset_system/environment_metadata.h>
 
@@ -37,17 +40,9 @@ namespace {
 
 }  // namespace
 
-atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsset(
-    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+static atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> decodeEnvironment(
+    const std::vector<std::byte>& artifactBytes, std::string_view metadataText) {
   using ResultT = atlantis::Result<EnvironmentAssetData, EnvironmentLoadError>;
-  std::vector<std::byte> artifactBytes;
-  if (!readFileBytes(artifactPath, artifactBytes)) {
-    return ResultT::Err(EnvironmentLoadError::ArtifactFileUnreadable);
-  }
-  std::string metadataText;
-  if (!readFileText(metadataPath, metadataText)) {
-    return ResultT::Err(EnvironmentLoadError::MetadataFileUnreadable);
-  }
   auto artifactResult = decodeEnvironmentArtifact(artifactBytes);
   if (artifactResult.isErr()) return ResultT::Err(EnvironmentLoadError::ArtifactDecodeFailed);
   auto metadataResult = parseEnvironmentMetadata(metadataText);
@@ -61,6 +56,40 @@ atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsse
     return ResultT::Err(EnvironmentLoadError::MetadataArtifactMismatch);
   }
   return ResultT::Ok(std::move(artifact.data));
+}
+
+atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsset(
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+  using R = atlantis::Result<EnvironmentAssetData, EnvironmentLoadError>;
+  std::vector<std::byte> artifact;
+  if (!readFileBytes(artifactPath, artifact)) return R::Err(EnvironmentLoadError::ArtifactFileUnreadable);
+  std::string metadata;
+  if (!readFileText(metadataPath, metadata)) return R::Err(EnvironmentLoadError::MetadataFileUnreadable);
+  return decodeEnvironment(artifact, metadata);
+}
+
+atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadPreviewStudioEnvironment(
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+  using R = atlantis::Result<EnvironmentAssetData, EnvironmentLoadError>;
+  constexpr auto maxArtifactBytes = [] {
+    std::size_t bytes = kEnvironmentArtifactHeaderSizeBytes + kEnvironmentShPayloadSizeBytes +
+                        kCookedEnvironmentDfgSize * kCookedEnvironmentDfgSize * 4u;
+    for (auto size = kCookedEnvironmentFaceSize; size > 0; size /= 2) bytes += size * size * 6u * 8u;
+    return bytes;
+  }();
+  std::vector<std::byte> artifact;
+  if (detail::readPreviewFile(artifactPath, maxArtifactBytes, artifact))
+    return R::Err(EnvironmentLoadError::ArtifactFileUnreadable);
+  std::string metadata;
+  if (detail::readPreviewFile(metadataPath, 64u * 1024u, metadata))
+    return R::Err(EnvironmentLoadError::MetadataFileUnreadable);
+  auto decoded = decodeEnvironment(artifact, metadata);
+  if (decoded.isErr()) return decoded;
+  const auto& data = decoded.value();
+  if (data.faceSize != kCookedEnvironmentFaceSize || data.mipCount != kCookedEnvironmentMipCount ||
+      data.dfgWidth != kCookedEnvironmentDfgSize || data.dfgHeight != kCookedEnvironmentDfgSize)
+    return R::Err(EnvironmentLoadError::MetadataArtifactMismatch);
+  return decoded;
 }
 
 }  // namespace atlantis::asset_system

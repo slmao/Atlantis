@@ -472,12 +472,13 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   pbrDirectLitNormalMapVertexInputLayout_ = std::move(pbrDirectLitNormalMapLayoutOpt.value());
 
   for (const auto& [path, target] : {
+           std::pair{&config.pbrIblOcclusionFragmentShaderSpirvPath, &occlusionFragmentSpirv_},
            std::pair{&config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath, &packedFragmentSpirv_},
            std::pair{&config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath, &packedNormalFragmentSpirv_}}) {
     if (path->empty()) continue;
     auto words = loadSpirvFile(*path);
     if (!words) {
-      ATLANTIS_LOG_ERROR("Failed to load metallic-roughness shader SPIR-V from {}", *path);
+      ATLANTIS_LOG_ERROR("Failed to load mapped material shader SPIR-V from {}", *path);
       lifecycle_.markFailed();
       return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::ShaderLoadFailed);
     }
@@ -1896,7 +1897,8 @@ void RuntimeApplication::runFrame() {
                                  pbrAnisotropicIblNormalMapVertexInputLayout_, pbrAnisotropicIblNormalMapVertexSpirv_,
                                  pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                  sampledTextureResourceMap_, materialDataMap_, textureDataMap_,
-                                 *defaultEmissiveTexture_, packedFragmentSpirv_, packedNormalFragmentSpirv_);
+                                 *defaultEmissiveTexture_, packedFragmentSpirv_, packedNormalFragmentSpirv_,
+                                 occlusionFragmentSpirv_);
   }
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -2150,8 +2152,8 @@ void RuntimeApplication::runFrame() {
         sampledTextureResourceMap_.emplace(candidate.emissiveTextureAssetId,
                                             std::move(candidate.newEmissiveTexture));
       }
-      if (candidate.newPackedTexture) {
-        sampledTextureResourceMap_.emplace(candidate.packedTextureAssetId, std::move(candidate.newPackedTexture));
+      if (candidate.newSurfaceDataTexture) {
+        sampledTextureResourceMap_.emplace(candidate.surfaceDataTextureAssetId, std::move(candidate.newSurfaceDataTexture));
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));

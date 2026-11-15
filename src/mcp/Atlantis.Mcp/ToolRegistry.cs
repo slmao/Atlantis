@@ -59,11 +59,18 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             AssetModel, ToolSchemas.MaterialDraftParameters()),
         Declare("assets.material_read_with_metallic_roughness", "assets.materialReadWithMetallicRoughness",
             "Read the opaque PBR recipe including its metallic-roughness slot.", AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
+        Declare("assets.material_read_with_occlusion", "assets.materialReadWithOcclusion",
+            "Read the opaque PBR recipe including its occlusion slot.", AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
         Declare("assets.material_save_with_metallic_roughness", "assets.materialSaveWithMetallicRoughness",
             "Admit one complete material recipe job. Retain the receipt and confirm settlement before retrying.",
             RebuildModel, ToolSchemas.MaterialSaveParameters(withMetallicRoughness: true)),
+        Declare("assets.material_save_with_occlusion", "assets.materialSaveWithOcclusion",
+            "Admit one complete material recipe job. Retain the receipt and confirm settlement before retrying.",
+            RebuildModel, ToolSchemas.MaterialSaveParameters(withOcclusion: true)),
         Declare("assets.preview_material_draft_with_metallic_roughness", "assets.previewMaterialDraftWithMetallicRoughness",
             "Render a complete draft on a cooked mesh.", AssetModel, ToolSchemas.MaterialDraftParameters(withMetallicRoughness: true)),
+        Declare("assets.preview_material_draft_with_occlusion", "assets.previewMaterialDraftWithOcclusion",
+            "Render a complete draft on a cooked mesh.", AssetModel, ToolSchemas.MaterialDraftParameters(withOcclusion: true)),
         Declare("assets.material_read_with_maps", "assets.materialReadWithMaps", "Read the complete opaque PBR recipe.",
             AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
         Declare("assets.material_save_with_maps", "assets.materialSaveWithMaps", "Admit a complete PBR recipe job. Keep the job ID. " +
@@ -85,7 +92,11 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             RebuildModel, ToolSchemas.RebuildStatusParameters()),
         Declare("assets.metallic_roughness_import", "assets.metallicRoughnessImport", "Register one managed linear metallic-roughness inbox PNG or resume its committed registration.",
             RebuildModel, ToolSchemas.ImportParameters()),
+        Declare("assets.occlusion_import", "assets.occlusionImport", "Register one managed linear occlusion inbox PNG or resume its committed registration.",
+            RebuildModel, ToolSchemas.ImportParameters()),
         Declare("assets.metallic_roughness_import_status", "assets.metallicRoughnessImportStatus", "Read-only status for a metallic-roughness job and the independent workspace repair state.",
+            RebuildModel, ToolSchemas.RebuildStatusParameters()),
+        Declare("assets.occlusion_import_status", "assets.occlusionImportStatus", "Read-only status for a occlusion job and the independent workspace repair state.",
             RebuildModel, ToolSchemas.RebuildStatusParameters()),
         Declare("assets.rebuild", "assets.rebuild", "Admit a rebuild for an existing asset GUID. Poll rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String))),
@@ -178,10 +189,12 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
                 "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or
                 "assets.previewMaterialDraftWithMaps" or "assets.materialReadWithMetallicRoughness" or
-                "assets.materialSaveWithMetallicRoughness" or "assets.previewMaterialDraftWithMetallicRoughness")
+                "assets.materialSaveWithMetallicRoughness" or "assets.previewMaterialDraftWithMetallicRoughness" or
+                "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion")
                 return MaterialOperation(mapping.Method, wireParameters);
             if (mapping.Method is "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
-                "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus")
+                "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or
+                "assets.occlusionImport" or "assets.occlusionImportStatus")
                 return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
@@ -257,8 +270,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
 
     private CallToolResult TextureOperation(string method, JsonValue parameters)
     {
-        bool start = method is "assets.textureImport" or "assets.normalMapImport" or "assets.metallicRoughnessImport";
-        string kind = method.StartsWith("assets.metallicRoughness", StringComparison.Ordinal) ? "Metallic-roughness map" :
+        bool start = method is "assets.textureImport" or "assets.normalMapImport" or "assets.metallicRoughnessImport" or "assets.occlusionImport";
+        string kind = method.StartsWith("assets.occlusion", StringComparison.Ordinal) ? "Occlusion map" :
+            method.StartsWith("assets.metallicRoughness", StringComparison.Ordinal) ? "Metallic-roughness map" :
             method.StartsWith("assets.normalMap", StringComparison.Ordinal) ? "Normal map" : "Texture";
         string? name = parameters.Find("name")?.AsString, mode = parameters.Find("mode")?.AsString;
         if (start && !Codec.ValidImportName(name)) return Error("InvalidArguments: invalid texture import name");
@@ -304,12 +318,13 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         var mesh = GuidMember("mesh");
         var job = GuidMember("jobId");
         bool withMaps = method.EndsWith("WithMaps", StringComparison.Ordinal);
+        bool withOcclusion = method.EndsWith("WithOcclusion", StringComparison.Ordinal);
         bool withMetallicRoughness = method.EndsWith("WithMetallicRoughness", StringComparison.Ordinal);
-        bool read = method is "assets.materialRead" or "assets.materialReadWithMaps" or "assets.materialReadWithMetallicRoughness";
-        bool save = method is "assets.materialSave" or "assets.materialSaveWithMaps" or "assets.materialSaveWithMetallicRoughness";
-        bool preview = method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness";
-        var request = save ? Codec.DecodeMaterialSave(parameters, withMaps, withMetallicRoughness) : null;
-        var recipe = parameters.Find("recipe") is JsonValue fields ? Codec.DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness) : null;
+        bool read = method is "assets.materialRead" or "assets.materialReadWithMaps" or "assets.materialReadWithMetallicRoughness" or "assets.materialReadWithOcclusion";
+        bool save = method is "assets.materialSave" or "assets.materialSaveWithMaps" or "assets.materialSaveWithMetallicRoughness" or "assets.materialSaveWithOcclusion";
+        bool preview = method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness" or "assets.previewMaterialDraftWithOcclusion";
+        var request = save ? Codec.DecodeMaterialSave(parameters, withMaps, withMetallicRoughness, withOcclusion) : null;
+        var recipe = parameters.Find("recipe") is JsonValue fields ? Codec.DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness, withOcclusion) : null;
         if (read && material is null || save && request is null ||
             method == "assets.materialStatus" && parameters.Find("jobId") is not null && job is null ||
             preview && (mesh is null || recipe is null))
@@ -336,21 +351,21 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         if (result.Find("err") is JsonValue refused)
         {
             var refusal = Codec.DecodeMaterialError(refused);
-            return refusal is not null && (!(withMaps || withMetallicRoughness) || refusal != A.MaterialError.Unsupported)
+            return refusal is not null && (!(withMaps || withMetallicRoughness || withOcclusion) || refusal != A.MaterialError.Unsupported)
                 ? Forward(result, true) : Malformed();
         }
         if (result.Find("ok") is not JsonValue ok) return Malformed();
         if (read)
-            return Codec.DecodeMaterialRead(ok, withMaps, withMetallicRoughness)?.Material == material ? Forward(result, false) : Malformed();
+            return Codec.DecodeMaterialRead(ok, withMaps, withMetallicRoughness, withOcclusion)?.Material == material ? Forward(result, false) : Malformed();
         if (request is not null)
             return Codec.DecodeMaterialJob(ok) is { State: A.RebuildState.Running } receipt && receipt.Target == request.Target
                 ? Forward(result, false) : Malformed();
         if (method == "assets.materialStatus")
             return Codec.DecodeMaterialStatus(ok) is A.MaterialStatus status && (job is null || status.Job?.Id.Value == job)
                 ? Forward(result, status.Job?.State == A.RebuildState.Failed) : Malformed();
-        var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness);
+        var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness, withOcclusion);
         return image is null ? Malformed() : ForwardPreview(JsonValue.NewObject().Set("mesh", Codec.Encode(image.Mesh))
-            .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness)), image.Width, image.Height, image.PngBytes);
+            .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness, withOcclusion)), image.Width, image.Height, image.PngBytes);
     }
 
     private CallToolResult PreviewMesh(JsonValue parameters)

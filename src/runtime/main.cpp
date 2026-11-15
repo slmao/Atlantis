@@ -249,6 +249,10 @@ int main(int argc, char** argv) {
   config.pbrIblVertexShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.spv";
   config.pbrIblVertexShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.vert.refl.json";
+  config.previewStudioArtifactPath = ATLANTIS_RUNTIME_ENVIRONMENT_ARTIFACT_PATH;
+  config.previewStudioMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
+  config.pbrIblOcclusionFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl_occlusion.frag.spv";
   config.pbrIblFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.refl.json";
@@ -434,8 +438,9 @@ int main(int argc, char** argv) {
                                     const atlantis::asset_system::TextureAssetData& texture,
                        const atlantis::asset_system::TextureAssetData* normal,
                        const atlantis::asset_system::TextureAssetData* emissive,
-                       const atlantis::asset_system::TextureAssetData* packed) {
-         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed);
+                       const atlantis::asset_system::TextureAssetData* packed,
+                       const atlantis::asset_system::TextureAssetData* occlusion, bool studioIbl) {
+         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed, occlusion, studioIbl);
        }});
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks

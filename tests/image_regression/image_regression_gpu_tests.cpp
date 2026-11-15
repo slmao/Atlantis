@@ -212,6 +212,29 @@ TEST_CASE("Packed PBR maps multiply the right linear channels before shading",
   }
 }
 
+TEST_CASE("Studio preview occlusion uses linear red and keeps a neutral clear", "[image_regression][gpu][mesh_material_preview]") {
+  using Texel = std::array<std::uint8_t, 4>;
+  for (const float metallic : {0.0f, 1.0f}) {
+    const auto preview = [&](std::optional<Texel> ao) {
+      return renderPbrMapPreviewPixels(false, false, 0.1f, metallic, 0.7f, {}, true, ao);
+    };
+    const auto black = preview(Texel{0, 255, 255, 255});
+    const auto mid = preview(Texel{128, 29, 181, 8});
+    const auto ignored = preview(Texel{128, 182, 77, 230});
+    const auto white = preview(Texel{255, 0, 0, 0});
+    const auto clear = preview(std::nullopt);
+    REQUIRE(black);
+    REQUIRE(mid);
+    REQUIRE(ignored);
+    REQUIRE(white);
+    REQUIRE(clear);
+    CHECK(white->rgba8 == clear->rgba8);
+    CHECK(mid->rgba8 == ignored->rgba8);
+    CHECK(black->rgba8 != mid->rgba8);
+    CHECK(mid->rgba8 != white->rgba8);
+  }
+}
+
 TEST_CASE("Headless material preview samples an uploaded nonzero RGBA8 mip",
           "[image_regression][gpu][mesh_material_preview]") {
   const auto mipped = renderMeshMaterialPreviewPixels(kPreviewDielectricGuid, true);

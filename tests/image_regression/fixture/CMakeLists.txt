@@ -23,6 +23,9 @@ add_library(atlantis_image_regression_fixture STATIC
 target_compile_definitions(atlantis_image_regression_fixture PRIVATE
   ATLANTIS_PREVIEW_MINIMAL_DIR="${ATLANTIS_minimal_mesh_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_NORMAL_DIR="${ATLANTIS_pbr_direct_lit_normal_map_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PREVIEW_IBL_DIR="${ATLANTIS_pbr_ibl_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PREVIEW_STUDIO_ARTIFACT="${ATLANTIS_ibl_studio_ARTIFACT_PATH}"
+  ATLANTIS_PREVIEW_STUDIO_METADATA="${ATLANTIS_ibl_studio_METADATA_PATH}"
   ATLANTIS_PREVIEW_PBR_DIR="${ATLANTIS_pbr_direct_lit_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_PACKED_DIR="${ATLANTIS_pbr_direct_lit_metallic_roughness_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_NORMAL_PACKED_DIR="${ATLANTIS_pbr_direct_lit_normal_map_metallic_roughness_SHADER_OUTPUT_DIR}"
@@ -31,7 +34,8 @@ target_compile_definitions(atlantis_image_regression_fixture PRIVATE
 add_dependencies(atlantis_image_regression_fixture
   atlantis_asset_catalog minimal_mesh_shaders pbr_direct_lit_shaders pbr_direct_lit_normal_map_shaders
   pbr_direct_lit_metallic_roughness_shaders pbr_direct_lit_normal_map_metallic_roughness_shaders
-  shadow_cast_shaders output_transform_unorm_shaders)
+  shadow_cast_shaders output_transform_unorm_shaders pbr_ibl_shaders pbr_ibl_occlusion_shaders
+  ${ATLANTIS_ibl_studio_TARGET})
 
 target_include_directories(atlantis_image_regression_fixture
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}

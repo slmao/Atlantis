@@ -197,9 +197,9 @@ TEST_CASE("asset system schema: MaterialAssetData", "[asset_system][schema]") {
   [[maybe_unused]] const auto& [kind, textureAsset, filter, addressMode, baseColorFactor, metallicFactor,
                                 roughnessFactor, normalMapTexture, clearcoatFactor, clearcoatRoughness, sheenColor,
                                 sheenRoughness, anisotropyFactor, anisotropyRotation, emissiveFactor, alphaMode,
-                                alphaCutoff, emissiveTexture, metallicRoughnessMap] = MaterialAssetData{};
+                                alphaCutoff, emissiveTexture, metallicRoughnessMap, occlusionMap] = MaterialAssetData{};
   const TypeDescriptor& type = requireType("asset_system::MaterialAssetData");
-  CHECK(type.fields.size() == 19);
+  CHECK(type.fields.size() == 20);
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, kind), kData);
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, textureAsset), kAssetRef);
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, filter), kData);
@@ -219,6 +219,7 @@ TEST_CASE("asset system schema: MaterialAssetData", "[asset_system][schema]") {
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, alphaCutoff), kData);
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, emissiveTexture), kAssetRef);
   expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, metallicRoughnessMap), kAssetRef);
+  expectField(type, ATLANTIS_SCHEMA_PROBE(MaterialAssetData, occlusionMap), kAssetRef);
 }
 
 TEST_CASE("asset system schema: material enums", "[asset_system][schema]") {

@@ -35,6 +35,10 @@ internal static partial class Program
     private static readonly string PackedRecipe = $$$"""{"values":{{{PackedValues}}},"filter":"Linear","address":"Repeat"}""";
     private static readonly string PackedArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{PackedRecipe}}}}""";
     private static readonly string PackedMetadata = $$$"""{"ok":{"mesh":"{{{Entity}}}","recipe":{{{PackedRecipe}}},"width":256,"height":256,"mimeType":"image/png"}}""";
+    private static readonly string OcclusionValues = $$$"""{"texture":"{{{Material}}}","color":[1,0.5,1],"metallic":0,"roughness":0.5,"normalMap":null,"emissiveTexture":"{{{Material}}}","emissiveFactor":[2,0,1],"metallicRoughnessMap":null,"occlusionMap":"{{{Entity}}}"}""";
+    private static readonly string OcclusionRecipe = $$$"""{"values":{{{OcclusionValues}}},"filter":"Linear","address":"Repeat"}""";
+    private static readonly string OcclusionArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{OcclusionRecipe}}}}""";
+    private static readonly string OcclusionMetadata = $$$"""{"ok":{"mesh":"{{{Entity}}}","recipe":{{{OcclusionRecipe}}},"width":256,"height":256,"mimeType":"image/png"}}""";
     private const string TypeId = "0x123456789abcdef0";
     private const string FieldId = "0xfedcba9876543210";
     private static readonly string WorldAddress = $$$"""{"entity":"{{{Entity}}}","component":"{{{TypeId}}}","field":"{{{FieldId}}}"}""";
@@ -66,6 +70,11 @@ internal static partial class Program
         ("assets.material_save_with_metallic_roughness", "assets.materialSaveWithMetallicRoughness", $$$"""{"mode":"Create","name":"sample","values":{{{PackedValues}}}}""",
             $$$"""{"ok":{"mode":"Create","name":"sample","jobId":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.preview_material_draft_with_metallic_roughness", "assets.previewMaterialDraftWithMetallicRoughness", PackedArgs, PackedMetadata),
+        ("assets.material_read_with_occlusion", "assets.materialReadWithOcclusion", $$$"""{"material":"{{{Material}}}"}""",
+            $$$"""{"ok":{"material":"{{{Material}}}","recipe":{{{OcclusionRecipe}}},"editable":false,"activeGeneration":null}}"""),
+        ("assets.material_save_with_occlusion", "assets.materialSaveWithOcclusion", $$$"""{"mode":"Create","name":"sample","values":{{{OcclusionValues}}}}""",
+            $$$"""{"ok":{"mode":"Create","name":"sample","jobId":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.preview_material_draft_with_occlusion", "assets.previewMaterialDraftWithOcclusion", OcclusionArgs, OcclusionMetadata),
         ("assets.import", "assets.import", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.import_status", "assets.importStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
@@ -80,6 +89,10 @@ internal static partial class Program
         ("assets.metallic_roughness_import", "assets.metallicRoughnessImport", """{"name":"sample","mode":"Register"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
         ("assets.metallic_roughness_import_status", "assets.metallicRoughnessImportStatus", "{}",
+            """{"ok":{"activeGeneration":null,"job":null,"workspaceNeedsRepair":true}}"""),
+        ("assets.occlusion_import", "assets.occlusionImport", """{"name":"sample","mode":"Register"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","name":"sample","mode":"Register","state":"Running"}}"""),
+        ("assets.occlusion_import_status", "assets.occlusionImportStatus", "{}",
             """{"ok":{"activeGeneration":null,"job":null,"workspaceNeedsRepair":true}}"""),
         ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
@@ -183,8 +196,8 @@ internal static partial class Program
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
-                (c.Tool is "assets.texture_import" or "assets.normal_map_import" or "assets.metallic_roughness_import") ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
-                (c.Tool is "assets.material_save" or "assets.material_save_with_maps" or "assets.material_save_with_metallic_roughness") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
+                (c.Tool is "assets.texture_import" or "assets.normal_map_import" or "assets.metallic_roughness_import" or "assets.occlusion_import") ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
+                (c.Tool is "assets.material_save" or "assets.material_save_with_maps" or "assets.material_save_with_metallic_roughness" or "assets.material_save_with_occlusion") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
                 c.Tool == "assets.material_status" ? description.Contains("not a receipt") && description.Contains("Runtime restart") :
                 c.Tool.StartsWith("assets.") ? description.Contains("Read-only") && description.Contains("Runtime restart") :
                 description.Contains("authoring.apply") && (c.Tool.StartsWith("authoring.")
@@ -461,7 +474,8 @@ internal static partial class Program
             if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
                 "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
-                "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "authoring.saveAs" or "authoring.createScene")
+                "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
+                "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or "authoring.saveAs" or "authoring.createScene")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

@@ -469,6 +469,21 @@ peer. A lost write receipt leaves the outcome unknown. See
 [Spec 0098](../specs/0098-metallic-roughness-texture.md) and
 [ADR-0157](../adr/0157-metallic-roughness-texture.md).
 
+### 5.2.7 Occlusion (Spec 0099 / ADR-0158)
+
+`assets.occlusionImport` and `assets.occlusionImportStatus` use the
+existing texture shapes and the shared worker. Receipts filter to the
+canonical managed Occlusion role. `assets.materialReadWithOcclusion`,
+`assets.materialSaveWithOcclusion` and `assets.previewMaterialDraftWithOcclusion`
+use the 0098 recipe with a required `occlusionMap` (canonical non-nil GUID
+or null) in every values arm, including Edit `expected`. A bound map
+requires both `normalMap` and `metallicRoughnessMap` to be null. Older
+recipes refuse a bound origin before staging. `assets.materialStatus` and
+`assets.previewMeshMaterial` retain their wire shapes. The server echoes
+the complete draft recipe and uses fixed studio lighting for compatible
+new draft calls and bound cooked pairs. [Spec 0099](../specs/0099-occlusion-texture.md)
+and [ADR-0158](../adr/0158-occlusion-texture.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

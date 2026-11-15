@@ -77,6 +77,7 @@ namespace atlantis::asset_system {
 // precedent. No dual-version reader.
 inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 9;
 inline constexpr std::uint32_t kMappedMaterialArtifactSchemaVersion = 10;
+inline constexpr std::uint32_t kOcclusionMaterialArtifactSchemaVersion = 11;
 inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 124;
 
 // The value encodeMaterialArtifact()'s trailing emissive argument
@@ -125,6 +126,7 @@ struct DecodedMaterialArtifact {
   // (non-zero) only for the PBR kinds -- enforced at parse time, not here.
   AssetId emissiveTexture = 0;
   AssetId metallicRoughnessMap = 0;
+  AssetId occlusionMap = 0;
   std::uint32_t schemaVersion = kMaterialArtifactSchemaVersion;
 };
 
@@ -148,7 +150,8 @@ struct DecodedMaterialArtifact {
                                                              MaterialAlphaMode alphaMode = MaterialAlphaMode::Opaque,
                                                              float alphaCutoff = 0.5f,
                                                              AssetId emissiveTexture = 0,
-                                                             AssetId metallicRoughnessMap = 0);
+                                                             AssetId metallicRoughnessMap = 0,
+                                                             AssetId occlusionMap = 0);
 
 [[nodiscard]] atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMaterialArtifact(
     const std::vector<std::byte>& bytes);

@@ -91,6 +91,7 @@ constexpr std::array kMaterialFields{
     primitive(kMaterial, "alphaCutoff", PrimitiveKind::Float32, kData, offsetof(M, alphaCutoff)),
     primitive(kMaterial, "emissiveTexture", PrimitiveKind::UInt64, kAssetRef, offsetof(M, emissiveTexture)),
     primitive(kMaterial, "metallicRoughnessMap", PrimitiveKind::UInt64, kAssetRef, offsetof(M, metallicRoughnessMap)),
+    primitive(kMaterial, "occlusionMap", PrimitiveKind::UInt64, kAssetRef, offsetof(M, occlusionMap)),
 };
 
 constexpr std::array kMaterialKindConstants{
