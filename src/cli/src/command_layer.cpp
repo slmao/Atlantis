@@ -1444,6 +1444,47 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
                                         "this connection carries no Runtime control"));
     }
     if (t[1] == "camera") {
+      if (t.size() >= 3 && t[2] == "navigation") {
+        constexpr std::string_view usage = "runtime camera navigation [GUID ...]";
+        if (t.size() - 3 > connection::kMaxViewportNavigationTargets) {
+          return failed(command, usageError(std::string(usage)));
+        }
+        std::vector<EntityGuid> targets;
+        for (std::size_t i = 3; i < t.size(); ++i) {
+          const auto entity = text::parseEntity(t[i]);
+          if (entity.isErr()) return failed(command, usageError(std::string(usage)));
+          targets.push_back(entity.value());
+        }
+        if (!connection::validViewportNavigationTargets(targets)) return failed(command, usageError(std::string(usage)));
+        const auto result = control_->viewportNavigation(targets);
+        if (result.isErr()) {
+          const auto& error = result.error();
+          return failed(command, plainError(std::string(connection::toString(error.code)), ErrorCategory::Runtime,
+              error.target ? "viewport navigation failed for " + text::formatEntity(*error.target)
+                           : "viewport navigation failed"));
+        }
+        const auto& value = result.value();
+        Value camera = Value::object();
+        camera.set("worldMatrix", floatsJson(value.sceneCamera.worldMatrix));
+        camera.set("fovYRadians", Value::number(value.sceneCamera.fovYRadians));
+        camera.set("nearZ", Value::number(value.sceneCamera.nearZ));
+        camera.set("farZ", Value::number(value.sceneCamera.farZ));
+        Value bounds = Value::array();
+        for (const auto& bound : value.bounds) {
+          Value item = Value::object();
+          item.set("entity", Value::string(text::formatEntity(bound.entity)));
+          item.set("kind", Value::string(bound.kind == connection::ViewportBoundsKind::Mesh ? "mesh" : "origin"));
+          item.set("min", floatsJson(bound.min));
+          item.set("max", floatsJson(bound.max));
+          bounds.push(std::move(item));
+        }
+        Value navigation = Value::object();
+        navigation.set("sceneGeneration", Value::number(value.sceneGeneration));
+        navigation.set("sceneCamera", std::move(camera));
+        navigation.set("bounds", std::move(bounds));
+        const std::string description = connection::json::write(navigation) + "\n";
+        return done(command, description, std::move(navigation));
+      }
       constexpr std::string_view kUsage =
           "runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear";
       if (t.size() == 3 && t[2] == "clear") {

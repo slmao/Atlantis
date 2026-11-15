@@ -187,6 +187,24 @@ public sealed class EditorCamera
     public float FlySpeed => _flySpeed;
     public CameraLens Lens => _lens;
 
+    public EditorCamera Copy() => (EditorCamera)MemberwiseClone();
+
+    public void SeedNavigation(CameraPose pose)
+    {
+        _pivotDistance = DefaultPivotDistance;
+        Reset(pose);
+    }
+
+    internal void PlaceAtPivot(Vector3 pivot, double distance, float? yaw = null, float pitch = 0)
+    {
+        _resetWorldMatrix = null;
+        if (yaw is float direction) SetDirection(direction, pitch);
+        _pivotDistance = (float)distance;
+        Vector3 forward = Forward();
+        _eye = new((float)(pivot.X - forward.X * distance), (float)(pivot.Y - forward.Y * distance),
+                   (float)(pivot.Z - forward.Z * distance));
+    }
+
     /// <summary>True once a navigation has moved the camera off the pose it was reset to.</summary>
     public bool Navigated => _resetWorldMatrix is null;
 

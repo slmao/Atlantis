@@ -130,6 +130,8 @@ internal static partial class Program
         ("control.resume", "control.resume", "{}", "null"),
         ("control.step", "control.step", """{"request":{"frames":2,"image":null,"withOverlay":true}}""", """{"ok":{"frame":2,"applied":true,"data":{"directionalLights":[],"pointLights":[],"view":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"projection":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"drawItemCount":3},"image":null}}"""),
         ("control.raycast", "control.raycast", """{"ray":{"origin":[0,1,2],"direction":[0,0,-1]}}""", $$$"""{"ok":{"entity":"{{{Entity}}}","distance":1e-05}}"""),
+        ("control.viewport_navigation", "control.viewportNavigation", $$$"""{"targets":["{{{Entity}}}"]}""",
+            $$$"""{"ok":{"sceneGeneration":2,"sceneCamera":{"worldMatrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,10,1],"fovYRadians":1,"nearZ":0.25,"farZ":100},"bounds":[{"entity":"{{{Entity}}}","kind":"origin","min":[1,2,3],"max":[1,2,3]}]}}"""),
         ("control.set_viewport_camera", "control.setViewportCamera", "{\"camera\":" + Camera + "}", "null"),
         ("control.set_viewport_overlay", "control.setViewportOverlay", """{"overlay":{"selection":[],"groups":[]}}""", """{"ok":null}"""),
         ("control.diagnostics", "control.diagnostics", """{"after":18446744073709551615,"max":20}""", """{"entries":[{"sequence":2,"severity":"warning","message":"原样\n<&>"}],"latest":2,"dropped":0}"""),
@@ -494,7 +496,7 @@ internal static partial class Program
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
-                "authoring.saveAs" or "authoring.createScene")
+                "authoring.saveAs" or "authoring.createScene" or "control.viewportNavigation")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

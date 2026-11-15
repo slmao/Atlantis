@@ -5,10 +5,12 @@
 #include <atlantis/result.h>
 
 #include <array>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -100,6 +102,59 @@ struct ViewportCamera {
   friend bool operator==(const ViewportCamera&, const ViewportCamera&) = default;
 };
 
+inline constexpr std::size_t kMaxViewportNavigationTargets = 64;
+[[nodiscard]] inline bool validViewportNavigationTargets(
+    std::span<const atlantis::asset_system::EntityGuid> targets) {
+  if (targets.size() > kMaxViewportNavigationTargets) return false;
+  for (auto it = targets.begin(); it != targets.end(); ++it) {
+    if (*it == atlantis::asset_system::EntityGuid{} || std::find(targets.begin(), it, *it) != it) return false;
+  }
+  return true;
+}
+enum class ViewportBoundsKind { Mesh, Origin };
+
+struct ViewportBounds {
+  atlantis::asset_system::EntityGuid entity;
+  ViewportBoundsKind kind = ViewportBoundsKind::Origin;
+  std::array<float, 3> min{};
+  std::array<float, 3> max{};
+  friend bool operator==(const ViewportBounds&, const ViewportBounds&) = default;
+};
+
+struct ViewportNavigation {
+  std::uint64_t sceneGeneration = 0;
+  ViewportCamera sceneCamera;
+  std::vector<ViewportBounds> bounds;
+  friend bool operator==(const ViewportNavigation&, const ViewportNavigation&) = default;
+};
+
+enum class ViewportNavigationError {
+  InvalidRequest, SceneCameraUnavailable, TargetUnavailable, GeometryUnavailable, InvalidBounds,
+  Unsupported, TransportFailure, RpcFailure, ProtocolFailure,
+};
+
+[[nodiscard]] constexpr std::string_view toString(ViewportNavigationError error) noexcept {
+  switch (error) {
+    case ViewportNavigationError::InvalidRequest: return "InvalidRequest";
+    case ViewportNavigationError::SceneCameraUnavailable: return "SceneCameraUnavailable";
+    case ViewportNavigationError::TargetUnavailable: return "TargetUnavailable";
+    case ViewportNavigationError::GeometryUnavailable: return "GeometryUnavailable";
+    case ViewportNavigationError::InvalidBounds: return "InvalidBounds";
+    case ViewportNavigationError::Unsupported: return "Unsupported";
+    case ViewportNavigationError::TransportFailure: return "TransportFailure";
+    case ViewportNavigationError::RpcFailure: return "RpcFailure";
+    case ViewportNavigationError::ProtocolFailure: return "ProtocolFailure";
+  }
+  return "(unrecognized ViewportNavigationError)";
+}
+
+struct ViewportNavigationFailure {
+  ViewportNavigationError code;
+  std::optional<atlantis::asset_system::EntityGuid> target = std::nullopt;
+  friend bool operator==(const ViewportNavigationFailure&, const ViewportNavigationFailure&) = default;
+};
+using ViewportNavigationResult = atlantis::Result<ViewportNavigation, ViewportNavigationFailure>;
+
 // Spec 0064 / ADR-0128 D2: a world-space ray (the direction unit length) and
 // the entity it hits first, with the distance along the ray.
 struct Ray {
@@ -187,6 +242,13 @@ class RuntimeControl {
   // current WorldMatrix (both triangle faces, alpha masks ignored; ADR-0123
   // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.
   [[nodiscard]] virtual atlantis::Result<std::optional<RayHit>, ControlError> raycast(const Ray& ray) = 0;
+  // ADR-0165: owned values from a single live scene sample, in target order.
+  // Targets are borrowed for this call only. An empty span asks for the active
+  // scene camera without an override or any geometry read.
+  [[nodiscard]] virtual ViewportNavigationResult viewportNavigation(
+      std::span<const atlantis::asset_system::EntityGuid>) {
+    return ViewportNavigationResult::Err({ViewportNavigationError::Unsupported});
+  }
   // Spec 0066 R2 / ADR-0132 D2: the calling client's Viewport overlay, drawn
   // from the next frame on, replaced whole; none clears it. Each client has
   // its own, the frame draws the union of all clients', and a client's

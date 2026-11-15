@@ -1562,6 +1562,9 @@ only under `BootstrapConfig::retainPickGeometry`, ADR-0123 D2 — set by
 ADR-0128 D2). Since Spec 0064 (ADR-0128 D1) `RuntimeControlHost` also carries
 `setViewportCamera` and `raycast`: the control camera is drawn at the same
 place 5 when no overlay supplies one, and `raycast` is `pickRenderable()`;
+[ADR-0165](../adr/0165-shared-viewport-navigation-query.md) adds an on-demand
+read of the active scene camera and selected World bounds through the same
+RuntimeControl boundary, using existing retained CPU geometry and live transforms;
 and `atlantis_runtime --parent-window <HWND>` (command line only, not with
 `--editor`) runs the Runtime in Platform's child-window mode, writing the
 session file — with the child's handle in its `window` field — once the first

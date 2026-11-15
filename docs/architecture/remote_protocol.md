@@ -142,6 +142,7 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 | `control.step` (parked) | `request: {"frames":<n>,"image":null\|"<path>","withOverlay":bool}` | `{"ok":<FrameReport>}` or `{"err":"<ControlError>"}` |
 | `control.diagnostics` | `after: <n>, max: <n>` | `{"entries":[…],"latest":<n>,"dropped":<n>}` |
 | `control.setViewportCamera` | `camera: <ViewportCamera>\|null` | `null` |
+| `control.viewportNavigation` | `targets: [<entity GUID>, …]` | `{"ok":{"sceneGeneration":<n>,"sceneCamera":<ViewportCamera>,"bounds":[…]}}\|{"err":{"code":<name>,"target"?:<entity GUID>}}` |
 | `control.raycast` | `ray: <Ray>` | `{"ok":<RayHit>\|null}` or `{"err":"<ControlError>"}` |
 | `control.setViewportOverlay` | `overlay: <ViewportOverlay>\|null` | `{"ok":null}` or `{"err":"InvalidRequest"}` |
 
@@ -153,6 +154,11 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 - a refused command is reported by `drainFailures` under its ticket.
 
 **The Viewport camera and the ray-cast** (Spec 0064, ADR-0128):
+- `control.viewportNavigation` reads one live Runtime snapshot of the active
+  scene camera before overrides, plus world-space bounds in the requested
+  order. Each bound has `entity`, `kind` (`mesh` or `origin`), `min` and
+  `max`. A camera-only read passes `[]`. The limit, error classification,
+  and mixed-version behavior follow [ADR-0165](../adr/0165-shared-viewport-navigation-query.md).
 - `control.setViewportCamera` replaces the camera the Runtime draws from,
   from its next frame; `null` restores the scene's active camera. The
   World's own camera entity is not touched. An in-process editor overlay's

@@ -61,6 +61,9 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
     return ResultT::Ok(connection::RayHit{hit->entity, hit->distance});
   };
   target.scene = application.sceneGuid();
+  target.viewportNavigation = [&application](std::span<const atlantis::asset_system::EntityGuid> targets) {
+    return application.viewportNavigation(targets);
+  };
   target.sceneGeneration = [&application] { return application.sceneGeneration(); };
   return target;
 }
@@ -151,6 +154,11 @@ connection::DiagnosticBatch RuntimeControlHost::diagnostics(std::uint64_t afterS
 
 void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCamera> camera) {
   if (target_.setViewportCamera) target_.setViewportCamera(camera);
+}
+
+connection::ViewportNavigationResult RuntimeControlHost::viewportNavigation(
+    std::span<const atlantis::asset_system::EntityGuid> targets) {
+  return target_.viewportNavigation ? target_.viewportNavigation(targets) : RuntimeControl::viewportNavigation(targets);
 }
 
 atlantis::Result<std::monostate, connection::ControlError> RuntimeControlHost::setViewportOverlay(

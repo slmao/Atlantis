@@ -66,6 +66,28 @@ public sealed record DiagnosticBatch(IReadOnlyList<Diagnostic> Entries, ulong La
 /// </summary>
 public sealed record ViewportCamera(IReadOnlyList<float> WorldMatrix, float FovYRadians, float NearZ, float FarZ);
 
+public enum ViewportBoundsKind { Mesh, Origin }
+
+public sealed record ViewportBounds(EntityGuid Entity, ViewportBoundsKind Kind, Vector3 Min, Vector3 Max);
+
+/// <summary>One Runtime scene sample. Bounds are in request order and the camera excludes any viewport override.</summary>
+public sealed record ViewportNavigation(ulong SceneGeneration, ViewportCamera SceneCamera, IReadOnlyList<ViewportBounds> Bounds)
+{
+    public const int MaxTargets = 64;
+}
+
+public enum ViewportNavigationError
+{
+    InvalidRequest, SceneCameraUnavailable, TargetUnavailable, GeometryUnavailable, InvalidBounds, Unsupported, RpcFailure,
+}
+
+public sealed record ViewportNavigationFailure(ViewportNavigationError Code, EntityGuid? Target = null, string? Detail = null);
+
+public sealed record ViewportNavigationResult(ViewportNavigation? Value, ViewportNavigationFailure? Error)
+{
+    public bool IsOk => Value is not null;
+}
+
 /// <summary>A world-space ray; <c>Direction</c> is a unit vector.</summary>
 public sealed record Ray(Vector3 Origin, Vector3 Direction);
 

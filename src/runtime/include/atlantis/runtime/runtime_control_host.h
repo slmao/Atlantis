@@ -78,6 +78,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
     std::function<std::uint64_t()> sceneGeneration;
     // Plan 0066 P4 (ADR-0132 D4): the union of the clients' Viewport overlays, drawn from the next frame on.
     std::function<void(const std::optional<atlantis::connection::ViewportOverlay>&)> setViewportOverlay;
+    std::function<atlantis::connection::ViewportNavigationResult(
+        std::span<const atlantis::asset_system::EntityGuid>)> viewportNavigation{};
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 
@@ -107,6 +109,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
                 done) override;
   atlantis::connection::DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) override;
   void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
+  [[nodiscard]] atlantis::connection::ViewportNavigationResult viewportNavigation(
+      std::span<const atlantis::asset_system::EntityGuid> targets) override;
   [[nodiscard]] atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(
       const atlantis::connection::Ray& ray) override;
   // Spec 0066 R2 (Plan 0066 J2): its caller is the transport, which hands it the union of its clients' overlays --

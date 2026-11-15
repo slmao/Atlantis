@@ -145,6 +145,10 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::Ray> decodeRay(const Value& value);
 [[nodiscard]] Value encode(const connection::RayHit& hit);
 [[nodiscard]] std::optional<connection::RayHit> decodeRayHit(const Value& value);
+[[nodiscard]] Value encode(const connection::ViewportNavigation& value);
+[[nodiscard]] Value encode(const connection::ViewportNavigationFailure& value);
+[[nodiscard]] std::optional<connection::ViewportNavigation> decodeViewportNavigation(const Value& value);
+[[nodiscard]] std::optional<connection::ViewportNavigationFailure> decodeViewportNavigationFailure(const Value& value);
 
 // Plan 0065 P6 (Spec 0065 R11; ADR-0130 D3): AuthoringConnection's values on
 // atlantis.remote/1 (remote_protocol.md). A scene address names its node as

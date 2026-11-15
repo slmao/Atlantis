@@ -717,6 +717,81 @@ public static partial class Codec
         return new ViewportCamera(matrix, f, n, r);
     }
 
+    public static JsonValue Encode(ViewportNavigation value)
+    {
+        JsonValue bounds = JsonValue.NewArray();
+        foreach (ViewportBounds bound in value.Bounds)
+        {
+            bounds.Push(JsonValue.NewObject().Set("entity", Encode(bound.Entity))
+                .Set("kind", JsonValue.String(bound.Kind == ViewportBoundsKind.Mesh ? "mesh" : "origin"))
+                .Set("min", EncodeFloats(bound.Min)).Set("max", EncodeFloats(bound.Max)));
+        }
+        return JsonValue.NewObject().Set("sceneGeneration", JsonValue.Number(value.SceneGeneration))
+            .Set("sceneCamera", Encode(value.SceneCamera)).Set("bounds", bounds);
+    }
+
+    public static JsonValue Encode(ViewportNavigationFailure failure)
+    {
+        JsonValue error = JsonValue.NewObject().Set("code", JsonValue.String(failure.Code.ToString()));
+        return failure.Target is EntityGuid target ? error.Set("target", Encode(target)) : error;
+    }
+
+    public static ViewportNavigation? DecodeViewportNavigation(JsonValue value)
+    {
+        if (!value.IsObject || value.Members.Count != 3 ||
+            value.Find("sceneGeneration") is not JsonValue generationValue || DecodeUInt64(generationValue) is not ulong generation ||
+            value.Find("sceneCamera") is not JsonValue cameraValue || DecodeViewportCamera(cameraValue) is not ViewportCamera camera ||
+            !(camera.NearZ > 0 && camera.FarZ > camera.NearZ && camera.FovYRadians > 0 && camera.FovYRadians < 3.1415926f) ||
+            !float.IsFinite(camera.FarZ) ||
+            value.Find("bounds") is not { IsArray: true } items || items.Items.Count > ViewportNavigation.MaxTargets) return null;
+        foreach (float element in camera.WorldMatrix) if (!float.IsFinite(element)) return null;
+        static bool Finite(Vector3 point) => float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z);
+        var bounds = new List<ViewportBounds>(items.Items.Count);
+        foreach (JsonValue item in items.Items)
+        {
+            if (!item.IsObject || item.Members.Count != 4 ||
+                item.Find("entity") is not JsonValue entityValue || DecodeEntity(entityValue) is not EntityGuid entity ||
+                item.Find("kind") is not { IsString: true } kind || kind.AsString is not ("mesh" or "origin") ||
+                DecodeVector3(item.Find("min")) is not Vector3 min || DecodeVector3(item.Find("max")) is not Vector3 max ||
+                !Finite(min) || !Finite(max) || min.X > max.X || min.Y > max.Y || min.Z > max.Z || (kind.AsString == "origin" && min != max))
+                return null;
+            bounds.Add(new ViewportBounds(entity, kind.AsString == "mesh" ? ViewportBoundsKind.Mesh : ViewportBoundsKind.Origin, min, max));
+        }
+        return new ViewportNavigation(generation, camera, bounds);
+    }
+
+    public static ViewportNavigationResult? DecodeViewportNavigationResponse(JsonValue response, IReadOnlyList<EntityGuid> targets)
+    {
+        JsonValue? result = response.Find("result"), error = response.Find("error");
+        if (result is null && error is not null)
+        {
+            if (error.Find("code") is not { IsString: true } code || error.Find("message") is not { IsString: true } message)
+                return null;
+            return new(null, code.AsString == "BadRequest" && message.AsString == "unknown method control.viewportNavigation"
+                ? new(ViewportNavigationError.Unsupported) : new(ViewportNavigationError.RpcFailure, Detail: code.AsString + ": " + message.AsString));
+        }
+        if (error is not null || result is not { IsObject: true } || result.Members.Count != 1) return null;
+        if (result.Find("ok") is JsonValue ok)
+        {
+            if (DecodeViewportNavigation(ok) is not ViewportNavigation value || value.Bounds.Count != targets.Count) return null;
+            for (int i = 0; i < targets.Count; ++i)
+                if (targets[i] != value.Bounds[i].Entity) return null;
+            return new(value, null);
+        }
+        if (result.Find("err") is not { IsObject: true } failure ||
+            failure.Find("code") is not { IsString: true } name ||
+            !Enum.TryParse(name.AsString, out ViewportNavigationError refusal) ||
+            refusal == ViewportNavigationError.RpcFailure || name.AsString != refusal.ToString() || !Enum.IsDefined(refusal))
+            return null;
+        bool needsTarget = refusal is ViewportNavigationError.TargetUnavailable or ViewportNavigationError.GeometryUnavailable or ViewportNavigationError.InvalidBounds;
+        if (failure.Members.Count != (needsTarget ? 2 : 1)) return null;
+        if (!needsTarget) return new(null, new(refusal));
+        if (failure.Find("target") is not JsonValue id || DecodeEntity(id) is not EntityGuid target) return null;
+        foreach (EntityGuid requested in targets)
+            if (requested == target) return new(null, new(refusal, target));
+        return null;
+    }
+
     public static JsonValue Encode(Ray ray) =>
         JsonValue.NewObject().Set("origin", EncodeFloats(ray.Origin)).Set("direction", EncodeFloats(ray.Direction));
 

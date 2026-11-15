@@ -216,6 +216,13 @@ in a profiling build
 (`-DATLANTIS_PROFILING=ON`), `--benchmark <scene>` and `--gate`; see
 [docs/process/profiling.md](docs/process/profiling.md) and
 [docs/process/performance-contract.md](docs/process/performance-contract.md).
+The Editor Viewport offers Focus Selection, six perspective directions,
+orbit and dolly speed, and Scene Camera. CLI
+`atlantis --session <file> --json runtime camera navigation [GUID ...]`,
+native `RuntimeControl::viewportNavigation`, C# `session.Control.ViewportNavigation`
+and MCP `control.viewport_navigation` share the camera and bounds read.
+Pass no GUIDs for the active scene camera alone.
+
 Cooked asset discovery (Spec 0081) uses the same shared interface in every client:
 `atlantis --session <file> asset list` or `asset get <guid>` (`--json` for structured
 output); C++ `gameplay::Assets(session.assets())`; C#

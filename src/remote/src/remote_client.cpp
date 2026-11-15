@@ -399,6 +399,46 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     params.set("camera", camera.has_value() ? codec::encode(*camera) : Value());
     (void)state_->call("control.setViewportCamera", std::move(params));
   }
+  atlantis::connection::ViewportNavigationResult viewportNavigation(
+      std::span<const atlantis::asset_system::EntityGuid> targets) override {
+    using ResultT = atlantis::connection::ViewportNavigationResult;
+    using Error = atlantis::connection::ViewportNavigationError;
+    if (!atlantis::connection::validViewportNavigationTargets(targets)) return ResultT::Err({Error::InvalidRequest});
+    Value params = Value::object();
+    Value items = Value::array();
+    for (const auto& target : targets) items.push(codec::encodeEntity(target));
+    params.set("targets", std::move(items));
+    const auto envelope = state_->awaitResponse(state_->send("control.viewportNavigation", std::move(params)));
+    if (!envelope) {
+      return ResultT::Err({state_->failure == RemoteError::ProtocolError ? Error::ProtocolFailure : Error::TransportFailure});
+    }
+    const auto* result = envelope->find("result");
+    const auto* error = envelope->find("error");
+    if (error && !result) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString() && message && message->isString()) {
+        return ResultT::Err({code->asString() == "BadRequest" && message->asString() == "unknown method control.viewportNavigation"
+                                ? Error::Unsupported : Error::RpcFailure});
+      }
+    }
+    if (result && !error && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* ok = result->find("ok")) {
+        const auto value = codec::decodeViewportNavigation(*ok);
+        if (value && std::ranges::equal(targets, value->bounds, {}, std::identity{}, &atlantis::connection::ViewportBounds::entity)) {
+          return ResultT::Ok(*value);
+        }
+      }
+      if (const auto* err = result->find("err")) {
+        const auto failure = codec::decodeViewportNavigationFailure(*err);
+        if (failure && (!failure->target || std::ranges::find(targets, *failure->target) != targets.end())) {
+          return ResultT::Err(*failure);
+        }
+      }
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return ResultT::Err({Error::ProtocolFailure});
+  }
   // Spec 0066 / ADR-0132 D2.
   atlantis::Result<std::monostate, atlantis::connection::ControlError> setViewportOverlay(
       std::optional<atlantis::connection::ViewportOverlay> overlay) override {

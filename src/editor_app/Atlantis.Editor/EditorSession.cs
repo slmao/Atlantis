@@ -175,6 +175,8 @@ public sealed record PickResult(RaycastResult Result, PickRay Ray, double InputT
 /// end of the first frame drawn from it.
 /// </summary>
 public sealed record CameraAck(double InputToAckMs, double? InputToFrameMs, int Coalesced);
+public sealed record ViewportNavigationState(long Intent, bool Supported, EditorCamera? EditorCamera,
+    CameraPose? SceneCamera, bool ProjectionReady, string? Message);
 
 /// <summary>One line per event, with milliseconds since the editor started, to editor.log.</summary>
 public sealed class EditorLog : IDisposable
@@ -284,7 +286,16 @@ public sealed class EditorWorker : IDisposable
     private readonly string _capturePath;
     private readonly object _lock = new();
     private readonly Queue<Action<RemoteSession>> _work = new();
-    private (ViewportCamera? Camera, long InputTicks, int Count)? _pendingCamera;
+    private (EditorCamera Camera, long InputTicks, int Count, long Intent)? _pendingCamera;
+    private readonly List<ViewportMotion> _pendingCameraMotion = new();
+    private long _cameraIntent;
+    private (int Width, int Height) _viewportExtent;
+    private ulong _viewportExtentRevision;
+    private bool _navigationSupported;
+    private bool _navigationUncertain;
+    private ulong _navigationGeneration;
+    private CameraPose? _navigationSceneCamera;
+    private EditorCamera? _confirmedEditorCamera;
     private bool _stopping;
     private volatile bool _measureLatency;
     // Plan 0066 M1: the measurement drag (worker-thread state, except the pending update under _lock).
@@ -372,6 +383,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<string>? Failed;
     public event Action<PickResult>? Picked;
     public event Action<CameraAck>? CameraAcked;
+    public event Action<ViewportNavigationState>? NavigationChanged;
     public event Action<FrameTimes>? Measured;
     // Plan 0068 M2.
     public event Action<DocumentInfo?>? DocumentOpened;
@@ -501,19 +513,287 @@ public sealed class EditorWorker : IDisposable
 
     public void Start() => _thread.Start();
 
-    public void SetCamera(ViewportCamera? camera, long inputTicks)
+    public void SetViewportExtent(int width, int height)
+    {
+        lock (_lock)
+        {
+            if (_viewportExtent == (width, height)) return;
+            _viewportExtent = (width, height);
+            ++_viewportExtentRevision;
+        }
+    }
+
+    public long SetCamera(EditorCamera camera, long inputTicks)
     {
         lock (_lock)
         {
             int count = _pendingCamera is { } pending ? pending.Count + 1 : 1;
             long first = _pendingCamera is { } p ? p.InputTicks : inputTicks;  // latency from the oldest coalesced input
-            _pendingCamera = (camera, first, count);
+            long intent = ++_cameraIntent;
+            _pendingCamera = (camera.Copy(), first, count, intent);
             Monitor.Pulse(_lock);
+            return intent;
         }
     }
 
-    public void Raycast(PickRay ray, long inputTicks, ulong request = 0) => Enqueue(session =>
+    public long QueueCameraMotion(ViewportMotion motion)
     {
+        lock (_lock)
+        {
+            _pendingCameraMotion.Add(motion);
+            long intent = ++_cameraIntent;
+            Monitor.Pulse(_lock);
+            return intent;
+        }
+    }
+
+    public long Navigate(IReadOnlyList<EntityGuid>? focus, IReadOnlyList<HierarchyRow> rows,
+                         ulong selection, ViewDirection? direction)
+    {
+        var identities = new Dictionary<EntityGuid, object>();
+        if (focus is not null)
+        {
+            foreach (HierarchyRow row in rows)
+                if (focus.Contains(row.Node) && _hierarchyIncarnations.TryGetValue(row, out object? identity))
+                    identities[row.Node] = identity;
+        }
+        lock (_lock)
+        {
+            long intent = ++_cameraIntent;
+            long lifetime = MeshDocumentLifetime;
+            _pendingCamera = null;
+            _pendingCameraMotion.Clear();
+            EntityGuid[]? targets = focus?.ToArray();
+            Enqueue(session => Navigate(session, intent, lifetime, selection, targets, identities, direction));
+            return intent;
+        }
+    }
+
+    private static CameraPose NavigationPose(ViewportCamera camera) =>
+        new(camera.WorldMatrix.ToArray(), new CameraLens(camera.FovYRadians, camera.NearZ, camera.FarZ));
+
+    private void PublishNavigation(long intent, string? message)
+    {
+        var state = new ViewportNavigationState(intent, _navigationSupported, _confirmedEditorCamera?.Copy(),
+            _navigationSceneCamera, !_navigationUncertain && (_confirmedEditorCamera is not null || _navigationSceneCamera is not null), message);
+        if (message is not null) _log.Write("viewport navigation: " + message);
+        _post(() =>
+        {
+            lock (_lock)
+                if (intent != _cameraIntent || _stopping || _pendingCameraMotion.Count != 0) return;
+            NavigationChanged?.Invoke(state);
+        });
+    }
+
+    private void ReadSceneNavigation(RemoteSession session, long intent, string? success = null)
+    {
+        ViewportNavigationResult result = session.Control.ViewportNavigation(Array.Empty<EntityGuid>());
+        _navigationSupported = result.Error?.Code != ViewportNavigationError.Unsupported;
+        if (result.Value is ViewportNavigation value)
+        {
+            _navigationGeneration = value.SceneGeneration;
+            _navigationSceneCamera = NavigationPose(value.SceneCamera);
+            _navigationUncertain = false;
+            PublishNavigation(intent, success);
+        }
+        else if (_navigationSupported)
+        {
+            _navigationSceneCamera = null;
+            _navigationUncertain = true;
+            PublishNavigation(intent, (success is null ? "" : "Override cleared. ") + "Scene camera projection unavailable: " + result.Error!.Code);
+        }
+        else PublishNavigation(intent, success);
+    }
+
+    private void Navigate(RemoteSession session, long intent, long lifetime, ulong selection, EntityGuid[]? targets,
+                          Dictionary<EntityGuid, object> identities, ViewDirection? direction)
+    {
+        const string set = "control.setViewportCamera";
+        bool focus = targets is not null;
+        bool returning = !focus && direction is null;
+        bool Current()
+        {
+            lock (_lock)
+                return !_stopping && _cameraIntent == intent && !_dragActive && !_gizmoActive && _requestedGroup is null &&
+                    (!focus || (lifetime == MeshDocumentLifetime && selection == _requestedSelectionGeneration &&
+                        identities.All(pair => ReferenceEquals(pair.Value, _tree.IncarnationOf(pair.Key)))));
+        }
+        if (!Current())
+        {
+            PublishNavigation(intent, "Viewport navigation canceled because its context changed.");
+            return;
+        }
+        if (!returning && !_navigationSupported)
+        {
+            PublishNavigation(intent, "Focus and direction views require an updated Runtime.");
+            return;
+        }
+
+        EditorCamera? candidate = null;
+        ulong generation = _navigationGeneration;
+        ulong extentRevision = 0;
+        if (!returning)
+        {
+            EditorCamera? source = _confirmedEditorCamera;
+            (int Width, int Height) extent;
+            ViewportNavigation? sample = null;
+            if (focus || source is null)
+            {
+                ViewportNavigationResult result = session.Control.ViewportNavigation(targets ?? Array.Empty<EntityGuid>());
+                if (result.Value is not ViewportNavigation value)
+                {
+                    PublishNavigation(intent, "Viewport navigation refused: " + result.Error!.Code +
+                        (result.Error.Target is EntityGuid entity ? " for " + entity : ""));
+                    return;
+                }
+                sample = value;
+                generation = value.SceneGeneration;
+                if (generation < _navigationGeneration)
+                {
+                    PublishNavigation(intent, "The Runtime scene changed. Invoke navigation again.");
+                    return;
+                }
+                _navigationGeneration = generation;
+                if (source is null)
+                {
+                    _navigationSceneCamera = NavigationPose(value.SceneCamera);
+                    _navigationUncertain = false;
+                    source = new EditorCamera();
+                    source.SeedNavigation(_navigationSceneCamera);
+                }
+            }
+            if (focus) PollDocument(session, pollApply: false);
+            lock (_lock)
+            {
+                extent = _viewportExtent;
+                extentRevision = _viewportExtentRevision;
+            }
+            if (focus && sample is not null && sample.Bounds.Count > 0)
+            {
+                Vector3 min = sample.Bounds[0].Min, max = sample.Bounds[0].Max;
+                foreach (ViewportBounds item in sample.Bounds)
+                {
+                    min = Vector3.Min(min, item.Min);
+                    max = Vector3.Max(max, item.Max);
+                }
+                candidate = NavigationFraming.Focus(source, min, max, extent.Width, extent.Height);
+            }
+            else if (direction is ViewDirection selected)
+                candidate = NavigationFraming.Direction(source, selected, extent.Width, extent.Height);
+            if (candidate is null)
+            {
+                PublishNavigation(intent, focus ? "Selection cannot fit the current viewport and lens."
+                                                : "Direction is unavailable for the current viewport and camera.");
+                return;
+            }
+        }
+        ulong id;
+        lock (_lock)
+        {
+            if (!Current() || (!returning && (extentRevision != _viewportExtentRevision || generation != _navigationGeneration)))
+            {
+                PublishNavigation(intent, "Viewport navigation canceled because its context changed.");
+                return;
+            }
+            JsonValue cameraValue = candidate is null ? JsonValue.Null() : Codec.Encode(SceneReader.ToViewportCamera(candidate.Pose()));
+            id = session.Send(set, JsonValue.NewObject().Set("camera", cameraValue));
+        }
+        if (CameraWriteRefusal(session, id) is string refusal)
+        {
+            PublishNavigation(intent, refusal);
+            return;
+        }
+        _confirmedEditorCamera = candidate;
+        if (returning)
+        {
+            if (_navigationSupported)
+            {
+                _navigationSceneCamera = null;
+                _navigationUncertain = true;
+                try { ReadSceneNavigation(session, intent, "Scene camera"); }
+                catch (RemoteException error)
+                {
+                    throw new RemoteException(error.Error, "viewport override cleared; scene camera read interrupted. " + error.Message);
+                }
+            }
+            else PublishNavigation(intent, "Scene camera");
+            return;
+        }
+        SettleEditorProjection(session, generation);
+        PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again."
+            : !Current() ? "The navigation context changed during the camera write."
+            : focus ? "Selection framed" : direction + " view");
+    }
+
+    private static string? CameraWriteRefusal(RemoteSession session, ulong id)
+    {
+        JsonValue reply;
+        try { reply = session.AwaitResponse(id); }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error.Error, "viewport camera write outcome unknown. " + error.Message);
+        }
+        if (reply.Find("error") is { IsObject: true } rpcError && reply.Find("result") is null &&
+            rpcError.Find("code") is { IsString: true } code)
+            return "Viewport camera refused: " + code.AsString;
+        if (reply.Find("result") is not { IsNull: true } || reply.Find("error") is not null)
+            throw new RemoteException(RemoteError.ProtocolError, "viewport camera write outcome unknown");
+        return null;
+    }
+
+    private void SettleEditorProjection(RemoteSession session, ulong generation)
+    {
+        _navigationUncertain = true;
+        RuntimeStatus settled = session.Control.Status();
+        _navigationGeneration = settled.SceneGeneration;
+        _navigationUncertain = settled.SceneGeneration != generation;
+    }
+
+    private void SettleCameraMotion(RemoteSession session)
+    {
+        long intent;
+        ulong id;
+        EditorCamera camera;
+        ulong generation = _navigationGeneration;
+        lock (_lock)
+        {
+            if (_stopping || _pendingCameraMotion.Count == 0) return;
+            intent = _cameraIntent;
+            if (_navigationUncertain || (_confirmedEditorCamera is null && _navigationSceneCamera is null))
+            {
+                _pendingCameraMotion.Clear();
+                PublishNavigation(intent, "Camera projection unavailable. Invoke Scene Camera or a direction again.");
+                return;
+            }
+            camera = _confirmedEditorCamera?.Copy() ?? new EditorCamera();
+            if (_confirmedEditorCamera is null) camera.SeedNavigation(_navigationSceneCamera!);
+            foreach (var motion in _pendingCameraMotion) motion.Apply(camera);
+            _pendingCameraMotion.Clear();
+            CameraPose pose = camera.Pose();
+            if (NavigationFraming.Projection(pose, _viewportExtent.Width, _viewportExtent.Height) is null)
+            {
+                PublishNavigation(intent, "Camera motion is unavailable for the current viewport and camera.");
+                return;
+            }
+            // Consume and send under the same intent lock so a newer discrete command
+            // can discard unsent motion without silently losing an intermediate sample.
+            id = session.Send("control.setViewportCamera",
+                JsonValue.NewObject().Set("camera", Codec.Encode(SceneReader.ToViewportCamera(pose))));
+        }
+        if (CameraWriteRefusal(session, id) is string refusal)
+        {
+            PublishNavigation(intent, refusal);
+            return;
+        }
+        _confirmedEditorCamera = camera;
+        SettleEditorProjection(session, generation);
+        PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again." : null);
+    }
+
+    public void Raycast(PickRay ray, long inputTicks, ulong request = 0, long? cameraIntent = null) => Enqueue(session =>
+    {
+        lock (_lock)
+            if (cameraIntent is long intent && _cameraIntent != intent) return;
         long lifetime = MeshDocumentLifetime;
         ulong nodesBefore = _tree.NodeLifetimeGeneration;
         RaycastResult result = session.Control.Raycast(new Ray(ray.Origin, ray.Direction));
@@ -2311,6 +2591,18 @@ public sealed class EditorWorker : IDisposable
     private void PollStatus(RemoteSession session)
     {
         RuntimeStatus status = session.Control.Status();
+        if (status.SceneGeneration > _navigationGeneration)
+        {
+            _navigationGeneration = status.SceneGeneration;
+            if (_navigationSupported && _confirmedEditorCamera is null)
+            {
+                long intent;
+                lock (_lock) intent = _cameraIntent;
+                _navigationSceneCamera = null;
+                _navigationUncertain = true;
+                ReadSceneNavigation(session, intent);
+            }
+        }
         _apply?.SetPaused(status.Paused);
         bool playing = !status.Paused;
         if (playing == _playing)
@@ -2487,19 +2779,22 @@ public sealed class EditorWorker : IDisposable
 
     private void Run()
     {
-        RemoteSession session;
+        RemoteSession? session = null;
         try
         {
             session = RemoteSession.Connect(_info);
             var world = new GameplayWorld(session);
             _world = world;
             SceneSnapshot snapshot = SceneReader.Read(world);
+            _navigationSceneCamera = snapshot.ScenePose;
             _log.Write("connected: port " + _info.Port + ", " + snapshot.Entities.Count + " entities");
             _post(() => Connected?.Invoke(snapshot));
+            ReadSceneNavigation(session, 0);
             OpenDocument(session);
         }
         catch (Exception e)
         {
+            session?.Dispose();
             _log.Write("connect failed: " + e.Message);
             _post(() => Failed?.Invoke(e.Message));
             return;
@@ -2523,7 +2818,7 @@ public sealed class EditorWorker : IDisposable
         while (true)
         {
             Action<RemoteSession>? work = null;
-            (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
+            (EditorCamera Camera, long InputTicks, int Count, long Intent)? camera = null;
             (float Dx, float Dy, long InputTicks, int Count)? drag = null;
             (float Amount, long Ticks, int Count)? gizmoBatch = null;
             (GroupGrab Grab, float Amount)? groupSample = null;
@@ -2531,14 +2826,17 @@ public sealed class EditorWorker : IDisposable
             lock (_lock)
             {
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
-                while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive) &&
+                while (!_stopping && _work.Count == 0 && _pendingCamera is null && _pendingCameraMotion.Count == 0 &&
+                       !(_pendingDrag is not null && _dragActive) &&
                        !(_pendingGizmo is not null && _gizmoActive) && _pendingGroup is null)
                 {
                     if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
                 interacting = _dragActive || _gizmoActive || _requestedGroup is not null;
                 if (_stopping) return;
-                if (_pendingCamera is not null)
+                if (_pendingCameraMotion.Count != 0)
+                    work = SettleCameraMotion;
+                else if (_pendingCamera is not null)
                 {
                     camera = _pendingCamera;
                     _pendingCamera = null;
@@ -2574,7 +2872,15 @@ public sealed class EditorWorker : IDisposable
             }
             if (camera is { } update)
             {
-                session.Control.SetViewportCamera(update.Camera);
+                ulong? request;
+                lock (_lock)
+                    request = update.Intent == _cameraIntent ? session.Send("control.setViewportCamera",
+                        JsonValue.NewObject().Set("camera", Codec.Encode(SceneReader.ToViewportCamera(update.Camera.Pose())))) : null;
+                if (request is null) continue;
+                if (session.AwaitResult(request.Value) is not { IsNull: true })
+                    throw new RemoteException(RemoteError.ProtocolError, "viewport camera write outcome unknown");
+                _confirmedEditorCamera = update.Camera;
+                _navigationUncertain = false;
                 double ack = Stopwatch.GetElapsedTime(update.InputTicks).TotalMilliseconds;
                 double? frame = null;
                 if (_measureLatency)
@@ -2585,8 +2891,8 @@ public sealed class EditorWorker : IDisposable
                     _ = session.Control.Status();
                     frame = Stopwatch.GetElapsedTime(update.InputTicks).TotalMilliseconds;
                 }
-                _log.Write(string.Format(CultureInfo.InvariantCulture, "camera {0} coalesced {1} input->ack {2:F1} ms{3}",
-                                         update.Camera is null ? "cleared" : "set", update.Count, ack,
+                _log.Write(string.Format(CultureInfo.InvariantCulture, "camera set coalesced {0} input->ack {1:F1} ms{2}",
+                                         update.Count, ack,
                                          frame is double f ? string.Format(CultureInfo.InvariantCulture, " input->frame {0:F1} ms", f) : ""));
                 var acked = new CameraAck(ack, frame, update.Count);
                 _post(() => CameraAcked?.Invoke(acked));

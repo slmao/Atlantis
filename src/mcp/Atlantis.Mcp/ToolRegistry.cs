@@ -137,6 +137,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("request", ToolSchemas.StepRequest))),
         Declare("control.raycast", "control.raycast", "Read the nearest mesh hit or null; NoGeometry when pick geometry is unavailable.", ControlModel,
             ToolSchemas.Parameters(("ray", ToolSchemas.Ray))),
+        Declare("control.viewport_navigation", "control.viewportNavigation", "Read the active scene camera and ordered world bounds. Pass [] for the camera only.", ControlModel,
+            ToolSchemas.Parameters(("targets", ToolSchemas.NavigationTargets))),
         Declare("control.set_viewport_camera", "control.setViewportCamera", "Set this client's viewport camera; null restores the scene camera.", ControlModel,
             ToolSchemas.Parameters(("camera", ToolSchemas.Nullable(ToolSchemas.Camera)))),
         Declare("control.set_viewport_overlay", "control.setViewportOverlay", "Replace this client's overlay; null clears it.", ControlModel,
@@ -205,6 +207,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
+            if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
             bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
             string? importName = import ? wireParameters.Find("name")?.AsString : null;
@@ -298,6 +301,25 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult ViewportNavigation(JsonValue parameters)
+    {
+        var targets = new List<EntityGuid>();
+        var seen = new HashSet<EntityGuid>();
+        foreach (JsonValue item in parameters.Find("targets")!.Items)
+        {
+            if (Codec.DecodeEntity(item) is not EntityGuid target || !seen.Add(target))
+                return Error("InvalidArguments: expected distinct non-nil canonical entity GUIDs");
+            targets.Add(target);
+        }
+        JsonValue response = session.Request("control.viewportNavigation", parameters);
+        ViewportNavigationResult? result = Codec.DecodeViewportNavigationResponse(response, targets);
+        if (result?.Value is Atlantis.Gameplay.ViewportNavigation value) return Forward(Codec.Ok(Codec.Encode(value)), false);
+        if (result?.Error is not ViewportNavigationFailure failure) return Error("ProtocolError: malformed viewport navigation reply");
+        return failure.Code == ViewportNavigationError.RpcFailure
+            ? Forward(response.Find("error")!, true)
+            : Forward(Codec.Err(Codec.Encode(failure)), true);
     }
 
     private CallToolResult TextureOperation(string method, JsonValue parameters)
