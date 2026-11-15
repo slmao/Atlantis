@@ -1173,13 +1173,13 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
-    private string ApplyVerifiedEdit(long lifetime, string notice)
+    private string ApplyVerifiedEdit(long lifetime, string notice, bool publishStatus = true)
     {
         if (lifetime != MeshDocumentLifetime || _apply is not { } apply) return notice;
         try
         {
             apply.AfterLocalEdit(true);
-            PostApplyState(lifetime);
+            if (publishStatus) PostApplyState(lifetime);
             return notice;
         }
         catch (Exception e) when (e is GameplayException or IOException)
@@ -1414,10 +1414,11 @@ public sealed class EditorWorker : IDisposable
                         history.Record(new EditTransaction("Set " + field.Field.Path, writes, new EditEntry[] { record }),
                             target.Committed(Array.Empty<CommandFailure>()));
                         history.Update();
-                        notice = ApplyVerifiedEdit(snapshot.Lifetime, notice);
+                        notice = ApplyVerifiedEdit(snapshot.Lifetime, notice, publishStatus: false);
                     }
                     PostHistory(snapshot.Lifetime);
                     _post(() => { if (snapshot.Lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
+                    PostApplyState(snapshot.Lifetime);
                     PostInspector();
                 }
                 finally { lock (_lock) _batchSettling = false; }
@@ -1459,7 +1460,6 @@ public sealed class EditorWorker : IDisposable
             {
                 _apply?.RequireExplicitApply("property batch could not be verified");
                 if (selection is not null) _history?.DiscardRedo();
-                PostApplyState(lifetime);
             }
             return new(BatchReplayState.Drop, committed
                 ? "Committed " + subject + ". History unavailable. Refresh, inspect and Apply explicitly."
@@ -1658,7 +1658,7 @@ public sealed class EditorWorker : IDisposable
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
                                  _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
         if (result == HistoryResult.Submitted) _commitTicks = start;
-        string notice = reordered ? ApplyVerifiedEdit(lifetime, _history.Notice) : _history.Notice;
+        string notice = reordered ? ApplyVerifiedEdit(lifetime, _history.Notice, publishStatus: !batchReplay) : _history.Notice;
         if (siblingReplay)
         {
             PostHistory(lifetime);

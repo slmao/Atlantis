@@ -2688,8 +2688,9 @@ public sealed class MainWindow : Window
                 row.Children.Add(set);
                 bool ReadValue(out PropertyValue value) => InspectorModel.TryParse(definition, box.Text ?? "", out value, out _);
                 set.IsEnabled = ReadValue(out _);
-                box.TextChanged += (_, _) =>
+                box.PropertyChanged += (sender, change) =>
                 {
+                    if (change.Property != TextBox.TextProperty) return;
                     set.IsEnabled = ReadValue(out _);
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path &&

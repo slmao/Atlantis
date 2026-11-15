@@ -103,13 +103,15 @@ public static partial class Program
         }
 
         foreach (bool oldApplySucceeds in new[] { true, false })
+        foreach (bool guardedBatch in new[] { true, false })
         {
             var (shared, recovery, address) = Setup();
             recovery.SetPaused(true);
             recovery.Request();
             ApplyReceipt previous = recovery.Receipt!;
             recovery.Commit(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(3)) });
-            recovery.RequireExplicitApplyAfterUnverifiedSwap();
+            if (guardedBatch) recovery.RequireExplicitApply("property batch could not be verified");
+            else recovery.RequireExplicitApplyAfterUnverifiedSwap();
             recovery.Poll();
             Check(recovery.Receipt == previous && recovery.Status == ApplyStatus.PendingPaused &&
                 !recovery.CanApply && !recovery.CanPreview, "sibling swap: retain the pending owned receipt");
