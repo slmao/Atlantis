@@ -1,3 +1,4 @@
+using Atlantis.Gameplay;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -49,6 +50,10 @@ internal static class ToolSchemas
 
     internal static readonly JsonNode StepRequest = ObjectWithOptionalOverlay();
     internal static readonly JsonNode Ray = Object(("origin", Vec3), ("direction", Vec3));
+    internal static readonly JsonNode NavigationTargets = new JsonObject
+    {
+        ["type"] = "array", ["items"] = String.DeepClone(), ["maxItems"] = ViewportNavigation.MaxTargets,
+    };
     internal static readonly JsonNode Camera = Object(("worldMatrix", Vector(Float, 16)),
         ("fovYRadians", Float), ("nearZ", Float), ("farZ", Float));
     private static readonly JsonNode Depth = Enum("Tested", "OnTop");

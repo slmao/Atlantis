@@ -466,6 +466,14 @@ TEST_CASE("atlantis: runtime camera set and clear, and runtime raycast", "[cli][
         envelope("runtime raycast", R"({"hit":{"guid":")" + std::string(kPoint) + R"(","distance":4.5}})"));
 }
 
+TEST_CASE("atlantis: viewport navigation rejects invalid selection and reports unsupported", "[cli][tree][runtime][camera]") {
+  Cli fixture;
+  CHECK(fixture.run("runtime camera navigation") != 0);
+  CHECK(fixture.run("runtime camera navigation invalid-guid") == 2);
+  const std::string duplicate = "runtime camera navigation " + std::string(kPoint) + " " + std::string(kPoint);
+  CHECK(fixture.run(duplicate) == 2);
+}
+
 // Plan 0066 P2 (Spec 0066 R2, R5, R6; ADR-0132 D2): the Viewport overlay commands and a capture's --with-overlay,
 // against the fake Runtime (which refuses an overlay as the Runtime does).
 TEST_CASE("atlantis: runtime overlay set, select and clear, and runtime step --with-overlay",

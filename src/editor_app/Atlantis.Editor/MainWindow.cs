@@ -265,11 +265,21 @@ public sealed class MainWindow : Window
     private readonly CheckBox _measureLatency = new() { Content = "Measure input latency (one more frame per update)" };
     private readonly Button _measureFrames = new() { Content = "Measure 600 frames" };
     private readonly Button _resetCamera = new() { Content = "Scene camera" };
+    private readonly Button _focusSelection = new() { Content = "Focus selection" };
+    private readonly ComboBox _viewDirection = new()
+    {
+        ItemsSource = new[] { "View direction", "Front", "Back", "Left", "Right", "Top", "Bottom" }, SelectedIndex = 0,
+    };
+    private readonly ComboBox _navigationSpeed = new()
+    {
+        ItemsSource = new[] { "Slow 0.5×", "Normal 1×", "Fast 2×" }, SelectedIndex = 1,
+    };
+    private readonly TextBlock _viewportNavFeedback = new() { TextTrimming = TextTrimming.CharacterEllipsis, Height = 18 };
     private readonly TextBox _sizeBox = new() { PlaceholderText = "WxH, e.g. 1280x720", Width = 150 };
     private readonly Button _applySize = new() { Content = "Set viewport size" };
     private (int Width, int Height)? _targetSize;
     private int _sizeCorrections;
-    private readonly EditorCamera _camera = new();
+    private EditorCamera _camera = new();
     private readonly DispatcherTimer _uiTicker = new() { Interval = TimeSpan.FromMilliseconds(16) };
     private readonly List<double> _uiGaps = new();
     private long _lastUiTick = Stopwatch.GetTimestamp();
@@ -279,6 +289,9 @@ public sealed class MainWindow : Window
     private EditorWorker? _worker;
     private SceneSnapshot? _scene;
     private bool _cameraInitialized;
+    private bool _navigationSupported, _navigationReady, _navigationPending, _navigationToolbarPointer;
+    private long _viewportCameraIntent;
+    private CameraPose? _sceneProjection;
     private (int X, int Y)? _pressed;
     private (int X, int Y) _last;
     private bool _dragging;
@@ -354,7 +367,12 @@ public sealed class MainWindow : Window
         Content = BuildWorkspace();
 
         _viewport.WindowCreated += OnViewportWindow;
-        _viewport.WindowDestroyed += () => _log.Write("viewport host window destroyed");
+        _viewport.WindowDestroyed += () =>
+        {
+            _worker?.SetViewportExtent(0, 0);
+            ++_pickRequest;
+            _log.Write("viewport host window destroyed");
+        };
         _measureFrames.Click += (_, _) =>
         {
             _measureLine = "measuring 600 frames...";
@@ -362,6 +380,21 @@ public sealed class MainWindow : Window
             _worker?.Measure(600);
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
+        _focusSelection.Click += (_, _) => NavigateViewport(_selection.Nodes);
+        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed })
+            control.AddHandler(PointerPressedEvent, (_, _) =>
+            {
+                _navigationToolbarPointer = true;
+                Dispatcher.UIThread.Post(() => _navigationToolbarPointer = false, DispatcherPriority.Input);
+            }, RoutingStrategies.Tunnel);
+        _viewDirection.SelectionChanged += (_, _) =>
+        {
+            int selected = _viewDirection.SelectedIndex;
+            if (selected <= 0) return;
+            _viewDirection.SelectedIndex = 0;
+            NavigateViewport(direction: (ViewDirection)(selected - 1));
+        };
+        UpdateViewportNavigationActions();
         _gizmoMode.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
@@ -490,15 +523,20 @@ public sealed class MainWindow : Window
         hierarchy.Children.Add(new Grid { Children = { _entities, _hierarchyDropFeedback } });
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
-        var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _resetCamera);
+        var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
+            _viewDirection, _navigationSpeed, _resetCamera);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
         AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
+        AddDocked(view, _viewportNavFeedback, Avalonia.Controls.Dock.Top);
         view.Children.Add(_viewport);
         AutomationProperties.SetName(_gizmoMode, "Transform mode");
         AutomationProperties.SetName(_gizmoSpace, "Coordinate space");
         AutomationProperties.SetName(_resetCamera, "Reset to scene camera");
+        AutomationProperties.SetName(_focusSelection, "Focus selection");
+        AutomationProperties.SetName(_viewDirection, "View direction");
+        AutomationProperties.SetName(_navigationSpeed, "Navigation speed");
 
         var tabs = new List<TabItem>
         {
@@ -590,9 +628,12 @@ public sealed class MainWindow : Window
 
     private void OnViewportWindow(ViewportWindow window)
     {
+        _worker?.SetViewportExtent(window.Width, window.Height);
         _log.Write("viewport host window 0x" + window.Handle.ToString("x") + " " + window.Width + "x" + window.Height);
         window.Resized += (w, h) =>
         {
+            _worker?.SetViewportExtent(w, h);
+            ++_pickRequest;
             CancelGroupGesture();
             _log.Write("viewport resized " + w + "x" + h);
             CorrectViewportSize();
@@ -655,6 +696,10 @@ public sealed class MainWindow : Window
         ResetReparent("");
         _reparentDocumentOpen = false;
         _worker?.Stop();
+        _viewportCameraIntent = 0;
+        _cameraInitialized = _navigationSupported = _navigationReady = _navigationPending = false;
+        _sceneProjection = null;
+        ShowNavigationMessage(null);
         _selection.Select(null);
         ++_pickRequest;
         ClearBatchInspector();
@@ -705,6 +750,20 @@ public sealed class MainWindow : Window
             SessionPath = sessionPath,
             Recorder = _recorder,
         };
+        if (window is not null) worker.SetViewportExtent(window.Width, window.Height);
+        worker.NavigationChanged += state =>
+        {
+            if (!ReferenceEquals(_worker, worker) || state.Intent != _viewportCameraIntent) return;
+            _navigationPending = false;
+            _navigationSupported = state.Supported;
+            _navigationReady = state.ProjectionReady;
+            _sceneProjection = state.EditorCamera is null ? state.SceneCamera : null;
+            if (state.EditorCamera is EditorCamera current) _camera = current;
+            else if (_sceneProjection is CameraPose scenePose) _camera.SeedNavigation(scenePose);
+            ++_pickRequest;
+            ShowNavigationMessage(state.Message);
+            UpdateViewportNavigationActions();
+        };
         worker.Connected += snapshot =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
@@ -719,6 +778,9 @@ public sealed class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _cameraInitialized = _navigationReady = _navigationPending = false;
+            ShowNavigationMessage(message);
+            UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
             ResetReparent(_reparentPending ? "Reparent interrupted. Inspect the document before retrying." : null);
@@ -919,6 +981,7 @@ public sealed class MainWindow : Window
         if (scene.ScenePose is CameraPose pose) _camera.Reset(pose);
         else _camera.Reset(new CameraPose(new float[] { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 2, 10, 1 }, CameraLens.Default));
         _cameraInitialized = true;
+        UpdateViewportNavigationActions();
         if (_recorder is not null && _selection.Node is null && scene.FirstRenderable is EntityGuid first)
         {
             SetSelection(first, true);  // the drag's default subject
@@ -1037,10 +1100,65 @@ public sealed class MainWindow : Window
         Height += dh / scale;
     }
 
-    private void ResetToSceneCamera()
+    private void ResetToSceneCamera() => NavigateViewport();
+
+    private void NavigateViewport(IReadOnlyList<EntityGuid>? focus = null, ViewDirection? direction = null)
     {
-        if (_scene?.ScenePose is CameraPose pose) _camera.Reset(pose);
-        _worker?.SetCamera(null, Stopwatch.GetTimestamp());
+        if (_worker is not { } worker || !_cameraInitialized || _gizmoGrab is not null || _groupGrab is not null) return;
+        _navigationPending = true;
+        ++_pickRequest;
+        ShowNavigationMessage("Updating viewport camera…");
+        _viewportCameraIntent = worker.Navigate(focus, _hierarchyRows, _selection.Generation, direction);
+    }
+
+    private void ShowNavigationMessage(string? message)
+    {
+        _viewportNavFeedback.Text = message;
+        ToolTip.SetTip(_viewportNavFeedback, message);
+    }
+
+    private void UpdateViewportNavigationActions()
+    {
+        bool camera = _cameraInitialized && _worker is not null && _gizmoGrab is null && _groupGrab is null;
+        _resetCamera.IsEnabled = camera;
+        _navigationSpeed.IsEnabled = camera;
+        _focusSelection.IsEnabled = camera && _navigationSupported &&
+            _selection.Nodes.Count is > 0 and <= ViewportNavigation.MaxTargets;
+        _viewDirection.IsEnabled = camera && _navigationSupported;
+        string? tip = camera && !_navigationSupported ? "Focus and direction views require an updated Runtime." : null;
+        ToolTip.SetTip(_focusSelection, tip ?? (_selection.Nodes.Count > ViewportNavigation.MaxTargets
+            ? "Focus supports up to 64 selected nodes." : null));
+        ToolTip.SetTip(_viewDirection, tip);
+    }
+
+    private bool MovingFocusToNavigation()
+    {
+        if (_navigationToolbarPointer) return true;
+        var focused = FocusManager?.GetFocusedElement();
+        return IsNavigationTarget(_resetCamera) || IsNavigationTarget(_focusSelection) ||
+            IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed);
+
+        bool IsNavigationTarget(Control control) =>
+            control.IsPointerOver || control.IsKeyboardFocusWithin || ReferenceEquals(focused, control) ||
+            (focused is Visual child && child.GetVisualAncestors().Contains(control));
+    }
+
+    private CameraMatrices? ViewportProjection(ViewportWindow window) =>
+        !_navigationReady || _navigationPending ? null :
+            NavigationFraming.Projection(_sceneProjection ?? _camera.Pose(), window.Width, window.Height);
+
+    private float NavigationSpeed => _navigationSpeed.SelectedIndex switch { 0 => 0.5f, 2 => 2f, _ => 1f };
+
+    private void MoveViewport(EditorCamera camera, long arrivalTicks)
+    {
+        if (_worker is not { } worker || _viewport.Window is not { } window ||
+            NavigationFraming.Projection(camera.Pose(), window.Width, window.Height) is null) return;
+        _camera = camera;
+        _sceneProjection = null;
+        _navigationPending = false;
+        ++_pickRequest;
+        _viewportCameraIntent = worker.SetCamera(camera, arrivalTicks);
+        ShowNavigationMessage(null);
     }
 
     private GizmoMode ModeUi => _gizmoMode.SelectedIndex switch { 1 => GizmoMode.Rotate, 2 => GizmoMode.Scale, _ => GizmoMode.Translate };
@@ -1076,6 +1194,7 @@ public sealed class MainWindow : Window
         bool wasGrabbed = _groupGrab is not null;
         bool canceled = _worker?.CancelGroupGizmo() == true;
         _groupGrab = null;
+        if (wasGrabbed) UpdateViewportNavigationActions();
         if (wasGrabbed || canceled) _pressed = null;
         if (wasGrabbed && _editLine.Text?.StartsWith("Group Gizmo", StringComparison.Ordinal) == true)
             _editLine.Text = "Group Gizmo canceled.";
@@ -1097,6 +1216,7 @@ public sealed class MainWindow : Window
                         _worker?.EndGroupGizmo(active.Id, amount);
                     else _worker?.CancelGroupGizmo(active.Id);
                     _groupGrab = null;
+                    UpdateViewportNavigationActions();
                 }
             }
             return true;
@@ -1105,7 +1225,7 @@ public sealed class MainWindow : Window
             _worker is not { } worker || _viewport.Window is not { Width: > 0, Height: > 0 } window ||
             _gizmoShown?.Group is not { } shown || shown.Selection != _selection.Generation ||
             shown.Mode != ModeUi || shown.Snap != (_gizmoSnap.IsChecked == true)) return false;
-        if (_camera.Matrices((float)window.Width / window.Height) is not CameraMatrices camera) return false;
+        if (ViewportProjection(window) is not CameraMatrices camera) return false;
         var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
         var pointer = new Vector2(e.X, e.Y);
         Vector3 pivot = shown.Placement.Pivot;
@@ -1128,6 +1248,7 @@ public sealed class MainWindow : Window
         if (worker.BeginGroupGizmo(shown, handle.Axis) is long id)
         {
             _groupGrab = (id, shown.Mode, handle);
+            UpdateViewportNavigationActions();
             _editLine.Text = "Group Gizmo · World · " + (shown.Mode == GizmoMode.Scale ? "Uniform scale" : shown.Mode.ToString());
         }
         return true;
@@ -1145,7 +1266,7 @@ public sealed class MainWindow : Window
             case ViewportPointer.LeftDown when _gizmoShown is { World: { } world, Availability: { } availability } && _worker is not null &&
                                                _cameraInitialized && window is { Width: > 0, Height: > 0 }:
             {
-                CameraMatrices? camera = _camera.Matrices((float)window.Width / window.Height);
+                CameraMatrices? camera = ViewportProjection(window);
                 if (camera is null) return false;
                 GizmoMode mode = GizmoLayout.EffectiveMode(availability, ModeUi);
                 GizmoSpace space = GizmoLayout.EffectiveSpace(world, SpaceUi);
@@ -1191,10 +1312,11 @@ public sealed class MainWindow : Window
                 break;
             case ViewportPointer.Move when _pressed is { } start:
                 if (!_dragging && MathF.Max(MathF.Abs(e.X - start.X), MathF.Abs(e.Y - start.Y)) > DragThresholdPixels) _dragging = true;
-                if (_dragging && _cameraInitialized)
+                if (_dragging && _navigationReady)
                 {
-                    _camera.Orbit(e.X - _last.X, e.Y - _last.Y);
-                    _worker?.SetCamera(SceneReader.ToViewportCamera(_camera.Pose()), e.ArrivalTicks);
+                    EditorCamera camera = _camera.Copy();
+                    camera.Orbit((e.X - _last.X) * NavigationSpeed, (e.Y - _last.Y) * NavigationSpeed);
+                    MoveViewport(camera, e.ArrivalTicks);
                 }
                 _last = (e.X, e.Y);
                 break;
@@ -1239,10 +1361,10 @@ public sealed class MainWindow : Window
 
     private void OnWheel(int delta, long arrivalTicks)
     {
-        if (_groupGrab is not null) return;
-        if (!_cameraInitialized) return;
-        _camera.Dolly(delta / 120.0f);
-        _worker?.SetCamera(SceneReader.ToViewportCamera(_camera.Pose()), arrivalTicks);
+        if (_groupGrab is not null || _gizmoGrab is not null || !_navigationReady) return;
+        EditorCamera camera = _camera.Copy();
+        camera.Dolly(delta / 120.0f * NavigationSpeed);
+        MoveViewport(camera, arrivalTicks);
         _inputLine = "forwarded wheel " + delta;
     }
 
@@ -1250,7 +1372,7 @@ public sealed class MainWindow : Window
     {
         ViewportWindow? window = _viewport.Window;
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
-        CameraMatrices? matrices = _camera.Matrices((float)window.Width / window.Height);
+        CameraMatrices? matrices = ViewportProjection(window);
         if (matrices is null) return;
         ulong request = ++_pickRequest;
         // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
@@ -1264,7 +1386,7 @@ public sealed class MainWindow : Window
         }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
         float ndcY = (float)y / window.Height * 2.0f - 1.0f;
-        _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks, request);
+        _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks, request, _viewportCameraIntent);
     }
 
     private void OnPicked(PickResult pick)
@@ -1367,6 +1489,7 @@ public sealed class MainWindow : Window
 
     private void UpdateHierarchyActions()
     {
+        UpdateViewportNavigationActions();
         bool multiple = _selection.Nodes.Count > 1;
         _duplicate.Content = multiple ? "Duplicate subtrees" : "Duplicate subtree";
         string? reason = _worker is null || _referenceSessionFailed ? "Connect to an authoring session."
@@ -2968,6 +3091,7 @@ public sealed class MainWindow : Window
         };
         nameBox.LostFocus += (_, _) =>
         {
+            if (MovingFocusToNavigation()) return;
             nameBox.Text = snapshot.Name;
             if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
             {
@@ -3219,6 +3343,7 @@ public sealed class MainWindow : Window
             };
             box.LostFocus += (_, _) =>
             {
+                if (MovingFocusToNavigation()) return;
                 Commit();
                 if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
                 {

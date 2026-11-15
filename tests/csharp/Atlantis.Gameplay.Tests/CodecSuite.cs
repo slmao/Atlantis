@@ -150,6 +150,8 @@ public static class CodecSuite
             case "Schema": return Codec.DecodeSchema(wire) is List<SchemaType> schema ? W(Codec.EncodeSchema(schema)) : null;
             case "ViewportCamera":
                 return Codec.DecodeViewportCamera(wire) is ViewportCamera camera ? W(Codec.Encode(camera)) : null;
+            case "ViewportNavigation":
+                return Codec.DecodeViewportNavigation(wire) is ViewportNavigation navigation ? W(Codec.Encode(navigation)) : null;
             case "Ray": return Codec.DecodeRay(wire) is Ray ray ? W(Codec.Encode(ray)) : null;
             case "RayHit": return Codec.DecodeRayHit(wire) is RayHit hit ? W(Codec.Encode(hit)) : null;
             // Plan 0066 P2: the Viewport overlay (section 6.6).

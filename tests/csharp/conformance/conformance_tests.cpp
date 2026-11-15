@@ -456,6 +456,8 @@ void authoringVectors(std::vector<Vector>& out) {
   camera.nearZ = 0.1f;
   camera.farZ = 500.0f;
   out.push_back({"viewport_camera", "ViewportCamera", codec::encode(camera)});
+  out.push_back({"viewport_navigation", "ViewportNavigation", codec::encode(connection::ViewportNavigation{
+      7, camera, {{kEntity, connection::ViewportBoundsKind::Origin, {1.0f, 2.0f, 3.0f}, {1.0f, 2.0f, 3.0f}}}})});
   out.push_back({"ray", "Ray", codec::encode(connection::Ray{{0.5f, 2.0f, 9.0f}, {0.0f, -0.6f, -0.8f}})});
   out.push_back({"ray_hit", "RayHit", codec::encode(connection::RayHit{kEntity, 7.25f})});
   out.push_back({"schema.world", "Schema", codec::encodeSchema(atlantis::world::worldSchema())});

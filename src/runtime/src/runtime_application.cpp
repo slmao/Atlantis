@@ -16,6 +16,7 @@
 #include <atlantis/runtime/material_realization.h>
 #include <atlantis/runtime/scene_extraction.h>
 #include <atlantis/runtime/scene_load.h>
+#include <atlantis/schema.h>
 #include <atlantis/shader_system/reflection_loader.h>
 #include <atlantis/shader_system/rhi_integration/vertex_input_mapping.h>
 #include <atlantis/vulkan_backend/vulkan_backend.h>
@@ -31,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -2369,6 +2371,92 @@ void RuntimeApplication::setControlViewportCamera(const std::optional<atlantis::
 std::optional<ActiveCameraInput> RuntimeApplication::activeCameraPose() const {
   if (!scene_) return std::nullopt;
   return collectActiveCamera(*scene_);
+}
+
+connection::ViewportNavigationResult RuntimeApplication::viewportNavigation(
+    std::span<const atlantis::asset_system::EntityGuid> targets) const {
+  using connection::ViewportNavigationResult;
+  using Error = connection::ViewportNavigationError;
+  using world::access::AccessError;
+  if (!connection::validViewportNavigationTargets(targets)) return ViewportNavigationResult::Err({Error::InvalidRequest});
+  const auto active = activeCameraPose();
+  if (!active) return ViewportNavigationResult::Err({Error::SceneCameraUnavailable});
+  const auto& lens = active->camera;
+  const auto finite = [](const auto& values) {
+    return std::ranges::all_of(values, [](float value) { return std::isfinite(value); });
+  };
+  if (!finite(active->worldMatrix) || !std::isfinite(lens.fovYRadians) || lens.fovYRadians <= 0.0f ||
+      lens.fovYRadians >= 3.1415926f || !std::isfinite(lens.nearZ) || !std::isfinite(lens.farZ) ||
+      lens.nearZ <= 0.0f || lens.farZ <= lens.nearZ) {
+    return ViewportNavigationResult::Err({Error::SceneCameraUnavailable});
+  }
+  const auto projection = extractCameraMatrices(active->worldMatrix, lens.fovYRadians, lens.nearZ, lens.farZ, 1.0f);
+  if (projection.isErr() || !finite(projection.value().view) || !finite(projection.value().projection)) {
+    return ViewportNavigationResult::Err({Error::SceneCameraUnavailable});
+  }
+  connection::ViewportNavigation result{
+      sceneGeneration_, {active->worldMatrix, lens.fovYRadians, lens.nearZ, lens.farZ}, {}};
+  result.bounds.reserve(targets.size());
+  constexpr auto matrixType = schema::typeId("world::WorldMatrix");
+  constexpr std::array columns{
+      schema::fieldId("world::WorldMatrix", "column0"), schema::fieldId("world::WorldMatrix", "column1"),
+      schema::fieldId("world::WorldMatrix", "column2"), schema::fieldId("world::WorldMatrix", "column3")};
+  constexpr auto meshType = schema::typeId("world::Renderable");
+  constexpr auto meshField = schema::fieldId("world::Renderable", "meshAsset");
+  for (const auto& entity : targets) {
+    if (!worldAccess_ || !worldAccess_->findEntity(entity)) {
+      return ViewportNavigationResult::Err({Error::TargetUnavailable, entity});
+    }
+    const auto mesh = worldAccess_->getProperty({entity, meshType, meshField});
+    const bool origin = mesh.isErr() && mesh.error() == AccessError::ComponentMissing;
+    const auto* meshId = mesh.isOk() ? std::get_if<std::uint64_t>(&mesh.value()) : nullptr;
+    const auto geometry = meshId == nullptr ? pickGeometry_.end() : pickGeometry_.find(asset_system::AssetId{*meshId});
+    if (!origin && (geometry == pickGeometry_.end() || geometry->second.positions.empty())) {
+      return ViewportNavigationResult::Err({Error::GeometryUnavailable, entity});
+    }
+    std::array<std::array<float, 4>, 4> matrix{};
+    for (std::size_t column = 0; column < columns.size(); ++column) {
+      const auto field = worldAccess_->getProperty({entity, matrixType, columns[column]});
+      const auto* value = field.isOk() ? std::get_if<std::array<float, 4>>(&field.value()) : nullptr;
+      if (!value || !finite(*value)) return ViewportNavigationResult::Err({Error::InvalidBounds, entity});
+      matrix[column] = *value;
+    }
+    if (matrix[0][3] != 0.0f || matrix[1][3] != 0.0f || matrix[2][3] != 0.0f || matrix[3][3] != 1.0f) {
+      return ViewportNavigationResult::Err({Error::InvalidBounds, entity});
+    }
+    const std::array<float, 3> translation{matrix[3][0], matrix[3][1], matrix[3][2]};
+    if (origin) {
+      result.bounds.push_back({entity, connection::ViewportBoundsKind::Origin, translation, translation});
+      continue;
+    }
+    const auto& low = geometry->second.localMin;
+    const auto& high = geometry->second.localMax;
+    if (!finite(low) || !finite(high) || low[0] > high[0] || low[1] > high[1] || low[2] > high[2]) {
+      return ViewportNavigationResult::Err({Error::InvalidBounds, entity});
+    }
+    connection::ViewportBounds bound{entity, connection::ViewportBoundsKind::Mesh};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+      double minimum = std::numeric_limits<double>::infinity();
+      double maximum = -minimum;
+      for (unsigned corner = 0; corner < 8; ++corner) {
+        double coordinate = translation[axis];
+        for (unsigned column = 0; column < 3; ++column) {
+          const float point = (corner & (1u << column)) != 0 ? high[column] : low[column];
+          coordinate += static_cast<double>(matrix[column][axis]) * point;
+        }
+        minimum = std::min(minimum, coordinate);
+        maximum = std::max(maximum, coordinate);
+      }
+      constexpr float limit = std::numeric_limits<float>::max();
+      if (minimum < -limit || maximum > limit) return ViewportNavigationResult::Err({Error::InvalidBounds, entity});
+      bound.min[axis] = static_cast<float>(minimum);
+      bound.max[axis] = static_cast<float>(maximum);
+      if (bound.min[axis] > minimum) bound.min[axis] = std::nextafter(bound.min[axis], -limit);
+      if (bound.max[axis] < maximum) bound.max[axis] = std::nextafter(bound.max[axis], limit);
+    }
+    result.bounds.push_back(bound);
+  }
+  return ViewportNavigationResult::Ok(std::move(result));
 }
 
 // Plan 0062 P3/P6 (ADR-0123 D2): through the World's operation boundary, so

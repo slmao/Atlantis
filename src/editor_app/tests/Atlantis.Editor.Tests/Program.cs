@@ -65,6 +65,7 @@ public static partial class Program
         try
         {
             Run(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
+            ViewportNavigationChecks();
             DragReportChecks();
             GizmoChecks(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             // Plan 0068 M1 (ADR-0137 D1): every ported model against its vectors.

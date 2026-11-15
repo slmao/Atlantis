@@ -463,6 +463,23 @@ public sealed class RemoteControl
         _session.Call("control.setViewportCamera",
             JsonValue.NewObject().Set("camera", camera is null ? JsonValue.Null() : Codec.Encode(camera)));
 
+    /// <summary>Reads bounds and the Runtime's active scene camera in one snapshot. Empty targets read only the camera.</summary>
+    public ViewportNavigationResult ViewportNavigation(IReadOnlyList<EntityGuid> targets)
+    {
+        const string method = "control.viewportNavigation";
+        if (targets.Count > global::Atlantis.Gameplay.ViewportNavigation.MaxTargets)
+            return new(null, new(ViewportNavigationError.InvalidRequest));
+        var seen = new HashSet<EntityGuid>();
+        JsonValue items = JsonValue.NewArray();
+        foreach (EntityGuid target in targets)
+        {
+            if (target.IsNil || !seen.Add(target)) return new(null, new(ViewportNavigationError.InvalidRequest));
+            items.Push(Codec.Encode(target));
+        }
+        JsonValue response = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("targets", items)));
+        return Codec.DecodeViewportNavigationResponse(response, targets) ?? throw _session.Malformed(method);
+    }
+
     /// <summary>
     /// Spec 0066 R2 / ADR-0132 D2 (Plan 0066 P2): this session's Viewport overlay, drawn from the Runtime's next frame
     /// with every other client's; null clears it. InvalidRequest (and nothing changed) for one not well formed or over

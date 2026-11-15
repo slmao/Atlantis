@@ -1,9 +1,9 @@
 # ADR 0165 — Shared Viewport Navigation Query
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-16
-- **Deciders:** Pending joint human review
-- **Acceptance:** Pending
+- **Deciders:** Atlantis maintainer
+- **Acceptance:** Joint approval of [PR #383, `e448c730`](https://github.com/slmao/Atlantis/pull/383) on 2026-11-16
 - **Related Spec:** [Spec 0109](../specs/0109-viewport-navigation.md)
 
 ## Context

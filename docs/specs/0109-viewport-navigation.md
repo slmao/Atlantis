@@ -1,11 +1,11 @@
 # Spec 0109 — Viewport Navigation and Selection Framing
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-16
 - **Related Plan:** [Plan 0109](../plans/0109-viewport-navigation.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0165](../adr/0165-shared-viewport-navigation-query.md) (Proposed)
+- **Approval:** Maintainer approval of [PR #383, `e448c730`](https://github.com/slmao/Atlantis/pull/383) on 2026-11-16
+- **Related ADR:** [ADR-0165](../adr/0165-shared-viewport-navigation-query.md) (Accepted)
 
 ## Summary
 

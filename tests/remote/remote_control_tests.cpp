@@ -52,6 +52,14 @@ class FakeControl final : public connection::RuntimeControl {
     viewportCamera = std::move(camera);
     ++viewportCameraCalls;
   }
+  connection::ViewportNavigationResult viewportNavigation(
+      std::span<const atlantis::asset_system::EntityGuid> targets) override {
+    if (!navigation) return RuntimeControl::viewportNavigation(targets);
+    auto result = *navigation;
+    for (const auto& target : targets) result.bounds.push_back(
+        {target, connection::ViewportBoundsKind::Origin, {1, 2, 3}, {1, 2, 3}});
+    return connection::ViewportNavigationResult::Ok(std::move(result));
+  }
   // Plan 0066 (Spec 0066 R2): the Viewport overlay last set (for a transport's fake, the union), and how often.
   atlantis::Result<std::monostate, connection::ControlError> setViewportOverlay(
       std::optional<connection::ViewportOverlay> overlay) override {
@@ -69,6 +77,7 @@ class FakeControl final : public connection::RuntimeControl {
     return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Ok(*rayAnswer);
   }
   std::optional<connection::ViewportCamera> viewportCamera;
+  std::optional<connection::ViewportNavigation> navigation;
   int viewportCameraCalls = 0;
   std::optional<connection::ViewportOverlay> viewportOverlay;
   int viewportOverlayCalls = 0;
@@ -104,6 +113,34 @@ class FakeControl final : public connection::RuntimeControl {
 };
 
 }  // namespace
+
+TEST_CASE("remote control: viewport navigation preserves target order and legacy controls", "[remote][control][camera]") {
+  const auto scene = cookAndDecodeScene(kSceneSource);
+  FakeControl control;
+  ServedWorld world(scene, {}, &control);
+  const auto session = world.attach();
+  auto& remote = session->control();
+  using Error = connection::ViewportNavigationError;
+  REQUIRE(remote.viewportNavigation({}).error().code == Error::Unsupported);
+  CHECK_FALSE(session->failure().has_value());
+  const auto first = atlantis::asset_system::parseEntityGuid("01090109-0001-4109-8109-000000000002").value();
+  const auto second = atlantis::asset_system::parseEntityGuid("01090109-0001-4109-8109-000000000001").value();
+  connection::ViewportCamera camera{{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 10, 1}, 1.0f, 0.25f, 100.0f};
+  control.navigation = connection::ViewportNavigation{7, camera, {}};
+  remote.pause();
+  remote.setViewportCamera(camera);
+  const std::array targets{first, second};
+  const auto result = remote.viewportNavigation(targets);
+  REQUIRE(result.isOk());
+  CHECK(result.value().sceneGeneration == 7);
+  CHECK(result.value().sceneCamera == camera);
+  REQUIRE(result.value().bounds.size() == 2);
+  CHECK(result.value().bounds[0].entity == first);
+  CHECK(result.value().bounds[1].entity == second);
+  CHECK(remote.viewportNavigation(std::array{first, first}).error().code == Error::InvalidRequest);
+  CHECK(remote.status().paused);
+  CHECK(control.viewportCameraCalls == 1);
+}
 
 TEST_CASE("remote control: status, pause, resume and diagnostics cross the wire", "[remote][control]") {
   const auto scene = cookAndDecodeScene(kSceneSource);

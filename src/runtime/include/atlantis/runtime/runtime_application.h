@@ -187,6 +187,8 @@ class RuntimeApplication {
   // camera is substituted. Empty without a scene or an active camera. Frame
   // thread only.
   [[nodiscard]] std::optional<ActiveCameraInput> activeCameraPose() const;
+  [[nodiscard]] atlantis::connection::ViewportNavigationResult viewportNavigation(
+      std::span<const atlantis::asset_system::EntityGuid> targets) const;
 
   // Plan 0062 P3 (Spec 0062 R4, R6; ADR-0123 D2): the editor's pick services,
   // over the CPU geometry kept when BootstrapConfig::retainPickGeometry was

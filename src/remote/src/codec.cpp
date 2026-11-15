@@ -1213,6 +1213,85 @@ std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& valu
   return connection::ViewportCamera{*matrix, *fov, *nearZ, *farZ};
 }
 
+Value encode(const connection::ViewportNavigation& navigation) {
+  Value bounds = Value::array();
+  for (const auto& bound : navigation.bounds) {
+    Value item = Value::object();
+    item.set("entity", encodeEntity(bound.entity));
+    item.set("kind", Value::string(bound.kind == connection::ViewportBoundsKind::Mesh ? "mesh" : "origin"));
+    item.set("min", encodeVector(bound.min));
+    item.set("max", encodeVector(bound.max));
+    bounds.push(std::move(item));
+  }
+  Value out = Value::object();
+  out.set("sceneGeneration", Value::number(navigation.sceneGeneration));
+  out.set("sceneCamera", encode(navigation.sceneCamera));
+  out.set("bounds", std::move(bounds));
+  return out;
+}
+
+Value encode(const connection::ViewportNavigationFailure& failure) {
+  Value out = Value::object();
+  out.set("code", Value::string(std::string(connection::toString(failure.code))));
+  if (failure.target) out.set("target", encodeEntity(*failure.target));
+  return out;
+}
+
+std::optional<connection::ViewportNavigation> decodeViewportNavigation(const Value& value) {
+  const auto* generationValue = value.find("sceneGeneration");
+  const auto* cameraValue = value.find("sceneCamera");
+  const auto* bounds = value.find("bounds");
+  if (!value.isObject() || value.asObject().size() != 3 || !generationValue || !cameraValue || !bounds ||
+      !bounds->isArray() || bounds->asArray().size() > connection::kMaxViewportNavigationTargets) return std::nullopt;
+  const auto generation = decodeUInt64(*generationValue);
+  const auto camera = decodeViewportCamera(*cameraValue);
+  const auto finite = [](const auto& items) {
+    for (const float value : items) if (!std::isfinite(value)) return false;
+    return true;
+  };
+  if (!generation || !camera || camera->nearZ <= 0 || camera->farZ <= camera->nearZ ||
+      camera->fovYRadians <= 0 || camera->fovYRadians >= 3.1415926f || !std::isfinite(camera->nearZ) ||
+      !std::isfinite(camera->farZ) || !std::isfinite(camera->fovYRadians) || !finite(camera->worldMatrix)) return std::nullopt;
+  connection::ViewportNavigation result{*generation, *camera, {}};
+  for (const auto& item : bounds->asArray()) {
+    const auto* entityValue = item.find("entity");
+    const auto* kind = item.find("kind");
+    const auto* minimum = item.find("min");
+    const auto* maximum = item.find("max");
+    if (!item.isObject() || item.asObject().size() != 4 || !entityValue || !kind || !kind->isString() ||
+        !minimum || !maximum) return std::nullopt;
+    const bool origin = kind->asString() == "origin";
+    const auto entity = decodeEntity(*entityValue);
+    const auto low = decodeVector<3>(*minimum);
+    const auto high = decodeVector<3>(*maximum);
+    if ((!origin && kind->asString() != "mesh") || !entity || !low || !high || !finite(*low) || !finite(*high) ||
+        (*low)[0] > (*high)[0] || (*low)[1] > (*high)[1] || (*low)[2] > (*high)[2] ||
+        (origin && *low != *high)) return std::nullopt;
+    result.bounds.push_back({*entity, origin ? connection::ViewportBoundsKind::Origin
+                                            : connection::ViewportBoundsKind::Mesh, *low, *high});
+  }
+  return result;
+}
+
+std::optional<connection::ViewportNavigationFailure> decodeViewportNavigationFailure(const Value& value) {
+  using Error = connection::ViewportNavigationError;
+  const auto* code = value.find("code");
+  const auto* target = value.find("target");
+  if (!value.isObject() || value.asObject().size() != (target ? 2u : 1u) || !code || !code->isString()) {
+    return std::nullopt;
+  }
+  for (const auto error : {Error::InvalidRequest, Error::SceneCameraUnavailable, Error::TargetUnavailable,
+                           Error::GeometryUnavailable, Error::InvalidBounds, Error::Unsupported}) {
+    if (code->asString() != connection::toString(error)) continue;
+    const bool targetRequired = error == Error::TargetUnavailable || error == Error::GeometryUnavailable ||
+                                error == Error::InvalidBounds;
+    const auto entity = target ? decodeEntity(*target) : std::nullopt;
+    if (targetRequired != (target != nullptr) || (target && !entity)) return std::nullopt;
+    return connection::ViewportNavigationFailure{error, entity};
+  }
+  return std::nullopt;
+}
+
 Value encode(const connection::Ray& ray) {
   Value out = Value::object();
   out.set("origin", encodeFloats(ray.origin));

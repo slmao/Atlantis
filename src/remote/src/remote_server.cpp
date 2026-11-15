@@ -372,6 +372,25 @@ namespace ac = atlantis::connection::authoring;
     if (hit.isErr()) return Outcome::Ok(codec::err(codec::encodeControlError(hit.error())));
     return Outcome::Ok(codec::ok(hit.value().has_value() ? codec::encode(*hit.value()) : Value()));
   }
+  if (method == "control.viewportNavigation") {
+    namespace c = atlantis::connection;
+    const auto* values = p.find("targets");
+    if (!p.isObject() || p.asObject().size() != 1 || !values || !values->isArray()) return bad("targets");
+    const auto invalid = [] {
+      return Outcome::Ok(codec::err(codec::encode(c::ViewportNavigationFailure{c::ViewportNavigationError::InvalidRequest})));
+    };
+    if (values->asArray().size() > c::kMaxViewportNavigationTargets) return invalid();
+    std::vector<atlantis::asset_system::EntityGuid> targets;
+    for (const auto& value : values->asArray()) {
+      if (!value.isString()) return bad("target GUID");
+      const auto parsed = atlantis::asset_system::parseEntityGuid(value.asString());
+      if (parsed.isErr() && parsed.error() != atlantis::asset_system::GuidParseError::NilGuid) return bad("target GUID");
+      targets.push_back(parsed.isOk() ? parsed.value() : atlantis::asset_system::EntityGuid{});
+    }
+    if (!c::validViewportNavigationTargets(targets)) return invalid();
+    const auto result = control.viewportNavigation(targets);
+    return Outcome::Ok(result.isOk() ? codec::ok(codec::encode(result.value())) : codec::err(codec::encode(result.error())));
+  }
   return Outcome::Err("unknown method " + std::string(method));
 }
 
