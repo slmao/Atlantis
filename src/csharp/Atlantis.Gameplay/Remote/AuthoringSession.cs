@@ -196,7 +196,7 @@ public sealed class AuthoringSession
 
     public CommandTicket Submit(A.Command command)
     {
-        if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision)
+        if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision)
             return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
@@ -205,9 +205,16 @@ public sealed class AuthoringSession
     /// <summary>All or nothing: every command applies, or none does and one failure names the transaction.</summary>
     public TransactionTicket SubmitTransaction(IReadOnlyList<A.Command> commands)
     {
-        if (commands.Any(command => command is A.RequireDocumentRevision) &&
-            Document()?.SupportsGuardedPropertyTransactions != true)
-            throw new NotSupportedException("This open document does not support guarded property transactions.");
+        bool property = commands.Any(command => command is A.RequireDocumentRevision);
+        bool transform = commands.Any(command => command is A.RequireTransformBatchRevision);
+        if (property || transform)
+        {
+            A.DocumentInfo? info = Document();
+            if (transform && info?.SupportsGuardedTransformTransactions != true)
+                throw new NotSupportedException("This open document does not support guarded Transform transactions.");
+            if (property && info?.SupportsGuardedPropertyTransactions != true)
+                throw new NotSupportedException("This open document does not support guarded property transactions.");
+        }
         JsonValue list = JsonValue.NewArray();
         foreach (A.Command command in commands)
         {

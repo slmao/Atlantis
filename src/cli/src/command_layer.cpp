@@ -1962,12 +1962,15 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parent.isErr()) return ResultT::Err(parent.error());
     return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
   }
-  if (verb == "require-revision") {
-    if (t.size() != 2) return ResultT::Err(usageError("require-revision <revision> (first line of scene tx)"));
+  if (verb == "require-revision" || verb == "require-transform-revision") {
+    const bool transform = verb == "require-transform-revision";
+    if (t.size() != 2) return ResultT::Err(usageError(transform ? "require-transform-revision <revision> (first line of scene tx)"
+                                                               : "require-revision <revision> (first line of scene tx)"));
     std::uint64_t revision{};
     const auto parsed = std::from_chars(t[1].data(), t[1].data() + t[1].size(), revision);
     if (parsed.ec != std::errc{} || parsed.ptr != t[1].data() + t[1].size())
       return ResultT::Err(textError(text::TextError::MalformedNumber, t[1]));
+    if (transform) return ResultT::Ok(std::vector<ac::Command>{ac::RequireTransformBatchRevision{revision}});
     return ResultT::Ok(std::vector<ac::Command>{ac::RequireDocumentRevision{revision}});
   }
   if (verb == "swap-siblings" || verb == "move-sibling") {
@@ -2025,14 +2028,21 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     return failed(command, plainError("SiblingOrderUnavailable", ErrorCategory::Refused,
                                       "this Runtime does not support sibling order changes"));
   const bool isTransaction = command == "scene tx";
-  const bool guarded = std::ranges::any_of(commands, [](const auto& edit) {
+  const bool propertyGuard = std::ranges::any_of(commands, [](const auto& edit) {
     return std::holds_alternative<ac::RequireDocumentRevision>(edit);
   });
+  const bool transformGuard = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireTransformBatchRevision>(edit);
+  });
+  const bool guarded = propertyGuard || transformGuard;
   Value batchTargets = Value::array();
   std::string batchField;
   if (guarded) {
     const auto info = a->document();
-    if (!info || !info->supportsGuardedPropertyTransactions)
+    if (transformGuard && (!info || !info->supportsGuardedTransformTransactions))
+      return failed(command, plainError("GuardedTransformBatchUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded Transform transactions"));
+    if (propertyGuard && (!info || !info->supportsGuardedPropertyTransactions))
       return failed(command, plainError("GuardedPropertyBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded property transactions"));
     for (const auto& edit : commands) {
@@ -2041,6 +2051,7 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       batchTargets.push(Value::string(text::formatEntity(write->address.node)));
       if (const auto leaf = leafOf(schema, write->address.component, write->address.field)) batchField = leaf->path;
     }
+    if (transformGuard) batchField = "Transform";
   }
   (void)drainSceneEvents();  // only this submission's events below
   (void)a->drainFailures();

@@ -220,7 +220,9 @@ public sealed class EditorLog : IDisposable
 /// <summary>Plan 0068 M5 (Spec 0068 R8): what the toolbar shows of the history.</summary>
 public sealed record HistorySnapshot(bool CanUndo, bool CanRedo, string UndoLabel, string RedoLabel, string Notice);
 
-public sealed record GizmoSnapshot(EntityGuid? Node, float[]? World, GizmoAvailability? Availability);
+public sealed record GroupGizmoSnapshot(long Lifetime, ulong Selection, GizmoMode Mode, bool Snap, GroupGizmo Placement);
+public sealed record GizmoSnapshot(EntityGuid? Node, float[]? World, GizmoAvailability? Availability,
+    GroupGizmoSnapshot? Group = null);
 
 /// <summary>Previews: the Runtime World's WorldMatrix of each node, one transaction per batch (ADR-0135 D1). Public for
 /// the tests project's live integration test, which drives real drags as EditMeasurement does.</summary>
@@ -318,6 +320,14 @@ public sealed class EditorWorker : IDisposable
     private ulong _selectionGeneration;
     private ulong _requestedSelectionGeneration;
     private bool _batchWritable;
+    private bool _groupWritable;
+    private sealed record GroupGrab(long Id, GroupGizmoSnapshot View, GizmoAxis Axis);
+    private long _nextGroupGrab;
+    private GroupGrab? _requestedGroup;
+    private GroupGrab? _groupGrab;
+    private bool _groupSettling;
+    private (GroupGrab Grab, float Amount)? _pendingGroup;
+    private GroupGizmoSample? _groupPreview;
     private bool _batchSettling;
     private InspectorModel? _inspector;
     private AssetReferencePicker? _referencePicker;
@@ -378,6 +388,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<BatchInspectorSnapshot>? BatchInspectorChanged;
     public event Action<long, string>? AssetReferenceInvalidated;
     public event Action<GizmoSnapshot>? GizmoChanged;
+    public event Action<long>? GroupGrabEnded;
     public event Action<HistorySnapshot>? HistoryChanged;
     public event Action<double, string>? CommitApplied;
 
@@ -727,6 +738,159 @@ public sealed class EditorWorker : IDisposable
             lock (_lock) { if (epoch != _gizmoRecoveryEpoch) return; _gizmoActive = false; }
             ReleaseGizmo(session);
         });
+    }
+
+    public long? BeginGroupGizmo(GroupGizmoSnapshot shown, GizmoAxis axis)
+    {
+        lock (_lock)
+        {
+            if (_stopping || _gizmoActive || _batchSettling || _groupSettling || _requestedGroup is not null ||
+                shown.Lifetime != MeshDocumentLifetime || shown.Selection != _requestedSelectionGeneration) return null;
+            var grab = new GroupGrab(++_nextGroupGrab, shown, axis);
+            _requestedGroup = grab;
+            Enqueue(session =>
+            {
+                if (!GroupCurrent(grab)) return;
+                GroupGizmo? fresh = ReadGroupPlacement(session);
+                if (!GroupCurrent(grab) || fresh is null || !shown.Placement.SameLayout(fresh) ||
+                    shown.Mode != _gizmoMode || shown.Snap != _gizmoSnap)
+                {
+                    CancelGroupGizmo(grab.Id);
+                    GroupNotice(shown.Lifetime, "The group placement changed. Grab the refreshed Gizmo again.");
+                    return;
+                }
+                _groupGrab = grab;
+                SendOverlay(session);
+            });
+            return grab.Id;
+        }
+    }
+
+    public void MoveGroupGizmo(long id, float amount)
+    {
+        lock (_lock)
+        {
+            if (_groupSettling || _requestedGroup is not { } grab || grab.Id != id) return;
+            _pendingGroup = (grab, amount);
+            Monitor.Pulse(_lock);
+        }
+    }
+
+    public bool CancelGroupGizmo(long? id = null)
+    {
+        lock (_lock)
+        {
+            if (_requestedGroup is not { } grab || (id is long specific && grab.Id != specific)) return false;
+            _requestedGroup = null;
+            _pendingGroup = null;
+            Enqueue(session =>
+            {
+                RetireGroup(grab);
+                SendOverlay(session);
+            });
+            _post(() => GroupGrabEnded?.Invoke(grab.Id));
+            return true;
+        }
+    }
+
+    public void EndGroupGizmo(long id, float amount)
+    {
+        lock (_lock)
+        {
+            if (_groupSettling || _requestedGroup is not { } grab || grab.Id != id) return;
+            _groupSettling = true;
+            _pendingGroup = null;
+            Enqueue(session =>
+            {
+                try { ReleaseGroup(session, grab, amount); }
+                finally
+                {
+                    lock (_lock)
+                    {
+                        if (ReferenceEquals(_requestedGroup, grab)) _requestedGroup = null;
+                        _groupSettling = false;
+                    }
+                    _post(() => GroupGrabEnded?.Invoke(grab.Id));
+                }
+            });
+        }
+    }
+
+    private bool GroupCurrent(GroupGrab grab)
+    {
+        lock (_lock)
+            return ReferenceEquals(grab, _requestedGroup) && !_stopping &&
+                grab.View.Lifetime == MeshDocumentLifetime && grab.View.Selection == _requestedSelectionGeneration;
+    }
+
+    private void RetireGroup(GroupGrab grab)
+    {
+        if (!ReferenceEquals(grab, _groupGrab)) return;
+        _groupGrab = null;
+        _groupPreview = null;
+    }
+
+    private void GroupNotice(long lifetime, string notice) =>
+        _post(() => { if (lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
+
+    private GroupGizmo? ReadGroupPlacement(RemoteSession session)
+    {
+        if (!_groupWritable || _selectedNodes.Count < 2 || _document is not RemoteAuthoringDocument document ||
+            ReadOrderRevision(document) is not ulong before) return null;
+        long lifetime = MeshDocumentLifetime;
+        var basis = GroupGizmo.Read(document, _tree, _selectedNodes);
+        var events = document.ObserveEvents();
+        ulong? after = ReadOrderRevision(document);
+        if (events is { Count: > 0 }) PollDocument(session, events, pollApply: false, refreshOverlay: false);
+        return events is not null && before == after && lifetime == MeshDocumentLifetime && basis is not null &&
+            basis.IsCurrent(_tree, preview: true, checkStamps: true) &&
+            basis.Targets.All(target => target.IsCurrent(_tree, checkStamp: true)) ? basis : null;
+    }
+
+    private void PreviewGroup(RemoteSession session, GroupGrab grab, float amount)
+    {
+        if (!ReferenceEquals(_groupGrab, grab) || !GroupCurrent(grab)) return;
+        var view = grab.View;
+        _groupPreview = view.Placement.Solve(view.Mode, grab.Axis, amount, view.Snap);
+        string notice = _groupPreview.Refusal ?? "Group Gizmo preview · Apply updates scene geometry.";
+        _post(() =>
+        {
+            if (GroupCurrent(grab)) EditNotice?.Invoke(notice);
+        });
+        SendOverlay(session);
+    }
+
+    private void ReleaseGroup(RemoteSession session, GroupGrab grab, float amount)
+    {
+        if (!ReferenceEquals(_groupGrab, grab) || !GroupCurrent(grab)) return;
+        RetireGroup(grab);
+        SendOverlay(session);
+        if (!GroupCurrent(grab)) return;
+        var view = grab.View;
+        GroupGizmoSample result = view.Placement.Solve(view.Mode, grab.Axis, amount, view.Snap);
+        if (result.Refusal is string refusal)
+        {
+            GroupNotice(view.Lifetime, refusal);
+            return;
+        }
+        string label = view.Mode + " group";
+        var edit = new BatchPropertyEdit(label, view.Placement.Targets, result.Writes, view.Placement);
+        var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab);
+        string notice = settled.Notice;
+        if (settled.State == BatchReplayState.Committed && result.Writes.Count > 0 &&
+            view.Lifetime == MeshDocumentLifetime && _history is { } history && _historyTarget is { } target)
+        {
+            history.Record(new EditTransaction(label, result.Writes, new EditEntry[] { edit }),
+                target.Committed(Array.Empty<CommandFailure>()));
+            history.Update();
+            PostHistory(view.Lifetime);
+            notice = ApplyVerifiedEdit(view.Lifetime, notice, publishStatus: false);
+        }
+        PostHistory(view.Lifetime);
+        GroupNotice(view.Lifetime, notice);
+        PostApplyState(view.Lifetime);
+        PostInspector();
+        SendOverlay(session);
     }
 
     public void CaptureAssetReference(EntityGuid node, TypeId component, FieldId field,
@@ -1365,6 +1529,7 @@ public sealed class EditorWorker : IDisposable
         lock (_lock)
         {
             _requestedSelectionGeneration = generation;
+            if (_requestedGroup is { } group && group.View.Selection != generation) CancelGroupGizmo(group.Id);
             Enqueue(session =>
             {
                 lock (_lock)
@@ -1393,7 +1558,7 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
-            if (_stopping || _batchSettling || snapshot.Lifetime != MeshDocumentLifetime ||
+            if (_stopping || _batchSettling || _requestedGroup is not null || _groupSettling || snapshot.Lifetime != MeshDocumentLifetime ||
                 snapshot.SelectionGeneration != _requestedSelectionGeneration ||
                 snapshot.Revision is null || !snapshot.Writable || !field.Field.Editable) return false;
             _batchSettling = true;
@@ -1428,12 +1593,14 @@ public sealed class EditorWorker : IDisposable
     }
 
     private BatchReplayResult SettlePropertyBatch(RemoteSession session, BatchPropertyEdit edit, bool forward,
-        long lifetime, ulong? selection = null)
+        long lifetime, ulong? selection = null, GroupGrab? grab = null)
     {
-        if (_document is not RemoteAuthoringDocument document || !_batchWritable)
-            return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
+        bool group = edit.Group is not null;
+        if (_document is not RemoteAuthoringDocument document || !(group ? _groupWritable : _batchWritable))
+            return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime &&
-            (selection is null || selection == _requestedSelectionGeneration);
+            (selection is null || selection == _requestedSelectionGeneration) &&
+            (grab is null || ReferenceEquals(grab, _requestedGroup));
         bool Current()
         {
             lock (_lock) return IsCurrent();
@@ -1445,13 +1612,20 @@ public sealed class EditorWorker : IDisposable
             PollDocument(session, events, pollApply: false, refreshInspector: false);
             return true;
         }
-        bool TargetsCurrent() => edit.Targets.All(target => target.IsCurrent(_tree, selection is not null));
+        bool TargetsCurrent(bool stamps) =>
+            (edit.Group?.IsCurrent(_tree, preview: grab is not null, checkStamps: stamps) ?? true) &&
+            edit.Targets.All(target => target.IsCurrent(_tree, stamps));
         var addresses = edit.Targets.Select(target => target.Address).ToArray();
         var writes = edit.Writes;
-        var expectedValues = selection is not null ? edit.Targets.Select(target => target.Value) :
-            writes.Select(write => (PropertyValue?)(forward ? write.Before : write.After));
+        var expectedValues = edit.Targets.Select(target => target.Value);
+        if (selection is null)
+        {
+            var valuesToCompare = writes.ToDictionary(write => write.Address, write => forward ? write.Before : write.After);
+            expectedValues = edit.Targets.Select(target => valuesToCompare.TryGetValue(target.Address, out var expected)
+                ? expected : target.Value);
+        }
         var changed = writes.Select(write => new SetProperty(write.Address, forward ? write.After : write.Before)).ToArray();
-        string subject = edit.Field + " on " + string.Join(", ", addresses.Select(address => address.Node));
+        string subject = edit.Field + " on " + string.Join(", ", edit.Group?.Roots ?? addresses.Select(address => address.Node));
         BatchReplayResult Conflict() => new(BatchReplayState.Drop, subject + " changed elsewhere. Refresh and review the values.");
         BatchReplayResult Stale() => new(BatchReplayState.Retry,
             (selection is null ? "Document revision changed." : "Selection or document revision changed.") +
@@ -1472,18 +1646,20 @@ public sealed class EditorWorker : IDisposable
         {
             if (!Current() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue || !Observe())
                 return Stale();
-            if (!TargetsCurrent()) return Conflict();
+            if (!TargetsCurrent(selection is not null)) return Conflict();
             IReadOnlyList<PropertyValue?> prior = document.GetProperties(addresses);
             if (!Observe() || !Current()) return Stale();
-            if (!TargetsCurrent()) return Conflict();
+            if (!TargetsCurrent(selection is not null)) return Conflict();
             if (ReadOrderRevision(document) != revision) return Stale();
             if (!prior.SequenceEqual(expectedValues)) return Conflict();
             if (changed.Length == 0) return new(BatchReplayState.Committed, "The selected values are unchanged.");
 
             if (!Current()) return Stale();
-            if (document.Info()?.SupportsGuardedPropertyTransactions != true)
-                return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
-            var commands = JsonValue.NewArray().Push(Codec.Encode(new RequireDocumentRevision(revision)));
+            DocumentInfo? info = document.Info();
+            if (!(group ? info?.SupportsGuardedTransformTransactions == true : info?.SupportsGuardedPropertyTransactions == true))
+                return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
+            Command guard = group ? new RequireTransformBatchRevision(revision) : new RequireDocumentRevision(revision);
+            var commands = JsonValue.NewArray().Push(Codec.Encode(guard));
             foreach (var command in changed) commands.Push(Codec.Encode(command));
             var parameters = JsonValue.NewObject().Set("commands", commands);
             ulong request;
@@ -1514,7 +1690,7 @@ public sealed class EditorWorker : IDisposable
             if (!SameDocument() || before != revision + 1 || after != before || observed is null ||
                 !observed.OfType<PropertyChanged>().SequenceEqual(changed.Select(write => new PropertyChanged(write.Address, write.Value))) ||
                 !values.SequenceEqual(changed.Select(write => (PropertyValue?)write.Value)) ||
-                !edit.Targets.All(target => target.IsCurrent(_tree, checkStamp: false)))
+                !TargetsCurrent(stamps: false))
                 return Uncertain();
             return new(BatchReplayState.Committed, (selection is not null ? "Set " : forward ? "Redid " : "Undid ") + subject + ".");
         }
@@ -1646,7 +1822,8 @@ public sealed class EditorWorker : IDisposable
 
     private void HistoryStep(RemoteSession session, bool undo)
     {
-        if (_history is null) return;
+        lock (_lock)
+            if (_history is null || _requestedGroup is not null || _groupSettling) return;
         PollDocument(session);
         long start = Stopwatch.GetTimestamp();
         long lifetime = MeshDocumentLifetime;
@@ -1840,6 +2017,7 @@ public sealed class EditorWorker : IDisposable
             PostApplyState();
             DocumentInfo? info = document.Info();
             _batchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
+            _groupWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
                                      _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
@@ -1856,7 +2034,7 @@ public sealed class EditorWorker : IDisposable
     private static bool IsSiblingOrderEvent(Event e) => e is NodeOrderChanged or NodeMovedInSiblingOrder;
 
     private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true,
-        Event? localOrder = null, bool allowOrderRefresh = true, bool refreshInspector = true)
+        Event? localOrder = null, bool allowOrderRefresh = true, bool refreshInspector = true, bool refreshOverlay = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
@@ -1885,10 +2063,14 @@ public sealed class EditorWorker : IDisposable
                 _selected = null;
             }
             _batchWritable = false;
+            _groupWritable = false;
+            CancelGroupGizmo();
             _post(() => MeshDocumentReopened?.Invoke(lifetime));
             _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
             PostHistory();
-            _batchWritable = _document.Info() is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
+            DocumentInfo? reopened = _document.Info();
+            _batchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
+            _groupWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
         }
         else if (historyChanged) PostHistory();
         if (destroyed.Count > 0)
@@ -1923,7 +2105,14 @@ public sealed class EditorWorker : IDisposable
                 _tree.ReconcileOrder(snapshot))
                 _log.Write("Hierarchy order refreshed at document revision " + before);
         }
-        if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session);
+        if (_groupGrab is { } group && (!group.View.Placement.IsCurrent(_tree, preview: true, checkStamps: true) ||
+            group.View.Placement.Targets.Any(target => !target.IsCurrent(_tree, checkStamp: true))))
+        {
+            CancelGroupGizmo(group.Id);
+            RetireGroup(group);
+            GroupNotice(group.View.Lifetime, "The group placement changed elsewhere. Grab the refreshed Gizmo again.");
+        }
+        if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session, refreshOverlay);
         if (!pollApply) return;
         _apply.Poll();
         if (_apply.Status is ApplyStatus.Failed or ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply) _commitTicks = null;
@@ -2012,7 +2201,7 @@ public sealed class EditorWorker : IDisposable
         _post(() => InspectorChanged?.Invoke(snapshot));
     }
 
-    private void PostHierarchy(RemoteSession session)
+    private void PostHierarchy(RemoteSession session, bool refreshOverlay = true)
     {
         if (_document is null) return;
         _siblingOrderAvailable = _tree.OrderSynchronized &&
@@ -2026,13 +2215,15 @@ public sealed class EditorWorker : IDisposable
         _markers = SceneMarkers.Of(_document, _tree, _transforms);
         IReadOnlyList<Marker> markers = _markers;
         _post(() => HierarchyChanged?.Invoke(rows, markers));
-        SendOverlay(session);
+        if (refreshOverlay) SendOverlay(session);
     }
 
     private void SendOverlay(RemoteSession session)
     {
         OverlayGroup? gizmo = null;
         GizmoSnapshot snapshot = new(null, null, null);
+        ulong selection = _selectionGeneration;
+        long lifetime = MeshDocumentLifetime;
         if (_document is not null && _gizmo is not null && _apply?.CanPreview == true && _selected is EntityGuid node && _tree.Contains(node))
         {
             float[] world = _gizmo.Dragging && _gizmo.LatestWorld is { } latest ? latest : _transforms.WorldOf(_document, _tree, node);
@@ -2044,11 +2235,40 @@ public sealed class EditorWorker : IDisposable
             gizmo = GizmoOverlay.ModeGizmo(new Vector3(world[12], world[13], world[14]), mode, directions, _gizmo.Axis is GizmoAxis axis ? (int)axis : null);
             snapshot = new GizmoSnapshot(node, world, availability);
         }
+        GroupGizmoSample? preview = null;
+        if (_selectedNodes.Count > 1 && _groupWritable)
+        {
+            GroupGrab? grab = _groupGrab is { } active && GroupCurrent(active) ? active : null;
+            GroupGizmo? placement = grab?.View.Placement ?? ReadGroupPlacement(session);
+            if (placement is not null && lifetime == MeshDocumentLifetime)
+            {
+                var shown = grab?.View ?? new GroupGizmoSnapshot(lifetime, selection, _gizmoMode, _gizmoSnap, placement);
+                gizmo = GizmoOverlay.GroupHandle(placement.Pivot, shown.Mode, grab?.Axis);
+                preview = grab is not null ? _groupPreview : null;
+                snapshot = new GizmoSnapshot(null, null, null, shown);
+            }
+        }
         ViewportOverlay overlay = _selectedNodes.Count > 1
-            ? GizmoOverlay.ForMultiselection(_selectedNodes, _markers)
+            ? GizmoOverlay.ForMultiselection(_selectedNodes, _markers, gizmo, preview)
             : GizmoOverlay.ForSelection(_selected, gizmo, _markers);
-        if (session.Control.SetViewportOverlay(overlay) is ControlError refused) _log.Write("overlay refused: " + refused);
-        _post(() => GizmoChanged?.Invoke(snapshot));
+        if (session.Control.SetViewportOverlay(overlay) is ControlError refused)
+        {
+            _log.Write("overlay refused: " + refused);
+            if (snapshot.Group is not null)
+            {
+                CancelGroupGizmo();
+                snapshot = new GizmoSnapshot(null, null, null);
+                GroupNotice(lifetime, "The group Gizmo overlay was refused.");
+                if (session.Control.SetViewportOverlay(GizmoOverlay.ForMultiselection(_selectedNodes, _markers)) is not null)
+                    session.Control.SetViewportOverlay(null);
+            }
+        }
+        _post(() =>
+        {
+            bool current;
+            lock (_lock) current = lifetime == MeshDocumentLifetime && selection == _requestedSelectionGeneration;
+            if (current) GizmoChanged?.Invoke(snapshot);
+        });
     }
 
     public void Measure(int frames) => Enqueue(session =>
@@ -2123,16 +2343,17 @@ public sealed class EditorWorker : IDisposable
             (ViewportCamera? Camera, long InputTicks, int Count)? camera = null;
             (float Dx, float Dy, long InputTicks, int Count)? drag = null;
             (float Amount, long Ticks, int Count)? gizmoBatch = null;
+            (GroupGrab Grab, float Amount)? groupSample = null;
             bool interacting;  // a pointer interaction is using the wire: its latency wins over the status poll
             lock (_lock)
             {
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
                 while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive) &&
-                       !(_pendingGizmo is not null && _gizmoActive))
+                       !(_pendingGizmo is not null && _gizmoActive) && _pendingGroup is null)
                 {
                     if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
-                interacting = _dragActive || _gizmoActive;
+                interacting = _dragActive || _gizmoActive || _requestedGroup is not null;
                 if (_stopping) return;
                 if (_pendingCamera is not null)
                 {
@@ -2153,7 +2374,13 @@ public sealed class EditorWorker : IDisposable
                 {
                     work = _work.Dequeue();
                 }
+                else if (_pendingGroup is not null)
+                {
+                    groupSample = _pendingGroup;
+                    _pendingGroup = null;
+                }
             }
+            if (groupSample is { } sample) PreviewGroup(session, sample.Grab, sample.Amount);
             if (gizmoBatch is { } batch) PreviewGizmo(session, batch.Amount, batch.Ticks, batch.Count);
             if (drag is { } offset)
             {

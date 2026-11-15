@@ -266,16 +266,19 @@ TEST_CASE("cli scene: swap-siblings submits one guarded transaction and reports 
   CHECK(scene.authoring->listNodes().value() == rows);
 }
 
-TEST_CASE("cli scene: a guarded property file uses one shared transaction", "[cli][scene]") {
+TEST_CASE("cli scene: guarded property and Transform files use one shared transaction", "[cli][scene]") {
   SceneCli scene(true);
   REQUIRE(scene.run("scene open") == 0);
   const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
   auto script = scene.source;
   script += ".tx";
+  bool transform = false;
+  SECTION("same property") { transform = false; }
+  SECTION("mixed Transform fields") { transform = true; }
   std::ofstream(script, std::ios::binary)
-      << "require-revision " << revision << "\n"
+      << (transform ? "require-transform-revision " : "require-revision ") << revision << "\n"
       << "set " << kNode1 << " Transform.localScale 2 2 2\n"
-      << "set " << kNode3 << " Transform.localScale 3 3 3\n";
+      << "set " << kNode3 << (transform ? " Transform.localPosition 3 3 3\n" : " Transform.localScale 3 3 3\n");
   const auto line = "scene tx " + script.generic_string();
   const int success = scene.run(line);
   const auto result = scene.envelope();

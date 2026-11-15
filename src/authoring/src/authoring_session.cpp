@@ -328,6 +328,38 @@ struct AuthoringSession::State {
     return ac::Error::InvalidGuardedPropertyBatch;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene&, const ac::RequireTransformBatchRevision&,
+                                 std::vector<ac::Event>&) const {
+    ATLANTIS_CHECK_MSG(false, "the transaction admits revision guards before candidate execution");
+    return ac::Error::InvalidGuardedPropertyBatch;
+  }
+
+  static bool validGuardedTransformBatch(const std::vector<ac::Command>& commands) {
+    if (commands.size() < 2 || commands.size() > 1 + ac::kMaxGuardedTransformWrites ||
+        !std::holds_alternative<ac::RequireTransformBatchRevision>(commands.front())) return false;
+    constexpr std::string_view transformName = "asset_system::scene::Transform";
+    const auto transform = schema::typeId(transformName);
+    const auto position = schema::fieldId(transformName, "localPosition");
+    const auto euler = schema::fieldId(transformName, "localEulerAnglesRadians");
+    const auto scale = schema::fieldId(transformName, "localScale");
+    std::vector<EntityGuid> nodes;
+    std::vector<std::pair<EntityGuid, schema::FieldId>> addresses;
+    for (std::size_t i = 1; i < commands.size(); ++i) {
+      const auto* write = std::get_if<ac::SetProperty>(&commands[i]);
+      if (!write || write->address.component != transform) return false;
+      const auto field = write->address.field;
+      if (field != position && field != euler && field != scale) return false;
+      const std::pair address{write->address.node, field};
+      if (std::ranges::find(addresses, address) != addresses.end()) return false;
+      addresses.push_back(address);
+      if (std::ranges::find(nodes, address.first) == nodes.end()) {
+        if (nodes.size() == ac::kMaxGuardedTransformNodes) return false;
+        nodes.push_back(address.first);
+      }
+    }
+    return true;
+  }
+
   static bool validGuardedPropertyBatch(const std::vector<ac::Command>& commands) {
     if (commands.size() < 2 || commands.size() > 1 + ac::kMaxGuardedPropertyWrites ||
         !std::holds_alternative<ac::RequireDocumentRevision>(commands.front())) return false;
@@ -351,15 +383,17 @@ struct AuthoringSession::State {
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
     const auto guard = std::ranges::find_if(commands, [](const ac::Command& command) {
-      return std::holds_alternative<ac::RequireDocumentRevision>(command);
+      return std::holds_alternative<ac::RequireDocumentRevision>(command) ||
+             std::holds_alternative<ac::RequireTransformBatchRevision>(command);
     });
-    if (guard != commands.end() && !validGuardedPropertyBatch(commands)) {
-      return ac::CommandFailure{CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())},
-                                ac::Error::InvalidGuardedPropertyBatch};
-    }
     if (guard != commands.end()) {
-      if (std::get<ac::RequireDocumentRevision>(*guard).expectedRevision != documentRevision)
-        return ac::CommandFailure{first, ac::Error::PropertyBatchStaleRevision};
+      const auto* transform = std::get_if<ac::RequireTransformBatchRevision>(&*guard);
+      if (!(transform ? validGuardedTransformBatch(commands) : validGuardedPropertyBatch(commands))) {
+        return ac::CommandFailure{CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())},
+                                  ac::Error::InvalidGuardedPropertyBatch};
+      }
+      const auto expected = transform ? transform->expectedRevision : std::get<ac::RequireDocumentRevision>(*guard).expectedRevision;
+      if (expected != documentRevision) return ac::CommandFailure{first, ac::Error::PropertyBatchStaleRevision};
     }
     if (commands.size() != 1) {
       for (std::size_t i = 0; i < commands.size(); ++i) {
@@ -459,7 +493,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return ac::DocumentInfo{state_.source.scene,
                             imported ? ac::Provenance::Imported : ac::Provenance::HandAuthored,
                             sourcePathOf(state_.source.provenance).generic_string(),
-                            static_cast<std::uint64_t>(state_.document->nodes.size()), true};
+                            static_cast<std::uint64_t>(state_.document->nodes.size()), true, true};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {

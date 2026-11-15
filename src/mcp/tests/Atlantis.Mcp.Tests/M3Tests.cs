@@ -68,10 +68,15 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
-            if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision")
+            if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision"
+                or "RequireTransformBatchRevision")
             {
-                bool guarded = kind == "RequireDocumentRevision";
-                QueueSession exact = new() { GuardedCapability = guarded ? JsonValue.Bool(true) : null };
+                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision";
+                QueueSession exact = new()
+                {
+                    GuardedCapability = kind == "RequireDocumentRevision" ? JsonValue.Bool(true) : null,
+                    TransformCapability = kind == "RequireTransformBatchRevision" ? JsonValue.Bool(true) : null,
+                };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
                 JsonValue commands = JsonValue.NewArray().Push(command);
@@ -171,6 +176,16 @@ internal static partial class Program
             Check(session.Calls[start].Method == "authoring.document" &&
                 session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
                 "guarded transactions ask the current document and send only on literal true");
+        }
+        foreach (JsonValue? capability in new[] { null, JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
+        {
+            session.TransformCapability = capability;
+            int start = session.Calls.Count;
+            var submitted = registry.Invoke(Request("authoring.submit_transaction",
+                guarded.Replace("RequireDocumentRevision", "RequireTransformBatchRevision", StringComparison.Ordinal)));
+            bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
+            Check(session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
+                "Transform capability is discovered independently from the property guard");
         }
         foreach (var c in CompositionCases)
         {
@@ -366,6 +381,7 @@ internal static partial class Program
         public bool AdjacentOnly { get; init; }
         public bool RejectCommands { get; init; }
         public JsonValue? GuardedCapability { get; set; }
+        public JsonValue? TransformCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -393,6 +409,7 @@ internal static partial class Program
                         .Set("provenance", JsonValue.String("HandAuthored")).Set("source", JsonValue.String("scene.txt"))
                         .Set("nodeCount", JsonValue.Number(2UL));
                     if (GuardedCapability is not null) result.Set("supportsGuardedPropertyTransactions", GuardedCapability);
+                    if (TransformCapability is not null) result.Set("supportsGuardedTransformTransactions", TransformCapability);
                     break;
                 case "authoring.submitTransaction":
                 {

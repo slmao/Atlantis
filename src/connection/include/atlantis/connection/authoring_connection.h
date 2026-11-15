@@ -47,6 +47,7 @@ struct DocumentInfo {
   std::string sourcePath;  // the source file (HandAuthored) or the generated source (Imported)
   std::uint64_t nodeCount = 0;
   bool supportsGuardedPropertyTransactions = false;
+  bool supportsGuardedTransformTransactions = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -124,9 +125,17 @@ struct RequireDocumentRevision {
 };
 inline constexpr std::size_t kMaxGuardedPropertyWrites = 64;
 
+/// First command of a guarded transaction of Transform leaves (ADR-0163).
+struct RequireTransformBatchRevision {
+  std::uint64_t expectedRevision = 0;
+};
+inline constexpr std::size_t kMaxGuardedTransformNodes = 64;
+inline constexpr std::size_t kMaxGuardedTransformWrites = 3 * kMaxGuardedTransformNodes;
+
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
-                 SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision>;
+                 SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
+                 RequireTransformBatchRevision>;
 
 // ---------------------------------------------------------------- events
 

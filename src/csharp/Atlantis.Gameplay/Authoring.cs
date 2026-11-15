@@ -23,6 +23,7 @@ public enum Provenance
 public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string SourcePath, ulong NodeCount)
 {
     public bool SupportsGuardedPropertyTransactions { get; init; }
+    public bool SupportsGuardedTransformTransactions { get; init; }
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
@@ -97,6 +98,13 @@ public sealed record MoveSiblingRelative(EntityGuid Node, EntityGuid Anchor, Ent
 public sealed record RequireDocumentRevision(ulong ExpectedRevision) : Command
 {
     public const int MaxWrites = 64;
+}
+
+/// <summary>First command of a guarded transaction of Transform leaves (ADR-0163).</summary>
+public sealed record RequireTransformBatchRevision(ulong ExpectedRevision) : Command
+{
+    public const int MaxNodes = 64;
+    public const int MaxWrites = 3 * MaxNodes;
 }
 
 /// <summary>Sets the active camera; null clears it.</summary>

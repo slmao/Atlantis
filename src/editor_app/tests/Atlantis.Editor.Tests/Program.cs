@@ -86,6 +86,7 @@ public static partial class Program
             SavedSceneCMakeChecks();
             // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
             GizmoDragChecks();
+            GroupGizmoChecks();
             // Plan 0068 M5: the history over the authoring document, structural records included.
             HistoryChecks();
         }

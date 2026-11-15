@@ -255,6 +255,67 @@ TEST_CASE("authoring: guarded property batches have one revision, ordinary event
       ac::PropertyChanged{first.address, write(1, 5).value}, ac::PropertyChanged{second.address, second.value}});
 }
 
+TEST_CASE("authoring: guarded Transform batches admit mixed leaves once", "[authoring][session]") {
+  auto initial = baseScene();
+  for (std::uint32_t node = 4; node <= 68; ++node) {
+    scene::AuthoringNode extra;
+    extra.guid = entity(node);
+    initial.nodes.push_back(extra);
+  }
+  Fixture f(initial);
+  auto& c = *f.connection;
+  REQUIRE(c.document()->supportsGuardedTransformTransactions);
+  const auto stream = c.subscribe({});
+  const auto revision = c.applyStatus().value().currentDocumentRevision.value();
+  using Guard = ac::RequireTransformBatchRevision;
+  auto write = [](std::uint32_t node, std::string_view leaf) {
+    return ac::SetProperty{{entity(node), kTransform, field("Transform", leaf)}, std::array{2.0f, 1.0f, 1.0f}};
+  };
+  const auto first = write(4, "localPosition");
+  const auto second = write(4, "localScale");
+  CHECK(refusalOf(c, {Guard{revision}}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{revision}, first, first}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{revision}, first, ac::RequireDocumentRevision{revision}}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{revision}, first, ac::SetNodeName{entity(4), "other"}}) == ac::Error::InvalidGuardedPropertyBatch);
+  const auto misplaced = c.submitTransaction({first, Guard{revision}, second});
+  auto failures = c.drainFailures();
+  REQUIRE(failures.size() == 1);
+  CHECK(failures.front().ticket.value == misplaced.first.value + 1);
+  CHECK(failures.front().error == ac::Error::InvalidGuardedPropertyBatch);
+  const auto failed = c.submitTransaction({Guard{revision}, first, write(99, "localScale")});
+  failures = c.drainFailures();
+  REQUIRE(failures.size() == 1);
+  CHECK(failures.front().ticket.value == failed.first.value + 2);
+  CHECK(failures.front().error == ac::Error::UnknownNode);
+
+  std::vector<ac::Command> tooManyNodes{Guard{revision}};
+  for (std::uint32_t node = 4; node <= 68; ++node) tooManyNodes.push_back(write(node, "localPosition"));
+  CHECK(refusalOf(c, tooManyNodes) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(revision == c.applyStatus().value().currentDocumentRevision.value());
+  CHECK(f.document() == initial);
+  CHECK(drain(c, stream).empty());
+
+  std::vector<ac::Command> full{Guard{revision}};
+  std::vector<ac::Event> expected;
+  for (std::uint32_t node = 4; node <= 67; ++node) {
+    for (const auto leaf : {"localPosition", "localEulerAnglesRadians", "localScale"}) {
+      const auto command = write(node, leaf);
+      full.push_back(command);
+      expected.emplace_back(ac::PropertyChanged{command.address, command.value});
+    }
+  }
+  auto oversized = full;
+  oversized.push_back(write(68, "localPosition"));
+  CHECK(refusalOf(c, oversized) == ac::Error::InvalidGuardedPropertyBatch);
+  const auto ticket = c.submitTransaction(full);
+  CHECK(ticket.count == 193);
+  CHECK(c.drainFailures().empty());
+  CHECK(c.applyStatus().value().currentDocumentRevision == revision + 1);
+  CHECK(drain(c, stream) == expected);
+  CHECK(refusalOf(c, {Guard{revision}, first, second}) == ac::Error::PropertyBatchStaleRevision);
+  CHECK(drain(c, stream).empty());
+}
+
 TEST_CASE("authoring: relative sibling moves rotate only occupied slots and settle once", "[authoring][session]") {
   auto initial = baseScene();
   scene::AuthoringNode middle;
