@@ -351,7 +351,9 @@ public static class CodecSuite
                           "ParentChanged");
         t.Equal<A.Event?>(new A.DocumentReopened(AssetGuid.Parse("52052052-00aa-4052-8052-0000000000aa")),
                           Codec.DecodeAuthoringEvent(wires["authoring.event.reopened"]), "DocumentReopened");
-        t.Equal(new A.EventFilter(), Codec.DecodeAuthoringFilter(wires["authoring.filter.all"]), "the default filter: all nine kinds");
+        t.Equal(new A.EventFilter(), Codec.DecodeAuthoringFilter(wires["authoring.filter.all"]), "the default filter retains the legacy kinds");
+        t.Equal(new A.EventFilter(A.EventKind.AllWithSiblingOrder), Codec.DecodeAuthoringFilter(wires["authoring.filter.order"]),
+            "the opt-in filter adds the order event");
         t.Equal(new A.EventFilter(A.EventKind.Applied), Codec.DecodeAuthoringFilter(wires["authoring.filter.applied"]),
                 "an Applied-only filter");
         t.Equal(new A.EventFilter(A.EventKind.PropertyChanged | A.EventKind.ComponentAdded, node, lightId),
@@ -372,7 +374,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(25, index, "the AuthoringError set has the C++ set's 25 names");
+        t.Equal(28, index, "the AuthoringError set has the C++ set's 28 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);

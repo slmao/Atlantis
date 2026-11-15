@@ -355,6 +355,7 @@ public static partial class Program
 
     private static void HierarchyChecks()
     {
+        SiblingOrderChecks();
         // The document: a root R with two children A (with a child A1) and B (the active camera), and a free node F.
         var document = new FakeDocument();
         EntityGuid r = document.Add(1, null, LocalTransform.Identity);
@@ -517,6 +518,31 @@ public static partial class Program
             roundTrips &= TransformMath.ToLocalTransform(m) is LocalTransform t && NearMatrix(WorldMatrices.ComposeLocal(t), m, 1e-5f);
         }
         Check(roundTrips, "transform math: a matrix decomposes to a local Transform that composes back (reflection kept)");
+    }
+
+    private static void SiblingOrderChecks()
+    {
+        var document = new FakeDocument();
+        var first = document.Add(1, null, LocalTransform.Identity);
+        var child = document.Add(2, first, LocalTransform.Identity);
+        var last = document.Add(3, null, LocalTransform.Identity);
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        object? identity = tree.IncarnationOf(first);
+        Check(tree.AdjacentSibling(first, SiblingDirection.Down) == last &&
+            tree.AdjacentSibling(first, SiblingDirection.Up) is null, "adjacency filters by parent, including root");
+        Check(tree.Apply(new NodeOrderChanged(first, last, 2, 0, 2), document) &&
+            tree.Order.SequenceEqual(new[] { last, child, first }) &&
+            ReferenceEquals(identity, tree.IncarnationOf(first)), "order delta swaps only the two slots and keeps identity");
+        tree.Apply(new NodeOrderChanged(first, last, 2, 0, 3), document);
+        Check(!tree.OrderSynchronized, "inconsistent delta suspends order");
+        var newChild = document.Add(4, last, LocalTransform.Identity);
+        tree.Apply(new NodeCreated(newChild, 3), document);
+        tree.Apply(new ParentChanged(newChild, last), document);
+        Check(tree.ReconcileOrder(document.ListNodes()) && tree.OrderSynchronized &&
+            tree.Order.SequenceEqual(new[] { first, child, last, newChild }) &&
+            ReferenceEquals(identity, tree.IncarnationOf(first)),
+            "snapshot covers a queued lifecycle event once and retains existing incarnations");
     }
 
     private static void DuplicateSubtreeChecks()

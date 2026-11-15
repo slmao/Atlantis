@@ -112,6 +112,7 @@ public static partial class Program
 
     private static void HistoryChecks()
     {
+        SiblingHistoryChecks();
         EntityGuid r = FakeDocument.Guid(1), a = FakeDocument.Guid(2), a1 = FakeDocument.Guid(3), b = FakeDocument.Guid(4), f = FakeDocument.Guid(5);
 
         {
@@ -360,6 +361,33 @@ public static partial class Program
                   !history.CanUndo && !history.CanRedo,
                   "history (stub): a refused undo transaction drops the entry with its reason");
         }
+    }
+
+    private static void SiblingHistoryChecks()
+    {
+        var h = Document5();
+        var first = h.Tree.Order[0];
+        var second = h.Tree.Order[^1];
+        var order = new SiblingOrderEntry(first, second, null, h.Tree.IncarnationOf(first)!,
+            h.Tree.IncarnationOf(second)!, SiblingDirection.Down);
+        var swap = new EditTransaction("Move sibling", Array.Empty<PropertyWrite>(), new EditEntry[] { order });
+        var position = new EditTransaction("Create", Array.Empty<PropertyWrite>(),
+            new EditEntry[] { new NodeLife(new NodeState(first, 0, null, Array.Empty<EntityGuid>(), Array.Empty<ComponentState>()), true) });
+        var settled = h.Target.Committed(Array.Empty<CommandFailure>());
+        h.History.Record(position, settled);
+        h.History.Update();
+        h.History.Record(swap, settled);
+        h.History.Update();
+        Check(h.History.Undo((entry, forward) => (entry == order && !forward &&
+            entry.DirectionFor(forward) == SiblingDirection.Up, "replayed")) == HistoryResult.Submitted &&
+            h.History.UndoLabel == "Create" && h.History.RedoLabel == "Move sibling",
+            "local undo keeps preceding positional history");
+        Check(h.History.Redo((_, _) => (false, "changed elsewhere")) == HistoryResult.ChangedElsewhere &&
+            !h.History.CanRedo && h.History.UndoLabel == "Create", "conflicted replay drops only its order record");
+        h.History.Record(position, settled);
+        Check(h.History.InvalidatePositional(), "external reorder invalidates settled and pending positional records");
+        h.History.Update();
+        Check(!h.History.CanUndo, "pending positional record cannot return after external reorder");
     }
 
     /// <summary>A property-only target whose own submissions are refused: the document-refusal path of a history step.</summary>

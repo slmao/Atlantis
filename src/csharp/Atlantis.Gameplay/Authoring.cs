@@ -79,6 +79,12 @@ public sealed record RemoveComponent(EntityGuid Node, TypeId Component) : Comman
 /// <summary>Reparents <paramref name="Node"/>; a null parent makes it a root.</summary>
 public sealed record SetParent(EntityGuid Node, EntityGuid? Parent) : Command;
 
+public enum SiblingDirection { Up, Down }
+
+/// <summary>Swaps the two global slots of adjacent siblings in the expected document revision.</summary>
+public sealed record SwapAdjacentSiblings(EntityGuid Node, EntityGuid Sibling, EntityGuid? Parent,
+    SiblingDirection Direction, ulong ExpectedRevision) : Command;
+
 /// <summary>Sets the active camera; null clears it.</summary>
 public sealed record SetActiveCamera(EntityGuid? Camera) : Command;
 
@@ -102,6 +108,8 @@ public enum EventKind
     NodeNameChanged = 512,
     All = PropertyChanged | NodeCreated | NodeDestroyed | ComponentAdded | ComponentRemoved | ParentChanged |
           ActiveCameraChanged | DocumentReopened | Applied | NodeNameChanged,
+    NodeOrderChanged = 1024,
+    AllWithSiblingOrder = All | NodeOrderChanged,
 }
 
 /// <summary>A change to the document, in the order applied (or the Runtime's reload of it: Applied).</summary>
@@ -165,6 +173,13 @@ public sealed record NodeNameChanged(EntityGuid Node, string Name) : Event
     public override EventKind Kind => EventKind.NodeNameChanged;
 }
 
+/// <summary>The final global slots after the swap, and the committed document revision.</summary>
+public sealed record NodeOrderChanged(EntityGuid Node, EntityGuid Sibling, ulong Position, ulong SiblingPosition,
+    ulong Revision) : Event
+{
+    public override EventKind Kind => EventKind.NodeOrderChanged;
+}
+
 /// <summary>
 /// Which events a subscription delivers: those of a listed kind, and -- when
 /// set -- of that node and that component. ActiveCameraChanged,
@@ -201,6 +216,9 @@ public enum AuthoringError
     CookRefused,
     NotRepresentableInSource,
     InvalidNodeName,
+    SiblingOrderStaleRevision,
+    SiblingOrderRequiresHandAuthored,
+    InvalidSiblingSwap,
 }
 
 /// <summary>

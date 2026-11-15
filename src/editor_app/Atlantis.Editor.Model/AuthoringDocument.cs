@@ -92,8 +92,11 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
     {
         _session = session;
         _wire = wire;
-        _subscription = session.Subscribe(new EventFilter());
+        _subscription = session.Subscribe(new EventFilter(Atlantis.Gameplay.Authoring.EventKind.AllWithSiblingOrder));
+        SupportsSiblingOrder = session.SupportsSiblingOrder();
     }
+
+    public bool SupportsSiblingOrder { get; }
 
     public IReadOnlyList<SchemaType> Schema => _session.Schema;
 

@@ -685,6 +685,7 @@ AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
                   {"kind":"SetParent","node":<N>,"parent":<N>|null}
                   {"kind":"SetActiveCamera","camera":<N>|null}
                   {"kind":"SetNodeName","node":<N>,"name":"<label>"}
+                  {"kind":"SwapAdjacentSiblings","node":<N>,"sibling":<N>,"parent":<N>|null,"direction":"Up"|"Down","expectedRevision":<n>}
 AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
                   {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
                   {"kind":"ComponentAdded","node":<N>,"component":<T>}
@@ -693,6 +694,7 @@ AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>
                   {"kind":"ActiveCameraChanged","camera":<N>|null}
                   {"kind":"DocumentReopened","scene":"<asset GUID>"}   {"kind":"Applied","generation":<n>}
                   {"kind":"NodeNameChanged","node":<N>,"name":"<label>"}
+                  {"kind":"NodeOrderChanged","node":<N>,"sibling":<N>,"position":<n>,"siblingPosition":<n>,"revision":<n>}
 AuthoringFilter   {"kinds":["PropertyChanged",…],"node":<N>|null,"component":<T>|null}
 AuthoringFailure  {"ticket":<n>,"error":"<AuthoringError>"}
 Document          {"scene":"<asset GUID>","provenance":"HandAuthored"|"Imported","source":"<path>","nodeCount":<n>}
@@ -703,11 +705,12 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
   followed by one `ComponentAdded` per listed component.
 - **Filter `kinds`** are listed in the order PropertyChanged, NodeCreated,
   NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-  ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged. An event matches when its
+  ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged. An event matches when its
   kind is listed and its node and component equal the filter's when those
   are not `null`; `ActiveCameraChanged`, `DocumentReopened` and `Applied`
   carry no node, and only `PropertyChanged`, `ComponentAdded` and
-  `ComponentRemoved` carry a component.
+  `ComponentRemoved` carry a component. Either participant can match the
+  node filter for `NodeOrderChanged`.
 - **Error names:**
   - **`AuthoringError`:** `NoDocument`, `UnknownNode`,
     `UnknownComponentType`, `ComponentMissing`, `ComponentAlreadyPresent`,
@@ -716,7 +719,8 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
     `NonEmptyDocument`, `NodeGuidNonNil`, `NodeGuidUnique`, `ParentExists`,
     `ParentAcyclic`, `ActiveCameraExists`, `ActiveCameraHasCamera`,
     `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
-    `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`;
+    `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`,
+    `SiblingOrderStaleRevision`, `SiblingOrderRequiresHandAuthored`, `InvalidSiblingSwap`;
   - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
     `SourceInvalid`;
   - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
@@ -734,6 +738,16 @@ commands/events require updated peers, including all-events subscribers.
 No RPC method or protocol version changes. CLI uses
 `scene name <node-guid> <json-string>` (also in `scene tx`; `""` clears), and MCP
 uses its existing `authoring.submit_transaction` tool with the command above.
+
+Spec 0104 / ADR-0160 exchanges two global slots for adjacent siblings under
+the same parent, including root nodes. Submit it as the only command in a
+transaction and drain that ticket's failures. Its one event names the
+resulting zero-based positions and document revision. Request
+`NodeOrderChanged` explicitly in an unfiltered all-kinds subscription to
+establish support. A legacy Runtime returns `BadRequest` with message
+`malformed or missing filter`. In that case clients retry once with the
+original kinds and retain the connection for ordinary commands. Use
+`authoring.listNodes` to inspect the current order after uncertain settlement.
 
 ### Managed asset import
 

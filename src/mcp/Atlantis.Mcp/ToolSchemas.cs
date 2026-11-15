@@ -37,6 +37,8 @@ internal static class ToolSchemas
         Command("AddComponent", ("node", String), ("component", String)),
         Command("RemoveComponent", ("node", String), ("component", String)),
         Command("SetParent", ("node", String), ("parent", Nullable(String))),
+        Command("SwapAdjacentSiblings", ("node", String), ("sibling", String), ("parent", Nullable(String)),
+            ("direction", Enum("Up", "Down")), ("expectedRevision", Integer)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)));
 

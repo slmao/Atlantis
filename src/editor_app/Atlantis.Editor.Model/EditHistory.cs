@@ -153,9 +153,27 @@ public sealed class EditHistory
         foreach (Pending pending in _pending) pending.RedoCleared = true;
     }
 
-    public HistoryResult Undo() => Take(_undo, Step.Undo);
+    public bool InvalidatePositional()
+    {
+        static bool Positional(EditTransaction edit) => edit.Structure.Any(e => e is NodeLife);
+        int removed = _undo.RemoveAll(Positional) + _redo.RemoveAll(Positional);
+        foreach (Pending pending in _pending)
+        {
+            if (!pending.Invalidated && Positional(pending.Edit))
+            {
+                pending.Invalidated = true;
+                ++removed;
+            }
+        }
+        if (removed != 0) Notice = "position history dropped: sibling order changed elsewhere";
+        return removed != 0;
+    }
 
-    public HistoryResult Redo() => Take(_redo, Step.Redo);
+    public HistoryResult Undo(Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap = null) =>
+        Take(_undo, Step.Undo, swap);
+
+    public HistoryResult Redo(Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap = null) =>
+        Take(_redo, Step.Redo, swap);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -205,7 +223,8 @@ public sealed class EditHistory
 
     // Undo reads After where the edit left it and writes Before; redo the reverse. On a mismatch or an unreadable
     // address nothing is submitted and the entry is dropped.
-    private HistoryResult Take(List<EditTransaction> from, Step kind)
+    private HistoryResult Take(List<EditTransaction> from, Step kind,
+        Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap)
     {
         if (Waiting)
         {
@@ -215,6 +234,16 @@ public sealed class EditHistory
         if (from.Count == 0) return HistoryResult.NothingTo;
         bool forward = kind == Step.Redo;
         EditTransaction edit = from[^1];
+        if (edit.Structure is [SiblingOrderEntry order])
+        {
+            from.RemoveAt(from.Count - 1);
+            if (swap is null) throw new InvalidOperationException("Sibling order replay requires a guarded settlement.");
+            var result = swap(order, forward);
+            Notice = result.Notice;
+            if (!result.Verified) return HistoryResult.ChangedElsewhere;
+            Push(forward ? _undo : _redo, edit);
+            return HistoryResult.Submitted;
+        }
         foreach (PropertyWrite write in edit.Writes)
         {
             PropertyValue? current = _target.Read(write.Address);

@@ -870,6 +870,8 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   access::CommandTicket submit(ac::Command command) override {
+    if (std::holds_alternative<ac::SwapAdjacentSiblings>(command))
+      return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
     const auto result = state_->call("authoring.submit", std::move(params));
@@ -878,6 +880,10 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return access::CommandTicket{*ticket};
   }
   access::TransactionTicket submitTransaction(std::vector<ac::Command> commands) override {
+    if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
+          return std::holds_alternative<ac::SwapAdjacentSiblings>(command);
+        }) && !supportsSiblingOrder())
+      return {};
     Value list = Value::array();
     for (const ac::Command& command : commands) list.push(codec::encode(command));
     Value params = Value::object();
@@ -888,13 +894,48 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return *ticket;
   }
 
+  bool supportsSiblingOrder() override {
+    if (!siblingOrderSupported_) {
+      const auto probe = subscribe(ac::EventFilter{ac::EventKindSet::all(), {}, {}});
+      if (probe.value == 0 || unsubscribe(probe).isErr()) return false;
+    }
+    return siblingOrderSupported_.value_or(false);
+  }
+
   atlantis::connection::SubscriptionId subscribe(ac::EventFilter filter) override {
+    using Id = atlantis::connection::SubscriptionId;
+    const bool orderProbe = filter.kinds == ac::EventKindSet::all() && !filter.node && !filter.component;
+    if (!orderProbe || siblingOrderSupported_.has_value()) {
+      if (orderProbe && !*siblingOrderSupported_) filter.kinds = ac::EventKindSet::legacy();
+      Value params = Value::object();
+      params.set("filter", codec::encode(filter));
+      const auto result = state_->call("authoring.subscribe", std::move(params));
+      const auto id = result ? codec::decodeUInt64(*result) : std::nullopt;
+      return id && *id != 0 ? Id{*id} : failed(Id{});
+    }
+
     Value params = Value::object();
     params.set("filter", codec::encode(filter));
-    const auto result = state_->call("authoring.subscribe", std::move(params));
-    const auto id = result ? codec::decodeUInt64(*result) : std::nullopt;
-    if (!id) return failed(atlantis::connection::SubscriptionId{});
-    return atlantis::connection::SubscriptionId{*id};
+    const auto envelope = state_->awaitResponse(state_->send("authoring.subscribe", std::move(params)));
+    if (!envelope) return failed(Id{});
+    const auto* result = envelope->find("result");
+    const auto* error = envelope->find("error");
+    if (result && !error) {
+      if (const auto id = codec::decodeUInt64(*result); id && *id != 0) {
+        siblingOrderSupported_ = true;
+        return Id{*id};
+      }
+    } else if (!result && error && error->isObject() && error->asObject().size() == 2) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString() && code->asString() == "BadRequest" &&
+          message && message->isString() && message->asString() == "malformed or missing filter") {
+        const auto subscription = subscribe(ac::EventFilter{});
+        if (subscription.value != 0) siblingOrderSupported_ = false;
+        return subscription;
+      }
+    }
+    return failed(Id{});
   }
   atlantis::Result<std::monostate, atlantis::connection::ConnectionError> unsubscribe(
       atlantis::connection::SubscriptionId subscription) override {
@@ -1059,6 +1100,7 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   RemoteSession::State* state_;
+  std::optional<bool> siblingOrderSupported_;
 };
 
 }  // namespace

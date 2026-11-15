@@ -93,6 +93,76 @@ TEST_CASE("authoring: the queries read the document", "[authoring][session]") {
 
 // ================================================================= commands
 
+TEST_CASE("authoring: a guarded sibling exchange changes exactly two slots and survives save",
+          "[authoring][session][sibling_order]") {
+  auto base = baseScene();
+  auto nested = base.nodes[1];
+  nested.guid = entity(4);
+  nested.parent = entity(1);
+  auto descendant = nested;
+  descendant.guid = entity(5);
+  descendant.parent = entity(2);
+  base.nodes.insert(base.nodes.begin() + 2, descendant);
+  base.nodes.push_back(nested);
+  Fixture f(base);
+  auto& c = *f.connection;
+  REQUIRE(c.applyStatus().isOk());
+  auto revision = [&] { return c.applyStatus().value().currentDocumentRevision.value(); };
+  auto up = ac::SiblingDirection::Up;
+  auto down = ac::SiblingDirection::Down;
+  using Swap = ac::SwapAdjacentSiblings;
+  using Change = ac::NodeOrderChanged;
+  const auto order = ac::EventKindSet::only(ac::EventKind::NodeOrderChanged);
+  const auto byFirst = c.subscribe({order, entity(1), {}});
+  const auto byOther = c.subscribe({order, entity(3), {}});
+  const auto unrelated = c.subscribe({order, entity(2), {}});
+  const auto byComponent = c.subscribe({order, entity(1), kCamera});
+  const auto legacy = c.subscribe({});
+  const auto original = readText(f.source);
+  const auto start = revision();
+  const Swap root{entity(1), entity(3), {}, down, start};
+  CHECK(refusalOf(c, {Swap{entity(1), entity(3), {}, up, start}}) == ac::Error::InvalidSiblingSwap);
+  CHECK(refusalOf(c, {Swap{entity(1), entity(2), {}, down, start}}) == ac::Error::InvalidSiblingSwap);
+  CHECK(refusalOf(c, {Swap{entity(1), entity(1), {}, down, start}}) == ac::Error::InvalidSiblingSwap);
+  CHECK(refusalOf(c, {Swap{entity(9), entity(1), {}, down, start}}) == ac::Error::UnknownNode);
+  CHECK(refusalOf(c, {root, ac::SetNodeName{entity(1), "refused"}}) == ac::Error::InvalidSiblingSwap);
+  CHECK(refusalOf(c, {Swap{entity(1), entity(3), {}, down, start - 1}}) == ac::Error::SiblingOrderStaleRevision);
+  CHECK(revision() == start);
+  CHECK(f.document() == base);
+  CHECK(drain(c, byFirst).empty());
+  CHECK(readText(f.source) == original);
+
+  const auto ticket = c.submitTransaction({root});
+  REQUIRE(ticket.count == 1);
+  CHECK(ticket.first.value != 0);
+  CHECK(c.drainFailures().empty());
+  CHECK(revision() == start + 1);
+  const std::vector<ac::Event> event{Change{entity(1), entity(3), 3, 0, start + 1}};
+  CHECK(drain(c, byFirst) == event);
+  CHECK(drain(c, byOther) == event);
+  CHECK(drain(c, unrelated).empty());
+  CHECK(drain(c, byComponent).empty());
+  CHECK(drain(c, legacy).empty());
+  std::swap(base.nodes[0], base.nodes[3]);
+  CHECK(f.document() == base);
+  CHECK_FALSE(refusalOf(c, {Swap{entity(4), entity(2), entity(1), up, revision()}}));
+  std::swap(base.nodes[1], base.nodes[4]);
+  CHECK(f.document() == base);
+  CHECK(readText(f.source) == original);
+  REQUIRE(c.save().isOk());
+  const auto beforeReopen = revision();
+  REQUIRE(c.open().isOk());
+  CHECK(f.document() == base);
+  CHECK(refusalOf(c, {Swap{entity(2), entity(4), entity(1), up, beforeReopen}}) == ac::Error::SiblingOrderStaleRevision);
+  CHECK(c.activeCamera().value() == entity(1));
+
+  AuthoringSession imported(DocumentSource{sceneGuid(), Imported{f.source}});
+  auto importedClient = imported.connect();
+  REQUIRE(importedClient->open().isOk());
+  CHECK(refusalOf(*importedClient, {Swap{entity(3), entity(1), {}, down,
+             importedClient->applyStatus().value().currentDocumentRevision.value()}}) == ac::Error::SiblingOrderRequiresHandAuthored);
+}
+
 TEST_CASE("authoring: SetProperty writes a leaf and reports PropertyChanged", "[authoring][session][commands]") {
   Fixture f;
   AuthoringConnection& c = *f.connection;

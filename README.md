@@ -426,6 +426,21 @@ Undo step. Use **Move to root** in Hierarchy Actions to clear the parent.
 If Runtime reload fails, repair the document and use Apply explicitly.
 [Spec 0103](docs/specs/0103-hierarchy-reparent.md).
 
+### Change sibling order
+
+In a hand-authored scene, select one node and use **Hierarchy → Actions →
+Move up** or **Move down**. The action exchanges its slot with its adjacent
+sibling under the current parent, including at the scene root. Undo and
+Redo replay the exchange while its participants still match. Save
+persists the order. If Runtime reload fails, use **Apply current document /
+Retry** after resolving the problem.
+
+The shared operation is `SwapAdjacentSiblings` in a single-command
+authoring transaction. CLI users can read the current revision with
+`scene apply-status` and run
+`scene swap-siblings <node> <sibling> <parent>|none up|down <revision>`.
+See the [shared contract](docs/architecture/remote_protocol.md#68-authoring-values-51).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

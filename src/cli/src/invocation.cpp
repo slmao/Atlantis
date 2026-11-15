@@ -371,6 +371,12 @@ int Invocation::finish(Reply reply) {
       failure->message += "; " + checked.error->message;
       failure->text = "error: " + failure->message;
     }
+    if (checked.error && checked.error->code == "SiblingOrderUnknown") {
+      if (!failure->subject.isObject()) failure->subject = Value::object();
+      for (const auto& [key, value] : checked.error->subject.asObject()) failure->subject.set(key, value);
+      failure->message += "; " + checked.error->message;
+      failure->text = "error: " + failure->message;
+    }
     if (checked.command == "assets import" || checked.command == "assets import-status") {
       failure->message += checked.command == "assets import" ? "; import admission unknown" : "; import outcome unknown";
       failure->text = "error: " + failure->message;

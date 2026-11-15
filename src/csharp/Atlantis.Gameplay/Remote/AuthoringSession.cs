@@ -28,6 +28,7 @@ public sealed class AuthoringSession
 {
     private readonly RemoteSession _session;
     private IReadOnlyList<SchemaType>? _schema;
+    private bool? _supportsSiblingOrder;
 
     internal AuthoringSession(RemoteSession session) => _session = session;
 
@@ -194,6 +195,7 @@ public sealed class AuthoringSession
 
     public CommandTicket Submit(A.Command command)
     {
+        if (command is A.SwapAdjacentSiblings) return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
     }
@@ -202,7 +204,11 @@ public sealed class AuthoringSession
     public TransactionTicket SubmitTransaction(IReadOnlyList<A.Command> commands)
     {
         JsonValue list = JsonValue.NewArray();
-        foreach (A.Command command in commands) list.Push(Codec.Encode(command));
+        foreach (A.Command command in commands)
+        {
+            RequireSiblingOrderIfNeeded(command);
+            list.Push(Codec.Encode(command));
+        }
         JsonValue result = _session.Call("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
         return Codec.DecodeTransactionTicket(result) ?? throw _session.Malformed("authoring.submitTransaction");
     }
@@ -216,10 +222,47 @@ public sealed class AuthoringSession
 
     // --- Events: every client's changes, and every Applied.
 
+    private void RequireSiblingOrderIfNeeded(A.Command command)
+    {
+        if (command is A.SwapAdjacentSiblings && !SupportsSiblingOrder())
+            throw new NotSupportedException("This Runtime does not support adjacent sibling swaps.");
+    }
+
+    /// <summary>Checks once per connection using the full unfiltered subscription.</summary>
+    public bool SupportsSiblingOrder()
+    {
+        if (_supportsSiblingOrder is null)
+        {
+            SubscriptionId probe = Subscribe(new A.EventFilter(A.EventKind.AllWithSiblingOrder));
+            if (Unsubscribe(probe) is not null) throw _session.Malformed("authoring.unsubscribe");
+        }
+        return _supportsSiblingOrder is true;
+    }
+
     public SubscriptionId Subscribe(A.EventFilter filter)
     {
-        JsonValue result = _session.Call("authoring.subscribe", JsonValue.NewObject().Set("filter", Codec.Encode(filter)));
-        return Codec.DecodeUInt64(result) is ulong id ? new SubscriptionId(id) : throw _session.Malformed("authoring.subscribe");
+        const string method = "authoring.subscribe";
+        static JsonValue Parameters(A.EventFilter value) => JsonValue.NewObject().Set("filter", Codec.Encode(value));
+        if (filter == new A.EventFilter(A.EventKind.AllWithSiblingOrder) && _supportsSiblingOrder is not true)
+        {
+            if (_supportsSiblingOrder is null)
+            {
+                JsonValue response = _session.AwaitResponse(_session.Send(method, Parameters(filter)));
+                if (response.Find("error") is null && response.Find("result") is JsonValue positive &&
+                    Codec.DecodeUInt64(positive) is ulong supportedId && supportedId != 0)
+                {
+                    _supportsSiblingOrder = true;
+                    return new SubscriptionId(supportedId);
+                }
+                if (!Codec.IsLegacySiblingOrderRefusal(response)) throw _session.Malformed(method);
+            }
+            JsonValue legacy = _session.Call(method, Parameters(new A.EventFilter()));
+            if (Codec.DecodeUInt64(legacy) is not ulong legacyId || legacyId == 0) throw _session.Malformed(method);
+            _supportsSiblingOrder = false;
+            return new SubscriptionId(legacyId);
+        }
+        JsonValue result = _session.Call(method, Parameters(filter));
+        return Codec.DecodeUInt64(result) is ulong id && id != 0 ? new SubscriptionId(id) : throw _session.Malformed(method);
     }
 
     /// <summary>Null when released; UnknownSubscription otherwise.</summary>

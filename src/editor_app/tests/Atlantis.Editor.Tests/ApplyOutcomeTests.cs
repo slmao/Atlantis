@@ -102,6 +102,38 @@ public static partial class Program
                 "outcome: explicit retry is available after rejecting the stale follow-up");
         }
 
+        foreach (bool oldApplySucceeds in new[] { true, false })
+        {
+            var (shared, recovery, address) = Setup();
+            recovery.SetPaused(true);
+            recovery.Request();
+            ApplyReceipt previous = recovery.Receipt!;
+            recovery.Commit(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(3)) });
+            recovery.RequireExplicitApplyAfterUnverifiedSwap();
+            recovery.Poll();
+            Check(recovery.Receipt == previous && recovery.Status == ApplyStatus.PendingPaused &&
+                !recovery.CanApply && !recovery.CanPreview, "sibling swap: retain the pending owned receipt");
+            recovery.Commit(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(4)) });
+            if (oldApplySucceeds) shared.Reload();
+            else shared.FailReload(ReloadError.ScenePreparationFailed);
+            recovery.Poll();
+            ApplyState terminal = oldApplySucceeds ? ApplyState.Applied : ApplyState.Failed;
+            Check(recovery.Receipt == previous && recovery.Snapshot?.Request?.State == terminal &&
+                recovery.Status == (oldApplySucceeds ? ApplyStatus.NeedsApply : ApplyStatus.Failed) &&
+                recovery.Suspended && recovery.CanApply && shared.Applies == 1,
+                "sibling swap: old receipt settles without applying a coalesced revision");
+            recovery.Commit(new Command[] { new SetProperty(address, PropertyValue.FromFloat32(5)) });
+            Check(shared.Applies == 1, "sibling swap: subsequent document edits still require explicit Apply");
+            recovery.Retry();
+            Check(recovery.Receipt!.Id != previous.Id && shared.Applies == 2 &&
+                recovery.Receipt.DocumentRevision == shared.ApplyStatus().Value!.CurrentDocumentRevision,
+                "sibling swap: explicit Retry snapshots the current revision once");
+            shared.Reload();
+            recovery.Poll();
+            Check(recovery.Status == ApplyStatus.Applied && recovery.CanPreview,
+                "sibling swap: explicit recovery resumes ordinary editing");
+        }
+
         var (d4, a4, _) = Setup(); a4.Request(); var old = a4.Receipt!; var other = d4.ApplyTracked().Value!; a4.Poll();
         Check(a4.Status == ApplyStatus.Superseded && a4.Receipt == old && a4.Suspended,
             "outcome: another client's same-revision apply supersedes, never becomes this caller's receipt");

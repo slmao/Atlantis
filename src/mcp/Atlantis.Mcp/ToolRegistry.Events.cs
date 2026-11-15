@@ -10,13 +10,14 @@ internal sealed partial class ToolRegistry
 {
     private JsonValue? _worldSubscription;
     private JsonValue? _authoringSubscription;
+    private bool _supportsSiblingOrder;
 
     private static ImmutableArray<ToolMapping> EventMappings { get; } =
     [
         Declare("world.drain_events", "connection.drainEvents",
             "Return and clear this host's World subscription: every event kind, no entity/component restriction. Does not drain failures.", WorldModel),
         Declare("authoring.drain_events", "authoring.drainEvents",
-            "Return and clear this host's document subscription, including Applied{generation}. Does not drain failures.", AuthoringModel),
+            "Return and clear this host's document subscription, including Applied and supported NodeOrderChanged events. Does not drain failures.", AuthoringModel),
     ];
 
     /// <summary>
@@ -31,14 +32,20 @@ internal sealed partial class ToolRegistry
         // Default SDK filters have all kinds and no predicates: an unrestricted filter, rather
         // than an empty kinds set (which would match nothing on the wire).
         _worldSubscription = Subscribe("connection.subscribe", Codec.Encode(new EventFilter()));
-        _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter()));
+        _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter(A.EventKind.AllWithSiblingOrder)));
+        if (Codec.IsLegacySiblingOrderRefusal(_authoringSubscription))
+            _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter()));
+        else
+            _supportsSiblingOrder = _authoringSubscription.Find("error") is null;
     }
 
     private JsonValue Subscribe(string method, JsonValue filter)
     {
         JsonValue response = session.Request(method, JsonValue.NewObject().Set("filter", filter));
-        if (response.Find("error") is not null) return response;
-        if (response.Find("result")?.TryGetUInt64(out _) != true)
+        if (response.Find("error") is not null && response.Find("result") is null) return response;
+        if (response.Find("error") is not null)
+            throw new RemoteException(RemoteError.ProtocolError, "ambiguous " + method + " result");
+        if (response.Find("result")?.TryGetUInt64(out ulong subscription) != true || subscription == 0)
             throw new RemoteException(RemoteError.ProtocolError, "malformed " + method + " result");
         return response;
     }

@@ -224,6 +224,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 if (subscription.Find("error") is JsonValue subscriptionError) return Forward(subscriptionError, true);
                 wireParameters = JsonValue.NewObject().Set("subscription", subscription.Find("result")!);
             }
+            if (mapping.Method == "authoring.submitTransaction" && !_supportsSiblingOrder &&
+                wireParameters.Find("commands")!.Items.Any(c => c.Find("kind")?.AsString == "SwapAdjacentSiblings"))
+                return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
             JsonValue response = session.Request(mapping.Method, wireParameters);
             if ((rebuild || rebuildStatus || import || importStatus) && Codec.IsLegacyAssetRebuildRefusal(response))
                 return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);

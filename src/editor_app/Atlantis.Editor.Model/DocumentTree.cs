@@ -34,6 +34,7 @@ public sealed class DocumentTree
     public int Count => _order.Count;
 
     public IReadOnlyList<EntityGuid> Order => _order;
+    public bool OrderSynchronized { get; private set; } = true;
 
     public bool Contains(EntityGuid node) => _rows.ContainsKey(node);
     /// <summary>An opaque identity for this occurrence of a node in the tree.</summary>
@@ -68,6 +69,38 @@ public sealed class DocumentTree
         }
         if (parent is not EntityGuid key) return _roots;
         return _children.TryGetValue(key, out List<EntityGuid>? children) ? children : Array.Empty<EntityGuid>();
+    }
+
+    public EntityGuid? AdjacentSibling(EntityGuid node, SiblingDirection direction)
+    {
+        IReadOnlyList<EntityGuid> siblings = ChildrenOf(ParentOf(node));
+        for (int i = 0; i < siblings.Count; ++i)
+        {
+            if (siblings[i] != node) continue;
+            int adjacent = i + (direction == SiblingDirection.Up ? -1 : 1);
+            return adjacent >= 0 && adjacent < siblings.Count ? siblings[adjacent] : null;
+        }
+        return null;
+    }
+
+    public int PositionOf(EntityGuid node) => _order.IndexOf(node);
+
+    public bool MatchesOrderDelta(NodeOrderChanged change) =>
+        OrderSynchronized && change.Node != change.Sibling && change.Position < (ulong)_order.Count &&
+        change.SiblingPosition < (ulong)_order.Count &&
+        _order[(int)change.Position] == change.Sibling && _order[(int)change.SiblingPosition] == change.Node;
+
+    /// <summary>Accepts an ordered snapshot after the caller fences its revision and drains covered lifecycle events.</summary>
+    public bool ReconcileOrder(IReadOnlyList<NodeSummary> nodes)
+    {
+        if (nodes.Count != _rows.Count || nodes.Select(n => n.Node).Distinct().Count() != nodes.Count ||
+            nodes.Any(n => !_rows.TryGetValue(n.Node, out Row? row) || row.Parent != n.Parent || row.Name != n.Name))
+            return false;
+        _order.Clear();
+        _order.AddRange(nodes.Select(n => n.Node));
+        OrderSynchronized = true;
+        Changed();
+        return true;
     }
 
     /// <summary>The node's descendants, depth first, each child before its own children, in the document's order.</summary>
@@ -119,6 +152,7 @@ public sealed class DocumentTree
             _order.Add(nodes[i].Node);
             _rows[nodes[i].Node] = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name, Components = components[i].ToList() };
         }
+        OrderSynchronized = true;
         Changed();
     }
 
@@ -134,6 +168,16 @@ public sealed class DocumentTree
     {
         switch (e)
         {
+            case NodeOrderChanged exchanged:
+                if (!MatchesOrderDelta(exchanged))
+                {
+                    if (!OrderSynchronized) return false;
+                    OrderSynchronized = false;
+                    break;
+                }
+                _order[(int)exchanged.Position] = exchanged.Node;
+                _order[(int)exchanged.SiblingPosition] = exchanged.Sibling;
+                break;
             case NodeCreated created:
             {
                 int position = (int)Math.Min(created.Position, (ulong)_order.Count);
@@ -261,7 +305,7 @@ public sealed class ApplyController
         if (_stopped) return;
         if (_inFlight)
         {
-            if (!_recovering) _again = true;
+            if (!_recovering && !_suspended) _again = true;
             return;
         }
         _recovering |= _suspended;
@@ -302,6 +346,22 @@ public sealed class ApplyController
     }
 
     public void LostApplyAcceptance() => Suspend(ApplyStatus.Unknown, "apply reply lost after document commit");
+
+    public void RequireExplicitApplyAfterUnverifiedSwap()
+    {
+        if (_stopped || _suspended) return;
+        const string reason = "sibling swap could not be verified";
+        _needGlobalStatus = true;
+        if (!_inFlight)
+        {
+            Suspend(ApplyStatus.NeedsApply, reason);
+            return;
+        }
+        // Keep polling the accepted snapshot, but drop any follow-up based on the uncertain revision.
+        _again = false;
+        _suspended = true;
+        _notice = reason;
+    }
     public void SetPaused(bool paused)
     {
         _paused = paused;
@@ -341,6 +401,11 @@ public sealed class ApplyController
         if (record.State == ApplyState.Superseded)
         { Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy); return; }
         Generation = record.Generation!.Value; Status = ApplyStatus.Applied;
+        if (_suspended)
+        {
+            Suspend(ApplyStatus.NeedsApply, _notice);
+            return;
+        }
         if (_recovering &&
             (view.Projection is not ApplyProjection projection || projection.Receipt != expected ||
              projection.Generation != Generation ||

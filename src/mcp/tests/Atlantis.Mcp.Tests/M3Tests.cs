@@ -68,14 +68,16 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
-            if (kind == "SetNodeName")
+            if (kind is "SetNodeName" or "SwapAdjacentSiblings")
             {
-                FakeSession names = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };
+                QueueSession exact = new();
+                var exactRegistry = new ToolRegistry(exact);
+                exactRegistry.InitializeSubscriptions();
                 string args = Json.Write(JsonValue.NewObject().Set("commands", JsonValue.NewArray().Push(command)));
-                CallToolResult named = new ToolRegistry(names).Invoke(Request("authoring.submit_transaction", args));
-                Check(named.IsError != true && names.Calls.Count == 1, "rename uses the existing exact transaction tool once");
-                Check(Json.Write(names.Calls.Single().Parameters.Find("commands")!.Items.Single()) == Json.Write(command), "rename data forwarded exactly");
-                Check(Codec.DecodeAuthoringCommand(command) is Atlantis.Gameplay.Authoring.SetNodeName, "SDK accepts rename fixture");
+                CallToolResult submittedExact = exactRegistry.Invoke(Request("authoring.submit_transaction", args));
+                Check(submittedExact.IsError != true && exact.Calls.Count == 3, kind + " uses the existing exact transaction tool once");
+                Check(Json.Write(exact.Calls[^1].Parameters.Find("commands")!.Items.Single()) == Json.Write(command), kind + " forwarded exactly");
+                Check(Codec.DecodeAuthoringCommand(command) is not null, "SDK accepts " + kind + " fixture");
                 ++fixtureCount;
                 continue;
             }
@@ -150,7 +152,7 @@ internal static partial class Program
             && session.Calls[1].Method == "authoring.subscribe", "one subscription per family at connect");
         Check(Json.Write(session.Calls[0].Parameters) == "{\"filter\":{\"kinds\":[\"EntityCreated\",\"EntityDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"PropertyChanged\"],\"entity\":null,\"component\":null}}",
             "World filter has no restrictions");
-        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\"],\"node\":null,\"component\":null}}",
+        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\",\"NodeOrderChanged\"],\"node\":null,\"component\":null}}",
             "authoring filter includes every kind, with no node/component restriction");
         try { registry.InitializeSubscriptions(); throw new Exception("duplicate initialization accepted"); }
         catch (InvalidOperationException) { Check(session.Calls.Count == 2, "initialization cannot create duplicate subscriptions"); }
@@ -203,6 +205,30 @@ internal static partial class Program
         Check(refused.IsError == true && unavailable.Calls.Count == 2, "refused startup subscription is reported without retry");
         CheckForward(refused, "{\"code\":\"NoAuthoring\",\"message\":\"no document service\"}", "subscription refusal");
         Check(unavailableRegistry.Invoke(Request("control.status", "{}")).IsError != true, "unavailable authoring subscription does not hide control tools");
+
+        const string sibling = "00000000-0000-4000-8000-000000000013";
+        string swap = "{\"commands\":[{\"kind\":\"SwapAdjacentSiblings\",\"node\":\"" + Entity +
+            "\",\"sibling\":\"" + sibling + "\",\"parent\":null,\"direction\":\"Down\",\"expectedRevision\":17}]}";
+        Check(registry.Invoke(Request("authoring.submit_transaction", swap)).IsError != true &&
+            Json.Write(session.Calls[^1].Parameters) == swap, "MCP forwards the same revision-fenced swap command");
+        session.EventError = null;
+        session.AuthoringEvents.Add(Json.Parse("{\"kind\":\"NodeOrderChanged\",\"node\":\"" + Entity +
+            "\",\"sibling\":\"" + sibling + "\",\"position\":2,\"siblingPosition\":0,\"revision\":18}"));
+        string orderEvents = Json.Write(JsonValue.NewObject().Set("ok", ToArray(session.AuthoringEvents)));
+        CheckForward(registry.Invoke(Request("authoring.drain_events", "{}")), orderEvents, "MCP forwards the opt-in order event");
+
+        QueueSession legacy = new() { LegacySiblingOrder = true };
+        var legacyRegistry = new ToolRegistry(legacy);
+        legacyRegistry.InitializeSubscriptions();
+        Check(legacy.Calls.Count == 3 && legacy.Calls[1].Method == "authoring.subscribe" &&
+            Json.Write(legacy.Calls[1].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal) &&
+            legacy.Calls[2].Method == "authoring.subscribe" &&
+            !Json.Write(legacy.Calls[2].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal),
+            "legacy Runtime gets exactly one fallback on the same session");
+        CheckForward(legacyRegistry.Invoke(Request("authoring.submit_transaction", swap)), "{\"err\":\"Unsupported\"}",
+            "legacy MCP swap is unavailable");
+        Check(legacy.Calls.Count == 3, "legacy MCP never sends the unavailable command");
+        CheckForward(legacyRegistry.Invoke(Request("authoring.drain_events", "{}")), "{\"ok\":[]}", "legacy observation still works");
     }
 
     private static readonly byte[] Png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=");
@@ -306,6 +332,7 @@ internal static partial class Program
         public string? NextError { get; set; }
         public string? EventError { get; set; }
         public bool NoAuthoring { get; init; }
+        public bool LegacySiblingOrder { get; init; }
         public bool RejectCommands { get; init; }
         private ulong _ticket = 100;
 
@@ -324,6 +351,8 @@ internal static partial class Program
                 case "connection.subscribe": result = JsonValue.Number(41L); break;
                 case "authoring.subscribe":
                     if (NoAuthoring) return Json.Parse("{\"error\":{\"code\":\"NoAuthoring\",\"message\":\"no document service\"}}");
+                    if (LegacySiblingOrder && parameters.Find("filter")?.Find("kinds")?.Items.Any(k => k.AsString == "NodeOrderChanged") == true)
+                        return Json.Parse("{\"error\":{\"code\":\"BadRequest\",\"message\":\"malformed or missing filter\"}}");
                     result = JsonValue.Number(73L); break;
                 case "authoring.submitTransaction":
                 {
