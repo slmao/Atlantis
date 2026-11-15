@@ -53,8 +53,8 @@ saved-scene Build and Open.
 | Decision | Recommendation |
 | --- | --- |
 | J1 — Scope and slots | Approve one adjacent swap under the current parent or scene root. Use the canonical global slots and the existing bake order. |
-| J2 — Shared contract and compatibility | Approve one revision-guarded swap command through the existing transaction and one opt-in order event. Accept the legacy-reader and mixed positional editing boundary in ADR-0160. |
-| J3 — History and apply | Approve one guarded reversible swap and conservative invalidation of prior position-dependent history on external or uncorrelated reorder. Keep explicit recovery and current reload semantics. |
+| J2 — Shared contract and compatibility | Approve the fenced, revision-guarded transaction and opt-in order event. Approve same-connection legacy fallback and the mixed positional editing boundary in ADR-0160. |
+| J3 — History and apply | Approve one guarded reversible swap and retention of positional history only on correlated local edits. Approve invalidation of prior positional history on external or uncorrelated reorder. Keep explicit recovery and current reload semantics. |
 | J4 — Acceptance and authorization | Approve targeted shared-client checks, Windows 100% Save/Open, and independent cold startup from the same source. Authorize S2–S4 after design merge. |
 
 Suggested joint authorization for the reviewed revision
@@ -72,24 +72,32 @@ Suggested joint authorization for the reviewed revision
   order, node data and the active camera. Exercise both directions, ends
   of the list, missing or replaced rows, different parents, a no-op,
   imported provenance, a stale revision and a mixed-command batch.
-  Check refusal consumes no edit revision, emits no order event and
-  leaves the source untouched. Verify one valid ticket, one revision
-  and one order event for acceptance.
+  Interleave a same-source reopen between the initial revision and
+  the final submit fence, and an external transaction between the
+  final check and host admission. Verify both refuse even if the
+  sibling pair remains identical. Check refusal consumes no edit
+  revision, emits no order event and leaves the source untouched.
+  Verify one valid ticket, one revision and one order event on acceptance.
 - [ ] **R2 shared clients and events.** Verify the same transaction in
   native and managed codec fixtures and across Editor, CLI, SDK and MCP.
-  Check GUID-filtered order events, preserved unrelated events and
-  current `listNodes` results. Keep an old client subscribed to the
-  declared legacy set while a new client swaps. Confirm fresh legacy
-  reads see the result and the old decoder remains usable. Check
-  upgraded clients connected to an old Runtime keep existing actions
-  through the documented fallback and report the unavailable swap.
+  Check that each swapped GUID can match the event, component
+  filters exclude it, and unrelated events keep their order. Exercise
+  delta recovery with a queued lifecycle event and a fenced
+  `listNodes` refresh. Keep an old client subscribed to the declared
+  legacy set while a new client swaps. Confirm fresh legacy reads see
+  the result and the old decoder remains usable. On an old Runtime,
+  verify recognized fallback and a subsequent legacy call on the
+  same connection. An unavailable swap sends no transaction. Confirm
+  that an unexpected or malformed probe result cannot enable it.
 - [ ] **R2/R3 conflicts and replay.** Cover a missing or invalid receipt,
   externally overtaken commit and unknown apply result. Undo and Redo
-  one swap without restoring unrelated slots. Verify a changed pair,
-  parent or adjacency is refused. Check that a local reorder can be
-  undone before earlier create/copy/delete history, and that external
-  reorder invalidates the affected class of positional records while
-  other edits retain their guards.
+  one swap without restoring unrelated slots. Verify a replaced
+  participant, changed parent or changed adjacency refuses replay.
+  Exercise an order event arriving before settlement as well as a
+  lost settlement with matching visible order. Confirm only the
+  correlated local case preserves earlier create/copy/delete history.
+  An external or uncorrelated reorder invalidates positional records,
+  including pending transitions, while other edits retain their guards.
 - [ ] **R4 Runtime ordering.** Verify fresh bake indices and extracted
   order with GUIDs, world matrices and active camera preserved. Use
   coincident pickable meshes with distinct GUIDs so equal-distance
@@ -108,12 +116,13 @@ Suggested joint authorization for the reviewed revision
   Explicitly Apply and record ordered Runtime results.
 - [ ] **R4 same-source cold start.** Record the saved source hash. Use
   that exact saved unit with existing 0090 Build and Open in an
-  independent Editor/Runtime. Keep 0090's configured build asset
-  inputs and verify the relevant mesh/material content and GUIDs match
-  the live acceptance fixture. Record both routes' asset inputs and
-  confirm the source hash, ordered GUIDs and pick winner match the
-  applied reopen. The cold path starts from cooked data without an
-  authoring Apply in the new process.
+  independent Editor/Runtime. Record the source and registration
+  fragment hashes and verify the configured mesh/material inputs
+  match the relevant content and GUIDs in the live fixture. Compare
+  the shared authoring order and the winner of the same explicit
+  Runtime raycast after reopened Apply and on cold startup before
+  any Apply in the new process. Read baked sequence directly in the
+  bake/extraction test. Runtime entity enumeration is GUID-sorted.
 - [ ] **Existing gates.** Build affected clients and native targets,
   run linked tests and applicable Android build/package checks.
   Evaluate the final full diff with `--gate --applies` and follow the

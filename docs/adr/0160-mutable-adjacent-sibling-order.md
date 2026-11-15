@@ -33,39 +33,50 @@ authoring event decoders reject unknown kinds.
    swap-specific refusals for a stale revision, unsupported provenance,
    or invalid pair, direction or transaction shape.
 2. **Publish one order event on commit.** `NodeOrderChanged` carries both
-   GUIDs, their resulting global positions and the committed document
-   revision. A node filter can match either GUID. A component filter
-   excludes it. Clients use this delta in commit order or refresh with
-   `listNodes` when they cannot reconcile it. Editor updates observed
-   positions without recreating rows' node identities. The event leaves
-   document lifetime and existing ownership intact.
-3. **Keep the Remote /1 wire additive.** Keep existing subscribe filters
-   and message shapes. New event delivery requires the new name in
-   `kinds`; existing lists receive only events they already decode.
-   New clients can establish support with their well-formed
-   unfiltered, order-aware subscription. When that well-formed request
-   receives the legacy `BadRequest` with `malformed or missing filter`,
-   use the existing filter and require its success. Keep reorder
-   unavailable for that connection. Other errors follow existing
-   connection handling. Old clients may
-   query the current order with `listNodes` and use GUID-addressed calls
-   that do not depend on cached order. Cached positional writes and
-   structural history in an old Editor are outside mixed-version editing
-   support while reorder is in use. Close the old editing session before
-   reordering alongside an upgraded writer. This adds no host lease or
-   new editor channel. Existing source and cooked versions remain readable.
+   GUIDs, their resulting zero-based global positions and the committed
+   document revision. A node filter can match either GUID. A component
+   filter excludes it. Clients consume the delta in commit order and
+   preserve row identities. If a delta cannot be reconciled, suspend
+   order actions until a revision-fenced `listNodes` refresh. Account
+   for queued lifecycle events and retire positional deltas covered by
+   that snapshot before applying newer events. Invalidate captures
+   whose node identity cannot be established. A refresh does not open
+   the source or advance the document lifetime.
+3. **Keep the Remote /1 wire additive.** New event delivery requires its
+   name in `kinds`. Legacy filters still receive events they already
+   decode. Clients that use reorder establish support on the same
+   connection with the well-formed unfiltered subscription including
+   the new kind. Inspect the correlated raw response before the ordinary
+   Remote result handler. The legacy `BadRequest` with
+   `malformed or missing filter` permits exactly one retry using the
+   original filter. With a valid retry result, keep the connection
+   usable for legacy calls and mark reorder unavailable. Other errors
+   follow existing connection handling. A write-only client releases
+   a probe-only subscription after the check and submits a swap only
+   on a capable connection. Passive order-aware clients use the
+   successful order-aware subscription for observation.
+
+   Old clients can take fresh `listNodes` snapshots and use
+   order-independent GUID-addressed calls. Legacy cached positional
+   writes and structural replay are outside mixed-version support
+   once upgraded clients reorder. End the old editing session before
+   enabling that concurrent workflow. The policy uses ordinary client
+   compatibility and no host lease. Existing source and cooked versions
+   remain readable.
 4. **Fence order-dependent history.** Local Undo/Redo follows the linear
    stack and exchanges the recorded pair in the appropriate direction.
    A settled local swap or replay keeps preceding local position records
-   usable when the linear history returns to their state. On an external
-   swap event, or when an order event cannot be correlated with this
-   Editor's settled swap at that revision, discard earlier undo/redo
-   entries containing a `NodeLife` record, since one replay direction
-   recreates a node at its recorded position. Pending history cannot
-   later restore a discarded positional entry. Keep other entries
-   subject to their existing guards. Order entries check the pair and
-   orientation on replay. Preserve reopen cleanup and settled-commit
-   Redo invalidation.
+   usable when the linear history returns to their state. Classify an
+   event as local only after the matching ticket and failure drain
+   confirm this Editor's swap at the expected next revision and the
+   pair and resulting slots agree. Defer history effects while that
+   settlement is outstanding. Treat external or uncorrelated order
+   changes, including changes found by snapshot refresh, as invalidating
+   earlier undo/redo entries containing a `NodeLife` record. Pending
+   history cannot later restore a discarded positional entry. Keep
+   other entries subject to their guards. Order entries retain node
+   identities and check the pair and orientation on replay. Preserve
+   reopen cleanup and settled-commit Redo invalidation.
 5. **Bake the persisted sequence.** Keep GUID-based references and the
    same scene formats. When saved, transient source indices are
    derived from the new positions and parent and camera references

@@ -50,10 +50,13 @@ not taken precedence. Follow the ordinary Inspector focus and draft
 rules.
 
 Swap the two occupied positions in the document's global node array.
-For global order `A, X, B` with adjacent siblings `A` and `B` and an
-unrelated node `X`, the result is `B, X, A`. Every other node stays in
-its slot, including descendants of either participant. Hierarchy
-continues to display each node as a subtree in its new sibling position.
+Find adjacency by filtering that array to the expected parent,
+including null for roots. **Move up** chooses the preceding sibling
+and **Move down** the following sibling in that filtered sequence.
+For global order `A, X, B` with adjacent siblings `A` and `B`, the
+result is `B, X, A`. `X` may be a descendant of either participant
+or belong elsewhere. Every other global slot stays fixed even when
+Hierarchy displays the two subtrees in their new sibling positions.
 Keep scene and node GUIDs, names, parent links, component values, local
 transforms, asset references and active camera unchanged.
 
@@ -63,12 +66,14 @@ Submit the single swap through the existing authoring transaction and
 failure drain defined in [ADR-0160](../adr/0160-mutable-adjacent-sibling-order.md#decision).
 Capture the intended pair and direction from the displayed Hierarchy.
 Guard worker, document lifetime and both displayed node identities
-using 0103's row-incarnation rule. Refresh the observed revision and
-require that the captured pair still qualifies before submit. The host
-checks the expected revision, parent and ordered adjacency atomically.
-A newer view can enable an explicit retry. The request never substitutes
-a different neighbor. Reject a stale or unsupported request without a
-history entry or automatic apply.
+using 0103's row-incarnation rule. Sample the current document revision,
+drain events, and verify the captured pair, parent and direction.
+Drain events again and require the same lifetime and revision before
+submitting with that revision. A successful same-source reopen
+invalidates the capture. A refused reopen keeps the lifetime.
+The host checks the revision, parent and ordered adjacency atomically.
+A stale or unsupported request adds no history and schedules no apply.
+Refresh may enable an explicit retry with a newly selected neighbor.
 
 After a valid ticket and matching failure drain, distinguish a refused
 request from a confirmed commit. On lost or invalid settlement, report
@@ -82,19 +87,21 @@ editing limits follow ADR-0160.
 ### R3. Undo/Redo and concurrent edits
 
 Record one Editor-local undo entry for a verified exchange. Require the
-same document lifetime, a single revision advance and the verified slot
-result before recording history and scheduling automatic apply. For a confirmed commit with an unverifiable
-result, invalidate Redo, report Undo unavailable for that edit, and
-leave further apply explicit. A successful reopen clears local history.
+same document lifetime, the single revision advance and the verified
+slot result before recording history and scheduling automatic apply.
+A confirmed commit with an unverifiable result invalidates Redo. Report
+Undo unavailable for that edit and leave further apply explicit.
+A successful reopen clears local history.
 
-Store the participants, parent and before/after sibling orientation.
-Each Undo or Redo verifies the recorded pair's current identities and
-expected adjacency, then submits the inverse or forward swap at the
-freshly observed revision. An external deletion, reparent, pair-order
-change or intervening sibling refuses the history step. Unrelated
-changes already observed can coexist when the recorded pair still
-satisfies those checks. Settle before applying either direction.
-Existing positional history across this operation follows ADR-0160.
+Store the participants' identities, expected parent and before/after
+sibling orientation. Each Undo or Redo uses the R2 revision fence and
+submits the inverse or forward swap at the validated current revision.
+A missing or replaced participant, changed parent, unexpected
+orientation or intervening sibling refuses the step and follows the
+existing conflicted-entry notice and drop rule. Other changes already
+observed can coexist if the recorded pair still matches. Replay
+exchanges the pair's current slots. Settle before applying either
+direction. Existing positional history follows ADR-0160.
 
 ### R4. Apply, Save and restart
 
