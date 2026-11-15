@@ -44,34 +44,38 @@ The existing logical name points to `inbox/<name>/source.png`. Reuse the
 0095 RGB/RGBA 8-bit PNG checks, 1–2048 pixels per axis and 24 MiB encoded
 limits, and the one-mip RGBA8 sRGB artifact. Inputs carry sRGB color samples.
 The registration source key remains `content:texture_<name>/source.png`.
-The same name, GUID, producer evidence, source bytes and receipt recovery
-rules apply to both uses.
+Both uses share one registration, its GUID and the existing status lookup. The UI label
+describes the existing color operation. Its wire method, CLI/SDK/MCP
+names and generation role stay as defined in 0095–0099.
 
 After explicit activation, use the registered logical name as the primary
 label for canonical managed color entries in Assets and material choices,
 with source and GUID available in existing details. Canonical naming guides
 presentation. The retained catalog and its cooked artifact determine
-slot eligibility. Preserve existing catalog choices outside this
-presentation change.
+slot eligibility. Apply the label wherever the existing shared Editor
+asset row/name helper renders the entry. Keep candidate membership and
+selection by GUID.
 
 ### R2. Binding and rendering
 
 Use the existing Emissive texture slot on editable opaque `PbrDirectLit`
 recipes. Users can select, replace or clear the GUID. The shared provider
 requires a supported dependency-free RGBA8 sRGB Texture in the active
-snapshot. An existing valid color GUID can serve both Base texture and
-Emissive texture, with one catalog dependency edge. Clearing the emissive
-binding retains an edge still used by the base slot. Preserve the base
-texture, sampler, other supported slots and their existing compatibility rules.
+snapshot. A color GUID can serve both Base texture and Emissive texture.
+The cooked recipe retains the two slot values and its catalog record
+carries one edge for their shared GUID. Replace or Clear removes an old
+edge only when the resulting recipe no longer references that GUID.
+Preserve the base texture, sampler, other supported slots and their
+existing compatibility rules.
 
 The shader multiplies sRGB-decoded RGB by the existing per-channel linear
 emissive factor and adds the result at the current emission composition
 point. Texture alpha has no emissive or opacity effect. Factor channels
 remain finite in [0, 65504]. All-zero factors produce no emission with
-any texture. Binding keeps the current factor. Clear removes the GUID and
-keeps that factor, so the white fallback produces uniform emission when
-the factor is nonzero. Retain the material dialog's guidance for these
-two cases.
+any texture. Select and Replace keep the current factor. Clear writes a
+null emissive texture and keeps the factor, so the white fallback yields a
+uniform emissive contribution when the factor is nonzero. Retain the
+material dialog's guidance for these two cases.
 
 Keep the existing mesh and complete-draft preview routes, camera, sampler,
 lighting selection, PNG bounds and error mapping. Compare draft and cooked
@@ -86,13 +90,20 @@ projection or undo history.
 Editor, CLI, both SDKs and MCP use the existing shared color import/status,
 catalog, material read/save/status and preview contracts. Use an existing
 recipe version that represents every field in the original and draft.
-The full recipe settled in [Spec 0099](0099-occlusion-texture.md) covers
-the current fields. Existing narrower clients can read and write their
-representable subset. A legacy version that cannot represent the source
-or original recipe keeps its existing refusal, including on Resume or
-an Edit that would otherwise clear the unrepresented field. Preserve the
-current precise unsupported mapping. Transport failures retain their
-original category and are not a reason to downgrade and replay a write.
+`WithMaps` covers a recipe with normal and emissive fields and no packed
+or occlusion binding. Use the existing higher versions when those fields
+are present, up through the complete [0099](0099-occlusion-texture.md)
+recipe. A Basic Read refuses an original with a bound emissive texture
+even when its factor is zero, or with a nonzero factor even when unbound.
+Basic Copy/Edit and Resume keep the existing source-stage refusal for an
+unrepresentable original or committed recipe, including an Edit whose
+proposed values clear the field. Older clients can still read a
+representable active recipe while a newer recipe is committed ahead.
+Edit uses the original values and active generation, and the existing
+ahead guard prevents a write based on that older view. Only the precise
+correlated unsupported-method response permits existing capability
+fallback. Transport errors keep their original category without write
+replay.
 
 Registration and Save & Publish are separate jobs. Reuse the current
 permission, project ownership, worker, committed-source and frozen
@@ -100,10 +111,13 @@ generation checks, including target-directory verification when
 publication is uncertain. A clean precommit failure permits explicit
 retry after correction. If publication fails after registration or
 material source commit, preserve the GUID and committed bytes. Use the
-existing matching color import Resume or material Resume after settlement
-or workspace repair. Keep known receipt IDs and targets on an unknown
-outcome. A missing or evicted receipt does not settle it. Reconcile the
-durable state before retry.
+existing color import Resume by logical name from the committed PNG,
+seal and fragment, or material Resume by material GUID from the committed
+recipe. The inbox can be absent on color Resume. Recover or repair the
+workspace first when required. Keep known receipt IDs and targets on an
+unknown outcome. A latest receipt is a lead until correlated to the
+attempt. A missing, mismatched or evicted receipt leaves the outcome
+unknown. Reconcile terminal and durable state before retry.
 
 Successful publication leaves the running catalog, scene document,
 projection and undo history in place. Show the existing explicit
@@ -113,12 +127,14 @@ restart.
 
 ### R4. Reopen and observable result
 
-Use one isolated, opted-in Windows checkout with an ordinary scene
-referencing the managed material GUID before the seed and staging
-configuration. After activating the imported texture generation, create a
-saved copy with Save As before changing the material. Publish an in-place
-material edit with the new texture and visibly nonzero linear RGB factors.
-Use a fixed camera and a matched unbound control.
+Use one isolated, opted-in Windows checkout. Before configuring the seed
+and staging builds, give the managed material a visible nonzero linear
+RGB factor and no emissive texture, and reference its GUID in the
+ordinary scene. Activate the imported texture generation, create a saved
+copy with Save As, and capture the unbound control. Then publish an
+in-place edit that changes only the emissive binding. The control and
+both reopen captures use the same mesh, camera, lighting, exposure and
+output size.
 
 1. Reopen the original ordinary scene using its profile and the named
    material generation. Verify both asset GUIDs, the exact recipe and
