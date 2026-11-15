@@ -292,6 +292,29 @@ TEST_CASE("remote authoring: two clients observe rename and atomic refusal under
   CHECK(b.drainEvents(all).value().empty());
 }
 
+TEST_CASE("remote authoring: guarded Transform writes share one revision and event order", "[remote][authoring]") {
+  ServedAuthoring served;
+  auto first = served.world.attach();
+  auto second = served.world.attach();
+  auto& a = first->authoring();
+  auto& b = second->authoring();
+  REQUIRE(a.open().isOk());
+  REQUIRE(a.document()->supportsGuardedTransformTransactions);
+  const auto transform = atlantis::schema::typeId("asset_system::scene::Transform");
+  const auto position = atlantis::schema::fieldId("asset_system::scene::Transform", "localPosition");
+  const auto scale = atlantis::schema::fieldId("asset_system::scene::Transform", "localScale");
+  const ac::SetProperty x{{node(1), transform, position}, std::array{1.0f, 2.0f, 3.0f}};
+  const ac::SetProperty y{{node(3), transform, scale}, std::array{2.0f, 2.0f, 2.0f}};
+  const auto stream = b.subscribe({});
+  const auto revision = a.applyStatus().value().currentDocumentRevision.value();
+  const auto ticket = a.submitTransaction({ac::RequireTransformBatchRevision{revision}, x, y});
+  CHECK(ticket.count == 3);
+  CHECK(a.drainFailures().empty());
+  CHECK(b.applyStatus().value().currentDocumentRevision == revision + 1);
+  CHECK(b.drainEvents(stream).value() == std::vector<ac::Event>{
+      ac::PropertyChanged{x.address, x.value}, ac::PropertyChanged{y.address, y.value}});
+}
+
 TEST_CASE("remote authoring: a Runtime that serves no authoring session answers NoAuthoring", "[remote][authoring]") {
   ServedAuthoring served(/*serve=*/false);
   auto session = served.world.attach();

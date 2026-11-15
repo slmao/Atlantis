@@ -75,6 +75,21 @@ public static class LiveAuthoringSuite
         t.Check(a.DrainFailures().Count == 0 && a.GetProperty(targetA).Value == beforeA && a.GetProperty(targetB).Value == beforeB,
             "guarded undo can write per-target values");
         b.Unsubscribe(subscription);
+
+        t.Check(a.Document()?.SupportsGuardedTransformTransactions == true, "live transform capability");
+        var position = a.Address(Mesh, "Transform.localPosition");
+        var originalPosition = a.GetProperty(position).Value;
+        ulong current = a.ApplyStatus().Value!.CurrentDocumentRevision!.Value;
+        var transformed = a.SubmitTransaction(new A.Command[] {
+            new A.RequireTransformBatchRevision(current), new A.SetProperty(position, next),
+            new A.SetProperty(targetA, next), new A.SetProperty(targetB, next) });
+        t.Check(transformed.Count == 4 && a.DrainFailures().Count == 0 &&
+            a.ApplyStatus().Value!.CurrentDocumentRevision == current + 1 &&
+            b.GetProperty(position).Value == next, "mixed Transform fields settle once across peers");
+        a.SubmitTransaction(new A.Command[] {
+            new A.RequireTransformBatchRevision(current + 1), new A.SetProperty(position, originalPosition),
+            new A.SetProperty(targetA, beforeA), new A.SetProperty(targetB, beforeB) });
+        t.Equal(0, a.DrainFailures().Count, "mixed Transform restore");
     }
 
     private static void SiblingOrder(TestContext t, RemoteSession first, RemoteSession second)

@@ -110,6 +110,10 @@ public static partial class Codec
                 output.Set("kind", JsonValue.String("RequireDocumentRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.RequireTransformBatchRevision c:
+                output.Set("kind", JsonValue.String("RequireTransformBatchRevision"))
+                    .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
+                break;
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
@@ -183,6 +187,9 @@ public static partial class Codec
             case "RequireDocumentRevision":
                 return value.Find("expectedRevision") is JsonValue required && DecodeUInt64(required) is ulong guardedRevision
                     ? new A.RequireDocumentRevision(guardedRevision) : null;
+            case "RequireTransformBatchRevision":
+                return value.Find("expectedRevision") is JsonValue transformGuard && DecodeUInt64(transformGuard) is ulong transformRevision
+                    ? new A.RequireTransformBatchRevision(transformRevision) : null;
             case "SetActiveCamera":
             {
                 (bool ok, EntityGuid? camera) = OptionalEntityMember(value, "camera");
@@ -365,6 +372,8 @@ public static partial class Codec
             .Set("source", JsonValue.String(document.SourcePath)).Set("nodeCount", JsonValue.Number(document.NodeCount));
         if (document.SupportsGuardedPropertyTransactions)
             result.Set("supportsGuardedPropertyTransactions", JsonValue.Bool(true));
+        if (document.SupportsGuardedTransformTransactions)
+            result.Set("supportsGuardedTransformTransactions", JsonValue.Bool(true));
         return result;
     }
 
@@ -385,7 +394,9 @@ public static partial class Codec
         return p is A.Provenance known ? new A.DocumentInfo(s, known, source.AsString, n)
         {
             SupportsGuardedPropertyTransactions =
-                value.Find("supportsGuardedPropertyTransactions") is { Kind: JsonKind.Bool, AsBool: true }
+                value.Find("supportsGuardedPropertyTransactions") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsGuardedTransformTransactions =
+                value.Find("supportsGuardedTransformTransactions") is { Kind: JsonKind.Bool, AsBool: true }
         } : null;
     }
 

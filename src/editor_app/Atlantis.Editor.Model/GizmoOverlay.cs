@@ -11,8 +11,10 @@
 // UI-free.
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Atlantis.Gameplay;
+using Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Editor.Model;
 
@@ -102,18 +104,45 @@ public static class GizmoOverlay
         return new ViewportOverlay(node is EntityGuid n ? new[] { n } : Array.Empty<EntityGuid>(), groups);
     }
 
-    public static ViewportOverlay ForMultiselection(IReadOnlyList<EntityGuid> nodes, IReadOnlyList<Marker> markers)
+    public static ViewportOverlay ForMultiselection(IReadOnlyList<EntityGuid> nodes, IReadOnlyList<Marker> markers,
+        OverlayGroup? handle = null, GroupGizmoSample? preview = null)
     {
         var selection = new HashSet<EntityGuid>(nodes);
-        var points = new List<OverlayPoint>(markers.Count);
-        foreach (Marker marker in markers)
+        var groups = new List<OverlayGroup>();
+        if (handle is not null) groups.Add(handle);
+        if (preview is not null)
+        {
+            foreach (float[] world in preview.Worlds)
+            {
+                var axes = new List<OverlaySegment>(3);
+                for (int i = 0; i < 3; ++i)
+                {
+                    var axis = new Vector3(world[i * 4], world[i * 4 + 1], world[i * 4 + 2]);
+                    float length = axis.Length();
+                    if (length > 0 && float.IsFinite(length))
+                        axes.Add(new OverlaySegment(Vector3.Zero, axis / length, AxisColors[i], OverlayDepth.OnTop, 2));
+                }
+                groups.Add(new OverlayGroup(new OverlayAnchor(new Vector3(world[12], world[13], world[14]), 20),
+                    axes, Array.Empty<OverlayTriangle>(), new[] { new OverlayPoint(Vector3.Zero, ActiveColor, OverlayDepth.OnTop, 6) }));
+            }
+        }
+        var points = new List<OverlayPoint>();
+        // Reserve the possible 64 guides and the center handle within the existing point limit.
+        int markerLimit = 16384 - (handle is null ? 0 : RequireTransformBatchRevision.MaxNodes + 3);
+        foreach (Marker marker in markers.Take(markerLimit))
         {
             OverlayColor color = selection.Contains(marker.Entity) ? SelectedMarkerColor : MarkerColor;
             points.Add(new OverlayPoint(marker.Position, color, OverlayDepth.OnTop, MarkerPixels));
         }
-        return new ViewportOverlay(nodes, points.Count == 0 ? Array.Empty<OverlayGroup>() :
-            new[] { OverlayGroup.World(points: points) });
+        if (points.Count > 0) groups.Add(OverlayGroup.World(points: points));
+        return new ViewportOverlay(nodes, groups);
     }
+
+    public static OverlayGroup GroupHandle(Vector3 pivot, GizmoMode mode, GizmoAxis? active) =>
+        mode == GizmoMode.Scale
+            ? OverlayGroup.World(points: new[] { new OverlayPoint(pivot, active is null ? MarkerColor : ActiveColor,
+                OverlayDepth.OnTop, 14) })
+            : ModeGizmo(pivot, mode, Axes, active is GizmoAxis axis ? (int)axis : null);
 
     private static readonly OverlayColor SelectedMarkerColor = new(0.32f, 0.66f, 1f, 1f);
 

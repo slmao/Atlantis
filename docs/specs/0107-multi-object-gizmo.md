@@ -1,11 +1,11 @@
 # Spec 0107 — Multi-Object Gizmo Transforms
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-15
 - **Related Plan:** [Plan 0107](../plans/0107-multi-object-gizmo.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0163](../adr/0163-guarded-transform-batches.md) (Proposed)
+- **Approval:** Maintainer approved the revision at [PR #379, `24827821`](https://github.com/slmao/Atlantis/pull/379) on 2026-11-15.
+- **Related ADR:** [ADR-0163](../adr/0163-guarded-transform-batches.md) (Accepted)
 
 ## Summary
 

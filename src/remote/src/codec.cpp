@@ -1421,6 +1421,9 @@ Value encode(const authoring::Command& command) {
           out.set("parent", encodeOptionalEntity(c.parent));
           out.set("placement", Value::string(c.placement == authoring::SiblingPlacement::Before ? "Before" : "After"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::RequireTransformBatchRevision>) {
+          out.set("kind", Value::string("RequireTransformBatchRevision"));
+          out.set("expectedRevision", Value::number(c.expectedRevision));
         } else if constexpr (std::is_same_v<C, authoring::RequireDocumentRevision>) {
           out.set("kind", Value::string("RequireDocumentRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
@@ -1509,6 +1512,12 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     if (!r || (p != "Before" && p != "After")) return std::nullopt;
     return authoring::Command(authoring::MoveSiblingRelative{
         *node, **anchor, *parent, p == "Before" ? authoring::SiblingPlacement::Before : authoring::SiblingPlacement::After, *r});
+  }
+  if (*kind == "RequireTransformBatchRevision") {
+    const auto* revision = value.find("expectedRevision");
+    const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
+    if (!expected) return std::nullopt;
+    return authoring::Command(authoring::RequireTransformBatchRevision{*expected});
   }
   if (*kind == "RequireDocumentRevision") {
     const auto* revision = value.find("expectedRevision");
@@ -1736,6 +1745,7 @@ Value encode(const authoring::DocumentInfo& document) {
   out.set("source", Value::string(document.sourcePath));
   out.set("nodeCount", Value::number(document.nodeCount));
   if (document.supportsGuardedPropertyTransactions) out.set("supportsGuardedPropertyTransactions", Value::boolean(true));
+  if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   return out;
 }
 
@@ -1754,6 +1764,8 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   authoring::DocumentInfo out{*s, authoring::Provenance::HandAuthored, source->asString(), *n};
   const auto* capability = value.find("supportsGuardedPropertyTransactions");
   out.supportsGuardedPropertyTransactions = capability && capability->isBool() && capability->asBool();
+  const auto* transform = value.find("supportsGuardedTransformTransactions");
+  out.supportsGuardedTransformTransactions = transform && transform->isBool() && transform->asBool();
   if (provenance->asString() == "Imported") {
     out.provenance = authoring::Provenance::Imported;
   } else if (provenance->asString() != "HandAuthored") {

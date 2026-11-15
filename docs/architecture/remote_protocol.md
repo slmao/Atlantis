@@ -789,6 +789,21 @@ unknown command while decoding the whole request. Keep the guarded
 writes together and inspect the document before retrying if settlement
 is unknown.
 
+### Guarded Transform transactions
+
+[ADR-0163](../adr/0163-guarded-transform-batches.md) adds the optional
+`supportsGuardedTransformTransactions` member to the open document.
+Only literal true enables this command. It is independent of the
+guarded single-property capability.
+
+`RequireTransformBatchRevision` carries an unsigned
+`expectedRevision` and goes first in the existing transaction.
+The following 1–192 writes address distinct whole-vector Transform
+leaves across at most 64 nodes. The guard consumes one ticket and
+emits no event. Shape and revision use the existing guarded refusal
+codes. A verified success advances one revision and publishes
+ordinary property events in write order. Apply stays separate.
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines

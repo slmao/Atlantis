@@ -232,14 +232,20 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                     _ => false
                 }))
                 return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
-            if (mapping.Method == "authoring.submitTransaction" &&
-                wireParameters.Find("commands")!.Items.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision"))
+            if (mapping.Method == "authoring.submitTransaction")
             {
-                JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
-                if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
-                if (document.Find("result") is not JsonValue descriptor ||
-                    Codec.DecodeDocumentInfo(descriptor)?.SupportsGuardedPropertyTransactions != true)
-                    return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+                var commands = wireParameters.Find("commands")!.Items;
+                bool property = commands.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision");
+                bool transform = commands.Any(c => c.Find("kind")?.AsString == "RequireTransformBatchRevision");
+                if (property || transform)
+                {
+                    JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
+                    if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
+                    var info = document.Find("result") is JsonValue descriptor ? Codec.DecodeDocumentInfo(descriptor) : null;
+                    if ((property && info?.SupportsGuardedPropertyTransactions != true) ||
+                        (transform && info?.SupportsGuardedTransformTransactions != true))
+                        return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+                }
             }
             JsonValue response = session.Request(mapping.Method, wireParameters);
             if ((rebuild || rebuildStatus || import || importStatus) && Codec.IsLegacyAssetRebuildRefusal(response))

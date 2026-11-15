@@ -31,6 +31,61 @@ public static partial class Program
 
     private static bool Near16(float[] a, float[] b, float tolerance) => NearMatrix(a, b, tolerance);
 
+    private static void GroupGizmoChecks()
+    {
+        var document = new FakeDocument();
+        var ancestor = document.Add(1, null, LocalTransform.Identity);
+        var first = document.Add(2, ancestor, LocalTransform.Identity);
+        var intermediate = document.Add(3, first, LocalTransform.Identity);
+        var inherited = document.Add(4, intermediate, LocalTransform.Identity with { Position = new Vector3(20, 0, 0) });
+        var otherParent = document.Add(5, null, LocalTransform.Identity with { Scale = new Vector3(2, 1, 1) });
+        var other = document.Add(6, otherParent, LocalTransform.Identity with { Position = new Vector3(2, 0, 0) });
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var group = GroupGizmo.Read(document, tree, [other, inherited, first])!;
+        Check(group.Roots.SequenceEqual(new[] { first, other }) && group.Pivot == new Vector3(2, 0, 0),
+            "group gizmo: pivot excludes an inherited selection through an unselected intermediary");
+        var translation = group.Solve(GizmoMode.Translate, GizmoAxis.X, 0.7f, snap: true);
+        Check(translation.Refusal is null && translation.Writes.Select(write => write.After.AsVec3())
+            .SequenceEqual(new[] { new Vector3(0.5f, 0, 0), new Vector3(2.25f, 0, 0) }) &&
+            translation.Writes.All(write => write.Address.Field == FakeDocument.Position),
+            "group gizmo: world translate snaps and only writes the local position");
+        var scale = group.Solve(GizmoMode.Scale, GizmoAxis.X, 2, snap: false);
+        Check(scale.Refusal is null && scale.Writes.Count == 4 && scale.Worlds[0][12] == -2 && scale.Worlds[1][12] == 6 &&
+            scale.Writes.All(write => write.Address.Node != inherited && write.Address.Field != FakeDocument.Euler),
+            "group gizmo: uniform scale changes offsets and scale under an invertible nonuniform parent");
+        var shear = group.Solve(GizmoMode.Rotate, GizmoAxis.Z, MathF.PI / 4, snap: false);
+        Check(shear.Refusal?.Contains(other.ToString(), StringComparison.Ordinal) == true &&
+            shear.Writes.Count == 0 && shear.Worlds.Count == 0, "group gizmo: rejection discards all candidate roots");
+        Check(group.Solve(GizmoMode.Rotate, GizmoAxis.Z, 2 * MathF.PI, snap: false).Writes.Count == 0,
+            "group gizmo: a full turn is an identity");
+
+        tree.Apply(new ParentChanged(inherited, first), document);
+        tree.Apply(new ParentChanged(inherited, intermediate), document);
+        Check(!group.IsCurrent(tree, preview: true, checkStamps: true) &&
+            group.IsCurrent(tree, preview: false, checkStamps: false),
+            "group gizmo: ancestry ABA invalidates the grab while inherited nodes do not enter replay context");
+
+        var tiny = document.Add(7, null, LocalTransform.Identity with { Scale = new Vector3(-2e-6f, 2e-6f, 2e-6f) });
+        var singular = document.Add(8, null, LocalTransform.Identity with { Scale = new Vector3(0, 1, 1) });
+        var underSingular = document.Add(9, singular, LocalTransform.Identity);
+        tree.Rebuild(document);
+        var reflected = GroupGizmo.Read(document, tree, [first, tiny])!;
+        var rotated = reflected.Solve(GizmoMode.Rotate, GizmoAxis.Z, MathF.PI / 2, snap: false);
+        Check(rotated.Refusal is null && rotated.Writes.Any(write => write.Address.Node == tiny && write.Address.Field == FakeDocument.Euler) &&
+            rotated.Writes.All(write => write.Address.Field != FakeDocument.ScaleField),
+            "group gizmo: a tiny signed scale cannot hide a missing ninety-degree rotation");
+        var degenerate = GroupGizmo.Read(document, tree, [first, underSingular])!;
+        Check(degenerate.Solve(GizmoMode.Translate, GizmoAxis.X, 1, snap: false).Refusal?.Contains("not invertible") == true &&
+            degenerate.Solve(GizmoMode.Translate, GizmoAxis.X, 0, snap: false).Refusal is null,
+            "group gizmo: a singular parent refuses a write, and identity still writes nothing");
+        var placement = GizmoOverlay.ForMultiselection([first, inherited, other], Array.Empty<Marker>(),
+            GizmoOverlay.GroupHandle(group.Pivot, GizmoMode.Scale, null), scale);
+        Check(placement.Selection.Count == 3 && placement.Groups.Sum(layer => layer.Points.Count) == 3 &&
+            placement.Groups.Sum(layer => layer.Segments.Count) == 6 && document.Submissions == 0,
+            "group gizmo: orientation guides are separate from selection and authoring");
+    }
+
     private static void GizmoDragChecks()
     {
         // A root R at (1, 2, 3) with children A (offset 2 on x) and B under A (offset 1 on y).

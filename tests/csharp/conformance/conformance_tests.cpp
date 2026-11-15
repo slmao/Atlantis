@@ -172,6 +172,7 @@ void authoringVectors(std::vector<Vector>& out) {
   command("name.empty", ac::SetNodeName{kNode, ""});
   command("swap_siblings", ac::SwapAdjacentSiblings{kNode, kParent, std::nullopt, ac::SiblingDirection::Up, 17});
   command("require_revision", ac::RequireDocumentRevision{17});
+  command("require_transform_revision", ac::RequireTransformBatchRevision{18});
   command("move_sibling", ac::MoveSiblingRelative{kNode, kParent, std::nullopt, ac::SiblingPlacement::Before, 17});
 
   const auto event = [&](std::string name, ac::Event e) {
@@ -218,6 +219,8 @@ void authoringVectors(std::vector<Vector>& out) {
                                                 "D:/Atlantis/assets/scenes/a \"b\" \xc3\xa9.scene.txt", 5})});
   out.push_back({"authoring.document.guarded", "Document",
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "D:/scene.txt", 3, true})});
+  out.push_back({"authoring.document.guarded_transform", "Document",
+                 codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "D:/scene.txt", 3, true, true})});
   out.push_back({"authoring.document.imported", "Document",
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::Imported, "D:/build/bistro/bistro.scene.txt", 5992})});
   out.push_back({"authoring.node", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent})});

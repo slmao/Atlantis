@@ -1,9 +1,9 @@
 # ADR 0163 — Guarded Transform Batches
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer accepted this ADR at [PR #379, `24827821`](https://github.com/slmao/Atlantis/pull/379) on 2026-11-15.
 - **Related Spec:** [Spec 0107](../specs/0107-multi-object-gizmo.md)
 
 ## Context

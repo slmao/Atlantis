@@ -246,6 +246,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
     case WM_SYSKEYDOWN:
     case WM_SYSKEYUP:
     case WM_CHAR:
+    case WM_CAPTURECHANGED:
       forwardToParent(s, hwnd, message, wParam, lParam);
       break;
     default:

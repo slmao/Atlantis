@@ -441,6 +441,18 @@ first line and ordinary `set` lines for the same field on distinct
 nodes after it. The guarded transaction reports the usual ticket
 and refusal. Apply remains a separate command.
 
+With several nodes selected, use the Viewport's World Move or Rotate,
+or drag the center Uniform scale handle. The pivot is the mean of the
+selected roots. A selected descendant follows its selected ancestor.
+Guides preview destination transforms while the current Runtime geometry
+stays in place. One accepted drag adds one Undo step, and Escape cancels
+the drag before submission.
+
+Shared clients can send the corresponding guarded Transform batch with
+`require-transform-revision <revision>` on the first line of a CLI
+`scene tx` file and ordinary `set` lines for Transform vector leaves.
+Use `scene apply-status` to read the revision. Apply the result separately.
+
 ### Change sibling order
 
 In a hand-authored scene, select one node and use **Hierarchy → Actions →

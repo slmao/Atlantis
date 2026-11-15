@@ -18,6 +18,7 @@ public sealed class DocumentTree
     private sealed class Row
     {
         public EntityGuid? Parent;
+        public object ParentStamp = new();
         public string Name = "";
         public List<TypeId> Components = new();
         public readonly Dictionary<TypeId, ComponentState> Lifetimes = new();
@@ -57,6 +58,7 @@ public sealed class DocumentTree
         ComponentAt(address) is { } component ? component.Changes.GetValueOrDefault(address.Field) ?? component : null;
 
     public EntityGuid? ParentOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Parent : null;
+    public object? ParentStamp(EntityGuid node) => _rows.GetValueOrDefault(node)?.ParentStamp;
 
     public string NameOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Name : "";
 
@@ -253,6 +255,7 @@ public sealed class DocumentTree
             case ParentChanged moved:
                 if (!_rows.TryGetValue(moved.Node, out Row? row)) return false;
                 row.Parent = moved.Parent;
+                row.ParentStamp = new object();
                 break;
             case NodeNameChanged renamed:
                 if (!_rows.TryGetValue(renamed.Node, out Row? named)) return false;

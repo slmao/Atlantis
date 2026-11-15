@@ -47,6 +47,7 @@ public sealed class ViewportWindow : IDisposable
 
     public event Action<int, int>? Resized;
     public event Action<ViewportPointerEvent>? Pointer;
+    public event Action? CaptureLost;
     public event Action<int, long>? Wheel;          // notches x 120 (WHEEL_DELTA), arrival ticks
     public event Action<int, bool, long>? Key;      // virtual key, down, arrival ticks
     public event Action<char>? Character;
@@ -139,6 +140,7 @@ public sealed class ViewportWindow : IDisposable
             case WM_RBUTTONUP: window.Pointer?.Invoke(new(ViewportPointer.RightUp, x, y, alt, shift, now)); return IntPtr.Zero;
             case WM_MBUTTONDOWN: window.Pointer?.Invoke(new(ViewportPointer.MiddleDown, x, y, alt, shift, now)); return IntPtr.Zero;
             case WM_MBUTTONUP: window.Pointer?.Invoke(new(ViewportPointer.MiddleUp, x, y, alt, shift, now)); return IntPtr.Zero;
+            case WM_CAPTURECHANGED: window.CaptureLost?.Invoke(); return IntPtr.Zero;
             case WM_MOUSEWHEEL:
                 window.Wheel?.Invoke((short)((wParam.ToInt64() >> 16) & 0xFFFF), now);
                 return IntPtr.Zero;
@@ -219,6 +221,7 @@ public sealed class ViewportWindow : IDisposable
     private const uint WM_SYSKEYDOWN = 0x0104;
     private const uint WM_SYSKEYUP = 0x0105;
     private const uint WM_MOUSEMOVE = 0x0200;
+    private const uint WM_CAPTURECHANGED = 0x0215;
     private const uint WM_LBUTTONDOWN = 0x0201;
     private const uint WM_LBUTTONUP = 0x0202;
     private const uint WM_RBUTTONDOWN = 0x0204;

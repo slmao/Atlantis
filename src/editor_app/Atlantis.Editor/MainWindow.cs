@@ -161,6 +161,9 @@ public sealed class MainWindow : Window
     private GizmoSnapshot? _gizmoShown;
     private GizmoGrab? _gizmoGrab;
     private GizmoMode _gizmoGrabMode;
+    private (long Id, GizmoMode Mode, GizmoGrab Handle)? _groupGrab;
+    private (int Mode, int Space, bool? Snap)? _singleGizmoSettings;
+    private bool _syncingGizmoSettings;
     // Plan 0068 M3: the Inspector panel, rebuilt from the worker's snapshots (not while a field is being typed in).
     private readonly StackPanel _inspectorPanel = new() { Spacing = 10, Margin = new Thickness(12) };
     private InspectorSnapshot? _inspectorShown;
@@ -381,6 +384,11 @@ public sealed class MainWindow : Window
         _play.Click += (_, _) => _worker?.Play();
         _pause.Click += (_, _) => _worker?.Pause();
         _step.Click += (_, _) => _worker?.StepFrame();
+        Deactivated += (_, _) => CancelGroupGesture();
+        AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (e.Key == Key.Escape && CancelGroupGesture()) e.Handled = true;
+        }, RoutingStrategies.Tunnel);
         KeyDown += (_, e) =>
         {
             // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
@@ -585,14 +593,20 @@ public sealed class MainWindow : Window
         _log.Write("viewport host window 0x" + window.Handle.ToString("x") + " " + window.Width + "x" + window.Height);
         window.Resized += (w, h) =>
         {
+            CancelGroupGesture();
             _log.Write("viewport resized " + w + "x" + h);
             CorrectViewportSize();
             UpdateStatus();
         };
         window.Pointer += OnPointer;
+        window.CaptureLost += () =>
+        {
+            if (_groupGrab is not null) CancelGroupGesture();
+        };
         window.Wheel += OnWheel;
         window.Key += (key, down, _) =>
         {
+            if (key == 0x1b && down && CancelGroupGesture()) return;
             _inputLine = "forwarded key 0x" + key.ToString("x2", CultureInfo.InvariantCulture) + (down ? " down" : " up");
             UpdateStatus();
         };
@@ -741,6 +755,9 @@ public sealed class MainWindow : Window
             _rebuildPending = _rebuildRunning = false;
             UpdateRebuildButtons();
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
+            _groupGrab = null;
+            _gizmoShown = null;
+            SetGroupControls(false);
             _referenceWindow?.Invalidate("the session failed");
             _referenceBusy = false; ++_referenceLaunch; UpdateReferenceButtons();
             _selection.Select(null);
@@ -782,7 +799,18 @@ public sealed class MainWindow : Window
             ToolTip.SetTip(_undo, _undo.Content);
             ToolTip.SetTip(_redo, _redo.Content);
         };
-        worker.GizmoChanged += snapshot => _gizmoShown = snapshot;
+        worker.GizmoChanged += snapshot =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
+            _gizmoShown = snapshot;
+            UpdateHierarchyActions();
+        };
+        worker.GroupGrabEnded += id =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _groupGrab is not { } grab || grab.Id != id) return;
+            _groupGrab = null;
+            _pressed = null;
+        };
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
         worker.ApplyStateChanged += (status, text) =>
         {
@@ -800,8 +828,11 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _retryApply.IsEnabled = canApply; _allowGizmoPreview = canPreview;
-            _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
-            if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }
+            if (!canPreview)
+            {
+                _gizmoGrab = null;
+                if (_selection.Nodes.Count < 2) _gizmoShown = null;
+            }
             UpdateAddMeshButton();
             UpdateHierarchyActions();
         };
@@ -1016,7 +1047,91 @@ public sealed class MainWindow : Window
 
     private GizmoSpace SpaceUi => _gizmoSpace.SelectedIndex == 1 ? GizmoSpace.Local : GizmoSpace.World;
 
-    private void SendGizmoSettings() => _worker?.SetGizmo(ModeUi, SpaceUi, _gizmoSnap.IsChecked == true);
+    private void SendGizmoSettings()
+    {
+        if (_syncingGizmoSettings) return;
+        if (_selection.Nodes.Count > 1) CancelGroupGesture();
+        _worker?.SetGizmo(ModeUi, SpaceUi, _gizmoSnap.IsChecked == true);
+    }
+
+    private void SetGroupControls(bool group)
+    {
+        if (group == _singleGizmoSettings.HasValue) return;
+        _syncingGizmoSettings = true;
+        try
+        {
+            var settings = _singleGizmoSettings ?? (_gizmoMode.SelectedIndex, _gizmoSpace.SelectedIndex, _gizmoSnap.IsChecked);
+            _singleGizmoSettings = group ? settings : null;
+            _gizmoMode.ItemsSource = group ? new[] { "Move", "Rotate", "Uniform scale" } : new[] { "Move", "Rotate", "Scale" };
+            _gizmoMode.SelectedIndex = settings.Mode;
+            _gizmoSpace.SelectedIndex = group ? 0 : settings.Space;
+            _gizmoSnap.IsChecked = settings.Snap;
+        }
+        finally { _syncingGizmoSettings = false; }
+        SendGizmoSettings();
+    }
+
+    private bool CancelGroupGesture()
+    {
+        bool wasGrabbed = _groupGrab is not null;
+        bool canceled = _worker?.CancelGroupGizmo() == true;
+        _groupGrab = null;
+        if (wasGrabbed || canceled) _pressed = null;
+        if (wasGrabbed && _editLine.Text?.StartsWith("Group Gizmo", StringComparison.Ordinal) == true)
+            _editLine.Text = "Group Gizmo canceled.";
+        return wasGrabbed || canceled;
+    }
+
+    private bool GroupGizmoPointer(ViewportPointerEvent e)
+    {
+        if (_groupGrab is { } active)
+        {
+            if (e.Kind is ViewportPointer.Move or ViewportPointer.LeftUp)
+            {
+                var point = new Vector2(e.X, e.Y);
+                float amount = Gizmo.DragAmount(active.Mode, active.Handle, point);
+                if (e.Kind == ViewportPointer.Move) _worker?.MoveGroupGizmo(active.Id, amount);
+                else
+                {
+                    if (_viewport.Window is { } w && e.X >= 0 && e.X < w.Width && e.Y >= 0 && e.Y < w.Height)
+                        _worker?.EndGroupGizmo(active.Id, amount);
+                    else _worker?.CancelGroupGizmo(active.Id);
+                    _groupGrab = null;
+                }
+            }
+            return true;
+        }
+        if (e.Kind != ViewportPointer.LeftDown || _selection.Nodes.Count < 2 || !_cameraInitialized ||
+            _worker is not { } worker || _viewport.Window is not { Width: > 0, Height: > 0 } window ||
+            _gizmoShown?.Group is not { } shown || shown.Selection != _selection.Generation ||
+            shown.Mode != ModeUi || shown.Snap != (_gizmoSnap.IsChecked == true)) return false;
+        if (_camera.Matrices((float)window.Width / window.Height) is not CameraMatrices camera) return false;
+        var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
+        var pointer = new Vector2(e.X, e.Y);
+        Vector3 pivot = shown.Placement.Pivot;
+        GizmoGrab handle;
+        if (shown.Mode == GizmoMode.Scale)
+        {
+            if (Picking.PixelOf(camera, rect, pivot) is not Vector2 center ||
+                Vector2.Distance(center, pointer) > Gizmo.PickPixels) return false;
+            handle = new GizmoGrab(GizmoAxis.X, pointer,
+                new GizmoHandle(center, Vector2.UnitX, center, 1), 0, false);
+        }
+        else
+        {
+            Vector3[] axes = [Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ];
+            if (Gizmo.Handles(camera, rect, pivot, axes) is not { } handles ||
+                Gizmo.Grab(handles, axes, camera, shown.Mode, pointer) is not GizmoGrab grabbed) return false;
+            handle = grabbed;
+        }
+        _pressed = null;
+        if (worker.BeginGroupGizmo(shown, handle.Axis) is long id)
+        {
+            _groupGrab = (id, shown.Mode, handle);
+            _editLine.Text = "Group Gizmo · World · " + (shown.Mode == GizmoMode.Scale ? "Uniform scale" : shown.Mode.ToString());
+        }
+        return true;
+    }
 
     // Plan 0068 M4 (Spec 0068 R5): a press on a handle of the selected node's Gizmo grabs it -- E1's handle layout and its
     // 8-pixel pick (gizmo.h's math, ported and held by vectors) -- a move drags it (previews on the Runtime World, one
@@ -1064,6 +1179,7 @@ public sealed class MainWindow : Window
     private void OnPointer(ViewportPointerEvent e)
     {
         if (_recorder is not null && MeasureDrag(e)) return;
+        if (GroupGizmoPointer(e)) return;
         if (GizmoPointer(e)) return;
         switch (e.Kind)
         {
@@ -1123,6 +1239,7 @@ public sealed class MainWindow : Window
 
     private void OnWheel(int delta, long arrivalTicks)
     {
+        if (_groupGrab is not null) return;
         if (!_cameraInitialized) return;
         _camera.Dolly(delta / 120.0f);
         _worker?.SetCamera(SceneReader.ToViewportCamera(_camera.Pose()), arrivalTicks);
@@ -1194,6 +1311,8 @@ public sealed class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        if (_gizmoShown?.Group?.Selection != _selection.Generation) CancelGroupGesture();
+        SetGroupControls(_selection.Nodes.Count > 1);
         if (_batchView?.SelectionGeneration != _selection.Generation) ClearBatchInspector();
         SyncHierarchySelection(scroll);
         if (_selection.Nodes.Count > 1)
@@ -1259,7 +1378,12 @@ public sealed class MainWindow : Window
         _create.IsEnabled = _selection.Nodes.Count < 2;
         _destroy.IsEnabled = _selection.Node is not null;
         bool gizmoTools = _allowGizmoPreview && _selection.Nodes.Count < 2;
-        _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = gizmoTools;
+        bool groupTools = _selection.Nodes.Count > 1 && _gizmoShown?.Group is { } group &&
+            group.Selection == _selection.Generation;
+        _gizmoMode.IsEnabled = _gizmoSnap.IsEnabled = gizmoTools || groupTools;
+        _gizmoSpace.IsEnabled = gizmoTools;
+        ToolTip.SetTip(_gizmoMode, _selection.Nodes.Count > 1 && !groupTools
+            ? "Group placement requires a current editable selection and guarded Transform support." : null);
         ToolTip.SetTip(_duplicate, reason);
         bool canCapture = CanCaptureReparent(drag: false) && SelectedReparentRow() is not null;
         _pickUp.IsEnabled = canCapture;

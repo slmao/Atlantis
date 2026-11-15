@@ -366,6 +366,12 @@ public static class CodecSuite
         t.Check(Codec.DecodeDocumentInfo(wires["authoring.document.guarded"])?.SupportsGuardedPropertyTransactions == true,
             "literal positive capability");
         var malformedCapability = Json.Parse(Json.Write(wires["authoring.document.guarded"]));
+        t.Check(Codec.DecodeDocumentInfo(wires["authoring.document.guarded_transform"])?.SupportsGuardedTransformTransactions == true &&
+            Codec.DecodeDocumentInfo(wires["authoring.document.guarded"])?.SupportsGuardedTransformTransactions == false,
+            "Transform capability is independent");
+        malformedCapability.Set("supportsGuardedTransformTransactions", JsonValue.String("true"));
+        t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedTransformTransactions == false,
+            "malformed Transform capability is unavailable");
         malformedCapability.Set("supportsGuardedPropertyTransactions", JsonValue.String("true"));
         t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedPropertyTransactions == false,
             "malformed capability does not invalidate a readable document");
