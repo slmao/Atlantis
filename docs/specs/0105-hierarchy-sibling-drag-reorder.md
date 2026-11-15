@@ -37,20 +37,25 @@ and separate display or render order. Cross-parent changes use 0103.
 
 ### R1. Drop targets and feedback
 
-Use the existing single-selection Hierarchy drag. Use the top and bottom
+Use the existing single-selection Hierarchy drag. In a hand-authored
+document on a connection that supports the move, use the top and bottom
 quarters of the target row for **before** and **after**. These zones
-accept a distinct live sibling, including another root, in a hand-authored
-document on a connection that supports the move. The middle half uses
-0103 reparent validation and feedback. An invalid edge target leaves
-the gesture uncommitted.
+accept a distinct live sibling, including another root. The middle half
+uses 0103 reparent validation and feedback. An invalid edge target
+leaves the gesture uncommitted. When the connection lacks move support,
+retain 0103's whole-row reparent hit testing and its existing admission
+rules.
 
 Show an insertion marker distinct from the center highlight. The **after**
 marker represents the gap after the target's subtree, including when its
 children are visible. At a viewport edge where that gap is clipped, keep
 the relative placement explicit in the feedback. Clear the marker on
 leave, cancellation, invalidation and settlement. Show no valid insertion
-marker for a no-op gap. Preserve ordinary Inspector focus and draft
-behavior. Disable a new move during settlement or an active Gizmo gesture.
+marker for a no-op gap. Resolve the drop against the intent and target
+incarnation of the last valid feedback. If the intent or target changes
+without updated feedback before release, cancel the drop. Preserve
+ordinary Inspector focus and draft behavior. Disable a new move during
+settlement or an active Gizmo gesture.
 Keep selection by GUID after a verified move if no newer selection has
 taken precedence. The 0104 buttons keep their existing capability and
 guards.
@@ -71,20 +76,24 @@ missing nodes, no-op gaps, imported documents, stale revisions and mixed
 batches do not mutate or emit a move event.
 
 Bind the source incarnation and document lifetime at drag start.
-At drop, capture the anchor from the displayed row and the displayed
-same-parent interval between the participants. On the worker, sample
+At drop, capture the anchor from the displayed row and the inclusive
+interval in the displayed sibling order. Obtain document positions
+from the document's global order. On the worker, sample
 the revision, drain authoring events and verify the captured interval
 and row incarnations. Drain again and require the same revision and
 lifetime before submitting. A successful same-source reopen invalidates
 the gesture. The host checks the revision and move atomically on admission.
 A refused move writes no history and requests no Apply.
 
-Use the usual ticket and failure drain, then verify the next revision
-and affected slots before recording history or scheduling Apply. A lost
-or invalid settlement reports the outcome as unknown, identifies source
-and anchor, and directs the user to refresh and inspect before retrying.
-Preserve the CLI transport error category on disconnect. The opt-in
-event, recovery snapshot and old-peer rules follow ADR-0161.
+Use the usual ticket and failure drain. A matching refusal remains
+known if a later refresh fails. After a valid one-command ticket and
+a complete drain without a matching refusal, verify the matching move
+event, exact next revision and affected slots before recording history
+or scheduling Apply. A lost or invalid settlement reports the outcome
+as unknown, identifies source and anchor, and directs the user to
+refresh and inspect before explicitly retrying. Preserve the CLI
+transport error category on disconnect. The opt-in event, recovery
+snapshot and old-peer rules follow ADR-0161.
 
 ### R3. History and Apply
 
@@ -103,7 +112,8 @@ For a confirmed move with an unverifiable result, invalidate Redo and
 report Undo unavailable for the edit. Unknown or unverifiable moves
 preserve settlement of any older owned Apply receipt and require an
 explicit Apply for the current revision. Clear automatic follow-ups to
-the older receipt. A successful reopen clears local history.
+the older receipt. Its terminal outcome only settles its own snapshot.
+A successful reopen clears local history.
 
 Use the [0083](0083-authoring-apply-outcomes.md) controller after a
 verified local edit. A failed reload keeps the document, history and

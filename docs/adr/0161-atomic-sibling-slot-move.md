@@ -28,10 +28,10 @@ between the affected siblings.
    and preserve every other sibling's relative order. For `A, X, B, Y, C`
    with `A/B/C` siblings, moving `A` after `C` produces `B, X, C, Y, A`.
    `X` and `Y` keep their slots. Validate and commit the usual
-   transaction candidate once. Use separate typed results for unknown
-   nodes, stale revision and unsupported provenance, and a closed
-   invalid-move refusal for invalid pairs, placements, no-op gaps and
-   mixed batches.
+   transaction candidate once. Preserve `NoDocument` and use typed
+   results for unknown nodes, stale revision and unsupported provenance.
+   Use a closed invalid-move refusal for invalid pairs, placements,
+   no-op gaps and mixed batches.
 2. **Publish one fixed-size delta.** Add
    `NodeMovedInSiblingOrder{node,parent,fromPosition,position,revision}`.
    The positions are the source's old and final zero-based global
@@ -39,24 +39,34 @@ between the affected siblings.
    endpoints, then rotate that parent's slots between the endpoints.
    A node filter matches the moved node. A component filter excludes
    the event. Positional observers use the unfiltered stream. On a
-   delta mismatch suspend order actions. Fence the `listNodes`
-   snapshot with the same revision before and after observation,
-   account for queued lifecycle events once and retire covered order
-   deltas before applying newer events. Preserve established
-   incarnations and invalidate captures whose identities cannot be
-   established. Refresh retains the document lifetime.
+   delta mismatch suspend order actions. Fence `listNodes` with the
+   same revision before the read and after draining queued events.
+   Account for lifecycle effects on row identities once. Use the
+   accepted snapshot as the order at that revision and retire covered
+   deltas of both order event kinds before applying newer ones.
+   If the fence fails, leave actions suspended until reconciliation
+   succeeds. Preserve established incarnations and invalidate
+   captures whose identities cannot be established. A reconciliation
+   refresh retains the document lifetime. A real reopen uses the
+   existing lifetime and rebuild rules.
 3. **Keep the wire additive.** Deliver the event only when requested.
    Establish a separate move capability alongside adjacent exchange
    support through the canonical unfiltered full subscription.
-   On the exact legacy `BadRequest` / `malformed or missing filter`
-   reply, retry with the 0104 kinds including `NodeOrderChanged`.
+   Try the 0105 kinds, which are the full 0104 kinds plus the new
+   event. On the exact legacy `BadRequest` / `malformed or missing
+   filter` reply, retry with the full 0104 kinds including
+   `NodeOrderChanged`.
    If that tier receives the same recognized refusal, retry once with
    the pre-0104 kinds. A valid subscription enables only the successful
-   tier's operations. Inspect the correlated envelope before the
-   ordinary error handler. Other errors follow existing handling.
-   Malformed or zero receipts enable no capability. Preserve the
-   defaults used by existing callers. Write-only clients release a
-   probe-only subscription. Passive observers retain the successful tier.
+   tier's operations. Only a correlated error envelope with the
+   exact legacy code and message and no result triggers fallback.
+   Other errors follow existing handling. Ambiguous, malformed or
+   zero receipts enable no capability. Cache the result per
+   connection. Keep the default and explicit 0104 filter encodings
+   and introduce a distinct 0105 opt-in filter. Fallback applies to
+   capability negotiation. Custom filters keep their requested scope.
+   Write-only clients release a probe-only subscription.
+   Passive observers retain the successful tier.
    Clients send a move only on a capable peer. Old decoders still
    accept legacy subscriptions and fresh snapshots. As in ADR-0160,
    end older cached positional editing sessions before a newer client
@@ -68,10 +78,18 @@ between the affected siblings.
    or replays preserve earlier positional history. External or
    uncorrelated order changes invalidate earlier `NodeLife` records,
    including pending transitions, under ADR-0160. Replay uses the
-   captured original gap for the inverse and validates the affected
-   interval under the current revision. Keep the older Apply receipt
-   observable if a move cannot be verified. Projection of the current
-   document then requires explicit recovery under Spec 0105.
+   original move intent for Redo. For Undo, a move toward the end
+   uses `Before` with the source's original following sibling as
+   anchor. A move toward the start uses `After` with its original
+   preceding sibling. These anchors lie inside the interval even when
+   the original drop anchor did not move. For example, moving `A`
+   before `C` in `A, B, C` gives `B, A, C`. Undo moves `A` before
+   `B` and guards all three identities and their current order.
+   Validate the saved interval as one contiguous sibling sequence
+   under the current revision, using current global slots. Keep the
+   older Apply receipt observable if a move cannot be verified.
+   Projection of the current document then requires explicit recovery
+   under Spec 0105.
 5. **Reuse the saved order.** Existing lossless source, cooker and
    bake consume the resulting global sequence. Parent, camera and
    other references continue to resolve by GUID under

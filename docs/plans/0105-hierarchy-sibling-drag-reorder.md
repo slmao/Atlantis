@@ -69,7 +69,9 @@ Suggested authorization for the reviewed revision
 
 - [ ] **R1/R2 gesture and slots.** Exercise top and bottom placement at
   the first, middle and last visible siblings, with valid center
-  reparent and distinct indicators. Include a target with children.
+  reparent and distinct indicators. Include an after marker for a
+  target with visible children. Cancel an edge drop that would resolve
+  to a different row incarnation or intent than the last feedback.
   Move a root and a nested node across at least two siblings in each
   direction in host fixtures. Compare the exact global sequence,
   interleaved descendants and unrelated slots, data and active camera.
@@ -82,42 +84,55 @@ Suggested authorization for the reviewed revision
   same-source reopen between fences invalidates the drop. Inject a
   final-check-to-host race. Check fixed-size event positions, source
   and component filters, event order and a fenced refresh with a
-  queued lifecycle change. Verify unchanged incarnations and no
-  double application of covered deltas.
+  queued lifecycle change and both order event kinds. Verify
+  unchanged incarnations and no double application of covered deltas.
 - [ ] **R2 contract and peers.** Match native and managed wire
   fixtures. Exercise shared CLI, SDK, MCP and Editor paths. On a
-  0104 Runtime keep adjacent actions and disable edge moves. On a
-  pre-0104 peer keep existing authoring reads and writes after
-  same-connection fallback. Verify unsupported moves are unsent,
-  malformed or unexpected probes do not enable support, and older
-  decoders receive only their requested events. Read current order on
-  a legacy client after a new move.
+  0104 Runtime keep adjacent actions and whole-row reparent. On a
+  pre-0104 peer keep existing authoring reads, writes and reparent
+  after same-connection fallback. Verify the exact filter sequence
+  and that only the successful tier enables operations. Verify
+  unsupported moves are unsent and malformed or unexpected probes
+  do not enable support. Keep an old decoder subscribed while a new
+  client moves, then verify a legacy event and a fresh list read.
 - [ ] **R3 settlement and conflicts.** Replay one move as Undo and
-  Redo without restoring unrelated slots. Refuse a stale interval
-  with changed order, replacement, insertion or parent. Allow a
-  compatible edit outside the interval. Verify an external or
-  uncorrelated move drops prior positional records, including pending
-  transitions, and correlated local edits preserve them. Inject
+  Redo without restoring unrelated slots, including a move whose
+  drop anchor keeps its slot. Refuse a stale interval with changed
+  order, replacement, insertion or parent. Allow an unrelated
+  insert before the interval that shifts its global positions.
+  Verify an external or uncorrelated move drops prior positional
+  records, including pending transitions, and correlated local edits
+  preserve them. Inject
   lost or invalid replies, an overtaken commit and a lost Apply
-  receipt. Verify CLI connection-category guidance and Editor replay
-  publication. Settle an older paused Apply without an automatic
+  receipt. A matching refusal survives a later refresh error.
+  Verify CLI connection-category guidance and Editor replay
+  publication. Exercise older paused Apply success and failure.
+  Preserve its receipt and terminal outcome without an automatic
   follow-up before explicit recovery of the current revision.
 - [ ] **R1–R4 Windows closeout.** At 100%, drag across at least two
   siblings in a disposable registered scene with non-contiguous
-  slots, children and coincident pickable meshes. Check marker and
-  selection, exact shared order and references. With the Runtime
-  paused, induce and observe a correlated reload failure. Repair and
-  explicitly Retry, confirming that the move is not repeated. Undo,
-  Redo, Save, reopen on the same generation and explicitly Apply.
-  Check history clears on reopen and compare the raycast winner.
+  slots, children and distinct coincident pickable siblings whose
+  first baked GUID changes with the move. Record a fixed ray and
+  the initial winner and projection generation. Check marker,
+  selection, exact shared order and references. While paused, queue
+  the move's Apply and induce a recoverable reload failure on Step.
+  Check the old winner and projection remain, with the new document
+  and history intact. Repair, explicitly Retry and Step, and verify
+  the winner changes without repeating the move. Undo and Redo
+  restore the respective winners after projection. Save, reopen on
+  the same generation, confirm local history clears, explicitly
+  Apply and record the new winner for the cold comparison.
 - [ ] **R4 same-source cold startup.** Record the saved scene and
   registration fragment hashes. Use the existing 0090 Build and Open
   flow to cook those exact bytes in an independent Editor/Runtime.
-  Compare dependency GUIDs and relevant artifact content. Before
-  any Apply in the child, check shared order and the winner of the
-  same explicit raycast. Check bake/extraction order directly and
-  confirm world matrices and active camera by GUID. Runtime entity
-  enumeration is GUID-sorted and does not demonstrate bake order.
+  Confirm the hashes across Build and Open and compare dependency
+  GUIDs and relevant artifact content. The child uses the configured
+  saved slot under 0090's ordinary launch. Before any Apply in the
+  child, compare shared order and the winner of the same explicit
+  raycast with the original reopened projection. Check bake/extraction
+  order directly and confirm world matrices and active camera by GUID.
+  Runtime entity enumeration is GUID-sorted and does not demonstrate
+  bake order.
 - [ ] **Existing gates.** Build affected native and managed targets
   and run their applicable checks, including Android build/package
   for affected native targets and Runtime Vulkan validation. Use the
