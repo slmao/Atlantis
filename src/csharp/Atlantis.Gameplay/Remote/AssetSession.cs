@@ -116,14 +116,17 @@ public sealed class AssetSession
     public Outcome<A.MaterialRead, A.MaterialError> MaterialReadWithOcclusion(AssetGuid material) =>
         ReadMaterial(material, false, withOcclusion: true);
 
-    private static string MaterialMethod(string member, bool withMaps, bool withMetallicRoughness, bool withOcclusion) =>
-        member + (withOcclusion ? "WithOcclusion" : withMetallicRoughness ? "WithMetallicRoughness" : withMaps ? "WithMaps" : "");
+    public Outcome<A.MaterialRead, A.MaterialError> MaterialReadWithCombinedMaps(AssetGuid material) =>
+        ReadMaterial(material, false, withOcclusion: true, withCombinedMaps: true);
 
-    private Outcome<A.MaterialRead, A.MaterialError> ReadMaterial(AssetGuid material, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false)
+    private static string MaterialMethod(string member, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps) =>
+        member + (withCombinedMaps ? "WithCombinedMaps" : withOcclusion ? "WithOcclusion" : withMetallicRoughness ? "WithMetallicRoughness" : withMaps ? "WithMaps" : "");
+
+    private Outcome<A.MaterialRead, A.MaterialError> ReadMaterial(AssetGuid material, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         if (material.IsNil) throw new ArgumentException("a non-nil material GUID is required", nameof(material));
-        return MaterialRequest(MaterialMethod("assets.materialRead", withMaps, withMetallicRoughness, withOcclusion), JsonValue.NewObject().Set("material", Codec.Encode(material)),
-            value => Codec.DecodeMaterialRead(value, withMaps, withMetallicRoughness, withOcclusion) is { } read && read.Material == material ? read : null);
+        return MaterialRequest(MaterialMethod("assets.materialRead", withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps), JsonValue.NewObject().Set("material", Codec.Encode(material)),
+            value => Codec.DecodeMaterialRead(value, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) is { } read && read.Material == material ? read : null);
     }
 
     /// <summary>Admits a managed PNG job. A missing admission receipt does not determine the durable outcome.</summary>
@@ -214,16 +217,19 @@ public sealed class AssetSession
     public Outcome<A.MaterialJob, A.MaterialError> MaterialSaveWithOcclusion(A.MaterialSave request) =>
         SaveMaterial(request, false, withOcclusion: true);
 
-    private Outcome<A.MaterialJob, A.MaterialError> SaveMaterial(A.MaterialSave request, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public Outcome<A.MaterialJob, A.MaterialError> MaterialSaveWithCombinedMaps(A.MaterialSave request) =>
+        SaveMaterial(request, false, withOcclusion: true, withCombinedMaps: true);
+
+    private Outcome<A.MaterialJob, A.MaterialError> SaveMaterial(A.MaterialSave request, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var parameters = Codec.EncodeMaterialSave(request, withMaps, withMetallicRoughness, withOcclusion);
+        var parameters = Codec.EncodeMaterialSave(request, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps);
         if (parameters is null) return Outcome<A.MaterialJob, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
         _session.ThrowIfFailed();
         var target = request.Target;
         try
         {
-            return MaterialRequest(MaterialMethod("assets.materialSave", withMaps, withMetallicRoughness, withOcclusion), parameters,
+            return MaterialRequest(MaterialMethod("assets.materialSave", withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps), parameters,
                 value => Codec.DecodeMaterialJob(value) is { State: A.RebuildState.Running } job &&
                     job.Target == target ? job : null);
         }
@@ -255,15 +261,18 @@ public sealed class AssetSession
     public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraftWithOcclusion(AssetGuid mesh, A.MaterialRecipe recipe) =>
         PreviewDraft(mesh, recipe, false, withOcclusion: true);
 
-    private Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewDraft(AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewMaterialDraftWithCombinedMaps(AssetGuid mesh, A.MaterialRecipe recipe) =>
+        PreviewDraft(mesh, recipe, false, withOcclusion: true, withCombinedMaps: true);
+
+    private Outcome<A.MaterialDraftPreview, A.MaterialError> PreviewDraft(AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         ArgumentNullException.ThrowIfNull(recipe);
-        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values, withMaps, withMetallicRoughness, withOcclusion) || !Enum.IsDefined(recipe.Filter) ||
+        if (mesh.IsNil || !Codec.ValidMaterialValues(recipe.Values, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) || !Enum.IsDefined(recipe.Filter) ||
             !Enum.IsDefined(recipe.Address))
             return Outcome<A.MaterialDraftPreview, A.MaterialError>.Err(A.MaterialError.InvalidRecipe);
-        return MaterialRequest(MaterialMethod("assets.previewMaterialDraft", withMaps, withMetallicRoughness, withOcclusion),
+        return MaterialRequest(MaterialMethod("assets.previewMaterialDraft", withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps),
             JsonValue.NewObject().Set("mesh", Codec.Encode(mesh)).Set("recipe", Codec.EncodeMaterialRecipe(recipe, withMaps, withMetallicRoughness, withOcclusion)),
-            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe, withMaps, withMetallicRoughness, withOcclusion));
+            value => Codec.DecodeMaterialDraftPreview(value, mesh, recipe, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps));
     }
 
     private Outcome<T, A.MaterialError> MaterialRequest<T>(string method, JsonValue parameters, Func<JsonValue, T?> decode)
@@ -287,7 +296,8 @@ public sealed class AssetSession
             var error = Codec.DecodeMaterialError(value);
             return error == A.MaterialError.Unsupported && (method.EndsWith("WithMaps", StringComparison.Ordinal) ||
                 method.EndsWith("WithMetallicRoughness", StringComparison.Ordinal) ||
-                method.EndsWith("WithOcclusion", StringComparison.Ordinal))
+                method.EndsWith("WithOcclusion", StringComparison.Ordinal) ||
+                method.EndsWith("WithCombinedMaps", StringComparison.Ordinal))
                 ? null : error;
         });
     }

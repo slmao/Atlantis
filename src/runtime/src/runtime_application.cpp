@@ -473,6 +473,9 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
 
   for (const auto& [path, target] : {
            std::pair{&config.pbrIblOcclusionFragmentShaderSpirvPath, &occlusionFragmentSpirv_},
+           std::pair{&config.pbrIblOcclusionPackedFragmentShaderSpirvPath, &occlusionPackedFragmentSpirv_},
+           std::pair{&config.pbrIblOcclusionNormalFragmentShaderSpirvPath, &occlusionNormalFragmentSpirv_},
+           std::pair{&config.pbrIblOcclusionNormalPackedFragmentShaderSpirvPath, &occlusionNormalPackedFragmentSpirv_},
            std::pair{&config.pbrDirectLitMetallicRoughnessFragmentShaderSpirvPath, &packedFragmentSpirv_},
            std::pair{&config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath, &packedNormalFragmentSpirv_}}) {
     if (path->empty()) continue;
@@ -1898,7 +1901,8 @@ void RuntimeApplication::runFrame() {
                                  pbrAnisotropicIblNormalMapFragmentSpirv_, environmentEnabled, pendingMaterialIds,
                                  sampledTextureResourceMap_, materialDataMap_, textureDataMap_,
                                  *defaultEmissiveTexture_, packedFragmentSpirv_, packedNormalFragmentSpirv_,
-                                 occlusionFragmentSpirv_);
+                                 occlusionFragmentSpirv_, occlusionPackedFragmentSpirv_, occlusionNormalFragmentSpirv_,
+                                 occlusionNormalPackedFragmentSpirv_);
   }
   // Plan 0018 Section P12 (Spec 0018 D8 step 5): gated on "at least one
   // material was newly realized this frame" -- NOT narrowed to "at least
@@ -2152,8 +2156,11 @@ void RuntimeApplication::runFrame() {
         sampledTextureResourceMap_.emplace(candidate.emissiveTextureAssetId,
                                             std::move(candidate.newEmissiveTexture));
       }
-      if (candidate.newSurfaceDataTexture) {
-        sampledTextureResourceMap_.emplace(candidate.surfaceDataTextureAssetId, std::move(candidate.newSurfaceDataTexture));
+      if (candidate.newPackedTexture) {
+        sampledTextureResourceMap_.emplace(candidate.packedTextureAssetId, std::move(candidate.newPackedTexture));
+      }
+      if (candidate.newOcclusionTexture) {
+        sampledTextureResourceMap_.emplace(candidate.occlusionTextureAssetId, std::move(candidate.newOcclusionTexture));
       }
       samplerResourceMap_.emplace(assetId, std::move(candidate.sampler));
       materialResourceMap_.emplace(assetId, std::move(candidate.material));

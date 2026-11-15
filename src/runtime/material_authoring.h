@@ -84,7 +84,7 @@ inline Result<RecipeTextures, ca::MaterialError> textures(
     if (slot) *slot = "Occlusion map";
     const auto& guid = *values.occlusionMap;
     if (!catalog.find(guid)) return R::Err(E::DependencyUnavailable);
-    if (!isOcclusion(guid) || values.normalMap || values.metallicRoughnessMap)
+    if (!isOcclusion(guid))
       return R::Err(E::UnsupportedMaterial);
     auto occlusion = texture(catalog, guid, as::TextureColorSpace::Unorm);
     if (occlusion.isErr()) return R::Err(occlusion.error());
@@ -120,7 +120,7 @@ inline std::optional<ca::MaterialValues> cookedValues(
 
 inline Result<ca::MaterialRecipe, ca::MaterialError> read(
     const as::AssetCatalog& catalog, const as::AssetGuid& guid,
-    ca::MaterialRecipeVersion version = ca::MaterialRecipeVersion::WithOcclusion) {
+    ca::MaterialRecipeVersion version = ca::MaterialRecipeVersion::WithCombinedMaps) {
   using E = ca::MaterialError;
   using R = Result<ca::MaterialRecipe, E>;
   const auto* record = catalog.find(guid);

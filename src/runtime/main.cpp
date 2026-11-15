@@ -253,6 +253,12 @@ int main(int argc, char** argv) {
   config.previewStudioMetadataPath = ATLANTIS_RUNTIME_ENVIRONMENT_METADATA_PATH;
   config.pbrIblOcclusionFragmentShaderSpirvPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl_occlusion.frag.spv";
+  config.pbrIblOcclusionPackedFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl_occlusion_packed.frag.spv";
+  config.pbrIblOcclusionNormalFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map_occlusion.frag.spv";
+  config.pbrIblOcclusionNormalPackedFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map_occlusion_packed.frag.spv";
   config.pbrIblFragmentShaderSpirvPath = std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.spv";
   config.pbrIblFragmentShaderReflectionPath =
       std::string(ATLANTIS_RUNTIME_PBR_IBL_SHADER_DIR) + "/pbr_ibl.frag.refl.json";

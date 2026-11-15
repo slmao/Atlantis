@@ -382,3 +382,53 @@ TEST_CASE("Provenance mismatch is reported as a separate diagnostic, never merge
   WARN("PROVENANCE MISMATCH: driver_version differs (golden=" << golden.driverVersion
                                                                 << ", current=" << current.driverVersion << ")");
 }
+
+TEST_CASE("Combined PBR previews read independent normal, packed G/B and occlusion inputs",
+          "[image_regression][gpu][mesh_material_preview][combined-maps]") {
+  using Texel = std::array<std::uint8_t, 4>;
+  constexpr Texel packed{11, 97, 213, 19};
+  const auto linear = [](const PixelBuffer& pixels, std::size_t offset) {
+    std::uint32_t bits = 0;
+    for (std::size_t i = 0; i < 4; ++i)
+      bits |= std::uint32_t{pixels.rgba8[offset + i]} << (i * 8);
+    return std::bit_cast<float>(bits);
+  };
+  constexpr float metallic = 0.8f, roughness = 0.7f;
+  for (const auto& [normal, mapped] : {std::pair{true, false}, std::pair{false, true}, std::pair{true, true}}) {
+    CAPTURE(normal, mapped);
+    const auto render = [&](std::uint8_t red, std::optional<Texel> map, bool hdr) {
+      return renderPbrMapPreviewPixels(normal, false, 0.1f, metallic, roughness, map,
+                                      true, Texel{red, 13, 212, 63}, hdr);
+    };
+    const auto map = mapped ? std::optional{packed} : std::nullopt;
+    const auto dark = render(0, map, true);
+    const auto mid = render(128, map, true);
+    const auto full = render(255, map, true);
+    REQUIRE(dark);
+    REQUIRE(mid);
+    REQUIRE(full);
+    std::size_t affected = 0;
+    for (std::size_t i = 0; i < full->rgba8.size(); i += 4) {
+      const float start = linear(*dark, i);
+      const float end = linear(*full, i);
+      if (end - start > 0.005f) ++affected;
+      CHECK(std::abs(linear(*mid, i) - (start + (end - start) * (128.0f / 255.0f))) < 0.002f);
+    }
+    CHECK(affected > 100);
+    const auto shown = render(255, map, false);
+    REQUIRE(shown);
+    const auto ignored = renderPbrMapPreviewPixels(normal, false, 0.1f, metallic, roughness,
+        map, true, Texel{255, 222, 31, 0});
+    REQUIRE(ignored);
+    CHECK(shown->rgba8 == ignored->rgba8);
+    if (mapped) {
+      const auto scalar = renderPbrMapPreviewPixels(normal, false, 0.1f, metallic * (213.0f / 255.0f),
+          roughness * (97.0f / 255.0f), {}, true, Texel{255, 13, 212, 63});
+      const auto ignoredPacked = render(255, Texel{211, 97, 213, 222}, false);
+      REQUIRE(scalar);
+      REQUIRE(ignoredPacked);
+      CHECK(shown->rgba8 == scalar->rgba8);
+      CHECK(shown->rgba8 == ignoredPacked->rgba8);
+    }
+  }
+}

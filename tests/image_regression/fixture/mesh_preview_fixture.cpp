@@ -36,6 +36,13 @@ runtime::BootstrapConfig previewConfig() {
   config.pbrIblVertexShaderReflectionPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl.vert.refl.json";
   config.pbrIblFragmentShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl.frag.spv";
   config.pbrIblOcclusionFragmentShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl_occlusion.frag.spv";
+  config.pbrIblNormalMapVertexShaderSpirvPath = ATLANTIS_PREVIEW_IBL_NORMAL_DIR "/pbr_ibl_normal_map.vert.spv";
+  config.pbrIblNormalMapVertexShaderReflectionPath = ATLANTIS_PREVIEW_IBL_NORMAL_DIR "/pbr_ibl_normal_map.vert.refl.json";
+  config.pbrIblOcclusionPackedFragmentShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl_occlusion_packed.frag.spv";
+  config.pbrIblOcclusionNormalFragmentShaderSpirvPath =
+      ATLANTIS_PREVIEW_IBL_NORMAL_DIR "/pbr_ibl_normal_map_occlusion.frag.spv";
+  config.pbrIblOcclusionNormalPackedFragmentShaderSpirvPath =
+      ATLANTIS_PREVIEW_IBL_NORMAL_DIR "/pbr_ibl_normal_map_occlusion_packed.frag.spv";
   config.previewStudioArtifactPath = ATLANTIS_PREVIEW_STUDIO_ARTIFACT;
   config.previewStudioMetadataPath = ATLANTIS_PREVIEW_STUDIO_METADATA;
   config.shadowCastVertexShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.spv";

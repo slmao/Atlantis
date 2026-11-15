@@ -475,7 +475,8 @@ class DescriptorPoolGuard {
   // new normal-map sampler slot, binding 5. ADR-0096 (Plan 0046
   // Milestone 1): widened again to 6U -- pbr_ibl_normal_map's emissive
   // slot, binding 6.
-  poolSizes[1].descriptorCount = 6U * maxSets;
+  // ADR-0159: the full IBL combination adds packed G/B and AO.
+  poolSizes[1].descriptorCount = 8U * maxSets;
 
   VkDescriptorPoolCreateInfo createInfo{};
   createInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1086,7 +1087,8 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   ATLANTIS_CHECK(params.sampledTextureBindingCount == 0 || params.sampledTextureBindingCount == 1 ||
                  params.sampledTextureBindingCount == 2 || params.sampledTextureBindingCount == 3 ||
                  params.sampledTextureBindingCount == 4 || params.sampledTextureBindingCount == 5 ||
-                 params.sampledTextureBindingCount == 6);
+                 params.sampledTextureBindingCount == 6 || params.sampledTextureBindingCount == 7 ||
+                 params.sampledTextureBindingCount == 8);
 
   auto createShaderModule = [this](const atlantis::rhi::ShaderStageBytecode& bytecode,
                                     VkShaderModule& outModule) -> VkResult {

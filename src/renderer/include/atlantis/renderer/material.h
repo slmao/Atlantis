@@ -155,9 +155,9 @@ class Material {
   // caller's 1x1 white default); null only on the non-PBR layouts
   // (checked at construction) and on renderer-only test doubles.
   [[nodiscard]] const atlantis::rhi::SampledTexture* emissiveTexture() const noexcept { return emissiveTexture_; }
-  [[nodiscard]] const atlantis::rhi::SampledTexture* surfaceDataMap() const noexcept { return surfaceDataMap_; }
+  [[nodiscard]] const atlantis::rhi::SampledTexture* occlusionMap() const noexcept { return occlusionMap_; }
   [[nodiscard]] const atlantis::rhi::SampledTexture* metallicRoughnessMap() const noexcept {
-    return environmentBinding_ == MaterialEnvironmentBinding::None ? surfaceDataMap_ : nullptr;
+    return metallicRoughnessMap_;
   }
 
  private:
@@ -180,7 +180,8 @@ class Material {
   MaterialAlphaMode alphaMode_ = MaterialAlphaMode::Opaque;
   float alphaCutoff_ = 0.0f;
   const atlantis::rhi::SampledTexture* emissiveTexture_ = nullptr;  // borrowed, never owned
-  const atlantis::rhi::SampledTexture* surfaceDataMap_ = nullptr;
+  const atlantis::rhi::SampledTexture* metallicRoughnessMap_ = nullptr;
+  const atlantis::rhi::SampledTexture* occlusionMap_ = nullptr;
 };
 
 enum class CreateMaterialError {

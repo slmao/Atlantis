@@ -679,13 +679,17 @@ struct RemoteServer::State {
         name == "assets.materialSaveWithMaps" || name == "assets.previewMaterialDraftWithMaps" ||
         name == "assets.materialReadWithMetallicRoughness" || name == "assets.materialSaveWithMetallicRoughness" ||
         name == "assets.previewMaterialDraftWithMetallicRoughness" || name == "assets.materialReadWithOcclusion" ||
-        name == "assets.materialSaveWithOcclusion" || name == "assets.previewMaterialDraftWithOcclusion") {
+        name == "assets.materialSaveWithOcclusion" || name == "assets.previewMaterialDraftWithOcclusion" ||
+        name == "assets.materialReadWithCombinedMaps" || name == "assets.materialSaveWithCombinedMaps" ||
+        name == "assets.previewMaterialDraftWithCombinedMaps") {
       const bool packed = name.ends_with("WithMetallicRoughness");
       const bool occlusion = name.ends_with("WithOcclusion");
-      const bool withMaps = occlusion || packed || name.ends_with("WithMaps");
+      const bool combined = name.ends_with("WithCombinedMaps");
+      const bool withMaps = combined || occlusion || packed || name.ends_with("WithMaps");
       namespace ca = connection::assets;
       using Guid = asset_system::AssetGuid;
-      const auto version = occlusion ? ca::MaterialRecipeVersion::WithOcclusion :
+      const auto version = combined ? ca::MaterialRecipeVersion::WithCombinedMaps :
+          occlusion ? ca::MaterialRecipeVersion::WithOcclusion :
           packed ? ca::MaterialRecipeVersion::WithMetallicRoughness :
           withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto bad = [&] { return errorResponse(requestId, "BadRequest", "invalid material operation parameters"); };
@@ -714,7 +718,8 @@ struct RemoteServer::State {
         const auto material = guid("material");
         if (!material || p.asObject().size() != 1) return bad();
         auto* provider = open();
-        return reply(provider ? (occlusion ? provider->materialReadWithOcclusion(*material) :
+        return reply(provider ? (combined ? provider->materialReadWithCombinedMaps(*material) :
+                                  occlusion ? provider->materialReadWithOcclusion(*material) :
                                   packed ? provider->materialReadWithMetallicRoughness(*material) :
                                   withMaps ? provider->materialReadWithMaps(*material) : provider->materialRead(*material))
                               : ca::MaterialReadResult::Err(ca::MaterialError::CatalogUnavailable),
@@ -724,7 +729,8 @@ struct RemoteServer::State {
         const auto materialSave = ca::decodeMaterialSave(p, version);
         if (!materialSave) return bad();
         auto* provider = open();
-        return reply(provider ? (occlusion ? provider->materialSaveWithOcclusion(*materialSave) :
+        return reply(provider ? (combined ? provider->materialSaveWithCombinedMaps(*materialSave) :
+                                  occlusion ? provider->materialSaveWithOcclusion(*materialSave) :
                                   packed ? provider->materialSaveWithMetallicRoughness(*materialSave) :
                                   withMaps ? provider->materialSaveWithMaps(*materialSave) : provider->materialSave(*materialSave))
                               : ca::MaterialSaveResult::Err(ca::MaterialError::Unavailable), ca::encodeMaterialJob);
@@ -741,7 +747,8 @@ struct RemoteServer::State {
       const auto recipe = member ? ca::decodeMaterialRecipe(*member, version) : std::nullopt;
       if (!mesh || !recipe || p.asObject().size() != 2) return bad();
       auto* provider = open();
-      auto result = provider ? (occlusion ? provider->previewMaterialDraftWithOcclusion(*mesh, *recipe) :
+      auto result = provider ? (combined ? provider->previewMaterialDraftWithCombinedMaps(*mesh, *recipe) :
+                                  occlusion ? provider->previewMaterialDraftWithOcclusion(*mesh, *recipe) :
                                packed ? provider->previewMaterialDraftWithMetallicRoughness(*mesh, *recipe) :
                                withMaps ? provider->previewMaterialDraftWithMaps(*mesh, *recipe)
                                          : provider->previewMaterialDraft(*mesh, *recipe))

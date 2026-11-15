@@ -78,6 +78,7 @@ namespace atlantis::asset_system {
 inline constexpr std::uint32_t kMaterialArtifactSchemaVersion = 9;
 inline constexpr std::uint32_t kMappedMaterialArtifactSchemaVersion = 10;
 inline constexpr std::uint32_t kOcclusionMaterialArtifactSchemaVersion = 11;
+inline constexpr std::uint32_t kCombinedMaterialArtifactSchemaVersion = 12;
 inline constexpr std::size_t kMaterialArtifactHeaderSizeBytes = 124;
 
 // The value encodeMaterialArtifact()'s trailing emissive argument

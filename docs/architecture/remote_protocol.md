@@ -484,6 +484,23 @@ the complete draft recipe and uses fixed studio lighting for compatible
 new draft calls and bound cooked pairs. [Spec 0099](../specs/0099-occlusion-texture.md)
 and [ADR-0158](../adr/0158-occlusion-texture.md).
 
+### 5.2.8 Combined PBR maps (Spec 0101 / ADR-0159)
+
+`assets.materialReadWithCombinedMaps`, `assets.materialSaveWithCombinedMaps`
+and `assets.previewMaterialDraftWithCombinedMaps` use the exact
+WithOcclusion fields and envelopes, with independent normal,
+metallic–roughness and occlusion slots. The complete recipe is echoed
+on draft preview and required in Edit `expected`. An older method
+refuses a recipe with AO and either other map, including the original
+or committed recipe on Edit, Copy or Resume. The new Save method can
+clear the binding and publish the resulting compatible recipe.
+Material status, texture operations and the GUID-pair PNG contract
+are shared. AO-bound drafts and cooked pairs use the fixed studio with
+the appropriate vertex layout. AO-free preview lighting follows
+WithOcclusion. Only the exact correlated unknown-method refusal
+indicates an older peer. See [Spec 0101](../specs/0101-combined-pbr-maps.md)
+and [ADR-0159](../adr/0159-combined-pbr-maps.md).
+
 ### 5.3 Correlated authoring apply (Spec 0083 / ADR-0144)
 
 | Method | Params | Result |

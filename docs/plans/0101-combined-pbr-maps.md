@@ -1,10 +1,10 @@
 # Plan: Combined Occlusion, Normal and Metallic–Roughness Maps
 
 - **Spec:** [Spec 0101](../specs/0101-combined-pbr-maps.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending joint approval and explicit implementation authorization
-- **Related ADR:** [ADR-0159](../adr/0159-combined-pbr-maps.md) (Proposed)
+- **Joint Human Review:** Atlantis maintainer, 2026-11-15, [PR #367](https://github.com/slmao/Atlantis/pull/367) at `dd262114`. Approved J1–J4 and authorized S2–S4 after the human merge at `1ddc6f52`.
+- **Related ADR:** [ADR-0159](../adr/0159-combined-pbr-maps.md) (Accepted)
 
 ## Objective
 

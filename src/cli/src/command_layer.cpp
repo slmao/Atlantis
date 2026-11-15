@@ -760,16 +760,19 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const std::string command = t.size() > 1 ? "assets " + std::string(t[1]) : "assets";
     auto verb = t.size() > 1 ? t[1] : std::string_view{};
     constexpr std::string_view mapsSuffix = "-with-maps", packedSuffix = "-with-metallic-roughness",
-                               occlusionSuffix = "-with-occlusion";
+                               occlusionSuffix = "-with-occlusion", combinedSuffix = "-with-combined-maps";
     const bool withMaps = verb.ends_with(mapsSuffix);
     const bool withPacked = verb.ends_with(packedSuffix);
     if (withMaps) verb.remove_suffix(mapsSuffix.size());
     const bool withOcclusion = verb.ends_with(occlusionSuffix);
-    if (withOcclusion) verb.remove_suffix(occlusionSuffix.size());
+    const bool combined = verb.ends_with(combinedSuffix);
+    if (combined) verb.remove_suffix(combinedSuffix.size());
+    else if (withOcclusion) verb.remove_suffix(occlusionSuffix.size());
     else if (withPacked) verb.remove_suffix(packedSuffix.size());
     if (verb == "material-read" || verb == "material-save" || verb == "preview-material-draft" ||
-        (!withMaps && !withPacked && verb == "material-status")) {
-      const auto version = withOcclusion ? ca::MaterialRecipeVersion::WithOcclusion :
+        (!withMaps && !withPacked && !withOcclusion && !combined && verb == "material-status")) {
+      const auto version = combined ? ca::MaterialRecipeVersion::WithCombinedMaps :
+          withOcclusion ? ca::MaterialRecipeVersion::WithOcclusion :
           withPacked ? ca::MaterialRecipeVersion::WithMetallicRoughness :
           withMaps ? ca::MaterialRecipeVersion::WithMaps : ca::MaterialRecipeVersion::Basic;
       const auto usage = [&] { return failed(command, usageError(
@@ -799,7 +802,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         auto request = encoded ? ca::decodeMaterialSave(*encoded, version) : std::nullopt;
         if (!request) return usage();
         if (!endpoint) return refusal(ca::MaterialError::Unavailable);
-        const auto saved = withOcclusion ? endpoint->materialSaveWithOcclusion(*request) :
+        const auto saved = combined ? endpoint->materialSaveWithCombinedMaps(*request) :
+            withOcclusion ? endpoint->materialSaveWithOcclusion(*request) :
             withPacked ? endpoint->materialSaveWithMetallicRoughness(*request) :
             withMaps ? endpoint->materialSaveWithMaps(*request) : endpoint->materialSave(*request);
         if (saved.isOk()) return result(ca::encodeMaterialJob(saved.value()));
@@ -849,7 +853,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       if (verb == "material-read") {
         if (t.size() != 3) return usage();
         if (!endpoint) return refusal(ca::MaterialError::CatalogUnavailable);
-        const auto read = withOcclusion ? endpoint->materialReadWithOcclusion(guid.value()) :
+        const auto read = combined ? endpoint->materialReadWithCombinedMaps(guid.value()) :
+            withOcclusion ? endpoint->materialReadWithOcclusion(guid.value()) :
             withPacked ? endpoint->materialReadWithMetallicRoughness(guid.value()) :
             withMaps ? endpoint->materialReadWithMaps(guid.value()) : endpoint->materialRead(guid.value());
         return read.isOk() ? result(ca::encodeMaterialRead(read.value(), version)) : refusal(read.error());
@@ -858,7 +863,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       auto recipe = encoded ? ca::decodeMaterialRecipe(*encoded, version) : std::nullopt;
       if (!recipe) return usage();
       if (!endpoint) return refusal(ca::MaterialError::Unsupported);
-      const auto image = withOcclusion ? endpoint->previewMaterialDraftWithOcclusion(guid.value(), *recipe) :
+      const auto image = combined ? endpoint->previewMaterialDraftWithCombinedMaps(guid.value(), *recipe) :
+            withOcclusion ? endpoint->previewMaterialDraftWithOcclusion(guid.value(), *recipe) :
           withPacked ? endpoint->previewMaterialDraftWithMetallicRoughness(guid.value(), *recipe) :
           withMaps ? endpoint->previewMaterialDraftWithMaps(guid.value(), *recipe)
                    : endpoint->previewMaterialDraft(guid.value(), *recipe);

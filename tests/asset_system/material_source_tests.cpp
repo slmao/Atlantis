@@ -4,6 +4,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -923,4 +924,39 @@ TEST_CASE("serializeMaterialSource writes emissive_texture only when present, an
   CHECK(reparsed.value().emissiveTextureAsset == testAssetGuid("textures/glow.dds"));
   CHECK(reparsed.value().normalMapAsset == testAssetGuid("textures/n.png"));
   CHECK(reparsed.value().alphaMode == MaterialAlphaMode::Mask);
+}
+
+TEST_CASE("Only combined AO material recipes emit source v13", "[asset_system][material][combined-maps]") {
+  auto seed = parseMaterialSource(kValidPbrSource);
+  REQUIRE(seed.isOk());
+  auto recipe = seed.value();
+  const auto ao = testAssetGuid("occlusion.png");
+  const auto packed = testAssetGuid("metallic-roughness.png");
+  const auto normal = testAssetGuid("normal.png");
+  recipe.occlusionMapAsset = ao;
+  const auto legacyAo = serializeMaterialSource(recipe);
+  CHECK(legacyAo.starts_with("atlantis_material_source_version: 12\n"));
+  for (const auto& [withNormal, withPacked] :
+       {std::pair{true, false}, std::pair{false, true}, std::pair{true, true}}) {
+    recipe.normalMapAsset = withNormal ? std::optional{normal} : std::nullopt;
+    recipe.metallicRoughnessMapAsset = withPacked ? std::optional{packed} : std::nullopt;
+    const auto bytes = serializeMaterialSource(recipe);
+    REQUIRE(bytes.starts_with("atlantis_material_source_version: 13\n"));
+    const auto result = parseMaterialSource(bytes);
+    REQUIRE(result.isOk());
+    CHECK(result.value().normalMapAsset == recipe.normalMapAsset);
+    CHECK(result.value().metallicRoughnessMapAsset == recipe.metallicRoughnessMapAsset);
+    CHECK(result.value().occlusionMapAsset == ao);
+    CHECK(serializeMaterialSource(result.value()) == bytes);
+    auto legacy = bytes;
+    legacy[legacy.find('\n') - 1] = '2';
+    CHECK(parseMaterialSource(legacy).isErr());
+    recipe.occlusionMapAsset.reset();
+    CHECK(serializeMaterialSource(recipe).starts_with(withPacked
+        ? "atlantis_material_source_version: 11\n" : "atlantis_material_source_version: 10\n"));
+    recipe.occlusionMapAsset = ao;
+  }
+  auto emptyCombination = legacyAo;
+  emptyCombination[emptyCombination.find('\n') - 1] = '3';
+  CHECK(parseMaterialSource(emptyCombination).isErr());
 }

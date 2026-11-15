@@ -193,6 +193,9 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::MaterialReadResult materialReadWithOcclusion(const as::AssetGuid& guid) const override {
     return readMaterial(guid, ac::MaterialRecipeVersion::WithOcclusion);
   }
+  ac::MaterialReadResult materialReadWithCombinedMaps(const as::AssetGuid& guid) const override {
+    return readMaterial(guid, ac::MaterialRecipeVersion::WithCombinedMaps);
+  }
   ac::MaterialReadResult readMaterial(const as::AssetGuid& guid, ac::MaterialRecipeVersion version) const {
     using R = ac::MaterialReadResult;
     initialize();
@@ -222,6 +225,11 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithOcclusion);
   }
+  ac::MaterialSaveResult materialSaveWithCombinedMaps(const ac::MaterialSave& request) override {
+    if (!rebuild_) return ac::MaterialSaveResult::Err(ac::MaterialError::Unavailable);
+    initialize();
+    return rebuild_->saveMaterial(request, catalog_, ac::MaterialRecipeVersion::WithCombinedMaps);
+  }
   ac::MaterialStatusResult materialStatus(std::optional<ac::MaterialJobId> id) const override {
     return rebuild_ ? rebuild_->materialStatus(id) : ac::MaterialStatusResult::Err(ac::MaterialError::Unavailable);
   }
@@ -246,7 +254,14 @@ struct AssetHost::State final : connection::AssetConnection {
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
+    if (!ac::representsMaterialValues(recipe.values, ac::MaterialRecipeVersion::WithOcclusion))
+      return ac::MaterialDraftPreviewResult::Err(ac::MaterialError::InvalidRecipe);
     return previewDraft(guid, recipe, !recipe.values.normalMap && !recipe.values.metallicRoughnessMap);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithCombinedMaps(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return previewDraft(guid, recipe, recipe.values.occlusionMap.has_value() ||
+        (!recipe.values.normalMap && !recipe.values.metallicRoughnessMap));
   }
   ac::MaterialDraftPreviewResult previewDraft(const as::AssetGuid& guid, const ac::MaterialRecipe& recipe,
                                                bool studioIbl) {
@@ -349,11 +364,17 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::MaterialReadResult materialReadWithOcclusion(const as::AssetGuid& guid) const override {
     return host_.materialReadWithOcclusion(guid);
   }
+  ac::MaterialReadResult materialReadWithCombinedMaps(const as::AssetGuid& guid) const override {
+    return host_.materialReadWithCombinedMaps(guid);
+  }
   ac::MaterialSaveResult materialSaveWithMetallicRoughness(const ac::MaterialSave& request) override {
     return host_.materialSaveWithMetallicRoughness(request);
   }
   ac::MaterialSaveResult materialSaveWithOcclusion(const ac::MaterialSave& request) override {
     return host_.materialSaveWithOcclusion(request);
+  }
+  ac::MaterialSaveResult materialSaveWithCombinedMaps(const ac::MaterialSave& request) override {
+    return host_.materialSaveWithCombinedMaps(request);
   }
   ac::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
@@ -362,6 +383,10 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(const as::AssetGuid& guid,
       const ac::MaterialRecipe& recipe) override {
     return host_.previewMaterialDraftWithOcclusion(guid, recipe);
+  }
+  ac::MaterialDraftPreviewResult previewMaterialDraftWithCombinedMaps(const as::AssetGuid& guid,
+      const ac::MaterialRecipe& recipe) override {
+    return host_.previewMaterialDraftWithCombinedMaps(guid, recipe);
   }
  private:
   connection::AssetConnection& host_;

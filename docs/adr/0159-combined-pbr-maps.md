@@ -1,9 +1,9 @@
 # ADR 0159: Independent Occlusion and Metallic–Roughness Bindings in PBR IBL
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Atlantis maintainer, 2026-11-15, [PR #367](https://github.com/slmao/Atlantis/pull/367) at `dd262114`.
 - **Related Spec:** [Spec 0101](../specs/0101-combined-pbr-maps.md)
 
 ## Context

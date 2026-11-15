@@ -199,6 +199,8 @@ public sealed class MainWindow : Window
     private bool _materialResumeWithMetallicRoughness;
     private bool? _materialSupportsOcclusion;
     private bool _materialResumeWithOcclusion;
+    private bool? _materialSupportsCombinedMaps;
+    private bool _materialResumeWithCombinedMaps;
     private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
@@ -584,7 +586,7 @@ public sealed class MainWindow : Window
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _materialSettlement.LoseReceipt();
-        _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null;
+        _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialSupportsCombinedMaps = null;
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
         _worker?.Stop();
         ++_saveAsRequest;
@@ -648,7 +650,7 @@ public sealed class MainWindow : Window
             _referenceSessionFailed = true;
             LoseTextureConnection();
             _materialSettlement.LoseReceipt();
-            _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialPoll.Stop();
+            _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialSupportsCombinedMaps = null; _materialPoll.Stop();
             ShowMaterialState();
             if (_newScenePendingName is not null)
             {
@@ -1264,13 +1266,14 @@ public sealed class MainWindow : Window
         long epoch = ++_materialReadEpoch;
         UpdateMaterialButtons();
         if (target is not AssetGuid guid || _worker is not { } worker || _referenceSessionFailed) return;
-        worker.ReadMaterial(guid, (result, legacy, packed, occlusion) =>
+        worker.ReadMaterial(guid, (result, legacy, packed, occlusion, combined) =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || epoch != _materialReadEpoch ||
                 _materialReadTarget != guid) return;
             _materialLegacy = legacy;
             _materialSupportsMetallicRoughness = packed;
             _materialSupportsOcclusion = occlusion;
+            _materialSupportsCombinedMaps = combined;
             if (result.IsOk) _selectedMaterial = result.Value;
             else if (result.Error != MaterialError.Unsupported && !_materialSettlement.BlocksSave)
                 ShowMaterialState("Selected material: " + result.Error);
@@ -1297,7 +1300,8 @@ public sealed class MainWindow : Window
         if (mode != MaterialMode.Create && original is null) return;
         var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
         var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items,
-            !_materialLegacy, _materialSupportsMetallicRoughness != false, _materialSupportsOcclusion != false);
+            !_materialLegacy, _materialSupportsMetallicRoughness != false, _materialSupportsOcclusion != false,
+            _materialSupportsCombinedMaps != false);
         _materialWindow = dialog;
         dialog.DraftChanged += () => SyncPreviewSelection(invalidate: true);
         dialog.PreviewRequested += () =>
@@ -1307,7 +1311,7 @@ public sealed class MainWindow : Window
             UpdatePreviewButton();
             StartNextPreview();
         };
-        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness, dialog.WithOcclusion);
+        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness, dialog.WithOcclusion, dialog.WithCombinedMaps);
         dialog.ResumeRequested += ResumeMaterial;
         dialog.Closed += (_, _) =>
         {
@@ -1463,13 +1467,13 @@ public sealed class MainWindow : Window
         UpdateTextureButtons();
     }
 
-    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion)
+    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps)
     {
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
         _materialSettlement.Begin(request.Target);
         ShowMaterialState();
-        worker.SaveMaterial(request, withMaps, withMetallicRoughness, withOcclusion, result =>
+        worker.SaveMaterial(request, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _materialSettlement.Target != request.Target) return;
             if (!result.IsOk)
@@ -1477,11 +1481,14 @@ public sealed class MainWindow : Window
                 _materialSettlement.Refused();
                 if (withMaps && result.Error == MaterialError.Unsupported)
                 {
-                    if (withOcclusion) _materialSupportsOcclusion = false;
+                    if (withCombinedMaps) _materialSupportsCombinedMaps = false;
+                    else if (withOcclusion) _materialSupportsOcclusion = false;
                     else if (withMetallicRoughness) _materialSupportsMetallicRoughness = false;
                     else _materialLegacy = true;
                     _materialWindow?.OfferLegacyEditing();
-                    ShowMaterialState(withOcclusion
+                    ShowMaterialState(withCombinedMaps
+                        ? "This Runtime does not support combined map editing. Choose occlusion editing explicitly or reconnect."
+                        : withOcclusion
                         ? "This Runtime does not support occlusion editing. Choose metallic-roughness editing explicitly or reconnect."
                         : withMetallicRoughness
                         ? "This Runtime does not support the metallic-roughness slot. Choose normal and emissive editing explicitly or reconnect."
@@ -1495,6 +1502,7 @@ public sealed class MainWindow : Window
             if (!_materialSettlement.Admit(result.Value)) return;
             _materialResumeWithMetallicRoughness = withMetallicRoughness;
             _materialResumeWithOcclusion = withOcclusion;
+            _materialResumeWithCombinedMaps = withCombinedMaps;
             ShowMaterialState(); _materialPoll.Start();
         });
     }
@@ -1504,7 +1512,8 @@ public sealed class MainWindow : Window
         if (_materialResume.IsEnabled && _materialSettlement.ResumableMaterial is AssetGuid saved)
             SubmitMaterial(new MaterialSave.Resume(saved), !_materialLegacy,
                 _materialResumeWithMetallicRoughness || _materialSupportsMetallicRoughness != false,
-                _materialResumeWithOcclusion || _materialSupportsOcclusion != false);
+                _materialResumeWithOcclusion || _materialSupportsOcclusion != false,
+                _materialResumeWithCombinedMaps || _materialSupportsCombinedMaps != false);
     }
 
     private void QueryMaterial()
@@ -1701,7 +1710,8 @@ public sealed class MainWindow : Window
             if (!_previewRequests.CanSend(intent)) return default;
             if (intent.Draft is MaterialRecipe recipe)
             {
-                var draft = intent.WithOcclusion ? preview.Assets.PreviewMaterialDraftWithOcclusion(intent.Guid, recipe) :
+                var draft = intent.WithCombinedMaps ? preview.Assets.PreviewMaterialDraftWithCombinedMaps(intent.Guid, recipe) :
+                    intent.WithOcclusion ? preview.Assets.PreviewMaterialDraftWithOcclusion(intent.Guid, recipe) :
                     intent.WithMetallicRoughness ? preview.Assets.PreviewMaterialDraftWithMetallicRoughness(intent.Guid, recipe) :
                     intent.WithMaps ? preview.Assets.PreviewMaterialDraftWithMaps(intent.Guid, recipe)
                     : preview.Assets.PreviewMaterialDraft(intent.Guid, recipe);

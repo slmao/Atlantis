@@ -657,6 +657,9 @@ class RuntimeApplication {
   std::vector<std::uint32_t> pbrDirectLitNormalMapFragmentSpirv_;
   std::vector<std::uint32_t> packedFragmentSpirv_;
   std::vector<std::uint32_t> occlusionFragmentSpirv_;
+  std::vector<std::uint32_t> occlusionPackedFragmentSpirv_;
+  std::vector<std::uint32_t> occlusionNormalFragmentSpirv_;
+  std::vector<std::uint32_t> occlusionNormalPackedFragmentSpirv_;
   std::vector<std::uint32_t> packedNormalFragmentSpirv_;
   atlantis::rhi::VertexInputLayout pbrIblNormalMapVertexInputLayout_;
   std::vector<std::uint32_t> pbrIblNormalMapVertexSpirv_;

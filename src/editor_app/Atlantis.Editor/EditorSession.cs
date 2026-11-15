@@ -386,24 +386,32 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
 
-    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool, bool, bool> done) =>
+    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool, bool, bool, bool> done) =>
         Enqueue(session =>
         {
-            var result = session.Assets.MaterialReadWithOcclusion(guid);
+            var result = session.Assets.MaterialReadWithCombinedMaps(guid);
+            bool combined = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
+            if (combined)
+            {
+                _post(() => done(result, false, true, true, true));
+                return;
+            }
+            result = session.Assets.MaterialReadWithOcclusion(guid);
             bool occlusion = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (!occlusion) result = session.Assets.MaterialReadWithMetallicRoughness(guid);
             bool packed = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (!packed) result = session.Assets.MaterialReadWithMaps(guid);
             bool basic = !result.IsOk && result.Error == Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (basic) result = session.Assets.MaterialRead(guid);
-            _post(() => done(result, basic, packed, occlusion));
+            _post(() => done(result, basic, packed, occlusion, false));
         });
 
-    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion,
+    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
         Enqueue(session =>
         {
-            var result = withOcclusion ? session.Assets.MaterialSaveWithOcclusion(request) :
+            var result = withCombinedMaps ? session.Assets.MaterialSaveWithCombinedMaps(request) :
+                withOcclusion ? session.Assets.MaterialSaveWithOcclusion(request) :
                 withMetallicRoughness ? session.Assets.MaterialSaveWithMetallicRoughness(request) :
                 withMaps ? session.Assets.MaterialSaveWithMaps(request) : session.Assets.MaterialSave(request);
             _post(() => done(result));

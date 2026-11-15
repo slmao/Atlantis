@@ -103,10 +103,12 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
                                                float alphaCutoff, AssetId emissiveTexture, AssetId metallicRoughnessMap,
                                                AssetId occlusionMap) {
   std::vector<std::byte> out;
-  out.reserve(kMaterialArtifactHeaderSizeBytes + (metallicRoughnessMap || occlusionMap ? sizeof(AssetId) : 0));
+  const bool combined = occlusionMap && (normalMapTexture || metallicRoughnessMap);
+  out.reserve(kMaterialArtifactHeaderSizeBytes + sizeof(AssetId) *
+      (combined ? 2 : (metallicRoughnessMap || occlusionMap ? 1 : 0)));
 
   for (char c : kMagic) out.push_back(static_cast<std::byte>(c));
-  appendU32LE(out, occlusionMap ? kOcclusionMaterialArtifactSchemaVersion :
+  appendU32LE(out, combined ? kCombinedMaterialArtifactSchemaVersion : occlusionMap ? kOcclusionMaterialArtifactSchemaVersion :
       metallicRoughnessMap ? kMappedMaterialArtifactSchemaVersion : kMaterialArtifactSchemaVersion);
   appendU32LE(out, kindToField(kind));
   appendU64LE(out, textureAsset);
@@ -126,6 +128,7 @@ std::vector<std::byte> encodeMaterialArtifact(MaterialKind kind, AssetId texture
   appendU32LE(out, alphaModeToField(alphaMode));
   appendFloatLE(out, alphaCutoff);
   appendU64LE(out, emissiveTexture);
+  if (combined) appendU64LE(out, metallicRoughnessMap);
   if (occlusionMap) appendU64LE(out, occlusionMap);
   else if (metallicRoughnessMap) appendU64LE(out, metallicRoughnessMap);
 
@@ -147,11 +150,12 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
   const std::uint32_t schemaVersion = readU32LE(bytes.data() + 8);
   const bool mapped = schemaVersion == kMappedMaterialArtifactSchemaVersion;
   const bool occluded = schemaVersion == kOcclusionMaterialArtifactSchemaVersion;
-  if (!mapped && !occluded && schemaVersion != kMaterialArtifactSchemaVersion) {
+  const bool combined = schemaVersion == kCombinedMaterialArtifactSchemaVersion;
+  if (!mapped && !occluded && !combined && schemaVersion != kMaterialArtifactSchemaVersion) {
     return ResultT::Err(MaterialArtifactDecodeError::UnsupportedSchemaVersion);
   }
 
-  const auto expectedSize = kMaterialArtifactHeaderSizeBytes + (mapped || occluded ? sizeof(AssetId) : 0);
+  const auto expectedSize = kMaterialArtifactHeaderSizeBytes + sizeof(AssetId) * (combined ? 2 : (mapped || occluded ? 1 : 0));
   if (bytes.size() != expectedSize)
     return ResultT::Err(bytes.size() < expectedSize ? MaterialArtifactDecodeError::TruncatedHeader
                                                     : MaterialArtifactDecodeError::UnexpectedSize);
@@ -316,11 +320,14 @@ atlantis::Result<DecodedMaterialArtifact, MaterialArtifactDecodeError> decodeMat
   // Plan 0046 Milestone 1 (ADR-0096): no range check -- `0` (none), the
   // normalMapTexture convention.
   decoded.emissiveTexture = readU64LE(bytes.data() + 116);
-  if (mapped || occluded) {
+  if (mapped || occluded || combined) {
     const auto map = readU64LE(bytes.data() + kMaterialArtifactHeaderSizeBytes);
+    if (mapped || combined) decoded.metallicRoughnessMap = map;
     if (occluded) decoded.occlusionMap = map;
-    else decoded.metallicRoughnessMap = map;
-    if (!map || (occluded && decoded.normalMapTexture) || decoded.kind != MaterialKind::PbrDirectLit ||
+    if (combined) decoded.occlusionMap = readU64LE(bytes.data() + kMaterialArtifactHeaderSizeBytes + sizeof(AssetId));
+    if ((mapped && !map) || (occluded && (!map || decoded.normalMapTexture)) ||
+        (combined && (!decoded.occlusionMap || (!map && !decoded.normalMapTexture))) ||
+        decoded.kind != MaterialKind::PbrDirectLit ||
         decoded.alphaMode != MaterialAlphaMode::Opaque || decoded.baseColorFactor[3] != 1.0f ||
         decoded.alphaCutoff != 0.5f)
       return ResultT::Err(MaterialArtifactDecodeError::MaterialFactorOutOfRange);

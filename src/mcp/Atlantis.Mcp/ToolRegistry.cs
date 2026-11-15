@@ -61,15 +61,22 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             "Read the opaque PBR recipe including its metallic-roughness slot.", AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
         Declare("assets.material_read_with_occlusion", "assets.materialReadWithOcclusion",
             "Read the opaque PBR recipe including its occlusion slot.", AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
+        Declare("assets.material_read_with_combined_maps", "assets.materialReadWithCombinedMaps",
+            "Read the opaque PBR recipe including its occlusion slot.", AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
         Declare("assets.material_save_with_metallic_roughness", "assets.materialSaveWithMetallicRoughness",
             "Admit one complete material recipe job. Retain the receipt and confirm settlement before retrying.",
             RebuildModel, ToolSchemas.MaterialSaveParameters(withMetallicRoughness: true)),
         Declare("assets.material_save_with_occlusion", "assets.materialSaveWithOcclusion",
             "Admit one complete material recipe job. Retain the receipt and confirm settlement before retrying.",
             RebuildModel, ToolSchemas.MaterialSaveParameters(withOcclusion: true)),
+        Declare("assets.material_save_with_combined_maps", "assets.materialSaveWithCombinedMaps",
+            "Admit one complete material recipe job. Retain the receipt and confirm settlement before retrying.",
+            RebuildModel, ToolSchemas.MaterialSaveParameters(withOcclusion: true)),
         Declare("assets.preview_material_draft_with_metallic_roughness", "assets.previewMaterialDraftWithMetallicRoughness",
             "Render a complete draft on a cooked mesh.", AssetModel, ToolSchemas.MaterialDraftParameters(withMetallicRoughness: true)),
         Declare("assets.preview_material_draft_with_occlusion", "assets.previewMaterialDraftWithOcclusion",
+            "Render a complete draft on a cooked mesh.", AssetModel, ToolSchemas.MaterialDraftParameters(withOcclusion: true)),
+        Declare("assets.preview_material_draft_with_combined_maps", "assets.previewMaterialDraftWithCombinedMaps",
             "Render a complete draft on a cooked mesh.", AssetModel, ToolSchemas.MaterialDraftParameters(withOcclusion: true)),
         Declare("assets.material_read_with_maps", "assets.materialReadWithMaps", "Read the complete opaque PBR recipe.",
             AssetModel, ToolSchemas.Parameters(("material", ToolSchemas.String))),
@@ -190,7 +197,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or
                 "assets.previewMaterialDraftWithMaps" or "assets.materialReadWithMetallicRoughness" or
                 "assets.materialSaveWithMetallicRoughness" or "assets.previewMaterialDraftWithMetallicRoughness" or
-                "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion")
+                "assets.materialReadWithOcclusion" or "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithOcclusion" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithOcclusion" or "assets.previewMaterialDraftWithCombinedMaps")
                 return MaterialOperation(mapping.Method, wireParameters);
             if (mapping.Method is "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or
@@ -318,13 +325,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         var mesh = GuidMember("mesh");
         var job = GuidMember("jobId");
         bool withMaps = method.EndsWith("WithMaps", StringComparison.Ordinal);
-        bool withOcclusion = method.EndsWith("WithOcclusion", StringComparison.Ordinal);
+        bool withCombinedMaps = method.EndsWith("WithCombinedMaps", StringComparison.Ordinal);
+        bool withOcclusion = withCombinedMaps || method.EndsWith("WithOcclusion", StringComparison.Ordinal);
         bool withMetallicRoughness = method.EndsWith("WithMetallicRoughness", StringComparison.Ordinal);
-        bool read = method is "assets.materialRead" or "assets.materialReadWithMaps" or "assets.materialReadWithMetallicRoughness" or "assets.materialReadWithOcclusion";
-        bool save = method is "assets.materialSave" or "assets.materialSaveWithMaps" or "assets.materialSaveWithMetallicRoughness" or "assets.materialSaveWithOcclusion";
-        bool preview = method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness" or "assets.previewMaterialDraftWithOcclusion";
-        var request = save ? Codec.DecodeMaterialSave(parameters, withMaps, withMetallicRoughness, withOcclusion) : null;
-        var recipe = parameters.Find("recipe") is JsonValue fields ? Codec.DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness, withOcclusion) : null;
+        bool read = method is "assets.materialRead" or "assets.materialReadWithMaps" or "assets.materialReadWithMetallicRoughness" or "assets.materialReadWithOcclusion" or "assets.materialReadWithCombinedMaps";
+        bool save = method is "assets.materialSave" or "assets.materialSaveWithMaps" or "assets.materialSaveWithMetallicRoughness" or "assets.materialSaveWithOcclusion" or "assets.materialSaveWithCombinedMaps";
+        bool preview = method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness" or "assets.previewMaterialDraftWithOcclusion" or "assets.previewMaterialDraftWithCombinedMaps";
+        var request = save ? Codec.DecodeMaterialSave(parameters, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) : null;
+        var recipe = parameters.Find("recipe") is JsonValue fields ? Codec.DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) : null;
         if (read && material is null || save && request is null ||
             method == "assets.materialStatus" && parameters.Find("jobId") is not null && job is null ||
             preview && (mesh is null || recipe is null))
@@ -356,14 +364,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         }
         if (result.Find("ok") is not JsonValue ok) return Malformed();
         if (read)
-            return Codec.DecodeMaterialRead(ok, withMaps, withMetallicRoughness, withOcclusion)?.Material == material ? Forward(result, false) : Malformed();
+            return Codec.DecodeMaterialRead(ok, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps)?.Material == material ? Forward(result, false) : Malformed();
         if (request is not null)
             return Codec.DecodeMaterialJob(ok) is { State: A.RebuildState.Running } receipt && receipt.Target == request.Target
                 ? Forward(result, false) : Malformed();
         if (method == "assets.materialStatus")
             return Codec.DecodeMaterialStatus(ok) is A.MaterialStatus status && (job is null || status.Job?.Id.Value == job)
                 ? Forward(result, status.Job?.State == A.RebuildState.Failed) : Malformed();
-        var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness, withOcclusion);
+        var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps);
         return image is null ? Malformed() : ForwardPreview(JsonValue.NewObject().Set("mesh", Codec.Encode(image.Mesh))
             .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness, withOcclusion)), image.Width, image.Height, image.PngBytes);
     }

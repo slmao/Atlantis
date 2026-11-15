@@ -65,6 +65,9 @@ struct BootstrapConfig {
   std::string pbrIblVertexShaderSpirvPath;
   std::string pbrIblVertexShaderReflectionPath;
   std::string pbrIblOcclusionFragmentShaderSpirvPath;
+  std::string pbrIblOcclusionPackedFragmentShaderSpirvPath;
+  std::string pbrIblOcclusionNormalFragmentShaderSpirvPath;
+  std::string pbrIblOcclusionNormalPackedFragmentShaderSpirvPath;
   std::string previewStudioArtifactPath;
   std::string previewStudioMetadataPath;
   std::string pbrIblFragmentShaderSpirvPath;

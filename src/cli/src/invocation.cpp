@@ -51,6 +51,8 @@ constexpr std::string_view kUsage =
     "  assets material-read-with-metallic-roughness <GUID> | assets material-save-with-metallic-roughness <JSON>\n"
     "  assets preview-material-draft-with-metallic-roughness <MeshGuid> <RecipeJSON>\n"
     "  assets occlusion-import <name> [--resume] | assets occlusion-import-status [<JobId>]\n"
+    "  assets material-read-with-combined-maps <GUID> | assets material-save-with-combined-maps <JSON>\n"
+    "  assets preview-material-draft-with-combined-maps <MeshGuid> <RecipeJSON>\n"
     "  assets material-read-with-occlusion <GUID> | assets material-save-with-occlusion <JSON>\n"
     "  assets preview-material-draft-with-occlusion <MeshGuid> <RecipeJSON>\n"
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
@@ -391,7 +393,8 @@ int Invocation::finish(Reply reply) {
     }
     if ((checked.command == "assets material-save" || checked.command == "assets material-save-with-maps" ||
          checked.command == "assets material-save-with-metallic-roughness" ||
-         checked.command == "assets material-save-with-occlusion") &&
+         checked.command == "assets material-save-with-occlusion" ||
+         checked.command == "assets material-save-with-combined-maps") &&
         checked.result.find("target")) {
       failure->subject = checked.result;
       failure->message += "; material save outcome unknown for " + checked.result.find("target")->asString() +

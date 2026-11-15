@@ -33,14 +33,13 @@ Material::Material(std::unique_ptr<atlantis::rhi::Pipeline> pipeline, MaterialPu
       emissiveFactor_(emissiveFactor),
       alphaMode_(alphaMode),
       alphaCutoff_(alphaCutoff),
-      emissiveTexture_(emissiveTexture), surfaceDataMap_(occlusionMap ? occlusionMap : metallicRoughnessMap) {
-  ATLANTIS_CHECK(!occlusionMap || (!metallicRoughnessMap && !normalMapTexture &&
-                 environmentBinding_ == MaterialEnvironmentBinding::Ibl &&
+      emissiveTexture_(emissiveTexture), metallicRoughnessMap_(metallicRoughnessMap), occlusionMap_(occlusionMap) {
+  ATLANTIS_CHECK(!occlusionMap || (environmentBinding_ == MaterialEnvironmentBinding::Ibl &&
                  pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit &&
                  alphaMode_ == MaterialAlphaMode::Opaque && sampledTexture_));
   ATLANTIS_CHECK(metallicRoughnessMap == nullptr ||
                  (pushConstantLayout_ == MaterialPushConstantLayout::PbrDirectLit &&
-                  environmentBinding_ == MaterialEnvironmentBinding::None && alphaMode_ == MaterialAlphaMode::Opaque &&
+                  (environmentBinding_ == MaterialEnvironmentBinding::None || occlusionMap) && alphaMode_ == MaterialAlphaMode::Opaque &&
                   sampledTexture_ != nullptr));
   ATLANTIS_CHECK((sampledTexture_ == nullptr) == (sampler_ == nullptr));
   // Plan 0029 Section P14 (ADR-0074 Section 2): a normal map may never

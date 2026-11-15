@@ -427,8 +427,10 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   const auto guid = [](const char* value) { return as::parseAssetGuid(value).value(); };
   const auto baseColor = guid("859a82af-a31e-457d-bc46-274c1a80ffba");
   const auto normal = guid("5e99757a-d524-4aaf-b665-0d308aa7ae99");
-  const bool useOcclusion = GENERATE(false, true);
-  CAPTURE(useOcclusion);
+  const auto variant = GENERATE(0, 1, 2);
+  const bool useOcclusion = variant != 0;
+  const bool combined = variant == 2;
+  CAPTURE(variant);
   const std::string leaf = useOcclusion ? "occlusion.png" : "metallic-roughness.png";
   const auto mappedTexture = as::deriveAssetGuid(f.guid, leaf);
   const std::string mappedKey = "texture_sample/" + leaf;
@@ -516,6 +518,7 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   auto updated = original;
   if (useOcclusion) {
     updated.values.occlusionMap = mappedTexture;
+    if (combined) updated.values.normalMap = normal;
   } else {
     updated.values.normalMap = normal;
     updated.values.metallicRoughnessMap = mappedTexture;
@@ -554,7 +557,10 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
     target.source = {as::CatalogRoot::Content, key, {}};
     target.artifact = artifact.generic_string();
     target.metadata = metadata.generic_string();
-    target.artifactSchema = recipe.values.occlusionMap ? as::kOcclusionMaterialArtifactSchemaVersion :
+    const bool combinedRecipe = combined && recipe.values.occlusionMap.has_value();
+    if (combinedRecipe) target.sourceSchema = as::kCombinedMaterialSourceSchemaVersion;
+    target.artifactSchema = combinedRecipe ? as::kCombinedMaterialArtifactSchemaVersion :
+        recipe.values.occlusionMap ? as::kOcclusionMaterialArtifactSchemaVersion :
         recipe.values.metallicRoughnessMap ? as::kMappedMaterialArtifactSchemaVersion : as::kMaterialArtifactSchemaVersion;
     target.dependencies = {baseColor};
     if (recipe.values.normalMap) target.dependencies.push_back(normal);
@@ -590,6 +596,7 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
       ca::MaterialSave{ca::EditMaterial{f.guid, {}, original.values, updated.values}};
   const auto accepted = opened.value()->saveMaterial(request,
       std::make_shared<const as::AssetCatalog>(std::move(catalog.value())),
+      combined ? ca::MaterialRecipeVersion::WithCombinedMaps :
       useOcclusion ? ca::MaterialRecipeVersion::WithOcclusion : ca::MaterialRecipeVersion::WithMetallicRoughness);
   REQUIRE(accepted.isOk());
   const auto limit = std::chrono::steady_clock::now() + 20s;

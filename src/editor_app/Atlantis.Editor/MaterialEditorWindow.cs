@@ -28,6 +28,7 @@ internal sealed class MaterialEditorWindow : Window
     private readonly Control _packedRow, _occlusionRow;
     private readonly ComboBox _occlusion = AssetChoice("Occlusion map");
     private readonly Button _clearOcclusion = new() { Content = "Clear" };
+    private readonly TextBlock _occlusionHelp = EditorVisuals.Secondary("");
     private readonly TextBlock _lighting = EditorVisuals.Secondary("");
     private readonly TextBox[] _values = new TextBox[8];
     private readonly Button _clearNormal = new() { Content = "Clear" }, _clearEmissive = new() { Content = "Clear" };
@@ -47,17 +48,19 @@ internal sealed class MaterialEditorWindow : Window
     internal bool WithMaps { get; private set; }
     internal bool WithMetallicRoughness { get; private set; }
     internal bool WithOcclusion { get; private set; }
+    internal bool WithCombinedMaps { get; private set; }
     internal event Action? DraftChanged;
     internal event Action? PreviewRequested;
     internal event Action<MaterialSave>? SaveRequested;
     internal event Action? ResumeRequested;
 
     internal MaterialEditorWindow(long surface, MaterialDraft draft, string name, IReadOnlyList<AssetSummary> catalog, bool withMaps = true,
-        bool withMetallicRoughness = false, bool withOcclusion = false)
+        bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         WithMaps = withMaps;
         WithMetallicRoughness = withMetallicRoughness;
         WithOcclusion = withOcclusion;
+        WithCombinedMaps = withCombinedMaps;
         Surface = surface; _draft = draft; _assetName = name;
         Title = draft.Mode switch { MaterialMode.Create => "New material", MaterialMode.Copy => "Duplicate material", _ => "Edit material" };
         Width = 760; Height = 610; MinWidth = 410; MinHeight = 420;
@@ -119,7 +122,7 @@ internal sealed class MaterialEditorWindow : Window
             EditorVisuals.Columns("*,Auto", _packed, _clearPacked));
         _packedRow.IsVisible = WithMetallicRoughness;
         _occlusionRow = EditorVisuals.Stack(5,
-            EditorVisuals.Secondary("Occlusion · linear R · indirect light only. Clear normal and metallic-roughness maps first."),
+            _occlusionHelp,
             EditorVisuals.Columns("*,Auto", _occlusion, _clearOcclusion));
         _occlusionRow.IsVisible = WithOcclusion;
         _maps = EditorVisuals.Group(EditorVisuals.Heading("Texture maps"), EditorVisuals.Stack(5,
@@ -131,7 +134,13 @@ internal sealed class MaterialEditorWindow : Window
         _basic.Click += (_, _) =>
         {
             if (!TryValues(out var values)) return;
-            if (WithOcclusion)
+            if (WithCombinedMaps)
+            {
+                if (UsesCombinedMaps(values) || UsesCombinedMaps(_draft.Initial)) return;
+                WithCombinedMaps = false;
+                ShowSettlement("Occlusion editing", false, false, false);
+            }
+            else if (WithOcclusion)
             {
                 if (values.OcclusionMap is not null || _draft.Initial.OcclusionMap is not null) return;
                 WithOcclusion = false;
@@ -196,7 +205,7 @@ internal sealed class MaterialEditorWindow : Window
     }
 
     internal AssetPreviewInputs? Inputs => _mesh.SelectedItem is AssetSummary mesh && TryValues(out var values)
-        ? new(mesh.Guid, null, Surface, _draft.Recipe(values), WithMaps, WithMetallicRoughness, WithOcclusion) : null;
+        ? new(mesh.Guid, null, Surface, _draft.Recipe(values), WithMaps, WithMetallicRoughness, WithOcclusion, WithCombinedMaps) : null;
 
     private bool TryValues(out MaterialValues values)
     {
@@ -216,7 +225,7 @@ internal sealed class MaterialEditorWindow : Window
             EmissiveTexture = WithMaps ? (_emissive.SelectedItem as AssetSummary)?.Guid : null,
             EmissiveRed = numbers[5], EmissiveGreen = numbers[6], EmissiveBlue = numbers[7]
         };
-        return values.OcclusionMap is null || (values.NormalMap is null && values.MetallicRoughnessMap is null);
+        return WithCombinedMaps || !UsesCombinedMaps(values);
     }
 
     private void Changed()
@@ -232,11 +241,19 @@ internal sealed class MaterialEditorWindow : Window
         _clearEmissive.IsEnabled = _emissive.SelectedItem is not null;
         _clearPacked.IsEnabled = _packed.SelectedItem is not null;
         _clearOcclusion.IsEnabled = _occlusion.SelectedItem is not null;
-        _occlusion.IsEnabled = _normal.SelectedItem is null && _packed.SelectedItem is null;
-        _normal.IsEnabled = _packed.IsEnabled = _occlusion.SelectedItem is null;
-        _lighting.Text = WithOcclusion && _normal.SelectedItem is null && _packed.SelectedItem is null
+        _occlusion.IsEnabled = WithCombinedMaps || (_normal.SelectedItem is null && _packed.SelectedItem is null);
+        _normal.IsEnabled = _packed.IsEnabled = WithCombinedMaps || _occlusion.SelectedItem is null;
+        _occlusionHelp.Text = WithCombinedMaps
+            ? _packed.SelectedItem is null
+                ? "Occlusion · linear R · indirect light only. No effect without scene IBL."
+                : "Occlusion · linear R · indirect light only. Clearing it restores direct lighting."
+            : "Occlusion · linear R · indirect light only. Clear normal and metallic-roughness maps first.";
+        _lighting.Text = WithOcclusion && ((WithCombinedMaps && _occlusion.SelectedItem is not null) ||
+            (_normal.SelectedItem is null && _packed.SelectedItem is null))
             ? "Fixed studio IBL · preview only" : "Fixed directional lighting · preview only";
-        _basic.IsEnabled = valid && (WithOcclusion
+        _basic.IsEnabled = valid && (WithCombinedMaps
+            ? !UsesCombinedMaps(values) && !UsesCombinedMaps(_draft.Initial)
+            : WithOcclusion
             ? values.OcclusionMap is null && _draft.Initial.OcclusionMap is null
             : WithMetallicRoughness
             ? values.MetallicRoughnessMap is null && _draft.Initial.MetallicRoughnessMap is null
@@ -258,12 +275,15 @@ internal sealed class MaterialEditorWindow : Window
         Refresh();
     }
 
+    private static bool UsesCombinedMaps(MaterialValues values) =>
+        values.OcclusionMap is not null && (values.NormalMap is not null || values.MetallicRoughnessMap is not null);
+
     private static bool IsBasic(MaterialValues values) => values.NormalMap is null && values.EmissiveTexture is null &&
         values.EmissiveRed == 0 && values.EmissiveGreen == 0 && values.EmissiveBlue == 0;
 
     internal void OfferLegacyEditing()
     {
-        _basic.Content = WithOcclusion ? "Use metallic-roughness editing" : WithMetallicRoughness ? "Use normal and emissive editing" : "Use basic editing";
+        _basic.Content = WithCombinedMaps ? "Use occlusion editing" : WithOcclusion ? "Use metallic-roughness editing" : WithMetallicRoughness ? "Use normal and emissive editing" : "Use basic editing";
         _basic.IsVisible = WithMaps;
         Refresh();
     }

@@ -14,6 +14,7 @@ namespace {
 // emissive_texture: AssetGuid references.
 constexpr std::string_view kVersionLine = "atlantis_material_source_version: 10";
 constexpr std::string_view kMappedVersionLine = "atlantis_material_source_version: 11";
+constexpr std::string_view kCombinedVersionLine = "atlantis_material_source_version: 13";
 constexpr std::string_view kOcclusionVersionLine = "atlantis_material_source_version: 12";
 constexpr std::string_view kOcclusionMapPrefix = "occlusion_map_asset: ";
 constexpr std::string_view kMetallicRoughnessMapPrefix = "metallic_roughness_map_asset: ";
@@ -247,8 +248,9 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   std::vector<std::string_view> lines = splitLines(text);
   std::optional<AssetGuid> packedMap;
   std::optional<AssetGuid> occlusionMap;
-  if (!lines.empty() && (lines.front() == kMappedVersionLine || lines.front() == kOcclusionVersionLine)) {
-    const bool occluded = lines.front() == kOcclusionVersionLine;
+  const bool combined = !lines.empty() && lines.front() == kCombinedVersionLine;
+  if (combined || (!lines.empty() && (lines.front() == kMappedVersionLine || lines.front() == kOcclusionVersionLine))) {
+    const bool occluded = combined || lines.front() == kOcclusionVersionLine;
     std::string_view guidText;
     if (!matchField(lines.back(), occluded ? kOcclusionMapPrefix : kMetallicRoughnessMapPrefix, guidText))
       return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
@@ -257,6 +259,13 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
     if (occluded) occlusionMap = guid.value();
     else packedMap = guid.value();
     lines.pop_back();
+    if (combined && matchField(lines.back(), kMetallicRoughnessMapPrefix, guidText)) {
+      const auto packed = parseAssetGuid(guidText);
+      if (packed.isErr() || packed.value() == AssetGuid{})
+        return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+      packedMap = packed.value();
+      lines.pop_back();
+    }
     lines.front() = kVersionLine;
   }
 
@@ -534,7 +543,9 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   if ((packedMap || occlusionMap) && (parsed.kind != MaterialKind::PbrDirectLit || parsed.alphaMode != MaterialAlphaMode::Opaque ||
                     parsed.baseColorFactor[3] != 1.0f || parsed.alphaCutoff != 0.5f))
     return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
-  if (occlusionMap && (parsed.normalMapAsset || *occlusionMap == AssetGuid{}))
+  if (occlusionMap && (*occlusionMap == AssetGuid{} ||
+      combined != (parsed.normalMapAsset.has_value() || packedMap.has_value()) ||
+      (combined && parsed.normalMapAsset == AssetGuid{})))
     return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
   parsed.metallicRoughnessMapAsset = packedMap;
   parsed.occlusionMapAsset = occlusionMap;
@@ -543,7 +554,8 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
 std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   std::string out;
-  out += source.occlusionMapAsset ? kOcclusionVersionLine :
+  const bool combined = source.occlusionMapAsset && (source.normalMapAsset || source.metallicRoughnessMapAsset);
+  out += combined ? kCombinedVersionLine : source.occlusionMapAsset ? kOcclusionVersionLine :
       source.metallicRoughnessMapAsset ? kMappedVersionLine : kVersionLine;
   out += '\n';
   out += kKindPrefix;

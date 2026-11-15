@@ -4,11 +4,14 @@
 #include <atlantis/asset_system/material_types.h>
 #include <atlantis/result.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
 
 namespace atlantis::asset_system {
+
+inline constexpr std::uint32_t kCombinedMaterialSourceSchemaVersion = 13;
 
 // Plan 0018 Section P4: the authoring-facing, not-yet-cooked
 // representation of one material -- textureLogicalPath is still a
