@@ -29,11 +29,13 @@ independently.
    leaves `localPosition`, `localEulerAnglesRadians`, or `localScale`.
    Validate these addresses against the authoring schema. An address
    may occur only once. A node may supply any subset of those leaves.
-   Reject a guard-only, misplaced, repeated, or mixed guard, other
-   component or leaf, duplicate address, or out-of-bound transaction
-   as `InvalidGuardedPropertyBatch`, correlated to the first guard's
-   ticket. An absent document keeps `NoDocument`. Leave the existing
-   `RequireDocumentRevision` admission shape unchanged.
+   Reject a guard-only, misplaced, repeated, or mixed guard, a command
+   other than `SetProperty` after the guard, another component or leaf,
+   a duplicate address, or an out-of-bound transaction as
+   `InvalidGuardedPropertyBatch`, against the first guard's ticket even
+   when the first guard is misplaced. An absent document keeps
+   `NoDocument`. Leave the existing `RequireDocumentRevision`
+   admission shape unchanged.
 2. **Admit in AuthoringSession.** After validating the shape, compare
    the expected document revision at the existing serialized admission
    point. Use `PropertyBatchStaleRevision` with the guard ticket on a
@@ -41,10 +43,14 @@ independently.
    validation rules, with normal property failure attribution and
    candidate cook. A refusal changes no values, revision or event.
    A success advances one revision and emits ordinary property events
-   in supplied write order. The guard emits no event. The normal
-   ticket range includes it and every write. Selection, parent pruning
-   and world-to-local math remain client decisions. Apply remains a
-   separate tracked request under [ADR-0144](0144-correlated-authoring-apply-outcomes.md).
+   in supplied write order. The guard emits no event. An admitted
+   request uses the existing submit and failure-drain settlement.
+   Its ticket range counts the guard and every write, up to 193
+   tickets. A ticket response alone establishes submission, with
+   the correlated failure drain determining refusal. Selection,
+   parent pruning and world-to-local math remain client decisions.
+   Apply remains a separate tracked request under
+   [ADR-0144](0144-correlated-authoring-apply-outcomes.md).
 3. **Discover on the current open document.** Add optional
    `supportsGuardedTransformTransactions` to the existing
    `authoring.document` response. Only literal true on a valid
@@ -61,11 +67,13 @@ independently.
 4. **Reuse shared clients.** Native `scene tx` accepts
    `require-transform-revision <revision>` before existing `set` lines.
    The C# SDK exposes the typed command and descriptor capability.
-   MCP extends its existing exact authoring transaction schema and
-   uses its existing failure drain. Editor uses the same transaction
-   and settlement via the SDK. Discovery refusal and potentially sent
-   but unverified submission remain distinguishable. Keep the
-   `atlantis.remote/1` envelope, events and old command encodings.
+   MCP adds the command to the existing exact transaction tool only
+   and uses its existing failure drain. Any typed convenience that
+   accepts this guard checks capability and uses the transaction path.
+   Editor uses the same transaction and settlement via the SDK.
+   Discovery refusal and potentially sent but unverified submission
+   remain distinguishable. Keep the `atlantis.remote/1` envelope,
+   events and old command encodings.
 5. **Preview through the current overlay.** Group gesture feedback
    uses existing per-client overlay primitives under
    [ADR-0132](0132-viewport-overlay-surface.md) and never writes
@@ -75,6 +83,18 @@ independently.
    cancellation or release through overlay replacement. Disconnect
    uses the existing server cleanup. This supplements ADR-0135's
    single-object preview, which retains its current World path.
+   Acceptance of an overlay request records the contribution.
+   The Windows acceptance separately verifies that guides are drawn.
+6. **Keep the existing capture owner.** Extend the Windows
+   child-window message forwarding in
+   [ADR-0126 D4](0126-viewport-embedding-and-input-routing.md#decision)
+   with the Runtime child's `WM_CAPTURECHANGED` on the same ordered
+   route as button messages. The child retains the existing
+   `SetCapture` and `ReleaseCapture` ownership. The Editor associates
+   the notice with the active grab and handles a normal LeftUp before
+   its routine loss notice. The existing Win32 host bounds and
+   deactivation still guard the gesture. This extension adds no wire
+   input message, window hook, polling, or public Platform event.
 
 ## Consequences
 
@@ -89,6 +109,10 @@ independently.
   retry uses a fresh read. A group preview shows placement guides and
   full geometry appears after Apply. The separate preview avoids
   temporary subtree writes and their rollback races.
+- Capture loss uses the host window route already used by the
+  embedded Viewport. Unexpected loss now reaches the group gesture
+  even if no mouse-up arrives. Standalone input keeps its existing
+  path.
 
 ## Alternatives Considered
 

@@ -44,7 +44,8 @@ order. The pivot is the arithmetic mean of their authoring world
 origins, including roots with no mesh or marker. With one effective
 root, use its origin and keep group behavior. Write only the effective
 roots. Selected and unselected descendants inherit the root's change
-through hierarchy, preserving their local properties.
+through hierarchy, preserving their local properties. Their origins
+carry no weight in the pivot.
 
 Use the existing world-axis handle geometry and direction conventions
 for Translate and Rotate. Use a distinct center handle for uniform
@@ -52,7 +53,7 @@ Scale, with horizontal movement using the existing scale sensitivity
 of one factor unit per 80 Viewport pixels.
 Show World as the available group space and label uniform Scale in the
 current [0093 visual conventions](0093-editor-visual-layout.md).
-Single-selection settings can be restored on returning to one node.
+Restore single-selection settings on returning to one node.
 An unavailable gesture shows its reason and keeps the requested mode
 visible. Snap using the existing increments of 0.5 world units, 15
 degrees and 0.1 of a factor. Freeze mode, axis, snap, pivot and baselines
@@ -66,22 +67,32 @@ matrix `W`, world pivot `p` and parent world matrix `P` (identity at
 scene root), apply the same world delta `D`. Translation uses
 `D = T(delta)`. Rotation uses `D = T(p) R(axis, angle) T(-p)`.
 Uniform scale uses `D = T(p) S(factor) T(-p)`, with the existing
-positive factor floor. Solve the local matrix as `inverse(P) D W`.
+positive factor floor of `1e-4`; a negative pointer-derived factor
+clamps at the floor. Solve the local matrix as `inverse(P) D W`.
 
 Translation preserves the original Euler and scale leaves exactly.
 Uniform scale preserves Euler values and multiplies the original signed
-local scale by the common factor. Rotation keeps original leaves when
-they still reproduce the desired matrix and can update any of the three
-leaves when required to reproduce it. Use the existing TRS, reflection
-and Euler conventions and check recomposition within the existing Gizmo
-shear tolerance, scaled per matrix element by the greater of one and
-its expected magnitude. A missing or unstable baseline, nonfinite
-result, non-invertible parent, or local result without a usable TRS
-refuses the whole gesture at that sample. In particular, a rotation
-under a nonuniform parent can introduce shear. Report the reason and
-first affected root in captured order. Releasing an invalid sample
-refuses the drag even if an earlier sample was valid. An identity delta
-or a final plan with zero changed leaves ends without writing.
+local scale by the common factor. Use the solved local translation.
+For rotation, validate the solved basis with the existing TRS
+decomposition and apply its reflection and Euler conventions. Keep the
+captured Euler and scale together if they reproduce the solved basis.
+Otherwise use the decomposed Euler and scale, retaining the captured
+scale when paired with the solved Euler it still reproduces the basis.
+Omit exactly unchanged typed leaves. Check that each recomposed basis
+column differs from the corresponding solved column by at most the
+existing Gizmo tolerance (`1e-4`) times the length of the solved column,
+with handedness preserved. The normalized shear and minimum axis
+length checks in the existing decomposition also apply. Normalize
+identity deltas before any decomposition, and end an identity or
+zero-write drag without writing.
+
+A missing or unstable baseline, nonfinite result, non-invertible
+parent, or nonidentity result without a usable TRS refuses the entire
+sample. A rotation under a nonuniform parent can introduce shear.
+Report the reason and first affected root in captured order. An
+invalid sample at release refuses the drag even if an earlier sample
+was valid. Solve from the LeftUp coordinates even when earlier moves
+were coalesced.
 
 Reuse the shared per-client overlay for the handles and bounded
 destination guides. Show the provisional root origins and their
@@ -90,8 +101,12 @@ effective root. Clear destination guides on an invalid sample and show
 why. Use the same selected highlights on the current Runtime
 projection. The viewport and status distinguish guides from applied
 geometry. [ADR-0163](../adr/0163-guarded-transform-batches.md) defines
-preview ownership. Draw from the latest sample on the existing worker
-path without adding idle polling or a Runtime frame hook.
+preview ownership. Use the latest sample on the existing worker path.
+Before dispatch, a refused overlay update cancels the gesture. Replace
+its contribution with the ordinary selection overlay, or clear that
+contribution if the replacement is refused. Send updates and clears in
+order on the same connection. A late sample from a canceled or released
+gesture cannot restore its guides.
 
 ### R3. Gesture invalidation and shared submission
 
@@ -99,24 +114,34 @@ Arm only with a stable view of the current writable document and a
 positive transform-transaction capability. The pointer must grab a
 handle from the same layout and selection the Editor displayed. If
 preparation finds stale placement inputs, refresh the layout and ask
-for a new grab. A grab freezes the document
-lifetime, selection generation, row identities, selected nodes' parent
-paths, and the local Transform leaves and incarnations used to compute
-the roots and their ancestor matrices. A selected descendant's parent
-path is relevant even though it has no directly written leaves.
-Invalidate a grab or queued release on observed relevant Transform,
-component, node or parent-edge changes, including away-and-back edits
-and destroy/recreate with the same GUID. An unrelated change settled
-before final preflight can coexist. Missing events, incomplete reads,
-or a change across the final revision fence refuse the attempt.
+for a new grab. A grab freezes the document lifetime, selection
+generation, selected-node identities, and parent edges and node
+identities along their full paths to the scene root. It also freezes
+the three Transform leaves and component identities of the effective
+roots and the ancestors used to solve their matrices. A selected
+descendant's parent path is relevant even though its local values
+inherit the edit without a write. Missing or ill-typed Transform
+reads cannot provide a baseline, including in the display-to-grab
+check. Invalidate a grab or queued release on changes to these
+dependencies, including away-and-back edits and destroy/recreate with
+the same GUID. An unrelated change settled before final preflight can
+coexist. Missing events, incomplete reads, or a change across the
+final revision fence refuse the attempt.
 
-Escape while the Viewport or Editor owns focus, loss of drag capture,
-deactivation, leaving the Viewport on release, selection or mode
-change, reopen and disconnect cancel an unsent drag. Discard its guides
-and pending samples. An old release cannot pick, restart or submit,
-including after returning to the same selection. A group drag and its
-settlement serialize with existing Inspector commits, property replay
-and other Gizmo edits. Use the existing focus and keyboard routes.
+Escape while the Viewport or Editor owns focus, unexpected loss of
+drag capture, deactivation, Viewport resize, release outside the
+Viewport, selection or mode change, reopen and disconnect cancel an
+unsent drag. Suppress camera navigation input during a grab. Use the
+existing focus and keyboard routes and the Runtime child's capture
+notification in [ADR-0163](../adr/0163-guarded-transform-batches.md#decision).
+A valid in-bounds LeftUp ends the left-button grab and queues
+settlement. A subsequent routine capture-loss notification does not
+cancel that release. Escape, deactivation or a change of editing context
+can still cancel it before send. Discard canceled guides and pending
+samples. An old release cannot pick, restart or submit, including
+after returning to the same selection. A group drag and its settlement
+serialize with existing Inspector commits, property replay and other
+Gizmo edits.
 
 On release, read the frozen dependencies through the bounded shared
 reads with event observation and a revision fence. Build the ordered
@@ -142,16 +167,20 @@ Publish confirmed settlement and history before fallible refreshes.
 
 Undo/Redo use the same guarded transaction and a fresh fenced revision,
 with the original root and Transform incarnations, ancestry identities
-and parent edges, and expected Transform values on the roots and their
-ancestors. Compare the entire context, including unchanged sibling
-leaves of that Transform. Replay recorded values without recomputing a
-pivot. A relevant mismatch refuses the whole replay and drops the
-conflicted entry with a reason. A revision-only refusal retains it on
-its original stack for explicit retry. A verified replay moves one
-entry. An unknown or overtaken settlement follows 0106's rules for
-history and explicit Apply, with the mode and affected roots in the
-notice. Preserve settlement of any older owned Apply, including when
-the new transaction result is unknown.
+and parent edges, and exact expected Transform values on all effective
+roots and their ancestors. This includes roots with no changed leaves
+and unchanged leaves on changed roots. Replay recorded values without
+recomputing a pivot. Eligibility uses the identities, edges and
+values of the current side of the entry. An intervening local
+Undo/Redo that has restored those values does not invalidate it.
+A relevant mismatch refuses the whole replay and drops the conflicted
+entry with a reason. A revision-only refusal retains it on its original
+stack for explicit retry. A verified replay moves one entry. An unknown
+or overtaken settlement follows 0106's rules for history and explicit
+Apply, with the mode and affected roots in the notice. Inspect a fresh
+authoritative snapshot before retrying an uncertain action. Preserve
+settlement of any older owned Apply, including when the new transaction
+result is unknown.
 
 One verified commit or replay creates one ordinary tracked Apply
 intent, subject to existing coalescing and recovery. Correlate the
@@ -166,7 +195,8 @@ remains authoritative for displayed geometry until a reload succeeds.
 
 ### R5. Persistence
 
-Use ordinary Save on the hand-authored source. Reopen that same source
+After the authored edit settles, use ordinary Save on the hand-authored
+source. Reopen that same source
 on the same active asset generation. The multi-selection, gesture and
 local history clear, and the saved locals, hierarchy and asset
 references recover by GUID. Explicit Apply of the reopened document
@@ -176,9 +206,11 @@ rebuilds the matching world placements.
 
 [ADR-0163](../adr/0163-guarded-transform-batches.md) supplements the
 shared transaction contract and records the multi-object preview
-boundary. The Editor owns the gesture and its history. Authoring owns
-admission. Connection and existing clients carry the command. Reuse
-the Runtime overlay, scene reload and source format.
+boundary. It extends the existing Windows embedded input route with
+the capture-loss notification. The Editor owns the gesture and its
+history. Authoring owns admission. Connection and existing clients
+carry the command. Reuse the Runtime overlay, scene reload and source
+format.
 
 ## Testing and Verification
 
