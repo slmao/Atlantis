@@ -1432,10 +1432,11 @@ public sealed class EditorWorker : IDisposable
     {
         if (_document is not RemoteAuthoringDocument document || !_batchWritable)
             return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
+        bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime &&
+            (selection is null || selection == _requestedSelectionGeneration);
         bool Current()
         {
-            lock (_lock) return !_stopping && lifetime == MeshDocumentLifetime &&
-                (selection is null || selection == _requestedSelectionGeneration);
+            lock (_lock) return IsCurrent();
         }
         bool SameDocument() => lifetime == MeshDocumentLifetime;
         bool Observe()
@@ -1452,7 +1453,9 @@ public sealed class EditorWorker : IDisposable
         var changed = writes.Select(write => new SetProperty(write.Address, forward ? write.After : write.Before)).ToArray();
         string subject = edit.Field + " on " + string.Join(", ", addresses.Select(address => address.Node));
         BatchReplayResult Conflict() => new(BatchReplayState.Drop, subject + " changed elsewhere. Refresh and review the values.");
-        BatchReplayResult Stale() => new(BatchReplayState.Retry, "Document revision changed. Refresh before retrying " + edit.Field + ".");
+        BatchReplayResult Stale() => new(BatchReplayState.Retry,
+            (selection is null ? "Document revision changed." : "Selection or document revision changed.") +
+            " Refresh before retrying " + edit.Field + ".");
         bool sent = false, committed = false;
         BatchReplayResult Uncertain()
         {
@@ -1477,13 +1480,27 @@ public sealed class EditorWorker : IDisposable
             if (!prior.SequenceEqual(expectedValues)) return Conflict();
             if (changed.Length == 0) return new(BatchReplayState.Committed, "The selected values are unchanged.");
 
-            var commands = new List<Command>(changed.Length + 1) { new RequireDocumentRevision(revision) };
-            commands.AddRange(changed);
             if (!Current()) return Stale();
-            sent = true;
-            var ticket = document.SubmitTransaction(commands);
+            if (document.Info()?.SupportsGuardedPropertyTransactions != true)
+                return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
+            var commands = JsonValue.NewArray().Push(Codec.Encode(new RequireDocumentRevision(revision)));
+            foreach (var command in changed) commands.Push(Codec.Encode(command));
+            var parameters = JsonValue.NewObject().Set("commands", commands);
+            ulong request;
+            // Selection changes share this lock with sending. Capability discovery and receipt waits stay outside it.
+            lock (_lock)
+            {
+                if (!IsCurrent()) return Stale();
+                sent = true;
+                request = session.Send("authoring.submitTransaction", parameters);
+            }
+            if (Codec.DecodeTransactionTicket(session.AwaitResult(request)) is not TransactionTicket ticket)
+            {
+                session.Dispose();
+                throw new RemoteException(RemoteError.ProtocolError, "a malformed authoring.submitTransaction result");
+            }
             var failures = document.DrainFailures();
-            if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count) return Uncertain();
+            if (ticket.First.Value == 0 || ticket.Count != (ulong)changed.Length + 1) return Uncertain();
             if (failures.FirstOrDefault(failure => ticket.Contains(failure.Ticket)) is { Ticket.Value: not 0 } refusal)
                 return new(refusal.Error is AuthoringError.UnknownNode or AuthoringError.ComponentMissing
                     ? BatchReplayState.Drop : BatchReplayState.Retry, "Batch refused: " + refusal.Error);
@@ -1500,10 +1517,6 @@ public sealed class EditorWorker : IDisposable
                 !edit.Targets.All(target => target.IsCurrent(_tree, checkStamp: false)))
                 return Uncertain();
             return new(BatchReplayState.Committed, (selection is not null ? "Set " : forward ? "Redid " : "Undid ") + subject + ".");
-        }
-        catch (NotSupportedException)
-        {
-            return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
         }
         catch (Exception error) when (error is GameplayException or IOException)
         {

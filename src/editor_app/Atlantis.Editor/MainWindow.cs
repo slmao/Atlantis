@@ -2612,6 +2612,20 @@ public sealed class MainWindow : Window
         _batchInputs.Clear();
     }
 
+    private void DiscardBatchDraft(BatchInspectorSnapshot snapshot)
+    {
+        if (!ReferenceEquals(_batchView, snapshot) || _batchDraft is not { } draft) return;
+        _batchDraft = null;
+        string path = draft.Field.Field.Path;
+        if (!_batchInputs.TryGetValue(path, out TextBox? input)) return;
+        _resettingBatchInput = true;
+        try
+        {
+            input.Text = snapshot.Fields.FirstOrDefault(field => field.Field.Path == path)?.Field.Text ?? "";
+        }
+        finally { _resettingBatchInput = false; }
+    }
+
     private void OnBatchInspectorChanged(BatchInspectorSnapshot snapshot)
     {
         if (_selection.Nodes.Count < 2 || snapshot.SelectionGeneration != _selection.Generation ||
@@ -2693,14 +2707,8 @@ public sealed class MainWindow : Window
                     if (change.Property != TextBox.TextProperty) return;
                     set.IsEnabled = ReadValue(out _);
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
-                    if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path &&
-                        _batchInputs.TryGetValue(previous.Field.Field.Path, out TextBox? older))
-                    {
-                        _resettingBatchInput = true;
-                        older.Text = snapshot.Fields.FirstOrDefault(item =>
-                            item.Field.Path == previous.Field.Field.Path)?.Field.Text ?? "";
-                        _resettingBatchInput = false;
-                    }
+                    if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
+                        DiscardBatchDraft(snapshot);
                     _batchDraft = (snapshot, field, box.Text ?? "");
                 };
                 void Submit()
@@ -2722,10 +2730,7 @@ public sealed class MainWindow : Window
                     if (e.Key == Key.Enter) { Submit(); e.Handled = true; }
                     if (e.Key == Key.Escape)
                     {
-                        _batchDraft = null;
-                        _resettingBatchInput = true;
-                        box.Text = definition.Text;
-                        _resettingBatchInput = false;
+                        DiscardBatchDraft(snapshot);
                         e.Handled = true;
                     }
                 };
