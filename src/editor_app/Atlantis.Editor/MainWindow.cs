@@ -93,7 +93,11 @@ public sealed class MainWindow : Window
     private readonly ListBox _entities = new();
     private readonly Selection _selection = new();
     private readonly Button _create = new() { Content = "Create child" };
+    private readonly Button _duplicate = new() { Content = "Duplicate subtree", IsEnabled = false };
     private readonly Button _destroy = new() { Content = "Destroy subtree" };
+    private readonly TextBlock _duplicateState = EditorVisuals.Secondary("");
+    private bool _duplicating;
+    private long _duplicateRequest;
     private readonly Button _toRoot = new() { Content = "Move to root" };
     private readonly Button _pickUp = new() { Content = "Pick up" };
     private readonly Button _moveHere = new() { Content = "Move under selection", IsEnabled = false };
@@ -328,6 +332,8 @@ public sealed class MainWindow : Window
         _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
         _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
+        _duplicate.Click += (_, _) => DuplicateSelectedSubtree();
+        ToolTip.SetShowOnDisabled(_duplicate, true);
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
         _save.Click += (_, _) => _worker?.Save();
@@ -416,8 +422,11 @@ public sealed class MainWindow : Window
         sceneFiles.MaxHeight = 164;
         _newSceneState.Text = NewSceneHint();
         var sceneSection = EditorVisuals.Disclosure("Scene files", sceneFiles);
-        var structural = EditorVisuals.Scroll(EditorVisuals.Actions(_destroy, _toRoot, _pickUp, _moveHere));
-        structural.MaxHeight = 130;
+        _duplicateState.TextWrapping = Avalonia.Media.TextWrapping.Wrap;
+        _duplicateState.IsVisible = false;
+        var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(_duplicate, _destroy, _toRoot, _pickUp, _moveHere));
+        structuralButtons.MaxHeight = 130;
+        var structural = EditorVisuals.Stack(4, structuralButtons, _duplicateState);
         var actions = new ToggleButton { Content = "Actions" };
         structural.IsVisible = false;
         actions.IsCheckedChanged += (_, _) => structural.IsVisible = actions.IsChecked == true;
@@ -601,6 +610,10 @@ public sealed class MainWindow : Window
         _meshDocumentLifetime = 0;
         _canAddMeshToDocument = _addingMesh = false;
         _addMeshState.Text = "";
+        ++_duplicateRequest;
+        _duplicating = false;
+        ShowDuplicateState("");
+        UpdateDuplicateButton();
         ++_referenceLaunch;
         _referenceWindow?.Close(); _referenceWindow = null;
         _referenceBusy = false; _referenceSessionFailed = false;
@@ -665,6 +678,10 @@ public sealed class MainWindow : Window
             if (_addingMesh) _addMeshState.Text = "Add interrupted. Inspect the document on reconnect before retrying.";
             _addingMesh = false;
             ++_meshRequest;
+            if (_duplicating) ShowDuplicateState("Duplicate interrupted. Inspect the document on reconnect before retrying.");
+            _duplicating = false;
+            ++_duplicateRequest;
+            UpdateDuplicateButton();
             _importPoll.Stop();
             if (_importPending || _importRunning)
                 _importState.Text = _importJob is ImportId importId ? $"Import {importId} outcome unknown." : "Import admission unknown.";
@@ -683,8 +700,14 @@ public sealed class MainWindow : Window
             UpdateStatus();
         };
         worker.Picked += OnPicked;
-        worker.HierarchyChanged += OnHierarchyChanged;
-        worker.InspectorChanged += OnInspectorChanged;
+        worker.HierarchyChanged += (rows, markers) =>
+        {
+            if (ReferenceEquals(_worker, worker)) OnHierarchyChanged(rows, markers);
+        };
+        worker.InspectorChanged += snapshot =>
+        {
+            if (ReferenceEquals(_worker, worker)) OnInspectorChanged(snapshot);
+        };
         worker.AssetReferenceInvalidated += (request, reason) =>
         {
             if (ReferenceEquals(_worker, worker) && _referenceWindow?.Target.Request == request)
@@ -723,6 +746,7 @@ public sealed class MainWindow : Window
             _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
             if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }
             UpdateAddMeshButton();
+            UpdateDuplicateButton();
         };
         // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
         worker.PlayStateChanged += playing =>
@@ -737,6 +761,7 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
             UpdateAddMeshButton();
+            UpdateDuplicateButton();
             UpdateSaveAsButton();
             _applyLine.Text = info is null ? "authoring: no document" :
                 "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
@@ -756,10 +781,15 @@ public sealed class MainWindow : Window
             _addingMesh = false;
             _addMeshState.Text = "Scene reopened.";
             UpdateAddMeshButton();
+            if (_duplicating) ShowDuplicateState("Scene reopened. Inspect the document before retrying.");
+            ++_duplicateRequest;
+            _duplicating = false;
+            UpdateDuplicateButton();
         };
         worker.NodesDestroyed += nodes =>
         {
-            if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
+            if (ReferenceEquals(_worker, worker) && _selection.Node is EntityGuid s && nodes.Contains(s))
+                SetSelection(null, true);
         };
         worker.NodeCreatedByEditor += node => SetSelection(node, true);
         worker.CameraAcked += ack =>
@@ -938,6 +968,7 @@ public sealed class MainWindow : Window
                 if (handles is null || Gizmo.Grab(handles, directions, camera, mode, new Vector2(e.X, e.Y)) is not GizmoGrab grab) return false;
                 _gizmoGrab = grab;
                 UpdateAddMeshButton();
+                UpdateDuplicateButton();
                 _gizmoGrabMode = mode;
                 _pressed = null;
                 _worker.BeginGizmoDrag(grab.Axis);
@@ -951,6 +982,7 @@ public sealed class MainWindow : Window
                 _worker?.EndGizmoDrag(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
                 _gizmoGrab = null;
                 UpdateAddMeshButton();
+                UpdateDuplicateButton();
                 return true;
             default:
                 return false;
@@ -1082,6 +1114,7 @@ public sealed class MainWindow : Window
             _syncingSelection = false;
         }
         _worker?.ShowSelection(node);
+        UpdateDuplicateButton();
     }
 
     private void OnHierarchySelected()
@@ -1091,6 +1124,48 @@ public sealed class MainWindow : Window
         if (node == _selection.Node) return;
         _selection.Select(node);
         _worker?.ShowSelection(node);
+        UpdateDuplicateButton();
+    }
+
+    private void UpdateDuplicateButton()
+    {
+        string? reason = _worker is null || _referenceSessionFailed ? "Connect to an authoring session."
+            : !_canAddMeshToDocument ? "Open a hand-authored scene to duplicate nodes."
+            : _duplicating ? "A duplicate is settling."
+            : _gizmoGrab is not null ? "Finish the active Gizmo gesture."
+            : _selection.Node is not EntityGuid node || !_hierarchyRows.Any(row => row.Node == node)
+                ? "Select a node in the Hierarchy."
+                : null;
+        _duplicate.IsEnabled = reason is null;
+        ToolTip.SetTip(_duplicate, reason);
+    }
+
+    private void ShowDuplicateState(string notice)
+    {
+        _duplicateState.Text = notice;
+        _duplicateState.IsVisible = notice.Length > 0;
+    }
+
+    private void DuplicateSelectedSubtree()
+    {
+        if (!_duplicate.IsEnabled || _worker is not { } worker || _selection.Node is not EntityGuid source) return;
+        long request = ++_duplicateRequest;
+        long lifetime = _meshDocumentLifetime;
+        ulong selection = _selection.Generation;
+        _duplicating = true;
+        ShowDuplicateState("Duplicating subtree…");
+        UpdateDuplicateButton();
+        worker.DuplicateSubtree(source, lifetime, (node, notice) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _duplicateRequest ||
+                lifetime != worker.MeshDocumentLifetime) return;
+            _duplicating = false;
+            ShowDuplicateState(notice);
+            if (_selection.Generation == selection && node is EntityGuid created &&
+                _hierarchyRows.Any(row => row.Node == created))
+                SetSelection(created, true);
+            UpdateDuplicateButton();
+        });
     }
 
     // Plan 0068 M3 (Spec 0068 R4): one typed editor per field -- a text box committed on Enter or loss of focus (one
@@ -2501,6 +2576,7 @@ public sealed class MainWindow : Window
         {
             _syncingSelection = false;
         }
+        UpdateDuplicateButton();
     }
 
     // The UI thread's responsiveness (P5 U2, input-queue coupling): the gaps between 16 ms timer ticks.

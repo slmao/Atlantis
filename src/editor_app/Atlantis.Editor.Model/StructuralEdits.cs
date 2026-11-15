@@ -96,6 +96,64 @@ public sealed class DocumentView : IDocumentView
     public ComponentState? ReadComponent(EntityGuid node, TypeId component) =>
         _tree.Contains(node) && _tree.ComponentsOf(node).Contains(component) ? ReadComponents(new[] { (node, component) })[0] : null;
 
+    /// <summary>A duplicate can only use complete, writable snapshots consistent with the observed tree.</summary>
+    public IReadOnlyList<NodeState>? ReadCompleteNodes(IReadOnlyList<EntityGuid> nodes)
+    {
+        IReadOnlyList<IReadOnlyList<TypeId>>? membership = _document.ObserveComponents(nodes);
+        var schema = _document.Schema;
+        if (membership?.Count != nodes.Count || SceneSchema.TypeOf(schema, "Transform") is not TypeId transform)
+            return null;
+        for (int i = 0; i < nodes.Count; ++i)
+        {
+            var types = membership[i];
+            if (!types.Contains(transform) || types.Distinct().Count() != types.Count ||
+                !types.OrderBy(t => t.Value).SequenceEqual(_tree.ComponentsOf(nodes[i]).OrderBy(t => t.Value)))
+                return null;
+            foreach (TypeId type in types)
+            {
+                string name = SceneSchema.NameOf(schema, type);
+                if (name is not ("Transform" or "Renderable" or "Camera" or "Light") ||
+                    LeavesOf(type) is not { Count: > 0 } leaves ||
+                    leaves.Any(field => (field.Flags & FieldFlags.EntityReference) != 0 ||
+                                       (field.Kind == TypeKind.Primitive && field.Primitive == PrimitiveKind.EntityGuid)))
+                    return null;
+            }
+        }
+
+        var result = new List<NodeState>(nodes.Count);
+        foreach (NodeState? state in ReadNodes(nodes))
+        {
+            if (state is null || state.Components.Any(component => !HasEveryValue(component)))
+                return null;
+            result.Add(state);
+        }
+        return result;
+    }
+
+    private bool HasEveryValue(ComponentState component)
+    {
+        var leaves = LeavesOf(component.Type);
+        return component.Values.Count == leaves.Count &&
+            component.Values.Zip(leaves).All(pair => pair.First.Address.Field == pair.Second.Id &&
+                                                   MatchesLeaf(pair.Second, pair.First.Value));
+    }
+
+    private static bool MatchesLeaf(SchemaField field, PropertyValue value)
+    {
+        if (value.Kind == PropertyKind.Absent) return field.IsOptional;
+        if (field.Kind == TypeKind.Enum) return value.Kind == PropertyKind.Enum;
+        if (field.Kind != TypeKind.Primitive) return false;
+        return field.Primitive switch
+        {
+            PrimitiveKind.UInt64 => value.Kind == PropertyKind.UInt64,
+            PrimitiveKind.Float32 => value.Kind == PropertyKind.Float32,
+            PrimitiveKind.Vec3Float32 => value.Kind == PropertyKind.Vec3,
+            PrimitiveKind.Vec4Float32 => value.Kind == PropertyKind.Vec4,
+            PrimitiveKind.AssetGuid => value.Kind == PropertyKind.AssetGuid,
+            _ => false,
+        };
+    }
+
     /// <summary>Several nodes in one pipelined read; null for an absent one.</summary>
     public IReadOnlyList<NodeState?> ReadNodes(IReadOnlyList<EntityGuid> nodes)
     {

@@ -31,6 +31,9 @@ public interface IAuthoringDocument
     /// <summary>Several nodes' component types in the input's order; a document that can pipeline the reads overrides it.</summary>
     IReadOnlyList<IReadOnlyList<TypeId>> ListComponents(IReadOnlyList<EntityGuid> nodes) => nodes.Select(ListComponents).ToList();
 
+    /// <summary>Component membership for an exact structural snapshot. Null when a read fails.</summary>
+    IReadOnlyList<IReadOnlyList<TypeId>>? ObserveComponents(IReadOnlyList<EntityGuid> nodes) => ListComponents(nodes);
+
     /// <summary>A property's value; null when it cannot be read.</summary>
     PropertyValue? GetProperty(SceneAddress address);
 
@@ -108,10 +111,17 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
         return components.IsOk ? components.Value! : Array.Empty<TypeId>();
     }
 
-    public IReadOnlyList<IReadOnlyList<TypeId>> ListComponents(IReadOnlyList<EntityGuid> nodes)
+    public IReadOnlyList<IReadOnlyList<TypeId>> ListComponents(IReadOnlyList<EntityGuid> nodes) =>
+        ReadComponentLists(nodes, strict: false)!;
+
+    public IReadOnlyList<IReadOnlyList<TypeId>>? ObserveComponents(IReadOnlyList<EntityGuid> nodes) =>
+        ReadComponentLists(nodes, strict: true);
+
+    private IReadOnlyList<IReadOnlyList<TypeId>>? ReadComponentLists(IReadOnlyList<EntityGuid> nodes, bool strict)
     {
         if (_wire is null) return nodes.Select(ListComponents).ToList();
         var all = new List<IReadOnlyList<TypeId>>(nodes.Count);
+        bool incomplete = false;
         for (int start = 0; start < nodes.Count; start += PipelineWindow)
         {
             int count = Math.Min(PipelineWindow, nodes.Count - start);
@@ -124,17 +134,19 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
             {
                 JsonValue result = _wire.AwaitResult(id);
                 var types = new List<TypeId>();
-                if (result.Find("ok") is JsonValue ok)
+                if (result.Find("ok") is { IsArray: true } ok)
                 {
                     foreach (JsonValue item in ok.Items)
                     {
                         if (Codec.DecodeTypeId(item) is TypeId type) types.Add(type);
+                        else incomplete = true;
                     }
                 }
+                else incomplete = true;
                 all.Add(types);
             }
         }
-        return all;
+        return strict && incomplete ? null : all;
     }
 
     public IReadOnlyList<PropertyValue?> GetProperties(IReadOnlyList<SceneAddress> addresses)

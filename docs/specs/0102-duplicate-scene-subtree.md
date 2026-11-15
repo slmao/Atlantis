@@ -1,10 +1,10 @@
 # Spec: Duplicate a Scene Node and Its Subtree
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-15
 - **Related Plan:** [Plan 0102](../plans/0102-duplicate-scene-subtree.md)
-- **Approval:** Pending joint review
+- **Approval:** Atlantis maintainer, 2026-11-15, [PR #369](https://github.com/slmao/Atlantis/pull/369) at `996edd11`.
 - **Related ADRs:** None new. See Architectural Impact.
 
 ## Summary

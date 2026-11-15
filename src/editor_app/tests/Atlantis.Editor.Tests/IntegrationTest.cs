@@ -92,6 +92,7 @@ public static class IntegrationTest
         IReadOnlyList<SchemaType> schema = document.Schema;
         bool imported = document.Info()?.Provenance == Provenance.Imported;
         List<EntityGuid> originalNodes = tree.Order.ToList();
+        if (!imported) DuplicateWireChecks(document, sessionPath, cli, work, Check);
 
         void Settle()
         {
@@ -430,6 +431,125 @@ public static class IntegrationTest
 
     // ASCII JSON escapes avoid depending on the Windows CRT argv code page.
     private static string QuoteName(string name) => System.Text.Json.JsonSerializer.Serialize(name);
+
+    private static void DuplicateWireChecks(RemoteAuthoringDocument document, string sessionPath, string cli,
+                                            string work, Action<string, bool, string> check)
+    {
+        IReadOnlyList<SchemaType> schema = document.Schema;
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var originalOrder = tree.Order.ToList();
+        var fixture = Enumerable.Range(0, HierarchyCommands.MaxDuplicateNodes).Select(_ => new EntityGuid(Guid.NewGuid())).ToArray();
+        string name = new('"', NodeNames.MaxUtf8Bytes);
+        var add = new List<Command>();
+        for (int i = 0; i < fixture.Length; ++i)
+        {
+            add.Add(new CreateNode(fixture[i], (ulong)(originalOrder.Count + i), Array.Empty<TypeId>()));
+            add.Add(new SetNodeName(fixture[i], name));
+            if (i > 0) add.Add(new SetParent(fixture[i], fixture[0]));
+        }
+        void Submit(IReadOnlyList<Command> commands)
+        {
+            TransactionTicket ticket = document.SubmitTransaction(commands);
+            if (ticket.Count != (ulong)commands.Count || document.DrainFailures().Any(f => ticket.Contains(f.Ticket)))
+                throw new InvalidOperationException("duplicate wire fixture transaction refused");
+            foreach (Event e in document.DrainEvents()) tree.Apply(e, document);
+        }
+        int RequestBytes(IReadOnlyList<Command> commands)
+        {
+            var values = JsonValue.NewArray();
+            foreach (Command command in commands) values.Push(Codec.Encode(command));
+            var request = JsonValue.NewObject().Set("id", JsonValue.Number(ulong.MaxValue))
+                .Set("method", JsonValue.String("authoring.submitTransaction"))
+                .Set("params", JsonValue.NewObject().Set("commands", values));
+            return Encoding.UTF8.GetByteCount(Json.Write(request));
+        }
+
+        Submit(add);
+        SubtreeDuplicate copy = HierarchyCommands.DuplicateSubtree(document, tree, fixture[0]).Copy ??
+            throw new InvalidOperationException("the 64-node wire fixture could not be planned");
+        var states = copy.Edit.Structure.Cast<NodeLife>().Select(entry => entry.State).ToList();
+        EntityGuid[] copies = states.Select(state => state.Node).ToArray();
+        var commands = StructuralSteps.Commands(copy.Edit, true, schema);
+        ulong? before = document.ApplyStatus().Value?.CurrentDocumentRevision;
+        Submit(commands);
+        var view = new DocumentView(document, tree);
+        check("duplicate: 64 nodes settle in one Remote transaction and one revision",
+            before.HasValue && document.ApplyStatus().Value?.CurrentDocumentRevision == before + 1 &&
+            view.ReadCompleteNodes(copies) is { } observed && copy.Matches(observed), RequestBytes(commands) + " UTF-8 bytes");
+
+        // Bound the wire using all current serializable leaves together, even
+        // when the scene schema would refuse that component combination.
+        const float longFloat = -1.2345678e-30f;
+        var types = schema.Where(type => type.ShortName is "Transform" or "Camera" or "Renderable" or "Light").ToList();
+        var longest = states.Select((state, i) => (EditEntry)new NodeLife(state with
+        {
+            Position = 65536ul + (ulong)i,
+            Parent = fixture[0],
+            Name = name,
+            Components = types.Select(type => new ComponentState(type.Id,
+                SchemaText.LeavesOf(schema, type.Id).Select(item => item.Leaf)
+                    .Where(field => (field.Flags & FieldFlags.Serializable) != 0)
+                    .Select(field => (new SceneAddress(state.Node, type.Id, field.Id),
+                        field.Kind == TypeKind.Enum ? PropertyValue.FromEnum(long.MinValue) : field.Primitive switch
+                        {
+                            PrimitiveKind.Float32 => PropertyValue.FromFloat32(longFloat),
+                            PrimitiveKind.Vec3Float32 => PropertyValue.FromVec3(new Vector3(longFloat)),
+                            PrimitiveKind.Vec4Float32 => PropertyValue.FromVec4(new Vector4(longFloat)),
+                            PrimitiveKind.AssetGuid => PropertyValue.FromAsset(new AssetGuid(Guid.NewGuid())),
+                            _ => throw new InvalidOperationException("update the command footprint for this schema"),
+                        })).ToList())).ToList()
+        }, true)).ToList();
+        int footprint = RequestBytes(StructuralSteps.Commands(copy.Edit with { Entries = longest }, true, schema));
+        check("duplicate: the maximal replay-shaped request fits the default Remote limit",
+            types.Count == 4 && footprint < 1024 * 1024, footprint + " UTF-8 bytes including full request envelope");
+        Submit(StructuralSteps.Commands(copy.Edit, false, schema));
+        check("duplicate: 64-node reverse batch removes only the copied GUIDs",
+            copies.All(guid => !tree.Contains(guid)) && fixture.All(tree.Contains), "");
+        Submit(StructuralSteps.Commands(copy.Edit, true, schema));
+        check("duplicate: 64-node redo restores the identical GUIDs and packet size",
+            RequestBytes(StructuralSteps.Commands(copy.Edit, true, schema)) == RequestBytes(commands) &&
+            new DocumentView(document, tree).ReadCompleteNodes(copies) is { } redone && copy.Matches(redone), "");
+        Submit(copies.Concat(fixture).Select(guid => (Command)new DestroyNode(guid)).ToList());
+
+        string path = Path.Combine(work, "duplicate-scene-tx.txt");
+        var root = new EntityGuid(Guid.NewGuid());
+        var child = new EntityGuid(Guid.NewGuid());
+        File.WriteAllLines(path, new[]
+        {
+            $"create {child} --at {tree.Count}",
+            $"create {root} --at {tree.Count + 1}",
+            $"name {root} \"CLI Copy\"",
+            $"parent {child} {root}",
+        });
+        before = document.ApplyStatus().Value?.CurrentDocumentRevision;
+        int code = Cli(cli, sessionPath, "scene", "tx", path);
+        foreach (Event e in document.DrainEvents()) tree.Apply(e, document);
+        check("duplicate: CLI scene tx and SDK agree on ordinary shared composition",
+            code == 0 && before.HasValue && document.ApplyStatus().Value?.CurrentDocumentRevision == before + 1 &&
+            tree.NameOf(root) == "CLI Copy" && tree.ParentOf(child) == root, "exit " + code);
+        if (tree.Contains(root) && tree.Contains(child)) Submit(new Command[] { new DestroyNode(child), new DestroyNode(root) });
+        check("duplicate: wire fixture restores the original document order", tree.Order.SequenceEqual(originalOrder), "");
+
+        if (SceneSchema.TypeOf(schema, "Light") is TypeId light)
+        {
+            EntityGuid? directional = tree.Order.Where(node => tree.ComponentsOf(node).Contains(light) &&
+                SceneSchema.AddressOf(schema, node, "Light", "kind") is SceneAddress address &&
+                document.GetProperty(address) == PropertyValue.FromEnum(0)).Select(node => (EntityGuid?)node).FirstOrDefault();
+            if (directional is EntityGuid sun &&
+                HierarchyCommands.DuplicateSubtree(document, tree, sun).Copy is SubtreeDuplicate invalid)
+            {
+                var duplicateSun = StructuralSteps.Commands(invalid.Edit, true, schema);
+                before = document.ApplyStatus().Value?.CurrentDocumentRevision;
+                TransactionTicket ticket = document.SubmitTransaction(duplicateSun);
+                var declined = document.DrainFailures().Where(failure => ticket.Contains(failure.Ticket)).ToList();
+                check("duplicate: the real authoring host refuses a second directional light atomically",
+                    declined.Count == 1 && declined[0].Error == AuthoringError.MaxDirectionalLights &&
+                    before.HasValue && document.ApplyStatus().Value?.CurrentDocumentRevision == before &&
+                    document.ListNodes().Select(node => node.Node).SequenceEqual(originalOrder), "");
+            }
+        }
+    }
 
     internal static int Cli(string executable, string session, params string[] args)
     {

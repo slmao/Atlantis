@@ -12,8 +12,10 @@
 // UI-free.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
 
@@ -23,6 +25,31 @@ namespace Atlantis.Editor.Model;
 public sealed record EditPlan(string Label, IReadOnlyList<Command> Commands, string? Refusal = null)
 {
     public static EditPlan Refused(string label, string reason) => new(label, Array.Empty<Command>(), reason);
+}
+
+/// <summary>The intended, replayable state of one duplicate transaction.</summary>
+public sealed record SubtreeDuplicate(EntityGuid Root, EditTransaction Edit)
+{
+    public bool Matches(IReadOnlyList<NodeState> observed)
+    {
+        var intended = Edit.Structure.OfType<NodeLife>().Select(entry => entry.State).ToList();
+        return intended.Count == observed.Count && intended.Zip(observed).All(pair =>
+            pair.First.Node == pair.Second.Node && pair.First.Position == pair.Second.Position &&
+            pair.First.SameAs(pair.Second) && pair.First.Components.Zip(pair.Second.Components).All(component =>
+                component.First.Values.Zip(component.Second.Values).All(value =>
+                    ExactPayload(value.First.Value, value.Second.Value))));
+    }
+
+    private static bool ExactPayload(PropertyValue first, PropertyValue second)
+    {
+        static bool Same(float a, float b) => BitConverter.SingleToInt32Bits(a) == BitConverter.SingleToInt32Bits(b);
+        if (first.TryGetFloat32(out float f) && second.TryGetFloat32(out float g)) return Same(f, g);
+        if (first.TryGetVec3(out Vector3 a) && second.TryGetVec3(out Vector3 b))
+            return Same(a.X, b.X) && Same(a.Y, b.Y) && Same(a.Z, b.Z);
+        if (first.TryGetVec4(out Vector4 c) && second.TryGetVec4(out Vector4 d))
+            return Same(c.X, d.X) && Same(c.Y, d.Y) && Same(c.Z, d.Z) && Same(c.W, d.W);
+        return first.Equals(second);
+    }
 }
 
 public static class TransformMath
@@ -120,6 +147,7 @@ public static class TransformMath
 
 public static class HierarchyCommands
 {
+    public const int MaxDuplicateNodes = 64;
     public const string AddMeshLabel = "add mesh to scene";
 
     public static EditPlan AddMesh(IReadOnlyList<SchemaType> schema, ulong position, EntityGuid node, AssetGuid mesh)
@@ -176,6 +204,75 @@ public static class HierarchyCommands
         var commands = new List<Command> { new CreateNode(node, (ulong)tree.Count, Array.Empty<TypeId>()) };
         if (parent is EntityGuid p) commands.Add(new SetParent(node, p));
         return (new EditPlan("create node", commands), node);
+    }
+
+    /// <summary>Builds the duplicate record from the current tree and complete authoring values.</summary>
+    public static (SubtreeDuplicate? Copy, string? Refusal) DuplicateSubtree(
+        IAuthoringDocument document, DocumentTree tree, EntityGuid source)
+    {
+        if (!tree.Contains(source)) return (null, "the selected node is gone");
+        var nodes = new List<EntityGuid> { source };
+        var seen = new HashSet<EntityGuid> { source };
+        for (int i = 0; i < nodes.Count; ++i)
+        {
+            foreach (EntityGuid child in tree.ChildrenOf(nodes[i]))
+            {
+                if (!seen.Add(child)) return (null, "invalid source hierarchy");
+                if (nodes.Count == MaxDuplicateNodes) return (null, $"the subtree exceeds {MaxDuplicateNodes} nodes");
+                nodes.Add(child);
+            }
+        }
+
+        if (new DocumentView(document, tree).ReadCompleteNodes(nodes) is not { } originals)
+            return (null, "the subtree's complete component values could not be read");
+        var copies = new Dictionary<EntityGuid, EntityGuid>(nodes.Count);
+        var minted = new HashSet<EntityGuid>();
+        foreach (EntityGuid original in nodes)
+        {
+            var copy = new EntityGuid(Guid.NewGuid());
+            if (!minted.Add(copy) || tree.Contains(copy))
+                return (null, "a copied node identity conflicts with the document");
+            copies.Add(original, copy);
+        }
+
+        NodeState root = originals[0];
+        string rootName = DuplicateRootName(root.Name, tree.ChildrenOf(root.Parent).Select(tree.NameOf));
+        var entries = new List<EditEntry>(nodes.Count);
+        ulong position = (ulong)tree.Count;
+        foreach (NodeState original in originals.OrderBy(node => node.Position))
+        {
+            EntityGuid copy = copies[original.Node];
+            bool isRoot = original.Node == source;
+            var components = original.Components.Select(component => new ComponentState(component.Type,
+                component.Values.Select(value => (value.Address with { Node = copy }, value.Value)).ToList())).ToList();
+            entries.Add(new NodeLife(new NodeState(copy, position++,
+                isRoot ? root.Parent : copies[original.Parent!.Value],
+                original.Children.Select(child => copies[child]).ToList(), components,
+                isRoot ? rootName : original.Name), true));
+        }
+        return (new SubtreeDuplicate(copies[source],
+            new EditTransaction("duplicate subtree", Array.Empty<PropertyWrite>(), entries)), null);
+    }
+
+    private static string DuplicateRootName(string source, IEnumerable<string> siblings)
+    {
+        var names = siblings.ToHashSet(StringComparer.Ordinal);
+        for (int number = 1; number <= names.Count + 1; ++number)
+        {
+            string suffix = number == 1 ? "Copy" : "Copy " + number.ToString(CultureInfo.InvariantCulture);
+            if (source.Length > 0) suffix = " " + suffix;
+            int remaining = NodeNames.MaxUtf8Bytes - suffix.Length;
+            int length = 0;
+            foreach (Rune scalar in source.EnumerateRunes())
+            {
+                remaining -= scalar.Utf8SequenceLength;
+                if (remaining < 0) break;
+                length += scalar.Utf16SequenceLength;
+            }
+            string candidate = source[..length] + suffix;
+            if (!names.Contains(candidate)) return candidate;
+        }
+        throw new InvalidOperationException("no duplicate label in a finite set of siblings");
     }
 
     /// <summary>The node and its whole subtree, in one transaction; the active camera cleared first if it is among them.</summary>

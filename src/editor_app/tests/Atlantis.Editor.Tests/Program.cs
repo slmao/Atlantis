@@ -75,6 +75,7 @@ public static partial class Program
             HistoryTranscriptChecks(Path.Combine(conformance, "history_transcripts.jsonl"));
             // Plan 0068 M2: the Hierarchy's model, its commands (J4) and the apply controller, against a fake document.
             HierarchyChecks();
+            DuplicateSubtreeChecks();
             ApplyControllerChecks();
         ApplyOutcomeChecks();
             // Plan 0068 M3: the Inspector's model.

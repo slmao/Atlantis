@@ -141,10 +141,16 @@ public sealed class EditHistory
     public void Record(EditTransaction edit, EditHandle handle)
     {
         if (edit.Writes.Count == 0 && edit.Structure.Count == 0) return;
-        _redo.Clear();
-        foreach (Pending pending in _pending) pending.RedoCleared = true;
+        DiscardRedo();
         _target.Track(handle, WritesOf(edit, forward: true));
         _pending.Add(new Pending { Edit = edit, Handle = handle, Step = Step.Record });
+    }
+
+    /// <summary>A confirmed new edit overtakes redo, even when there is no safe record for that edit.</summary>
+    public void DiscardRedo()
+    {
+        _redo.Clear();
+        foreach (Pending pending in _pending) pending.RedoCleared = true;
     }
 
     public HistoryResult Undo() => Take(_undo, Step.Undo);
