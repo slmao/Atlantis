@@ -51,10 +51,13 @@ node is selected.
 Plain Hierarchy click replaces the set. Ctrl+click toggles one row
 without selecting its descendants. Support keyboard focus navigation
 and Ctrl+Space toggle within the Hierarchy. A toggle beyond 64 leaves
-the set intact and reports the limit. A Viewport hit selects one node
-and a miss clears the set. A late pick answer must match the latest
-pick and the selection generation, connection and document lifetime
-of its request before changing the set.
+the set intact and reports the limit. A Viewport hit selects one
+live node and a miss clears the set. Each new Viewport pick, including
+a synchronous marker pick, supersedes older picks. An explicit
+Hierarchy selection action supersedes pending picks even if the set
+is unchanged. A reply must match the request, selection intent,
+connection and document lifetime. An observed removal or replacement
+of the hit node invalidates the pick.
 
 Keep selection through ordinary Apply and Hierarchy refresh for
 unchanged node incarnations. Destroy removes the selected incarnation
@@ -69,42 +72,54 @@ nor an existing marker is represented in the Hierarchy and selected
 count. Show the selection count, hide the Gizmo during multiselection
 and reject single-target actions while several nodes are selected,
 including structural commands, row drag and asset-reference editing.
+Cancel uncommitted single-target previews or gestures on entering
+multiselection. A submitted edit settles against its original target.
 Use the [0093 visual conventions](0093-editor-visual-layout.md).
 
 ### R2. Common fields and explicit assignment
 
 Intersect component IDs across the entire set. Within those
-components, use schema leaf addresses and show their typed values as
-uniform, mixed, uniformly absent or unavailable. Use the same typed
-equality as the existing Inspector. A mixed placeholder represents
-no draft value. Never substitute zero, blank or a representative
-node's value for a mixed or unavailable read.
+components, use schema leaf addresses and the existing Inspector's
+typed equality. Show a uniform value if all reads agree on a present
+value, uniformly absent if all reads explicitly report absence, and
+mixed for differing successful reads, including absent/present.
+An incomplete component list leaves the intersection unavailable.
+A failed value read makes its row unavailable. Display a mixed
+placeholder without populating an edit value.
 
 For a hand-authored document on a capable Runtime, enable common
 non-optional editable numeric scalars, whole vectors and enum leaves.
 All other common leaves can be inspected read-only. A vector draft
 assigns the full typed vector, with each element explicitly provided.
 Use a per-field Set action or explicit Enter to confirm, and Escape to
-discard. Changing focus alone does not submit. Permit one draft at a
-time. Changes to the selection, subject identity, field availability or
-document lifetime invalidate the draft. Refreshes for an unchanged
-selection leave focused text intact. If a relevant external event
-invalidates the draft's baseline, show a conflict and let the user
-review the refreshed values before starting another draft.
+discard. Changing focus alone does not submit. Keep a draft when
+focus moves within the same Inspector context. Starting another
+field draft discards the previous one. Changes to the selection,
+subject identity, field availability or document lifetime invalidate
+the draft. A relevant external change shows a conflict and requires
+a fresh displayed snapshot and new input before another submission.
 
-Bind a draft to the displayed field, exact selection and its
-generation, document lifetime, node and component incarnations, and
-each selected node's original typed value. Populate the view and
-preflight through existing bounded component/property reads and
-revision fencing. Partial or unstable reads cannot authorize a write.
+Accept an Inspector snapshot only for the current connection,
+document lifetime, selection generation and latest refresh of that
+selection. Selecting A, then B, then A requires a fresh snapshot.
+Bind a draft to the snapshot actually displayed, with the field,
+node and component incarnations, and every selected node's original
+typed value. An unrelated refresh can update other fields without
+overwriting or rebasing that draft. Populate the view and preflight
+through existing bounded component/property reads and revision
+fencing. Partial or unstable reads cannot authorize a write.
 On preflight, observe pending lifecycle and property events, read the
 current targets and values, and fence the reads with the same document
 revision before and after. An observed change to the drafted field or
 replacement of an addressed node or component invalidates the draft,
-including same-GUID replacement. Unrelated edits settled before
-preflight may coexist once the captured targets and values still
-match. A revision change during the fence or before host admission
-refuses the attempt and refreshes the view.
+including same-GUID replacement. Observe those changes from the
+displayed snapshot, including a value changed away and back before
+Set. Unrelated edits settled before preflight may coexist once the
+captured targets and values still match. A revision change during the
+fence or before host admission refuses the attempt and refreshes the
+view. Recheck the selection generation at submission. Once sent,
+settle against the original targets even if the selection changes.
+Permit only one guarded edit or replay to settle per Editor worker.
 
 ### R3. Shared settlement and Undo/Redo
 
@@ -117,44 +132,60 @@ An all-equal assignment has no transaction, history or Apply.
 Older Runtime peers can show the selection and common fields
 read-only and continue existing single-node editing.
 
-Settle the ticket and its complete failure drain before scheduling
-Apply. A correlated refusal remains known if a later refresh fails.
-Before recording local authorship, verify the matching property
-events and resulting target values under a fence at the expected
-next revision. A refusal
-creates no history or Apply. A verified batch makes one local history
-record with each changed address and its own before/after value.
-Keep selection independent from the record.
+Settle a nonzero N+1 ticket range and the complete failure drain
+for N writes. Use the same submission's ticket range to classify
+refusals. A correlated refusal remains known if a later refresh
+fails, with no new history or Apply. Before recording local
+authorship, verify the matching ordered property events and
+resulting values at the guarded revision plus one. Fence these reads
+and the event drain against that revision on both sides. A verified
+batch makes one local history record with each changed address and
+its own before/after value. Publish it even if the selection changed
+after submission.
 
 Undo and Redo use the same guarded transaction. Use a fresh fenced
 revision with the recorded node/component incarnations and exact
 expected values for the entire recorded write set. An unrelated edit
 can coexist when this check holds. A changed value, missing target,
 or replaced instance refuses the whole replay and drops the
-conflicted entry with a reason. A verified replay moves one record
-between the history stacks. Publish replay settlement and known
-history before any subsequent fallible refresh. A real reopen clears
-local history.
+conflicted entry with a reason. A known stale-revision refusal on
+its own keeps the entry on its original stack. Refresh and recheck
+the targets before an explicit retry. A verified replay moves one
+record between the history stacks. Publish replay settlement and
+known history before any subsequent fallible refresh. A real reopen
+clears local history. An old document's settlement cannot update the
+new document's history or Inspector.
 
 A lost or invalid settlement is unknown. A settled commit overtaken
 before verification is confirmed but unavailable for Undo. Report the
-field and affected targets and direct the caller to refresh and inspect
-before attempting another batch. Do not synthesize history or repeat
-the writes. A confirmed new commit clears Redo even when its history
-cannot be verified. Preserve settlement for any older owned Apply,
-drop automatic follow-ups and require explicit Apply of the current
-revision. A lost Apply receipt leaves the verified edit and history
-intact and reports the projection outcome as unknown.
+field and affected targets and require a fresh authoritative read
+and inspection before another batch. An unknown or unverified
+replay drops the attempted entry without moving it to the opposite
+stack. An unknown or unverified new forward batch clears Redo
+because it may have overtaken that branch. A verified edit keeps its
+history if only the Apply receipt is lost. Report the projection
+outcome as unknown in that case. Preserve settlement of any older
+owned Apply, clear automatic follow-ups and require explicit Apply
+of the current revision after an uncertain or unverifiable edit.
 
 ### R4. Apply, Save and reopen
 
 Use the [0083 Apply controller](0083-authoring-apply-outcomes.md) after
 verified batch, Undo and Redo, with one Apply intent per action and the
-existing coalescing rules. With Runtime paused or reload failed, report
-the distinction between the document and its last successful Runtime
-projection. While recovery is suspended, further verified edit or
-history actions can update the document. Explicit Retry/Apply projects
-the latest document without repeating the property transaction.
+existing coalescing rules. The guarded edit and Apply are separate
+requests. Correlate the exact accepted Apply ID and revision. If
+another writer advances the document between edit verification and
+Apply acceptance, the receipt describes the revision actually
+snapshotted. Show that revision and retain the verified history.
+A later accepted snapshot provides no proof that the earlier
+revision was projected separately.
+
+With Runtime paused or reload failed, show the current document and
+last successful Runtime projection as separate states. While
+recovery is suspended, further verified edits and replays can
+update the document without issuing Apply. Explicit Retry/Apply
+projects the latest document without repeating the property
+transaction.
 
 Save the accepted values through ordinary Save. Reopen the same
 hand-authored source on the same active asset generation, read the
