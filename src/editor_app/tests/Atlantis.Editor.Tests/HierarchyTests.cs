@@ -539,10 +539,19 @@ public static partial class Program
         var newChild = document.Add(4, last, LocalTransform.Identity);
         tree.Apply(new NodeCreated(newChild, 3), document);
         tree.Apply(new ParentChanged(newChild, last), document);
+        object? childIdentity = tree.IncarnationOf(newChild);
+        Check(!tree.Apply(new NodeMovedInSiblingOrder(last, null, 0, 2, 4), document) &&
+            !tree.Apply(new NodeOrderChanged(last, first, 2, 0, 5), document),
+            "an unsynchronized tree defers both order deltas pending a snapshot");
         Check(tree.ReconcileOrder(document.ListNodes()) && tree.OrderSynchronized &&
             tree.Order.SequenceEqual(new[] { first, child, last, newChild }) &&
-            ReferenceEquals(identity, tree.IncarnationOf(first)),
-            "snapshot covers a queued lifecycle event once and retains existing incarnations");
+            ReferenceEquals(identity, tree.IncarnationOf(first)) &&
+            ReferenceEquals(childIdentity, tree.IncarnationOf(newChild)),
+            "snapshot covers a queued lifecycle event once and retires both order deltas");
+        Check(tree.Apply(new NodeMovedInSiblingOrder(first, null, 0, 2, 6), document) &&
+            tree.Order.SequenceEqual(new[] { last, child, first, newChild }) &&
+            ReferenceEquals(childIdentity, tree.IncarnationOf(newChild)),
+            "new relative delta applies once after the snapshot");
     }
 
     private static void DuplicateSubtreeChecks()
