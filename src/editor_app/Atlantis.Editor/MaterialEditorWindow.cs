@@ -66,18 +66,11 @@ internal sealed class MaterialEditorWindow : Window
         AutomationProperties.SetName(_name, "Material name");
         _name.IsReadOnly = draft.Mode == MaterialMode.Edit;
         _name.Text = draft.Mode == MaterialMode.Create ? "" : _name.IsReadOnly ? name : "";
-        static bool HasRole(AssetSummary asset, string suffix)
-        {
-            const string prefix = "content:texture_";
-            return asset.Source.StartsWith(prefix, StringComparison.Ordinal) &&
-                asset.Source.EndsWith(suffix, StringComparison.Ordinal) &&
-                asset.Source.Length > prefix.Length + suffix.Length &&
-                Codec.ValidImportName(asset.Source[prefix.Length..^suffix.Length]);
-        }
-        var textures = catalog.Where(x => x.Type == AssetType.Texture && !HasRole(x, "/metallic-roughness.png") &&
-            !HasRole(x, "/occlusion.png")).ToArray();
-        var packed = catalog.Where(x => x.Type == AssetType.Texture && HasRole(x, "/metallic-roughness.png")).ToArray();
-        var occlusion = catalog.Where(x => x.Type == AssetType.Texture && HasRole(x, "/occlusion.png")).ToArray();
+        static bool IsPacked(AssetSummary asset) => EditorVisuals.ManagedTextureName(asset, "/metallic-roughness.png") is not null;
+        static bool IsOcclusion(AssetSummary asset) => EditorVisuals.ManagedTextureName(asset, "/occlusion.png") is not null;
+        var textures = catalog.Where(x => x.Type == AssetType.Texture && !IsPacked(x) && !IsOcclusion(x)).ToArray();
+        var packed = catalog.Where(IsPacked).ToArray();
+        var occlusion = catalog.Where(IsOcclusion).ToArray();
         _occlusion.ItemsSource = occlusion;
         _occlusion.SelectedItem = occlusion.FirstOrDefault(x => x.Guid == draft.Initial.OcclusionMap);
         _occlusion.SelectionChanged += (_, _) => Changed();
