@@ -581,9 +581,7 @@ TEST_CASE("occlusion material versions match the binding and catalog", "[asset_s
   CHECK(parseMaterialSource(bound).value().occlusionMapAsset == occlusion);
   CHECK(parseMaterialSource(bound + "roughness_factor: 1\n").isErr());
 
-  recipe.normalMapAsset = testAssetGuid("normal");
-  CHECK(parseMaterialSource(serializeMaterialSource(recipe)).isErr());
-  recipe.normalMapAsset.reset();
+  CHECK(parseMaterialSource(bound + "normal_map_asset: " + toString(testAssetGuid("normal")) + "\n").isErr());
   cook(bound);
   const auto newArtifact = readFile(artifactPath);
   const auto newMetadata = readFile(metadataPath);

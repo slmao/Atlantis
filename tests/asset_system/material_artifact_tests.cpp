@@ -166,7 +166,7 @@ TEST_CASE("decodeMaterialArtifact rejects an unsupported schema version", "[asse
   auto bytes =
       encodeMaterialArtifact(MaterialKind::UnlitTextured, 1ULL, MaterialSamplerFilter::Linear,
                               MaterialSamplerAddressMode::Repeat, kDefaultBaseColorFactor, 1.0f, 1.0f, 0ULL, 0.0f, 0.0f, kDefaultSheenColor, 0.0f, 0.0f, 0.0f);
-  bytes[8] = std::byte{0x0C};  // schemaVersion's low byte, offset 8
+  bytes[8] = std::byte{0x0D};  // schemaVersion's low byte, offset 8
   const auto result = decodeMaterialArtifact(bytes);
   REQUIRE(result.isErr());
   CHECK(result.error() == MaterialArtifactDecodeError::UnsupportedSchemaVersion);
