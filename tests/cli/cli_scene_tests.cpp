@@ -266,6 +266,25 @@ TEST_CASE("cli scene: swap-siblings submits one guarded transaction and reports 
   CHECK(scene.authoring->listNodes().value() == rows);
 }
 
+TEST_CASE("cli scene: move-sibling rotates occupied slots and reports one move event",
+          "[cli][scene][sibling_order]") {
+  namespace ac = atlantis::connection::authoring;
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto initial = scene.authoring->listNodes().value();
+  REQUIRE(initial.size() == 4);
+  const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+  const auto command = "scene move-sibling " + std::string(kNode1) + " " + std::string(kNode4) +
+      " none after " + std::to_string(revision);
+  REQUIRE(scene.run(command) == 0);
+  CHECK(scene.cli.out.str().find("NodeMovedInSiblingOrder") != std::string::npos);
+  const auto rows = scene.authoring->listNodes().value();
+  CHECK(rows == std::vector<ac::NodeSummary>{initial[1], initial[3], initial[2], initial[0]});
+  CHECK(scene.run(command) != 0);
+  CHECK(scene.cli.out.str().find(toString(ac::Error::SiblingOrderStaleRevision)) != std::string::npos);
+  CHECK(scene.authoring->listNodes().value() == rows);
+}
+
 TEST_CASE("cli scene: usage, no document and no authoring session", "[cli][scene]") {
   SceneCli scene(/*json=*/true);
   CHECK(scene.run("scene") == 2);

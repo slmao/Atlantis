@@ -331,6 +331,8 @@ public sealed class EditorWorker : IDisposable
     private bool _siblingMoveQueued;
     private volatile bool _siblingOrderAvailable;
     public bool SiblingOrderAvailable => _siblingOrderAvailable;
+    private volatile bool _siblingMoveSupported;
+    public bool SiblingMoveSupported => _siblingMoveSupported;
     // Published rows keep the identity of the node they depicted, including while the UI holds an old row.
     private readonly ConditionalWeakTable<HierarchyRow, object> _hierarchyIncarnations = new();
     private long? _commitTicks;  // the last commit's start, until its Applied dates it
@@ -1009,52 +1011,81 @@ public sealed class EditorWorker : IDisposable
                 !_hierarchyIncarnations.TryGetValue(row, out object? nodeIdentity) ||
                 !_hierarchyIncarnations.TryGetValue(sibling, out object? siblingIdentity)) return false;
             var order = new SiblingOrderEntry(row.Node, sibling.Node, row.Parent, nodeIdentity, siblingIdentity, direction);
-            _siblingMoveQueued = true;
-            Enqueue(session =>
-            {
-                string notice;
-                try
-                {
-                    var result = SettleSiblingOrder(session, order, forward: true, lifetime);
-                    notice = result.Notice;
-                    if (result.Verified && _history is { } history && _historyTarget is { } target)
-                    {
-                        var edit = new EditTransaction("Move sibling", Array.Empty<PropertyWrite>(), new EditEntry[] { order });
-                        history.Record(edit, target.Committed(Array.Empty<CommandFailure>()));
-                        history.Update();
-                        notice = ApplySiblingOrder(lifetime, notice);
-                    }
-                    PostHistory(lifetime);
-                }
-                finally
-                {
-                    lock (_lock) _siblingMoveQueued = false;
-                }
-                _log.Write(notice);
-                _post(() => settled(notice));
-            });
+            QueueSiblingOrder(order, lifetime, settled);
             return true;
         }
     }
 
-    private (bool Verified, string Notice) SettleSiblingOrder(RemoteSession session, SiblingOrderEntry order,
+    public bool SameHierarchyIncarnation(HierarchyRow first, HierarchyRow second) =>
+        first.Node == second.Node && _hierarchyIncarnations.TryGetValue(first, out object? identity) &&
+        _hierarchyIncarnations.TryGetValue(second, out object? other) && ReferenceEquals(identity, other);
+
+    public bool MoveSiblingRelative(ReparentSource source, HierarchyRow anchor, IReadOnlyList<HierarchyRow> interval,
+        SiblingPlacement placement, Action<string> settled)
+    {
+        lock (_lock)
+        {
+            if (_stopping || source.Lifetime != MeshDocumentLifetime || !_siblingMoveSupported || !_siblingOrderAvailable ||
+                _gizmoActive || _reparentQueued || _siblingMoveQueued || !ReferenceEquals(source, _reparentSource))
+                return false;
+            var displayed = new List<(EntityGuid Node, object Identity)>(interval.Count);
+            foreach (HierarchyRow row in interval)
+            {
+                if (row.Parent != source.Parent || !_hierarchyIncarnations.TryGetValue(row, out object? identity) ||
+                    (row.Node == source.Node && !ReferenceEquals(identity, source.Incarnation))) return false;
+                displayed.Add((row.Node, identity));
+            }
+            if (SiblingMoveEntry.Capture(source.Node, anchor.Node, source.Parent, placement, displayed) is not { } order)
+                return false;
+            _reparentSource = null;
+            QueueSiblingOrder(order, source.Lifetime, settled);
+            return true;
+        }
+    }
+
+    private void QueueSiblingOrder(SiblingEditEntry order, long lifetime, Action<string> settled)
+    {
+        _siblingMoveQueued = true;
+        Enqueue(session =>
+        {
+            string notice;
+            try
+            {
+                var result = SettleSiblingOrder(session, order, forward: true, lifetime);
+                notice = result.Notice;
+                if (result.Verified && _history is { } history && _historyTarget is { } target)
+                {
+                    var edit = new EditTransaction("Move sibling", Array.Empty<PropertyWrite>(), new EditEntry[] { order });
+                    history.Record(edit, target.Committed(Array.Empty<CommandFailure>()));
+                    history.Update();
+                    notice = ApplySiblingOrder(lifetime, notice);
+                }
+                PostHistory(lifetime);
+            }
+            finally
+            {
+                lock (_lock) _siblingMoveQueued = false;
+            }
+            _log.Write(notice);
+            _post(() => settled(notice));
+        });
+    }
+
+    private (bool Verified, string Notice) SettleSiblingOrder(RemoteSession session, SiblingEditEntry order,
         bool forward, long lifetime)
     {
-        if (_document is not RemoteAuthoringDocument document || !document.SupportsSiblingOrder)
+        bool relative = order is SiblingMoveEntry;
+        if (_document is not RemoteAuthoringDocument document || !(relative ? document.SupportsSiblingMove : document.SupportsSiblingOrder))
             return (false, "Sibling order is unavailable for this connection.");
-        SiblingDirection direction = order.DirectionFor(forward);
         bool Current()
         {
             lock (_lock) return !_stopping && lifetime == MeshDocumentLifetime;
         }
-        bool CanSubmit()
+        (Command Command, Event Delta)? Plan(ulong revision)
         {
             lock (_lock)
-                return Current() && !_gizmoActive && _gizmo?.Dragging != true && !_reparentQueued &&
-                    _tree.OrderSynchronized && ReferenceEquals(order.NodeIncarnation, _tree.IncarnationOf(order.Node)) &&
-                    ReferenceEquals(order.SiblingIncarnation, _tree.IncarnationOf(order.Sibling)) &&
-                    _tree.ParentOf(order.Node) == order.Parent && _tree.ParentOf(order.Sibling) == order.Parent &&
-                    _tree.AdjacentSibling(order.Node, direction) == order.Sibling;
+                return Current() && !_gizmoActive && _gizmo?.Dragging != true && !_reparentQueued && _tree.OrderSynchronized
+                    ? order.Plan(_tree, forward, revision) : null;
         }
         bool Observe()
         {
@@ -1063,45 +1094,45 @@ public sealed class EditorWorker : IDisposable
             return Current();
         }
         bool sent = false, committed = false;
-        string pair = $"{order.Node} and {order.Sibling}";
-        string unknown = $"Sibling swap outcome unknown for {pair}. Refresh and inspect before retrying.";
-        string unverified = $"Sibling swap committed for {pair}. Undo is unavailable for this edit. Inspect and Apply explicitly.";
-        const string stale = "Sibling swap refused: the document, rows or sibling order changed. Refresh before retrying.";
+        string operation = relative ? "Sibling move" : "Sibling swap";
+        string pair = $"{order.Node} and {order.Anchor}";
+        string unknown = $"{operation} outcome unknown for {pair}. Refresh and inspect before retrying.";
+        string unverified = $"{operation} committed for {pair}. Undo is unavailable for this edit. Inspect and Apply explicitly.";
+        string stale = $"{operation} refused: the document, rows or sibling order changed. Refresh before retrying.";
         try
         {
             if (!Current() || ReadOrderRevision(document) is not ulong expected || expected == ulong.MaxValue ||
-                !Observe() || !CanSubmit() || document.Info()?.Provenance != Provenance.HandAuthored ||
-                !Observe() || ReadOrderRevision(document) != expected || !CanSubmit())
+                !Observe() || Plan(expected) is null || document.Info()?.Provenance != Provenance.HandAuthored ||
+                !Observe() || ReadOrderRevision(document) != expected || Plan(expected) is not { } planned)
                 return (false, stale);
 
-            var delta = new NodeOrderChanged(order.Node, order.Sibling,
-                (ulong)_tree.PositionOf(order.Sibling), (ulong)_tree.PositionOf(order.Node), expected + 1);
+            var delta = planned.Delta;
+            if (planned.Command is MoveSiblingRelative move) pair = $"{move.Node} and {move.Anchor}";
+            unknown = $"{operation} outcome unknown for {pair}. Refresh and inspect before retrying.";
+            unverified = $"{operation} committed for {pair}. Undo is unavailable for this edit. Inspect and Apply explicitly.";
             sent = true;
-            var ticket = document.SubmitTransaction(new Command[]
-            {
-                new SwapAdjacentSiblings(order.Node, order.Sibling, order.Parent, direction, expected)
-            });
+            var ticket = document.SubmitTransaction(new[] { planned.Command });
             var failures = document.DrainFailures();
             if (ticket.First.Value == 0 || ticket.Count != 1)
             {
                 _apply?.RequireExplicitApplyAfterUnverifiedSwap();
+                _history?.InvalidatePositional();
                 Observe();
                 return (false, unknown);
             }
             if (failures.FirstOrDefault(f => f.Ticket == ticket.First) is { Ticket.Value: not 0 } failure)
             {
-                Observe();
-                return (false, $"Sibling swap refused: {failure.Error}.");
+                return (false, $"{operation} refused: {failure.Error}.");
             }
             committed = true;
             // Read after draining so a newer edit/reopen racing with observation cannot certify this commit.
             var observed = document.ObserveEvents();
-            bool verified = observed is not null && observed.OfType<NodeOrderChanged>().SequenceEqual(new[] { delta }) &&
-                !observed.Any(e => e is DocumentReopened) && ReadOrderRevision(document) == delta.Revision &&
-                Current() && _tree.MatchesOrderDelta(delta);
+            bool verified = observed is not null && observed.Where(IsSiblingOrderEvent).SequenceEqual(new[] { delta }) &&
+                !observed.Any(e => e is DocumentReopened) && ReadOrderRevision(document) == expected + 1 &&
+                Current() && Plan(expected)?.Delta == delta;
             if (observed is not null) PollDocument(session, observed, pollApply: false, localOrder: verified ? delta : null);
             if (!verified || !Current() || !_tree.OrderSynchronized ||
-                _tree.PositionOf(order.Node) != (int)delta.Position || _tree.PositionOf(order.Sibling) != (int)delta.SiblingPosition)
+                !order.Verified(_tree, forward, delta))
             {
                 if (Current())
                 {
@@ -1111,7 +1142,7 @@ public sealed class EditorWorker : IDisposable
                 }
                 return (false, unverified);
             }
-            return (true, $"Swapped siblings {pair}.");
+            return (true, relative ? $"Moved sibling {pair}." : $"Swapped siblings {pair}.");
         }
         catch (Exception e) when (e is GameplayException or IOException)
         {
@@ -1121,7 +1152,7 @@ public sealed class EditorWorker : IDisposable
                 _history?.InvalidatePositional();
                 if (committed) _history?.DiscardRedo();
             }
-            return (false, committed ? unverified : sent ? unknown : $"Sibling swap refused: {e.Message}");
+            return (false, committed ? unverified : sent ? unknown : $"{operation} refused: {e.Message}");
         }
     }
 
@@ -1442,7 +1473,7 @@ public sealed class EditorWorker : IDisposable
         long start = Stopwatch.GetTimestamp();
         long lifetime = MeshDocumentLifetime;
         bool siblingReplay = false, reordered = false;
-        (bool Verified, string Notice) Replay(SiblingOrderEntry order, bool forward)
+        (bool Verified, string Notice) Replay(SiblingEditEntry order, bool forward)
         {
             siblingReplay = true;
             var settlement = SettleSiblingOrder(session, order, forward, lifetime);
@@ -1635,8 +1666,10 @@ public sealed class EditorWorker : IDisposable
     }
 
     // Drains the authoring events into the tree, the transform cache and the apply controller; posts what changed.
+    private static bool IsSiblingOrderEvent(Event e) => e is NodeOrderChanged or NodeMovedInSiblingOrder;
+
     private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true,
-        NodeOrderChanged? localOrder = null, bool allowOrderRefresh = true)
+        Event? localOrder = null, bool allowOrderRefresh = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
@@ -1649,7 +1682,7 @@ public sealed class EditorWorker : IDisposable
             _referencePicker?.Observe(e);
             ReferenceInvalidated(refusal);
             _tree.Apply(e, _document);
-            if (e is NodeOrderChanged order && (order != localOrder || !_tree.OrderSynchronized))
+            if (IsSiblingOrderEvent(e) && (e != localOrder || !_tree.OrderSynchronized))
                 historyChanged |= _history?.InvalidatePositional() == true;
             _transforms.Apply(e);
             _apply.Apply(e);
@@ -1772,6 +1805,7 @@ public sealed class EditorWorker : IDisposable
         if (_document is null) return;
         _siblingOrderAvailable = _tree.OrderSynchronized &&
             _document is RemoteAuthoringDocument { SupportsSiblingOrder: true };
+        _siblingMoveSupported = _document is RemoteAuthoringDocument { SupportsSiblingMove: true };
         _postedGeneration = _tree.Generation;
         _transformsChanged = false;
         IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema);

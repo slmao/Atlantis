@@ -1262,7 +1262,7 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::CookRefused,          authoring::Error::NotRepresentableInSource,
     authoring::Error::InvalidNodeName,
     authoring::Error::SiblingOrderStaleRevision, authoring::Error::SiblingOrderRequiresHandAuthored,
-    authoring::Error::InvalidSiblingSwap,
+    authoring::Error::InvalidSiblingSwap, authoring::Error::InvalidSiblingMove,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -1272,7 +1272,7 @@ constexpr std::array kApplyErrors = {authoring::ApplyError::NoDocument, authorin
                                      authoring::ApplyError::CookFailed, authoring::ApplyError::DecodeFailed,
                                      authoring::ApplyError::ReloadRefused};
 
-constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 11> kAuthoringEventKinds = {{
+constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 12> kAuthoringEventKinds = {{
     {authoring::EventKind::PropertyChanged, "PropertyChanged"},
     {authoring::EventKind::NodeCreated, "NodeCreated"},
     {authoring::EventKind::NodeDestroyed, "NodeDestroyed"},
@@ -1284,6 +1284,7 @@ constexpr std::array<std::pair<authoring::EventKind, std::string_view>, 11> kAut
     {authoring::EventKind::Applied, "Applied"},
     {authoring::EventKind::NodeNameChanged, "NodeNameChanged"},
     {authoring::EventKind::NodeOrderChanged, "NodeOrderChanged"},
+    {authoring::EventKind::NodeMovedInSiblingOrder, "NodeMovedInSiblingOrder"},
 }};
 
 // Remote checks name values without depending on the scene schema module.
@@ -1412,6 +1413,13 @@ Value encode(const authoring::Command& command) {
           out.set("parent", encodeOptionalEntity(c.parent));
           out.set("direction", Value::string(c.direction == authoring::SiblingDirection::Up ? "Up" : "Down"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::MoveSiblingRelative>) {
+          out.set("kind", Value::string("MoveSiblingRelative"));
+          out.set("node", encodeEntity(c.node));
+          out.set("anchor", encodeEntity(c.anchor));
+          out.set("parent", encodeOptionalEntity(c.parent));
+          out.set("placement", Value::string(c.placement == authoring::SiblingPlacement::Before ? "Before" : "After"));
+          out.set("expectedRevision", Value::number(c.expectedRevision));
         } else {
           static_assert(std::is_same_v<C, authoring::SetActiveCamera>);
           out.set("kind", Value::string("SetActiveCamera"));
@@ -1484,6 +1492,20 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     return authoring::Command(authoring::SwapAdjacentSiblings{
         *node, **sibling, *parent, d == "Up" ? authoring::SiblingDirection::Up : authoring::SiblingDirection::Down, *r});
   }
+  if (*kind == "MoveSiblingRelative") {
+    const auto node = nodeMember(value);
+    const auto anchor = optionalEntityMember(value, "anchor");
+    const auto parent = optionalEntityMember(value, "parent");
+    const Value* placement = value.find("placement");
+    const Value* revision = value.find("expectedRevision");
+    if (!node || !anchor || !*anchor || !parent || !placement || !placement->isString() || !revision)
+      return std::nullopt;
+    const auto p = placement->asString();
+    const auto r = decodeUInt64(*revision);
+    if (!r || (p != "Before" && p != "After")) return std::nullopt;
+    return authoring::Command(authoring::MoveSiblingRelative{
+        *node, **anchor, *parent, p == "Before" ? authoring::SiblingPlacement::Before : authoring::SiblingPlacement::After, *r});
+  }
   if (*kind == "SetActiveCamera") {
     const auto camera = optionalEntityMember(value, "camera");
     if (!camera) return std::nullopt;
@@ -1534,6 +1556,13 @@ Value encode(const authoring::Event& event) {
           out.set("sibling", encodeEntity(e.sibling));
           out.set("position", Value::number(e.position));
           out.set("siblingPosition", Value::number(e.siblingPosition));
+          out.set("revision", Value::number(e.revision));
+        } else if constexpr (std::is_same_v<E, authoring::NodeMovedInSiblingOrder>) {
+          out.set("kind", Value::string("NodeMovedInSiblingOrder"));
+          out.set("node", encodeEntity(e.node));
+          out.set("parent", encodeOptionalEntity(e.parent));
+          out.set("fromPosition", Value::number(e.fromPosition));
+          out.set("position", Value::number(e.position));
           out.set("revision", Value::number(e.revision));
         } else {
           static_assert(std::is_same_v<E, authoring::Applied>);
@@ -1609,6 +1638,19 @@ std::optional<authoring::Event> decodeAuthoringEvent(const Value& value) {
     const auto r = decodeUInt64(*revision);
     if (!p || !sp || !r || *node == **sibling || *p == *sp || *r == 0) return std::nullopt;
     return authoring::Event(authoring::NodeOrderChanged{*node, **sibling, *p, *sp, *r});
+  }
+  if (*kind == "NodeMovedInSiblingOrder") {
+    const auto node = nodeMember(value);
+    const auto parent = optionalEntityMember(value, "parent");
+    const Value* from = value.find("fromPosition");
+    const Value* position = value.find("position");
+    const Value* revision = value.find("revision");
+    if (!node || !parent || !from || !position || !revision) return std::nullopt;
+    const auto f = decodeUInt64(*from);
+    const auto p = decodeUInt64(*position);
+    const auto r = decodeUInt64(*revision);
+    if (!f || !p || !r || *f == *p || *r == 0) return std::nullopt;
+    return authoring::Event(authoring::NodeMovedInSiblingOrder{*node, *parent, *f, *p, *r});
   }
   if (*kind == "Applied") {
     const Value* generation = value.find("generation");

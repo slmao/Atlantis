@@ -78,6 +78,7 @@
 {"case":"authoring.command.name","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":"  名 \"quoted\" \\ "}}
 {"case":"authoring.command.name.empty","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":""}}
 {"case":"authoring.command.swap_siblings","type":"AuthoringCommand","wire":{"kind":"SwapAdjacentSiblings","node":"52052052-0003-4052-8052-000000000003","sibling":"52052052-0001-4052-8052-000000000001","parent":null,"direction":"Up","expectedRevision":17}}
+{"case":"authoring.command.move_sibling","type":"AuthoringCommand","wire":{"kind":"MoveSiblingRelative","node":"52052052-0003-4052-8052-000000000003","anchor":"52052052-0001-4052-8052-000000000001","parent":null,"placement":"Before","expectedRevision":17}}
 {"case":"authoring.event.changed","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"f32":7}}}
 {"case":"authoring.event.changed.absent","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"absent":true}}}
 {"case":"authoring.event.created","type":"AuthoringEvent","wire":{"kind":"NodeCreated","node":"58005800-0000-4000-8000-0000000000b1","position":5}}
@@ -92,8 +93,10 @@
 {"case":"authoring.event.applied","type":"AuthoringEvent","wire":{"kind":"Applied","generation":3}}
 {"case":"authoring.event.name","type":"AuthoringEvent","wire":{"kind":"NodeNameChanged","node":"52052052-0003-4052-8052-000000000003","name":"  名 \"quoted\" \\ "}}
 {"case":"authoring.event.order","type":"AuthoringEvent","wire":{"kind":"NodeOrderChanged","node":"52052052-0003-4052-8052-000000000003","sibling":"52052052-0001-4052-8052-000000000001","position":0,"siblingPosition":2,"revision":18}}
+{"case":"authoring.event.sibling_move","type":"AuthoringEvent","wire":{"kind":"NodeMovedInSiblingOrder","node":"52052052-0003-4052-8052-000000000003","parent":null,"fromPosition":2,"position":0,"revision":18}}
 {"case":"authoring.filter.all","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","NodeCreated","NodeDestroyed","ComponentAdded","ComponentRemoved","ParentChanged","ActiveCameraChanged","DocumentReopened","Applied","NodeNameChanged"],"node":null,"component":null}}
 {"case":"authoring.filter.order","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","NodeCreated","NodeDestroyed","ComponentAdded","ComponentRemoved","ParentChanged","ActiveCameraChanged","DocumentReopened","Applied","NodeNameChanged","NodeOrderChanged"],"node":null,"component":null}}
+{"case":"authoring.filter.move","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","NodeCreated","NodeDestroyed","ComponentAdded","ComponentRemoved","ParentChanged","ActiveCameraChanged","DocumentReopened","Applied","NodeNameChanged","NodeOrderChanged","NodeMovedInSiblingOrder"],"node":null,"component":null}}
 {"case":"authoring.filter.none","type":"AuthoringFilter","wire":{"kinds":[],"node":null,"component":null}}
 {"case":"authoring.filter.applied","type":"AuthoringFilter","wire":{"kinds":["Applied"],"node":null,"component":null}}
 {"case":"authoring.filter.property","type":"AuthoringFilter","wire":{"kinds":["PropertyChanged","ComponentAdded"],"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d"}}
@@ -131,6 +134,7 @@
 {"case":"authoring.error.SiblingOrderStaleRevision","type":"AuthoringError","wire":"SiblingOrderStaleRevision"}
 {"case":"authoring.error.SiblingOrderRequiresHandAuthored","type":"AuthoringError","wire":"SiblingOrderRequiresHandAuthored"}
 {"case":"authoring.error.InvalidSiblingSwap","type":"AuthoringError","wire":"InvalidSiblingSwap"}
+{"case":"authoring.error.InvalidSiblingMove","type":"AuthoringError","wire":"InvalidSiblingMove"}
 {"case":"authoring.open_error.SourceUnreadable","type":"OpenError","wire":"SourceUnreadable"}
 {"case":"authoring.open_error.SourceParseFailed","type":"OpenError","wire":"SourceParseFailed"}
 {"case":"authoring.open_error.SourceInvalid","type":"OpenError","wire":"SourceInvalid"}

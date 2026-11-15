@@ -169,10 +169,10 @@ public sealed class EditHistory
         return removed != 0;
     }
 
-    public HistoryResult Undo(Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap = null) =>
+    public HistoryResult Undo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null) =>
         Take(_undo, Step.Undo, swap);
 
-    public HistoryResult Redo(Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap = null) =>
+    public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null) =>
         Take(_redo, Step.Redo, swap);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
@@ -224,7 +224,7 @@ public sealed class EditHistory
     // Undo reads After where the edit left it and writes Before; redo the reverse. On a mismatch or an unreadable
     // address nothing is submitted and the entry is dropped.
     private HistoryResult Take(List<EditTransaction> from, Step kind,
-        Func<SiblingOrderEntry, bool, (bool Verified, string Notice)>? swap)
+        Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap)
     {
         if (Waiting)
         {
@@ -234,7 +234,7 @@ public sealed class EditHistory
         if (from.Count == 0) return HistoryResult.NothingTo;
         bool forward = kind == Step.Redo;
         EditTransaction edit = from[^1];
-        if (edit.Structure is [SiblingOrderEntry order])
+        if (edit.Structure is [SiblingEditEntry order])
         {
             from.RemoveAt(from.Count - 1);
             if (swap is null) throw new InvalidOperationException("Sibling order replay requires a guarded settlement.");

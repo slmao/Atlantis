@@ -439,6 +439,10 @@ The shared operation is `SwapAdjacentSiblings` in a single-command
 authoring transaction. CLI users can read the current revision with
 `scene apply-status` and run
 `scene swap-siblings <node> <sibling> <parent>|none up|down <revision>`.
+In Hierarchy, drag the selected node to the top or bottom edge of a
+sibling's row to insert it before or after that sibling. The center keeps
+its reparent action. CLI uses the equivalent single-command transaction
+`scene move-sibling <node> <anchor> <parent>|none before|after <revision>`.
 See the [shared contract](docs/architecture/remote_protocol.md#68-authoring-values-51).
 
 ### Save a hand-authored scene copy

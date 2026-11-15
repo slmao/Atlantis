@@ -85,6 +85,11 @@ public enum SiblingDirection { Up, Down }
 public sealed record SwapAdjacentSiblings(EntityGuid Node, EntityGuid Sibling, EntityGuid? Parent,
     SiblingDirection Direction, ulong ExpectedRevision) : Command;
 
+public enum SiblingPlacement { Before, After }
+
+public sealed record MoveSiblingRelative(EntityGuid Node, EntityGuid Anchor, EntityGuid? Parent,
+    SiblingPlacement Placement, ulong ExpectedRevision) : Command;
+
 /// <summary>Sets the active camera; null clears it.</summary>
 public sealed record SetActiveCamera(EntityGuid? Camera) : Command;
 
@@ -110,6 +115,8 @@ public enum EventKind
           ActiveCameraChanged | DocumentReopened | Applied | NodeNameChanged,
     NodeOrderChanged = 1024,
     AllWithSiblingOrder = All | NodeOrderChanged,
+    NodeMovedInSiblingOrder = 2048,
+    AllWithSiblingMove = AllWithSiblingOrder | NodeMovedInSiblingOrder,
 }
 
 /// <summary>A change to the document, in the order applied (or the Runtime's reload of it: Applied).</summary>
@@ -180,6 +187,12 @@ public sealed record NodeOrderChanged(EntityGuid Node, EntityGuid Sibling, ulong
     public override EventKind Kind => EventKind.NodeOrderChanged;
 }
 
+public sealed record NodeMovedInSiblingOrder(EntityGuid Node, EntityGuid? Parent, ulong FromPosition, ulong Position,
+    ulong Revision) : Event
+{
+    public override EventKind Kind => EventKind.NodeMovedInSiblingOrder;
+}
+
 /// <summary>
 /// Which events a subscription delivers: those of a listed kind, and -- when
 /// set -- of that node and that component. ActiveCameraChanged,
@@ -219,6 +232,7 @@ public enum AuthoringError
     SiblingOrderStaleRevision,
     SiblingOrderRequiresHandAuthored,
     InvalidSiblingSwap,
+    InvalidSiblingMove,
 }
 
 /// <summary>

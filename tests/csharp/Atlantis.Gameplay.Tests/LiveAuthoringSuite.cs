@@ -68,6 +68,21 @@ public static class LiveAuthoringSuite
         var inverse = command with { Direction = A.SiblingDirection.Up, ExpectedRevision = revision + 1 };
         a.SubmitTransaction(new A.Command[] { inverse });
         t.Check(a.DrainFailures().Count == 0 && a.ListNodes().Value.SequenceEqual(original), "inverse restores source order");
+        b.DrainEvents(observed);
+        var relative = b.Subscribe(new A.EventFilter(A.EventKind.AllWithSiblingMove));
+        t.Check(b.SupportsSiblingMove() && b.SupportsSiblingOrder(), "relative tier retains adjacent support");
+        var lastRoot = Enumerable.Range(0, original.Count).Last(i => original[i].Parent is null);
+        var move = new A.MoveSiblingRelative(original[0].Node, original[lastRoot].Node, null, A.SiblingPlacement.After, revision + 2);
+        ticket = a.SubmitTransaction(new A.Command[] { move });
+        t.Check(ticket.Count == 1 && a.DrainFailures().Count == 0, "SDK relative transaction settles");
+        t.Check(b.DrainEvents(relative).Value.SequenceEqual(new A.Event[] {
+            new A.NodeMovedInSiblingOrder(move.Node, null, 0, (ulong)lastRoot, revision + 3)
+        }), "relative subscription receives one fixed-size order delta");
+        t.Check(b.DrainEvents(observed).Value.Count == 0 && b.DrainEvents(legacy).Value.Count == 0 &&
+            b.ListNodes().Value[lastRoot] == original[0], "older filters retain their event sets and can read the new order");
+        a.Submit(move with { Anchor = original[1].Node, Placement = A.SiblingPlacement.Before, ExpectedRevision = revision + 3 });
+        t.Check(a.DrainFailures().Count == 0 && b.ListNodes().Value.SequenceEqual(original), "relative inverse restores source order");
+        b.Unsubscribe(relative);
         b.Unsubscribe(observed);
         b.Unsubscribe(legacy);
     }

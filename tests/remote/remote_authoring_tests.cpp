@@ -99,6 +99,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
       ac::SetNodeName{node(3), "same label"},
       ac::SetNodeName{node(3), ""},
       ac::SwapAdjacentSiblings{node(3), node(1), {}, ac::SiblingDirection::Up, 17},
+      ac::MoveSiblingRelative{node(3), node(1), {}, ac::SiblingPlacement::Before, 17},
   };
   for (const auto& command : commands) roundTrips(command, &codec::decodeAuthoringCommand);
   const std::vector<ac::Event> events{
@@ -113,6 +114,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
       ac::Applied{12},
       ac::NodeNameChanged{node(3), "same label"},
       ac::NodeOrderChanged{node(3), node(1), 0, 2, 18},
+      ac::NodeMovedInSiblingOrder{node(3), {}, 2, 0, 18},
   };
   for (const auto& event : events) {
     roundTrips(event, &codec::decodeAuthoringEvent);
@@ -127,7 +129,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
              &codec::decodeDocumentInfo);
   roundTrips(ac::NodeSummary{node(3), node(1)}, &codec::decodeNodeSummary);
   roundTrips(ac::NodeSummary{node(3), node(1), "node label"}, &codec::decodeNodeSummary);
-  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidSiblingSwap); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidSiblingMove); ++e) {
     const auto error = static_cast<ac::Error>(e);
     CHECK(codec::decodeAuthoringError(codec::encodeAuthoringError(error)) == error);
   }

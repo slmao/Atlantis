@@ -42,6 +42,7 @@ using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Assets;
 using SceneAddress = Atlantis.Gameplay.Authoring.SceneAddress;
 using SiblingDirection = Atlantis.Gameplay.Authoring.SiblingDirection;
+using SiblingPlacement = Atlantis.Gameplay.Authoring.SiblingPlacement;
 using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
@@ -139,7 +140,11 @@ public sealed class MainWindow : Window
     private long _reparentRequest;
     private readonly TextBlock _reparentState = EditorVisuals.Secondary("");
     private (HierarchyRow Row, PointerPressedEventArgs Event, Point Position)? _hierarchyPress;
-    private (ReparentSource Source, string Token)? _hierarchyDrag;
+    private (ReparentSource Source, string Token, bool Relative)? _hierarchyDrag;
+    private (HierarchyRow Row, SiblingPlacement? Placement)? _advertisedHierarchyDrop;
+    private readonly Canvas _hierarchyDropFeedback = new() { IsHitTestVisible = false, ClipToBounds = true };
+    private readonly Border _hierarchyDropLine = new() { Height = 2, Background = EditorVisuals.Focus, IsVisible = false };
+    private readonly Border _hierarchyDropLabel = new() { Background = EditorVisuals.Pane, Padding = new Thickness(6, 2), IsVisible = false };
     private ListBoxItem? _reparentTargetRow;
     private static readonly DataFormat<string> ReparentDragFormat = DataFormat.CreateStringApplicationFormat("atlantis-reparent");
     private bool _syncingSelection;
@@ -333,7 +338,7 @@ public sealed class MainWindow : Window
         _entities.AddHandler(PointerReleasedEvent, (_, _) => _hierarchyPress = null, RoutingStrategies.Tunnel);
         DragDrop.SetAllowDrop(_entities, true);
         DragDrop.AddDragOverHandler(_entities, OnHierarchyDragOver);
-        DragDrop.AddDragLeaveHandler(_entities, (_, _) => HighlightReparentTarget(null));
+        DragDrop.AddDragLeaveHandler(_entities, (_, _) => ClearHierarchyDropFeedback());
         DragDrop.AddDropHandler(_entities, OnHierarchyDrop);
 
         Content = BuildWorkspace();
@@ -465,7 +470,9 @@ public sealed class MainWindow : Window
         ShowReparentState("");
         AddDocked(hierarchy, _reparentState, Avalonia.Controls.Dock.Top);
         AddDocked(hierarchy, sceneSection, Avalonia.Controls.Dock.Bottom);
-        hierarchy.Children.Add(_entities);
+        _hierarchyDropFeedback.Children.Add(_hierarchyDropLine);
+        _hierarchyDropFeedback.Children.Add(_hierarchyDropLabel);
+        hierarchy.Children.Add(new Grid { Children = { _entities, _hierarchyDropFeedback } });
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _resetCamera);
@@ -1282,7 +1289,7 @@ public sealed class MainWindow : Window
 
         _pickedUp = null;
         string token = Guid.NewGuid().ToString("N");
-        _hierarchyDrag = (source, token);
+        _hierarchyDrag = (source, token, worker.SiblingMoveSupported);
         var data = new DataTransfer();
         data.Add(DataTransferItem.Create(ReparentDragFormat, token));
         try
@@ -1295,26 +1302,88 @@ public sealed class MainWindow : Window
             if (_hierarchyDrag?.Source == source)
             {
                 _hierarchyDrag = null;
-                HighlightReparentTarget(null);
+                ClearHierarchyDropFeedback();
                 UpdateHierarchyActions();
             }
         }
     }
 
-    private ListBoxItem? ReparentDropTarget(DragEventArgs e)
+    private (ListBoxItem Item, HierarchyRow Row, SiblingPlacement? Placement)? HierarchyDropTarget(DragEventArgs e)
     {
         if (_hierarchyDrag is not { } drag || !CanCaptureReparent(drag: true) ||
-            drag.Source.Lifetime != _worker?.MeshDocumentLifetime ||
+            _worker is not { } worker || drag.Source.Lifetime != worker.MeshDocumentLifetime ||
+            drag.Relative != worker.SiblingMoveSupported ||
             e.DataTransfer.TryGetValue(ReparentDragFormat) != drag.Token ||
             HierarchyItem(e.Source) is not { DataContext: HierarchyRow target } item ||
-            target.Node == drag.Source.Parent || !_hierarchyRows.Any(row => row.Node == drag.Source.Node))
+            !_hierarchyRows.Any(row => row.Node == drag.Source.Node))
             return null;
+
+        double height = item.Bounds.Height;
+        double pointer = e.GetPosition(item).Y;
+        if (drag.Relative && height > 0 && (pointer < height / 4 || pointer >= 3 * height / 4))
+        {
+            SiblingPlacement placement = pointer < height / 4 ? SiblingPlacement.Before : SiblingPlacement.After;
+            if (!worker.SiblingOrderAvailable || target.Node == drag.Source.Node || target.Parent != drag.Source.Parent)
+                return null;
+            var interval = DisplayedDropInterval(drag.Source, target);
+            bool noChange = interval.Count == 2 && (interval[0].Node == drag.Source.Node) == (placement == SiblingPlacement.Before);
+            return interval.Count < 2 || noChange ? null : (item, target, placement);
+        }
+
+        if (target.Node == drag.Source.Parent) return null;
         for (HierarchyRow? current = target; current is not null;)
         {
             if (current.Node == drag.Source.Node) return null;
             current = current.Parent is EntityGuid parent ? _hierarchyRows.FirstOrDefault(row => row.Node == parent) : null;
         }
-        return item;
+        return (item, target, null);
+    }
+
+    private IReadOnlyList<HierarchyRow> DisplayedDropInterval(ReparentSource source, HierarchyRow anchor)
+    {
+        var siblings = _hierarchyRows.Where(row => row.Parent == source.Parent).ToList();
+        int from = siblings.FindIndex(row => row.Node == source.Node);
+        int to = siblings.FindIndex(row => ReferenceEquals(row, anchor));
+        return from < 0 || to < 0 ? Array.Empty<HierarchyRow>() :
+            siblings.GetRange(Math.Min(from, to), Math.Abs(from - to) + 1);
+    }
+
+    private void ClearHierarchyDropFeedback()
+    {
+        _advertisedHierarchyDrop = null;
+        _hierarchyDropLine.IsVisible = false;
+        _hierarchyDropLabel.IsVisible = false;
+        HighlightReparentTarget(null);
+    }
+
+    private void ShowHierarchyInsertion(ListBoxItem item, HierarchyRow anchor, SiblingPlacement placement)
+    {
+        ListBoxItem? endpoint = item;
+        if (placement == SiblingPlacement.After)
+        {
+            int index = _hierarchyRows.ToList().FindIndex(row => ReferenceEquals(row, anchor));
+            if (index >= 0)
+            {
+                while (index + 1 < _hierarchyRows.Count && _hierarchyRows[index + 1].Depth > anchor.Depth) ++index;
+                endpoint = _entities.GetVisualDescendants().OfType<ListBoxItem>()
+                    .FirstOrDefault(row => ReferenceEquals(row.DataContext, _hierarchyRows[index]));
+            }
+        }
+        double y = placement == SiblingPlacement.Before ? 0 : endpoint?.Bounds.Height ?? 0;
+        var point = endpoint?.TranslatePoint(new Point(0, y), _hierarchyDropFeedback);
+        if (point is { } screen && screen.Y >= 1 && screen.Y < _hierarchyDropFeedback.Bounds.Height)
+        {
+            _hierarchyDropLine.Width = Math.Max(0, item.Bounds.Width - 8);
+            Canvas.SetLeft(_hierarchyDropLine, screen.X + 4);
+            Canvas.SetTop(_hierarchyDropLine, screen.Y - 1);
+            _hierarchyDropLine.IsVisible = true;
+            return;
+        }
+        _hierarchyDropLabel.Child = EditorVisuals.Ellipsis($"{placement} {anchor.Label}");
+        _hierarchyDropLabel.MaxWidth = _hierarchyDropFeedback.Bounds.Width;
+        Canvas.SetLeft(_hierarchyDropLabel, 4);
+        Canvas.SetTop(_hierarchyDropLabel, 2);
+        _hierarchyDropLabel.IsVisible = true;
     }
 
     private void HighlightReparentTarget(ListBoxItem? item)
@@ -1332,17 +1401,41 @@ public sealed class MainWindow : Window
 
     private void OnHierarchyDragOver(object? sender, DragEventArgs e)
     {
-        var item = ReparentDropTarget(e);
-        HighlightReparentTarget(item);
-        e.DragEffects = item is null ? DragDropEffects.None : DragDropEffects.Move;
+        var target = HierarchyDropTarget(e);
+        ClearHierarchyDropFeedback();
+        if (target is { } drop)
+        {
+            _advertisedHierarchyDrop = (drop.Row, drop.Placement);
+            if (drop.Placement is SiblingPlacement placement) ShowHierarchyInsertion(drop.Item, drop.Row, placement);
+            else HighlightReparentTarget(drop.Item);
+        }
+        e.DragEffects = target is null ? DragDropEffects.None : DragDropEffects.Move;
         e.Handled = true;
     }
 
     private void OnHierarchyDrop(object? sender, DragEventArgs e)
     {
-        bool submitted = ReparentDropTarget(e)?.DataContext is HierarchyRow target &&
-            _hierarchyDrag is { } drag && SubmitReparent(drag.Source, target, drag: true);
-        HighlightReparentTarget(null);
+        bool submitted = false;
+        if (HierarchyDropTarget(e) is { } target && _advertisedHierarchyDrop is { } advertised &&
+            _hierarchyDrag is { } drag && advertised.Placement == target.Placement &&
+            _worker is { } worker && worker.SameHierarchyIncarnation(advertised.Row, target.Row))
+        {
+            if (target.Placement is SiblingPlacement placement)
+            {
+                _siblingMovePending = worker.MoveSiblingRelative(drag.Source, target.Row,
+                    DisplayedDropInterval(drag.Source, target.Row), placement, notice =>
+                    {
+                        if (!ReferenceEquals(_worker, worker) || drag.Source.Lifetime != worker.MeshDocumentLifetime) return;
+                        _siblingMovePending = false;
+                        ShowReparentState(notice);
+                        UpdateHierarchyActions();
+                    });
+                submitted = _siblingMovePending;
+                if (submitted) UpdateHierarchyActions();
+            }
+            else submitted = SubmitReparent(drag.Source, target.Row, drag: true);
+        }
+        ClearHierarchyDropFeedback();
         e.DragEffects = submitted ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
     }
@@ -1362,7 +1455,7 @@ public sealed class MainWindow : Window
         _pickedUp = null;
         _hierarchyPress = null;
         _hierarchyDrag = null;
-        HighlightReparentTarget(null);
+        ClearHierarchyDropFeedback();
         if (notice is not null) ShowReparentState(notice);
     }
 
@@ -2783,7 +2876,7 @@ public sealed class MainWindow : Window
 
     private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)
     {
-        HighlightReparentTarget(null);
+        ClearHierarchyDropFeedback();
         _hierarchyRows = rows;
         _markers = markers;
         _syncingSelection = true;

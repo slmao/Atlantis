@@ -870,7 +870,7 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   access::CommandTicket submit(ac::Command command) override {
-    if (std::holds_alternative<ac::SwapAdjacentSiblings>(command))
+    if (std::holds_alternative<ac::SwapAdjacentSiblings>(command) || std::holds_alternative<ac::MoveSiblingRelative>(command))
       return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
@@ -880,6 +880,10 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return access::CommandTicket{*ticket};
   }
   access::TransactionTicket submitTransaction(std::vector<ac::Command> commands) override {
+    if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
+          return std::holds_alternative<ac::MoveSiblingRelative>(command);
+        }) && !supportsSiblingMove())
+      return {};
     if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
           return std::holds_alternative<ac::SwapAdjacentSiblings>(command);
         }) && !supportsSiblingOrder())
@@ -895,18 +899,20 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   bool supportsSiblingOrder() override {
-    if (!siblingOrderSupported_) {
-      const auto probe = subscribe(ac::EventFilter{ac::EventKindSet::all(), {}, {}});
-      if (probe.value == 0 || unsubscribe(probe).isErr()) return false;
-    }
-    return siblingOrderSupported_.value_or(false);
+    return probeSiblingOrder() >= 1;
+  }
+
+  bool supportsSiblingMove() override {
+    return probeSiblingOrder() == 2;
   }
 
   atlantis::connection::SubscriptionId subscribe(ac::EventFilter filter) override {
     using Id = atlantis::connection::SubscriptionId;
-    const bool orderProbe = filter.kinds == ac::EventKindSet::all() && !filter.node && !filter.component;
-    if (!orderProbe || siblingOrderSupported_.has_value()) {
-      if (orderProbe && !*siblingOrderSupported_) filter.kinds = ac::EventKindSet::legacy();
+    constexpr std::array kinds{ac::EventKindSet::legacy(), ac::EventKindSet::all(), ac::EventKindSet::withSiblingMove()};
+    const int requested = filter.node || filter.component ? 0 :
+        filter.kinds == kinds[2] ? 2 : filter.kinds == kinds[1] ? 1 : 0;
+    if (requested == 0 || siblingOrderTier_) {
+      if (requested != 0) filter.kinds = kinds[std::min(requested, *siblingOrderTier_)];
       Value params = Value::object();
       params.set("filter", codec::encode(filter));
       const auto result = state_->call("authoring.subscribe", std::move(params));
@@ -914,26 +920,27 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
       return id && *id != 0 ? Id{*id} : failed(Id{});
     }
 
-    Value params = Value::object();
-    params.set("filter", codec::encode(filter));
-    const auto envelope = state_->awaitResponse(state_->send("authoring.subscribe", std::move(params)));
-    if (!envelope) return failed(Id{});
-    const auto* result = envelope->find("result");
-    const auto* error = envelope->find("error");
-    if (result && !error) {
-      if (const auto id = codec::decodeUInt64(*result); id && *id != 0) {
-        siblingOrderSupported_ = true;
-        return Id{*id};
+    for (int tier = requested; tier >= 0; --tier) {
+      filter.kinds = kinds[tier];
+      Value params = Value::object();
+      params.set("filter", codec::encode(filter));
+      const auto envelope = state_->awaitResponse(state_->send("authoring.subscribe", std::move(params)));
+      if (!envelope) break;
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error) {
+        if (const auto id = codec::decodeUInt64(*result); id && *id != 0) {
+          // An explicit 0104 subscription does not establish whether 0105 is supported.
+          if (requested == 2 || tier == 0) siblingOrderTier_ = tier;
+          return Id{*id};
+        }
+        break;
       }
-    } else if (!result && error && error->isObject() && error->asObject().size() == 2) {
+      if (tier == 0 || result || !error || !error->isObject() || error->asObject().size() != 2) break;
       const auto* code = error->find("code");
       const auto* message = error->find("message");
-      if (code && code->isString() && code->asString() == "BadRequest" &&
-          message && message->isString() && message->asString() == "malformed or missing filter") {
-        const auto subscription = subscribe(ac::EventFilter{});
-        if (subscription.value != 0) siblingOrderSupported_ = false;
-        return subscription;
-      }
+      if (!code || !code->isString() || code->asString() != "BadRequest" ||
+          !message || !message->isString() || message->asString() != "malformed or missing filter") break;
     }
     return failed(Id{});
   }
@@ -1100,7 +1107,15 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   RemoteSession::State* state_;
-  std::optional<bool> siblingOrderSupported_;
+  std::optional<int> siblingOrderTier_;
+
+  int probeSiblingOrder() {
+    if (!siblingOrderTier_) {
+      const auto probe = subscribe(ac::EventFilter{ac::EventKindSet::withSiblingMove(), {}, {}});
+      if (probe.value == 0 || unsubscribe(probe).isErr()) return 0;
+    }
+    return siblingOrderTier_.value_or(0);
+  }
 };
 
 }  // namespace

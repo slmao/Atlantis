@@ -24,6 +24,7 @@ public static partial class Codec
         (A.EventKind.Applied, "Applied"),
         (A.EventKind.NodeNameChanged, "NodeNameChanged"),
         (A.EventKind.NodeOrderChanged, "NodeOrderChanged"),
+        (A.EventKind.NodeMovedInSiblingOrder, "NodeMovedInSiblingOrder"),
     };
 
     // An EntityGuid or null.
@@ -99,6 +100,12 @@ public static partial class Codec
                     .Set("sibling", Encode(c.Sibling)).Set("parent", EncodeOptional(c.Parent))
                     .Set("direction", JsonValue.String(c.Direction.ToString())).Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.MoveSiblingRelative c:
+                output.Set("kind", JsonValue.String("MoveSiblingRelative")).Set("node", Encode(c.Node))
+                    .Set("anchor", Encode(c.Anchor)).Set("parent", EncodeOptional(c.Parent))
+                    .Set("placement", JsonValue.String(c.Placement.ToString()))
+                    .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
+                break;
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
@@ -157,6 +164,18 @@ public static partial class Codec
                         direction.AsString == "Up" ? A.SiblingDirection.Up : A.SiblingDirection.Down, expected)
                     : null;
             }
+            case "MoveSiblingRelative":
+            {
+                var (parentOk, parent) = OptionalEntityMember(value, "parent");
+                var (anchorOk, anchor) = OptionalEntityMember(value, "anchor");
+                return NodeOf(value) is EntityGuid node && anchorOk && anchor is EntityGuid other && parentOk &&
+                       value.Find("placement") is { IsString: true } placement &&
+                       placement.AsString is "Before" or "After" &&
+                       value.Find("expectedRevision") is JsonValue revision && DecodeUInt64(revision) is ulong expected
+                    ? new A.MoveSiblingRelative(node, other, parent,
+                        placement.AsString == "Before" ? A.SiblingPlacement.Before : A.SiblingPlacement.After, expected)
+                    : null;
+            }
             case "SetActiveCamera":
             {
                 (bool ok, EntityGuid? camera) = OptionalEntityMember(value, "camera");
@@ -209,6 +228,11 @@ public static partial class Codec
                     .Set("sibling", Encode(e.Sibling)).Set("position", JsonValue.Number(e.Position))
                     .Set("siblingPosition", JsonValue.Number(e.SiblingPosition)).Set("revision", JsonValue.Number(e.Revision));
                 break;
+            case A.NodeMovedInSiblingOrder e:
+                output.Set("kind", JsonValue.String("NodeMovedInSiblingOrder")).Set("node", Encode(e.Node))
+                    .Set("parent", EncodeOptional(e.Parent)).Set("fromPosition", JsonValue.Number(e.FromPosition))
+                    .Set("position", JsonValue.Number(e.Position)).Set("revision", JsonValue.Number(e.Revision));
+                break;
             default: throw new System.ArgumentException("an unrecognized authoring event", nameof(evt));
         }
         return output;
@@ -229,6 +253,16 @@ public static partial class Codec
                        value.Find("siblingPosition") is JsonValue siblingPosition && DecodeUInt64(siblingPosition) is ulong otherSlot &&
                        value.Find("revision") is JsonValue revision && DecodeUInt64(revision) is ulong committed
                     ? new A.NodeOrderChanged(node, other, slot, otherSlot, committed) : null;
+            }
+            case "NodeMovedInSiblingOrder":
+            {
+                var (parentOk, parent) = OptionalEntityMember(value, "parent");
+                return NodeOf(value) is EntityGuid node && parentOk &&
+                       value.Find("fromPosition") is JsonValue from && DecodeUInt64(from) is ulong oldSlot &&
+                       value.Find("position") is JsonValue movePosition && DecodeUInt64(movePosition) is ulong newSlot &&
+                       value.Find("revision") is JsonValue revision && DecodeUInt64(revision) is ulong committed &&
+                       oldSlot != newSlot && committed != 0
+                    ? new A.NodeMovedInSiblingOrder(node, parent, oldSlot, newSlot, committed) : null;
             }
             case "PropertyChanged": return SceneAddressValueOf(value) is var (address, v) ? new A.PropertyChanged(address, v) : null;
             case "NodeCreated":

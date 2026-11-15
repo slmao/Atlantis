@@ -365,6 +365,7 @@ public static partial class Program
 
     private static void SiblingHistoryChecks()
     {
+        RelativeSiblingHistoryChecks();
         var h = Document5();
         var first = h.Tree.Order[0];
         var second = h.Tree.Order[^1];
@@ -378,8 +379,8 @@ public static partial class Program
         h.History.Update();
         h.History.Record(swap, settled);
         h.History.Update();
-        Check(h.History.Undo((entry, forward) => (entry == order && !forward &&
-            entry.DirectionFor(forward) == SiblingDirection.Up, "replayed")) == HistoryResult.Submitted &&
+        Check(h.History.Undo((entry, forward) => (entry is SiblingOrderEntry swapEntry && swapEntry == order && !forward &&
+            swapEntry.DirectionFor(forward) == SiblingDirection.Up, "replayed")) == HistoryResult.Submitted &&
             h.History.UndoLabel == "Create" && h.History.RedoLabel == "Move sibling",
             "local undo keeps preceding positional history");
         Check(h.History.Redo((_, _) => (false, "changed elsewhere")) == HistoryResult.ChangedElsewhere &&
@@ -388,6 +389,35 @@ public static partial class Program
         Check(h.History.InvalidatePositional(), "external reorder invalidates settled and pending positional records");
         h.History.Update();
         Check(!h.History.CanUndo, "pending positional record cannot return after external reorder");
+    }
+
+    private static void RelativeSiblingHistoryChecks()
+    {
+        var h = new HistoryHarness();
+        EntityGuid a = h.Document.Add(1, null, LocalTransform.Identity);
+        EntityGuid x = h.Document.Add(2, a, LocalTransform.Identity);
+        EntityGuid b = h.Document.Add(3, null, LocalTransform.Identity);
+        EntityGuid y = h.Document.Add(4, b, LocalTransform.Identity);
+        EntityGuid c = h.Document.Add(5, null, LocalTransform.Identity);
+        h.Tree.Rebuild(h.Document);
+        var interval = new[] { a, b, c }.Select(node => (node, h.Tree.IncarnationOf(node)!)).ToArray();
+        SiblingMoveEntry entry = SiblingMoveEntry.Capture(a, c, null, SiblingPlacement.Before, interval)!;
+        var initial = entry.Plan(h.Tree, true, 1)!.Value;
+        Check(initial.Delta == new NodeMovedInSiblingOrder(a, null, 0, 2, 2), "move history: exact destination for before");
+        h.Tree.Apply(initial.Delta, h.Document);
+        Check(h.Tree.Order.SequenceEqual(new[] { b, x, a, y, c }) && entry.Verified(h.Tree, true, initial.Delta),
+            "move history: preserve interleaving and an unmoved anchor");
+        EntityGuid other = h.Document.Add(6, null, LocalTransform.Identity);
+        h.Tree.Apply(new NodeCreated(other, 0), h.Document);
+        var inverse = entry.Plan(h.Tree, false, 3)!.Value;
+        Check(inverse.Command == new MoveSiblingRelative(a, b, null, SiblingPlacement.Before, 3) &&
+            inverse.Delta == new NodeMovedInSiblingOrder(a, null, 3, 1, 4), "move history: inverse survives outside insertion");
+        h.Tree.Apply(inverse.Delta, h.Document);
+        Check(h.Tree.Order.SequenceEqual(new[] { other, a, x, b, y, c }), "move history: undo only restores its interval");
+        Check(entry.Plan(h.Tree, true, 4) is not null, "move history: redo keeps its original intent");
+        h.Tree.Apply(new NodeDestroyed(b), h.Document);
+        h.Tree.Apply(new NodeCreated(b, 3), h.Document);
+        Check(entry.Plan(h.Tree, true, 5) is null, "move history: same-GUID replacement within the interval conflicts");
     }
 
     /// <summary>A property-only target whose own submissions are refused: the document-refusal path of a history step.</summary>

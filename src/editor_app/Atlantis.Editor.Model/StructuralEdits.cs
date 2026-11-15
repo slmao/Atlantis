@@ -52,12 +52,76 @@ public sealed record ParentEntry(EntityGuid Node, EntityGuid? Before, EntityGuid
 
 public sealed record NameEntry(EntityGuid Node, string Before, string After) : EditEntry;
 
+public abstract record SiblingEditEntry(EntityGuid Node, EntityGuid Anchor, EntityGuid? Parent) : EditEntry
+{
+    public abstract (Command Command, Event Delta)? Plan(DocumentTree tree, bool forward, ulong revision);
+    public abstract bool Verified(DocumentTree tree, bool forward, Event delta);
+}
+
 /// <summary>Both participants, their incarnations, and the original orientation.</summary>
 public sealed record SiblingOrderEntry(EntityGuid Node, EntityGuid Sibling, EntityGuid? Parent,
-    object NodeIncarnation, object SiblingIncarnation, SiblingDirection Direction) : EditEntry
+    object NodeIncarnation, object SiblingIncarnation, SiblingDirection Direction) : SiblingEditEntry(Node, Sibling, Parent)
 {
     public SiblingDirection DirectionFor(bool forward) =>
         forward ? Direction : Direction == SiblingDirection.Up ? SiblingDirection.Down : SiblingDirection.Up;
+
+    public override (Command Command, Event Delta)? Plan(DocumentTree tree, bool forward, ulong revision)
+    {
+        SiblingDirection direction = DirectionFor(forward);
+        if (!ReferenceEquals(NodeIncarnation, tree.IncarnationOf(Node)) ||
+            !ReferenceEquals(SiblingIncarnation, tree.IncarnationOf(Sibling)) ||
+            tree.ParentOf(Node) != Parent || tree.ParentOf(Sibling) != Parent ||
+            tree.AdjacentSibling(Node, direction) != Sibling) return null;
+        return (new SwapAdjacentSiblings(Node, Sibling, Parent, direction, revision),
+            new NodeOrderChanged(Node, Sibling, (ulong)tree.PositionOf(Sibling), (ulong)tree.PositionOf(Node), revision + 1));
+    }
+
+    public override bool Verified(DocumentTree tree, bool forward, Event delta) =>
+        delta is NodeOrderChanged changed && tree.PositionOf(Node) == (int)changed.Position &&
+        tree.PositionOf(Sibling) == (int)changed.SiblingPosition;
+}
+
+public sealed record SiblingMoveEntry(EntityGuid Node, EntityGuid Anchor, EntityGuid? Parent, SiblingPlacement Placement,
+    IReadOnlyList<(EntityGuid Node, object Identity)> Before, IReadOnlyList<(EntityGuid Node, object Identity)> After)
+    : SiblingEditEntry(Node, Anchor, Parent)
+{
+    public static SiblingMoveEntry? Capture(EntityGuid node, EntityGuid anchor, EntityGuid? parent,
+        SiblingPlacement placement, IReadOnlyList<(EntityGuid Node, object Identity)> interval)
+    {
+        if (interval.Count < 2 || node == anchor) return null;
+        bool towardEnd = interval[0].Node == node && interval[^1].Node == anchor;
+        if (!towardEnd && (interval[0].Node != anchor || interval[^1].Node != node)) return null;
+        int from = towardEnd ? 0 : interval.Count - 1;
+        bool after = placement == SiblingPlacement.After;
+        int to = towardEnd ? interval.Count - (after ? 1 : 2) : (after ? 1 : 0);
+        if (from == to) return null;
+        var result = interval.ToList();
+        result.RemoveAt(from);
+        result.Insert(to, interval[from]);
+        return new SiblingMoveEntry(node, anchor, parent, placement, interval, result);
+    }
+
+    private bool Matches(DocumentTree tree, IReadOnlyList<(EntityGuid Node, object Identity)> interval) =>
+        interval.All(row => ReferenceEquals(row.Identity, tree.IncarnationOf(row.Node))) &&
+        tree.SiblingInterval(Parent, interval[0].Node, interval[^1].Node).SequenceEqual(interval.Select(row => row.Node));
+
+    public override (Command Command, Event Delta)? Plan(DocumentTree tree, bool forward, ulong revision)
+    {
+        var current = forward ? Before : After;
+        var result = forward ? After : Before;
+        if (!Matches(tree, current)) return null;
+        bool towardEnd = Before[0].Node == Node;
+        EntityGuid anchor = forward ? Anchor : towardEnd ? Before[1].Node : Before[^2].Node;
+        SiblingPlacement placement = forward ? Placement : towardEnd ? SiblingPlacement.Before : SiblingPlacement.After;
+        int target = result.ToList().FindIndex(row => row.Node == Node);
+        return (new MoveSiblingRelative(Node, anchor, Parent, placement, revision),
+            new NodeMovedInSiblingOrder(Node, Parent, (ulong)tree.PositionOf(Node),
+                (ulong)tree.PositionOf(current[target].Node), revision + 1));
+    }
+
+    public override bool Verified(DocumentTree tree, bool forward, Event delta) =>
+        delta is NodeMovedInSiblingOrder moved && tree.PositionOf(Node) == (int)moved.Position &&
+        Matches(tree, forward ? After : Before);
 }
 
 /// <summary>What a step needs to read of the document to compare it with a record (ADR-0136 D3).</summary>

@@ -229,7 +229,7 @@ TEST_CASE("an entity's Renderable mesh is read through the boundary", "[runtime]
   CHECK_FALSE(atlantis::runtime::detail::renderableMesh(boundary, empty).has_value());
 }
 
-TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the equal-distance winner",
+TEST_CASE("cold bake and extraction honor rotated sibling slots and change the equal-distance winner",
           "[runtime][editor][picking][sibling_order]") {
   namespace as = atlantis::asset_system;
   namespace scene = as::scene;
@@ -245,8 +245,11 @@ TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the
   camera.transform.localPosition = {0, 0, 8};
   auto second = first;
   second.guid = newGuid(3);
+  auto third = first;
+  third.guid = newGuid(4);
+  third.transform.localPosition = {3, 0, 0};
   scene::AuthoringScene source;
-  source.nodes = {first, camera, second};
+  source.nodes = {first, camera, second, third};
   source.activeCamera = camera.guid;
 
   const auto bake = [&](const scene::AuthoringScene& unit) {
@@ -259,7 +262,7 @@ TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the
     return atlantis::world::bakeScene(decoded.value());
   };
   auto baseline = bake(source);
-  std::swap(source.nodes[0], source.nodes[2]);
+  source.nodes = {second, camera, third, first};
   auto reordered = bake(source);
   using atlantis::world::toColumnMajor;
   for (const auto& node : source.nodes) {
@@ -273,15 +276,17 @@ TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the
   CHECK(reordered.activeCamera == reordered.entities.find(camera.guid));
   CHECK(reordered.entities.find(camera.guid)->index() == 1);
   CHECK(reordered.entities.find(second.guid)->index() == 0);
-  CHECK(reordered.entities.find(first.guid)->index() == 2);
-  auto expect = [&](auto& baked, EntityGuid winner, EntityGuid runnerUp) {
+  CHECK(reordered.entities.find(third.guid)->index() == 2);
+  CHECK(reordered.entities.find(first.guid)->index() == 3);
+  auto expect = [&](auto& baked, EntityGuid winner, EntityGuid runnerUp, EntityGuid last) {
     access::RuntimeWorldAccess boundary(baked);
     const auto instances = collectPickInstances(boundary, baked);
     const auto extracted = atlantis::runtime::collectRenderables(baked);
-    REQUIRE(instances.size() == 2);
-    REQUIRE(extracted.size() == 2);
+    REQUIRE(instances.size() == 3);
+    REQUIRE(extracted.size() == 3);
     CHECK(instances[0].entity == winner);
     CHECK(instances[1].entity == runnerUp);
+    CHECK(instances[2].entity == last);
     CHECK(instances[0].mesh == extracted[0].renderable.meshAsset);
     CHECK(instances[1].worldMatrix == extracted[1].worldMatrix);
     std::unordered_map<AssetId, PickMeshGeometry> geometry;
@@ -290,6 +295,6 @@ TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the
     REQUIRE(hit.has_value());
     CHECK(hit->entity == winner);
   };
-  expect(baseline, first.guid, second.guid);
-  expect(reordered, second.guid, first.guid);
+  expect(baseline, first.guid, second.guid, third.guid);
+  expect(reordered, second.guid, third.guid, first.guid);
 }

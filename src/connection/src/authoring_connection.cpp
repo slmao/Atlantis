@@ -44,7 +44,7 @@ namespace {
 
 EventKind kindOf(const Event& event) noexcept {
   // The variant's alternatives are declared in EventKind's order.
-  static_assert(std::variant_size_v<Event> == static_cast<std::size_t>(EventKind::NodeOrderChanged) + 1);
+  static_assert(std::variant_size_v<Event> == static_cast<std::size_t>(EventKind::NodeMovedInSiblingOrder) + 1);
   return static_cast<EventKind>(event.index());
 }
 
@@ -52,6 +52,9 @@ bool EventFilter::matches(const Event& event) const {
   if (!kinds.contains(kindOf(event))) return false;
   if (const auto* order = std::get_if<NodeOrderChanged>(&event)) {
     return !component && (!node || *node == order->node || *node == order->sibling);
+  }
+  if (const auto* move = std::get_if<NodeMovedInSiblingOrder>(&event)) {
+    return !component && (!node || *node == move->node);
   }
   if (node.has_value() && nodeOf(event) != node) return false;
   if (component.has_value() && componentOf(event) != component) return false;
@@ -64,6 +67,7 @@ std::string_view toString(Error error) noexcept {
     case Error::SiblingOrderStaleRevision: return "SiblingOrderStaleRevision";
     case Error::SiblingOrderRequiresHandAuthored: return "SiblingOrderRequiresHandAuthored";
     case Error::InvalidSiblingSwap: return "InvalidSiblingSwap";
+    case Error::InvalidSiblingMove: return "InvalidSiblingMove";
     case Error::NoDocument: return "NoDocument";
     case Error::UnknownNode: return "UnknownNode";
     case Error::UnknownComponentType: return "UnknownComponentType";
