@@ -124,6 +124,9 @@ public sealed record SiblingMoveEntry(EntityGuid Node, EntityGuid Anchor, Entity
         Matches(tree, forward ? After : Before);
 }
 
+public sealed record BatchPropertyEdit(string Field, IReadOnlyList<BatchPropertyTarget> Targets,
+    IReadOnlyList<PropertyWrite> Writes) : EditEntry;
+
 /// <summary>What a step needs to read of the document to compare it with a record (ADR-0136 D3).</summary>
 public interface IDocumentView
 {

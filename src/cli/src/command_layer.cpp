@@ -1962,6 +1962,14 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parent.isErr()) return ResultT::Err(parent.error());
     return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
   }
+  if (verb == "require-revision") {
+    if (t.size() != 2) return ResultT::Err(usageError("require-revision <revision> (first line of scene tx)"));
+    std::uint64_t revision{};
+    const auto parsed = std::from_chars(t[1].data(), t[1].data() + t[1].size(), revision);
+    if (parsed.ec != std::errc{} || parsed.ptr != t[1].data() + t[1].size())
+      return ResultT::Err(textError(text::TextError::MalformedNumber, t[1]));
+    return ResultT::Ok(std::vector<ac::Command>{ac::RequireDocumentRevision{revision}});
+  }
   if (verb == "swap-siblings" || verb == "move-sibling") {
     const bool relative = verb == "move-sibling";
     const std::string_view usage = relative ? "scene move-sibling <node> <anchor> <parent>|none before|after <revision>"
@@ -2017,11 +2025,28 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     return failed(command, plainError("SiblingOrderUnavailable", ErrorCategory::Refused,
                                       "this Runtime does not support sibling order changes"));
   const bool isTransaction = command == "scene tx";
+  const bool guarded = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireDocumentRevision>(edit);
+  });
+  Value batchTargets = Value::array();
+  std::string batchField;
+  if (guarded) {
+    const auto info = a->document();
+    if (!info || !info->supportsGuardedPropertyTransactions)
+      return failed(command, plainError("GuardedPropertyBatchUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded property transactions"));
+    for (const auto& edit : commands) {
+      const auto* write = std::get_if<ac::SetProperty>(&edit);
+      if (!write) continue;
+      batchTargets.push(Value::string(text::formatEntity(write->address.node)));
+      if (const auto leaf = leafOf(schema, write->address.component, write->address.field)) batchField = leaf->path;
+    }
+  }
   (void)drainSceneEvents();  // only this submission's events below
   (void)a->drainFailures();
   const std::size_t n = commands.size();
   access::TransactionTicket tickets;
-  if (!orderPair && !isTransaction && n == 1) {
+  if (!guarded && !orderPair && !isTransaction && n == 1) {
     tickets = access::TransactionTicket{a->submit(std::move(commands.front())), 1};
   } else {
     tickets = a->submitTransaction(std::move(commands));
@@ -2031,6 +2056,13 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   const bool knownRefusal = validTicket && std::any_of(drained.begin(), drained.end(), [&](const auto& failure) {
     return tickets.contains(failure.ticket);
   });
+  if (guarded && (!validTicket || (!knownRefusal && (!authoringEvents_ || a->applyStatus().isErr())))) {
+    std::string message = "Guarded property batch outcome unknown";
+    if (!batchField.empty()) message += " for " + batchField;
+    message += ". Reconnect and inspect the addressed properties before retrying.";
+    return failed(command, plainError("GuardedPropertyBatchUnknown", ErrorCategory::Runtime, std::move(message),
+        subject({{"field", Value::string(batchField)}, {"nodes", std::move(batchTargets)}})));
+  }
   if (orderPair && (!validTicket || (!knownRefusal && (!authoringEvents_ || a->applyStatus().isErr())))) {
     const std::string node = text::formatEntity(orderPair->first);
     const std::string sibling = text::formatEntity(orderPair->second);

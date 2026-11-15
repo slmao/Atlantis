@@ -149,6 +149,11 @@ public sealed class MainWindow : Window
     private ListBoxItem? _reparentTargetRow;
     private static readonly DataFormat<string> ReparentDragFormat = DataFormat.CreateStringApplicationFormat("atlantis-reparent");
     private bool _syncingSelection;
+    private ulong _pickRequest;
+    private BatchInspectorSnapshot? _batchView;
+    private (BatchInspectorSnapshot View, CommonInspectorField Field, string Text)? _batchDraft;
+    private readonly Dictionary<string, TextBox> _batchInputs = new();
+    private bool _resettingBatchInput;
     // Plan 0068 M4: the Gizmo's settings, the selected node's matrix and availability, and the grab in progress.
     private readonly ComboBox _gizmoMode = new() { ItemsSource = new[] { "Move", "Rotate", "Scale" }, SelectedIndex = 0, MinWidth = 80 };
     private readonly ComboBox _gizmoSpace = new() { ItemsSource = new[] { "World", "Local" }, SelectedIndex = 0, MinWidth = 80 };
@@ -325,7 +330,8 @@ public sealed class MainWindow : Window
         _status.TextWrapping = Avalonia.Media.TextWrapping.Wrap;
         _status.Height = 96;
         _notes.PlaceholderText = "Type here (keyboard focus check)";
-        _entities.SelectionMode = SelectionMode.Single;
+        _entities.SelectionMode = SelectionMode.Multiple;
+        _entities.AddHandler(KeyDownEvent, OnHierarchyKeyDown, RoutingStrategies.Tunnel);
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
         {
             var label = EditorVisuals.Ellipsis(row?.Label ?? "");
@@ -635,6 +641,9 @@ public sealed class MainWindow : Window
         ResetReparent("");
         _reparentDocumentOpen = false;
         _worker?.Stop();
+        _selection.Select(null);
+        ++_pickRequest;
+        ClearBatchInspector();
         ++_saveAsRequest;
         _saveAsPending = false;
         _saveAs.IsEnabled = false;
@@ -734,11 +743,16 @@ public sealed class MainWindow : Window
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
             _referenceWindow?.Invalidate("the session failed");
             _referenceBusy = false; ++_referenceLaunch; UpdateReferenceButtons();
+            _selection.Select(null);
+            ++_pickRequest;
+            SyncHierarchySelection(scroll: false);
+            ClearBatchInspector();
+            _inspectorPanel.Children.Clear();
             _assetBrowser.Disconnect(); RenderAssets();
             _runtimeLine = "session failed: " + message;
             UpdateStatus();
         };
-        worker.Picked += OnPicked;
+        worker.Picked += pick => { if (ReferenceEquals(_worker, worker)) OnPicked(pick); };
         worker.HierarchyChanged += (rows, markers) =>
         {
             if (ReferenceEquals(_worker, worker)) OnHierarchyChanged(rows, markers);
@@ -751,6 +765,10 @@ public sealed class MainWindow : Window
         {
             if (ReferenceEquals(_worker, worker) && _referenceWindow?.Target.Request == request)
                 _referenceWindow.Invalidate(reason);
+        };
+        worker.BatchInspectorChanged += snapshot =>
+        {
+            if (ReferenceEquals(_worker, worker)) OnBatchInspectorChanged(snapshot);
         };
         worker.HistoryChanged += history =>
         {
@@ -811,6 +829,9 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
+            ++_pickRequest;
+            ClearBatchInspector();
+            if (_selection.Nodes.Count > 1) SetSelection(null, false);
             ResetReparent(_reparentPending || _siblingMovePending || _pickedUp is not null || _hierarchyDrag is not null
                 ? "Scene reopened. Inspect the document before retrying the move." : null);
             if (_saveAsPending)
@@ -831,7 +852,11 @@ public sealed class MainWindow : Window
         worker.NodesDestroyed += nodes =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
-            if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
+            if (_selection.Nodes.Any(nodes.Contains))
+            {
+                _selection.Set(_selection.Nodes.Where(node => !nodes.Contains(node)));
+                PublishSelection(scroll: false);
+            }
             if (!_reparentPending && (_pickedUp ?? _hierarchyDrag?.Source) is { } source && nodes.Contains(source.Node))
             {
                 ResetReparent("Reparent cancelled: the source was deleted.");
@@ -1110,6 +1135,7 @@ public sealed class MainWindow : Window
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
         CameraMatrices? matrices = _camera.Matrices((float)window.Width / window.Height);
         if (matrices is null) return;
+        ulong request = ++_pickRequest;
         // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
         var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
         if (Picking.PickMarker(_markers, matrices, rect, x, y) is EntityGuid marker)
@@ -1121,11 +1147,12 @@ public sealed class MainWindow : Window
         }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
         float ndcY = (float)y / window.Height * 2.0f - 1.0f;
-        _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks);
+        _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks, request);
     }
 
     private void OnPicked(PickResult pick)
     {
+        if (pick.Request != 0 && pick.Request != _pickRequest) return;
         if (pick.Result.Error is ControlError error)
         {
             _pickLine = "pick: " + error;
@@ -1144,34 +1171,79 @@ public sealed class MainWindow : Window
         UpdateStatus();
     }
 
-    // Plan 0068 M2 (Spec 0068 R6, Q6): the one selection. A change anywhere -- the Viewport pick, the Hierarchy, a
-    // node destroyed -- updates the list's highlight and the overlay (outline, Gizmo, markers).
     private void SetSelection(EntityGuid? node, bool scroll)
     {
+        ++_pickRequest;
         _selection.Select(node);
+        PublishSelection(scroll);
+    }
+
+    private void SyncHierarchySelection(bool scroll)
+    {
         _syncingSelection = true;
         try
         {
-            HierarchyRow? row = node is EntityGuid n ? _hierarchyRows.FirstOrDefault(r => r.Node == n) : null;
-            _entities.SelectedItem = row;
-            if (scroll && row is not null) _entities.ScrollIntoView(row);
+            var selected = _entities.SelectedItems!;
+            selected.Clear();
+            foreach (HierarchyRow row in _hierarchyRows.Where(row => _selection.Nodes.Contains(row.Node)))
+                selected.Add(row);
+            if (scroll && selected.Count == 1 && selected[0] is object item) _entities.ScrollIntoView(item);
         }
-        finally
+        finally { _syncingSelection = false; }
+    }
+
+    private void PublishSelection(bool scroll)
+    {
+        if (_batchView?.SelectionGeneration != _selection.Generation) ClearBatchInspector();
+        SyncHierarchySelection(scroll);
+        if (_selection.Nodes.Count > 1)
         {
-            _syncingSelection = false;
+            _gizmoGrab = null;
+            _gizmoShown = null;
+            _dragPress = null;
+            if (_pickedUp is not null || _hierarchyDrag is not null) ResetReparent(null);
+            if (_batchView is null)
+            {
+                _inspectorPanel.Children.Clear();
+                _inspectorPanel.Children.Add(EditorVisuals.Secondary($"Reading {_selection.Nodes.Count} selected nodes…"));
+            }
         }
-        _worker?.ShowSelection(node);
+        _worker?.ShowSelection(_selection.Nodes, _selection.Generation);
         UpdateHierarchyActions();
     }
 
     private void OnHierarchySelected()
     {
         if (_syncingSelection) return;
-        EntityGuid? node = (_entities.SelectedItem as HierarchyRow)?.Node;
-        if (node == _selection.Node) return;
-        _selection.Select(node);
-        _worker?.ShowSelection(node);
-        UpdateHierarchyActions();
+        var nodes = _entities.SelectedItems!.OfType<HierarchyRow>().Select(row => row.Node).ToArray();
+        ++_pickRequest;
+        if (_selection.Set(nodes)) PublishSelection(scroll: false);
+        else
+        {
+            SyncHierarchySelection(scroll: false);
+            _editLine.Text = $"Select up to {Atlantis.Gameplay.Authoring.RequireDocumentRevision.MaxWrites} nodes.";
+        }
+    }
+
+    private void ToggleHierarchyRow(HierarchyRow row)
+    {
+        ++_pickRequest;
+        if (_selection.Toggle(row.Node)) PublishSelection(scroll: false);
+        else _editLine.Text = $"Select up to {Atlantis.Gameplay.Authoring.RequireDocumentRevision.MaxWrites} nodes.";
+    }
+
+    private void OnHierarchyKeyDown(object? sender, KeyEventArgs e)
+    {
+        if ((e.KeyModifiers & KeyModifiers.Control) != 0 && e.Key == Key.Space &&
+            HierarchyItem(e.Source)?.DataContext is HierarchyRow row)
+        {
+            ToggleHierarchyRow(row);
+            e.Handled = true;
+        }
+        else if ((e.KeyModifiers & KeyModifiers.Shift) != 0 && e.Key is Key.Up or Key.Down)
+        {
+            e.Handled = true;
+        }
     }
 
     private void UpdateHierarchyActions()
@@ -1184,6 +1256,10 @@ public sealed class MainWindow : Window
                 ? "Select a node in the Hierarchy."
                 : null;
         _duplicate.IsEnabled = reason is null;
+        _create.IsEnabled = _selection.Nodes.Count < 2;
+        _destroy.IsEnabled = _selection.Node is not null;
+        bool gizmoTools = _allowGizmoPreview && _selection.Nodes.Count < 2;
+        _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = gizmoTools;
         ToolTip.SetTip(_duplicate, reason);
         bool canCapture = CanCaptureReparent(drag: false) && SelectedReparentRow() is not null;
         _pickUp.IsEnabled = canCapture;
@@ -1250,7 +1326,7 @@ public sealed class MainWindow : Window
     }
 
     private bool CanCaptureReparent(bool drag) =>
-        _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen &&
+        _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen && _selection.Nodes.Count == 1 &&
         (!drag || _canAddMeshToDocument) && !_reparentPending && !_siblingMovePending && _gizmoGrab is null;
 
     private HierarchyRow? SelectedReparentRow() =>
@@ -1269,9 +1345,16 @@ public sealed class MainWindow : Window
     private void OnHierarchyPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _hierarchyPress = null;
-        if (CanCaptureReparent(drag: true) && e.GetCurrentPoint(_entities).Properties.IsLeftButtonPressed &&
-            HierarchyItem(e.Source)?.DataContext is HierarchyRow row)
-            _hierarchyPress = (row, e, e.GetPosition(_entities));
+        if (!e.GetCurrentPoint(_entities).Properties.IsLeftButtonPressed ||
+            HierarchyItem(e.Source) is not { DataContext: HierarchyRow row } item) return;
+        if ((e.KeyModifiers & KeyModifiers.Control) != 0) ToggleHierarchyRow(row);
+        else
+        {
+            SetSelection(row.Node, scroll: false);
+            if (CanCaptureReparent(drag: true)) _hierarchyPress = (row, e, e.GetPosition(_entities));
+        }
+        item.Focus();
+        e.Handled = true;
     }
 
     private async void OnHierarchyPointerMoved(object? sender, PointerEventArgs e)
@@ -2522,8 +2605,141 @@ public sealed class MainWindow : Window
         _importState.Text = text;
     }
 
+    private void ClearBatchInspector()
+    {
+        _batchView = null;
+        _batchDraft = null;
+        _batchInputs.Clear();
+    }
+
+    private void OnBatchInspectorChanged(BatchInspectorSnapshot snapshot)
+    {
+        if (_selection.Nodes.Count < 2 || snapshot.SelectionGeneration != _selection.Generation ||
+            snapshot.Lifetime != _meshDocumentLifetime) return;
+        if (_batchDraft is { } draft && snapshot.Revision is not null)
+        {
+            var fresh = snapshot.Fields.FirstOrDefault(field => field.Field.Path == draft.Field.Field.Path);
+            if (fresh is null || !fresh.Field.Editable || !fresh.Targets.SequenceEqual(draft.Field.Targets))
+            {
+                _batchDraft = null;
+                _editLine.Text = "The property changed elsewhere. Review the new values before editing.";
+            }
+        }
+        _batchView = snapshot;
+        BuildBatchInspector(snapshot);
+    }
+
+    private void BuildBatchInspector(BatchInspectorSnapshot snapshot)
+    {
+        var focused = _batchInputs.FirstOrDefault(pair => pair.Value.IsFocused);
+        int caret = focused.Value?.CaretIndex ?? 0;
+        _batchInputs.Clear();
+        _nameBox = null;
+        _inspectorShown = _inspectorDeferred = null;
+        _refreshReferenceLabels.Clear();
+        _inspectorPanel.Children.Clear();
+        _inspectorPanel.Children.Add(EditorVisuals.Heading($"{snapshot.Count} selected nodes", 17));
+        if (snapshot.Notice is string note)
+        {
+            _inspectorPanel.Children.Add(EditorVisuals.Secondary(note));
+            if (snapshot.Revision is null)
+            {
+                var refresh = new Button { Content = "Refresh properties" };
+                refresh.Click += (_, _) => _worker?.RefreshInspector();
+                _inspectorPanel.Children.Add(refresh);
+            }
+        }
+        foreach (var component in snapshot.Fields.GroupBy(field => field.Field.ComponentName))
+        {
+            _inspectorPanel.Children.Add(EditorVisuals.Heading(component.Key, 14));
+            foreach (CommonInspectorField field in component)
+            {
+                InspectorField definition = field.Field;
+                string display = field.State switch
+                {
+                    CommonValueState.Mixed => "Mixed values",
+                    CommonValueState.Absent => "Absent",
+                    CommonValueState.Unavailable => "Unavailable",
+                    _ => definition.Text
+                };
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("120,*,Auto"), Margin = new Thickness(0, 2) };
+                row.Children.Add(EditorVisuals.Ellipsis(definition.Label));
+                _inspectorPanel.Children.Add(row);
+                if (!snapshot.Writable || !definition.Editable)
+                {
+                    var value = EditorVisuals.Ellipsis(display);
+                    Grid.SetColumn(value, 1);
+                    row.Children.Add(value);
+                    continue;
+                }
+
+                var box = new TextBox
+                {
+                    Text = _batchDraft is { } saved && saved.Field.Field.Path == definition.Path ? saved.Text : definition.Text,
+                    PlaceholderText = field.State == CommonValueState.Mixed ? display : ""
+                };
+                _batchInputs[definition.Path] = box;
+                AutomationProperties.SetName(box, definition.Path);
+                var set = new Button { Content = "Set" };
+                AutomationProperties.SetName(set, "Set " + definition.Path);
+                Grid.SetColumn(box, 1);
+                Grid.SetColumn(set, 2);
+                row.Children.Add(box);
+                row.Children.Add(set);
+                bool ReadValue(out PropertyValue value) => InspectorModel.TryParse(definition, box.Text ?? "", out value, out _);
+                set.IsEnabled = ReadValue(out _);
+                box.TextChanged += (_, _) =>
+                {
+                    set.IsEnabled = ReadValue(out _);
+                    if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
+                    if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path &&
+                        _batchInputs.TryGetValue(previous.Field.Field.Path, out TextBox? older))
+                    {
+                        _resettingBatchInput = true;
+                        older.Text = snapshot.Fields.FirstOrDefault(item =>
+                            item.Field.Path == previous.Field.Field.Path)?.Field.Text ?? "";
+                        _resettingBatchInput = false;
+                    }
+                    _batchDraft = (snapshot, field, box.Text ?? "");
+                };
+                void Submit()
+                {
+                    if (!ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
+                    var basis = _batchDraft is { } current && current.Field.Field.Path == definition.Path
+                        ? (current.View, current.Field) : (snapshot, field);
+                    if (_worker?.CommitBatch(basis.Item1, basis.Item2, value) == true)
+                    {
+                        _batchDraft = null;
+                        set.IsEnabled = false;
+                        box.IsEnabled = false;
+                    }
+                    else _editLine.Text = "Batch editing is busy or the selection changed. Refresh and retry.";
+                }
+                set.Click += (_, _) => Submit();
+                box.KeyDown += (_, e) =>
+                {
+                    if (e.Key == Key.Enter) { Submit(); e.Handled = true; }
+                    if (e.Key == Key.Escape)
+                    {
+                        _batchDraft = null;
+                        _resettingBatchInput = true;
+                        box.Text = definition.Text;
+                        _resettingBatchInput = false;
+                        e.Handled = true;
+                    }
+                };
+            }
+        }
+        if (focused.Key is string path && _batchInputs.TryGetValue(path, out TextBox? next))
+        {
+            next.Focus();
+            next.CaretIndex = Math.Min(caret, next.Text?.Length ?? 0);
+        }
+    }
+
     private void OnInspectorChanged(InspectorSnapshot snapshot)
     {
+        if (_selection.Nodes.Count > 1 || snapshot.Subject != _selection.Node) return;
         if (_referenceBusy) return; // the worker owns the captured target; refresh after settlement/cancel
         // An observed external rename cancels a name draft immediately. Other
         // field refreshes retain the existing deferral while a user is typing.
@@ -2894,15 +3110,9 @@ public sealed class MainWindow : Window
         _hierarchyRows = rows;
         _markers = markers;
         _syncingSelection = true;
-        try
-        {
-            _entities.ItemsSource = rows;
-            _entities.SelectedItem = _selection.Node is EntityGuid n ? rows.FirstOrDefault(r => r.Node == n) : null;
-        }
-        finally
-        {
-            _syncingSelection = false;
-        }
+        try { _entities.ItemsSource = rows; }
+        finally { _syncingSelection = false; }
+        SyncHierarchySelection(scroll: false);
         UpdateHierarchyActions();
     }
 

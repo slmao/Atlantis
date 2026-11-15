@@ -363,6 +363,12 @@ public static class CodecSuite
         t.Equal(new A.DocumentInfo(AssetGuid.Parse("52052052-00aa-4052-8052-0000000000aa"), A.Provenance.HandAuthored,
                                    "D:/Atlantis/assets/scenes/a \"b\" é.scene.txt", 5),
                 Codec.DecodeDocumentInfo(wires["authoring.document"]), "a hand-authored document (escapes, non-ASCII)");
+        t.Check(Codec.DecodeDocumentInfo(wires["authoring.document.guarded"])?.SupportsGuardedPropertyTransactions == true,
+            "literal positive capability");
+        var malformedCapability = Json.Parse(Json.Write(wires["authoring.document.guarded"]));
+        malformedCapability.Set("supportsGuardedPropertyTransactions", JsonValue.String("true"));
+        t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedPropertyTransactions == false,
+            "malformed capability does not invalidate a readable document");
         t.Equal(A.Provenance.Imported, Codec.DecodeDocumentInfo(wires["authoring.document.imported"])?.Provenance, "an imported document");
         t.Equal(new A.NodeSummary(parent, null), Codec.DecodeNodeSummary(wires["authoring.node.root"]), "a root node");
 
@@ -374,7 +380,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(29, index, "the AuthoringError set has the C++ set's 29 names");
+        t.Equal(31, index, "the AuthoringError set has the C++ set's 31 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);

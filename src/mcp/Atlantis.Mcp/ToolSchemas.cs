@@ -41,6 +41,7 @@ internal static class ToolSchemas
             ("direction", Enum("Up", "Down")), ("expectedRevision", Integer)),
         Command("MoveSiblingRelative", ("node", String), ("anchor", String), ("parent", Nullable(String)),
             ("placement", Enum("Before", "After")), ("expectedRevision", Integer)),
+        Command("RequireDocumentRevision", ("expectedRevision", Integer)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)));
 

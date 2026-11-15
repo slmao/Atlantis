@@ -102,6 +102,21 @@ public static class GizmoOverlay
         return new ViewportOverlay(node is EntityGuid n ? new[] { n } : Array.Empty<EntityGuid>(), groups);
     }
 
+    public static ViewportOverlay ForMultiselection(IReadOnlyList<EntityGuid> nodes, IReadOnlyList<Marker> markers)
+    {
+        var selection = new HashSet<EntityGuid>(nodes);
+        var points = new List<OverlayPoint>(markers.Count);
+        foreach (Marker marker in markers)
+        {
+            OverlayColor color = selection.Contains(marker.Entity) ? SelectedMarkerColor : MarkerColor;
+            points.Add(new OverlayPoint(marker.Position, color, OverlayDepth.OnTop, MarkerPixels));
+        }
+        return new ViewportOverlay(nodes, points.Count == 0 ? Array.Empty<OverlayGroup>() :
+            new[] { OverlayGroup.World(points: points) });
+    }
+
+    private static readonly OverlayColor SelectedMarkerColor = new(0.32f, 0.66f, 1f, 1f);
+
     /// <summary>E1's marker colour (kMarkerColor: IM_COL32(235, 235, 235, 230)) and a size the pick radius covers.</summary>
     public static readonly OverlayColor MarkerColor = new(235 / 255.0f, 235 / 255.0f, 235 / 255.0f, 230 / 255.0f);
     public const float MarkerPixels = 9.0f;

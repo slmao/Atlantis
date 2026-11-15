@@ -51,6 +51,7 @@ TEST_CASE("authoring: before open() there is no document; open() reads it and re
   CHECK(info->provenance == ac::Provenance::HandAuthored);
   CHECK(info->sourcePath == f.source.generic_string());
   CHECK(info->nodeCount == 3);
+  CHECK(info->supportsGuardedPropertyTransactions);
   CHECK(f.document() == baseScene());
 }
 
@@ -184,6 +185,74 @@ TEST_CASE("authoring: SetProperty writes a leaf and reports PropertyChanged", "[
   CHECK(f.document().nodes[kLightNode].light->color == std::array<float, 3>{1.0f, 0.0f, 0.5f});
   CHECK_FALSE(f.document().nodes[kMeshNode].renderable->materialAsset.has_value());
   CHECK(c.getProperty(material).value() == ac::PropertyValue{wa::Absent{}});
+}
+
+TEST_CASE("authoring: guarded property batches have one revision, ordinary events and atomic refusal",
+          "[authoring][session]") {
+  auto fixture = baseScene();
+  for (int node = 4; node <= 67; ++node) {
+    scene::AuthoringNode extra;
+    extra.guid = entity(node);
+    fixture.nodes.push_back(extra);
+  }
+  Fixture f(fixture);
+  AuthoringConnection& c = *f.connection;
+  auto other = f.session.connect();
+  auto revision = [&] { return c.applyStatus().value().currentDocumentRevision.value(); };
+  const auto original = revision();
+  const auto eventStream = c.subscribe({});
+  auto write = [](int node, float value) {
+    return ac::SetProperty{ac::PropertyAddress{entity(static_cast<std::uint32_t>(node)), kTransform, field("Transform", "localScale")},
+                          std::array<float, 3>{value, 1.0f, 1.0f}};
+  };
+  using Guard = ac::RequireDocumentRevision;
+  const auto first = write(1, 2);
+  const auto second = write(2, 3);
+  const auto unknown = write(99, 4);
+  CHECK(refusalOf(c, {Guard{original}}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {first, Guard{original}, second}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{original}, first, Guard{original}}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{original}, first, first}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{original}, first, ac::SetNodeName{entity(2), "name"}}) == ac::Error::InvalidGuardedPropertyBatch);
+  CHECK(refusalOf(c, {Guard{original}, first, ac::SetProperty{
+      ac::PropertyAddress{entity(2), kTransform, field("Transform", "localPosition")}, first.value}}) == ac::Error::InvalidGuardedPropertyBatch);
+  const auto rejected = c.submitTransaction({Guard{original}, first, unknown});
+  const auto failures = c.drainFailures();
+  REQUIRE(failures.size() == 1);
+  CHECK(failures.front().ticket.value == rejected.first.value + 2);
+  CHECK(failures.front().error == ac::Error::UnknownNode);
+  CHECK(revision() == original);
+  CHECK(f.document() == fixture);
+  CHECK(drain(c, eventStream).empty());
+
+  std::vector<ac::Command> max{Guard{original}};
+  for (int node = 4; node <= 67; ++node) max.push_back(write(node, 2));
+  auto oversized = max;
+  oversized.push_back(first);
+  CHECK(refusalOf(c, oversized) == ac::Error::InvalidGuardedPropertyBatch);
+  const auto ticket = c.submitTransaction(max);
+  CHECK(ticket.count == 65);
+  CHECK(c.drainFailures().empty());
+  CHECK(revision() == original + 1);
+  CHECK(drain(c, eventStream).size() == 64);
+
+  const auto beforeRace = revision();
+  REQUIRE_FALSE(refusalOf(*other, {ac::SetNodeName{entity(3), "outside"}}));
+  CHECK(refusalOf(c, {Guard{beforeRace}, first, second}) == ac::Error::PropertyBatchStaleRevision);
+  const auto unrelated = drain(c, eventStream);
+  REQUIRE(unrelated.size() == 1);
+  CHECK(std::holds_alternative<ac::NodeNameChanged>(unrelated.front()));
+  const auto single = c.submitTransaction({Guard{revision()}, first});
+  CHECK(single.count == 2);
+  CHECK(c.drainFailures().empty());
+  CHECK(drain(c, eventStream) == std::vector<ac::Event>{ac::PropertyChanged{first.address, first.value}});
+  const auto beforeMulti = revision();
+  const auto multi = c.submitTransaction({Guard{beforeMulti}, write(1, 5), second});
+  CHECK(multi.count == 3);
+  CHECK(c.drainFailures().empty());
+  CHECK(revision() == beforeMulti + 1);
+  CHECK(drain(c, eventStream) == std::vector<ac::Event>{
+      ac::PropertyChanged{first.address, write(1, 5).value}, ac::PropertyChanged{second.address, second.value}});
 }
 
 TEST_CASE("authoring: relative sibling moves rotate only occupied slots and settle once", "[authoring][session]") {

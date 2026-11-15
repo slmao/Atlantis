@@ -1263,6 +1263,7 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::InvalidNodeName,
     authoring::Error::SiblingOrderStaleRevision, authoring::Error::SiblingOrderRequiresHandAuthored,
     authoring::Error::InvalidSiblingSwap, authoring::Error::InvalidSiblingMove,
+    authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -1420,6 +1421,9 @@ Value encode(const authoring::Command& command) {
           out.set("parent", encodeOptionalEntity(c.parent));
           out.set("placement", Value::string(c.placement == authoring::SiblingPlacement::Before ? "Before" : "After"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::RequireDocumentRevision>) {
+          out.set("kind", Value::string("RequireDocumentRevision"));
+          out.set("expectedRevision", Value::number(c.expectedRevision));
         } else {
           static_assert(std::is_same_v<C, authoring::SetActiveCamera>);
           out.set("kind", Value::string("SetActiveCamera"));
@@ -1505,6 +1509,12 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     if (!r || (p != "Before" && p != "After")) return std::nullopt;
     return authoring::Command(authoring::MoveSiblingRelative{
         *node, **anchor, *parent, p == "Before" ? authoring::SiblingPlacement::Before : authoring::SiblingPlacement::After, *r});
+  }
+  if (*kind == "RequireDocumentRevision") {
+    const auto* revision = value.find("expectedRevision");
+    const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
+    if (!expected) return std::nullopt;
+    return authoring::Command(authoring::RequireDocumentRevision{*expected});
   }
   if (*kind == "SetActiveCamera") {
     const auto camera = optionalEntityMember(value, "camera");
@@ -1725,6 +1735,7 @@ Value encode(const authoring::DocumentInfo& document) {
           Value::string(document.provenance == authoring::Provenance::Imported ? "Imported" : "HandAuthored"));
   out.set("source", Value::string(document.sourcePath));
   out.set("nodeCount", Value::number(document.nodeCount));
+  if (document.supportsGuardedPropertyTransactions) out.set("supportsGuardedPropertyTransactions", Value::boolean(true));
   return out;
 }
 
@@ -1741,6 +1752,8 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   const auto n = decodeUInt64(*nodeCount);
   if (!s || !n) return std::nullopt;
   authoring::DocumentInfo out{*s, authoring::Provenance::HandAuthored, source->asString(), *n};
+  const auto* capability = value.find("supportsGuardedPropertyTransactions");
+  out.supportsGuardedPropertyTransactions = capability && capability->isBool() && capability->asBool();
   if (provenance->asString() == "Imported") {
     out.provenance = authoring::Provenance::Imported;
   } else if (provenance->asString() != "HandAuthored") {

@@ -165,7 +165,10 @@ public static class FrameSampler
 /// <summary>A pick's answer, with when its input arrived and when the answer did.</summary>
 public sealed record SavedSceneReceipt(string Name, AssetGuid Scene, string Source);
 
-public sealed record PickResult(RaycastResult Result, PickRay Ray, double InputToAnswerMs);
+public sealed record PickResult(RaycastResult Result, PickRay Ray, double InputToAnswerMs)
+{
+    public ulong Request { get; init; }
+}
 
 /// <summary>
 /// A camera update's timing: input arrival to the Runtime's acknowledgement, and (when latency is measured) to the
@@ -311,6 +314,11 @@ public sealed class EditorWorker : IDisposable
     private long _lastPoll;
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
     private EntityGuid? _selected;
+    private IReadOnlyList<EntityGuid> _selectedNodes = Array.Empty<EntityGuid>();
+    private ulong _selectionGeneration;
+    private ulong _requestedSelectionGeneration;
+    private bool _batchWritable;
+    private bool _batchSettling;
     private InspectorModel? _inspector;
     private AssetReferencePicker? _referencePicker;
     private long _referenceRequest;
@@ -367,6 +375,7 @@ public sealed class EditorWorker : IDisposable
     public event Action<string>? EditNotice;
     public event Action<EntityGuid>? NodeCreatedByEditor;
     public event Action<InspectorSnapshot>? InspectorChanged;
+    public event Action<BatchInspectorSnapshot>? BatchInspectorChanged;
     public event Action<long, string>? AssetReferenceInvalidated;
     public event Action<GizmoSnapshot>? GizmoChanged;
     public event Action<HistorySnapshot>? HistoryChanged;
@@ -489,9 +498,17 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
-    public void Raycast(PickRay ray, long inputTicks) => Enqueue(session =>
+    public void Raycast(PickRay ray, long inputTicks, ulong request = 0) => Enqueue(session =>
     {
+        long lifetime = MeshDocumentLifetime;
+        ulong nodesBefore = _tree.NodeLifetimeGeneration;
         RaycastResult result = session.Control.Raycast(new Ray(ray.Origin, ray.Direction));
+        if (request != 0 && _document is not null)
+        {
+            PollDocument(session, pollApply: false);
+            if (lifetime != MeshDocumentLifetime || (result.Hit is RayHit hit &&
+                (nodesBefore != _tree.NodeLifetimeGeneration || !_tree.Contains(hit.Entity)))) return;
+        }
         double ms = Stopwatch.GetElapsedTime(inputTicks).TotalMilliseconds;
         _log.Write(string.Format(CultureInfo.InvariantCulture, "pick {0} input->answer {1:F1} ms",
                                  result.Error?.ToString() ?? result.Hit?.Entity.ToString() ?? "miss", ms));
@@ -500,8 +517,8 @@ public sealed class EditorWorker : IDisposable
                                  "  same ray: atlantis --session \"{0}\" runtime raycast --origin {1:G9} {2:G9} {3:G9} --direction {4:G9} {5:G9} {6:G9}",
                                  SessionPath ?? "<session file>", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X,
                                  ray.Direction.Y, ray.Direction.Z));
-        var answer = new PickResult(result, ray, ms);
-        _post(() => Picked?.Invoke(answer));
+        var answer = new PickResult(result, ray, ms) { Request = request };
+        _post(() => { if (lifetime == MeshDocumentLifetime) Picked?.Invoke(answer); });
     });
 
     /// <summary>
@@ -1058,7 +1075,7 @@ public sealed class EditorWorker : IDisposable
                     var edit = new EditTransaction("Move sibling", Array.Empty<PropertyWrite>(), new EditEntry[] { order });
                     history.Record(edit, target.Committed(Array.Empty<CommandFailure>()));
                     history.Update();
-                    notice = ApplySiblingOrder(lifetime, notice);
+                    notice = ApplyVerifiedEdit(lifetime, notice);
                 }
                 PostHistory(lifetime);
             }
@@ -1156,7 +1173,7 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
-    private string ApplySiblingOrder(long lifetime, string notice)
+    private string ApplyVerifiedEdit(long lifetime, string notice)
     {
         if (lifetime != MeshDocumentLifetime || _apply is not { } apply) return notice;
         try
@@ -1336,15 +1353,163 @@ public sealed class EditorWorker : IDisposable
     /// Plan 0068 M2 (Spec 0068 R6): the overlay for the selection -- the node outlined, a translate Gizmo at its world
     /// position (from the document), and the light and camera markers.
     /// </summary>
-    public void ShowSelection(EntityGuid? node) => Enqueue(session =>
+    public void ShowSelection(EntityGuid? node)
     {
-        string? refusal = _referencePicker?.Refusal;
-        _referencePicker?.SelectionChanged(node);
-        ReferenceInvalidated(refusal);
-        _selected = node;
-        SendOverlay(session);
-        PostInspector();
-    });
+        ulong generation;
+        lock (_lock) generation = ++_requestedSelectionGeneration;
+        ShowSelection(node is EntityGuid guid ? new[] { guid } : Array.Empty<EntityGuid>(), generation);
+    }
+
+    public void ShowSelection(IReadOnlyList<EntityGuid> nodes, ulong generation)
+    {
+        lock (_lock)
+        {
+            _requestedSelectionGeneration = generation;
+            Enqueue(session =>
+            {
+                lock (_lock)
+                {
+                    if (_requestedSelectionGeneration != generation) return;
+                }
+                EntityGuid? node = nodes.Count == 1 ? nodes[0] : null;
+                string? refusal = _referencePicker?.Refusal;
+                _referencePicker?.SelectionChanged(node);
+                ReferenceInvalidated(refusal);
+                _selectionGeneration = generation;
+                _selectedNodes = nodes;
+                _selected = node;
+                if (nodes.Count > 1 && _gizmo?.Dragging == true)
+                {
+                    _gizmo.Revert();
+                    lock (_lock) _gizmoActive = false;
+                }
+                SendOverlay(session);
+                PostInspector();
+            });
+        }
+    }
+
+    public bool CommitBatch(BatchInspectorSnapshot snapshot, CommonInspectorField field, PropertyValue value)
+    {
+        lock (_lock)
+        {
+            if (_stopping || _batchSettling || snapshot.Lifetime != MeshDocumentLifetime ||
+                snapshot.SelectionGeneration != _requestedSelectionGeneration ||
+                snapshot.Revision is null || !snapshot.Writable || !field.Field.Editable) return false;
+            _batchSettling = true;
+            Enqueue(session =>
+            {
+                try
+                {
+                    var writes = field.Targets.Where(target => target.Value is PropertyValue before && before != value)
+                        .Select(target => new PropertyWrite(target.Address, target.Value!.Value, value)).ToArray();
+                    var edit = new BatchPropertyEdit(field.Field.Path, field.Targets, writes);
+                    var result = SettlePropertyBatch(session, edit, true, snapshot.Lifetime, snapshot.SelectionGeneration);
+                    string notice = result.Notice;
+                    if (result.State == BatchReplayState.Committed && writes.Length != 0 &&
+                        snapshot.Lifetime == MeshDocumentLifetime && _history is { } history && _historyTarget is { } target)
+                    {
+                        var changed = field.Targets.Where(item => writes.Any(write => write.Address == item.Address)).ToArray();
+                        var record = edit with { Targets = changed };
+                        history.Record(new EditTransaction("Set " + field.Field.Path, writes, new EditEntry[] { record }),
+                            target.Committed(Array.Empty<CommandFailure>()));
+                        history.Update();
+                        notice = ApplyVerifiedEdit(snapshot.Lifetime, notice);
+                    }
+                    PostHistory(snapshot.Lifetime);
+                    _post(() => { if (snapshot.Lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
+                    PostInspector();
+                }
+                finally { lock (_lock) _batchSettling = false; }
+            });
+            return true;
+        }
+    }
+
+    private BatchReplayResult SettlePropertyBatch(RemoteSession session, BatchPropertyEdit edit, bool forward,
+        long lifetime, ulong? selection = null)
+    {
+        if (_document is not RemoteAuthoringDocument document || !_batchWritable)
+            return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
+        bool Current()
+        {
+            lock (_lock) return !_stopping && lifetime == MeshDocumentLifetime &&
+                (selection is null || selection == _requestedSelectionGeneration);
+        }
+        bool SameDocument() => lifetime == MeshDocumentLifetime;
+        bool Observe()
+        {
+            if (document.ObserveEvents() is not { } events) return false;
+            PollDocument(session, events, pollApply: false, refreshInspector: false);
+            return true;
+        }
+        bool TargetsCurrent() => edit.Targets.All(target => target.IsCurrent(_tree, selection is not null));
+        var addresses = edit.Targets.Select(target => target.Address).ToArray();
+        var writes = edit.Writes;
+        var expectedValues = selection is not null ? edit.Targets.Select(target => target.Value) :
+            writes.Select(write => (PropertyValue?)(forward ? write.Before : write.After));
+        var changed = writes.Select(write => new SetProperty(write.Address, forward ? write.After : write.Before)).ToArray();
+        string subject = edit.Field + " on " + string.Join(", ", addresses.Select(address => address.Node));
+        BatchReplayResult Conflict() => new(BatchReplayState.Drop, subject + " changed elsewhere. Refresh and review the values.");
+        BatchReplayResult Stale() => new(BatchReplayState.Retry, "Document revision changed. Refresh before retrying " + edit.Field + ".");
+        bool sent = false, committed = false;
+        BatchReplayResult Uncertain()
+        {
+            if (SameDocument())
+            {
+                _apply?.RequireExplicitApply("property batch could not be verified");
+                if (selection is not null) _history?.DiscardRedo();
+                PostApplyState(lifetime);
+            }
+            return new(BatchReplayState.Drop, committed
+                ? "Committed " + subject + ". History unavailable. Refresh, inspect and Apply explicitly."
+                : "Edit outcome unknown for " + subject + ". Refresh and inspect before retrying.");
+        }
+        try
+        {
+            if (!Current() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue || !Observe())
+                return Stale();
+            if (!TargetsCurrent()) return Conflict();
+            IReadOnlyList<PropertyValue?> prior = document.GetProperties(addresses);
+            if (!Observe() || !Current()) return Stale();
+            if (!TargetsCurrent()) return Conflict();
+            if (ReadOrderRevision(document) != revision) return Stale();
+            if (!prior.SequenceEqual(expectedValues)) return Conflict();
+            if (changed.Length == 0) return new(BatchReplayState.Committed, "The selected values are unchanged.");
+
+            var commands = new List<Command>(changed.Length + 1) { new RequireDocumentRevision(revision) };
+            commands.AddRange(changed);
+            if (!Current()) return Stale();
+            sent = true;
+            var ticket = document.SubmitTransaction(commands);
+            var failures = document.DrainFailures();
+            if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count) return Uncertain();
+            if (failures.FirstOrDefault(failure => ticket.Contains(failure.Ticket)) is { Ticket.Value: not 0 } refusal)
+                return new(refusal.Error is AuthoringError.UnknownNode or AuthoringError.ComponentMissing
+                    ? BatchReplayState.Drop : BatchReplayState.Retry, "Batch refused: " + refusal.Error);
+            committed = true;
+            ulong? before = ReadOrderRevision(document);
+            IReadOnlyList<PropertyValue?> values = document.GetProperties(changed.Select(write => write.Address).ToArray());
+            IReadOnlyList<Event>? observed = document.ObserveEvents();
+            ulong? after = ReadOrderRevision(document);
+            if (observed is not null)
+                PollDocument(session, observed, pollApply: false, refreshInspector: false);
+            if (!SameDocument() || before != revision + 1 || after != before || observed is null ||
+                !observed.OfType<PropertyChanged>().SequenceEqual(changed.Select(write => new PropertyChanged(write.Address, write.Value))) ||
+                !values.SequenceEqual(changed.Select(write => (PropertyValue?)write.Value)) ||
+                !edit.Targets.All(target => target.IsCurrent(_tree, checkStamp: false)))
+                return Uncertain();
+            return new(BatchReplayState.Committed, (selection is not null ? "Set " : forward ? "Redid " : "Undid ") + subject + ".");
+        }
+        catch (NotSupportedException)
+        {
+            return new(BatchReplayState.Retry, "Guarded property editing is unavailable.");
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            return sent ? Uncertain() : new(BatchReplayState.Retry, "Batch refused before submission: " + error.Message);
+        }
+    }
 
     // The release: one authoring transaction from the final matrix, then an apply; a refusal reverts the preview.
     private void ReleaseGizmo(RemoteSession session)
@@ -1472,7 +1637,7 @@ public sealed class EditorWorker : IDisposable
         PollDocument(session);
         long start = Stopwatch.GetTimestamp();
         long lifetime = MeshDocumentLifetime;
-        bool siblingReplay = false, reordered = false;
+        bool siblingReplay = false, reordered = false, batchReplay = false;
         (bool Verified, string Notice) Replay(SiblingEditEntry order, bool forward)
         {
             siblingReplay = true;
@@ -1480,12 +1645,20 @@ public sealed class EditorWorker : IDisposable
             reordered = settlement.Verified;
             return settlement;
         }
-        HistoryResult result = undo ? _history.Undo(Replay) : _history.Redo(Replay);
+        BatchReplayResult ReplayBatch(BatchPropertyEdit edit, bool forward)
+        {
+            batchReplay = true;
+            var settlement = SettlePropertyBatch(session, edit, forward, lifetime);
+            reordered = settlement.State == BatchReplayState.Committed;
+            return settlement;
+        }
+        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch) : _history.Redo(Replay, ReplayBatch);
+        siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
                                  _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
         if (result == HistoryResult.Submitted) _commitTicks = start;
-        string notice = reordered ? ApplySiblingOrder(lifetime, _history.Notice) : _history.Notice;
+        string notice = reordered ? ApplyVerifiedEdit(lifetime, _history.Notice) : _history.Notice;
         if (siblingReplay)
         {
             PostHistory(lifetime);
@@ -1653,6 +1826,7 @@ public sealed class EditorWorker : IDisposable
             _previewSession = session;
             PostApplyState();
             DocumentInfo? info = document.Info();
+            _batchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
                                      _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
@@ -1669,7 +1843,7 @@ public sealed class EditorWorker : IDisposable
     private static bool IsSiblingOrderEvent(Event e) => e is NodeOrderChanged or NodeMovedInSiblingOrder;
 
     private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true,
-        Event? localOrder = null, bool allowOrderRefresh = true)
+        Event? localOrder = null, bool allowOrderRefresh = true, bool refreshInspector = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
@@ -1692,22 +1866,34 @@ public sealed class EditorWorker : IDisposable
         if (events.Any(e => e is DocumentReopened))
         {
             long lifetime = Interlocked.Increment(ref _meshDocumentLifetime);
+            if (_selectedNodes.Count > 1)
+            {
+                _selectedNodes = Array.Empty<EntityGuid>();
+                _selected = null;
+            }
+            _batchWritable = false;
             _post(() => MeshDocumentReopened?.Invoke(lifetime));
             _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
             PostHistory();
+            _batchWritable = _document.Info() is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
         }
         else if (historyChanged) PostHistory();
         if (destroyed.Count > 0)
         {
-            if (_selected is EntityGuid s && destroyed.Contains(s)) _selected = null;
+            _selectedNodes = _selectedNodes.Where(node => !destroyed.Contains(node)).ToArray();
+            _selected = _selectedNodes.Count == 1 ? _selectedNodes[0] : null;
             _post(() => NodesDestroyed?.Invoke(destroyed));
         }
         // Another client's change to the selected node (or the node going) refreshes the Inspector.
-        if (_selected is EntityGuid subject && events.Any(e => e is PropertyChanged { Address.Node: var n } && n == subject ||
-                                                              e is ComponentAdded { Node: var a } && a == subject ||
-                                                              e is NodeNameChanged { Node: var renamed } && renamed == subject ||
-                                                              e is ComponentRemoved { Node: var r } && r == subject || e is DocumentReopened) ||
-            destroyed.Count > 0)
+        if (refreshInspector && (destroyed.Count > 0 || events.Any(e => e switch
+        {
+            PropertyChanged changed => _selectedNodes.Contains(changed.Address.Node),
+            ComponentAdded added => _selectedNodes.Contains(added.Node),
+            ComponentRemoved removed => _selectedNodes.Contains(removed.Node),
+            NodeNameChanged named => _selected == named.Node,
+            DocumentReopened => true,
+            _ => false
+        })))
         {
             PostInspector();
         }
@@ -1790,6 +1976,19 @@ public sealed class EditorWorker : IDisposable
     private void PostInspector()
     {
         if (_inspector is null || _document is null) return;
+        if (_selectedNodes.Count > 1 && _document is RemoteAuthoringDocument remote)
+        {
+            ulong generation = _selectionGeneration;
+            long lifetime = MeshDocumentLifetime;
+            ulong? before = ReadOrderRevision(remote);
+            var fields = _inspector.ReadCommon(_selectedNodes, _tree);
+            bool stable = before is not null && ReadOrderRevision(remote) == before && fields is not null;
+            var view = new BatchInspectorSnapshot(generation, lifetime, stable ? before : null, _selectedNodes.Count,
+                stable && _batchWritable, stable ? fields! : Array.Empty<CommonInspectorField>(),
+                stable ? _batchWritable ? null : "Batch editing is unavailable for this document." : "Common properties are unavailable. Refresh to retry.");
+            _post(() => { if (lifetime == MeshDocumentLifetime) BatchInspectorChanged?.Invoke(view); });
+            return;
+        }
         EntityGuid? subject = _selected is EntityGuid s && _tree.Contains(s) ? s : null;
         _inspector.Refresh(subject);
         IReadOnlyList<SchemaType> schema = _document.Schema;
@@ -1832,7 +2031,9 @@ public sealed class EditorWorker : IDisposable
             gizmo = GizmoOverlay.ModeGizmo(new Vector3(world[12], world[13], world[14]), mode, directions, _gizmo.Axis is GizmoAxis axis ? (int)axis : null);
             snapshot = new GizmoSnapshot(node, world, availability);
         }
-        ViewportOverlay overlay = GizmoOverlay.ForSelection(_selected, gizmo, _markers);
+        ViewportOverlay overlay = _selectedNodes.Count > 1
+            ? GizmoOverlay.ForMultiselection(_selectedNodes, _markers)
+            : GizmoOverlay.ForSelection(_selected, gizmo, _markers);
         if (session.Control.SetViewportOverlay(overlay) is ControlError refused) _log.Write("overlay refused: " + refused);
         _post(() => GizmoChanged?.Invoke(snapshot));
     }

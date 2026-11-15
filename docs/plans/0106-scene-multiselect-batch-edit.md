@@ -1,10 +1,10 @@
 # Plan 0106 — Scene Multiselection and Batch Property Editing
 
 - **Spec:** [Spec 0106](../specs/0106-scene-multiselect-batch-edit.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
-- **Related ADR:** [ADR-0162](../adr/0162-revision-guarded-authoring-property-batch.md) (Proposed).
+- **Joint Human Review:** The maintainer approved J1–J4, Spec/Plan 0106 and ADR-0162 in [PR #377 at `3f66ff58`](https://github.com/slmao/Atlantis/pull/377) on 2026-11-15. S2–S4 were authorized after manual design merge.
+- **Related ADR:** [ADR-0162](../adr/0162-revision-guarded-authoring-property-batch.md) (Accepted).
 
 ## Objective
 

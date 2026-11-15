@@ -118,7 +118,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("authoring.drain_failures", "authoring.drainFailures",
             "Return and clear all this connection's outstanding document command failures, in order, not only the last transaction's.", AuthoringModel),
         Declare("authoring.open", "authoring.open", "Open or reopen the running scene's source document.", AuthoringModel),
-        Declare("authoring.document", "authoring.document", "Read document identity, provenance, source and node count; null before open.", AuthoringModel),
+        Declare("authoring.document", "authoring.document", "Read document identity, provenance, source, node count and optional guarded property support; null before open.", AuthoringModel),
         Declare("authoring.apply", "authoring.apply", "Legacy acceptance only, not reload success. Prefer apply_tracked then apply_status.", AuthoringModel),
         Declare("authoring.apply_tracked", "authoring.applyTracked", "Accept the current document snapshot and return its receipt; no implicit wait or retry. Inspect apply_status for that id.", AuthoringModel),
         Declare("authoring.apply_status", "authoring.applyStatus", "Read a retained request and current projection non-destructively; absent/null id is global newest, never proof of a lost caller receipt. Inspect state, not tool success.", AuthoringModel,
@@ -232,6 +232,15 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                     _ => false
                 }))
                 return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+            if (mapping.Method == "authoring.submitTransaction" &&
+                wireParameters.Find("commands")!.Items.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision"))
+            {
+                JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
+                if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
+                if (document.Find("result") is not JsonValue descriptor ||
+                    Codec.DecodeDocumentInfo(descriptor)?.SupportsGuardedPropertyTransactions != true)
+                    return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+            }
             JsonValue response = session.Request(mapping.Method, wireParameters);
             if ((rebuild || rebuildStatus || import || importStatus) && Codec.IsLegacyAssetRebuildRefusal(response))
                 return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);

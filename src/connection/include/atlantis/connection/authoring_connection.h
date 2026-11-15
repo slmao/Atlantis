@@ -46,6 +46,7 @@ struct DocumentInfo {
   Provenance provenance = Provenance::HandAuthored;
   std::string sourcePath;  // the source file (HandAuthored) or the generated source (Imported)
   std::uint64_t nodeCount = 0;
+  bool supportsGuardedPropertyTransactions = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -117,9 +118,15 @@ struct MoveSiblingRelative {
   SiblingPlacement placement = SiblingPlacement::Before;
   std::uint64_t expectedRevision = 0;
 };
+// ADR-0162: only as the first command in a property-only transaction.
+struct RequireDocumentRevision {
+  std::uint64_t expectedRevision = 0;
+};
+inline constexpr std::size_t kMaxGuardedPropertyWrites = 64;
+
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
-                 SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative>;
+                 SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision>;
 
 // ---------------------------------------------------------------- events
 
@@ -285,6 +292,8 @@ enum class Error : std::uint8_t {
   SiblingOrderRequiresHandAuthored,
   InvalidSiblingSwap,
   InvalidSiblingMove,
+  InvalidGuardedPropertyBatch,
+  PropertyBatchStaleRevision,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;
