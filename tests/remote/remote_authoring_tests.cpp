@@ -315,6 +315,42 @@ TEST_CASE("remote authoring: guarded Transform writes share one revision and eve
       ac::PropertyChanged{x.address, x.value}, ac::PropertyChanged{y.address, y.value}});
 }
 
+TEST_CASE("remote authoring: guarded duplicate fits the full node limit", "[remote][authoring]") {
+  ServedAuthoring served;
+  auto first = served.world.attach();
+  auto second = served.world.attach();
+  auto& a = first->authoring();
+  auto& b = second->authoring();
+  CHECK_FALSE(a.document());
+  REQUIRE(a.open().isOk());
+  REQUIRE(a.document()->supportsGuardedDuplicateTransactions);
+  const auto rows = a.listNodes().value();
+  const auto revision = a.applyStatus().value().currentDocumentRevision.value();
+  const auto stream = b.subscribe({});
+  using Guard = ac::RequireDuplicateBatchRevision;
+  std::vector<ac::Command> append{Guard{revision}};
+  std::vector<ac::Command> remove{Guard{revision + 1}};
+  const auto copy = [](std::uint32_t index) {
+    EntityGuid id = node(1);
+    id.bytes.back() = static_cast<decltype(id.bytes)::value_type>(100 + index);
+    return id;
+  };
+  for (std::uint32_t i = 0; i < 64; ++i) {
+    append.push_back(ac::CreateNode{copy(i), rows.size() + i, {}});
+    append.push_back(ac::SetNodeName{copy(i), std::string(255, 'x')});
+    remove.push_back(ac::DestroyNode{copy(63 - i)});
+  }
+  CHECK(a.submitTransaction(append).count == 129);
+  REQUIRE(a.drainFailures().empty());
+  CHECK(b.drainEvents(stream).value().size() == 128);
+  CHECK(b.applyStatus().value().currentDocumentRevision == revision + 1);
+  CHECK(a.submitTransaction(remove).count == 65);
+  REQUIRE(a.drainFailures().empty());
+  CHECK(b.listNodes().value() == rows);
+  CHECK(b.drainEvents(stream).value().size() == 64);
+  CHECK(b.applyStatus().value().currentDocumentRevision == revision + 2);
+}
+
 TEST_CASE("remote authoring: a Runtime that serves no authoring session answers NoAuthoring", "[remote][authoring]") {
   ServedAuthoring served(/*serve=*/false);
   auto session = served.world.attach();

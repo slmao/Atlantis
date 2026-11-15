@@ -24,6 +24,8 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
 {
     public bool SupportsGuardedPropertyTransactions { get; init; }
     public bool SupportsGuardedTransformTransactions { get; init; }
+    /// <summary>The current document supports revision-guarded duplicate transactions.</summary>
+    public bool SupportsGuardedDuplicateTransactions { get; init; }
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
@@ -105,6 +107,12 @@ public sealed record RequireTransformBatchRevision(ulong ExpectedRevision) : Com
 {
     public const int MaxNodes = 64;
     public const int MaxWrites = 3 * MaxNodes;
+}
+
+/// <summary>First command of a guarded append or suffix removal (ADR-0164).</summary>
+public sealed record RequireDuplicateBatchRevision(ulong ExpectedRevision) : Command
+{
+    public const int MaxNodes = 64;
 }
 
 /// <summary>Sets the active camera; null clears it.</summary>
@@ -252,6 +260,8 @@ public enum AuthoringError
     InvalidSiblingMove,
     InvalidGuardedPropertyBatch,
     PropertyBatchStaleRevision,
+    InvalidGuardedDuplicateBatch,
+    DuplicateBatchStaleRevision,
 }
 
 /// <summary>

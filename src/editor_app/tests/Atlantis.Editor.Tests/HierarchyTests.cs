@@ -706,6 +706,78 @@ public static partial class Program
               limit.Submissions == 0, "duplicate: 65 nodes are refused before field reads or submission");
     }
 
+    private static void GuardedDuplicateChecks()
+    {
+        var document = new FakeDocument();
+        EntityGuid a = document.Add(1, null, LocalTransform.Identity);
+        EntityGuid b = document.Add(2, null, LocalTransform.Identity);
+        EntityGuid leaf = document.Add(3, FakeDocument.Guid(5), new LocalTransform(Vector3.Zero, Vector3.Zero, new(-2, 3, 1)));
+        EntityGuid sibling = document.Add(4, null, LocalTransform.Identity);
+        EntityGuid middle = document.Add(5, a, LocalTransform.Identity);
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var selection = new Selection();
+        var target = new AuthoringEditTarget(document, tree, new ApplyController(document));
+        var history = new EditHistory(target);
+        var first = HierarchyCommands.DuplicateSubtrees(document, tree, [b, leaf, a]).Edit!;
+        Check(first.Copies.Count == 4 && first.Roots.Count == 2 &&
+            first.Copies[2].State.Parent == first.Copies[3].State.Node &&
+            first.Copies[0].State.Name == "Copy" && first.Copies[1].State.Name == "Copy 2",
+            "batch duplicate deduplicates through an intermediate and preserves interleaved document order");
+        Check(HierarchyCommands.DuplicateSubtrees(document, tree, [a, leaf]).Edit?.Roots.Count == 1,
+            "multi-selection with one effective root retains the guarded path");
+
+        BatchReplayResult Replay(GuardedDuplicateEdit edit, bool forward)
+        {
+            if (edit.Matches(tree, document, !forward, checkIncarnations: !forward) != true)
+                return new(BatchReplayState.Drop, "conflict");
+            var commands = edit.Commands(forward, 1, document.Schema).Skip(1).ToArray();
+            var refusal = Submit(document, tree, selection, new EditPlan("batch duplicate", commands));
+            if (refusal is not null || edit.Matches(tree, document, forward, checkIncarnations: false) != true)
+                throw new InvalidOperationException("unexpected fake batch settlement");
+            if (forward) edit.CaptureCopyIdentities(tree);
+            return new(BatchReplayState.Committed, "settled");
+        }
+        void Record(GuardedDuplicateEdit edit)
+        {
+            Check(Replay(edit, true).State == BatchReplayState.Committed, "forward replay accepted");
+            history.Record(new EditTransaction("duplicate", Array.Empty<PropertyWrite>(), new EditEntry[] { edit }),
+                target.Committed(Array.Empty<CommandFailure>()));
+            history.Update();
+        }
+        Record(first);
+        var second = HierarchyCommands.DuplicateSubtrees(document, tree, [a, sibling]).Edit!;
+        Record(second);
+        var beforeReplay = tree.Order.ToArray();
+        Check(history.Undo(duplicate: Replay) == HistoryResult.Submitted &&
+            history.Undo(duplicate: Replay) == HistoryResult.Submitted, "both batches undo independently");
+        Check(history.Redo(duplicate: Replay) == HistoryResult.Submitted &&
+            history.Redo(duplicate: Replay) == HistoryResult.Submitted &&
+            tree.Order.SequenceEqual(beforeReplay), "verified local recreation preserves dependent redo by GUID and slot");
+        Check(!history.InvalidatePositional() && history.UndoDepth == 2,
+            "legacy order invalidation leaves guarded entries for replay's own boundary check");
+        EntityGuid latest = second.Copies[^1].State.Node;
+        Submit(document, tree, selection, new EditPlan("replace endpoint", new Command[] {
+            new DestroyNode(latest), new CreateNode(latest, (ulong)(tree.Count - 1), Array.Empty<TypeId>()) }));
+        int submissions = document.Submissions;
+        Check(history.Undo(duplicate: Replay) == HistoryResult.ChangedElsewhere && document.Submissions == submissions,
+            "externally replaced copy refuses whole undo without sending");
+
+        var limit = new FakeDocument();
+        EntityGuid root1 = limit.Add(1, null, LocalTransform.Identity);
+        EntityGuid root2 = limit.Add(2, null, LocalTransform.Identity);
+        for (int i = 3; i <= 64; ++i) limit.Add(i, i % 2 == 0 ? root1 : root2, LocalTransform.Identity);
+        var limitTree = new DocumentTree();
+        limitTree.Rebuild(limit);
+        Check(HierarchyCommands.DuplicateSubtrees(limit, limitTree, [root1, root2]).Edit?.Copies.Count == 64,
+            "batch limit applies to the union");
+        limit.Add(65, root1, LocalTransform.Identity);
+        limitTree.Rebuild(limit);
+        int reads = limit.PropertyReads;
+        Check(HierarchyCommands.DuplicateSubtrees(limit, limitTree, [root1, root2]).Edit is null &&
+            limit.PropertyReads == reads, "65 unique nodes refuse before reading leaves");
+    }
+
     private static void ApplyControllerChecks()
     {
         var document = new FakeDocument();

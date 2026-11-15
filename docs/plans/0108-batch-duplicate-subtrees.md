@@ -1,10 +1,10 @@
 # Plan 0108 — Duplicate Selected Scene Subtrees
 
 - **Spec:** [Spec 0108](../specs/0108-batch-duplicate-subtrees.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending J1–J4 and implementation authorization
-- **Related ADR:** [ADR-0164](../adr/0164-guarded-duplicate-transactions.md) (Proposed)
+- **Joint Human Review:** The maintainer approved J1–J4 and Spec/Plan 0108 at [PR #381, `ced4e82b`](https://github.com/slmao/Atlantis/pull/381) on 2026-11-16, accepted ADR-0164 and authorized S2–S4 after manual design merge `eaaac88f`.
+- **Related ADR:** [ADR-0164](../adr/0164-guarded-duplicate-transactions.md) (Accepted)
 
 ## Objective
 

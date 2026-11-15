@@ -43,6 +43,65 @@ public abstract record EditEntry;
 /// <summary>A node created (absent before, present after) or destroyed (present before, absent after).</summary>
 public sealed record NodeLife(NodeState State, bool Created) : EditEntry;
 
+/// <summary>One duplicate suffix and the live identities on which guarded replay depends.</summary>
+public sealed record GuardedDuplicateEdit(IReadOnlyList<EntityGuid> Roots, IReadOnlyList<NodeLife> Copies,
+    int PrefixCount, EntityGuid? Predecessor, Dictionary<EntityGuid, object> Dependencies) : EditEntry
+{
+    public Dictionary<EntityGuid, object> CopyIdentities { get; private set; } = new();
+    private IEnumerable<EntityGuid> CopyIds => Copies.Select(copy => copy.State.Node);
+
+    public IReadOnlyList<Command> Commands(bool forward, ulong revision, IReadOnlyList<SchemaType> schema)
+    {
+        var edit = new EditTransaction("duplicate subtrees", Array.Empty<PropertyWrite>(), Copies);
+        return new Command[] { new RequireDuplicateBatchRevision(revision) }
+            .Concat(StructuralSteps.Commands(edit, forward, schema)).ToArray();
+    }
+
+    public static IReadOnlyList<Event> ExpectedEvents(IEnumerable<Command> commands)
+    {
+        var events = new List<Event>();
+        foreach (Command command in commands)
+        {
+            switch (command)
+            {
+                case CreateNode { Node: EntityGuid node } create:
+                    events.Add(new NodeCreated(node, create.Position));
+                    events.AddRange(create.Components.Select(component => new ComponentAdded(node, component)));
+                    break;
+                case SetProperty write: events.Add(new PropertyChanged(write.Address, write.Value)); break;
+                case SetNodeName name: events.Add(new NodeNameChanged(name.Node, name.Name)); break;
+                case SetParent parent: events.Add(new ParentChanged(parent.Node, parent.Parent)); break;
+                case DestroyNode destroy: events.Add(new NodeDestroyed(destroy.Node)); break;
+            }
+        }
+        return events;
+    }
+
+    public bool? Matches(DocumentTree tree, IAuthoringDocument document, bool present, bool checkIncarnations)
+    {
+        if (!tree.OrderSynchronized || tree.Count != PrefixCount + (present ? Copies.Count : 0) ||
+            (PrefixCount > 0 && tree.Order[PrefixCount - 1] != Predecessor) ||
+            Dependencies.Any(dep => !ReferenceEquals(dep.Value, tree.IncarnationOf(dep.Key))))
+            return false;
+        if (!present) return CopyIds.All(node => !tree.Contains(node));
+        if (!tree.Order.Skip(PrefixCount).SequenceEqual(CopyIds) ||
+            (checkIncarnations && CopyIds.Any(node => !CopyIdentities.TryGetValue(node, out object? identity) ||
+                !ReferenceEquals(identity, tree.IncarnationOf(node))))) return false;
+        var actual = new DocumentView(document, tree).ReadCompleteNodes(CopyIds.ToArray());
+        return actual is null ? null : Copies.Zip(actual).All(pair => pair.First.State.SameAs(pair.Second));
+    }
+
+    public void CaptureCopyIdentities(DocumentTree tree) =>
+        CopyIdentities = CopyIds.ToDictionary(node => node, node => tree.IncarnationOf(node)!);
+
+    public void RebindDependencies(IReadOnlyDictionary<EntityGuid, object> removed, GuardedDuplicateEdit restored)
+    {
+        foreach (var (node, identity) in removed)
+            if (Dependencies.TryGetValue(node, out object? dependency) && ReferenceEquals(identity, dependency))
+                Dependencies[node] = restored.CopyIdentities[node];
+    }
+}
+
 /// <summary>A component added or removed, with its values.</summary>
 public sealed record ComponentLife(EntityGuid Node, ComponentState State, bool Added) : EditEntry;
 

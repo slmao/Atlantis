@@ -173,6 +173,7 @@ void authoringVectors(std::vector<Vector>& out) {
   command("swap_siblings", ac::SwapAdjacentSiblings{kNode, kParent, std::nullopt, ac::SiblingDirection::Up, 17});
   command("require_revision", ac::RequireDocumentRevision{17});
   command("require_transform_revision", ac::RequireTransformBatchRevision{18});
+  command("require_duplicate_revision", ac::RequireDuplicateBatchRevision{19});
   command("move_sibling", ac::MoveSiblingRelative{kNode, kParent, std::nullopt, ac::SiblingPlacement::Before, 17});
 
   const auto event = [&](std::string name, ac::Event e) {
@@ -221,6 +222,8 @@ void authoringVectors(std::vector<Vector>& out) {
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "D:/scene.txt", 3, true})});
   out.push_back({"authoring.document.guarded_transform", "Document",
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "D:/scene.txt", 3, true, true})});
+  out.push_back({"authoring.document.guarded_duplicate", "Document",
+                 codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::HandAuthored, "D:/scene.txt", 3, true, true, true})});
   out.push_back({"authoring.document.imported", "Document",
                  codec::encode(ac::DocumentInfo{kAsset, ac::Provenance::Imported, "D:/build/bistro/bistro.scene.txt", 5992})});
   out.push_back({"authoring.node", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent})});
@@ -228,7 +231,7 @@ void authoringVectors(std::vector<Vector>& out) {
   out.push_back({"authoring.node.named", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent, "  \xe5\x90\x8d \"quoted\" \\ "})});
 
   // The refusal set: every name of every error set, in declaration order.
-  for (int e = 0; e <= static_cast<int>(ac::Error::PropertyBatchStaleRevision); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::DuplicateBatchStaleRevision); ++e) {
     const auto error = static_cast<ac::Error>(e);
     out.push_back(
         {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});

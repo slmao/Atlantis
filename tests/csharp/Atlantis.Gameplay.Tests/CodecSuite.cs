@@ -372,6 +372,12 @@ public static class CodecSuite
         malformedCapability.Set("supportsGuardedTransformTransactions", JsonValue.String("true"));
         t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedTransformTransactions == false,
             "malformed Transform capability is unavailable");
+        t.Check(Codec.DecodeDocumentInfo(wires["authoring.document.guarded_duplicate"])?.SupportsGuardedDuplicateTransactions == true &&
+            Codec.DecodeDocumentInfo(wires["authoring.document.guarded_transform"])?.SupportsGuardedDuplicateTransactions == false,
+            "duplicate capability is independent");
+        malformedCapability.Set("supportsGuardedDuplicateTransactions", JsonValue.String("true"));
+        t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedDuplicateTransactions == false,
+            "malformed duplicate capability preserves the descriptor");
         malformedCapability.Set("supportsGuardedPropertyTransactions", JsonValue.String("true"));
         t.Check(Codec.DecodeDocumentInfo(malformedCapability)?.SupportsGuardedPropertyTransactions == false,
             "malformed capability does not invalidate a readable document");
@@ -386,7 +392,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(31, index, "the AuthoringError set has the C++ set's 31 names");
+        t.Equal(33, index, "the AuthoringError set has the C++ set's 33 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);

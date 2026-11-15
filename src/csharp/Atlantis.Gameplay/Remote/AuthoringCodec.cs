@@ -110,6 +110,10 @@ public static partial class Codec
                 output.Set("kind", JsonValue.String("RequireDocumentRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.RequireDuplicateBatchRevision c:
+                output.Set("kind", JsonValue.String("RequireDuplicateBatchRevision"))
+                    .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
+                break;
             case A.RequireTransformBatchRevision c:
                 output.Set("kind", JsonValue.String("RequireTransformBatchRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
@@ -187,6 +191,9 @@ public static partial class Codec
             case "RequireDocumentRevision":
                 return value.Find("expectedRevision") is JsonValue required && DecodeUInt64(required) is ulong guardedRevision
                     ? new A.RequireDocumentRevision(guardedRevision) : null;
+            case "RequireDuplicateBatchRevision":
+                return value.Find("expectedRevision") is JsonValue duplicateGuard && DecodeUInt64(duplicateGuard) is ulong duplicateRevision
+                    ? new A.RequireDuplicateBatchRevision(duplicateRevision) : null;
             case "RequireTransformBatchRevision":
                 return value.Find("expectedRevision") is JsonValue transformGuard && DecodeUInt64(transformGuard) is ulong transformRevision
                     ? new A.RequireTransformBatchRevision(transformRevision) : null;
@@ -374,6 +381,8 @@ public static partial class Codec
             result.Set("supportsGuardedPropertyTransactions", JsonValue.Bool(true));
         if (document.SupportsGuardedTransformTransactions)
             result.Set("supportsGuardedTransformTransactions", JsonValue.Bool(true));
+        if (document.SupportsGuardedDuplicateTransactions)
+            result.Set("supportsGuardedDuplicateTransactions", JsonValue.Bool(true));
         return result;
     }
 
@@ -396,7 +405,9 @@ public static partial class Codec
             SupportsGuardedPropertyTransactions =
                 value.Find("supportsGuardedPropertyTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsGuardedTransformTransactions =
-                value.Find("supportsGuardedTransformTransactions") is { Kind: JsonKind.Bool, AsBool: true }
+                value.Find("supportsGuardedTransformTransactions") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsGuardedDuplicateTransactions =
+                value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true }
         } : null;
     }
 

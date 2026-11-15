@@ -69,18 +69,21 @@ internal static partial class Program
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
             if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision"
-                or "RequireTransformBatchRevision")
+                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision")
             {
-                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision";
+                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision";
                 QueueSession exact = new()
                 {
                     GuardedCapability = kind == "RequireDocumentRevision" ? JsonValue.Bool(true) : null,
                     TransformCapability = kind == "RequireTransformBatchRevision" ? JsonValue.Bool(true) : null,
+                    DuplicateCapability = kind == "RequireDuplicateBatchRevision" ? JsonValue.Bool(true) : null,
                 };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
                 JsonValue commands = JsonValue.NewArray().Push(command);
-                if (guarded) commands.Push(JsonValue.NewObject().Set("kind", JsonValue.String("SetProperty"))
+                if (kind == "RequireDuplicateBatchRevision")
+                    commands.Push(Json.Parse("{\"kind\":\"DestroyNode\",\"node\":\"52052052-0001-4052-8052-000000000001\"}"));
+                else if (guarded) commands.Push(JsonValue.NewObject().Set("kind", JsonValue.String("SetProperty"))
                     .Set("address", Json.Parse(SceneAddress)).Set("value", Json.Parse("{\"f32\":4}")));
                 string args = Json.Write(JsonValue.NewObject().Set("commands", commands));
                 CallToolResult submittedExact = exactRegistry.Invoke(Request("authoring.submit_transaction", args));
@@ -382,6 +385,7 @@ internal static partial class Program
         public bool RejectCommands { get; init; }
         public JsonValue? GuardedCapability { get; set; }
         public JsonValue? TransformCapability { get; set; }
+        public JsonValue? DuplicateCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -410,6 +414,7 @@ internal static partial class Program
                         .Set("nodeCount", JsonValue.Number(2UL));
                     if (GuardedCapability is not null) result.Set("supportsGuardedPropertyTransactions", GuardedCapability);
                     if (TransformCapability is not null) result.Set("supportsGuardedTransformTransactions", TransformCapability);
+                    if (DuplicateCapability is not null) result.Set("supportsGuardedDuplicateTransactions", DuplicateCapability);
                     break;
                 case "authoring.submitTransaction":
                 {

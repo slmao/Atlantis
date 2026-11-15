@@ -316,6 +316,64 @@ TEST_CASE("authoring: guarded Transform batches admit mixed leaves once", "[auth
   CHECK(drain(c, stream).empty());
 }
 
+TEST_CASE("authoring: guarded duplicate admits atomic append and suffix removal", "[authoring][session]") {
+  const auto initial = baseScene();
+  Fixture f(initial);
+  auto& c = *f.connection;
+  REQUIRE(c.document()->supportsGuardedDuplicateTransactions);
+  const auto stream = c.subscribe({});
+  const auto revision = c.applyStatus().value().currentDocumentRevision.value();
+  const auto size = c.listNodes().value().size();
+  using Guard = ac::RequireDuplicateBatchRevision;
+  using Error = ac::Error;
+  const ac::CreateNode child{entity(40), size, {}};
+  const ac::CreateNode parent{entity(41), size + 1, {kCamera}};
+  const ac::SetProperty scale{{entity(40), kTransform, field("Transform", "localScale")}, std::array{-2.0f, 1.0f, 1.0f}};
+  const auto invalid = Error::InvalidGuardedDuplicateBatch;
+  CHECK(refusalOf(c, {Guard{revision}}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, ac::CreateNode{ac::EntityGuid{}, size, {}}}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, child, child}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, child, scale, scale}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, child, ac::SetNodeName{entity(1), "original"}}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, ac::CreateNode{entity(1), size, {}}}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, parent}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, ac::DestroyNode{entity(1)}}) == invalid);
+  CHECK(refusalOf(c, {Guard{revision}, child, ac::RequireTransformBatchRevision{revision}}) == invalid);
+  CHECK(refusalOf(c, {ac::RequireDocumentRevision{revision}, Guard{revision}, child}) == Error::InvalidGuardedPropertyBatch);
+  const auto misplaced = c.submitTransaction({child, Guard{revision}});
+  CHECK(c.drainFailures() == std::vector<ac::CommandFailure>{{{misplaced.first.value + 1}, invalid}});
+  const auto wrongValue = c.submitTransaction({Guard{revision}, child, ac::SetProperty{scale.address, false}});
+  const auto failures = c.drainFailures();
+  REQUIRE(failures.size() == 1);
+  CHECK(failures.front().ticket.value == wrongValue.first.value + 2);
+  CHECK(failures.front().error == Error::KindMismatch);
+  CHECK(refusalOf(c, {Guard{revision}, child, ac::SetParent{entity(40), entity(99)}}) == Error::ParentExists);
+  std::vector<ac::Command> oversized{Guard{revision}};
+  for (std::uint32_t i = 0; i < 65; ++i) oversized.push_back(ac::CreateNode{entity(100 + i), size + i, {}});
+  CHECK(refusalOf(c, oversized) == invalid);
+  CHECK(f.document() == initial);
+  CHECK(c.applyStatus().value().currentDocumentRevision == revision);
+  CHECK(drain(c, stream).empty());
+
+  const auto append = c.submitTransaction({Guard{revision}, child, scale, ac::SetParent{entity(40), entity(41)}, parent});
+  CHECK(append.count == 5);
+  REQUIRE(c.drainFailures().empty());
+  CHECK(c.applyStatus().value().currentDocumentRevision == revision + 1);
+  CHECK(drain(c, stream) == std::vector<ac::Event>{ac::NodeCreated{entity(40), size},
+      ac::PropertyChanged{scale.address, scale.value}, ac::ParentChanged{entity(40), entity(41)},
+      ac::NodeCreated{entity(41), size + 1}, ac::ComponentAdded{entity(41), kCamera}});
+  CHECK(refusalOf(c, {Guard{revision}, child}) == Error::DuplicateBatchStaleRevision);
+  const auto remove = c.submitTransaction({Guard{revision + 1}, ac::DestroyNode{entity(41)}, ac::DestroyNode{entity(40)}});
+  CHECK(remove.count == 3);
+  CHECK(c.drainFailures().empty());
+  CHECK(drain(c, stream) == std::vector<ac::Event>{ac::NodeDestroyed{entity(41)}, ac::NodeDestroyed{entity(40)}});
+  CHECK(f.document() == initial);
+  REQUIRE(c.open().isOk());
+  (void)drain(c, stream);
+  CHECK(refusalOf(c, {Guard{revision + 2}, child}) == Error::DuplicateBatchStaleRevision);
+  CHECK(drain(c, stream).empty());
+}
+
 TEST_CASE("authoring: relative sibling moves rotate only occupied slots and settle once", "[authoring][session]") {
   auto initial = baseScene();
   scene::AuthoringNode middle;

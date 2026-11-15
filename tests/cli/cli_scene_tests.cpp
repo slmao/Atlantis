@@ -292,6 +292,25 @@ TEST_CASE("cli scene: guarded property and Transform files use one shared transa
   CHECK(scene.cli.out.str().find("PropertyBatchStaleRevision") != std::string::npos);
 }
 
+TEST_CASE("cli scene: guarded duplicate uses an ordinary transaction file", "[cli][scene]") {
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+  auto script = scene.source;
+  script += ".tx";
+  std::ofstream(script, std::ios::binary) << "require-duplicate-revision " << revision << "\n"
+      << "create 52052052-0099-4052-8052-000000000099\n"
+      << "name 52052052-0099-4052-8052-000000000099 \"Copy\"\n";
+  const auto line = "scene tx " + script.generic_string();
+  CHECK(scene.run(line) == 0);
+  CHECK(member(*scene.envelope().find("result"), "committed") == "true");
+  CHECK(scene.authoring->listNodes().value().back().name == "Copy");
+  CHECK(scene.run(line) == 1);
+  CHECK(scene.cli.out.str().find("DuplicateBatchStaleRevision") != std::string::npos);
+  std::error_code ignored;
+  fs::remove(script, ignored);
+}
+
 TEST_CASE("cli scene: move-sibling rotates occupied slots and reports one move event",
           "[cli][scene][sibling_order]") {
   namespace ac = atlantis::connection::authoring;

@@ -1367,12 +1367,15 @@ public sealed class MainWindow : Window
 
     private void UpdateHierarchyActions()
     {
+        bool multiple = _selection.Nodes.Count > 1;
+        _duplicate.Content = multiple ? "Duplicate subtrees" : "Duplicate subtree";
         string? reason = _worker is null || _referenceSessionFailed ? "Connect to an authoring session."
             : !_canAddMeshToDocument ? "Open a hand-authored scene to duplicate nodes."
             : _duplicating ? "A duplicate is settling."
-            : _gizmoGrab is not null ? "Finish the active Gizmo gesture."
-            : _selection.Node is not EntityGuid node || !_hierarchyRows.Any(row => row.Node == node)
-                ? "Select a node in the Hierarchy."
+            : _gizmoGrab is not null || _groupGrab is not null ? "Finish the active Gizmo gesture."
+            : multiple && _worker.DuplicateBatchAvailable != true ? "The open document does not support guarded duplicate."
+            : _selection.Nodes.Count == 0 || _selection.Nodes.Any(node => !_hierarchyRows.Any(row => row.Node == node))
+                ? "Select live nodes in the Hierarchy."
                 : null;
         _duplicate.IsEnabled = reason is null;
         _create.IsEnabled = _selection.Nodes.Count < 2;
@@ -1429,7 +1432,13 @@ public sealed class MainWindow : Window
 
     private void DuplicateSelectedSubtree()
     {
-        if (!_duplicate.IsEnabled || _worker is not { } worker || _selection.Node is not EntityGuid source) return;
+        if (!_duplicate.IsEnabled || _worker is not { } worker) return;
+        if (_selection.Nodes.Count > 1)
+        {
+            DuplicateSelectedSubtrees(worker);
+            return;
+        }
+        if (_selection.Node is not EntityGuid source) return;
         long request = ++_duplicateRequest;
         long lifetime = _meshDocumentLifetime;
         ulong selection = _selection.Generation;
@@ -1447,6 +1456,31 @@ public sealed class MainWindow : Window
                 SetSelection(created, true);
             UpdateHierarchyActions();
         });
+    }
+
+    private void DuplicateSelectedSubtrees(EditorWorker worker)
+    {
+        long request = ++_duplicateRequest;
+        long lifetime = _meshDocumentLifetime;
+        ulong selection = _selection.Generation;
+        ulong pick = _pickRequest;
+        var rows = _hierarchyRows.Where(row => _selection.Nodes.Contains(row.Node)).ToArray();
+        _duplicating = worker.DuplicateSubtrees(rows, lifetime, selection, (roots, notice) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _duplicateRequest ||
+                lifetime != worker.MeshDocumentLifetime) return;
+            _duplicating = false;
+            ShowDuplicateState(notice);
+            if (roots is not null && _selection.Generation == selection && _pickRequest == pick)
+            {
+                ++_pickRequest;
+                _selection.Set(roots);
+                PublishSelection(scroll: true);
+            }
+            UpdateHierarchyActions();
+        });
+        ShowDuplicateState(_duplicating ? "Duplicating subtrees…" : "Duplicate refused. Refresh the selection and retry.");
+        UpdateHierarchyActions();
     }
 
     private bool CanCaptureReparent(bool drag) =>

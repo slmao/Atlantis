@@ -321,6 +321,9 @@ public sealed class EditorWorker : IDisposable
     private ulong _requestedSelectionGeneration;
     private bool _batchWritable;
     private bool _groupWritable;
+    private volatile bool _duplicateBatchWritable;
+    private bool _duplicateBatchQueued;
+    public bool DuplicateBatchAvailable => _duplicateBatchWritable;
     private sealed record GroupGrab(long Id, GroupGizmoSnapshot View, GizmoAxis Axis);
     private long _nextGroupGrab;
     private GroupGrab? _requestedGroup;
@@ -744,7 +747,7 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
-            if (_stopping || _gizmoActive || _batchSettling || _groupSettling || _requestedGroup is not null ||
+            if (_stopping || _gizmoActive || _batchSettling || _duplicateBatchQueued || _groupSettling || _requestedGroup is not null ||
                 shown.Lifetime != MeshDocumentLifetime || shown.Selection != _requestedSelectionGeneration) return null;
             var grab = new GroupGrab(++_nextGroupGrab, shown, axis);
             _requestedGroup = grab;
@@ -1170,6 +1173,160 @@ public sealed class EditorWorker : IDisposable
         PostApplyState(lifetime);
     });
 
+    public bool DuplicateSubtrees(IReadOnlyList<HierarchyRow> rows, long lifetime, ulong selection,
+        Action<IReadOnlyList<EntityGuid>?, string> settled)
+    {
+        lock (_lock)
+        {
+            if (_stopping || !_duplicateBatchWritable || lifetime != MeshDocumentLifetime ||
+                selection != _requestedSelectionGeneration || _duplicateBatchQueued || _batchSettling ||
+                _groupSettling || _requestedGroup is not null || _gizmoActive || _reparentQueued || _siblingMoveQueued ||
+                rows.Count < 2 || rows.Count > RequireDuplicateBatchRevision.MaxNodes) return false;
+            var targets = new Dictionary<EntityGuid, object>(rows.Count);
+            foreach (HierarchyRow row in rows)
+            {
+                if (!_hierarchyIncarnations.TryGetValue(row, out object? identity) || !targets.TryAdd(row.Node, identity))
+                    return false;
+            }
+            _duplicateBatchQueued = true;
+            Enqueue(session =>
+            {
+                try
+                {
+                    var (result, edit) = SettleDuplicateBatch(session, null, forward: true, lifetime, targets, selection);
+                    IReadOnlyList<EntityGuid>? copiedRoots = null;
+                    if (result.State == BatchReplayState.Committed && edit is not null && lifetime == MeshDocumentLifetime &&
+                        _history is { } history && _historyTarget is { } target)
+                    {
+                        history.Record(new EditTransaction("duplicate subtrees", Array.Empty<PropertyWrite>(), new EditEntry[] { edit }),
+                            target.Committed(Array.Empty<CommandFailure>()));
+                        history.Update();
+                        copiedRoots = edit.Roots;
+                    }
+                    PostHistory(lifetime);
+                    string notice = copiedRoots is not null
+                        ? ApplyVerifiedEdit(lifetime, result.Notice, publishStatus: false) : result.Notice;
+                    _post(() => { if (lifetime == MeshDocumentLifetime) settled(copiedRoots, notice); });
+                    PostApplyState(lifetime);
+                    PollDocument(session, pollApply: false);
+                    PostInspector();
+                }
+                finally { lock (_lock) _duplicateBatchQueued = false; }
+            });
+            return true;
+        }
+    }
+
+    private (BatchReplayResult Result, GuardedDuplicateEdit? Edit) SettleDuplicateBatch(RemoteSession session,
+        GuardedDuplicateEdit? edit, bool forward, long lifetime, IReadOnlyDictionary<EntityGuid, object>? targets = null,
+        ulong? selection = null)
+    {
+        bool initial = edit is null;
+        if (_document is not RemoteAuthoringDocument document || !_duplicateBatchWritable)
+            return (new(BatchReplayState.Retry, "Guarded duplicate is unavailable."), edit);
+        bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive &&
+            _gizmo?.Dragging != true && _requestedGroup is null &&
+            (selection is null || selection == _requestedSelectionGeneration);
+        bool TargetsMatch() => targets is null || targets.All(target =>
+            ReferenceEquals(target.Value, _tree.IncarnationOf(target.Key)));
+        IReadOnlyList<Event>? Observe()
+        {
+            if (document.ObserveEvents() is not { } events) return null;
+            PollDocument(session, events, pollApply: false, allowOrderRefresh: false,
+                refreshInspector: false, refreshOverlay: false, refreshHierarchy: false);
+            return lifetime == MeshDocumentLifetime ? events : null;
+        }
+        bool ObserveOrder(out IReadOnlyList<Event>? events)
+        {
+            var nodes = document.ObserveNodes();
+            events = Observe();
+            if (nodes is null || events is null) return false;
+            return _tree.OrderSynchronized && nodes.SequenceEqual(_tree.Order.Select(node =>
+                new NodeSummary(node, _tree.ParentOf(node), _tree.NameOf(node)))) || _tree.ReconcileOrder(nodes);
+        }
+
+        string operation = initial ? "Duplicate" : forward ? "Redo duplicate" : "Undo duplicate";
+        (BatchReplayResult, GuardedDuplicateEdit?) Retry(string reason) =>
+            (new(BatchReplayState.Retry, $"{operation} refused: {reason}"), edit);
+        (BatchReplayResult, GuardedDuplicateEdit?) Conflict(string reason) =>
+            (new(BatchReplayState.Drop, $"{operation} refused: {reason}"), edit);
+        bool sent = false, committed = false;
+        (BatchReplayResult, GuardedDuplicateEdit?) Uncertain()
+        {
+            if (lifetime == MeshDocumentLifetime)
+            {
+                _apply?.RequireExplicitApply("duplicate transaction could not be verified");
+                if (initial) _history?.DiscardRedo();
+            }
+            string subject = string.Join(", ", edit!.Roots);
+            string notice = committed
+                ? $"{operation} committed for {subject}. History unavailable. Inspect and Apply the current document explicitly."
+                : $"{operation} outcome unknown for {subject}. Inspect the document and confirm the prior request ended before retrying.";
+            return (new(BatchReplayState.Drop, notice), edit);
+        }
+
+        try
+        {
+            if (!IsCurrent() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue ||
+                !ObserveOrder(out _)) return Retry("the document or edit context is unavailable");
+            if (!TargetsMatch()) return Conflict("a selected Hierarchy row was replaced");
+            if (initial)
+            {
+                var planned = HierarchyCommands.DuplicateSubtrees(document, _tree, targets!.Keys.ToArray());
+                edit = planned.Edit;
+                if (edit is null) return Retry(planned.Refusal ?? "the subtree snapshot is incomplete");
+            }
+            bool? matches = initial ? true : edit!.Matches(_tree, document, present: !forward, checkIncarnations: !forward);
+            EntityGuid? camera = null;
+            if (!forward && !document.ObserveActiveCamera(out camera)) return Retry("the active camera could not be verified");
+            if (Observe() is null || ReadOrderRevision(document) != revision || !IsCurrent())
+                return Retry("the document or edit context changed. Refresh before retrying");
+            if (!TargetsMatch()) return Conflict("a selected Hierarchy row was replaced");
+            if (matches is null) return Retry("the full copy state could not be verified");
+            if (matches == false || (camera is EntityGuid active && edit!.CopyIdentities.ContainsKey(active)))
+                return Conflict("the copy, its parent, the active camera or the recorded append boundary changed");
+
+            if (document.Info() is not { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true })
+                return Retry("the open document does not support guarded duplicate transactions");
+            var commands = edit!.Commands(forward, revision, document.Schema);
+            var encoded = JsonValue.NewArray();
+            foreach (Command command in commands) encoded.Push(Codec.Encode(command));
+            var parameters = JsonValue.NewObject().Set("commands", encoded);
+            ulong request;
+            lock (_lock)
+            {
+                if (!IsCurrent() || !TargetsMatch()) return Retry("the displayed edit context changed");
+                sent = true;
+                request = session.Send("authoring.submitTransaction", parameters);
+            }
+
+            if (Codec.DecodeTransactionTicket(session.AwaitResult(request)) is not TransactionTicket ticket ||
+                ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
+                ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
+                return Uncertain();
+            var failures = document.DrainFailures();
+            if (failures.FirstOrDefault(failure => ticket.Contains(failure.Ticket)) is { Ticket.Value: not 0 } refusal)
+                return initial || refusal.Error == AuthoringError.DuplicateBatchStaleRevision
+                    ? Retry(refusal.Error.ToString()) : Conflict(refusal.Error.ToString());
+            committed = true;
+            if (ReadOrderRevision(document) != revision + 1 || !ObserveOrder(out var authored))
+                return Uncertain();
+            bool verified = edit.Matches(_tree, document, present: forward, checkIncarnations: false) == true;
+            var closingEvents = Observe();
+            if (!verified || closingEvents is null || ReadOrderRevision(document) != revision + 1 ||
+                !authored!.Concat(closingEvents).Where(e => e is not Applied)
+                    .SequenceEqual(GuardedDuplicateEdit.ExpectedEvents(commands)))
+                return Uncertain();
+            if (forward) edit.CaptureCopyIdentities(_tree);
+            string notice = initial ? $"Duplicated {edit.Copies.Count} nodes." : $"{operation}: {edit.Copies.Count} nodes.";
+            return (new(BatchReplayState.Committed, notice), edit);
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            return sent ? Uncertain() : Retry(error.Message);
+        }
+    }
+
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
     public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
 
@@ -1560,7 +1717,7 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
-            if (_stopping || _batchSettling || _requestedGroup is not null || _groupSettling || snapshot.Lifetime != MeshDocumentLifetime ||
+            if (_stopping || _batchSettling || _duplicateBatchQueued || _requestedGroup is not null || _groupSettling || snapshot.Lifetime != MeshDocumentLifetime ||
                 snapshot.SelectionGeneration != _requestedSelectionGeneration ||
                 snapshot.Revision is null || !snapshot.Writable || !field.Field.Editable) return false;
             _batchSettling = true;
@@ -1849,7 +2006,14 @@ public sealed class EditorWorker : IDisposable
             reordered = settlement.State == BatchReplayState.Committed;
             return settlement;
         }
-        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch) : _history.Redo(Replay, ReplayBatch);
+        BatchReplayResult ReplayDuplicate(GuardedDuplicateEdit edit, bool forward)
+        {
+            batchReplay = true;
+            var (settlement, _) = SettleDuplicateBatch(session, edit, forward, lifetime);
+            reordered = settlement.State == BatchReplayState.Committed;
+            return settlement;
+        }
+        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate) : _history.Redo(Replay, ReplayBatch, ReplayDuplicate);
         siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
@@ -2027,6 +2191,7 @@ public sealed class EditorWorker : IDisposable
             DocumentInfo? info = document.Info();
             _batchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
+            _duplicateBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
                                      _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
@@ -2074,6 +2239,7 @@ public sealed class EditorWorker : IDisposable
             }
             _batchWritable = false;
             _groupWritable = false;
+            _duplicateBatchWritable = false;
             CancelGroupGizmo();
             _post(() => MeshDocumentReopened?.Invoke(lifetime));
             _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
@@ -2081,6 +2247,7 @@ public sealed class EditorWorker : IDisposable
             DocumentInfo? reopened = _document.Info();
             _batchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
+            _duplicateBatchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
         }
         else if (historyChanged) PostHistory();
         if (destroyed.Count > 0)

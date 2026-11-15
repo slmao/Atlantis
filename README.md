@@ -453,6 +453,21 @@ Shared clients can send the corresponding guarded Transform batch with
 `scene tx` file and ordinary `set` lines for Transform vector leaves.
 Use `scene apply-status` to read the revision. Apply the result separately.
 
+### Duplicate selected subtrees
+
+Select multiple Hierarchy rows in a hand-authored scene and choose
+**Actions → Duplicate subtrees**. Overlapping selections count once
+and one operation copies at most 64 nodes. The copies keep their local
+placement and use new GUIDs. Undo and Redo act on the whole batch
+while the recorded append boundary and identities still match.
+
+Shared clients use the same revision-guarded append or suffix removal.
+In a CLI `scene tx` file, put `require-duplicate-revision <revision>`
+before the ordinary create and initialization lines or the suffix's
+destroy lines. Read the revision with `scene apply-status` and settle
+the transaction before Apply. If Apply fails in Editor, repair the
+document and use **Apply current document / Retry**.
+
 ### Change sibling order
 
 In a hand-authored scene, select one node and use **Hierarchy → Actions →

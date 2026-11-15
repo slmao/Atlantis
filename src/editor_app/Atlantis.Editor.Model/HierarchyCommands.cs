@@ -253,40 +253,90 @@ public static class HierarchyCommands
             }
         }
 
-        if (new DocumentView(document, tree).ReadCompleteNodes(nodes) is not { } originals)
-            return (null, "the subtree's complete component values could not be read");
+        var (entries, roots, refusal) = CopyNodes(document, tree, nodes, new[] { source });
+        return entries is null ? (null, refusal) : (new SubtreeDuplicate(roots[0],
+            new EditTransaction("duplicate subtree", Array.Empty<PropertyWrite>(), entries)), null);
+    }
+
+    public static (GuardedDuplicateEdit? Edit, string? Refusal) DuplicateSubtrees(
+        IAuthoringDocument document, DocumentTree tree, IReadOnlyList<EntityGuid> selection)
+    {
+        if (!tree.OrderSynchronized || selection.Count < 2 || selection.Count > RequireDuplicateBatchRevision.MaxNodes)
+            return (null, "select two or more live Hierarchy nodes");
+        var selected = selection.ToHashSet();
+        if (selected.Count != selection.Count || selected.Any(node => !tree.Contains(node)))
+            return (null, "a selected node is no longer present");
+        var roots = selected.Where(node => !selected.Any(ancestor =>
+            ancestor != node && tree.IsSelfOrAncestor(ancestor, node))).ToList();
+        var seen = new HashSet<EntityGuid>(roots);
+        if (roots.Count == 0) return (null, "invalid source hierarchy");
+        var nodes = new List<EntityGuid>(roots);
+        for (int i = 0; i < nodes.Count; ++i)
+        {
+            foreach (EntityGuid child in tree.ChildrenOf(nodes[i]))
+            {
+                if (!seen.Add(child)) return (null, "invalid source hierarchy");
+                if (nodes.Count == RequireDuplicateBatchRevision.MaxNodes)
+                    return (null, $"the selected subtrees exceed {RequireDuplicateBatchRevision.MaxNodes} nodes in total");
+                nodes.Add(child);
+            }
+        }
+        var (entries, copiedRoots, refusal) = CopyNodes(document, tree, nodes, roots);
+        if (entries is null) return (null, refusal);
+        var dependencies = roots.Select(tree.ParentOf).OfType<EntityGuid>().ToHashSet();
+        EntityGuid? predecessor = tree.Count == 0 ? null : tree.Order[^1];
+        if (predecessor is EntityGuid precedingNode) dependencies.Add(precedingNode);
+        return (new GuardedDuplicateEdit(copiedRoots, entries, tree.Count, predecessor,
+            dependencies.ToDictionary(node => node, node => tree.IncarnationOf(node)!)), null);
+    }
+
+    private static (IReadOnlyList<NodeLife>? Entries, IReadOnlyList<EntityGuid> Roots, string? Refusal) CopyNodes(
+        IAuthoringDocument document, DocumentTree tree, IReadOnlyList<EntityGuid> nodes, IReadOnlyList<EntityGuid> roots)
+    {
+        if (new DocumentView(document, tree).ReadCompleteNodes(nodes) is not { } snapshot)
+            return (null, Array.Empty<EntityGuid>(), "the subtree's complete component values could not be read");
+        var originals = snapshot.OrderBy(node => node.Position).ToArray();
         var copies = new Dictionary<EntityGuid, EntityGuid>(nodes.Count);
         var minted = new HashSet<EntityGuid>();
         foreach (EntityGuid original in nodes)
         {
             var copy = new EntityGuid(Guid.NewGuid());
-            if (!minted.Add(copy) || tree.Contains(copy))
-                return (null, "a copied node identity conflicts with the document");
+            if (copy.Value == Guid.Empty || !minted.Add(copy) || tree.Contains(copy))
+                return (null, Array.Empty<EntityGuid>(), "a copied node identity conflicts with the document");
             copies.Add(original, copy);
         }
 
-        NodeState root = originals[0];
-        string rootName = DuplicateRootName(root.Name, tree.ChildrenOf(root.Parent).Select(tree.NameOf));
-        var entries = new List<EditEntry>(nodes.Count);
+        var rootSet = roots.ToHashSet();
+        var rootNames = new Dictionary<EntityGuid, string>();
+        foreach (var siblings in originals.Where(node => rootSet.Contains(node.Node)).GroupBy(node => node.Parent))
+        {
+            var names = tree.ChildrenOf(siblings.Key).Select(tree.NameOf).ToHashSet(StringComparer.Ordinal);
+            foreach (NodeState root in siblings)
+            {
+                string name = DuplicateRootName(root.Name, names);
+                rootNames.Add(root.Node, name);
+                names.Add(name);
+            }
+        }
+
+        var entries = new List<NodeLife>(nodes.Count);
         ulong position = (ulong)tree.Count;
-        foreach (NodeState original in originals.OrderBy(node => node.Position))
+        foreach (NodeState original in originals)
         {
             EntityGuid copy = copies[original.Node];
-            bool isRoot = original.Node == source;
+            bool isRoot = rootNames.TryGetValue(original.Node, out string? name);
             var components = original.Components.Select(component => new ComponentState(component.Type,
                 component.Values.Select(value => (value.Address with { Node = copy }, value.Value)).ToList())).ToList();
             entries.Add(new NodeLife(new NodeState(copy, position++,
-                isRoot ? root.Parent : copies[original.Parent!.Value],
+                isRoot ? original.Parent : copies[original.Parent!.Value],
                 original.Children.Select(child => copies[child]).ToList(), components,
-                isRoot ? rootName : original.Name), true));
+                isRoot ? name! : original.Name), true));
         }
-        return (new SubtreeDuplicate(copies[source],
-            new EditTransaction("duplicate subtree", Array.Empty<PropertyWrite>(), entries)), null);
+        return (entries, originals.Where(node => rootSet.Contains(node.Node)).Select(node => copies[node.Node]).ToArray(), null);
     }
 
-    private static string DuplicateRootName(string source, IEnumerable<string> siblings)
+    private static string DuplicateRootName(string source, HashSet<string> names)
     {
-        var names = siblings.ToHashSet(StringComparer.Ordinal);
         for (int number = 1; number <= names.Count + 1; ++number)
         {
             string suffix = number == 1 ? "Copy" : "Copy " + number.ToString(CultureInfo.InvariantCulture);

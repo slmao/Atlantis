@@ -872,7 +872,8 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   access::CommandTicket submit(ac::Command command) override {
     if (std::holds_alternative<ac::SwapAdjacentSiblings>(command) || std::holds_alternative<ac::MoveSiblingRelative>(command) ||
         std::holds_alternative<ac::RequireDocumentRevision>(command) ||
-        std::holds_alternative<ac::RequireTransformBatchRevision>(command))
+        std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
+        std::holds_alternative<ac::RequireDuplicateBatchRevision>(command))
       return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
@@ -888,10 +889,14 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     const bool transform = std::ranges::any_of(commands, [](const ac::Command& command) {
       return std::holds_alternative<ac::RequireTransformBatchRevision>(command);
     });
-    if (property || transform) {
+    const bool duplicate = std::ranges::any_of(commands, [](const ac::Command& command) {
+      return std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
+    });
+    if (property || transform || duplicate) {
       const auto info = document();
       if (!info || (property && !info->supportsGuardedPropertyTransactions) ||
-          (transform && !info->supportsGuardedTransformTransactions)) return {};
+          (transform && !info->supportsGuardedTransformTransactions) ||
+          (duplicate && !info->supportsGuardedDuplicateTransactions)) return {};
     }
     if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
           return std::holds_alternative<ac::MoveSiblingRelative>(command);

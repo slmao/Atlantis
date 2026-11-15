@@ -196,7 +196,8 @@ public sealed class AuthoringSession
 
     public CommandTicket Submit(A.Command command)
     {
-        if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision)
+        if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision
+            or A.RequireDuplicateBatchRevision)
             return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
@@ -207,9 +208,12 @@ public sealed class AuthoringSession
     {
         bool property = commands.Any(command => command is A.RequireDocumentRevision);
         bool transform = commands.Any(command => command is A.RequireTransformBatchRevision);
-        if (property || transform)
+        bool duplicate = commands.Any(command => command is A.RequireDuplicateBatchRevision);
+        if (property || transform || duplicate)
         {
             A.DocumentInfo? info = Document();
+            if (duplicate && info?.SupportsGuardedDuplicateTransactions != true)
+                throw new NotSupportedException("This open document does not support guarded duplicate transactions.");
             if (transform && info?.SupportsGuardedTransformTransactions != true)
                 throw new NotSupportedException("This open document does not support guarded Transform transactions.");
             if (property && info?.SupportsGuardedPropertyTransactions != true)
