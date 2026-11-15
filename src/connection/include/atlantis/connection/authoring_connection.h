@@ -49,8 +49,7 @@ struct DocumentInfo {
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
-// One node, in the document's order (the instantiation order, immutable after
-// creation; Spec 0065 Non-Goals).
+// One node, in the document's canonical order (also the bake's instantiation order).
 struct NodeSummary {
   EntityGuid node;
   std::optional<EntityGuid> parent;
@@ -99,8 +98,18 @@ struct SetNodeName {
   EntityGuid node;
   std::string name;
 };
+enum class SiblingDirection : std::uint8_t { Up, Down };
+
+struct SwapAdjacentSiblings {
+  EntityGuid node;
+  EntityGuid sibling;
+  std::optional<EntityGuid> parent;
+  SiblingDirection direction = SiblingDirection::Up;
+  std::uint64_t expectedRevision = 0;
+};
 using Command =
-    std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera, SetNodeName>;
+    std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
+                 SetNodeName, SwapAdjacentSiblings>;
 
 // ---------------------------------------------------------------- events
 
@@ -154,8 +163,16 @@ struct NodeNameChanged {
   std::string name;
   friend bool operator==(const NodeNameChanged&, const NodeNameChanged&) = default;
 };
+struct NodeOrderChanged {
+  EntityGuid node;
+  EntityGuid sibling;
+  std::uint64_t position = 0;
+  std::uint64_t siblingPosition = 0;
+  std::uint64_t revision = 0;
+  friend bool operator==(const NodeOrderChanged&, const NodeOrderChanged&) = default;
+};
 using Event = std::variant<PropertyChanged, NodeCreated, NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-                           ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged>;
+                           ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged>;
 
 enum class EventKind : std::uint8_t {
   PropertyChanged,
@@ -168,6 +185,7 @@ enum class EventKind : std::uint8_t {
   DocumentReopened,
   Applied,
   NodeNameChanged,
+  NodeOrderChanged,
 };
 
 [[nodiscard]] EventKind kindOf(const Event& event) noexcept;
@@ -175,7 +193,8 @@ enum class EventKind : std::uint8_t {
 class EventKindSet {
  public:
   constexpr EventKindSet() noexcept = default;  // empty
-  [[nodiscard]] static constexpr EventKindSet all() noexcept { return EventKindSet(0x3FF); }
+  [[nodiscard]] static constexpr EventKindSet all() noexcept { return EventKindSet(0x7FF); }
+  [[nodiscard]] static constexpr EventKindSet legacy() noexcept { return EventKindSet(0x3FF); }
   [[nodiscard]] static constexpr EventKindSet only(EventKind kind) noexcept { return EventKindSet().with(kind); }
   [[nodiscard]] constexpr EventKindSet with(EventKind kind) const noexcept {
     return EventKindSet(static_cast<std::uint16_t>(bits_ | bit(kind)));
@@ -197,7 +216,7 @@ class EventKindSet {
 // DocumentReopened and Applied carry no node, and only PropertyChanged,
 // ComponentAdded and ComponentRemoved carry a component.
 struct EventFilter {
-  EventKindSet kinds = EventKindSet::all();
+  EventKindSet kinds = EventKindSet::legacy();
   std::optional<EntityGuid> node;
   std::optional<schema::TypeId> component;
 
@@ -241,6 +260,9 @@ enum class Error : std::uint8_t {
   CookRefused,
   NotRepresentableInSource,
   InvalidNodeName,
+  SiblingOrderStaleRevision,
+  SiblingOrderRequiresHandAuthored,
+  InvalidSiblingSwap,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;
@@ -368,6 +390,9 @@ class AuthoringConnection {
   // A refusal is reported by drainFailures().
   virtual atlantis::world::access::CommandTicket submit(authoring::Command command) = 0;
   virtual atlantis::world::access::TransactionTicket submitTransaction(std::vector<authoring::Command> commands) = 0;
+
+  // Remote connections establish this through the order-aware event subscription.
+  [[nodiscard]] virtual bool supportsSiblingOrder() { return true; }
 
   // Event (R6): pull-only, per subscription, from the moment it is made; and
   // the failures of this connection's own submissions.

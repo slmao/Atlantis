@@ -52,6 +52,14 @@ public sealed record ParentEntry(EntityGuid Node, EntityGuid? Before, EntityGuid
 
 public sealed record NameEntry(EntityGuid Node, string Before, string After) : EditEntry;
 
+/// <summary>Both participants, their incarnations, and the original orientation.</summary>
+public sealed record SiblingOrderEntry(EntityGuid Node, EntityGuid Sibling, EntityGuid? Parent,
+    object NodeIncarnation, object SiblingIncarnation, SiblingDirection Direction) : EditEntry
+{
+    public SiblingDirection DirectionFor(bool forward) =>
+        forward ? Direction : Direction == SiblingDirection.Up ? SiblingDirection.Down : SiblingDirection.Up;
+}
+
 /// <summary>What a step needs to read of the document to compare it with a record (ADR-0136 D3).</summary>
 public interface IDocumentView
 {

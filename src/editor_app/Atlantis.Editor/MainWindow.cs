@@ -41,6 +41,7 @@ using Avalonia.Threading;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Assets;
 using SceneAddress = Atlantis.Gameplay.Authoring.SceneAddress;
+using SiblingDirection = Atlantis.Gameplay.Authoring.SiblingDirection;
 using PixelRect = Avalonia.PixelRect;  // the window's pixels; the model's PixelRect is the Viewport image's
 
 namespace Atlantis.Editor;
@@ -99,6 +100,8 @@ public sealed class MainWindow : Window
     private bool _duplicating;
     private long _duplicateRequest;
     private readonly Button _toRoot = new() { Content = "Move to root" };
+    private readonly Button _moveUp = new() { Content = "Move up", IsEnabled = false };
+    private readonly Button _moveDown = new() { Content = "Move down", IsEnabled = false };
     private readonly Button _pickUp = new() { Content = "Pick up" };
     private readonly Button _moveHere = new() { Content = "Move under selection", IsEnabled = false };
     // Plan 0068 M5: the history's Undo and Redo, labelled with the edit they would step over.
@@ -132,6 +135,7 @@ public sealed class MainWindow : Window
     private ReparentSource? _pickedUp;
     private bool _reparentDocumentOpen;
     private bool _reparentPending;
+    private bool _siblingMovePending;
     private long _reparentRequest;
     private readonly TextBlock _reparentState = EditorVisuals.Secondary("");
     private (HierarchyRow Row, PointerPressedEventArgs Event, Point Position)? _hierarchyPress;
@@ -380,6 +384,8 @@ public sealed class MainWindow : Window
         {
             if (CaptureSelectedReparent() is { } source) SubmitReparent(source, null, drag: false);
         };
+        _moveUp.Click += (_, _) => MoveSelectedSibling(SiblingDirection.Up);
+        _moveDown.Click += (_, _) => MoveSelectedSibling(SiblingDirection.Down);
         _pickUp.Click += (_, _) =>
         {
             _pickedUp = CaptureSelectedReparent();
@@ -441,7 +447,8 @@ public sealed class MainWindow : Window
         var sceneSection = EditorVisuals.Disclosure("Scene files", sceneFiles);
         _duplicateState.TextWrapping = Avalonia.Media.TextWrapping.Wrap;
         _duplicateState.IsVisible = false;
-        var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(_duplicate, _destroy, _toRoot, _pickUp, _moveHere));
+        var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(
+            _duplicate, _destroy, _toRoot, _pickUp, _moveHere, _moveUp, _moveDown));
         structuralButtons.MaxHeight = 130;
         var structural = EditorVisuals.Stack(4, structuralButtons, _duplicateState);
         var actions = new ToggleButton { Content = "Actions" };
@@ -796,7 +803,7 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
-            ResetReparent(_reparentPending || _pickedUp is not null || _hierarchyDrag is not null
+            ResetReparent(_reparentPending || _siblingMovePending || _pickedUp is not null || _hierarchyDrag is not null
                 ? "Scene reopened. Inspect the document before retrying the move." : null);
             if (_saveAsPending)
             {
@@ -1174,6 +1181,36 @@ public sealed class MainWindow : Window
         _pickUp.IsEnabled = canCapture;
         _toRoot.IsEnabled = canCapture && SelectedReparentRow()?.Parent is not null;
         _moveHere.IsEnabled = canCapture && _pickedUp is { } pickup && _selection.Node != pickup.Node;
+        bool canReorder = _worker?.SiblingOrderAvailable == true && _canAddMeshToDocument && canCapture &&
+            _pickedUp is null && _hierarchyDrag is null;
+        _moveUp.IsEnabled = canReorder && DisplayedSibling(SiblingDirection.Up) is not null;
+        _moveDown.IsEnabled = canReorder && DisplayedSibling(SiblingDirection.Down) is not null;
+    }
+
+    private HierarchyRow? DisplayedSibling(SiblingDirection direction)
+    {
+        if (SelectedReparentRow() is not { } row) return null;
+        var siblings = _hierarchyRows.Where(r => r.Parent == row.Parent).ToList();
+        int index = siblings.FindIndex(candidate => ReferenceEquals(candidate, row));
+        int adjacent = index + (direction == SiblingDirection.Up ? -1 : 1);
+        return index >= 0 && adjacent >= 0 && adjacent < siblings.Count ? siblings[adjacent] : null;
+    }
+
+    private void MoveSelectedSibling(SiblingDirection direction)
+    {
+        Button button = direction == SiblingDirection.Up ? _moveUp : _moveDown;
+        if (!button.IsEnabled || _worker is not { } worker || SelectedReparentRow() is not { } row ||
+            DisplayedSibling(direction) is not { } sibling) return;
+        long lifetime = _meshDocumentLifetime;
+        _siblingMovePending = worker.MoveSibling(row, sibling, direction, lifetime, notice =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || lifetime != worker.MeshDocumentLifetime) return;
+            _siblingMovePending = false;
+            ShowReparentState(notice);
+            UpdateHierarchyActions();
+        });
+        ShowReparentState(_siblingMovePending ? "Moving sibling…" : "Sibling swap refused. Refresh before retrying.");
+        UpdateHierarchyActions();
     }
 
     private void ShowDuplicateState(string notice)
@@ -1206,7 +1243,7 @@ public sealed class MainWindow : Window
 
     private bool CanCaptureReparent(bool drag) =>
         _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen &&
-        (!drag || _canAddMeshToDocument) && !_reparentPending && _gizmoGrab is null;
+        (!drag || _canAddMeshToDocument) && !_reparentPending && !_siblingMovePending && _gizmoGrab is null;
 
     private HierarchyRow? SelectedReparentRow() =>
         _entities.SelectedItem is HierarchyRow row && row.Node == _selection.Node ? row : null;
@@ -1318,6 +1355,7 @@ public sealed class MainWindow : Window
 
     private void ResetReparent(string? notice)
     {
+        _siblingMovePending = false;
         if ((_pickedUp ?? _hierarchyDrag?.Source) is { } source) _worker?.CancelReparent(source);
         ++_reparentRequest;
         _reparentPending = false;

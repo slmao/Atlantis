@@ -35,14 +35,92 @@ public static class LiveAuthoringSuite
             Queries(t, first, server);
             Commands(t, first, second);
             Names(t, first, second);
+            SiblingOrder(t, first, second);
             ApplyUnderPause(t, first);
             TrackedApplyUnderPause(t, first, second);
             Save(t, first);
         }
         Imported(t);
         NoAuthoring(t);
+        LegacySiblingOrder(t, exactRefusal: true);
+        LegacySiblingOrder(t, exactRefusal: false);
         CreateSceneUnknownOutcome(t, RemoteError.Disconnected, null);
         CreateSceneUnknownOutcome(t, RemoteError.ProtocolError, "scenes/saved/save_other/scene.scene.txt");
+    }
+
+    private static void SiblingOrder(TestContext t, RemoteSession first, RemoteSession second)
+    {
+        var a = first.Authoring;
+        var b = second.Authoring;
+        var original = a.ListNodes().Value;
+        var legacy = b.Subscribe(new A.EventFilter());
+        var observed = b.Subscribe(new A.EventFilter(A.EventKind.AllWithSiblingOrder));
+        t.Check(b.SupportsSiblingOrder(), "canonical subscription establishes sibling order support");
+        ulong revision = a.ApplyStatus().Value!.CurrentDocumentRevision!.Value;
+        var command = new A.SwapAdjacentSiblings(original[0].Node, original[1].Node, null, A.SiblingDirection.Down, revision);
+        var ticket = a.SubmitTransaction(new A.Command[] { command });
+        t.Check(ticket.First.Value != 0 && ticket.Count == 1 && a.DrainFailures().Count == 0, "shared SDK order transaction settles");
+        t.Check(b.DrainEvents(legacy).Value.Count == 0 && b.ListNodes().Value[0] == original[1],
+            "old filter sees no unknown event and fresh order remains readable");
+        t.Check(b.DrainEvents(observed).Value.SequenceEqual(new A.Event[] {
+            new A.NodeOrderChanged(command.Node, command.Sibling, 1, 0, revision + 1)
+        }), "opted-in observer receives one order event with final slots and revision");
+        var inverse = command with { Direction = A.SiblingDirection.Up, ExpectedRevision = revision + 1 };
+        a.SubmitTransaction(new A.Command[] { inverse });
+        t.Check(a.DrainFailures().Count == 0 && a.ListNodes().Value.SequenceEqual(original), "inverse restores source order");
+        b.Unsubscribe(observed);
+        b.Unsubscribe(legacy);
+    }
+
+    private static void LegacySiblingOrder(TestContext t, bool exactRefusal)
+    {
+        const string scene = "52052052-00aa-4052-8052-0000000000aa";
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        Task<bool> peer = Task.Run(() =>
+        {
+            using TcpClient socket = listener.AcceptTcpClient();
+            socket.ReceiveTimeout = 5000;
+            using var stream = socket.GetStream();
+            using var reader = new StreamReader(stream);
+            using var writer = new StreamWriter(stream) { AutoFlush = true, NewLine = "\n" };
+            JsonValue Read() => Json.Parse(reader.ReadLine() ?? throw new EndOfStreamException());
+            void Reply(JsonValue request, string key, JsonValue value) =>
+                writer.WriteLine(Json.Write(JsonValue.NewObject().Set("id", request.Find("id")!).Set(key, value)));
+            Reply(Read(), "result", JsonValue.NewObject().Set("scene", JsonValue.String(scene)));
+            Reply(Read(), "result", Json.Parse("[]"));
+            var probe = Read();
+            bool all = probe.Find("method")?.AsString == "authoring.subscribe" &&
+                probe.Find("params")?.Find("filter")?.Find("kinds")?.Items.Any(k => k.AsString == "NodeOrderChanged") == true;
+            Reply(probe, "error", JsonValue.NewObject().Set("code", JsonValue.String("BadRequest"))
+                .Set("message", JsonValue.String(exactRefusal ? "malformed or missing filter" : "wrong filter")));
+            if (!exactRefusal) return all;
+            var fallback = Read();
+            bool legacy = fallback.Find("method")?.AsString == "authoring.subscribe" &&
+                fallback.Find("params")?.Find("filter")?.Find("kinds")?.Items.All(k => k.AsString != "NodeOrderChanged") == true;
+            Reply(fallback, "result", JsonValue.Number(3UL));
+            var read = Read();
+            Reply(read, "result", Json.Parse("{\"ok\":[]}"));
+            return all && legacy && read.Find("method")?.AsString == "authoring.listNodes";
+        });
+        var info = new SessionInfo((ushort)((IPEndPoint)listener.LocalEndpoint).Port, "00112233445566778899aabbccddeeff",
+            1, AssetGuid.Parse(scene));
+        using RemoteSession client = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
+        var filter = new A.EventFilter(A.EventKind.AllWithSiblingOrder);
+        if (exactRefusal)
+        {
+            t.Equal(3UL, client.Authoring.Subscribe(filter).Value, "same-session legacy subscription succeeds");
+            t.Check(!client.Authoring.SupportsSiblingOrder(), "legacy connection disables sibling order");
+            t.Throws<NotSupportedException>(() => client.Authoring.Submit(new A.SwapAdjacentSiblings(Mesh, Sun, null,
+                A.SiblingDirection.Down, 1)), "legacy swap is refused before wire submission");
+            t.Check(client.Authoring.ListNodes().IsOk && client.Failure is null, "legacy connection remains usable");
+        }
+        else
+        {
+            t.Throws<RemoteException>(() => client.Authoring.Subscribe(filter), "unexpected probe refusal fails normally");
+            t.Equal<RemoteError?>(RemoteError.ProtocolError, client.Failure, "unexpected probe reply cannot enable order");
+        }
+        t.Check(peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(), "probe and optional fallback used the expected wire requests");
     }
 
     private static void CreateSceneUnknownOutcome(TestContext t, RemoteError expected, string? replySource)

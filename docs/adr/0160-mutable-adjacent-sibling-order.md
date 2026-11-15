@@ -1,9 +1,9 @@
 # ADR 0160: Mutable Order for Adjacent Scene Siblings
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending.
+- **Acceptance:** Maintainer accepted [PR #373, revision 6d6abb11](https://github.com/slmao/Atlantis/pull/373) with the Spec and Plan.
 - **Related Spec:** [Spec 0104](../specs/0104-adjacent-sibling-order.md).
 
 ## Context

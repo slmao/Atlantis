@@ -170,6 +170,7 @@ void authoringVectors(std::vector<Vector>& out) {
   command("camera.none", ac::SetActiveCamera{std::nullopt});
   command("name", ac::SetNodeName{kNode, "  \xe5\x90\x8d \"quoted\" \\ "});
   command("name.empty", ac::SetNodeName{kNode, ""});
+  command("swap_siblings", ac::SwapAdjacentSiblings{kNode, kParent, std::nullopt, ac::SiblingDirection::Up, 17});
 
   const auto event = [&](std::string name, ac::Event e) {
     const json::Value wire = codec::encode(e);
@@ -191,8 +192,11 @@ void authoringVectors(std::vector<Vector>& out) {
   event("reopened", ac::DocumentReopened{kAsset});
   event("applied", ac::Applied{3});
   event("name", ac::NodeNameChanged{kNode, "  \xe5\x90\x8d \"quoted\" \\ "});
+  event("order", ac::NodeOrderChanged{kNode, kParent, 0, 2, 18});
 
   out.push_back({"authoring.filter.all", "AuthoringFilter", codec::encode(ac::EventFilter{})});
+  out.push_back({"authoring.filter.order", "AuthoringFilter",
+                 codec::encode(ac::EventFilter{ac::EventKindSet::all(), {}, {}})});
   out.push_back({"authoring.filter.none", "AuthoringFilter",
                  codec::encode(ac::EventFilter{ac::EventKindSet(), std::nullopt, std::nullopt})});
   out.push_back({"authoring.filter.applied", "AuthoringFilter",
@@ -214,7 +218,7 @@ void authoringVectors(std::vector<Vector>& out) {
   out.push_back({"authoring.node.named", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent, "  \xe5\x90\x8d \"quoted\" \\ "})});
 
   // The refusal set: every name of every error set, in declaration order.
-  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidNodeName); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidSiblingSwap); ++e) {
     const auto error = static_cast<ac::Error>(e);
     out.push_back(
         {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});

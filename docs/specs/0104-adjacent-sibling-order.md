@@ -1,11 +1,11 @@
 # Spec: Persist an Adjacent Sibling Swap in Hierarchy
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-15
 - **Related Plan:** [Plan 0104](../plans/0104-adjacent-sibling-order.md)
-- **Approval:** Pending joint review.
-- **Related ADR:** [ADR-0160](../adr/0160-mutable-adjacent-sibling-order.md) (Proposed).
+- **Approval:** Jointly approved J1–J4 with the Plan at [PR #373, revision 6d6abb11](https://github.com/slmao/Atlantis/pull/373).
+- **Related ADR:** [ADR-0160](../adr/0160-mutable-adjacent-sibling-order.md) (Accepted).
 
 ## Summary
 

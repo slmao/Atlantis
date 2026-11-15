@@ -8,6 +8,8 @@
 
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/asset_system/authoring_scene_mapping.h>
+#include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/decode_scene.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/scene_extraction.h>
@@ -225,4 +227,69 @@ TEST_CASE("an entity's Renderable mesh is read through the boundary", "[runtime]
   boundary.submit(access::CreateEntity{empty});
   REQUIRE(boundary.applyPending().failures.empty());
   CHECK_FALSE(atlantis::runtime::detail::renderableMesh(boundary, empty).has_value());
+}
+
+TEST_CASE("cold bake and extraction honor exchanged sibling slots and change the equal-distance winner",
+          "[runtime][editor][picking][sibling_order]") {
+  namespace as = atlantis::asset_system;
+  namespace scene = as::scene;
+  const auto mesh = as::parseAssetGuid("00620062-0062-4062-8062-006200620062").value();
+  const auto sceneId = as::deriveAssetGuid(mesh, "saved scene");
+  scene::AuthoringNode first;
+  first.guid = newGuid(1);
+  first.renderable = scene::Renderable{mesh, std::nullopt};
+  scene::AuthoringNode camera;
+  camera.guid = newGuid(2);
+  camera.parent = first.guid;
+  camera.camera = scene::Camera{};
+  camera.transform.localPosition = {0, 0, 8};
+  auto second = first;
+  second.guid = newGuid(3);
+  scene::AuthoringScene source;
+  source.nodes = {first, camera, second};
+  source.activeCamera = camera.guid;
+
+  const auto bake = [&](const scene::AuthoringScene& unit) {
+    const auto parsed = scene::toParsedSceneSource(unit);
+    REQUIRE(parsed.isOk());
+    const auto cooked = as::cookSceneSource(as::serializeSceneSource(parsed.value()), sceneId);
+    REQUIRE(cooked.isOk());
+    auto decoded = as::decodeScene(cooked.value());
+    REQUIRE(decoded.isOk());
+    return atlantis::world::bakeScene(decoded.value());
+  };
+  auto baseline = bake(source);
+  std::swap(source.nodes[0], source.nodes[2]);
+  auto reordered = bake(source);
+  using atlantis::world::toColumnMajor;
+  for (const auto& node : source.nodes) {
+    const auto prior = baseline.entities.find(node.guid).value();
+    const auto next = reordered.entities.find(node.guid).value();
+    const auto oldMatrix = baseline.world.get<atlantis::world::WorldMatrix>(prior).value();
+    const auto newMatrix = reordered.world.get<atlantis::world::WorldMatrix>(next).value();
+    CHECK(toColumnMajor(oldMatrix) == toColumnMajor(newMatrix));
+  }
+  CHECK(baseline.activeCamera == baseline.entities.find(camera.guid));
+  CHECK(reordered.activeCamera == reordered.entities.find(camera.guid));
+  CHECK(reordered.entities.find(camera.guid)->index() == 1);
+  CHECK(reordered.entities.find(second.guid)->index() == 0);
+  CHECK(reordered.entities.find(first.guid)->index() == 2);
+  auto expect = [&](auto& baked, EntityGuid winner, EntityGuid runnerUp) {
+    access::RuntimeWorldAccess boundary(baked);
+    const auto instances = collectPickInstances(boundary, baked);
+    const auto extracted = atlantis::runtime::collectRenderables(baked);
+    REQUIRE(instances.size() == 2);
+    REQUIRE(extracted.size() == 2);
+    CHECK(instances[0].entity == winner);
+    CHECK(instances[1].entity == runnerUp);
+    CHECK(instances[0].mesh == extracted[0].renderable.meshAsset);
+    CHECK(instances[1].worldMatrix == extracted[1].worldMatrix);
+    std::unordered_map<AssetId, PickMeshGeometry> geometry;
+    geometry.emplace(instances[0].mesh, buildPickGeometry(kLayout, cubeVertexBytes(), kCubeIndices));
+    const auto hit = pickNearest(instances, geometry, PickRay{{0, 0, 8}, {0, 0, -1}});
+    REQUIRE(hit.has_value());
+    CHECK(hit->entity == winner);
+  };
+  expect(baseline, first.guid, second.guid);
+  expect(reordered, second.guid, first.guid);
 }

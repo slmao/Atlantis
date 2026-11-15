@@ -271,11 +271,39 @@ struct AuthoringSession::State {
     return std::nullopt;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene& d, const ac::SwapAdjacentSiblings& c,
+                                 std::vector<ac::Event>& events) {
+    if (!std::holds_alternative<HandAuthored>(source.provenance))
+      return ac::Error::SiblingOrderRequiresHandAuthored;
+    if (c.expectedRevision != documentRevision) return ac::Error::SiblingOrderStaleRevision;
+    const auto node = findNode(d, c.node);
+    const auto sibling = findNode(d, c.sibling);
+    if (!node || !sibling) return ac::Error::UnknownNode;
+    if ((c.direction != ac::SiblingDirection::Up && c.direction != ac::SiblingDirection::Down) ||
+        *node == *sibling || d.nodes[*node].parent != c.parent || d.nodes[*sibling].parent != c.parent ||
+        (c.direction == ac::SiblingDirection::Up ? *sibling > *node : *sibling < *node))
+      return ac::Error::InvalidSiblingSwap;
+    const auto first = std::min(*node, *sibling);
+    const auto last = std::max(*node, *sibling);
+    for (std::size_t i = first + 1; i < last; ++i) {
+      if (d.nodes[i].parent == c.parent) return ac::Error::InvalidSiblingSwap;
+    }
+    std::swap(d.nodes[*node], d.nodes[*sibling]);
+    events.push_back(ac::NodeOrderChanged{c.node, c.sibling, *sibling, *node, documentRevision + 1});
+    return std::nullopt;
+  }
+
   // A transaction (one command or several): applied to a copy, validated, and
   // swapped in, or refused whole.
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
+    if (commands.size() != 1) {
+      for (std::size_t i = 0; i < commands.size(); ++i) {
+        if (std::holds_alternative<ac::SwapAdjacentSiblings>(commands[i]))
+          return ac::CommandFailure{CommandTicket{first.value + i}, ac::Error::InvalidSiblingSwap};
+      }
+    }
     scene::AuthoringScene candidate = *document;
     std::vector<ac::Event> events;
     for (std::size_t i = 0; i < commands.size(); ++i) {

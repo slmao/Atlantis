@@ -246,6 +246,26 @@ TEST_CASE("cli scene: apply waits for Applied; save writes the source", "[cli][s
   CHECK(readText(scene.source) == atlantis::asset_system::serializeSceneSource(saved.value()));
 }
 
+TEST_CASE("cli scene: swap-siblings submits one guarded transaction and reports its order event",
+          "[cli][scene][sibling_order]") {
+  namespace ac = atlantis::connection::authoring;
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const std::string second = "52052052-0002-4052-8052-000000000002";
+  const auto status = scene.authoring->applyStatus().value();
+  REQUIRE(status.currentDocumentRevision);
+  const auto names = std::string(kNode1) + " " + second + " none down ";
+  const auto command = "scene swap-siblings " + names + std::to_string(*status.currentDocumentRevision);
+  REQUIRE(scene.run(command) == 0);
+  CHECK(scene.cli.out.str().find("NodeOrderChanged") != std::string::npos);
+  const auto rows = scene.authoring->listNodes().value();
+  CHECK(atlantis::asset_system::toString(rows[0].node) == second);
+  CHECK(atlantis::asset_system::toString(rows[1].node) == kNode1);
+  CHECK(scene.run(command) != 0);
+  CHECK(scene.cli.out.str().find(toString(ac::Error::SiblingOrderStaleRevision)) != std::string::npos);
+  CHECK(scene.authoring->listNodes().value() == rows);
+}
+
 TEST_CASE("cli scene: usage, no document and no authoring session", "[cli][scene]") {
   SceneCli scene(/*json=*/true);
   CHECK(scene.run("scene") == 2);
