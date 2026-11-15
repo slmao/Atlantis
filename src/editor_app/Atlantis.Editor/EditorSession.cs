@@ -786,7 +786,7 @@ public sealed class EditorWorker : IDisposable
             Enqueue(session =>
             {
                 RetireGroup(grab);
-                SendOverlay(session);
+                SendOverlay(session, retiring: grab);
             });
             _post(() => GroupGrabEnded?.Invoke(grab.Id));
             return true;
@@ -864,7 +864,7 @@ public sealed class EditorWorker : IDisposable
     {
         if (!ReferenceEquals(_groupGrab, grab) || !GroupCurrent(grab)) return;
         RetireGroup(grab);
-        SendOverlay(session);
+        SendOverlay(session, retiring: grab);
         if (!GroupCurrent(grab)) return;
         var view = grab.View;
         GroupGizmoSample result = view.Placement.Solve(view.Mode, grab.Axis, amount, view.Snap);
@@ -877,18 +877,20 @@ public sealed class EditorWorker : IDisposable
         var edit = new BatchPropertyEdit(label, view.Placement.Targets, result.Writes, view.Placement);
         var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab);
         string notice = settled.Notice;
+        bool recorded = false;
         if (settled.State == BatchReplayState.Committed && result.Writes.Count > 0 &&
             view.Lifetime == MeshDocumentLifetime && _history is { } history && _historyTarget is { } target)
         {
             history.Record(new EditTransaction(label, result.Writes, new EditEntry[] { edit }),
                 target.Committed(Array.Empty<CommandFailure>()));
             history.Update();
-            PostHistory(view.Lifetime);
-            notice = ApplyVerifiedEdit(view.Lifetime, notice, publishStatus: false);
+            recorded = true;
         }
         PostHistory(view.Lifetime);
+        if (recorded) notice = ApplyVerifiedEdit(view.Lifetime, notice, publishStatus: false);
         GroupNotice(view.Lifetime, notice);
         PostApplyState(view.Lifetime);
+        PollDocument(session, pollApply: false, refreshInspector: false, refreshOverlay: false);
         PostInspector();
         SendOverlay(session);
     }
@@ -1571,6 +1573,7 @@ public sealed class EditorWorker : IDisposable
                     var edit = new BatchPropertyEdit(field.Field.Path, field.Targets, writes);
                     var result = SettlePropertyBatch(session, edit, true, snapshot.Lifetime, snapshot.SelectionGeneration);
                     string notice = result.Notice;
+                    bool recorded = false;
                     if (result.State == BatchReplayState.Committed && writes.Length != 0 &&
                         snapshot.Lifetime == MeshDocumentLifetime && _history is { } history && _historyTarget is { } target)
                     {
@@ -1579,11 +1582,13 @@ public sealed class EditorWorker : IDisposable
                         history.Record(new EditTransaction("Set " + field.Field.Path, writes, new EditEntry[] { record }),
                             target.Committed(Array.Empty<CommandFailure>()));
                         history.Update();
-                        notice = ApplyVerifiedEdit(snapshot.Lifetime, notice, publishStatus: false);
+                        recorded = true;
                     }
                     PostHistory(snapshot.Lifetime);
+                    if (recorded) notice = ApplyVerifiedEdit(snapshot.Lifetime, notice, publishStatus: false);
                     _post(() => { if (snapshot.Lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
                     PostApplyState(snapshot.Lifetime);
+                    PollDocument(session, pollApply: false, refreshInspector: false);
                     PostInspector();
                 }
                 finally { lock (_lock) _batchSettling = false; }
@@ -1685,8 +1690,10 @@ public sealed class EditorWorker : IDisposable
             IReadOnlyList<PropertyValue?> values = document.GetProperties(changed.Select(write => write.Address).ToArray());
             IReadOnlyList<Event>? observed = document.ObserveEvents();
             ulong? after = ReadOrderRevision(document);
+            // Consume events for identity checks. The caller publishes history before any view refresh.
             if (observed is not null)
-                PollDocument(session, observed, pollApply: false, refreshInspector: false);
+                PollDocument(session, observed, pollApply: false, allowOrderRefresh: false,
+                    refreshInspector: false, refreshHierarchy: false);
             if (!SameDocument() || before != revision + 1 || after != before || observed is null ||
                 !observed.OfType<PropertyChanged>().SequenceEqual(changed.Select(write => new PropertyChanged(write.Address, write.Value))) ||
                 !values.SequenceEqual(changed.Select(write => (PropertyValue?)write.Value)) ||
@@ -1848,12 +1855,14 @@ public sealed class EditorWorker : IDisposable
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
                                  _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
         if (result == HistoryResult.Submitted) _commitTicks = start;
+        if (batchReplay) PostHistory(lifetime);
         string notice = reordered ? ApplyVerifiedEdit(lifetime, _history.Notice, publishStatus: !batchReplay) : _history.Notice;
         if (siblingReplay)
         {
-            PostHistory(lifetime);
+            if (!batchReplay) PostHistory(lifetime);
             _post(() => { if (lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
         }
+        if (batchReplay) PostApplyState(lifetime);
         PollDocument(session);
         if (!siblingReplay) PostHistory();
         PostInspector();
@@ -2034,7 +2043,8 @@ public sealed class EditorWorker : IDisposable
     private static bool IsSiblingOrderEvent(Event e) => e is NodeOrderChanged or NodeMovedInSiblingOrder;
 
     private void PollDocument(RemoteSession session, IReadOnlyList<Event>? observed = null, bool pollApply = true,
-        Event? localOrder = null, bool allowOrderRefresh = true, bool refreshInspector = true, bool refreshOverlay = true)
+        Event? localOrder = null, bool allowOrderRefresh = true, bool refreshInspector = true, bool refreshOverlay = true,
+        bool refreshHierarchy = true)
     {
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
@@ -2112,7 +2122,8 @@ public sealed class EditorWorker : IDisposable
             RetireGroup(group);
             GroupNotice(group.View.Lifetime, "The group placement changed elsewhere. Grab the refreshed Gizmo again.");
         }
-        if (_tree.Generation != _postedGeneration || _transformsChanged) PostHierarchy(session, refreshOverlay);
+        if (refreshHierarchy && (_tree.Generation != _postedGeneration || _transformsChanged))
+            PostHierarchy(session, refreshOverlay);
         if (!pollApply) return;
         _apply.Poll();
         if (_apply.Status is ApplyStatus.Failed or ApplyStatus.Superseded or ApplyStatus.Unknown or ApplyStatus.NeedsApply) _commitTicks = null;
@@ -2153,7 +2164,8 @@ public sealed class EditorWorker : IDisposable
     {
         if (_apply is null) return;
         bool canApply = _apply.CanApply, canPreview = _apply.CanPreview;
-        if (_applyControls != (canApply, canPreview))
+        bool controlsChanged = _applyControls != (canApply, canPreview);
+        if (controlsChanged)
         {
             lock (_lock)
             {
@@ -2163,15 +2175,17 @@ public sealed class EditorWorker : IDisposable
             }
             _applyControls = (canApply, canPreview);
             _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyControlsChanged?.Invoke(canApply, canPreview); });
-            if (_previewSession is RemoteSession session) SendOverlay(session);
         }
         string text = _apply.Text + (_playing ? PlayNote : "");
         ApplyStatus status = _apply.Status;
-        if (text == _applyText && status == _postedApplyStatus) return;
-        _postedApplyStatus = status;
-        _applyText = text;
-        _log.Write("apply: " + text);
-        _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(status, text); });
+        if (text != _applyText || status != _postedApplyStatus)
+        {
+            _postedApplyStatus = status;
+            _applyText = text;
+            _log.Write("apply: " + text);
+            _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(status, text); });
+        }
+        if (controlsChanged && _previewSession is RemoteSession session) SendOverlay(session);
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.
@@ -2218,7 +2232,7 @@ public sealed class EditorWorker : IDisposable
         if (refreshOverlay) SendOverlay(session);
     }
 
-    private void SendOverlay(RemoteSession session)
+    private void SendOverlay(RemoteSession session, GroupGrab? retiring = null)
     {
         OverlayGroup? gizmo = null;
         GizmoSnapshot snapshot = new(null, null, null);
@@ -2254,12 +2268,14 @@ public sealed class EditorWorker : IDisposable
         if (session.Control.SetViewportOverlay(overlay) is ControlError refused)
         {
             _log.Write("overlay refused: " + refused);
-            if (snapshot.Group is not null)
+            // A failed placement read can leave no Group snapshot while retiring guides.
+            if (retiring is not null || snapshot.Group is not null)
             {
-                CancelGroupGizmo();
+                CancelGroupGizmo(retiring?.Id);
                 snapshot = new GizmoSnapshot(null, null, null);
                 GroupNotice(lifetime, "The group Gizmo overlay was refused.");
-                if (session.Control.SetViewportOverlay(GizmoOverlay.ForMultiselection(_selectedNodes, _markers)) is not null)
+                if (retiring is not null ||
+                    session.Control.SetViewportOverlay(GizmoOverlay.ForMultiselection(_selectedNodes, _markers)) is not null)
                     session.Control.SetViewportOverlay(null);
             }
         }
