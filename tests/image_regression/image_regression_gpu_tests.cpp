@@ -5,6 +5,8 @@
 #include "support/provenance.h"
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -209,6 +211,61 @@ TEST_CASE("Packed PBR maps multiply the right linear channels before shading",
     CHECK(mapped->rgba8 != differentG->rgba8);
     CHECK(mapped->rgba8 != differentB->rgba8);
     CHECK(zeroB->rgba8 == zeroBReference->rgba8);
+  }
+}
+
+TEST_CASE("Studio preview occlusion uses linear red and keeps a neutral clear", "[image_regression][gpu][mesh_material_preview]") {
+  using Texel = std::array<std::uint8_t, 4>;
+  for (const float metallic : {0.0f, 1.0f}) {
+    const auto preview = [&](std::optional<Texel> ao) {
+      return renderPbrMapPreviewPixels(false, false, 0.1f, metallic, 0.7f, {}, true, ao);
+    };
+    const auto black = preview(Texel{0, 255, 255, 255});
+    const auto mid = preview(Texel{128, 29, 181, 8});
+    const auto ignored = preview(Texel{128, 182, 77, 230});
+    const auto white = preview(Texel{255, 0, 0, 0});
+    const auto clear = preview(std::nullopt);
+    REQUIRE(black);
+    REQUIRE(mid);
+    REQUIRE(ignored);
+    REQUIRE(white);
+    REQUIRE(clear);
+    CHECK(white->rgba8 == clear->rgba8);
+    CHECK(mid->rgba8 == ignored->rgba8);
+    CHECK(black->rgba8 != mid->rgba8);
+    CHECK(mid->rgba8 != white->rgba8);
+  }
+}
+
+TEST_CASE("Occlusion scales the linear HDR light contribution", "[image_regression][gpu][mesh_material_preview]") {
+  using Texel = std::array<std::uint8_t, 4>;
+  const auto linear = [](const PixelBuffer& pixels, std::size_t offset) {
+    std::uint32_t bits = 0;
+    for (std::size_t i = 0; i < 4; ++i)
+      bits |= std::uint32_t{pixels.rgba8[offset + i]} << (8 * i);
+    return std::bit_cast<float>(bits);
+  };
+  for (const float metallic : {0.0f, 1.0f}) {
+    const auto render = [&](std::uint8_t red) {
+      return renderPbrMapPreviewPixels(false, false, 0.1f, metallic, 0.7f, {}, true, Texel{red, 83, 225, 8}, true);
+    };
+    const auto dark = render(0), partial = render(128), full = render(255);
+    REQUIRE(dark);
+    REQUIRE(partial);
+    REQUIRE(full);
+    std::size_t geometryPixels = 0;
+    float worstError = 0;
+    for (std::size_t i = 0; i < dark->rgba8.size(); i += 4) {
+      const float base = linear(*dark, i);
+      const float indirect = linear(*full, i) - base;
+      if (indirect <= 0.015f) continue;
+      const float measured = linear(*partial, i) - base;
+      if (!std::isfinite(measured)) { worstError = 1.0f; break; }
+      worstError = std::max(worstError, std::abs(measured - indirect * (128.0f / 255.0f)));
+      ++geometryPixels;
+    }
+    CHECK(geometryPixels > 100);
+    CHECK(worstError <= 0.005f);  // Two samples after RGBA16F rounding.
   }
 }
 

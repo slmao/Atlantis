@@ -44,7 +44,8 @@ using atlantis::asset_system::CatalogAssetType;
       return schema == atlantis::asset_system::kTextureArtifactSchemaVersion;
     case CatalogAssetType::Material:
       return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion ||
-             schema == atlantis::asset_system::kMappedMaterialArtifactSchemaVersion;
+             schema == atlantis::asset_system::kMappedMaterialArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kOcclusionMaterialArtifactSchemaVersion;
     case CatalogAssetType::Scene:
       return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
     case CatalogAssetType::Environment:
@@ -249,6 +250,7 @@ struct LoadedDependencies {
       referenceTexture(reused.normalMapTexture);
       referenceTexture(reused.emissiveTexture);
       referenceTexture(reused.metallicRoughnessMap);
+      referenceTexture(reused.occlusionMap);
       continue;
     }
     const auto& materialEntry = *resolvedMaterialEntries[i];
@@ -261,14 +263,14 @@ struct LoadedDependencies {
     const atlantis::asset_system::MaterialAssetData& materialAssetData = materialAssetResult.value();
 
     namespace as = atlantis::asset_system;
-    const auto usesPackedInOtherSlot = [&](as::AssetId id) {
+    const auto usesManagedDataMapInOtherSlot = [&](as::AssetId id) {
       const auto* record = id ? catalog.find(id) : nullptr;
-      return record && as::isMetallicRoughnessSource(record->source);
+      return record && (as::isMetallicRoughnessSource(record->source) || as::isOcclusionSource(record->source));
     };
-    if (usesPackedInOtherSlot(materialAssetData.textureAsset) ||
-        usesPackedInOtherSlot(materialAssetData.normalMapTexture) ||
-        usesPackedInOtherSlot(materialAssetData.emissiveTexture)) {
-      ATLANTIS_LOG_ERROR("Packed metallic-roughness texture is used in another material slot");
+    if (usesManagedDataMapInOtherSlot(materialAssetData.textureAsset) ||
+        usesManagedDataMapInOtherSlot(materialAssetData.normalMapTexture) ||
+        usesManagedDataMapInOtherSlot(materialAssetData.emissiveTexture)) {
+      ATLANTIS_LOG_ERROR("Managed data map is used in another material slot");
       return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
     }
 
@@ -371,6 +373,28 @@ struct LoadedDependencies {
         return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
       }
     }
+    if (const auto occlusionId = materialAssetData.occlusionMap) {
+      const auto resolved = resolveDependency(catalog, occlusionId, CatalogAssetType::Texture);
+      if (resolved.isErr()) return ResultT::Err(resolved.error());
+      const auto& occlusion = *resolved.value();
+      if (!as::isOcclusionSource(occlusion.source) || !occlusion.dependencies.empty() ||
+          std::ranges::count(materialEntry.dependencies, occlusion.guid) != 1) {
+        ATLANTIS_LOG_ERROR("Occlusion texture has no matching role and unique dependency edge");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+      if (!haveTexture(occlusionId)) {
+        auto decoded = as::loadPreviewBaseColorTexture(occlusion);
+        if (decoded.isErr()) return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+        textureDataMap.emplace(occlusionId, std::move(decoded.value()));
+      }
+      const auto& texture = textureOf(occlusionId);
+      if (texture.colorSpace != as::TextureColorSpace::Unorm || texture.layout != as::TextureDataLayout::Rgba8 ||
+          texture.mipCount != 1) {
+        ATLANTIS_LOG_ERROR("Occlusion texture must be single-mip RGBA8 UNORM");
+        return ResultT::Err(RuntimeInitError::SceneDependencyLoadFailed);
+      }
+    }
+    referenceTexture(materialAssetData.occlusionMap);
     referenceTexture(materialAssetData.metallicRoughnessMap);
     referenceTexture(materialAssetData.textureAsset);
     referenceTexture(materialAssetData.normalMapTexture);

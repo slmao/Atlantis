@@ -48,8 +48,8 @@ public sealed class AssetBrowser
 }
 
 // Surface 0 is Assets. A chooser uses its unique request ID.
-public readonly record struct AssetPreviewInputs(AssetGuid Mesh, AssetGuid? Material, long Surface = 0, MaterialRecipe? Draft = null, bool WithMaps = false, bool WithMetallicRoughness = false);
-public sealed record AssetPreviewIntent(long Epoch, AssetGuid Guid, AssetGuid? Material, long Surface, MaterialRecipe? Draft = null, bool WithMaps = false, bool WithMetallicRoughness = false);
+public readonly record struct AssetPreviewInputs(AssetGuid Mesh, AssetGuid? Material, long Surface = 0, MaterialRecipe? Draft = null, bool WithMaps = false, bool WithMetallicRoughness = false, bool WithOcclusion = false);
+public sealed record AssetPreviewIntent(long Epoch, AssetGuid Guid, AssetGuid? Material, long Surface, MaterialRecipe? Draft = null, bool WithMaps = false, bool WithMetallicRoughness = false, bool WithOcclusion = false);
 
 /// <summary>One active operation and one replaceable intent across Editor
 /// sessions. UI transitions and the worker's admission check share a lock;
@@ -106,7 +106,7 @@ public sealed class AssetPreviewRequests
         lock (_gate)
         {
             if (_inputs is not { Draft: { } draft } inputs || !CanRequestDraft()) return false;
-            _current = _next = new(++_epoch, inputs.Mesh, null, inputs.Surface, draft, inputs.WithMaps, inputs.WithMetallicRoughness);
+            _current = _next = new(++_epoch, inputs.Mesh, null, inputs.Surface, draft, inputs.WithMaps, inputs.WithMetallicRoughness, inputs.WithOcclusion);
             return true;
         }
     }

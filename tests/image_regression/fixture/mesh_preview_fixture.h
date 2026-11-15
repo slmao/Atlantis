@@ -23,5 +23,7 @@ inline constexpr std::string_view kPreviewAshWoodGuid = "ce676321-102e-4f55-91c4
                                                                         bool multiMipFixture = false);
 [[nodiscard]] std::optional<PixelBuffer> renderPbrMapPreviewPixels(
     bool normal, bool emissive, float emission, float metallic = 0.0f, float roughness = 0.9f,
-    std::optional<std::array<std::uint8_t, 4>> packed = std::nullopt);
+    std::optional<std::array<std::uint8_t, 4>> packed = std::nullopt,
+    bool studioIbl = false, std::optional<std::array<std::uint8_t, 4>> occlusion = std::nullopt,
+    bool readLinearRed = false);
 }  // namespace atlantis::image_regression

@@ -140,7 +140,7 @@ public sealed class MainWindow : Window
     private InspectorSnapshot? _inspectorDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
-    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map", "Metallic-roughness" }, SelectedIndex = 0 };
+    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map", "Metallic-roughness", "Occlusion map" }, SelectedIndex = 0 };
     private readonly SelectableTextBlock _textureFormat = EditorVisuals.Details("");
     private readonly TextBox _textureName = new() { PlaceholderText = "Inbox texture name" };
     private readonly Button _textureRegister = new() { Content = "Register", IsEnabled = false };
@@ -154,6 +154,7 @@ public sealed class MainWindow : Window
         public string Kind => Mode switch
         {
             TextureImportKind.MetallicRoughness => "Metallic-roughness map",
+            TextureImportKind.Occlusion => "Occlusion map",
             TextureImportKind.Normal => "Normal map",
             _ => "Base color"
         };
@@ -167,7 +168,7 @@ public sealed class MainWindow : Window
             Job?.State == RebuildState.Succeeded;
     }
     private readonly TextureImportView[] _textureImports =
-        [new(TextureImportKind.Color), new(TextureImportKind.Normal), new(TextureImportKind.MetallicRoughness)];
+        [new(TextureImportKind.Color), new(TextureImportKind.Normal), new(TextureImportKind.MetallicRoughness), new(TextureImportKind.Occlusion)];
     private TextureImportView SelectedTextureImport => _textureImports[Math.Max(0, _textureKind.SelectedIndex)];
     private bool _textureRepair;
     private readonly ListBox _assetsList = new() { Height = 128 };
@@ -195,6 +196,8 @@ public sealed class MainWindow : Window
     private bool _materialPolling, _materialCanWrite, _materialSupported, _materialLegacy;
     private bool? _materialSupportsMetallicRoughness;
     private bool _materialResumeWithMetallicRoughness;
+    private bool? _materialSupportsOcclusion;
+    private bool _materialResumeWithOcclusion;
     private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
@@ -580,7 +583,7 @@ public sealed class MainWindow : Window
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
         _materialSettlement.LoseReceipt();
-        _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null;
+        _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null;
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
         _worker?.Stop();
         ++_saveAsRequest;
@@ -644,7 +647,7 @@ public sealed class MainWindow : Window
             _referenceSessionFailed = true;
             LoseTextureConnection();
             _materialSettlement.LoseReceipt();
-            _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialPoll.Stop();
+            _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialPoll.Stop();
             ShowMaterialState();
             if (_newScenePendingName is not null)
             {
@@ -1260,12 +1263,13 @@ public sealed class MainWindow : Window
         long epoch = ++_materialReadEpoch;
         UpdateMaterialButtons();
         if (target is not AssetGuid guid || _worker is not { } worker || _referenceSessionFailed) return;
-        worker.ReadMaterial(guid, (result, legacy, packed) =>
+        worker.ReadMaterial(guid, (result, legacy, packed, occlusion) =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || epoch != _materialReadEpoch ||
                 _materialReadTarget != guid) return;
             _materialLegacy = legacy;
             _materialSupportsMetallicRoughness = packed;
+            _materialSupportsOcclusion = occlusion;
             if (result.IsOk) _selectedMaterial = result.Value;
             else if (result.Error != MaterialError.Unsupported && !_materialSettlement.BlocksSave)
                 ShowMaterialState("Selected material: " + result.Error);
@@ -1292,7 +1296,7 @@ public sealed class MainWindow : Window
         if (mode != MaterialMode.Create && original is null) return;
         var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
         var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items,
-            !_materialLegacy, _materialSupportsMetallicRoughness != false);
+            !_materialLegacy, _materialSupportsMetallicRoughness != false, _materialSupportsOcclusion != false);
         _materialWindow = dialog;
         dialog.DraftChanged += () => SyncPreviewSelection(invalidate: true);
         dialog.PreviewRequested += () =>
@@ -1302,7 +1306,7 @@ public sealed class MainWindow : Window
             UpdatePreviewButton();
             StartNextPreview();
         };
-        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness);
+        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness, dialog.WithOcclusion);
         dialog.ResumeRequested += ResumeMaterial;
         dialog.Closed += (_, _) =>
         {
@@ -1426,6 +1430,7 @@ public sealed class MainWindow : Window
         _textureFormat.Text = state.Mode switch
         {
             TextureImportKind.MetallicRoughness => "PNG \u00b7 linear RGBA8 \u00b7 G roughness, B metallic",
+            TextureImportKind.Occlusion => "PNG · linear RGBA8 · R occlusion for indirect light",
             TextureImportKind.Normal => "PNG \u00b7 linear RGBA8 \u00b7 tangent space +Y",
             _ => "PNG \u00b7 sRGB"
         };
@@ -1457,13 +1462,13 @@ public sealed class MainWindow : Window
         UpdateTextureButtons();
     }
 
-    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness)
+    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion)
     {
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
         _materialSettlement.Begin(request.Target);
         ShowMaterialState();
-        worker.SaveMaterial(request, withMaps, withMetallicRoughness, result =>
+        worker.SaveMaterial(request, withMaps, withMetallicRoughness, withOcclusion, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _materialSettlement.Target != request.Target) return;
             if (!result.IsOk)
@@ -1471,10 +1476,13 @@ public sealed class MainWindow : Window
                 _materialSettlement.Refused();
                 if (withMaps && result.Error == MaterialError.Unsupported)
                 {
-                    if (withMetallicRoughness) _materialSupportsMetallicRoughness = false;
+                    if (withOcclusion) _materialSupportsOcclusion = false;
+                    else if (withMetallicRoughness) _materialSupportsMetallicRoughness = false;
                     else _materialLegacy = true;
                     _materialWindow?.OfferLegacyEditing();
-                    ShowMaterialState(withMetallicRoughness
+                    ShowMaterialState(withOcclusion
+                        ? "This Runtime does not support occlusion editing. Choose metallic-roughness editing explicitly or reconnect."
+                        : withMetallicRoughness
                         ? "This Runtime does not support the metallic-roughness slot. Choose normal and emissive editing explicitly or reconnect."
                         : "This Runtime supports basic material editing. Choose basic editing explicitly or reconnect.");
                     return;
@@ -1485,6 +1493,7 @@ public sealed class MainWindow : Window
             }
             if (!_materialSettlement.Admit(result.Value)) return;
             _materialResumeWithMetallicRoughness = withMetallicRoughness;
+            _materialResumeWithOcclusion = withOcclusion;
             ShowMaterialState(); _materialPoll.Start();
         });
     }
@@ -1493,7 +1502,8 @@ public sealed class MainWindow : Window
     {
         if (_materialResume.IsEnabled && _materialSettlement.ResumableMaterial is AssetGuid saved)
             SubmitMaterial(new MaterialSave.Resume(saved), !_materialLegacy,
-                _materialResumeWithMetallicRoughness || _materialSupportsMetallicRoughness != false);
+                _materialResumeWithMetallicRoughness || _materialSupportsMetallicRoughness != false,
+                _materialResumeWithOcclusion || _materialSupportsOcclusion != false);
     }
 
     private void QueryMaterial()
@@ -1690,7 +1700,8 @@ public sealed class MainWindow : Window
             if (!_previewRequests.CanSend(intent)) return default;
             if (intent.Draft is MaterialRecipe recipe)
             {
-                var draft = intent.WithMetallicRoughness ? preview.Assets.PreviewMaterialDraftWithMetallicRoughness(intent.Guid, recipe) :
+                var draft = intent.WithOcclusion ? preview.Assets.PreviewMaterialDraftWithOcclusion(intent.Guid, recipe) :
+                    intent.WithMetallicRoughness ? preview.Assets.PreviewMaterialDraftWithMetallicRoughness(intent.Guid, recipe) :
                     intent.WithMaps ? preview.Assets.PreviewMaterialDraftWithMaps(intent.Guid, recipe)
                     : preview.Assets.PreviewMaterialDraft(intent.Guid, recipe);
                 return draft.IsOk ? (draft.Value.PngBytes, null, false) :

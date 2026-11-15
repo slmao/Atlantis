@@ -555,3 +555,59 @@ TEST_CASE("packed material versions match the binding and catalog", "[asset_syst
   CHECK(readFile(artifactPath) == oldArtifact);
   CHECK(readFile(metadataPath) == oldMetadata);
 }
+TEST_CASE("occlusion material versions match the binding and catalog", "[asset_system][material]") {
+  TempDirGuard dir("occlusion_versions");
+  const auto sourcePath = dir.path / "surface.material.txt";
+  const auto artifactPath = dir.path / "surface.amaterial";
+  const auto metadataPath = dir.path / "surface.amaterial.meta.txt";
+  const auto guid = testAssetGuid("surface");
+  const auto occlusion = testAssetGuid("occlusion");
+  auto recipe = parseMaterialSource(kValidPbrSource).value();
+  const auto unbound = serializeMaterialSource(recipe);
+  auto cook = [&](std::string_view source) {
+    writeFile(sourcePath, std::string(source));
+    REQUIRE(cookMaterial(sourcePath.string(), "surface.material.txt", guid, artifactPath.string(),
+                         metadataPath.string()).isOk());
+  };
+  cook(unbound);
+  const auto oldArtifact = readFile(artifactPath);
+  const auto oldMetadata = readFile(metadataPath);
+  CHECK(oldArtifact.size() == kMaterialArtifactHeaderSizeBytes);
+  CHECK(oldMetadata.starts_with("atlantis_material_metadata_version: 9"));
+  recipe.occlusionMapAsset = occlusion;
+  const auto bound = serializeMaterialSource(recipe);
+  CHECK(bound.starts_with("atlantis_material_source_version: 12"));
+  CHECK(bound.ends_with("occlusion_map_asset: " + toString(occlusion) + "\n"));
+  CHECK(parseMaterialSource(bound).value().occlusionMapAsset == occlusion);
+  CHECK(parseMaterialSource(bound + "roughness_factor: 1\n").isErr());
+
+  recipe.normalMapAsset = testAssetGuid("normal");
+  CHECK(parseMaterialSource(serializeMaterialSource(recipe)).isErr());
+  recipe.normalMapAsset.reset();
+  cook(bound);
+  const auto newArtifact = readFile(artifactPath);
+  const auto newMetadata = readFile(metadataPath);
+  CHECK(newArtifact.size() == oldArtifact.size() + sizeof(AssetId));
+  CHECK(newMetadata.starts_with("atlantis_material_metadata_version: 11"));
+  CHECK(newMetadata.find("occlusion_map_asset_id: ") != std::string::npos);
+  AssetCatalogRecord record;
+  record.guid = guid;
+  record.assetId = assetKey(guid);
+  record.type = CatalogAssetType::Material;
+  record.artifactSchema = kOcclusionMaterialArtifactSchemaVersion;
+  const auto loaded = loadMaterialAsset(artifactPath, metadataPath, &record);
+  REQUIRE(loaded.isOk());
+  CHECK(loaded.value().occlusionMap == assetKey(occlusion));
+  record.artifactSchema = kMaterialArtifactSchemaVersion;
+  CHECK(loadMaterialAsset(artifactPath, metadataPath, &record).isErr());
+
+  writeFile(metadataPath, oldMetadata);
+  CHECK(loadMaterialAsset(artifactPath, metadataPath).isErr());
+  writeFile(artifactPath, oldArtifact);
+  writeFile(metadataPath, newMetadata);
+  CHECK(loadMaterialAsset(artifactPath, metadataPath).isErr());
+  recipe.occlusionMapAsset.reset();
+  cook(serializeMaterialSource(recipe));
+  CHECK(readFile(artifactPath) == oldArtifact);
+  CHECK(readFile(metadataPath) == oldMetadata);
+}

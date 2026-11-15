@@ -42,6 +42,12 @@ inline bool isMetallicRoughnessSource(const CatalogSourceId& source) noexcept {
   return isMetallicRoughnessSource(source.root, source.path, source.subKey);
 }
 
+[[nodiscard]] bool isOcclusionSource(CatalogRoot root, std::string_view path,
+                                     std::string_view subKey) noexcept;
+inline bool isOcclusionSource(const CatalogSourceId& source) noexcept {
+  return isOcclusionSource(source.root, source.path, source.subKey);
+}
+
 struct AssetCatalogRecord {
   AssetGuid guid;
   AssetId assetId = 0;

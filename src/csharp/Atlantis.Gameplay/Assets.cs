@@ -80,6 +80,7 @@ public readonly record struct MaterialValues(AssetGuid Texture, float Red, float
 {
     public AssetGuid? NormalMap { get; init; }
     public AssetGuid? MetallicRoughnessMap { get; init; }
+    public AssetGuid? OcclusionMap { get; init; }
     public AssetGuid? EmissiveTexture { get; init; }
     public float EmissiveRed { get; init; }
     public float EmissiveGreen { get; init; }

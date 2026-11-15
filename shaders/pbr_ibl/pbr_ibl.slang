@@ -116,6 +116,12 @@ static const float kPointLightDistanceEpsilon = 1e-4;
 static const float kPi = 3.14159265358979323846;
 static const float kMinAlpha = 1e-3;
 static const float kMinDot = 1e-4;
+// Spec 0099 adds this binding only to the opaque occlusion variant.
+#ifdef ATLANTIS_OCCLUSION
+[[vk::binding(6, 0)]]
+Sampler2D<float4> occlusionSampler;
+#endif
+
 static const float kSpecularMipCount = 9.0;
 // Plan 0027 P4: a reasoned, not yet empirically-tuned, starting value --
 // see Plan 0027's own P4 derivation.
@@ -340,7 +346,11 @@ float4 fragmentMain(Varying input) : SV_Target {
     float3 prefiltered = environmentSampler.SampleLevel(R, lod).rgb;
     float2 dfg = dfgLutSampler.Sample(float2(NdotV, roughness)).rg;
     float3 specularIbl = prefiltered * (F0 * dfg.x + dfg.y);
+    #ifdef ATLANTIS_OCCLUSION
+    accumulated += occlusionSampler.Sample(input.uv).r * (diffuseIbl + specularIbl);
+    #else
     accumulated += diffuseIbl + specularIbl;
+    #endif
 
     // Plan 0041 Milestone 2 (Spec 0041 R6, ADR-0089 Decision 3): self-lit
     // colour, added after every lighting term and before the output

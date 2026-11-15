@@ -32,6 +32,12 @@ runtime::BootstrapConfig previewConfig() {
       ATLANTIS_PREVIEW_PACKED_DIR "/pbr_direct_lit_metallic_roughness.frag.spv";
   config.pbrDirectLitNormalMapMetallicRoughnessFragmentShaderSpirvPath =
       ATLANTIS_PREVIEW_NORMAL_PACKED_DIR "/pbr_direct_lit_normal_map_metallic_roughness.frag.spv";
+  config.pbrIblVertexShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl.vert.spv";
+  config.pbrIblVertexShaderReflectionPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl.vert.refl.json";
+  config.pbrIblFragmentShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl.frag.spv";
+  config.pbrIblOcclusionFragmentShaderSpirvPath = ATLANTIS_PREVIEW_IBL_DIR "/pbr_ibl_occlusion.frag.spv";
+  config.previewStudioArtifactPath = ATLANTIS_PREVIEW_STUDIO_ARTIFACT;
+  config.previewStudioMetadataPath = ATLANTIS_PREVIEW_STUDIO_METADATA;
   config.shadowCastVertexShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.spv";
   config.shadowCastVertexShaderReflectionPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.vert.refl.json";
   config.shadowCastFragmentShaderSpirvPath = ATLANTIS_PREVIEW_SHADOW_DIR "/shadow_cast.frag.spv";
@@ -108,7 +114,8 @@ std::optional<PixelBuffer> renderMeshMaterialPreviewPixels(std::string_view mate
 }
 std::optional<PixelBuffer> renderPbrMapPreviewPixels(
     bool normal, bool emissive, float emission, float metallic, float roughness,
-    std::optional<std::array<std::uint8_t, 4>> packed) {
+    std::optional<std::array<std::uint8_t, 4>> packed, bool studioIbl,
+    std::optional<std::array<std::uint8_t, 4>> occlusion, bool readLinearRed) {
   namespace as = asset_system;
   const auto meshId = as::parseAssetGuid(kPreviewQuadGuid).value();
   const auto materialId = as::parseAssetGuid(kPreviewDielectricGuid).value();
@@ -138,6 +145,12 @@ std::optional<PixelBuffer> renderPbrMapPreviewPixels(
   recipe.emissiveFactor[2] = emission;
   recipe.metallicFactor = metallic;
   recipe.roughnessFactor = roughness;
+  as::TextureAssetData occlusionTexture;
+  if (occlusion) {
+    recipe.occlusionMap = as::assetKey(materialId) + 2;
+    occlusionTexture.width = occlusionTexture.height = occlusionTexture.mipCount = 1;
+    occlusionTexture.pixelBytes.assign(occlusion->begin(), occlusion->end());
+  }
   as::TextureAssetData packedTexture;
   if (packed) {
     recipe.metallicRoughnessMap = as::assetKey(materialId) + 1;
@@ -145,9 +158,16 @@ std::optional<PixelBuffer> renderPbrMapPreviewPixels(
     packedTexture.pixelBytes.assign(packed->begin(), packed->end());
   }
   return renderPreviewPixels([&](auto& device, const auto& config, auto& incomplete) {
-    return runtime::detail::renderMeshMaterialPreview(device, config, mesh.value(), recipe, base.value(),
+    auto captureConfig = config;
+    if (readLinearRed) {
+      captureConfig.outputTransformUnormVertexShaderSpirvPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.vert.spv";
+      captureConfig.outputTransformUnormVertexShaderReflectionPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.vert.refl.json";
+      captureConfig.outputTransformUnormFragmentShaderSpirvPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.frag.spv";
+    }
+    return runtime::detail::renderMeshMaterialPreview(device, captureConfig, mesh.value(), recipe, base.value(),
         meshId, materialId, incomplete, nullptr, nullptr, normal ? &normalTexture.value() : nullptr,
-        emissive ? &lightMask : nullptr, packed ? &packedTexture : nullptr);
+        emissive ? &lightMask : nullptr, packed ? &packedTexture : nullptr,
+        occlusion ? &occlusionTexture : nullptr, studioIbl);
   });
 }
 }  // namespace atlantis::image_regression

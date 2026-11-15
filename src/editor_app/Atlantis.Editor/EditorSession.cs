@@ -39,7 +39,7 @@ using Atlantis.Editor.Model;
 
 namespace Atlantis.Editor;
 
-internal enum TextureImportKind { Color, Normal, MetallicRoughness }
+internal enum TextureImportKind { Color, Normal, MetallicRoughness, Occlusion }
 
 public sealed record EntityRow(EntityGuid Guid, string Label)
 {
@@ -386,22 +386,25 @@ public sealed class EditorWorker : IDisposable
         Action<Outcome<Atlantis.Gameplay.Assets.ImportStatus, Atlantis.Gameplay.Assets.ImportError>> done) =>
         Enqueue(session => { var result = session.Assets.ImportStatus(id); _post(() => done(result)); });
 
-    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool, bool> done) =>
+    public void ReadMaterial(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.MaterialRead, Atlantis.Gameplay.Assets.MaterialError>, bool, bool, bool> done) =>
         Enqueue(session =>
         {
-            var result = session.Assets.MaterialReadWithMetallicRoughness(guid);
+            var result = session.Assets.MaterialReadWithOcclusion(guid);
+            bool occlusion = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
+            if (!occlusion) result = session.Assets.MaterialReadWithMetallicRoughness(guid);
             bool packed = result.IsOk || result.Error != Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (!packed) result = session.Assets.MaterialReadWithMaps(guid);
             bool basic = !result.IsOk && result.Error == Atlantis.Gameplay.Assets.MaterialError.Unsupported;
             if (basic) result = session.Assets.MaterialRead(guid);
-            _post(() => done(result, basic, packed));
+            _post(() => done(result, basic, packed, occlusion));
         });
 
-    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness,
+    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion,
         Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
         Enqueue(session =>
         {
-            var result = withMetallicRoughness ? session.Assets.MaterialSaveWithMetallicRoughness(request) :
+            var result = withOcclusion ? session.Assets.MaterialSaveWithOcclusion(request) :
+                withMetallicRoughness ? session.Assets.MaterialSaveWithMetallicRoughness(request) :
                 withMaps ? session.Assets.MaterialSaveWithMaps(request) : session.Assets.MaterialSave(request);
             _post(() => done(result));
         });
@@ -412,6 +415,7 @@ public sealed class EditorWorker : IDisposable
         {
             var result = kind switch
             {
+                TextureImportKind.Occlusion => session.Assets.OcclusionImport(name, mode),
                 TextureImportKind.MetallicRoughness => session.Assets.MetallicRoughnessImport(name, mode),
                 TextureImportKind.Normal => session.Assets.NormalMapImport(name, mode),
                 _ => session.Assets.TextureImport(name, mode)
@@ -425,6 +429,7 @@ public sealed class EditorWorker : IDisposable
         {
             var result = kind switch
             {
+                TextureImportKind.Occlusion => session.Assets.OcclusionImportStatus(id),
                 TextureImportKind.MetallicRoughness => session.Assets.MetallicRoughnessImportStatus(id),
                 TextureImportKind.Normal => session.Assets.NormalMapImportStatus(id),
                 _ => session.Assets.TextureImportStatus(id)

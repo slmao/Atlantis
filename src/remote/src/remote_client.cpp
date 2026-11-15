@@ -561,6 +561,9 @@ class RemoteAssets final : public connection::AssetConnection {
   ca::TextureImportStartResult metallicRoughnessImport(std::string_view name, ca::ImportMode mode) override {
     return importTexture("assets.metallicRoughnessImport", name, mode);
   }
+  ca::TextureImportStartResult occlusionImport(std::string_view name, ca::ImportMode mode) override {
+    return importTexture("assets.occlusionImport", name, mode);
+  }
   ca::TextureImportStartResult importTexture(std::string_view method, std::string_view name, ca::ImportMode mode) {
     ATLANTIS_CHECK(ca::validImportName(name));
     auto params = Value::object();
@@ -580,6 +583,9 @@ class RemoteAssets final : public connection::AssetConnection {
   ca::TextureImportStatusResult metallicRoughnessImportStatus(std::optional<ca::TextureImportId> id) const override {
     return importTextureStatus("assets.metallicRoughnessImportStatus", id);
   }
+  ca::TextureImportStatusResult occlusionImportStatus(std::optional<ca::TextureImportId> id) const override {
+    return importTextureStatus("assets.occlusionImportStatus", id);
+  }
   ca::TextureImportStatusResult importTextureStatus(std::string_view method, std::optional<ca::TextureImportId> id) const {
     ATLANTIS_CHECK(!id || id->value != AssetGuid{});
     auto params = Value::object();
@@ -598,11 +604,15 @@ class RemoteAssets final : public connection::AssetConnection {
   ca::MaterialReadResult materialReadWithMetallicRoughness(const AssetGuid& material) const override {
     return readMaterial(material, ca::MaterialRecipeVersion::WithMetallicRoughness);
   }
+  ca::MaterialReadResult materialReadWithOcclusion(const AssetGuid& material) const override {
+    return readMaterial(material, ca::MaterialRecipeVersion::WithOcclusion);
+  }
   ca::MaterialReadResult readMaterial(const AssetGuid& material, ca::MaterialRecipeVersion version) const {
     if (material == AssetGuid{}) return ca::MaterialReadResult::Err(ca::MaterialError::UnknownMaterial);
     auto params = Value::object();
     params.set("material", codec::encodeAsset(material));
-    const auto method = version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.materialReadWithMetallicRoughness"
+    const auto method = version == ca::MaterialRecipeVersion::WithOcclusion ? "assets.materialReadWithOcclusion"
+        : version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.materialReadWithMetallicRoughness"
         : version == ca::MaterialRecipeVersion::WithMaps ? "assets.materialReadWithMaps" : "assets.materialRead";
     return materialRequest<ca::MaterialRead>(method, std::move(params), [material, version](const Value& v) {
       auto read = ca::decodeMaterialRead(v, version);
@@ -617,6 +627,9 @@ class RemoteAssets final : public connection::AssetConnection {
   }
   ca::MaterialSaveResult materialSaveWithMetallicRoughness(const ca::MaterialSave& request) override {
     return saveMaterial(request, ca::MaterialRecipeVersion::WithMetallicRoughness);
+  }
+  ca::MaterialSaveResult materialSaveWithOcclusion(const ca::MaterialSave& request) override {
+    return saveMaterial(request, ca::MaterialRecipeVersion::WithOcclusion);
   }
   ca::MaterialSaveResult saveMaterial(const ca::MaterialSave& request, ca::MaterialRecipeVersion version) {
     const auto validValues = [version](const auto& values) {
@@ -636,7 +649,8 @@ class RemoteAssets final : public connection::AssetConnection {
     auto params = ca::encodeMaterialSave(request, version);
     if (!ca::decodeMaterialSave(params, version)) return ca::MaterialSaveResult::Err(ca::MaterialError::InvalidRecipe);
     const auto target = ca::materialTarget(request);
-    const auto method = version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.materialSaveWithMetallicRoughness"
+    const auto method = version == ca::MaterialRecipeVersion::WithOcclusion ? "assets.materialSaveWithOcclusion"
+        : version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.materialSaveWithMetallicRoughness"
         : version == ca::MaterialRecipeVersion::WithMaps ? "assets.materialSaveWithMaps" : "assets.materialSave";
     return materialRequest<ca::MaterialJob>(method, std::move(params), [&target](const Value& v) {
       auto job = ca::decodeMaterialJob(v);
@@ -663,6 +677,10 @@ class RemoteAssets final : public connection::AssetConnection {
       const ca::MaterialRecipe& recipe) override {
     return previewDraft(mesh, recipe, ca::MaterialRecipeVersion::WithMetallicRoughness);
   }
+  ca::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(const AssetGuid& mesh,
+      const ca::MaterialRecipe& recipe) override {
+    return previewDraft(mesh, recipe, ca::MaterialRecipeVersion::WithOcclusion);
+  }
   ca::MaterialDraftPreviewResult previewDraft(const AssetGuid& mesh, const ca::MaterialRecipe& recipe,
       ca::MaterialRecipeVersion version) {
     if (mesh == AssetGuid{} || !ca::validMaterialRecipe(recipe) ||
@@ -671,7 +689,8 @@ class RemoteAssets final : public connection::AssetConnection {
     auto params = Value::object();
     params.set("mesh", codec::encodeAsset(mesh));
     params.set("recipe", ca::encodeMaterialRecipe(recipe, version));
-    const auto method = version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.previewMaterialDraftWithMetallicRoughness"
+    const auto method = version == ca::MaterialRecipeVersion::WithOcclusion ? "assets.previewMaterialDraftWithOcclusion"
+        : version == ca::MaterialRecipeVersion::WithMetallicRoughness ? "assets.previewMaterialDraftWithMetallicRoughness"
         : version == ca::MaterialRecipeVersion::WithMaps ? "assets.previewMaterialDraftWithMaps" : "assets.previewMaterialDraft";
     return materialRequest<ca::MaterialDraftPreview>(method, std::move(params),
         [&](const Value& v) { return ca::decodeMaterialDraftPreview(v, mesh, recipe, version); });
@@ -724,7 +743,7 @@ class RemoteAssets final : public connection::AssetConnection {
             if (auto value = decode(*ok)) return R::Ok(std::move(*value));
           } else if (const auto* err = result->find("err")) {
             if (auto error = ca::decodeMaterialError(*err);
-                error && (*error != E::Unsupported || (!method.ends_with("WithMaps") && !method.ends_with("WithMetallicRoughness")))) return R::Err(*error);
+                error && (*error != E::Unsupported || (!method.ends_with("WithMaps") && !method.ends_with("WithMetallicRoughness") && !method.ends_with("WithOcclusion")))) return R::Err(*error);
           }
         }
       } else if (const auto* error = envelope->find("error"); error &&

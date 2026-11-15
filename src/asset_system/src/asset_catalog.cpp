@@ -21,8 +21,10 @@
 
 namespace atlantis::asset_system {
 
-bool isMetallicRoughnessSource(CatalogRoot root, std::string_view path, std::string_view subKey) noexcept {
-  constexpr std::string_view prefix = "texture_", suffix = "/metallic-roughness.png";
+namespace {
+bool isManagedTextureRole(CatalogRoot root, std::string_view path, std::string_view subKey,
+                          std::string_view suffix) noexcept {
+  constexpr std::string_view prefix = "texture_";
   if (root != CatalogRoot::Content || !subKey.empty() || !path.starts_with(prefix) ||
       !path.ends_with(suffix) || path.size() <= prefix.size() + suffix.size()) return false;
 
@@ -34,7 +36,15 @@ bool isMetallicRoughnessSource(CatalogRoot root, std::string_view path, std::str
   if (name == "con" || name == "prn" || name == "aux" || name == "nul") return false;
   return !(name.size() == 4 && (name.starts_with("com") || name.starts_with("lpt")) && digit(name.back()));
 }
+}  // namespace
 
+bool isMetallicRoughnessSource(CatalogRoot root, std::string_view path, std::string_view subKey) noexcept {
+  return isManagedTextureRole(root, path, subKey, "/metallic-roughness.png");
+}
+
+bool isOcclusionSource(CatalogRoot root, std::string_view path, std::string_view subKey) noexcept {
+  return isManagedTextureRole(root, path, subKey, "/occlusion.png");
+}
 
 namespace {
 

@@ -89,10 +89,10 @@ struct RealizedMaterialCandidate {
   std::unique_ptr<atlantis::rhi::SampledTexture> newEmissiveTexture;
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> emissiveStagingBuffer;
   std::vector<atlantis::rhi::SampledTextureUploadRegion> emissiveUploadRegions;
-  atlantis::asset_system::AssetId packedTextureAssetId = 0;
-  std::unique_ptr<atlantis::rhi::SampledTexture> newPackedTexture;
-  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> packedStagingBuffer;
-  std::vector<atlantis::rhi::SampledTextureUploadRegion> packedUploadRegions;
+  atlantis::asset_system::AssetId surfaceDataTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newSurfaceDataTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> surfaceDataStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> surfaceDataUploadRegions;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };
@@ -226,7 +226,8 @@ struct RealizedMaterialCandidate {
     // white texture every PBR material without an emissive texture binds --
     // borrowed, and it must outlive the returned Material.
     const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
-    const atlantis::asset_system::TextureAssetData* packedTextureData = nullptr);
+    const atlantis::asset_system::TextureAssetData* packedTextureData = nullptr,
+    const atlantis::asset_system::TextureAssetData* occlusionTextureData = nullptr);
 
 // Step 1 of Spec 0018 D8: the pending set is a pure function of current
 // state, recomputed every frame -- never a persisted queue. Returns a
@@ -326,7 +327,8 @@ struct RealizedMaterialCandidate {
     // realizeOneMaterialCandidate() call.
     const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
     const std::vector<std::uint32_t>& packedFragmentSpirv = {},
-    const std::vector<std::uint32_t>& packedNormalFragmentSpirv = {});
+    const std::vector<std::uint32_t>& packedNormalFragmentSpirv = {},
+    const std::vector<std::uint32_t>& occlusionFragmentSpirv = {});
 
 // Compatibility overload for every no-environment composition root. It keeps
 // the pre-Spec-0025 call shape and selects pbr_direct_lit exactly.
@@ -401,7 +403,8 @@ struct DefaultEmissiveTexture {
     atlantis::asset_system::AssetId materialId, const atlantis::asset_system::MaterialAssetData& material,
     const atlantis::asset_system::TextureAssetData& texture, const atlantis::rhi::SampledTexture* whiteEmissive,
     const atlantis::asset_system::TextureAssetData* normal, const atlantis::asset_system::TextureAssetData* emissive,
-    const atlantis::asset_system::TextureAssetData* packed = nullptr);
+    const atlantis::asset_system::TextureAssetData* packed = nullptr,
+    const atlantis::asset_system::TextureAssetData* occlusion = nullptr, bool studioIbl = false);
 
 // Plan 0024 Milestone 6 (correction, ADR-0068 D-4, discovered during
 // Implementation -- Human Review direction, chat, 2026-09-01): every

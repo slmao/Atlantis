@@ -9,6 +9,7 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Atlantis.Gameplay.Assets;
+using Atlantis.Gameplay.Remote;
 
 namespace Atlantis.Editor;
 
@@ -203,8 +204,21 @@ internal static class EditorVisuals
     internal static void Glyph(Button button, string path, string? shortLabel = null) =>
         button.ContentTemplate = LabelTemplate(path, shortLabel);
 
+    internal static string? ManagedTextureName(AssetSummary asset, string suffix)
+    {
+        const string prefix = "content:texture_";
+        string source = asset.Source;
+        if (asset.Type != AssetType.Texture || source.Length <= prefix.Length + suffix.Length ||
+            !source.StartsWith(prefix, StringComparison.Ordinal) || !source.EndsWith(suffix, StringComparison.Ordinal))
+            return null;
+
+        string name = source[prefix.Length..^suffix.Length];
+        return Codec.ValidImportName(name) ? name : null;
+    }
+
     internal static string AssetName(AssetSummary asset)
     {
+        if (ManagedTextureName(asset, "/occlusion.png") is string name) return name;
         string source = asset.Source;
         int separator = source.IndexOf(':');
         if (separator >= 0) source = source[(separator + 1)..];

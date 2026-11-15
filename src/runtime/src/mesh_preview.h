@@ -59,6 +59,7 @@ struct MeshPreviewReadOnly {
     std::shared_ptr<MeshPreviewResources>& incompleteSubmission,
     PreviewCompletion complete = nullptr, const MeshPreviewReadOnly* readOnly = nullptr,
     const asset_system::TextureAssetData* normal = nullptr, const asset_system::TextureAssetData* emissive = nullptr,
-    const atlantis::asset_system::TextureAssetData* packed = nullptr);
+    const atlantis::asset_system::TextureAssetData* packed = nullptr,
+    const atlantis::asset_system::TextureAssetData* occlusion = nullptr, bool studioIbl = false);
 
 }  // namespace atlantis::runtime::detail

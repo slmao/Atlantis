@@ -218,7 +218,7 @@ TEST_CASE("parseMaterialSource rejects a base_color_factor with the wrong token 
 
 TEST_CASE("parseMaterialSource rejects an unknown source version", "[asset_system][material]") {
   const auto result = parseMaterialSource(
-      "atlantis_material_source_version: 12\n"
+      "atlantis_material_source_version: 13\n"
       "kind: unlit_textured\n"
       "texture: bbcc8ef4-3e54-8630-853d-5ee9c4ef345f\n"
       "filter: linear\n"

@@ -186,7 +186,8 @@ TEST_CASE("geometry and pair previews consume the same permit", "[runtime][asset
       },
       .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
                         const as::StaticMeshAssetData& geometry, const as::MaterialAssetData& mat,
-                        const as::TextureAssetData& texture, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                        const as::TextureAssetData& texture, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool) {
         ++pairs;
         CHECK(meshId == mesh);
         CHECK(materialId == material);
@@ -222,7 +223,8 @@ TEST_CASE("a pair-only provider keeps the first full catalog and validates both 
   const AssetHost::PreviewProvider pairOnly{
       .available = [] { return true; },
       .renderPair = [](const as::AssetGuid&, const as::AssetGuid&, const as::StaticMeshAssetData&,
-                       const as::MaterialAssetData&, const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                       const as::MaterialAssetData&, const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool) {
         FAIL("no cooked files in the snapshot fixture");
         return Pair::Err(E::RenderFailed);
       }};
@@ -263,6 +265,7 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   const auto mesh = as::parseAssetGuid("58e57a64-ad60-4925-b6d6-6561540e8476").value();
   const auto material = as::parseAssetGuid("1542b95d-74b5-48ba-82be-eddbe2843129").value();
   int rendered = 0;
+  bool previewStudio = false;
   AssetHost host(ATLANTIS_ASSET_CATALOG_PATH, nullptr, {
       .available = [] { return true; },
       .render = [](const as::AssetGuid& id, as::StaticMeshAssetData) {
@@ -270,8 +273,10 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
       },
       .renderPair = [&](const as::AssetGuid& meshId, const as::AssetGuid& materialId,
                         const as::StaticMeshAssetData&, const as::MaterialAssetData& mat,
-                        const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*) {
+                        const as::TextureAssetData&, const as::TextureAssetData*, const as::TextureAssetData*, const as::TextureAssetData*,
+                        const as::TextureAssetData*, bool studioIbl) {
         ++rendered;
+        previewStudio = studioIbl;
         CHECK(meshId == mesh);
         CHECK(materialId == as::AssetGuid{});
         CHECK(mat.baseColorFactor[0] == 0.125f);
@@ -293,6 +298,7 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   CHECK(second->previewMesh(mesh).error() == ac::PreviewError::Busy);
   CHECK(second->previewMeshMaterial(mesh, material).error() == ac::MeshMaterialPreviewError::Busy);
   CHECK(rendered == 0);
+  CHECK(second->previewMaterialDraftWithOcclusion(mesh, draft).error() == E::Busy);
   host.beginServiceInterval();
   REQUIRE(first->previewMaterialDraft(mesh, draft).isOk());
   CHECK(second->previewMaterialDraftWithMaps(mesh, draft).error() == E::Busy);
@@ -301,4 +307,9 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   CHECK(second->materialRead(material).value() == cooked.value());
   CHECK(second->materialStatus({}).error() == E::Unavailable);
   CHECK(rendered == 1);
+  CHECK_FALSE(previewStudio);
+  host.beginServiceInterval();
+  REQUIRE(second->previewMaterialDraftWithOcclusion(mesh, draft).isOk());
+  CHECK(previewStudio);
+  CHECK(first->previewMaterialDraft(mesh, draft).error() == E::Busy);
 }

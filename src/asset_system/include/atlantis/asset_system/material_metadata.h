@@ -61,6 +61,7 @@ struct MaterialMetadata {
   // normalMapTexture discipline -- cross-validated identically.
   AssetId emissiveTexture = 0;
   AssetId metallicRoughnessMap = 0;
+  AssetId occlusionMap = 0;
 };
 
 [[nodiscard]] atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std::string_view text);

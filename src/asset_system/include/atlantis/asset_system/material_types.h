@@ -130,6 +130,7 @@ struct MaterialAssetData {
   // the four PBR kinds -- enforced at parse time, never here.
   AssetId emissiveTexture = 0;
   AssetId metallicRoughnessMap = 0;
+  AssetId occlusionMap = 0;
 };
 
 }  // namespace atlantis::asset_system

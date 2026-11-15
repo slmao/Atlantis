@@ -14,6 +14,8 @@ namespace {
 // emissive_texture: AssetGuid references.
 constexpr std::string_view kVersionLine = "atlantis_material_source_version: 10";
 constexpr std::string_view kMappedVersionLine = "atlantis_material_source_version: 11";
+constexpr std::string_view kOcclusionVersionLine = "atlantis_material_source_version: 12";
+constexpr std::string_view kOcclusionMapPrefix = "occlusion_map_asset: ";
 constexpr std::string_view kMetallicRoughnessMapPrefix = "metallic_roughness_map_asset: ";
 constexpr std::string_view kKindPrefix = "kind: ";
 constexpr std::string_view kTexturePrefix = "texture: ";
@@ -244,13 +246,16 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
 
   std::vector<std::string_view> lines = splitLines(text);
   std::optional<AssetGuid> packedMap;
-  if (!lines.empty() && lines.front() == kMappedVersionLine) {
+  std::optional<AssetGuid> occlusionMap;
+  if (!lines.empty() && (lines.front() == kMappedVersionLine || lines.front() == kOcclusionVersionLine)) {
+    const bool occluded = lines.front() == kOcclusionVersionLine;
     std::string_view guidText;
-    if (!matchField(lines.back(), kMetallicRoughnessMapPrefix, guidText))
+    if (!matchField(lines.back(), occluded ? kOcclusionMapPrefix : kMetallicRoughnessMapPrefix, guidText))
       return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
     const auto guid = parseAssetGuid(guidText);
     if (guid.isErr()) return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
-    packedMap = guid.value();
+    if (occluded) occlusionMap = guid.value();
+    else packedMap = guid.value();
     lines.pop_back();
     lines.front() = kVersionLine;
   }
@@ -526,16 +531,20 @@ atlantis::Result<ParsedMaterialSource, MaterialSourceParseError> parseMaterialSo
   parsed.alphaMode = optionalValues.alphaMode;
   parsed.alphaCutoff = optionalValues.alphaCutoff;
   parsed.emissiveTextureAsset = optionalValues.emissiveTexture;
-  if (packedMap && (parsed.kind != MaterialKind::PbrDirectLit || parsed.alphaMode != MaterialAlphaMode::Opaque ||
+  if ((packedMap || occlusionMap) && (parsed.kind != MaterialKind::PbrDirectLit || parsed.alphaMode != MaterialAlphaMode::Opaque ||
                     parsed.baseColorFactor[3] != 1.0f || parsed.alphaCutoff != 0.5f))
     return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
+  if (occlusionMap && (parsed.normalMapAsset || *occlusionMap == AssetGuid{}))
+    return ResultT::Err(MaterialSourceParseError::FieldOrderMismatch);
   parsed.metallicRoughnessMapAsset = packedMap;
+  parsed.occlusionMapAsset = occlusionMap;
   return ResultT::Ok(std::move(parsed));
 }
 
 std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   std::string out;
-  out += source.metallicRoughnessMapAsset ? kMappedVersionLine : kVersionLine;
+  out += source.occlusionMapAsset ? kOcclusionVersionLine :
+      source.metallicRoughnessMapAsset ? kMappedVersionLine : kVersionLine;
   out += '\n';
   out += kKindPrefix;
   // Plan 0023 Milestone 1 (Plan 0035 Milestone 2/ADR-0081 widening,
@@ -651,6 +660,11 @@ std::string serializeMaterialSource(const ParsedMaterialSource& source) {
   if (source.metallicRoughnessMapAsset) {
     out += kMetallicRoughnessMapPrefix;
     out += toString(*source.metallicRoughnessMapAsset);
+    out += '\n';
+  }
+  if (source.occlusionMapAsset) {
+    out += kOcclusionMapPrefix;
+    out += toString(*source.occlusionMapAsset);
     out += '\n';
   }
   return out;

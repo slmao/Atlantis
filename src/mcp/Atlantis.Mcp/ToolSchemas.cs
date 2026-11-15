@@ -80,13 +80,18 @@ internal static class ToolSchemas
         ("metallic", Number), ("roughness", Number), ("normalMap", Nullable(String)),
         ("emissiveTexture", Nullable(String)), ("emissiveFactor", Vector(Number, 3)), ("metallicRoughnessMap", Nullable(String)));
 
-    internal static JsonElement MaterialDraftParameters(bool withMaps = false, bool withMetallicRoughness = false) => Parameters(("mesh", String),
-        ("recipe", Object(("values", withMetallicRoughness ? MaterialValuesWithMetallicRoughness : withMaps ? MaterialValuesWithMaps : MaterialValues), ("filter", Enum("Nearest", "Linear")),
+    private static readonly JsonNode MaterialValuesWithOcclusion = Object(("texture", String), ("color", Vector(Number, 3)),
+        ("metallic", Number), ("roughness", Number), ("normalMap", Nullable(String)),
+        ("emissiveTexture", Nullable(String)), ("emissiveFactor", Vector(Number, 3)),
+        ("metallicRoughnessMap", Nullable(String)), ("occlusionMap", Nullable(String)));
+
+    internal static JsonElement MaterialDraftParameters(bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false) => Parameters(("mesh", String),
+        ("recipe", Object(("values", withOcclusion ? MaterialValuesWithOcclusion : withMetallicRoughness ? MaterialValuesWithMetallicRoughness : withMaps ? MaterialValuesWithMaps : MaterialValues), ("filter", Enum("Nearest", "Linear")),
                           ("address", Enum("Repeat", "ClampToEdge")))));
 
-    internal static JsonElement MaterialSaveParameters(bool withMaps = false, bool withMetallicRoughness = false)
+    internal static JsonElement MaterialSaveParameters(bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
     {
-        var values = withMetallicRoughness ? MaterialValuesWithMetallicRoughness : withMaps ? MaterialValuesWithMaps : MaterialValues;
+        var values = withOcclusion ? MaterialValuesWithOcclusion : withMetallicRoughness ? MaterialValuesWithMetallicRoughness : withMaps ? MaterialValuesWithMaps : MaterialValues;
         return JsonSerializer.SerializeToElement(new JsonObject { ["type"] = "object", ["oneOf"] = Choice(
             Object(("mode", Enum("Create")), ("name", String), ("values", values)),
             Object(("mode", Enum("Copy")), ("name", String), ("material", String), ("values", values)),

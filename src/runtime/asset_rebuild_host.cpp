@@ -297,8 +297,8 @@ bool matchesFrozenMaterials(const as::AssetCatalog& catalog, const Materials& ma
 }
 
 using TextureKind = AssetRebuildHost::TextureKind;
-constexpr std::array kTextureLeaves{"source.png", "normal.png", "metallic-roughness.png"};
-constexpr std::array kTextureRoles{"BaseColor", "Normal", "MetallicRoughness"};
+constexpr std::array kTextureLeaves{"source.png", "normal.png", "metallic-roughness.png", "occlusion.png"};
+constexpr std::array kTextureRoles{"BaseColor", "Normal", "MetallicRoughness", "Occlusion"};
 constexpr const char* textureLeaf(TextureKind kind) { return kTextureLeaves[static_cast<std::size_t>(kind)]; }
 constexpr as::TextureColorSpace textureColor(TextureKind kind) {
   return kind == TextureKind::Color ? as::TextureColorSpace::Srgb : as::TextureColorSpace::Unorm;
@@ -629,8 +629,11 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
   const bool hasPackedMaps = std::ranges::any_of(textures, [](const auto& entry) {
     return entry.second.kind == TextureKind::MetallicRoughness;
   });
+  const bool hasOcclusion = std::ranges::any_of(textures, [](const auto& entry) {
+    return entry.second.kind == TextureKind::Occlusion;
+  });
   if (!managedInventory.empty()) {
-    const std::uint64_t version = hasPackedMaps ? 6u : hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u;
+    const std::uint64_t version = hasOcclusion ? 7u : hasPackedMaps ? 6u : hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u;
     value.set("version", json::Value::number(version));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
     value.set("producers", json::Value::string(utf8(managedInventory)));
@@ -649,9 +652,9 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
       entry.set("inputSha256", json::Value::string(input.digest));
       entry.set("artifactSha256", json::Value::string(input.artifact));
       entry.set("metadataSha256", json::Value::string(input.metadata));
-      if (hasNormals || hasPackedMaps)
+      if (hasNormals || hasPackedMaps || hasOcclusion)
         entry.set("colorSpace", json::Value::string(input.kind == TextureKind::Color ? "Srgb" : "Unorm"));
-      if (hasPackedMaps)
+      if (hasPackedMaps || hasOcclusion)
         entry.set("role", json::Value::string(kTextureRoles[static_cast<std::size_t>(input.kind)]));
       sources.set(key, std::move(entry));
     }
@@ -1224,7 +1227,7 @@ struct AssetRebuildHost::State {
         recipe = {{input.textureAsset, {input.baseColorFactor[0], input.baseColorFactor[1],
                    input.baseColorFactor[2]}, input.metallicFactor, input.roughnessFactor, input.normalMapAsset,
                    input.emissiveTextureAsset, {input.emissiveFactor[0], input.emissiveFactor[1], input.emissiveFactor[2]},
-                   input.metallicRoughnessMapAsset},
+                   input.metallicRoughnessMapAsset, input.occlusionMapAsset},
                   input.filter == as::MaterialSamplerFilter::Linear ? ca::MaterialFilter::Linear
                                                                      : ca::MaterialFilter::Nearest,
                   input.addressMode == as::MaterialSamplerAddressMode::Repeat ? ca::MaterialAddress::Repeat

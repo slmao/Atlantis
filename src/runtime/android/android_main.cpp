@@ -138,6 +138,8 @@ void android_main(struct android_app* app) {
       extractAsset(assetManager, internalDataPath, "shaders/pbr_ibl/pbr_ibl.vert.spv");
   config.pbrIblVertexShaderReflectionPath =
       extractAsset(assetManager, internalDataPath, "shaders/pbr_ibl/pbr_ibl.vert.refl.json");
+  config.pbrIblOcclusionFragmentShaderSpirvPath = extractAsset(assetManager, internalDataPath,
+      "shaders/pbr_ibl/pbr_ibl_occlusion.frag.spv");
   config.pbrIblFragmentShaderSpirvPath =
       extractAsset(assetManager, internalDataPath, "shaders/pbr_ibl/pbr_ibl.frag.spv");
   config.pbrIblFragmentShaderReflectionPath =

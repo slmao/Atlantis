@@ -64,6 +64,9 @@ struct BootstrapConfig {
   std::string environmentMetadataPath;
   std::string pbrIblVertexShaderSpirvPath;
   std::string pbrIblVertexShaderReflectionPath;
+  std::string pbrIblOcclusionFragmentShaderSpirvPath;
+  std::string previewStudioArtifactPath;
+  std::string previewStudioMetadataPath;
   std::string pbrIblFragmentShaderSpirvPath;
   std::string pbrIblFragmentShaderReflectionPath;
   // Plan 0029 Section P15 (Human Review Approved Plan Correction,

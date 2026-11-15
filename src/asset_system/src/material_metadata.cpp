@@ -11,6 +11,8 @@ namespace {
 
 constexpr std::string_view kVersionLine = "atlantis_material_metadata_version: 9";
 constexpr std::string_view kMappedVersionLine = "atlantis_material_metadata_version: 10";
+constexpr std::string_view kOcclusionVersionLine = "atlantis_material_metadata_version: 11";
+constexpr std::string_view kOcclusionMapPrefix = "occlusion_map_asset_id: ";
 constexpr std::string_view kMetallicRoughnessMapPrefix = "metallic_roughness_map_asset_id: ";
 constexpr std::string_view kAssetGuidPrefix = "asset_guid: ";
 constexpr std::string_view kAssetIdPrefix = "asset_id: ";
@@ -176,10 +178,11 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
 
   const std::vector<std::string_view> lines = splitLines(text);
   const bool mapped = !lines.empty() && lines[0] == kMappedVersionLine;
-  if (lines.size() != kExpectedLineCount + (mapped ? 1 : 0))
+  const bool occluded = !lines.empty() && lines[0] == kOcclusionVersionLine;
+  if (lines.size() != kExpectedLineCount + (mapped || occluded ? 1 : 0))
     return ResultT::Err(MetadataParseError::WrongLineCount);
 
-  if (!mapped && lines[0] != kVersionLine) return ResultT::Err(MetadataParseError::UnknownMetadataVersion);
+  if (!mapped && !occluded && lines[0] != kVersionLine) return ResultT::Err(MetadataParseError::UnknownMetadataVersion);
 
   MaterialMetadata metadata;
   std::string_view value;
@@ -296,6 +299,9 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
   }
   if (!parseAssetIdHex(value, metadata.emissiveTexture)) return ResultT::Err(MetadataParseError::MalformedValue);
 
+  if (occluded && (!matchField(lines.back(), kOcclusionMapPrefix, value) ||
+                   !parseAssetIdHex(value, metadata.occlusionMap) || !metadata.occlusionMap))
+    return ResultT::Err(MetadataParseError::MalformedValue);
   if (mapped && (!matchField(lines.back(), kMetallicRoughnessMapPrefix, value) ||
                  !parseAssetIdHex(value, metadata.metallicRoughnessMap) || !metadata.metallicRoughnessMap))
     return ResultT::Err(MetadataParseError::MalformedValue);
@@ -304,7 +310,8 @@ atlantis::Result<MaterialMetadata, MetadataParseError> parseMaterialMetadata(std
 
 std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   std::string out;
-  out += metadata.metallicRoughnessMap ? kMappedVersionLine : kVersionLine;
+  out += metadata.occlusionMap ? kOcclusionVersionLine :
+      metadata.metallicRoughnessMap ? kMappedVersionLine : kVersionLine;
   out += '\n';
   out += kAssetGuidPrefix;
   out += toString(metadata.assetGuid);
@@ -393,6 +400,11 @@ std::string serializeMaterialMetadata(const MaterialMetadata& metadata) {
   if (metadata.metallicRoughnessMap) {
     out += kMetallicRoughnessMapPrefix;
     out += toHexString(metadata.metallicRoughnessMap);
+    out += '\n';
+  }
+  if (metadata.occlusionMap) {
+    out += kOcclusionMapPrefix;
+    out += toHexString(metadata.occlusionMap);
     out += '\n';
   }
   return out;

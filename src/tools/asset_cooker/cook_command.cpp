@@ -287,6 +287,7 @@ constexpr std::uint32_t kMeshSourceSchema = 3;
 constexpr std::uint32_t kSceneSourceSchema = 7;
 constexpr std::uint32_t kMaterialSourceSchema = 10;
 constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
+constexpr std::uint32_t kOcclusionMaterialSourceSchema = 12;
 
 // The mesh format is the one with two schemas (u16 and u32 indices), so a
 // mesh record reads its schema back from the artifact the cook wrote.
@@ -369,8 +370,8 @@ constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
   return std::move(parsed.value());
 }
 
-[[nodiscard]] bool validPackedMapRoles(const CookCommandRequest& request, const ParsedMaterialSource& material) {
-  if (request.catalogSourcePath.empty()) return !material.metallicRoughnessMapAsset;
+[[nodiscard]] bool validManagedMapRoles(const CookCommandRequest& request, const ParsedMaterialSource& material) {
+  if (request.catalogSourcePath.empty()) return !material.metallicRoughnessMapAsset && !material.occlusionMapAsset;
   const auto text = readTextFile(request.catalogSourcePath);
   if (!text) return false;
   const auto source = parseAssetCatalogSource(*text);
@@ -380,10 +381,16 @@ constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
     return entry && entry->type == CatalogAssetType::Texture &&
         isMetallicRoughnessSource(entry->root, entry->path, {});
   };
-  return !isPacked(material.textureAsset) &&
-      (!material.normalMapAsset || !isPacked(*material.normalMapAsset)) &&
-      (!material.emissiveTextureAsset || !isPacked(*material.emissiveTextureAsset)) &&
-      (!material.metallicRoughnessMapAsset || isPacked(*material.metallicRoughnessMapAsset));
+  const auto isOcclusion = [&](const AssetGuid& id) {
+    const auto* entry = source.value().find(id);
+    return entry && entry->type == CatalogAssetType::Texture && isOcclusionSource(entry->root, entry->path, {});
+  };
+  const auto reserved = [&](const AssetGuid& id) { return isPacked(id) || isOcclusion(id); };
+  return !reserved(material.textureAsset) &&
+      (!material.normalMapAsset || !reserved(*material.normalMapAsset)) &&
+      (!material.emissiveTextureAsset || !reserved(*material.emissiveTextureAsset)) &&
+      (!material.metallicRoughnessMapAsset || isPacked(*material.metallicRoughnessMapAsset)) &&
+      (!material.occlusionMapAsset || isOcclusion(*material.occlusionMapAsset));
 }
 
 // Where a per-asset cook writes its artifact -- the same names each cook
@@ -809,8 +816,8 @@ constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
   const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Material);
   if (!guid) return 1;
   const auto material = readMaterialSource(request.sourcePath);
-  if (!material || !validPackedMapRoles(request, *material)) {
-    std::cerr << "atlantis_asset_cooker: invalid material source or metallic-roughness texture role\n";
+  if (!material || !validManagedMapRoles(request, *material)) {
+    std::cerr << "atlantis_asset_cooker: invalid material source or managed texture role\n";
     return 1;
   }
   const auto result =
@@ -824,9 +831,12 @@ constexpr std::uint32_t kMappedMaterialSourceSchema = 11;
   if (material->emissiveTextureAsset) dependencies.push_back(*material->emissiveTextureAsset);
   const bool mapped = material->metallicRoughnessMapAsset.has_value();
   if (mapped) dependencies.push_back(*material->metallicRoughnessMapAsset);
+  const bool occluded = material->occlusionMapAsset.has_value();
+  if (occluded) dependencies.push_back(*material->occlusionMapAsset);
   if (!writeCookFragment(request, CatalogAssetType::Material, *guid, artifactPath, metadataPath,
-      mapped ? kMappedMaterialArtifactSchemaVersion : kMaterialArtifactSchemaVersion,
-      mapped ? kMappedMaterialSourceSchema : kMaterialSourceSchema, std::move(dependencies))) {
+      occluded ? kOcclusionMaterialArtifactSchemaVersion :
+          mapped ? kMappedMaterialArtifactSchemaVersion : kMaterialArtifactSchemaVersion,
+      occluded ? kOcclusionMaterialSourceSchema : mapped ? kMappedMaterialSourceSchema : kMaterialSourceSchema, std::move(dependencies))) {
     return 1;
   }
 
@@ -1287,7 +1297,8 @@ bool parseCookArguments(const std::vector<std::string>& args, CookCommandRequest
   const bool managedTextureSource = managedTexture && managedTexture->root == CatalogRoot::Content &&
       managedTexture->subKey.empty() && managedTexture->path.starts_with("texture_") &&
       ((managedTexture->path.ends_with("/source.png") && request.colorSpace == "srgb") ||
-       ((managedTexture->path.ends_with("/normal.png") || isMetallicRoughnessSource(*managedTexture)) &&
+       ((managedTexture->path.ends_with("/normal.png") || isMetallicRoughnessSource(*managedTexture) ||
+         isOcclusionSource(*managedTexture)) &&
         request.colorSpace == "unorm")) &&
       managedTexture->path == computeRelativePathString(request.sourcePath, request.assetRoot);
   if (!request.catalogId.empty() && !(isCookKind && source == CookArgumentSource::CookManifestLine) &&
