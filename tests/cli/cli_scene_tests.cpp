@@ -266,6 +266,29 @@ TEST_CASE("cli scene: swap-siblings submits one guarded transaction and reports 
   CHECK(scene.authoring->listNodes().value() == rows);
 }
 
+TEST_CASE("cli scene: a guarded property file uses one shared transaction", "[cli][scene]") {
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+  auto script = scene.source;
+  script += ".tx";
+  std::ofstream(script, std::ios::binary)
+      << "require-revision " << revision << "\n"
+      << "set " << kNode1 << " Transform.localScale 2 2 2\n"
+      << "set " << kNode3 << " Transform.localScale 3 3 3\n";
+  const auto line = "scene tx " + script.generic_string();
+  const int success = scene.run(line);
+  const auto result = scene.envelope();
+  const int stale = scene.run(line);
+  std::error_code ignored;
+  fs::remove(script, ignored);
+  CHECK(success == 0);
+  CHECK(member(*result.find("result"), "committed") == "true");
+  CHECK(scene.authoring->applyStatus().value().currentDocumentRevision == revision + 1);
+  CHECK(stale != 0);
+  CHECK(scene.cli.out.str().find("PropertyBatchStaleRevision") != std::string::npos);
+}
+
 TEST_CASE("cli scene: move-sibling rotates occupied slots and reports one move event",
           "[cli][scene][sibling_order]") {
   namespace ac = atlantis::connection::authoring;

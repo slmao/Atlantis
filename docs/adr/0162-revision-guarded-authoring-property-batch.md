@@ -1,9 +1,9 @@
 # ADR 0162 — Revision-Guarded Authoring Property Batch
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review.
+- **Acceptance:** The maintainer accepted this ADR in [PR #377 at `3f66ff58`](https://github.com/slmao/Atlantis/pull/377) on 2026-11-15.
 - **Related Spec:** [Spec 0106](../specs/0106-scene-multiselect-batch-edit.md).
 
 ## Context

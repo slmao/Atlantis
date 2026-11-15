@@ -20,6 +20,12 @@ public sealed class DocumentTree
         public EntityGuid? Parent;
         public string Name = "";
         public List<TypeId> Components = new();
+        public readonly Dictionary<TypeId, ComponentState> Lifetimes = new();
+    }
+
+    private sealed class ComponentState
+    {
+        public readonly Dictionary<FieldId, object> Changes = new();
     }
 
     private readonly Dictionary<EntityGuid, Row> _rows = new();
@@ -31,6 +37,8 @@ public sealed class DocumentTree
     /// <summary>Increments with every change, for a view to know when to refresh.</summary>
     public ulong Generation { get; private set; }
 
+    public ulong NodeLifetimeGeneration { get; private set; }
+
     public int Count => _order.Count;
 
     public IReadOnlyList<EntityGuid> Order => _order;
@@ -39,6 +47,14 @@ public sealed class DocumentTree
     public bool Contains(EntityGuid node) => _rows.ContainsKey(node);
     /// <summary>An opaque identity for this occurrence of a node in the tree.</summary>
     public object? IncarnationOf(EntityGuid node) => _rows.GetValueOrDefault(node);
+
+    private ComponentState? ComponentAt(SceneAddress address) =>
+        _rows.GetValueOrDefault(address.Node)?.Lifetimes.GetValueOrDefault(address.Component);
+
+    public object? ComponentIncarnationOf(SceneAddress address) => ComponentAt(address);
+
+    public object? PropertyStamp(SceneAddress address) =>
+        ComponentAt(address) is { } component ? component.Changes.GetValueOrDefault(address.Field) ?? component : null;
 
     public EntityGuid? ParentOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Parent : null;
 
@@ -168,6 +184,7 @@ public sealed class DocumentTree
     /// <summary>Re-reads the whole document (on open and on DocumentReopened).</summary>
     public void Rebuild(IAuthoringDocument document)
     {
+        ++NodeLifetimeGeneration;
         _rows.Clear();
         _order.Clear();
         IReadOnlyList<NodeSummary> nodes = document.ListNodes();
@@ -175,7 +192,9 @@ public sealed class DocumentTree
         for (int i = 0; i < nodes.Count; ++i)
         {
             _order.Add(nodes[i].Node);
-            _rows[nodes[i].Node] = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name, Components = components[i].ToList() };
+            var row = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name, Components = components[i].ToList() };
+            foreach (TypeId type in row.Components) row.Lifetimes.TryAdd(type, new ComponentState());
+            _rows[nodes[i].Node] = row;
         }
         OrderSynchronized = true;
         Changed();
@@ -214,15 +233,21 @@ public sealed class DocumentTree
             case NodeCreated created:
             {
                 int position = (int)Math.Min(created.Position, (ulong)_order.Count);
+                ++NodeLifetimeGeneration;
                 _order.Insert(position, created.Node);
                 // A node is created with its Transform (a required component, no ComponentAdded for it); the rest arrive as events.
                 var fresh = new Row();
-                if (SceneSchema.TypeOf(document.Schema, "Transform") is TypeId transform) fresh.Components.Add(transform);
+                if (SceneSchema.TypeOf(document.Schema, "Transform") is TypeId transform)
+                {
+                    fresh.Components.Add(transform);
+                    fresh.Lifetimes.Add(transform, new ComponentState());
+                }
                 _rows[created.Node] = fresh;
                 break;
             }
             case NodeDestroyed destroyed:
                 if (!_rows.Remove(destroyed.Node)) return false;
+                ++NodeLifetimeGeneration;
                 _order.Remove(destroyed.Node);
                 break;
             case ParentChanged moved:
@@ -236,11 +261,17 @@ public sealed class DocumentTree
             case ComponentAdded added:
                 if (!_rows.TryGetValue(added.Node, out Row? withAdded) || withAdded.Components.Contains(added.Component)) return false;
                 withAdded.Components.Add(added.Component);
+                withAdded.Lifetimes.Add(added.Component, new ComponentState());
                 withAdded.Components.Sort((a, b) => a.Value.CompareTo(b.Value));
                 break;
             case ComponentRemoved removed:
                 if (!_rows.TryGetValue(removed.Node, out Row? withRemoved) || !withRemoved.Components.Remove(removed.Component)) return false;
+                withRemoved.Lifetimes.Remove(removed.Component);
                 break;
+            case Atlantis.Gameplay.Authoring.PropertyChanged change:
+                if (ComponentAt(change.Address) is { } component)
+                    component.Changes[change.Address.Field] = new object();
+                return false;
             case DocumentReopened:
                 Rebuild(document);
                 return true;
@@ -252,29 +283,35 @@ public sealed class DocumentTree
     }
 }
 
-/// <summary>
-/// The one selection the Viewport pick, the Hierarchy and the Inspector share (Spec 0068 Q6, S-a). A node any client
-/// destroys is deselected; a selection persists across applies (GUIDs persist).
-/// </summary>
+/// <summary>The Editor's ordered local selection; single-target operations use Node.</summary>
 public sealed class Selection
 {
-    public EntityGuid? Node { get; private set; }
-
-    /// <summary>Increments with every change.</summary>
+    public IReadOnlyList<EntityGuid> Nodes { get; private set; } = Array.Empty<EntityGuid>();
+    public EntityGuid? Node => Nodes.Count == 1 ? Nodes[0] : null;
     public ulong Generation { get; private set; }
 
-    public void Select(EntityGuid? node)
+    public void Select(EntityGuid? node) => Set(node is EntityGuid guid ? new[] { guid } : Array.Empty<EntityGuid>());
+
+    public bool Set(IEnumerable<EntityGuid> nodes)
     {
-        if (node == Node) return;
-        Node = node;
-        ++Generation;
+        EntityGuid[] next = nodes.Distinct().Take(RequireDocumentRevision.MaxWrites + 1).ToArray();
+        if (next.Length > RequireDocumentRevision.MaxWrites) return false;
+        if (!Nodes.SequenceEqual(next))
+        {
+            Nodes = next;
+            ++Generation;
+        }
+        return true;
     }
 
-    /// <summary>Follows one authoring event: the selected node destroyed, or the document reopened without it.</summary>
+    public bool Toggle(EntityGuid node) =>
+        Nodes.Contains(node) ? Set(Nodes.Where(item => item != node)) : Set(Nodes.Append(node));
+
     public void Apply(Event e, DocumentTree tree)
     {
-        if (e is NodeDestroyed destroyed && destroyed.Node == Node) Select(null);
-        if (e is DocumentReopened && Node is EntityGuid n && !tree.Contains(n)) Select(null);
+        if (e is NodeDestroyed destroyed) Set(Nodes.Where(n => n != destroyed.Node));
+        if (e is DocumentReopened)
+            Set(Nodes.Count > 1 ? Array.Empty<EntityGuid>() : Nodes.Where(tree.Contains));
     }
 }
 
@@ -382,8 +419,13 @@ public sealed class ApplyController
 
     public void RequireExplicitApplyAfterUnverifiedSwap()
     {
-        if (_stopped || _suspended) return;
-        const string reason = "sibling swap could not be verified";
+        if (!_suspended) RequireExplicitApply("sibling swap could not be verified");
+    }
+
+    public void RequireExplicitApply(string reason)
+    {
+        if (_stopped) return;
+        if (_suspended && !_inFlight) return;
         _needGlobalStatus = true;
         if (!_inFlight)
         {

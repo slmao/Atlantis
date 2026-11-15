@@ -322,11 +322,45 @@ struct AuthoringSession::State {
     return std::nullopt;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene&, const ac::RequireDocumentRevision&,
+                                 std::vector<ac::Event>&) const {
+    ATLANTIS_CHECK_MSG(false, "the transaction admits revision guards before candidate execution");
+    return ac::Error::InvalidGuardedPropertyBatch;
+  }
+
+  static bool validGuardedPropertyBatch(const std::vector<ac::Command>& commands) {
+    if (commands.size() < 2 || commands.size() > 1 + ac::kMaxGuardedPropertyWrites ||
+        !std::holds_alternative<ac::RequireDocumentRevision>(commands.front())) return false;
+    const auto* initial = std::get_if<ac::SetProperty>(&commands[1]);
+    if (!initial) return false;
+    std::vector<ac::EntityGuid> nodes;
+    nodes.reserve(commands.size() - 1);
+    for (std::size_t i = 1; i < commands.size(); ++i) {
+      const auto* write = std::get_if<ac::SetProperty>(&commands[i]);
+      if (!write || write->address.component != initial->address.component ||
+          write->address.field != initial->address.field ||
+          std::ranges::find(nodes, write->address.node) != nodes.end()) return false;
+      nodes.push_back(write->address.node);
+    }
+    return true;
+  }
+
   // A transaction (one command or several): applied to a copy, validated, and
   // swapped in, or refused whole.
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
+    const auto guard = std::ranges::find_if(commands, [](const ac::Command& command) {
+      return std::holds_alternative<ac::RequireDocumentRevision>(command);
+    });
+    if (guard != commands.end() && !validGuardedPropertyBatch(commands)) {
+      return ac::CommandFailure{CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())},
+                                ac::Error::InvalidGuardedPropertyBatch};
+    }
+    if (guard != commands.end()) {
+      if (std::get<ac::RequireDocumentRevision>(*guard).expectedRevision != documentRevision)
+        return ac::CommandFailure{first, ac::Error::PropertyBatchStaleRevision};
+    }
     if (commands.size() != 1) {
       for (std::size_t i = 0; i < commands.size(); ++i) {
         if (std::holds_alternative<ac::SwapAdjacentSiblings>(commands[i]))
@@ -337,7 +371,7 @@ struct AuthoringSession::State {
     }
     scene::AuthoringScene candidate = *document;
     std::vector<ac::Event> events;
-    for (std::size_t i = 0; i < commands.size(); ++i) {
+    for (std::size_t i = guard != commands.end() ? 1 : 0; i < commands.size(); ++i) {
       if (const auto refusal = applyCommand(candidate, commands[i], events)) {
         return ac::CommandFailure{CommandTicket{first.value + i}, *refusal};
       }
@@ -425,7 +459,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return ac::DocumentInfo{state_.source.scene,
                             imported ? ac::Provenance::Imported : ac::Provenance::HandAuthored,
                             sourcePathOf(state_.source.provenance).generic_string(),
-                            static_cast<std::uint64_t>(state_.document->nodes.size())};
+                            static_cast<std::uint64_t>(state_.document->nodes.size()), true};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {

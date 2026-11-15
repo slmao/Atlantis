@@ -687,6 +687,7 @@ AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
                   {"kind":"SetNodeName","node":<N>,"name":"<label>"}
                   {"kind":"SwapAdjacentSiblings","node":<N>,"sibling":<N>,"parent":<N>|null,"direction":"Up"|"Down","expectedRevision":<n>}
                   {"kind":"MoveSiblingRelative","node":<N>,"anchor":<N>,"parent":<N>|null,"placement":"Before"|"After","expectedRevision":<n>}
+                  {"kind":"RequireDocumentRevision","expectedRevision":<n>}
 AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
                   {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
                   {"kind":"ComponentAdded","node":<N>,"component":<T>}
@@ -725,7 +726,7 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
     `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
     `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`,
     `SiblingOrderStaleRevision`, `SiblingOrderRequiresHandAuthored`, `InvalidSiblingSwap`,
-    `InvalidSiblingMove`;
+    `InvalidSiblingMove`, `InvalidGuardedPropertyBatch`, `PropertyBatchStaleRevision`;
   - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
     `SourceInvalid`;
   - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
@@ -770,6 +771,23 @@ the relative operation only after the 0105 tier is confirmed. Existing
 subscribers retain their event sets, and a fresh `authoring.listNodes`
 shows the current order. If a move reply is lost or invalid, inspect the
 current order and revision before another move. Apply remains separate.
+
+Spec 0106 / ADR-0162 adds the optional boolean
+`supportsGuardedPropertyTransactions` to `Document`. A literal true
+on the current open document enables guarded property writes.
+Older readers can read the descriptor's existing members. Other
+capability values leave the guarded path unavailable.
+
+Place `RequireDocumentRevision` first in `authoring.submitTransaction`
+with one to 64 `SetProperty` commands to the same component and field
+on distinct nodes. The guard consumes a ticket and emits no event.
+The host checks shape and revision at admission. The two guard
+refusals use the first guard's ticket. Success consumes one document
+revision and publishes ordinary property events in write order.
+Drain the matching failures before Apply. Older hosts refuse the
+unknown command while decoding the whole request. Keep the guarded
+writes together and inspect the document before retrying if settlement
+is unknown.
 
 ### Managed asset import
 

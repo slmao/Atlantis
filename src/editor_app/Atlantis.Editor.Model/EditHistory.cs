@@ -95,6 +95,10 @@ public enum HistoryResult
     Invalidated,       // an address cannot be read any more: entry dropped, nothing submitted
 }
 
+public enum BatchReplayState { Committed, Retry, Drop }
+
+public sealed record BatchReplayResult(BatchReplayState State, string Notice);
+
 /// <summary>E2's history (ADR-0124), over any edit target. Not thread-safe.</summary>
 public sealed class EditHistory
 {
@@ -169,11 +173,13 @@ public sealed class EditHistory
         return removed != 0;
     }
 
-    public HistoryResult Undo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null) =>
-        Take(_undo, Step.Undo, swap);
+    public HistoryResult Undo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null) =>
+        Take(_undo, Step.Undo, swap, batch);
 
-    public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null) =>
-        Take(_redo, Step.Redo, swap);
+    public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null) =>
+        Take(_redo, Step.Redo, swap, batch);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -224,7 +230,8 @@ public sealed class EditHistory
     // Undo reads After where the edit left it and writes Before; redo the reverse. On a mismatch or an unreadable
     // address nothing is submitted and the entry is dropped.
     private HistoryResult Take(List<EditTransaction> from, Step kind,
-        Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap)
+        Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap,
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch)
     {
         if (Waiting)
         {
@@ -241,6 +248,18 @@ public sealed class EditHistory
             var result = swap(order, forward);
             Notice = result.Notice;
             if (!result.Verified) return HistoryResult.ChangedElsewhere;
+            Push(forward ? _undo : _redo, edit);
+            return HistoryResult.Submitted;
+        }
+        if (edit.Structure is [BatchPropertyEdit properties])
+        {
+            if (batch is null) throw new InvalidOperationException("Batch replay requires guarded settlement.");
+            BatchReplayResult result = batch(properties, forward);
+            Notice = result.Notice;
+            if (from.Count == 0 || !ReferenceEquals(from[^1], edit)) return HistoryResult.Invalidated;
+            if (result.State == BatchReplayState.Retry) return HistoryResult.Waiting;
+            from.RemoveAt(from.Count - 1);
+            if (result.State == BatchReplayState.Drop) return HistoryResult.ChangedElsewhere;
             Push(forward ? _undo : _redo, edit);
             return HistoryResult.Submitted;
         }

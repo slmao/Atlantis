@@ -68,15 +68,20 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
-            if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative")
+            if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision")
             {
-                QueueSession exact = new();
+                bool guarded = kind == "RequireDocumentRevision";
+                QueueSession exact = new() { GuardedCapability = guarded ? JsonValue.Bool(true) : null };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
-                string args = Json.Write(JsonValue.NewObject().Set("commands", JsonValue.NewArray().Push(command)));
+                JsonValue commands = JsonValue.NewArray().Push(command);
+                if (guarded) commands.Push(JsonValue.NewObject().Set("kind", JsonValue.String("SetProperty"))
+                    .Set("address", Json.Parse(SceneAddress)).Set("value", Json.Parse("{\"f32\":4}")));
+                string args = Json.Write(JsonValue.NewObject().Set("commands", commands));
                 CallToolResult submittedExact = exactRegistry.Invoke(Request("authoring.submit_transaction", args));
-                Check(submittedExact.IsError != true && exact.Calls.Count == 3, kind + " uses the existing exact transaction tool once");
-                Check(Json.Write(exact.Calls[^1].Parameters.Find("commands")!.Items.Single()) == Json.Write(command), kind + " forwarded exactly");
+                Check(submittedExact.IsError != true && exact.Calls.Count == (guarded ? 4 : 3),
+                    kind + " uses the existing exact transaction tool once");
+                Check(Json.Write(exact.Calls[^1].Parameters.Find("commands")!.Items[0]) == Json.Write(command), kind + " forwarded exactly");
                 Check(Codec.DecodeAuthoringCommand(command) is not null, "SDK accepts " + kind + " fixture");
                 ++fixtureCount;
                 continue;
@@ -156,6 +161,17 @@ internal static partial class Program
             "authoring filter includes every kind, with no node/component restriction");
         try { registry.InitializeSubscriptions(); throw new Exception("duplicate initialization accepted"); }
         catch (InvalidOperationException) { Check(session.Calls.Count == 2, "initialization cannot create duplicate subscriptions"); }
+        const string guarded = "{\"commands\":[{\"kind\":\"RequireDocumentRevision\",\"expectedRevision\":7}]}";
+        foreach (JsonValue capability in new[] { JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
+        {
+            session.GuardedCapability = capability;
+            int start = session.Calls.Count;
+            var submitted = registry.Invoke(Request("authoring.submit_transaction", guarded));
+            bool supported = capability.Kind == JsonKind.Bool && capability.AsBool;
+            Check(session.Calls[start].Method == "authoring.document" &&
+                session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
+                "guarded transactions ask the current document and send only on literal true");
+        }
         foreach (var c in CompositionCases)
         {
             session.NextError = "NoDocument";
@@ -349,6 +365,7 @@ internal static partial class Program
         public bool LegacySiblingOrder { get; init; }
         public bool AdjacentOnly { get; init; }
         public bool RejectCommands { get; init; }
+        public JsonValue? GuardedCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -371,6 +388,12 @@ internal static partial class Program
                         LegacySiblingOrder && k.AsString == "NodeOrderChanged") == true)
                         return Json.Parse("{\"error\":{\"code\":\"BadRequest\",\"message\":\"malformed or missing filter\"}}");
                     result = JsonValue.Number(73L); break;
+                case "authoring.document":
+                    result = JsonValue.NewObject().Set("scene", JsonValue.String(Entity))
+                        .Set("provenance", JsonValue.String("HandAuthored")).Set("source", JsonValue.String("scene.txt"))
+                        .Set("nodeCount", JsonValue.Number(2UL));
+                    if (GuardedCapability is not null) result.Set("supportsGuardedPropertyTransactions", GuardedCapability);
+                    break;
                 case "authoring.submitTransaction":
                 {
                     ulong count = (ulong)parameters.Find("commands")!.Items.Count;

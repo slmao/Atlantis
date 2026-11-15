@@ -356,6 +356,7 @@ public static partial class Program
     private static void HierarchyChecks()
     {
         SiblingOrderChecks();
+        BatchInspectorChecks();
         // The document: a root R with two children A (with a child A1) and B (the active camera), and a free node F.
         var document = new FakeDocument();
         EntityGuid r = document.Add(1, null, LocalTransform.Identity);
@@ -518,6 +519,37 @@ public static partial class Program
             roundTrips &= TransformMath.ToLocalTransform(m) is LocalTransform t && NearMatrix(WorldMatrices.ComposeLocal(t), m, 1e-5f);
         }
         Check(roundTrips, "transform math: a matrix decomposes to a local Transform that composes back (reflection kept)");
+    }
+
+    private static void BatchInspectorChecks()
+    {
+        var document = new FakeDocument();
+        var first = document.Add(1, null, LocalTransform.Identity, FakeDocument.Light);
+        var second = document.Add(2, null, new LocalTransform(Vector3.Zero, Vector3.Zero, new Vector3(2)));
+        var selection = new Selection();
+        Check(selection.Set(new [] {first, second}) && selection.Node is null && selection.Nodes.Count == 2,
+            "batch selection has no single target");
+        ulong generation = selection.Generation;
+        Check(!selection.Set(Enumerable.Range(1, 65).Select(FakeDocument.Guid)) && selection.Generation == generation,
+            "selection beyond the cap preserves the existing selection");
+
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var common = new InspectorModel(document).ReadCommon(selection.Nodes, tree)!;
+        var scale = common.Single(item => item.Field.Path == "Transform.localScale");
+        Check(common.All(item => item.Field.Component == FakeDocument.Transform) &&
+            scale.State == CommonValueState.Mixed && scale.Field.Text == "" && scale.Field.Editable,
+            "common fields intersect components and a mixed value is not input");
+        var change = new SceneAddress(first, FakeDocument.Transform, FakeDocument.ScaleField);
+        tree.Apply(new PropertyChanged(change, PropertyValue.FromVec3(new Vector3(2))), document);
+        tree.Apply(new PropertyChanged(change, PropertyValue.FromVec3(Vector3.One)), document);
+        Check(!scale.Targets[0].IsCurrent(tree, checkStamp: true) && scale.Targets[0].IsCurrent(tree, checkStamp: false),
+            "a value changed away and back invalidates the draft but preserves its component incarnation");
+        tree.Apply(new NodeDestroyed(second), document);
+        tree.Apply(new NodeCreated(second, 1), document);
+        Check(!scale.Targets[1].IsCurrent(tree, checkStamp: false), "same GUID replacement conflicts with replay");
+        selection.Apply(new NodeDestroyed(second), tree);
+        Check(selection.Node == first, "destroyed selected incarnation is removed");
     }
 
     private static void SiblingOrderChecks()

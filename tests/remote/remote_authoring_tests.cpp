@@ -102,6 +102,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
       ac::MoveSiblingRelative{node(3), node(1), {}, ac::SiblingPlacement::Before, 17},
   };
   for (const auto& command : commands) roundTrips(command, &codec::decodeAuthoringCommand);
+  roundTrips(ac::Command{ac::RequireDocumentRevision{19}}, &codec::decodeAuthoringCommand);
   const std::vector<ac::Event> events{
       ac::PropertyChanged{address, access::PropertyValue{access::Absent{}}},
       ac::NodeCreated{node(7), 2},
@@ -129,7 +130,7 @@ TEST_CASE("remote authoring codec: every authoring value round-trips", "[remote]
              &codec::decodeDocumentInfo);
   roundTrips(ac::NodeSummary{node(3), node(1)}, &codec::decodeNodeSummary);
   roundTrips(ac::NodeSummary{node(3), node(1), "node label"}, &codec::decodeNodeSummary);
-  for (int e = 0; e <= static_cast<int>(ac::Error::InvalidSiblingMove); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::PropertyBatchStaleRevision); ++e) {
     const auto error = static_cast<ac::Error>(e);
     CHECK(codec::decodeAuthoringError(codec::encodeAuthoringError(error)) == error);
   }

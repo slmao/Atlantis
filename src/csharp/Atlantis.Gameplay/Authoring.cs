@@ -20,7 +20,10 @@ public enum Provenance
 }
 
 /// <summary>The open document's identity: its scene, provenance, source path and node count.</summary>
-public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string SourcePath, ulong NodeCount);
+public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string SourcePath, ulong NodeCount)
+{
+    public bool SupportsGuardedPropertyTransactions { get; init; }
+}
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
 public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "");
@@ -89,6 +92,12 @@ public enum SiblingPlacement { Before, After }
 
 public sealed record MoveSiblingRelative(EntityGuid Node, EntityGuid Anchor, EntityGuid? Parent,
     SiblingPlacement Placement, ulong ExpectedRevision) : Command;
+
+/// <summary>First command of a guarded batch of writes to one field on distinct nodes (ADR-0162).</summary>
+public sealed record RequireDocumentRevision(ulong ExpectedRevision) : Command
+{
+    public const int MaxWrites = 64;
+}
 
 /// <summary>Sets the active camera; null clears it.</summary>
 public sealed record SetActiveCamera(EntityGuid? Camera) : Command;
@@ -233,6 +242,8 @@ public enum AuthoringError
     SiblingOrderRequiresHandAuthored,
     InvalidSiblingSwap,
     InvalidSiblingMove,
+    InvalidGuardedPropertyBatch,
+    PropertyBatchStaleRevision,
 }
 
 /// <summary>

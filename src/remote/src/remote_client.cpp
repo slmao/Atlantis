@@ -870,7 +870,8 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
   access::CommandTicket submit(ac::Command command) override {
-    if (std::holds_alternative<ac::SwapAdjacentSiblings>(command) || std::holds_alternative<ac::MoveSiblingRelative>(command))
+    if (std::holds_alternative<ac::SwapAdjacentSiblings>(command) || std::holds_alternative<ac::MoveSiblingRelative>(command) ||
+        std::holds_alternative<ac::RequireDocumentRevision>(command))
       return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
@@ -880,6 +881,12 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return access::CommandTicket{*ticket};
   }
   access::TransactionTicket submitTransaction(std::vector<ac::Command> commands) override {
+    if (std::ranges::any_of(commands, [](const ac::Command& command) {
+          return std::holds_alternative<ac::RequireDocumentRevision>(command);
+        })) {
+      const auto info = document();
+      if (!info || !info->supportsGuardedPropertyTransactions) return {};
+    }
     if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
           return std::holds_alternative<ac::MoveSiblingRelative>(command);
         }) && !supportsSiblingMove())

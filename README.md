@@ -426,6 +426,21 @@ Undo step. Use **Move to root** in Hierarchy Actions to clear the parent.
 If Runtime reload fails, repair the document and use Apply explicitly.
 [Spec 0103](docs/specs/0103-hierarchy-reparent.md).
 
+### Edit a common property across scene nodes
+
+In a hand-authored scene, Ctrl-click Hierarchy rows to select up to
+64 nodes. The Inspector shows common components and distinguishes
+mixed values. Enter a value for one editable field and use **Set**.
+One Undo restores each changed node's original value. Save persists
+the accepted values. After a failed Runtime reload, repair and use
+**Apply current document / Retry** to project the current document.
+
+For native CLI, run `scene apply-status` on the open session, then
+use `scene tx <file|->`. Put `require-revision <revision>` on the
+first line and ordinary `set` lines for the same field on distinct
+nodes after it. The guarded transaction reports the usual ticket
+and refusal. Apply remains a separate command.
+
 ### Change sibling order
 
 In a hand-authored scene, select one node and use **Hierarchy → Actions →

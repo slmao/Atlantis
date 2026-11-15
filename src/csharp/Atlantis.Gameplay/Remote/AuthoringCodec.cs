@@ -106,6 +106,10 @@ public static partial class Codec
                     .Set("placement", JsonValue.String(c.Placement.ToString()))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.RequireDocumentRevision c:
+                output.Set("kind", JsonValue.String("RequireDocumentRevision"))
+                    .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
+                break;
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
@@ -176,6 +180,9 @@ public static partial class Codec
                         placement.AsString == "Before" ? A.SiblingPlacement.Before : A.SiblingPlacement.After, expected)
                     : null;
             }
+            case "RequireDocumentRevision":
+                return value.Find("expectedRevision") is JsonValue required && DecodeUInt64(required) is ulong guardedRevision
+                    ? new A.RequireDocumentRevision(guardedRevision) : null;
             case "SetActiveCamera":
             {
                 (bool ok, EntityGuid? camera) = OptionalEntityMember(value, "camera");
@@ -351,10 +358,15 @@ public static partial class Codec
         return new A.CommandFailure(new CommandTicket(t), e);
     }
 
-    public static JsonValue Encode(A.DocumentInfo document) =>
-        JsonValue.NewObject().Set("scene", Encode(document.Scene))
+    public static JsonValue Encode(A.DocumentInfo document)
+    {
+        JsonValue result = JsonValue.NewObject().Set("scene", Encode(document.Scene))
             .Set("provenance", JsonValue.String(document.Provenance == A.Provenance.Imported ? "Imported" : "HandAuthored"))
             .Set("source", JsonValue.String(document.SourcePath)).Set("nodeCount", JsonValue.Number(document.NodeCount));
+        if (document.SupportsGuardedPropertyTransactions)
+            result.Set("supportsGuardedPropertyTransactions", JsonValue.Bool(true));
+        return result;
+    }
 
     public static A.DocumentInfo? DecodeDocumentInfo(JsonValue value)
     {
@@ -370,7 +382,11 @@ public static partial class Codec
             "Imported" => A.Provenance.Imported,
             _ => null,
         };
-        return p is A.Provenance known ? new A.DocumentInfo(s, known, source.AsString, n) : null;
+        return p is A.Provenance known ? new A.DocumentInfo(s, known, source.AsString, n)
+        {
+            SupportsGuardedPropertyTransactions =
+                value.Find("supportsGuardedPropertyTransactions") is { Kind: JsonKind.Bool, AsBool: true }
+        } : null;
     }
 
     public static JsonValue Encode(A.NodeSummary node)

@@ -40,6 +40,23 @@ public sealed record InspectorField(TypeId Component, string ComponentName, stri
     public bool Present => Value is PropertyValue v && !v.IsAbsent;
 }
 
+public enum CommonValueState { Uniform, Mixed, Absent, Unavailable }
+
+public sealed record BatchPropertyTarget(SceneAddress Address, PropertyValue? Value, object? NodeIdentity,
+    object? ComponentIdentity, object? ValueStamp)
+{
+    public bool IsCurrent(DocumentTree tree, bool checkStamp) =>
+        NodeIdentity is not null && ReferenceEquals(NodeIdentity, tree.IncarnationOf(Address.Node)) &&
+        ComponentIdentity is not null && ReferenceEquals(ComponentIdentity, tree.ComponentIncarnationOf(Address)) &&
+        (!checkStamp || ReferenceEquals(ValueStamp, tree.PropertyStamp(Address)));
+}
+
+public sealed record CommonInspectorField(InspectorField Field, CommonValueState State,
+    IReadOnlyList<BatchPropertyTarget> Targets);
+
+public sealed record BatchInspectorSnapshot(ulong SelectionGeneration, long Lifetime, ulong? Revision,
+    int Count, bool Writable, IReadOnlyList<CommonInspectorField> Fields, string? Notice = null);
+
 public sealed class InspectorModel
 {
     private readonly IAuthoringDocument _document;
@@ -88,6 +105,60 @@ public sealed class InspectorModel
                                                ControlOf(field), IsEditable(field), field.IsOptional, choices, _document.GetProperty(address)));
             }
         }
+    }
+
+    public IReadOnlyList<CommonInspectorField>? ReadCommon(IReadOnlyList<EntityGuid> nodes, DocumentTree tree)
+    {
+        var components = _document.ObserveComponents(nodes);
+        if (components is null || components.Count != nodes.Count) return null;
+        var common = components[0].Where(type => components.All(types => types.Contains(type)))
+            .OrderBy(type => SceneSchema.NameOf(_document.Schema, type) == "Transform" ? 0 : 1)
+            .ThenBy(type => SceneSchema.NameOf(_document.Schema, type), StringComparer.Ordinal);
+        var leaves = new List<InspectorField>();
+        foreach (TypeId component in common)
+        {
+            string name = SceneSchema.NameOf(_document.Schema, component);
+            foreach (LeafPath leaf in SchemaText.LeavesOf(_document.Schema, component))
+            {
+                SchemaField field = leaf.Leaf;
+                var choices = field.Kind == TypeKind.Enum
+                    ? SchemaText.FindType(_document.Schema, field.Type)?.Constants ?? Array.Empty<SchemaConstant>()
+                    : Array.Empty<SchemaConstant>();
+                FieldControl control = ControlOf(field);
+                leaves.Add(new InspectorField(component, name, leaf.Path, leaf.Path[(name.Length + 1)..], field,
+                    control, IsEditable(field) && !field.IsOptional && control != FieldControl.Guid,
+                    field.IsOptional, choices, null));
+            }
+        }
+
+        var addresses = leaves.SelectMany(field => nodes.Select(node =>
+            new SceneAddress(node, field.Component, field.Field.Id))).ToArray();
+        IReadOnlyList<PropertyValue?> values = _document.GetProperties(addresses);
+        if (values.Count != addresses.Length) return null;
+        var result = new List<CommonInspectorField>(leaves.Count);
+        for (int index = 0; index < leaves.Count; ++index)
+        {
+            var targets = new List<BatchPropertyTarget>(nodes.Count);
+            int offset = index * nodes.Count;
+            for (int item = 0; item < nodes.Count; ++item)
+            {
+                var address = addresses[offset + item];
+                targets.Add(new BatchPropertyTarget(address, values[offset + item], tree.IncarnationOf(address.Node),
+                    tree.ComponentIncarnationOf(address), tree.PropertyStamp(address)));
+            }
+            PropertyValue? first = targets[0].Value;
+            CommonValueState state = targets.Any(target => target.Value is null || !target.IsCurrent(tree, checkStamp: false))
+                ? CommonValueState.Unavailable
+                : targets.Any(target => target.Value != first) ? CommonValueState.Mixed
+                : first!.Value.IsAbsent ? CommonValueState.Absent : CommonValueState.Uniform;
+            InspectorField field = leaves[index] with
+            {
+                Value = state is CommonValueState.Uniform or CommonValueState.Absent ? first : null,
+                Editable = leaves[index].Editable && state is (CommonValueState.Uniform or CommonValueState.Mixed)
+            };
+            result.Add(new CommonInspectorField(field, state, targets));
+        }
+        return result;
     }
 
     /// <summary>The field at <paramref name="path"/> ("Light.intensity"), or null.</summary>

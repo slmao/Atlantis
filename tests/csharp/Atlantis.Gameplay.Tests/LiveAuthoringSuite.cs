@@ -36,6 +36,7 @@ public static class LiveAuthoringSuite
             Commands(t, first, second);
             Names(t, first, second);
             SiblingOrder(t, first, second);
+            GuardedProperties(t, first, second);
             ApplyUnderPause(t, first);
             TrackedApplyUnderPause(t, first, second);
             Save(t, first);
@@ -46,6 +47,34 @@ public static class LiveAuthoringSuite
         LegacySiblingOrder(t, exactRefusal: false);
         CreateSceneUnknownOutcome(t, RemoteError.Disconnected, null);
         CreateSceneUnknownOutcome(t, RemoteError.ProtocolError, "scenes/saved/save_other/scene.scene.txt");
+    }
+
+    private static void GuardedProperties(TestContext t, RemoteSession first, RemoteSession second)
+    {
+        var a = first.Authoring;
+        var b = second.Authoring;
+        t.Check(a.Document()?.SupportsGuardedPropertyTransactions == true, "capable live document");
+        var targetA = a.Address(Mesh, "Transform.localScale");
+        var targetB = a.Address(Sun, "Transform.localScale");
+        var beforeA = a.GetProperty(targetA).Value;
+        var beforeB = a.GetProperty(targetB).Value;
+        var next = PropertyValue.FromVec3(new System.Numerics.Vector3(2, 2, 2));
+        ulong revision = a.ApplyStatus().Value!.CurrentDocumentRevision!.Value;
+        var subscription = b.Subscribe(new A.EventFilter());
+        var ticket = a.SubmitTransaction(new A.Command[] {
+            new A.RequireDocumentRevision(revision), new A.SetProperty(targetA, next), new A.SetProperty(targetB, next) });
+        t.Check(ticket.Count == 3 && a.DrainFailures().Count == 0, "two writes have one guarded ticket range");
+        t.Check(b.DrainEvents(subscription).Value.SequenceEqual(new A.Event[] {
+            new A.PropertyChanged(targetA, next), new A.PropertyChanged(targetB, next) }), "old event encoding covers both writes");
+        t.Equal(revision + 1, a.ApplyStatus().Value!.CurrentDocumentRevision!.Value, "one guarded revision");
+        ticket = a.SubmitTransaction(new A.Command[] { new A.RequireDocumentRevision(revision), new A.SetProperty(targetA, beforeA) });
+        t.Check(a.DrainFailures().Single() == new A.CommandFailure(ticket.First, A.AuthoringError.PropertyBatchStaleRevision) &&
+            b.DrainEvents(subscription).Value.Count == 0, "stale guard refuses without events");
+        a.SubmitTransaction(new A.Command[] {
+            new A.RequireDocumentRevision(revision + 1), new A.SetProperty(targetA, beforeA), new A.SetProperty(targetB, beforeB) });
+        t.Check(a.DrainFailures().Count == 0 && a.GetProperty(targetA).Value == beforeA && a.GetProperty(targetB).Value == beforeB,
+            "guarded undo can write per-target values");
+        b.Unsubscribe(subscription);
     }
 
     private static void SiblingOrder(TestContext t, RemoteSession first, RemoteSession second)
