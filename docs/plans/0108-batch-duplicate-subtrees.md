@@ -32,7 +32,7 @@ authoring commit, and one conflict-aware Undo/Redo entry.
 | `src/connection/include/atlantis/connection/authoring_connection.h`, `src/connection/src/authoring_connection.cpp`, `src/authoring/src/authoring_session.cpp` | Declare and admit the two guarded shapes, using the existing candidate and final validation. |
 | `src/remote/src/{codec,remote_client}.cpp`, `src/cli/src/{command_layer,invocation}.cpp` | Carry the additive command, discovery and refusals over the existing native and CLI surface. |
 | `src/csharp/Atlantis.Gameplay/{Authoring.cs,Remote/AuthoringCodec.cs,Remote/AuthoringSession.cs}`, `src/mcp/Atlantis.Mcp/{ToolSchemas,ToolRegistry}.cs` | Typed command, optional capability and the existing exact MCP transaction tool. |
-| `src/editor_app/Atlantis.Editor.Model/{HierarchyCommands,StructuralEdits,DocumentTree,AuthoringDocument,EditHistory}.cs` | Derive closure, read and plan the batch, and retain one complete and guarded replay record. Reuse existing node lifetime tracking and positional history behavior. |
+| `src/editor_app/Atlantis.Editor.Model/{HierarchyCommands,StructuralEdits,DocumentTree,AuthoringDocument,EditHistory}.cs` | Derive closure, read and plan the batch, and retain one guarded record in the existing history. Reuse node lifetime tracking and keep the batch's boundary checks separate from legacy positional invalidation. |
 | `src/editor_app/Atlantis.Editor/{EditorSession,MainWindow}.cs` | Hierarchy action, captured selection and result publication using existing worker, Apply and visual controls. |
 | `tests/authoring/authoring_session_tests.cpp`, `tests/remote/remote_authoring_tests.cpp`, `tests/cli/cli_scene_tests.cpp`, `tests/csharp/conformance/{conformance_tests.cpp,codec_vectors.jsonl}`, `tests/csharp/Atlantis.Gameplay.Tests/{CodecSuite,LiveAuthoringSuite}.cs`, `src/mcp/tests/Atlantis.Mcp.Tests/M3Tests.cs` | Admission, native and managed codec conformance, and shared client checks. |
 | `src/editor_app/tests/Atlantis.Editor.Tests/{HierarchyTests,HistoryTests,ApplyOutcomeTests,IntegrationTest,J7Acceptance,Program}.cs` | Batch model, replay conflicts, receipt settlement and Windows acceptance on disposable source. |
@@ -55,8 +55,8 @@ visuals.
 | Decision | Recommendation |
 | --- | --- |
 | **J1 — Selection and copy layout** | Approve one batch for 2–64 selected rows, deduplicate by ancestry, and cap the complete union at 64 nodes. Copy fresh GUIDs, same local placement and one appended block in global source order. |
-| **J2 — Shared structural guard** | Accept ADR-0164. Use the separately discovered guard for append and suffix removal through the existing authoring transaction. Preserve legacy operations. |
-| **J3 — Replay and recovery** | Approve exact copy and tail checks, same-GUID Redo, conservative conflict refusal, and history publication before refresh. Settle Apply independently and require explicit recovery after uncertain or failed Apply. |
+| **J2 — Shared structural guard** | Accept ADR-0164. Use the separately discovered guard for append and suffix removal through the existing authoring transaction, with revision admission before document-dependent checks. Preserve legacy operations and mixed-version discovery. |
+| **J3 — Replay and recovery** | Approve exact copy and tail checks, same-GUID Redo, and dependency updates only from verified local batch replay. Publish history before refresh. Settle Apply independently, retain older receipt settlement and require explicit recovery after an uncertain edit or unsuccessful Apply. |
 | **J4 — Acceptance and authorization** | Approve Windows 100% Save/reopen, guarded and legacy client checks, and applicable repository gates. After manual design merge, authorize S2–S4 together. |
 
 Suggested authorization for the reviewed revision
@@ -77,47 +77,67 @@ Suggested authorization for the reviewed revision
   child-before-parent order, sibling-name collisions within the
   batch, and the existing unnamed and UTF-8 naming cases. Compare
   full values, including signed scale, asset references, absent
-  optional values and active camera. Refuse an incomplete snapshot.
+  optional values and active camera. Refuse an incomplete snapshot
+  or unreconciled authoritative order.
 - [ ] **R3 and ADR-0164 — Guard and compatibility.** Verify both
   valid shapes, one revision, ordered events and the full ticket range
   including the guard. Refuse malformed shapes, misplaced or mixed
-  guards, excessive count, duplicate GUID or address, existing-node
+  guards in both orders, excessive count, nil or duplicate GUID,
+  collision with an existing GUID, duplicate leaf address, existing-node
   writes, an invalid append position and deletion outside the suffix.
-  Force a failure in a later command and a stale revision at host
-  admission. Check that each refusal leaves the candidate unpublished.
+  Exercise a valid 64-node append through Remote within its existing
+  request budget. Force an ordinary command or final validation failure
+  after earlier candidate writes. Race an external edit or same-session
+  reopen after preflight and confirm the stale revision takes precedence
+  over the now-invalid boundary. Each refusal leaves the document,
+  revision and events unchanged.
   Exercise the shared contract in CLI, C# SDK, MCP and Editor, with
-  native and managed vectors. Verify bidirectional compatibility
-  with an actual legacy peer, ordinary and earlier guarded edit
-  paths, absent/false/malformed capability, reconnect and reopen,
-  and raw legacy refusal of an unknown guard after an ordinary write
-  in the same request. Exercise the existing single-node action.
+  native and managed vectors. MCP coverage explicitly drains failures
+  before Apply. Verify bidirectional compatibility with an actual
+  legacy peer, ordinary and earlier guarded edit paths,
+  absent/false/malformed capability, a null document, reconnect and
+  reopen. Verify raw legacy refusal of an unknown guard after an ordinary
+  write in the same request and preserve the existing single-node action.
 - [ ] **R3–R4 — Settlement, replay and recovery.** Change selection
-  during capability discovery and replace a row with the same GUID
-  before send. Verify a known refusal has no edit, history or Apply.
-  Cover a later selection during verified settlement, lost or malformed
-  submission receipts and verified commit overtaken before readback.
-  Exercise stacked replay, a changed copy or unrecorded child, changed
-  active camera, equal-valued same-GUID replacement of a copy or
-  surviving parent, changed tail boundary and Redo GUID collision.
-  Verify an unrelated edit can coexist, stale revision alone retains
-  the entry, and an indeterminate replay follows the explicit recovery
-  path. Disconnect during post-settlement refresh and confirm verified
-  history was published. Cover older pending Apply settlement and a
-  verified edit with a lost Apply receipt.
+  during capability discovery and replace a captured row with the same
+  GUID, including while the worker knows about the replacement and the UI
+  still shows the old row. Verify no send when context has changed and no
+  edit, history or Apply for a known refusal. Cover a later selection
+  during verified settlement, malformed ticket ranges, failed drain, and
+  a known commit with stale or unavailable readback.
+  Undo B then A and Redo A then B when B's boundary or parent depends
+  on A. Exercise a changed copy or unrecorded child, copied camera
+  activated externally, equal-valued same-GUID replacement of a copy,
+  parent or predecessor, changed tail and Redo GUID collision. Check
+  that an external reorder leaving the recorded boundary and copy
+  state intact permits replay. A known stale guard refusal retains
+  the entry and an indeterminate replay drops it without automatic Apply.
+  Disconnect during post-settlement refresh and confirm verified
+  history was published. Settle an older pending Apply after an
+  uncertain edit, with automatic follow-ups still suspended. Cover
+  a verified edit with a lost Apply receipt and an externally advanced
+  revision in the actual accepted Apply receipt.
 - [ ] **R1–R5 — Windows 100% actual Editor.** Open a disposable
   hand-authored scene with selected nodes under different parents and
-  a selected descendant of one root. Invoke the Hierarchy action and
-  record the originals and copies by GUID, full authored state and
-  document order. Check selection feedback, one authoring revision
-  and one Undo operation. Undo and Redo the whole batch and verify
-  Redo retains its GUIDs and slots. Use the existing recoverable Apply
-  failure setup, distinguish the edited source document from the last
-  good projection, then explicitly Apply the current document without
-  duplicating history or nodes. Save after Redo and reopen that same
-  source with the same active asset generation. Verify GUIDs, names,
-  parents, order, component values, asset references and active
-  camera before applying, confirm history cleared and check the
-  resulting Runtime projection after explicit Apply.
+  a selected descendant of one root. Use the 0102 recoverable Apply
+  setup. While paused on a good projection, a second shared client
+  changes an unrelated renderable's binding to a non-nil missing mesh
+  GUID without applying. Invoke the Hierarchy action and record
+  originals and copies by GUID, full authored state and document
+  order. Check selection feedback, one authoring revision and one Undo
+  step. Step the Runtime and verify `ScenePreparationFailed` on the
+  batch's Apply receipt with the authored copies and history retained.
+  Restore the binding, explicitly Apply and step or resume to an
+  Applied receipt.
+  Check the copies by GUID in the Runtime since original and duplicate
+  geometry may overlap. Verify no additional creation or history.
+  Undo and Redo the whole batch and confirm Redo retains its GUIDs and
+  slots. Save after Redo and verify the saved result, then use Authoring
+  Open on that same source with the same active asset generation. In
+  the reopened document, verify GUIDs, names, parents, order, component
+  values, asset references and active camera and confirm history cleared.
+  Verify the reopened revision reaches Applied on explicit Apply and
+  the Runtime projection contains the same copies.
 - [ ] **Existing gates.** Build and test affected native and managed
   targets and run the applicable Editor/Runtime integration, Vulkan
   Validation Layers and golden checks. Assess applicable Android
