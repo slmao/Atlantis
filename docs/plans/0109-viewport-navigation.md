@@ -48,17 +48,19 @@ camera and child-window path established by [ADR-0128](../adr/0128-remote-viewpo
 camera vector conventions from [ADR-0137](../adr/0137-csharp-model-port-held-by-vectors.md),
 selection and routing from [0106](../specs/0106-scene-multiselect-batch-edit.md)
 and [0107](../specs/0107-multi-object-gizmo.md), and [0093](../specs/0093-editor-visual-layout.md)
-for visuals. Use existing Editor worker serialization and observed scene
-generation; never let an old navigation read queue a camera command after a
-superseding UI intent or a newer generation observed by the worker.
+for visuals. Use the existing worker and retain the generation from its
+status and navigation reads. Schedule the discrete acknowledgement and
+following service-boundary read in worker order. Share the intent check
+with existing coalesced camera writes and tag picks with the camera state
+they were calculated against.
 
 ## Joint review
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — User controls** | Approve one toolbar group, six exact perspective directions, and 0.5×/1×/2× for existing orbit and dolly. Keep gestures, thresholds and Gizmo routing. |
-| **J2 — Shared read and compatibility** | Accept ADR-0165. Approve one additive camera-and-bounds query for all clients, 0–64 targets, legacy behavior on older hosts and no change to camera override ownership. |
-| **J3 — Fit and recovery** | Approve live selected-target bounds plus origins for transform-only nodes, conservative fit against the existing lens, and whole-action refusal for missing data or an unrepresentable fit. Approve scene-camera clear/read settlement and invalidation on stale selection or observed scene change with two separate shared operations. |
+| **J1 — User controls** | Approve one toolbar group, four cardinal views and near-vertical Top/Bottom at the existing ±89° pitch clamp. Use the current perspective projection and 0.5×/1×/2× for orbit and dolly. Keep gesture thresholds and Gizmo priority. |
+| **J2 — Shared read and compatibility** | Accept ADR-0165. Approve one additive query for all clients, with 0–64 targets, a same-dispatch camera/bounds snapshot, explicit refusals and legacy behavior on older hosts. Keep the existing shared override ownership. |
+| **J3 — Fit and recovery** | Approve live selected-target bounds and origins for non-renderables, quantized-pose validation and refusal for missing geometry or an unrepresentable fit. Approve intent guards and service-boundary settlement of the existing camera setter, with fresh active-camera readback after clear. |
 | **J4 — Evidence and authorization** | Approve Windows 100% actual-window acceptance, mixed-version checks and the applicable repository gates. After manual design merge, authorize S2–S4 together. |
 
 Suggested authorization for the reviewed revision
@@ -75,37 +77,50 @@ Suggested authorization for the reviewed revision
   reads with retained geometry disabled, ordered mixed mesh/origin results
   and one generation while paused and after scene replacement. Verify that a
   runtime-only World transform contributes the displayed position. Cover
-  multiple cameras, unknown GUIDs, absent meshes, invalid matrices, duplicate
-  and nil GUIDs, and 64 accepted versus 65 refused. Exercise native and C#
-  codec vectors, CLI output/exit behavior, SDK and MCP old-host mapping, and
-  an unchanged older client's camera, pick and overlay operations against the
-  new host. Exercise malformed replies and actual disconnects separately.
+  multiple cameras, unknown GUIDs, a missing Renderable versus missing
+  mesh geometry, outward rounding and invalid matrices, malformed versus
+  duplicate or nil GUIDs, and 64 accepted versus 65 refused. Exercise native
+  and C# codec vectors, CLI output/exit behavior, SDK and MCP old-host
+  mapping, and an unchanged older client's camera, pick and overlay
+  operations against the new host. Exercise malformed replies (including a
+  different target or order) and actual disconnects separately.
 - [ ] **R1–R4 — Model and Editor worker.** Cover eight-corner bounds under
   parent transform, rotation, negative or nonuniform scale, point-only and
   coincident bounds, large valid coordinates and finite clip/precision
-  refusals. Check padded fit and clip planes across normal and portrait
-  aspects, six directions and pole orbit handoff. Preserve existing camera
-  conformance vectors. Cover same-GUID row replacement, selection changes,
-  resize or collapse while pending, a second Focus, explicit return and
-  newer orbit overtaking an old callback, observed projection generation
-  change, clear failure, successful clear followed by read failure, and
-  disconnect. Verify dispatch guards and absence of stale accepted status.
+  refusals, including a finite eye where float `eye + forward` loses the
+  direction. Check padded fit and clip planes for normal and portrait
+  aspects, all six directions, Top/Bottom at ±89°, further orbit and
+  `Normal` speed equivalence. Preserve existing camera conformance vectors.
+  Cover selection change and same-GUID row replacement, resize or collapse,
+  newer Focus/direction/return overtaking an old bounds read or queued
+  motion, and a sent older write whose replacement is refused. Cover a
+  generation change across the discrete setter and read, an outstanding
+  old pick, clear refusal, acknowledged clear with read failure, lost reply,
+  and a fresh return after failure. Verify dispatch, the confirmed camera
+  state and suppression of stale UI completion and hit tests.
 - [ ] **R1–R5 — Windows Editor App at 100%.** Attach the actual Editor to a
-  disposable scene with two separated renderables, a transform-only node,
-  a camera rolled relative to world up, and an active camera that is not
-  first in normal enumeration. Focus one mesh, the group, and the origin
-  alone. Repeat the group fit in a narrow window, check the edge of the
-  fitted objects against the physical viewport and click a mesh to verify
-  outline and hit alignment. Exercise six views, speed changes, wheel and
-  drag, Gizmo priority and an Inspector draft across a toolbar action.
-  While an override is installed, change the live active camera pose
-  through the existing shared controls; return to Scene Camera and check
-  rendered view and picking against the new pose. Exercise the geometry
-  unavailable refusal and confirm the previous camera stays usable. Verify
-  camera actions preserve selection, document values/revision, dirty state,
-  history, scene camera data (apart from the explicit test edit), generation
-  and Apply state; save/reopen the unchanged source to confirm it contains
-  no Editor camera state.
+  disposable hand-authored scene with two visually distinct, separated
+  meshes, an off-origin transform-only node and an active camera whose pose
+  and lens differ from the first Camera in enumeration. Save a reference
+  copy of the authored source through the ordinary Save path. Focus one
+  mesh, the group and the non-renderable alone. Repeat the group fit in a
+  narrow window and observe that both meshes fit. Click a recognizable
+  off-center mesh in each window size after settlement and compare the
+  selected GUID and outline to the clicked object. Exercise all six views,
+  Top/Bottom picking on a visible mesh, wheel and drag speed changes, Gizmo
+  priority and an Inspector draft across a toolbar action.
+  With an override installed, apply a live-only active-camera pose change
+  via the existing Runtime World client and settle the command (step when
+  paused). Leave the pose stable, return to Scene Camera and verify the new
+  view and an off-center pick match the active camera. In a launch with
+  pick geometry disabled, verify Focus refusal for a renderable and
+  preservation of the prior pose. Compare document
+  revision, dirty state, history, camera fields, scene generation and Apply
+  state before and after the navigation actions, independently of the test
+  setup changes and deliberate picks. Save through the same path and compare
+  to the reference; reopen the same source and check the persisted authored
+  camera and scene values. Confirm a fresh hosted attachment starts from
+  the active scene camera without a persisted navigation pose.
 - [ ] **Existing gates.** Build and test affected native and managed targets
   and exercise Runtime and Editor integration. Retain applicable Vulkan
   Validation Layers and golden checks. Assess Android build and packaging
