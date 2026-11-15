@@ -1,10 +1,10 @@
 # Plan: Occlusion Texture Import and Binding
 
 - **Spec:** [Spec 0099](../specs/0099-occlusion-texture.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending J1–J4 and one-time implementation authorization
-- **ADR:** [ADR-0158](../adr/0158-occlusion-texture.md) (Proposed)
+- **Joint Human Review:** The maintainer [approved J1–J4 and authorized S2–S4](https://github.com/slmao/Atlantis/pull/363#issuecomment-6888525686) at `d44a04d5` on 2026-11-15. [PR #363](https://github.com/slmao/Atlantis/pull/363) was manually merged as `f9ad2529`. Windows acceptance covers 100% DPI. Dedicated Android acceptance does not apply. Final merge remains human.
+- **ADR:** [ADR-0158](../adr/0158-occlusion-texture.md) (Accepted)
 
 ## Objective
 

@@ -1,9 +1,9 @@
 # ADR 0158: Occlusion Texture Role and IBL Material Binding
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-15, [PR #363](https://github.com/slmao/Atlantis/pull/363#issuecomment-6888525686) at `d44a04d5`
 - **Related Spec:** [Spec 0099](../specs/0099-occlusion-texture.md)
 
 ## Context

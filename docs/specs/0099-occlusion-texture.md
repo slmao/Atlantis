@@ -1,11 +1,11 @@
 # Spec: Occlusion Texture Import and Binding
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-15
 - **Related Plan:** [Plan 0099](../plans/0099-occlusion-texture.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0158](../adr/0158-occlusion-texture.md) (Proposed)
+- **Approval:** Atlantis maintainer, 2026-11-15, [PR #363](https://github.com/slmao/Atlantis/pull/363#issuecomment-6888525686) at `d44a04d5`
+- **Related ADR:** [ADR-0158](../adr/0158-occlusion-texture.md) (Accepted)
 
 ## Summary
 
