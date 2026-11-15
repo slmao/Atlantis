@@ -1,9 +1,9 @@
 # Plan: Emissive Texture Import and Binding
 
 - **Spec:** [Spec 0100](../specs/0100-emissive-texture-import-and-binding.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of Spec 0100 and this Plan together, with explicit implementation authorization.
+- **Joint Human Review:** Atlantis maintainer, 2026-11-15, [PR #365](https://github.com/slmao/Atlantis/pull/365) at `9bc50950`. Approved Spec/Plan 0100 and J1–J4 together and authorized S2–S4 after the human merge. No new ADR.
 
 ## Objective
 

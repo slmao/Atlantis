@@ -140,7 +140,8 @@ public sealed class MainWindow : Window
     private InspectorSnapshot? _inspectorDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
-    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map", "Metallic-roughness", "Occlusion map" }, SelectedIndex = 0 };
+    private const string ColorTextureLabel = "sRGB color";
+    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { ColorTextureLabel, "Normal map", "Metallic-roughness", "Occlusion map" }, SelectedIndex = 0 };
     private readonly SelectableTextBlock _textureFormat = EditorVisuals.Details("");
     private readonly TextBox _textureName = new() { PlaceholderText = "Inbox texture name" };
     private readonly Button _textureRegister = new() { Content = "Register", IsEnabled = false };
@@ -156,7 +157,7 @@ public sealed class MainWindow : Window
             TextureImportKind.MetallicRoughness => "Metallic-roughness map",
             TextureImportKind.Occlusion => "Occlusion map",
             TextureImportKind.Normal => "Normal map",
-            _ => "Base color"
+            _ => ColorTextureLabel
         };
         public TextureImportJob? Job;
         public (string Name, ImportMode Mode)? Target;
@@ -1432,7 +1433,7 @@ public sealed class MainWindow : Window
             TextureImportKind.MetallicRoughness => "PNG \u00b7 linear RGBA8 \u00b7 G roughness, B metallic",
             TextureImportKind.Occlusion => "PNG · linear RGBA8 · R occlusion for indirect light",
             TextureImportKind.Normal => "PNG \u00b7 linear RGBA8 \u00b7 tangent space +Y",
-            _ => "PNG \u00b7 sRGB"
+            _ => "PNG · sRGB · Base texture or Emissive texture"
         };
         string text = state.Error is { } error ? $"{state.Kind} import: {error}. " : "";
         if (state.Unknown)

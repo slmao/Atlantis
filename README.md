@@ -340,16 +340,18 @@ and the durable state before retrying. See
 [Spec 0094](docs/specs/0094-basic-material-authoring.md).
 
 
-#### Import a base color texture
+#### Import an sRGB color texture
 
 Place an 8-bit RGB or RGBA PNG at `inbox/<name>/source.png` in the opted-in
-managed project. In **Assets → Import Texture**, enter the inbox name and
-choose **Register**. The producer interprets the RGB samples as sRGB.
-Restart into the reported generation to find the texture in Assets and
-choose it in the material's **Base texture** field. Preview on a mesh,
-choose **Save & Publish**, then restart into the material generation.
-The edited material keeps its GUID, so a saved scene keeps its reference.
-Saved Scenes builds use the committed managed project root.
+managed project. In **Assets → Import Texture**, choose **sRGB color**,
+enter the inbox name and choose **Register**. The producer interprets the
+RGB samples as sRGB. Restart into the reported generation to find the
+texture by its registered name in Assets and choose it as **Base texture**
+or **Emissive texture**. One registered GUID can serve both slots.
+Preview on a mesh, choose **Save & Publish**, then restart into the
+material generation. The edited material keeps its GUID, so a saved
+scene keeps its reference. Saved Scenes builds use the committed managed
+project root. [Spec 0100](docs/specs/0100-emissive-texture-import-and-binding.md).
 
 Use `assets texture-import <name> [--resume]` and
 `assets texture-import-status [<jobId>]` from the CLI. The same operation
@@ -360,7 +362,8 @@ seal, and complete generations before retrying. See
 [Spec 0095](docs/specs/0095-texture-import-and-base-color-binding.md).
 
 In the material editor, choose a cooked RGBA8 UNORM normal map and an
-optional RGBA8 sRGB emissive texture. The emissive RGB factor is linear.
+optional RGBA8 sRGB emissive texture. The shader multiplies decoded RGB
+by the linear emissive factor. Set a nonzero factor to see emission.
 Clearing the normal map restores geometric normals. Clearing the
 emissive texture keeps the factor and samples white. Preview the draft on
 a mesh, then use **Save & Publish** and restart into the reported generation.

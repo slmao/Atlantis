@@ -218,7 +218,8 @@ internal static class EditorVisuals
 
     internal static string AssetName(AssetSummary asset)
     {
-        if (ManagedTextureName(asset, "/occlusion.png") is string name) return name;
+        if ((ManagedTextureName(asset, "/source.png") ?? ManagedTextureName(asset, "/occlusion.png")) is string name)
+            return name;
         string source = asset.Source;
         int separator = source.IndexOf(':');
         if (separator >= 0) source = source[(separator + 1)..];
