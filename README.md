@@ -406,6 +406,18 @@ clients use the material commands with the `-with-combined-maps` suffix.
 Save, publish and restart explicitly into the returned generation.
 [Spec 0101](docs/specs/0101-combined-pbr-maps.md).
 
+### Duplicate a scene subtree
+
+Select a node in a hand-authored scene and choose **Hierarchy → Actions →
+Duplicate subtree**. The copy starts under the same parent and at the
+same placement. One Undo removes the copy and one Redo restores its
+GUIDs. If Runtime reload fails, repair the document and use Apply
+explicitly. Save writes the current authoring document.
+
+Shared clients can compose the same edit as a single authoring
+transaction using explicit node GUIDs, property and name writes, and
+remapped parent links. [Spec 0102](docs/specs/0102-duplicate-scene-subtree.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

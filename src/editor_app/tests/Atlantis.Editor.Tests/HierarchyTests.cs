@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
@@ -125,6 +126,8 @@ internal sealed class FakeDocument : IAuthoringDocument
     }
 
     public int Submissions { get; private set; }
+    public int PropertyReads { get; private set; }
+    public SceneAddress? Unreadable { get; set; }
 
     public DocumentInfo? Info() => new(default, Provenance.HandAuthored, "fake.scene.txt", (ulong)_nodes.Count);
 
@@ -133,7 +136,11 @@ internal sealed class FakeDocument : IAuthoringDocument
     public IReadOnlyList<TypeId> ListComponents(EntityGuid node) =>
         _nodes.FirstOrDefault(n => n.Id == node).Node?.Components.Select(c => new TypeId(c)).ToList() ?? new List<TypeId>();
 
-    public PropertyValue? GetProperty(SceneAddress address) => _values.TryGetValue(address, out PropertyValue v) ? v : null;
+    public PropertyValue? GetProperty(SceneAddress address)
+    {
+        ++PropertyReads;
+        return address != Unreadable && _values.TryGetValue(address, out PropertyValue v) ? v : null;
+    }
 
     public EntityGuid? ActiveCamera() => _camera;
 
@@ -448,6 +455,126 @@ public static partial class Program
             roundTrips &= TransformMath.ToLocalTransform(m) is LocalTransform t && NearMatrix(WorldMatrices.ComposeLocal(t), m, 1e-5f);
         }
         Check(roundTrips, "transform math: a matrix decomposes to a local Transform that composes back (reflection kept)");
+    }
+
+    private static void DuplicateSubtreeChecks()
+    {
+        var document = new FakeDocument();
+        EntityGuid parent = document.Add(1, null, LocalTransform.Identity);
+        EntityGuid child = document.Add(2, FakeDocument.Guid(3), LocalTransform.Identity, FakeDocument.CameraType);
+        float negativeZero = BitConverter.Int32BitsToSingle(int.MinValue);
+        var local = new LocalTransform(new Vector3(negativeZero, 3, 4), new Vector3(1, 2, 3), new Vector3(-2, 3, 1));
+        EntityGuid source = document.Add(3, parent, local, FakeDocument.Light);
+        EntityGuid sibling = document.Add(4, parent, LocalTransform.Identity);
+        document.SetCamera(child);
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var selection = new Selection();
+        string longName = new string('a', 243) + "🌳🌳🌳";
+        string firstCandidate = new string('a', 243) + "🌳 Copy";
+        string expectedName = new string('a', 243) + "🌳 Copy 2";
+        var naming = new EditPlan("name fixture", new Command[]
+        {
+            new SetNodeName(source, longName), new SetNodeName(sibling, firstCandidate),
+            new SetNodeName(child, "camera · \"original\"")
+        });
+        Check(Submit(document, tree, selection, naming) is null, "duplicate: long-name fixture");
+
+        document.Unreadable = new SceneAddress(source, FakeDocument.Light, FakeDocument.Range);
+        Check(HierarchyCommands.DuplicateSubtree(document, tree, source).Copy is null,
+            "duplicate: an unreadable optional field is distinct from Absent");
+        document.Unreadable = null;
+        SubtreeDuplicate copy = HierarchyCommands.DuplicateSubtree(document, tree, source).Copy ??
+            throw new InvalidOperationException("the source should be duplicable");
+        var nodes = copy.Edit.Structure.OfType<NodeLife>().Select(life => life.State).ToList();
+        var cloneChild = nodes[0].Node;
+        var cloneRoot = nodes[1].Node;
+        IReadOnlyList<Command> commands = StructuralSteps.Commands(copy.Edit, true, document.Schema);
+        Check(copy.Root == cloneRoot && cloneRoot != source && cloneChild != child &&
+              nodes[0].Parent == cloneRoot && nodes[1].Parent == parent &&
+              nodes[1].Name == expectedName && Encoding.UTF8.GetByteCount(nodes[1].Name) <= NodeNames.MaxUtf8Bytes &&
+              nodes[0].Name == "camera · \"original\"" && commands.All(c => c is not SetActiveCamera),
+            "duplicate: fresh IDs, original relative order, remapped parent, UTF-8 name and existing active camera");
+        Check(Submit(document, tree, selection, new EditPlan(copy.Edit.Label, commands)) is null &&
+              tree.Order.TakeLast(2).SequenceEqual(new[] { cloneChild, cloneRoot }) && tree.ChildrenOf(parent).Last() == cloneRoot &&
+              document.ActiveCamera() == child &&
+              copy.Matches(new DocumentView(document, tree).ReadCompleteNodes(new[] { cloneChild, cloneRoot })!),
+            "duplicate: one batch preserves all intended state and appends the root after its siblings");
+        var changed = new SetProperty(new SceneAddress(cloneRoot, FakeDocument.Transform, FakeDocument.Position),
+            PropertyValue.FromVec3(new Vector3(0.0f, 3, 4)));
+        Submit(document, tree, selection, new EditPlan("signed zero", new[] { changed }));
+        Check(!copy.Matches(new DocumentView(document, tree).ReadCompleteNodes(new[] { cloneChild, cloneRoot })!),
+            "duplicate: the postcondition distinguishes signed-zero payloads");
+        Submit(document, tree, selection, new EditPlan("restore payload", new[]
+        {
+            changed with { Value = PropertyValue.FromVec3(local.Position) }
+        }));
+
+        var apply = new ApplyController(document);
+        var target = new AuthoringEditTarget(document, tree, apply);
+        var history = new EditHistory(target);
+        history.Record(copy.Edit, target.Committed(Array.Empty<CommandFailure>()));
+        history.Update();
+        void Observe()
+        {
+            foreach (Event e in document.DrainEvents())
+            {
+                tree.Apply(e, document);
+                apply.Apply(e);
+            }
+            history.Update();
+        }
+        Check(history.UndoDepth == 1 && history.Undo() == HistoryResult.Submitted,
+            "duplicate: the whole copy has one undo");
+        Observe();
+        Check(!tree.Contains(cloneRoot) && !tree.Contains(cloneChild) && tree.Contains(source) &&
+              history.Redo() == HistoryResult.Submitted, "duplicate: undo removes both copies, redo is available");
+        Observe();
+        Check(copy.Matches(new DocumentView(document, tree).ReadCompleteNodes(new[] { cloneChild, cloneRoot })!),
+            "duplicate: redo preserves the same identities and payload");
+
+        document.SetCamera(cloneChild);
+        Check(history.Undo() == HistoryResult.Submitted, "duplicate: active-camera conflict is settled by the host");
+        Observe();
+        Check(tree.Contains(cloneRoot) && tree.Contains(cloneChild) && document.ActiveCamera() == cloneChild &&
+              history.Notice.Contains("ActiveCameraExists", StringComparison.Ordinal),
+            "duplicate: removing an externally activated camera is refused atomically");
+        document.SetCamera(child);
+        history.Record(copy.Edit, target.Committed(Array.Empty<CommandFailure>()));
+        history.Update();
+        Check(history.Undo() == HistoryResult.Submitted, "duplicate: a settled undo makes redo available");
+        Observe();
+        Check(history.CanRedo, "duplicate: redo branch exists before a new edit");
+        history.DiscardRedo();
+        Check(!history.CanRedo, "duplicate: an unrecordable new edit still invalidates redo");
+        Submit(document, tree, selection, new EditPlan(copy.Edit.Label, commands));
+        history.Record(copy.Edit, target.Committed(Array.Empty<CommandFailure>()));
+        history.Update();
+
+        EntityGuid external = FakeDocument.Guid(5);
+        Submit(document, tree, selection, new EditPlan("external child", new Command[]
+        {
+            new CreateNode(external, (ulong)tree.Count, Array.Empty<TypeId>()), new SetParent(external, cloneRoot)
+        }));
+        int beforeRefusal = document.Submissions;
+        Check(history.Undo() == HistoryResult.ChangedElsewhere && document.Submissions == beforeRefusal &&
+              tree.Contains(external), "duplicate: undo refuses an external child without submitting");
+
+        var limit = new FakeDocument();
+        EntityGuid root = limit.Add(1, null, LocalTransform.Identity);
+        for (int i = 2; i <= HierarchyCommands.MaxDuplicateNodes; ++i) limit.Add(i, root, LocalTransform.Identity);
+        var limitTree = new DocumentTree();
+        limitTree.Rebuild(limit);
+        var atLimit = HierarchyCommands.DuplicateSubtree(limit, limitTree, root).Copy;
+        Check(atLimit?.Edit.Structure.Count == 64 &&
+              ((NodeLife)atLimit.Edit.Structure[0]).State is { Name: "Copy", Parent: null },
+            "duplicate: 64 nodes including an unnamed scene root are eligible");
+        limit.Add(65, root, LocalTransform.Identity);
+        limitTree.Rebuild(limit);
+        int reads = limit.PropertyReads;
+        var tooLarge = HierarchyCommands.DuplicateSubtree(limit, limitTree, root);
+        Check(tooLarge.Copy is null && tooLarge.Refusal!.Contains("64") && limit.PropertyReads == reads &&
+              limit.Submissions == 0, "duplicate: 65 nodes are refused before field reads or submission");
     }
 
     private static void ApplyControllerChecks()

@@ -832,6 +832,134 @@ public sealed class EditorWorker : IDisposable
 
     public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
 
+    public void DuplicateSubtree(EntityGuid source, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
+    {
+        void Report(EntityGuid? node, string notice)
+        {
+            _log.Write(notice);
+            _post(() => settled(node, notice));
+        }
+        bool IsCurrent()
+        {
+            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime;
+        }
+        bool CanSubmit()
+        {
+            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime && !_gizmoActive && _gizmo?.Dragging != true;
+        }
+        if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
+        {
+            Report(null, "Duplicate refused: the authoring document is unavailable.");
+            return;
+        }
+        bool Observe()
+        {
+            if (!IsCurrent() || document.ObserveEvents() is not { } events) return false;
+            PollDocument(session, events, pollApply: false);
+            return IsCurrent();
+        }
+        ulong? Revision()
+        {
+            var status = document.ApplyStatus();
+            return status.IsOk ? status.Value!.CurrentDocumentRevision : null;
+        }
+
+        EntityGuid? attempted = null;
+        EntityGuid? verified = null;
+        bool committed = false;
+        bool applying = false;
+        string Unknown() => $"Duplicate outcome unknown for {attempted}. Inspect the document before explicitly retrying.";
+        try
+        {
+            if (!CanSubmit() || Revision() is not ulong before || !Observe() ||
+                document.Info()?.Provenance != Provenance.HandAuthored)
+            {
+                Report(null, "Duplicate refused: open an accessible hand-authored scene and finish any active gesture.");
+                return;
+            }
+            var (copy, refusal) = HierarchyCommands.DuplicateSubtree(document, _tree, source);
+            if (copy is null)
+            {
+                Report(null, "Duplicate refused: " + refusal);
+                return;
+            }
+            var commands = StructuralSteps.Commands(copy.Edit, forward: true, document.Schema);
+            if (!Observe() || Revision() != before || !CanSubmit())
+            {
+                Report(null, "Duplicate refused: the document or gesture changed. Retry explicitly.");
+                return;
+            }
+
+            attempted = copy.Root;
+            TransactionTicket ticket = document.SubmitTransaction(commands);
+            var drained = document.DrainFailures();
+            if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
+                ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
+            {
+                Report(null, Unknown());
+                return;
+            }
+            var failures = drained.Where(failure => ticket.Contains(failure.Ticket)).ToList();
+            if (failures.Count != 0)
+            {
+                Report(null, "Duplicate refused: " + failures[0].Error);
+                return;
+            }
+            committed = true;
+            if (IsCurrent())
+            {
+                _history?.DiscardRedo();
+                PostHistory(lifetime);
+            }
+
+            if (Revision() is not ulong observing || !Observe())
+            {
+                Report(null, $"Duplicated {attempted}. Undo unavailable. Apply the current document explicitly.");
+                return;
+            }
+            var copies = copy.Edit.Structure.OfType<NodeLife>().Select(entry => entry.State.Node).ToList();
+            var observed = new DocumentView(document, _tree).ReadCompleteNodes(copies);
+            if (!Observe() || Revision() != observing || !IsCurrent() || observed is null || !copy.Matches(observed) ||
+                _history is not { } history || _historyTarget is not { } target)
+            {
+                Report(null, $"Duplicated {attempted}. Undo unavailable. Apply the current document explicitly.");
+                return;
+            }
+
+            history.Record(copy.Edit, target.Committed(failures));
+            history.Update();
+            PostHistory(lifetime);
+            verified = copy.Root;
+            if (!IsCurrent())
+            {
+                Report(null, $"Duplicated {attempted}. Session or document changed before apply.");
+                return;
+            }
+            if (observing <= before || observing - before != 1)
+            {
+                Report(verified, $"Duplicated {attempted}. Document advanced. Apply the current document explicitly.");
+                return;
+            }
+            applying = true;
+            apply.AfterLocalEdit(true);
+            Report(verified, $"Duplicated {attempted}.");
+        }
+        catch (Exception e) when (e is GameplayException or IOException)
+        {
+            if (applying)
+            {
+                apply.LostApplyAcceptance();
+                string text = apply.Text;
+                _post(() => { if (MeshDocumentLifetime == lifetime) ApplyStateChanged?.Invoke(ApplyStatus.Unknown, text); });
+            }
+            Report(verified, committed
+                ? $"Duplicated {attempted}. {(applying ? "Apply outcome unknown." : "Undo unavailable.")}"
+                : attempted.HasValue ? Unknown() : "Duplicate refused: " + e.Message);
+            throw;
+        }
+        PostApplyState(lifetime);
+    });
+
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
     public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
 
