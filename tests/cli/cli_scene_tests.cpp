@@ -266,6 +266,25 @@ TEST_CASE("cli scene: swap-siblings submits one guarded transaction and reports 
   CHECK(scene.authoring->listNodes().value() == rows);
 }
 
+TEST_CASE("cli scene: move-sibling rotates occupied slots and reports one move event",
+          "[cli][scene][sibling_order]") {
+  namespace ac = atlantis::connection::authoring;
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto initial = scene.authoring->listNodes().value();
+  REQUIRE(initial.size() == 5);
+  const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+  const auto command = "scene move-sibling " + std::string(kNode1) + " " + std::string(kNode4) +
+      " none after " + std::to_string(revision);
+  REQUIRE(scene.run(command) == 0);
+  CHECK(scene.cli.out.str().find("NodeMovedInSiblingOrder") != std::string::npos);
+  const auto rows = scene.authoring->listNodes().value();
+  CHECK(rows == std::vector<ac::NodeSummary>{initial[1], initial[3], initial[2], initial[0], initial[4]});
+  CHECK(scene.run(command) != 0);
+  CHECK(scene.cli.out.str().find(toString(ac::Error::SiblingOrderStaleRevision)) != std::string::npos);
+  CHECK(scene.authoring->listNodes().value() == rows);
+}
+
 TEST_CASE("cli scene: usage, no document and no authoring session", "[cli][scene]") {
   SceneCli scene(/*json=*/true);
   CHECK(scene.run("scene") == 2);
@@ -330,7 +349,7 @@ TEST_CASE("cli scene: names preserve JSON strings through argv repl and transact
     const std::vector<std::string> argv{"scene", "name", std::string(kNode1), json::write(json::Value::string(name))};
     return scene.invocation->run(argv);
   };
-  const std::string label = " 场景  \"quoted\" \\ end ";
+  const std::string label = " 鍦烘櫙  \"quoted\" \\ end ";
   REQUIRE(runName(label) == 0);
   CHECK(scene.session.document()->nodes[0].name == label);
   const auto renamed = scene.envelope();
@@ -357,7 +376,7 @@ TEST_CASE("cli scene: names preserve JSON strings through argv repl and transact
   CHECK(scene.session.document()->nodes[0].name == replLabel);
 
   const fs::path script = scene.source.parent_path() / (scene.source.filename().string() + ".tx");
-  const std::string txLabel = "tx   exact spaces 场景";
+  const std::string txLabel = "tx   exact spaces 鍦烘櫙";
   std::ofstream(script, std::ios::binary) << "name " << kNode1 << " " << json::write(json::Value::string(txLabel))
                                         << "\nscene name " << kNode3 << " \"\"\n";
   REQUIRE(scene.run("scene tx " + script.string()) == 0);

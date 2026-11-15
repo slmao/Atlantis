@@ -1,10 +1,10 @@
 # Plan: Drag a Hierarchy Node to a Sibling Position
 
 - **Spec:** [Spec 0105](../specs/0105-hierarchy-sibling-drag-reorder.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
-- **Related ADR:** [ADR-0161](../adr/0161-atomic-sibling-slot-move.md) (Proposed).
+- **Joint Human Review:** The maintainer approved J1–J4, Spec/Plan and ADR-0161 in [PR #375 at `d9131083`](https://github.com/slmao/Atlantis/pull/375) on 2026-11-15. S2–S4 were authorized after manual design merge.
+- **Related ADR:** [ADR-0161](../adr/0161-atomic-sibling-slot-move.md) (Accepted).
 
 ## Objective
 

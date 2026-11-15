@@ -686,6 +686,7 @@ AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
                   {"kind":"SetActiveCamera","camera":<N>|null}
                   {"kind":"SetNodeName","node":<N>,"name":"<label>"}
                   {"kind":"SwapAdjacentSiblings","node":<N>,"sibling":<N>,"parent":<N>|null,"direction":"Up"|"Down","expectedRevision":<n>}
+                  {"kind":"MoveSiblingRelative","node":<N>,"anchor":<N>,"parent":<N>|null,"placement":"Before"|"After","expectedRevision":<n>}
 AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
                   {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
                   {"kind":"ComponentAdded","node":<N>,"component":<T>}
@@ -695,6 +696,7 @@ AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>
                   {"kind":"DocumentReopened","scene":"<asset GUID>"}   {"kind":"Applied","generation":<n>}
                   {"kind":"NodeNameChanged","node":<N>,"name":"<label>"}
                   {"kind":"NodeOrderChanged","node":<N>,"sibling":<N>,"position":<n>,"siblingPosition":<n>,"revision":<n>}
+                  {"kind":"NodeMovedInSiblingOrder","node":<N>,"parent":<N>|null,"fromPosition":<n>,"position":<n>,"revision":<n>}
 AuthoringFilter   {"kinds":["PropertyChanged",…],"node":<N>|null,"component":<T>|null}
 AuthoringFailure  {"ticket":<n>,"error":"<AuthoringError>"}
 Document          {"scene":"<asset GUID>","provenance":"HandAuthored"|"Imported","source":"<path>","nodeCount":<n>}
@@ -705,12 +707,14 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
   followed by one `ComponentAdded` per listed component.
 - **Filter `kinds`** are listed in the order PropertyChanged, NodeCreated,
   NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-  ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged. An event matches when its
+  ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged,
+  NodeMovedInSiblingOrder. An event matches when its
   kind is listed and its node and component equal the filter's when those
   are not `null`; `ActiveCameraChanged`, `DocumentReopened` and `Applied`
   carry no node, and only `PropertyChanged`, `ComponentAdded` and
   `ComponentRemoved` carry a component. Either participant can match the
-  node filter for `NodeOrderChanged`.
+  node filter for `NodeOrderChanged`. Only the moved node matches the
+  node filter for `NodeMovedInSiblingOrder`.
 - **Error names:**
   - **`AuthoringError`:** `NoDocument`, `UnknownNode`,
     `UnknownComponentType`, `ComponentMissing`, `ComponentAlreadyPresent`,
@@ -720,7 +724,8 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
     `ParentAcyclic`, `ActiveCameraExists`, `ActiveCameraHasCamera`,
     `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
     `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`,
-    `SiblingOrderStaleRevision`, `SiblingOrderRequiresHandAuthored`, `InvalidSiblingSwap`;
+    `SiblingOrderStaleRevision`, `SiblingOrderRequiresHandAuthored`, `InvalidSiblingSwap`,
+    `InvalidSiblingMove`;
   - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
     `SourceInvalid`;
   - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
@@ -748,6 +753,23 @@ establish support. A legacy Runtime returns `BadRequest` with message
 `malformed or missing filter`. In that case clients retry once with the
 original kinds and retain the connection for ordinary commands. Use
 `authoring.listNodes` to inspect the current order after uncertain settlement.
+
+Spec 0105 / ADR-0161 inserts a node before or after an anchor under the
+same parent, including the scene root. Use a single-command transaction
+with the observed document revision. The operation rotates the affected
+sibling slots and reports one event with the moved node's old and new
+zero-based global positions and the new revision. Existing gaps and mixed
+transactions are refused.
+
+Probe support with the unfiltered all-kinds subscription that includes
+`NodeMovedInSiblingOrder`. On a correlated `BadRequest` with the exact
+message `malformed or missing filter` and no result, retry with the 0104
+unfiltered all-kinds set, then with the original set if that retry receives
+the same refusal. A valid nonzero subscription confirms its tier. Submit
+the relative operation only after the 0105 tier is confirmed. Existing
+subscribers retain their event sets, and a fresh `authoring.listNodes`
+shows the current order. If a move reply is lost or invalid, inspect the
+current order and revision before another move. Apply remains separate.
 
 ### Managed asset import
 

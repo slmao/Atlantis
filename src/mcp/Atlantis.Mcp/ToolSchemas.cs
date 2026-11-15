@@ -39,6 +39,8 @@ internal static class ToolSchemas
         Command("SetParent", ("node", String), ("parent", Nullable(String))),
         Command("SwapAdjacentSiblings", ("node", String), ("sibling", String), ("parent", Nullable(String)),
             ("direction", Enum("Up", "Down")), ("expectedRevision", Integer)),
+        Command("MoveSiblingRelative", ("node", String), ("anchor", String), ("parent", Nullable(String)),
+            ("placement", Enum("Before", "After")), ("expectedRevision", Integer)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)));
 

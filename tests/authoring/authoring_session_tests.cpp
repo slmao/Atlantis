@@ -186,6 +186,88 @@ TEST_CASE("authoring: SetProperty writes a leaf and reports PropertyChanged", "[
   CHECK(c.getProperty(material).value() == ac::PropertyValue{wa::Absent{}});
 }
 
+TEST_CASE("authoring: relative sibling moves rotate only occupied slots and settle once", "[authoring][session]") {
+  auto initial = baseScene();
+  scene::AuthoringNode middle;
+  middle.guid = entity(4);
+  scene::AuthoringNode child;
+  child.guid = entity(5);
+  child.parent = middle.guid;
+  initial.nodes.insert(initial.nodes.begin() + 2, {middle, child});
+  Fixture f(initial);
+  auto& c = *f.connection;
+  using Move = ac::MoveSiblingRelative;
+  using Event = ac::NodeMovedInSiblingOrder;
+  const auto before = ac::SiblingPlacement::Before, after = ac::SiblingPlacement::After;
+  const auto kind = ac::EventKindSet::only(ac::EventKind::NodeMovedInSiblingOrder);
+  const auto modern = c.subscribe({kind, entity(1), {}});
+  const auto anchorOnly = c.subscribe({kind, entity(3), {}});
+  const auto component = c.subscribe({kind, entity(1), kTransform});
+  const auto adjacent = c.subscribe({ac::EventKindSet::all(), {}, {}});
+  const auto revision = c.applyStatus().value().currentDocumentRevision.value();
+  const auto source = readText(f.source);
+  CHECK(refusalOf(c, {Move{entity(1), entity(4), {}, before, revision}}) == ac::Error::InvalidSiblingMove);
+  CHECK(refusalOf(c, {Move{entity(1), entity(5), {}, after, revision}}) == ac::Error::InvalidSiblingMove);
+  CHECK(refusalOf(c, {Move{entity(1), entity(1), {}, after, revision}}) == ac::Error::InvalidSiblingMove);
+  CHECK(refusalOf(c, {Move{entity(1), entity(99), {}, after, revision}}) == ac::Error::UnknownNode);
+  CHECK(refusalOf(c, {ac::SetNodeName{entity(1), "refused"}, Move{entity(1), entity(3), {}, after, revision}})
+        == ac::Error::InvalidSiblingMove);
+  CHECK(c.applyStatus().value().currentDocumentRevision == revision);
+  CHECK(drain(c, modern).empty());
+  auto ticket = c.submitTransaction({Move{entity(1), entity(3), {}, after, revision}});
+  REQUIRE(ticket.first.value != 0);
+  CHECK(ticket.count == 1);
+  CHECK(c.drainFailures().empty());
+  auto expected = initial;
+  expected.nodes[0] = initial.nodes[2];
+  expected.nodes[2] = initial.nodes[4];
+  expected.nodes[4] = initial.nodes[0];
+  CHECK(f.document() == expected);
+  CHECK(drain(c, modern) == std::vector<ac::Event>{Event{entity(1), {}, 0, 4, revision + 1}});
+  CHECK(drain(c, adjacent).empty());
+  CHECK(drain(c, anchorOnly).empty());
+  CHECK(drain(c, component).empty());
+  CHECK(refusalOf(c, {Move{entity(1), entity(4), {}, before, revision}}) == ac::Error::SiblingOrderStaleRevision);
+  CHECK(readText(f.source) == source);
+  REQUIRE(c.save().isOk());
+  REQUIRE(c.open().isOk());
+  CHECK(f.document() == expected);
+  CHECK(c.activeCamera().value() == entity(1));
+  CHECK_FALSE(refusalOf(c, {Move{entity(1), entity(4), {}, before,
+      c.applyStatus().value().currentDocumentRevision.value()}}));
+  CHECK(f.document() == initial);
+
+  AuthoringSession imported(DocumentSource{sceneGuid(), Imported{f.source}});
+  auto peer = imported.connect();
+  REQUIRE(peer->open().isOk());
+  CHECK(refusalOf(*peer, {Move{entity(4), entity(1), {}, after,
+      peer->applyStatus().value().currentDocumentRevision.value()}}) == ac::Error::SiblingOrderRequiresHandAuthored);
+}
+
+TEST_CASE("authoring: relative sibling moves preserve nested slots in both directions", "[authoring][session]") {
+  auto initial = baseScene();
+  for (int index = 4; index != 7; ++index) {
+    scene::AuthoringNode node;
+    node.guid = entity(index);
+    node.parent = entity(1);
+    initial.nodes.insert(initial.nodes.begin() + (index == 4 ? 1 : initial.nodes.size()), node);
+  }
+  Fixture f(initial);
+  auto& c = *f.connection;
+  const auto revision = c.applyStatus().value().currentDocumentRevision.value();
+  using Move = ac::MoveSiblingRelative;
+  using Placement = ac::SiblingPlacement;
+  auto expected = initial;
+  expected.nodes[1] = initial.nodes[2];
+  expected.nodes[2] = initial.nodes[4];
+  expected.nodes[4] = initial.nodes[5];
+  expected.nodes[5] = initial.nodes[1];
+  REQUIRE_FALSE(refusalOf(c, {Move{entity(4), entity(6), entity(1), Placement::After, revision}}));
+  CHECK(f.document() == expected);
+  REQUIRE_FALSE(refusalOf(c, {Move{entity(4), entity(2), entity(1), Placement::Before, revision + 1}}));
+  CHECK(f.document() == initial);
+}
+
 TEST_CASE("authoring: SetProperty's addressing refusals change nothing", "[authoring][session][commands]") {
   Fixture f;
   AuthoringConnection& c = *f.connection;
@@ -633,7 +715,7 @@ TEST_CASE("authoring: rename is atomic, ordered and shared without changing iden
   const auto byNode = b->subscribe({ac::EventKindSet::all(), entity(2), std::nullopt});
   const auto byComponent = b->subscribe({ac::EventKindSet::all(), entity(2), kRenderable});
   const auto original = f.document();
-  const std::string label = "two  spaces \"quoted\" \\ 场景";
+  const std::string label = "two  spaces \"quoted\" \\ 鍦烘櫙";
   CHECK(refusalOf(a, {ac::SetNodeName{entity(2), label}, ac::SetNodeName{entity(3), label}}) == std::nullopt);
   CHECK(a.listNodes().value()[1] == ac::NodeSummary{entity(2), entity(1), label});
   CHECK(b->listNodes().value()[2].name == label);
@@ -665,7 +747,7 @@ TEST_CASE("authoring: rename is atomic, ordered and shared without changing iden
 
 TEST_CASE("authoring: names survive save reopen and apply; imported save stays refused", "[authoring][session][name]") {
   Fixture f;
-  const std::string label = " camera  场景";
+  const std::string label = " camera  鍦烘櫙";
   REQUIRE(refusalOf(*f.connection, {ac::SetNodeName{entity(1), label}}) == std::nullopt);
   REQUIRE(f.connection->save().isOk());
   CHECK(documentOf(readText(f.source)) == f.document());

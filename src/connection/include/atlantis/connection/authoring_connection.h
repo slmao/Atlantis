@@ -107,9 +107,19 @@ struct SwapAdjacentSiblings {
   SiblingDirection direction = SiblingDirection::Up;
   std::uint64_t expectedRevision = 0;
 };
+
+enum class SiblingPlacement : std::uint8_t { Before, After };
+
+struct MoveSiblingRelative {
+  EntityGuid node;
+  EntityGuid anchor;
+  std::optional<EntityGuid> parent;
+  SiblingPlacement placement = SiblingPlacement::Before;
+  std::uint64_t expectedRevision = 0;
+};
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
-                 SetNodeName, SwapAdjacentSiblings>;
+                 SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative>;
 
 // ---------------------------------------------------------------- events
 
@@ -171,8 +181,17 @@ struct NodeOrderChanged {
   std::uint64_t revision = 0;
   friend bool operator==(const NodeOrderChanged&, const NodeOrderChanged&) = default;
 };
+struct NodeMovedInSiblingOrder {
+  EntityGuid node;
+  std::optional<EntityGuid> parent;
+  std::uint64_t fromPosition;
+  std::uint64_t position;
+  std::uint64_t revision;
+  friend bool operator==(const NodeMovedInSiblingOrder&, const NodeMovedInSiblingOrder&) = default;
+};
 using Event = std::variant<PropertyChanged, NodeCreated, NodeDestroyed, ComponentAdded, ComponentRemoved, ParentChanged,
-                           ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged>;
+                           ActiveCameraChanged, DocumentReopened, Applied, NodeNameChanged, NodeOrderChanged,
+                           NodeMovedInSiblingOrder>;
 
 enum class EventKind : std::uint8_t {
   PropertyChanged,
@@ -186,6 +205,7 @@ enum class EventKind : std::uint8_t {
   Applied,
   NodeNameChanged,
   NodeOrderChanged,
+  NodeMovedInSiblingOrder,
 };
 
 [[nodiscard]] EventKind kindOf(const Event& event) noexcept;
@@ -194,6 +214,7 @@ class EventKindSet {
  public:
   constexpr EventKindSet() noexcept = default;  // empty
   [[nodiscard]] static constexpr EventKindSet all() noexcept { return EventKindSet(0x7FF); }
+  [[nodiscard]] static constexpr EventKindSet withSiblingMove() noexcept { return EventKindSet(0xFFF); }
   [[nodiscard]] static constexpr EventKindSet legacy() noexcept { return EventKindSet(0x3FF); }
   [[nodiscard]] static constexpr EventKindSet only(EventKind kind) noexcept { return EventKindSet().with(kind); }
   [[nodiscard]] constexpr EventKindSet with(EventKind kind) const noexcept {
@@ -263,6 +284,7 @@ enum class Error : std::uint8_t {
   SiblingOrderStaleRevision,
   SiblingOrderRequiresHandAuthored,
   InvalidSiblingSwap,
+  InvalidSiblingMove,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;
@@ -393,6 +415,7 @@ class AuthoringConnection {
 
   // Remote connections establish this through the order-aware event subscription.
   [[nodiscard]] virtual bool supportsSiblingOrder() { return true; }
+  [[nodiscard]] virtual bool supportsSiblingMove() { return true; }
 
   // Event (R6): pull-only, per subscription, from the moment it is made; and
   // the failures of this connection's own submissions.

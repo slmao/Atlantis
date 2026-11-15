@@ -28,7 +28,7 @@ public sealed class AuthoringSession
 {
     private readonly RemoteSession _session;
     private IReadOnlyList<SchemaType>? _schema;
-    private bool? _supportsSiblingOrder;
+    private int? _siblingOrderTier;
 
     internal AuthoringSession(RemoteSession session) => _session = session;
 
@@ -195,7 +195,8 @@ public sealed class AuthoringSession
 
     public CommandTicket Submit(A.Command command)
     {
-        if (command is A.SwapAdjacentSiblings) return SubmitTransaction(new[] { command }).First;
+        if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative)
+            return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
     }
@@ -226,41 +227,52 @@ public sealed class AuthoringSession
     {
         if (command is A.SwapAdjacentSiblings && !SupportsSiblingOrder())
             throw new NotSupportedException("This Runtime does not support adjacent sibling swaps.");
+        if (command is A.MoveSiblingRelative && !SupportsSiblingMove())
+            throw new NotSupportedException("This Runtime does not support relative sibling moves.");
     }
 
     /// <summary>Checks once per connection using the full unfiltered subscription.</summary>
-    public bool SupportsSiblingOrder()
+    public bool SupportsSiblingOrder() => ProbeSiblingOrder() >= 1;
+
+    public bool SupportsSiblingMove() => ProbeSiblingOrder() == 2;
+
+    private int ProbeSiblingOrder()
     {
-        if (_supportsSiblingOrder is null)
+        if (_siblingOrderTier is null)
         {
-            SubscriptionId probe = Subscribe(new A.EventFilter(A.EventKind.AllWithSiblingOrder));
+            SubscriptionId probe = Subscribe(new A.EventFilter(A.EventKind.AllWithSiblingMove));
             if (Unsubscribe(probe) is not null) throw _session.Malformed("authoring.unsubscribe");
         }
-        return _supportsSiblingOrder is true;
+        return _siblingOrderTier ?? 0;
     }
 
     public SubscriptionId Subscribe(A.EventFilter filter)
     {
         const string method = "authoring.subscribe";
         static JsonValue Parameters(A.EventFilter value) => JsonValue.NewObject().Set("filter", Codec.Encode(value));
-        if (filter == new A.EventFilter(A.EventKind.AllWithSiblingOrder) && _supportsSiblingOrder is not true)
+        static A.EventFilter TierFilter(int tier) => new(tier switch
         {
-            if (_supportsSiblingOrder is null)
+            2 => A.EventKind.AllWithSiblingMove,
+            1 => A.EventKind.AllWithSiblingOrder,
+            _ => A.EventKind.All
+        });
+        int requested = filter == TierFilter(2) ? 2 : filter == TierFilter(1) ? 1 : 0;
+        if (requested != 0 && _siblingOrderTier is null)
+        {
+            for (int tier = requested; tier >= 0; --tier)
             {
-                JsonValue response = _session.AwaitResponse(_session.Send(method, Parameters(filter)));
+                JsonValue response = _session.AwaitResponse(_session.Send(method, Parameters(TierFilter(tier))));
                 if (response.Find("error") is null && response.Find("result") is JsonValue positive &&
                     Codec.DecodeUInt64(positive) is ulong supportedId && supportedId != 0)
                 {
-                    _supportsSiblingOrder = true;
+                    if (requested == 2 || tier == 0) _siblingOrderTier = tier;
                     return new SubscriptionId(supportedId);
                 }
-                if (!Codec.IsLegacySiblingOrderRefusal(response)) throw _session.Malformed(method);
+                if (tier == 0 || !Codec.IsLegacySiblingOrderRefusal(response)) break;
             }
-            JsonValue legacy = _session.Call(method, Parameters(new A.EventFilter()));
-            if (Codec.DecodeUInt64(legacy) is not ulong legacyId || legacyId == 0) throw _session.Malformed(method);
-            _supportsSiblingOrder = false;
-            return new SubscriptionId(legacyId);
+            throw _session.Malformed(method);
         }
+        if (requested != 0 && _siblingOrderTier is int supported) filter = TierFilter(Math.Min(requested, supported));
         JsonValue result = _session.Call(method, Parameters(filter));
         return Codec.DecodeUInt64(result) is ulong id && id != 0 ? new SubscriptionId(id) : throw _session.Malformed(method);
     }

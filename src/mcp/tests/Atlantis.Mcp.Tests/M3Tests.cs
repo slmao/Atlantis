@@ -68,7 +68,7 @@ internal static partial class Program
                     .Set("address", Json.Parse(SceneAddress)).Set("value", wire)
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
-            if (kind is "SetNodeName" or "SwapAdjacentSiblings")
+            if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative")
             {
                 QueueSession exact = new();
                 var exactRegistry = new ToolRegistry(exact);
@@ -152,7 +152,7 @@ internal static partial class Program
             && session.Calls[1].Method == "authoring.subscribe", "one subscription per family at connect");
         Check(Json.Write(session.Calls[0].Parameters) == "{\"filter\":{\"kinds\":[\"EntityCreated\",\"EntityDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"PropertyChanged\"],\"entity\":null,\"component\":null}}",
             "World filter has no restrictions");
-        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\",\"NodeOrderChanged\"],\"node\":null,\"component\":null}}",
+        Check(Json.Write(session.Calls[1].Parameters) == "{\"filter\":{\"kinds\":[\"PropertyChanged\",\"NodeCreated\",\"NodeDestroyed\",\"ComponentAdded\",\"ComponentRemoved\",\"ParentChanged\",\"ActiveCameraChanged\",\"DocumentReopened\",\"Applied\",\"NodeNameChanged\",\"NodeOrderChanged\",\"NodeMovedInSiblingOrder\"],\"node\":null,\"component\":null}}",
             "authoring filter includes every kind, with no node/component restriction");
         try { registry.InitializeSubscriptions(); throw new Exception("duplicate initialization accepted"); }
         catch (InvalidOperationException) { Check(session.Calls.Count == 2, "initialization cannot create duplicate subscriptions"); }
@@ -220,15 +220,29 @@ internal static partial class Program
         QueueSession legacy = new() { LegacySiblingOrder = true };
         var legacyRegistry = new ToolRegistry(legacy);
         legacyRegistry.InitializeSubscriptions();
-        Check(legacy.Calls.Count == 3 && legacy.Calls[1].Method == "authoring.subscribe" &&
-            Json.Write(legacy.Calls[1].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal) &&
+        Check(legacy.Calls.Count == 4 && legacy.Calls[1].Method == "authoring.subscribe" &&
+            Json.Write(legacy.Calls[1].Parameters).Contains("NodeMovedInSiblingOrder", StringComparison.Ordinal) &&
             legacy.Calls[2].Method == "authoring.subscribe" &&
-            !Json.Write(legacy.Calls[2].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal),
-            "legacy Runtime gets exactly one fallback on the same session");
+            Json.Write(legacy.Calls[2].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal) &&
+            !Json.Write(legacy.Calls[2].Parameters).Contains("NodeMovedInSiblingOrder", StringComparison.Ordinal) &&
+            legacy.Calls[3].Method == "authoring.subscribe" &&
+            !Json.Write(legacy.Calls[3].Parameters).Contains("NodeOrderChanged", StringComparison.Ordinal),
+            "legacy Runtime gets the two lower tiers on the same session");
         CheckForward(legacyRegistry.Invoke(Request("authoring.submit_transaction", swap)), "{\"err\":\"Unsupported\"}",
             "legacy MCP swap is unavailable");
-        Check(legacy.Calls.Count == 3, "legacy MCP never sends the unavailable command");
+        Check(legacy.Calls.Count == 4, "legacy MCP never sends the unavailable command");
         CheckForward(legacyRegistry.Invoke(Request("authoring.drain_events", "{}")), "{\"ok\":[]}", "legacy observation still works");
+
+        QueueSession adjacent = new() { AdjacentOnly = true };
+        var adjacentRegistry = new ToolRegistry(adjacent);
+        adjacentRegistry.InitializeSubscriptions();
+        string move = swap.Replace("SwapAdjacentSiblings", "MoveSiblingRelative").Replace("\"sibling\"", "\"anchor\"")
+            .Replace("\"direction\":\"Down\"", "\"placement\":\"After\"");
+        Check(adjacent.Calls.Count == 3, "0104 MCP needs one lower tier");
+        CheckForward(adjacentRegistry.Invoke(Request("authoring.submit_transaction", move)), "{\"err\":\"Unsupported\"}",
+            "0104 MCP does not forward a move");
+        Check(adjacent.Calls.Count == 3 && adjacentRegistry.Invoke(Request("authoring.submit_transaction", swap)).IsError != true,
+            "0104 MCP keeps adjacent swaps on the same session");
     }
 
     private static readonly byte[] Png = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=");
@@ -333,6 +347,7 @@ internal static partial class Program
         public string? EventError { get; set; }
         public bool NoAuthoring { get; init; }
         public bool LegacySiblingOrder { get; init; }
+        public bool AdjacentOnly { get; init; }
         public bool RejectCommands { get; init; }
         private ulong _ticket = 100;
 
@@ -351,7 +366,9 @@ internal static partial class Program
                 case "connection.subscribe": result = JsonValue.Number(41L); break;
                 case "authoring.subscribe":
                     if (NoAuthoring) return Json.Parse("{\"error\":{\"code\":\"NoAuthoring\",\"message\":\"no document service\"}}");
-                    if (LegacySiblingOrder && parameters.Find("filter")?.Find("kinds")?.Items.Any(k => k.AsString == "NodeOrderChanged") == true)
+                    if (parameters.Find("filter")?.Find("kinds")?.Items.Any(k =>
+                        (LegacySiblingOrder || AdjacentOnly) && k.AsString == "NodeMovedInSiblingOrder" ||
+                        LegacySiblingOrder && k.AsString == "NodeOrderChanged") == true)
                         return Json.Parse("{\"error\":{\"code\":\"BadRequest\",\"message\":\"malformed or missing filter\"}}");
                     result = JsonValue.Number(73L); break;
                 case "authoring.submitTransaction":

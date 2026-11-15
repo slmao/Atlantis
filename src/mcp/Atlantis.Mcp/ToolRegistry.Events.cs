@@ -11,13 +11,14 @@ internal sealed partial class ToolRegistry
     private JsonValue? _worldSubscription;
     private JsonValue? _authoringSubscription;
     private bool _supportsSiblingOrder;
+    private bool _supportsSiblingMove;
 
     private static ImmutableArray<ToolMapping> EventMappings { get; } =
     [
         Declare("world.drain_events", "connection.drainEvents",
             "Return and clear this host's World subscription: every event kind, no entity/component restriction. Does not drain failures.", WorldModel),
         Declare("authoring.drain_events", "authoring.drainEvents",
-            "Return and clear this host's document subscription, including Applied and supported NodeOrderChanged events. Does not drain failures.", AuthoringModel),
+            "Return and clear this host's document subscription, including Applied and supported sibling order events. Does not drain failures.", AuthoringModel),
     ];
 
     /// <summary>
@@ -32,11 +33,13 @@ internal sealed partial class ToolRegistry
         // Default SDK filters have all kinds and no predicates: an unrestricted filter, rather
         // than an empty kinds set (which would match nothing on the wire).
         _worldSubscription = Subscribe("connection.subscribe", Codec.Encode(new EventFilter()));
-        _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter(A.EventKind.AllWithSiblingOrder)));
+        _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter(A.EventKind.AllWithSiblingMove)));
+        _supportsSiblingMove = _authoringSubscription.Find("error") is null;
+        if (Codec.IsLegacySiblingOrderRefusal(_authoringSubscription))
+            _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter(A.EventKind.AllWithSiblingOrder)));
+        _supportsSiblingOrder = _authoringSubscription.Find("error") is null;
         if (Codec.IsLegacySiblingOrderRefusal(_authoringSubscription))
             _authoringSubscription = Subscribe("authoring.subscribe", Codec.Encode(new A.EventFilter()));
-        else
-            _supportsSiblingOrder = _authoringSubscription.Find("error") is null;
     }
 
     private JsonValue Subscribe(string method, JsonValue filter)

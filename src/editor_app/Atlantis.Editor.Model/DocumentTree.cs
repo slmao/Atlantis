@@ -85,10 +85,35 @@ public sealed class DocumentTree
 
     public int PositionOf(EntityGuid node) => _order.IndexOf(node);
 
+    public IReadOnlyList<EntityGuid> SiblingInterval(EntityGuid? parent, EntityGuid first, EntityGuid last)
+    {
+        var siblings = ChildrenOf(parent).ToList();
+        int begin = siblings.IndexOf(first), end = siblings.IndexOf(last);
+        return begin >= 0 && end >= begin ? siblings.GetRange(begin, end - begin + 1) : Array.Empty<EntityGuid>();
+    }
+
     public bool MatchesOrderDelta(NodeOrderChanged change) =>
         OrderSynchronized && change.Node != change.Sibling && change.Position < (ulong)_order.Count &&
         change.SiblingPosition < (ulong)_order.Count &&
         _order[(int)change.Position] == change.Sibling && _order[(int)change.SiblingPosition] == change.Node;
+
+    public bool MatchesOrderDelta(NodeMovedInSiblingOrder change) =>
+        OrderSynchronized && change.FromPosition != change.Position &&
+        change.FromPosition < (ulong)_order.Count && change.Position < (ulong)_order.Count &&
+        _order[(int)change.FromPosition] == change.Node && ParentOf(change.Node) == change.Parent &&
+        ParentOf(_order[(int)change.Position]) == change.Parent;
+
+    private void RotateSiblingSlots(NodeMovedInSiblingOrder change)
+    {
+        int from = (int)change.FromPosition, to = (int)change.Position;
+        int step = from < to ? 1 : -1;
+        for (int slot = from + step; slot != to + step; slot += step)
+        {
+            if (ParentOf(_order[slot]) != change.Parent) continue;
+            (_order[from], _order[slot]) = (_order[slot], _order[from]);
+            from = slot;
+        }
+    }
 
     /// <summary>Accepts an ordered snapshot after the caller fences its revision and drains covered lifecycle events.</summary>
     public bool ReconcileOrder(IReadOnlyList<NodeSummary> nodes)
@@ -168,6 +193,14 @@ public sealed class DocumentTree
     {
         switch (e)
         {
+            case NodeMovedInSiblingOrder moved:
+                if (MatchesOrderDelta(moved)) RotateSiblingSlots(moved);
+                else
+                {
+                    if (!OrderSynchronized) return false;
+                    OrderSynchronized = false;
+                }
+                break;
             case NodeOrderChanged exchanged:
                 if (!MatchesOrderDelta(exchanged))
                 {

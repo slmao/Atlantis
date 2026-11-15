@@ -293,6 +293,35 @@ struct AuthoringSession::State {
     return std::nullopt;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene& d, const ac::MoveSiblingRelative& c,
+                                 std::vector<ac::Event>& events) {
+    if (!std::holds_alternative<HandAuthored>(source.provenance))
+      return ac::Error::SiblingOrderRequiresHandAuthored;
+    if (c.expectedRevision != documentRevision) return ac::Error::SiblingOrderStaleRevision;
+    const auto node = findNode(d, c.node);
+    const auto anchor = findNode(d, c.anchor);
+    if (!node || !anchor) return ac::Error::UnknownNode;
+    if ((c.placement != ac::SiblingPlacement::Before && c.placement != ac::SiblingPlacement::After) ||
+        *node == *anchor || d.nodes[*node].parent != c.parent || d.nodes[*anchor].parent != c.parent)
+      return ac::Error::InvalidSiblingMove;
+    std::vector<std::size_t> slots;
+    for (std::size_t i = std::min(*node, *anchor); i <= std::max(*node, *anchor); ++i) {
+      if (d.nodes[i].parent == c.parent) slots.push_back(i);
+    }
+    const bool towardEnd = *node < *anchor;
+    const bool after = c.placement == ac::SiblingPlacement::After;
+    const std::size_t from = towardEnd ? 0 : slots.size() - 1;
+    const std::size_t to = towardEnd ? slots.size() - (after ? 1 : 2) : (after ? 1 : 0);
+    if (from == to) return ac::Error::InvalidSiblingMove;
+    for (std::size_t current = from; current != to;) {
+      const std::size_t next = towardEnd ? current + 1 : current - 1;
+      std::swap(d.nodes[slots[current]], d.nodes[slots[next]]);
+      current = next;
+    }
+    events.push_back(ac::NodeMovedInSiblingOrder{c.node, c.parent, *node, slots[to], documentRevision + 1});
+    return std::nullopt;
+  }
+
   // A transaction (one command or several): applied to a copy, validated, and
   // swapped in, or refused whole.
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
@@ -302,6 +331,8 @@ struct AuthoringSession::State {
       for (std::size_t i = 0; i < commands.size(); ++i) {
         if (std::holds_alternative<ac::SwapAdjacentSiblings>(commands[i]))
           return ac::CommandFailure{CommandTicket{first.value + i}, ac::Error::InvalidSiblingSwap};
+        if (std::holds_alternative<ac::MoveSiblingRelative>(commands[i]))
+          return ac::CommandFailure{CommandTicket{first.value + i}, ac::Error::InvalidSiblingMove};
       }
     }
     scene::AuthoringScene candidate = *document;

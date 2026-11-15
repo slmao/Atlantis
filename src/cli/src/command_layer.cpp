@@ -1736,6 +1736,9 @@ namespace {
         } else if constexpr (std::is_same_v<E, ac::NodeOrderChanged>) {
           return "swapped " + text::formatEntity(e.node) + " and " + text::formatEntity(e.sibling) +
                  " at revision " + std::to_string(e.revision);
+        } else if constexpr (std::is_same_v<E, ac::NodeMovedInSiblingOrder>) {
+          return "moved " + text::formatEntity(e.node) + " from slot " + std::to_string(e.fromPosition) +
+                 " to " + std::to_string(e.position) + " at revision " + std::to_string(e.revision);
         } else {
           static_assert(std::is_same_v<E, ac::Applied>);
           return "applied generation " + std::to_string(e.generation);
@@ -1788,6 +1791,13 @@ namespace {
           out.set("position", Value::number(e.position));
           out.set("siblingPosition", Value::number(e.siblingPosition));
           out.set("revision", Value::number(e.revision));
+        } else if constexpr (std::is_same_v<E, ac::NodeMovedInSiblingOrder>) {
+          out.set("kind", Value::string("NodeMovedInSiblingOrder"));
+          out.set("guid", Value::string(text::formatEntity(e.node)));
+          out.set("parent", optionalEntityJson(e.parent));
+          out.set("fromPosition", Value::number(e.fromPosition));
+          out.set("position", Value::number(e.position));
+          out.set("revision", Value::number(e.revision));
         } else {
           static_assert(std::is_same_v<E, ac::Applied>);
           out.set("kind", Value::string("Applied"));
@@ -1825,7 +1835,7 @@ std::vector<ac::Event> CommandLayer::drainSceneEvents() {
 connection::AuthoringConnection* CommandLayer::authoring(bool observe) {
   if (authoring_ == nullptr && authoringProvider_) authoring_ = authoringProvider_();
   if (observe && authoring_ != nullptr && !authoringEvents_)
-    authoringEvents_ = authoring_->subscribe(ac::EventFilter{ac::EventKindSet::all(), {}, {}});
+    authoringEvents_ = authoring_->subscribe(ac::EventFilter{ac::EventKindSet::withSiblingMove(), {}, {}});
   return authoring_;
 }
 
@@ -1952,9 +1962,12 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parent.isErr()) return ResultT::Err(parent.error());
     return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
   }
-  if (verb == "swap-siblings") {
-    constexpr std::string_view usage = "scene swap-siblings <node> <sibling> <parent>|none up|down <revision>";
-    if (t.size() != 6 || (t[4] != "up" && t[4] != "down")) return ResultT::Err(usageError(usage));
+  if (verb == "swap-siblings" || verb == "move-sibling") {
+    const bool relative = verb == "move-sibling";
+    const std::string_view usage = relative ? "scene move-sibling <node> <anchor> <parent>|none before|after <revision>"
+                                           : "scene swap-siblings <node> <sibling> <parent>|none up|down <revision>";
+    if (t.size() != 6 || (relative ? t[4] != "before" && t[4] != "after" : t[4] != "up" && t[4] != "down"))
+      return ResultT::Err(usageError(usage));
     const auto node = entityAt(1);
     if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
     const auto sibling = entityAt(2);
@@ -1965,6 +1978,9 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     const auto parsed = std::from_chars(t[5].data(), t[5].data() + t[5].size(), revision);
     if (parsed.ec != std::errc{} || parsed.ptr != t[5].data() + t[5].size())
       return ResultT::Err(textError(text::TextError::MalformedNumber, t[5]));
+    if (relative) return ResultT::Ok(std::vector<ac::Command>{ac::MoveSiblingRelative{
+        node.value(), sibling.value(), parent.value(),
+        t[4] == "before" ? ac::SiblingPlacement::Before : ac::SiblingPlacement::After, revision}});
     return ResultT::Ok(std::vector<ac::Command>{ac::SwapAdjacentSiblings{
         node.value(), sibling.value(), parent.value(),
         t[4] == "up" ? ac::SiblingDirection::Up : ac::SiblingDirection::Down, revision}});
@@ -1975,7 +1991,7 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     return ResultT::Ok(std::vector<ac::Command>{ac::SetActiveCamera{camera.value()}});
   }
   return ResultT::Err(plainError("NotAWrite", ErrorCategory::Usage,
-                                 "not a scene write: set, name, create, destroy, add, remove, parent, swap-siblings, camera <guid>|none"));
+                                 "not a scene write: set, name, create, destroy, add, remove, parent, swap-siblings, move-sibling, camera <guid>|none"));
 }
 
 Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, std::string command) {
@@ -1984,14 +2000,20 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
   const std::span<const TypeDescriptor> schema = a->schema();
-  std::optional<ac::SwapAdjacentSiblings> swap;
+  std::optional<std::pair<ac::EntityGuid, ac::EntityGuid>> orderPair;
+  bool relative = false;
   for (const auto& edit : commands) {
     if (const auto* sibling = std::get_if<ac::SwapAdjacentSiblings>(&edit)) {
-      swap = *sibling;
+      orderPair.emplace(sibling->node, sibling->sibling);
+      break;
+    }
+    if (const auto* move = std::get_if<ac::MoveSiblingRelative>(&edit)) {
+      orderPair.emplace(move->node, move->anchor);
+      relative = true;
       break;
     }
   }
-  if (swap && !a->supportsSiblingOrder())
+  if (orderPair && !(relative ? a->supportsSiblingMove() : a->supportsSiblingOrder()))
     return failed(command, plainError("SiblingOrderUnavailable", ErrorCategory::Refused,
                                       "this Runtime does not support sibling order changes"));
   const bool isTransaction = command == "scene tx";
@@ -1999,19 +2021,23 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   (void)a->drainFailures();
   const std::size_t n = commands.size();
   access::TransactionTicket tickets;
-  if (!swap && !isTransaction && n == 1) {
+  if (!orderPair && !isTransaction && n == 1) {
     tickets = access::TransactionTicket{a->submit(std::move(commands.front())), 1};
   } else {
     tickets = a->submitTransaction(std::move(commands));
   }
   const auto drained = a->drainFailures();
-  if (swap && (tickets.first.value == 0 || tickets.count != n || !authoringEvents_ || a->applyStatus().isErr())) {
-    const std::string node = text::formatEntity(swap->node);
-    const std::string sibling = text::formatEntity(swap->sibling);
+  const bool validTicket = tickets.first.value != 0 && tickets.count == n;
+  const bool knownRefusal = validTicket && std::any_of(drained.begin(), drained.end(), [&](const auto& failure) {
+    return tickets.contains(failure.ticket);
+  });
+  if (orderPair && (!validTicket || (!knownRefusal && (!authoringEvents_ || a->applyStatus().isErr())))) {
+    const std::string node = text::formatEntity(orderPair->first);
+    const std::string sibling = text::formatEntity(orderPair->second);
     return failed(command, plainError("SiblingOrderUnknown", ErrorCategory::Runtime,
-        "sibling swap outcome unknown for " + node + " and " + sibling +
+        std::string(relative ? "sibling move" : "sibling swap") + " outcome unknown for " + node + " and " + sibling +
         ". Reconnect and inspect their order with scene nodes before retrying.",
-        subject({{"node", Value::string(node)}, {"sibling", Value::string(sibling)}})));
+        subject({{"node", Value::string(node)}, {relative ? "anchor" : "sibling", Value::string(sibling)}})));
   }
   const auto ticketValue = [&] {
     if (isTransaction) {
@@ -2079,7 +2105,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
   if (t.size() < 2) {
-    return failed(command, usageError("scene schema|open|nodes|get|set|create|destroy|add|remove|parent|swap-siblings|camera|apply|save|tx"));
+    return failed(command, usageError("scene schema|open|nodes|get|set|create|destroy|add|remove|parent|swap-siblings|move-sibling|camera|apply|save|tx"));
   }
   // A sole logical name is disjoint from the existing entity GUID and option forms.
   if (createsSource) {

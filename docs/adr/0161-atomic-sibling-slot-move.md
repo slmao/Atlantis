@@ -1,9 +1,9 @@
 # ADR 0161: Atomically Move a Node Within Its Sibling Slots
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-15
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending.
+- **Acceptance:** The maintainer accepted this ADR in [PR #375 at `d9131083`](https://github.com/slmao/Atlantis/pull/375) on 2026-11-15.
 - **Related Spec:** [Spec 0105](../specs/0105-hierarchy-sibling-drag-reorder.md).
 
 ## Context
