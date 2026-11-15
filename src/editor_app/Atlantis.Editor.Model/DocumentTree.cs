@@ -36,6 +36,8 @@ public sealed class DocumentTree
     public IReadOnlyList<EntityGuid> Order => _order;
 
     public bool Contains(EntityGuid node) => _rows.ContainsKey(node);
+    /// <summary>An opaque identity for this occurrence of a node in the tree.</summary>
+    public object? IncarnationOf(EntityGuid node) => _rows.GetValueOrDefault(node);
 
     public EntityGuid? ParentOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Parent : null;
 

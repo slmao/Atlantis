@@ -388,10 +388,10 @@ public sealed class MainWindow : Window
         };
         _moveHere.Click += (_, _) =>
         {
-            if (_pickedUp is { } source && _selection.Node is EntityGuid parent)
+            if (_pickedUp is { } source && SelectedReparentRow() is { } target)
             {
                 _pickedUp = null;
-                SubmitReparent(source, parent, drag: false);
+                SubmitReparent(source, target, drag: false);
             }
         };
         _applySize.Click += (_, _) => ApplyViewportSize();
@@ -1209,13 +1209,13 @@ public sealed class MainWindow : Window
         (!drag || _canAddMeshToDocument) && !_reparentPending && _gizmoGrab is null;
 
     private HierarchyRow? SelectedReparentRow() =>
-        _hierarchyRows.FirstOrDefault(row => row.Node == _selection.Node);
+        _entities.SelectedItem is HierarchyRow row && row.Node == _selection.Node ? row : null;
 
     private ReparentSource? CaptureSelectedReparent()
     {
         if (!CanCaptureReparent(drag: false) || SelectedReparentRow() is not { } row) return null;
         _pickedUp = null;
-        return _worker?.CaptureReparent(row.Node, row.Parent, _meshDocumentLifetime);
+        return _worker?.CaptureReparent(row, _meshDocumentLifetime);
     }
 
     private static ListBoxItem? HierarchyItem(object? source) =>
@@ -1241,7 +1241,7 @@ public sealed class MainWindow : Window
         if (Math.Max(Math.Abs(displacement.X), Math.Abs(displacement.Y)) < 5) return;
         _hierarchyPress = null;
         if (!CanCaptureReparent(drag: true) || !Equals(SelectedReparentRow(), press.Row) || _worker is not { } worker ||
-            worker.CaptureReparent(press.Row.Node, press.Row.Parent, _meshDocumentLifetime) is not { } source) return;
+            worker.CaptureReparent(press.Row, _meshDocumentLifetime) is not { } source) return;
 
         _pickedUp = null;
         string token = Guid.NewGuid().ToString("N");
@@ -1304,7 +1304,7 @@ public sealed class MainWindow : Window
     private void OnHierarchyDrop(object? sender, DragEventArgs e)
     {
         bool submitted = ReparentDropTarget(e)?.DataContext is HierarchyRow target &&
-            _hierarchyDrag is { } drag && SubmitReparent(drag.Source, target.Node, drag: true);
+            _hierarchyDrag is { } drag && SubmitReparent(drag.Source, target, drag: true);
         HighlightReparentTarget(null);
         e.DragEffects = submitted ? DragDropEffects.Move : DragDropEffects.None;
         e.Handled = true;
@@ -1328,12 +1328,12 @@ public sealed class MainWindow : Window
         if (notice is not null) ShowReparentState(notice);
     }
 
-    private bool SubmitReparent(ReparentSource source, EntityGuid? parent, bool drag)
+    private bool SubmitReparent(ReparentSource source, HierarchyRow? target, bool drag)
     {
         if (_worker is not { } worker || !CanCaptureReparent(drag)) return false;
         long request = ++_reparentRequest;
         ulong selection = _selection.Generation;
-        _reparentPending = worker.Reparent(source, parent, drag, (verified, notice) =>
+        _reparentPending = worker.Reparent(source, target, drag, (verified, notice) =>
         {
             if (!ReferenceEquals(_worker, worker) || request != _reparentRequest ||
                 source.Lifetime != worker.MeshDocumentLifetime) return;

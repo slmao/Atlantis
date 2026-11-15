@@ -18,6 +18,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using Atlantis.Gameplay;
@@ -253,11 +254,20 @@ public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<Inspec
                                        IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable,
                                        string Name = "");
 
-public sealed class ReparentSource(EntityGuid node, EntityGuid? parent, long lifetime)
+public sealed class ReparentSource
 {
-    public EntityGuid Node { get; } = node;
-    public EntityGuid? Parent { get; } = parent;
-    public long Lifetime { get; } = lifetime;
+    internal ReparentSource(HierarchyRow row, object incarnation, long lifetime)
+    {
+        Node = row.Node;
+        Parent = row.Parent;
+        Incarnation = incarnation;
+        Lifetime = lifetime;
+    }
+
+    public EntityGuid Node { get; }
+    public EntityGuid? Parent { get; }
+    public long Lifetime { get; }
+    internal object Incarnation { get; }
 }
 
 public sealed class EditorWorker : IDisposable
@@ -317,9 +327,9 @@ public sealed class EditorWorker : IDisposable
     private bool _gizmoActive;  // set and cleared by the worker, read under _lock
     // One drag, pickup, or settling move per worker. State is protected by _lock.
     private ReparentSource? _reparentSource;
-    private EntityGuid? _reparentDestination;
     private bool _reparentQueued;
-    private bool _reparentInvalidated;
+    // Published rows keep the identity of the node they depicted, including while the UI holds an old row.
+    private readonly ConditionalWeakTable<HierarchyRow, object> _hierarchyIncarnations = new();
     private long? _commitTicks;  // the last commit's start, until its Applied dates it
     private int _previewBatches;
 
@@ -975,14 +985,13 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
     public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
 
-    public ReparentSource? CaptureReparent(EntityGuid node, EntityGuid? parent, long lifetime)
+    public ReparentSource? CaptureReparent(HierarchyRow row, long lifetime)
     {
         lock (_lock)
         {
-            if (_stopping || lifetime != MeshDocumentLifetime || _gizmoActive || _reparentQueued) return null;
-            _reparentSource = new ReparentSource(node, parent, lifetime);
-            _reparentDestination = null;
-            _reparentInvalidated = false;
+            if (_stopping || lifetime != MeshDocumentLifetime || _gizmoActive || _reparentQueued ||
+                !_hierarchyIncarnations.TryGetValue(row, out object? incarnation)) return null;
+            _reparentSource = new ReparentSource(row, incarnation, lifetime);
             return _reparentSource;
         }
     }
@@ -995,22 +1004,23 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
-    public bool Reparent(ReparentSource source, EntityGuid? parent, bool drag, Action<bool, string> settled)
+    public bool Reparent(ReparentSource source, HierarchyRow? target, bool drag, Action<bool, string> settled)
     {
         lock (_lock)
         {
+            object? targetIncarnation = null;
             if (_stopping || source.Lifetime != MeshDocumentLifetime || _gizmoActive ||
-                !ReferenceEquals(source, _reparentSource) || _reparentQueued || _reparentInvalidated)
+                !ReferenceEquals(source, _reparentSource) || _reparentQueued ||
+                (target is not null && !_hierarchyIncarnations.TryGetValue(target, out targetIncarnation)))
                 return false;
-            _reparentDestination = parent;
             _reparentQueued = true;
-            Enqueue(session => SettleReparent(session, source, parent, drag, settled));
+            Enqueue(session => SettleReparent(session, source, target?.Node, targetIncarnation, drag, settled));
             return true;
         }
     }
 
-    private void SettleReparent(RemoteSession session, ReparentSource source, EntityGuid? parent, bool drag,
-        Action<bool, string> settled)
+    private void SettleReparent(RemoteSession session, ReparentSource source, EntityGuid? parent, object? targetIncarnation,
+        bool drag, Action<bool, string> settled)
     {
         long lifetime = source.Lifetime;
         void Report(bool verified, string notice)
@@ -1031,7 +1041,9 @@ public sealed class EditorWorker : IDisposable
         {
             lock (_lock)
                 return !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive && _gizmo?.Dragging != true &&
-                       ReferenceEquals(source, _reparentSource) && !_reparentInvalidated;
+                       ReferenceEquals(source, _reparentSource) &&
+                       ReferenceEquals(source.Incarnation, _tree.IncarnationOf(source.Node)) &&
+                       (parent is not EntityGuid target || ReferenceEquals(targetIncarnation, _tree.IncarnationOf(target)));
         }
         if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
         {
@@ -1482,12 +1494,6 @@ public sealed class EditorWorker : IDisposable
         }
         if (destroyed.Count > 0)
         {
-            lock (_lock)
-            {
-                if (_reparentSource is { } source &&
-                    (destroyed.Contains(source.Node) || (_reparentDestination is EntityGuid parent && destroyed.Contains(parent))))
-                    _reparentInvalidated = true;
-            }
             if (_selected is EntityGuid s && destroyed.Contains(s)) _selected = null;
             _post(() => NodesDestroyed?.Invoke(destroyed));
         }
@@ -1582,6 +1588,8 @@ public sealed class EditorWorker : IDisposable
         _postedGeneration = _tree.Generation;
         _transformsChanged = false;
         IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema);
+        foreach (HierarchyRow row in rows)
+            _hierarchyIncarnations.Add(row, _tree.IncarnationOf(row.Node)!);
         _markers = SceneMarkers.Of(_document, _tree, _transforms);
         IReadOnlyList<Marker> markers = _markers;
         _post(() => HierarchyChanged?.Invoke(rows, markers));
