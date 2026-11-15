@@ -1149,13 +1149,20 @@ public sealed class MainWindow : Window
 
     private float NavigationSpeed => _navigationSpeed.SelectedIndex switch { 0 => 0.5f, 2 => 2f, _ => 1f };
 
-    private void MoveViewport(EditorCamera camera, long arrivalTicks)
+    private void MoveViewport(ViewportMotion motion, long arrivalTicks)
     {
-        if (_worker is not { } worker || _viewport.Window is not { } window ||
-            NavigationFraming.Projection(camera.Pose(), window.Width, window.Height) is null) return;
+        if (_worker is not { } worker || _viewport.Window is not { } window) return;
+        if (_navigationPending)
+        {
+            ++_pickRequest;
+            _viewportCameraIntent = worker.QueueCameraMotion(motion);
+            return;
+        }
+        EditorCamera camera = _camera.Copy();
+        motion.Apply(camera);
+        if (NavigationFraming.Projection(camera.Pose(), window.Width, window.Height) is null) return;
         _camera = camera;
         _sceneProjection = null;
-        _navigationPending = false;
         ++_pickRequest;
         _viewportCameraIntent = worker.SetCamera(camera, arrivalTicks);
         ShowNavigationMessage(null);
@@ -1312,12 +1319,9 @@ public sealed class MainWindow : Window
                 break;
             case ViewportPointer.Move when _pressed is { } start:
                 if (!_dragging && MathF.Max(MathF.Abs(e.X - start.X), MathF.Abs(e.Y - start.Y)) > DragThresholdPixels) _dragging = true;
-                if (_dragging && _navigationReady)
-                {
-                    EditorCamera camera = _camera.Copy();
-                    camera.Orbit((e.X - _last.X) * NavigationSpeed, (e.Y - _last.Y) * NavigationSpeed);
-                    MoveViewport(camera, e.ArrivalTicks);
-                }
+                if (_dragging && (_navigationReady || _navigationPending))
+                    MoveViewport(ViewportMotion.Orbit((e.X - _last.X) * NavigationSpeed, (e.Y - _last.Y) * NavigationSpeed),
+                        e.ArrivalTicks);
                 _last = (e.X, e.Y);
                 break;
             case ViewportPointer.LeftUp:
@@ -1361,10 +1365,8 @@ public sealed class MainWindow : Window
 
     private void OnWheel(int delta, long arrivalTicks)
     {
-        if (_groupGrab is not null || _gizmoGrab is not null || !_navigationReady) return;
-        EditorCamera camera = _camera.Copy();
-        camera.Dolly(delta / 120.0f * NavigationSpeed);
-        MoveViewport(camera, arrivalTicks);
+        if (_groupGrab is not null || _gizmoGrab is not null || !(_navigationReady || _navigationPending)) return;
+        MoveViewport(ViewportMotion.Dolly(delta / 120.0f * NavigationSpeed), arrivalTicks);
         _inputLine = "forwarded wheel " + delta;
     }
 

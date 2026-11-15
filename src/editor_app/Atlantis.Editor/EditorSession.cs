@@ -287,6 +287,7 @@ public sealed class EditorWorker : IDisposable
     private readonly object _lock = new();
     private readonly Queue<Action<RemoteSession>> _work = new();
     private (EditorCamera Camera, long InputTicks, int Count, long Intent)? _pendingCamera;
+    private readonly List<ViewportMotion> _pendingCameraMotion = new();
     private long _cameraIntent;
     private (int Width, int Height) _viewportExtent;
     private ulong _viewportExtentRevision;
@@ -535,6 +536,17 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
+    public long QueueCameraMotion(ViewportMotion motion)
+    {
+        lock (_lock)
+        {
+            _pendingCameraMotion.Add(motion);
+            long intent = ++_cameraIntent;
+            Monitor.Pulse(_lock);
+            return intent;
+        }
+    }
+
     public long Navigate(IReadOnlyList<EntityGuid>? focus, IReadOnlyList<HierarchyRow> rows,
                          ulong selection, ViewDirection? direction)
     {
@@ -550,6 +562,7 @@ public sealed class EditorWorker : IDisposable
             long intent = ++_cameraIntent;
             long lifetime = MeshDocumentLifetime;
             _pendingCamera = null;
+            _pendingCameraMotion.Clear();
             EntityGuid[]? targets = focus?.ToArray();
             Enqueue(session => Navigate(session, intent, lifetime, selection, targets, identities, direction));
             return intent;
@@ -567,7 +580,7 @@ public sealed class EditorWorker : IDisposable
         _post(() =>
         {
             lock (_lock)
-                if (intent != _cameraIntent || _stopping) return;
+                if (intent != _cameraIntent || _stopping || _pendingCameraMotion.Count != 0) return;
             NavigationChanged?.Invoke(state);
         });
     }
@@ -685,20 +698,11 @@ public sealed class EditorWorker : IDisposable
             JsonValue cameraValue = candidate is null ? JsonValue.Null() : Codec.Encode(SceneReader.ToViewportCamera(candidate.Pose()));
             id = session.Send(set, JsonValue.NewObject().Set("camera", cameraValue));
         }
-        JsonValue reply;
-        try { reply = session.AwaitResponse(id); }
-        catch (RemoteException error)
+        if (CameraWriteRefusal(session, id) is string refusal)
         {
-            throw new RemoteException(error.Error, "viewport camera write outcome unknown. " + error.Message);
-        }
-        if (reply.Find("error") is { IsObject: true } rpcError && reply.Find("result") is null &&
-            rpcError.Find("code") is { IsString: true } code)
-        {
-            PublishNavigation(intent, "Viewport camera refused: " + code.AsString);
+            PublishNavigation(intent, refusal);
             return;
         }
-        if (reply.Find("result") is not { IsNull: true } || reply.Find("error") is not null)
-            throw new RemoteException(RemoteError.ProtocolError, "viewport camera write outcome unknown");
         _confirmedEditorCamera = candidate;
         if (returning)
         {
@@ -715,13 +719,75 @@ public sealed class EditorWorker : IDisposable
             else PublishNavigation(intent, "Scene camera");
             return;
         }
+        SettleEditorProjection(session, generation);
+        PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again."
+            : !Current() ? "The navigation context changed during the camera write."
+            : focus ? "Selection framed" : direction + " view");
+    }
+
+    private static string? CameraWriteRefusal(RemoteSession session, ulong id)
+    {
+        JsonValue reply;
+        try { reply = session.AwaitResponse(id); }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error.Error, "viewport camera write outcome unknown. " + error.Message);
+        }
+        if (reply.Find("error") is { IsObject: true } rpcError && reply.Find("result") is null &&
+            rpcError.Find("code") is { IsString: true } code)
+            return "Viewport camera refused: " + code.AsString;
+        if (reply.Find("result") is not { IsNull: true } || reply.Find("error") is not null)
+            throw new RemoteException(RemoteError.ProtocolError, "viewport camera write outcome unknown");
+        return null;
+    }
+
+    private void SettleEditorProjection(RemoteSession session, ulong generation)
+    {
         _navigationUncertain = true;
         RuntimeStatus settled = session.Control.Status();
         _navigationGeneration = settled.SceneGeneration;
         _navigationUncertain = settled.SceneGeneration != generation;
-        PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again."
-            : !Current() ? "The navigation context changed during the camera write."
-            : focus ? "Selection framed" : direction + " view");
+    }
+
+    private void SettleCameraMotion(RemoteSession session)
+    {
+        long intent;
+        ulong id;
+        EditorCamera camera;
+        ulong generation = _navigationGeneration;
+        lock (_lock)
+        {
+            if (_stopping || _pendingCameraMotion.Count == 0) return;
+            intent = _cameraIntent;
+            if (_navigationUncertain || (_confirmedEditorCamera is null && _navigationSceneCamera is null))
+            {
+                _pendingCameraMotion.Clear();
+                PublishNavigation(intent, "Camera projection unavailable. Invoke Scene Camera or a direction again.");
+                return;
+            }
+            camera = _confirmedEditorCamera?.Copy() ?? new EditorCamera();
+            if (_confirmedEditorCamera is null) camera.SeedNavigation(_navigationSceneCamera!);
+            foreach (var motion in _pendingCameraMotion) motion.Apply(camera);
+            _pendingCameraMotion.Clear();
+            CameraPose pose = camera.Pose();
+            if (NavigationFraming.Projection(pose, _viewportExtent.Width, _viewportExtent.Height) is null)
+            {
+                PublishNavigation(intent, "Camera motion is unavailable for the current viewport and camera.");
+                return;
+            }
+            // Consume and send under the same intent lock so a newer discrete command
+            // can discard unsent motion without silently losing an intermediate sample.
+            id = session.Send("control.setViewportCamera",
+                JsonValue.NewObject().Set("camera", Codec.Encode(SceneReader.ToViewportCamera(pose))));
+        }
+        if (CameraWriteRefusal(session, id) is string refusal)
+        {
+            PublishNavigation(intent, refusal);
+            return;
+        }
+        _confirmedEditorCamera = camera;
+        SettleEditorProjection(session, generation);
+        PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again." : null);
     }
 
     public void Raycast(PickRay ray, long inputTicks, ulong request = 0, long? cameraIntent = null) => Enqueue(session =>
@@ -2760,14 +2826,17 @@ public sealed class EditorWorker : IDisposable
             lock (_lock)
             {
                 // A pending drag offset waits for its BeginDrag (queued work) to have run.
-                while (!_stopping && _work.Count == 0 && _pendingCamera is null && !(_pendingDrag is not null && _dragActive) &&
+                while (!_stopping && _work.Count == 0 && _pendingCamera is null && _pendingCameraMotion.Count == 0 &&
+                       !(_pendingDrag is not null && _dragActive) &&
                        !(_pendingGizmo is not null && _gizmoActive) && _pendingGroup is null)
                 {
                     if (!Monitor.Wait(_lock, TimeSpan.FromMilliseconds(PollMilliseconds))) break;  // Plan 0068 M2: time to poll
                 }
                 interacting = _dragActive || _gizmoActive || _requestedGroup is not null;
                 if (_stopping) return;
-                if (_pendingCamera is not null)
+                if (_pendingCameraMotion.Count != 0)
+                    work = SettleCameraMotion;
+                else if (_pendingCamera is not null)
                 {
                     camera = _pendingCamera;
                     _pendingCamera = null;

@@ -5,6 +5,18 @@ namespace Atlantis.Editor.Model;
 
 public enum ViewDirection { Front, Back, Left, Right, Top, Bottom }
 
+public readonly record struct ViewportMotion(float X, float Y, bool IsDolly)
+{
+    public static ViewportMotion Orbit(float x, float y) => new(x, y, false);
+    public static ViewportMotion Dolly(float notches) => new(notches, 0, true);
+
+    public void Apply(EditorCamera camera)
+    {
+        if (IsDolly) camera.Dolly(X);
+        else camera.Orbit(X, Y);
+    }
+}
+
 public static class NavigationFraming
 {
     public static EditorCamera? Direction(EditorCamera current, ViewDirection direction, int width, int height)
