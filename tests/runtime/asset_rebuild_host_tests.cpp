@@ -472,13 +472,14 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
       fs::copy_file(staging / "other.amaterial.meta.txt", dir / metadata, fs::copy_options::overwrite_existing);
     };
   }
-  SECTION("missing normal map catalog edge") {
+  SECTION("missing map catalog edge") {
     config.afterMaterialPreparation = [=](const fs::path& dir) {
       const auto file = dir / "asset_catalog.txt";
       auto catalog = as::parseAssetCatalogRecords(read(file));
       if (catalog.isErr()) throw std::runtime_error("prepared fixture catalog is unreadable");
       for (auto& record : catalog.value())
-        if (record.guid == materialGuid) std::erase(record.dependencies, normal);
+        if (record.guid == materialGuid && std::erase(record.dependencies, useOcclusion ? mappedTexture : normal) != 1)
+          throw std::runtime_error("prepared material had no matching map edge");
       std::ofstream(file, std::ios::binary) << as::serializeAssetCatalog(std::move(catalog.value()));
     };
   }
