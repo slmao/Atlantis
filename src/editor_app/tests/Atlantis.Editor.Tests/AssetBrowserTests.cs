@@ -10,6 +10,14 @@ public static partial class Program
     private static void AssetBrowserChecks()
     {
         AssetGuid a = AssetGuid.Parse("00810081-0081-4081-8081-008100810081"), b = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
+        var color = new AssetSummary(a, AssetType.Texture, "content:texture_sign/source.png");
+        var alternate = new AssetSummary(b, AssetType.Texture, "content:texture_panel/source.png");
+        Check(EditorVisuals.AssetName(color) == "sign" && EditorVisuals.AssetName(alternate) == "panel",
+            "assets: canonical managed color entries use their distinct registration names");
+        Check(EditorVisuals.AssetName(color with { Source = "assets:texture_sign/source.png" }) == "source" &&
+              EditorVisuals.AssetName(color with { Source = "content:texture_sign/occlusion.png" }) == "sign",
+            "assets: new color label preserves ordinary filenames and managed occlusion labels");
+
         var model = new AssetBrowser();
         var data = new[] { new AssetSummary(a, AssetType.Mesh, "content:Scene.gltf#mesh/0"), new AssetSummary(b, AssetType.Material, "assets:material.txt") };
         var ok = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(data);

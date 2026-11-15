@@ -1,13 +1,18 @@
 #include <cook_command.h>
 #include "test_catalog_source.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/load_material.h>
+
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -355,4 +360,59 @@ TEST_CASE("runCookCommand reports a genuine rename failure cleanly, with no left
   REQUIRE(runCookCommand(request) != 0);
   CHECK(fs::is_directory(outputDir / "mesh.amesh"));  // left untouched, not replaced with a partial file
   CHECK(findTempFiles(outputDir, "mesh.amesh").empty());
+}
+
+TEST_CASE("Material cook keeps emissive slots distinct from their deduplicated catalog edges",
+          "[asset_cooker][emissive]") {
+  namespace as = atlantis::asset_system;
+  using atlantis::tools::asset_cooker::test::testCatalogGuid;
+  TempDirGuard dir("emissive_dependencies");
+  const auto root = dir.path / "assets";
+  const auto source = root / "sign.material.txt";
+  const auto output = dir.path / "out";
+  const auto base = testCatalogGuid("base.png");
+  const auto emissive = testCatalogGuid("emissive.png");
+  const auto replacement = testCatalogGuid("alternate.png");
+  const std::string recipe =
+      "atlantis_material_source_version: 10\n"
+      "kind: pbr_direct_lit\n"
+      "texture: " + as::toString(base) + "\n"
+      "filter: linear\n"
+      "address_mode: repeat\n"
+      "base_color_factor: 1 1 1 1\n"
+      "metallic_factor: 0\n"
+      "roughness_factor: 0.9\n"
+      "emissive_factor: 0.5 0.25 0.125\n";
+  writeFile(source, recipe);
+  for (const auto* path : {"base.png", "emissive.png", "alternate.png"}) writeFile(root / path, {});
+
+  CookCommandRequest request;
+  request.kind = atlantis::tools::asset_cooker::AssetKind::Material;
+  request.sourcePath = source.string();
+  request.assetRoot = root.string();
+  request.outputDir = output.string();
+  request.stampPath = (dir.path / "sign.stamp").string();
+  request.catalogSourcePath = writeCatalogSourceCovering(root, dir.path / "asset_catalog.txt").string();
+
+  for (const auto& bound : {std::optional{emissive}, std::optional{replacement},
+                            std::optional{base}, std::optional<as::AssetGuid>{}}) {
+    CAPTURE(bound.has_value());
+    writeFile(source, bound ? recipe + "emissive_texture: " + as::toString(*bound) + "\n" : recipe);
+    REQUIRE(runCookCommand(request) == 0);
+    const auto records = as::parseAssetCatalogRecords(readFileText(output / "sign.amaterial.catalog.txt"));
+    REQUIRE(records.isOk());
+    REQUIRE(records.value().size() == 1);
+    const auto& record = records.value().front();
+    const auto material = as::loadPreviewMaterialAsset(record);
+    REQUIRE(material.isOk());
+    CHECK(material.value().textureAsset == as::assetKey(base));
+    CHECK(material.value().emissiveTexture == (bound ? as::assetKey(*bound) : 0));
+    CHECK(material.value().emissiveFactor[0] == 0.5f);
+    CHECK(material.value().emissiveFactor[1] == 0.25f);
+    CHECK(material.value().emissiveFactor[2] == 0.125f);
+    std::vector<as::AssetGuid> expected{base};
+    if (bound && *bound != base) expected.push_back(*bound);
+    std::ranges::sort(expected);
+    CHECK(record.dependencies == expected);
+  }
 }

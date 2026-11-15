@@ -1,10 +1,10 @@
 # Spec: Emissive Texture Import and Binding
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-15
 - **Related Plan:** [Plan 0100](../plans/0100-emissive-texture-import-and-binding.md)
-- **Approval:** Pending
+- **Approval:** Atlantis maintainer, 2026-11-15, [PR #365](https://github.com/slmao/Atlantis/pull/365) at `9bc50950`.
 - **Related ADRs:** [ADR-0096](../adr/0096-emissive-texture-always-bound-slot.md), [ADR-0154](../adr/0154-managed-base-color-texture-import.md), [ADR-0155](../adr/0155-pbr-material-map-authoring.md) (Accepted, reused)
 
 ## Summary
