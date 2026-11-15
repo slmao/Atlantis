@@ -142,6 +142,7 @@ public sealed class MainWindow : Window
     private (HierarchyRow Row, PointerPressedEventArgs Event, Point Position)? _hierarchyPress;
     private (ReparentSource Source, string Token, bool Relative)? _hierarchyDrag;
     private (HierarchyRow Row, SiblingPlacement? Placement)? _advertisedHierarchyDrop;
+    private Point? _hierarchyDropPointer;
     private readonly Canvas _hierarchyDropFeedback = new() { IsHitTestVisible = false, ClipToBounds = true };
     private readonly Border _hierarchyDropLine = new() { Height = 2, Background = EditorVisuals.Focus, IsVisible = false };
     private readonly Border _hierarchyDropLabel = new() { Background = EditorVisuals.Pane, Padding = new Thickness(6, 2), IsVisible = false };
@@ -1289,6 +1290,7 @@ public sealed class MainWindow : Window
 
         _pickedUp = null;
         string token = Guid.NewGuid().ToString("N");
+        _hierarchyDropPointer = null;
         _hierarchyDrag = (source, token, worker.SiblingMoveSupported);
         var data = new DataTransfer();
         data.Add(DataTransferItem.Create(ReparentDragFormat, token));
@@ -1302,6 +1304,7 @@ public sealed class MainWindow : Window
             if (_hierarchyDrag?.Source == source)
             {
                 _hierarchyDrag = null;
+                _hierarchyDropPointer = null;
                 ClearHierarchyDropFeedback();
                 UpdateHierarchyActions();
             }
@@ -1399,9 +1402,20 @@ public sealed class MainWindow : Window
         item.BorderThickness = new Thickness(1);
     }
 
+    private bool IsAdvertisedHierarchyDrop(HierarchyRow row, SiblingPlacement? placement) =>
+        _advertisedHierarchyDrop is { } advertised && advertised.Placement == placement &&
+        _worker?.SameHierarchyIncarnation(advertised.Row, row) == true;
+
     private void OnHierarchyDragOver(object? sender, DragEventArgs e)
     {
         var target = HierarchyDropTarget(e);
+        Point pointer = e.GetPosition(_entities);
+        // The native drag loop can send a final DragOver at release even when the pointer stayed still.
+        // After a row refresh, require pointer movement before advertising the changed target.
+        if (_hierarchyDrag is { Relative: true } && _hierarchyDropPointer == pointer &&
+            target is { } stationary && !IsAdvertisedHierarchyDrop(stationary.Row, stationary.Placement))
+            target = null;
+        _hierarchyDropPointer = pointer;
         ClearHierarchyDropFeedback();
         if (target is { } drop)
         {
@@ -1416,9 +1430,8 @@ public sealed class MainWindow : Window
     private void OnHierarchyDrop(object? sender, DragEventArgs e)
     {
         bool submitted = false;
-        if (HierarchyDropTarget(e) is { } target && _advertisedHierarchyDrop is { } advertised &&
-            _hierarchyDrag is { } drag && advertised.Placement == target.Placement &&
-            _worker is { } worker && worker.SameHierarchyIncarnation(advertised.Row, target.Row))
+        if (HierarchyDropTarget(e) is { } target && IsAdvertisedHierarchyDrop(target.Row, target.Placement) &&
+            _hierarchyDrag is { } drag && _worker is { } worker)
         {
             if (target.Placement is SiblingPlacement placement)
             {
@@ -1455,6 +1468,7 @@ public sealed class MainWindow : Window
         _pickedUp = null;
         _hierarchyPress = null;
         _hierarchyDrag = null;
+        _hierarchyDropPointer = null;
         ClearHierarchyDropFeedback();
         if (notice is not null) ShowReparentState(notice);
     }
