@@ -80,6 +80,7 @@
 {"case":"authoring.command.swap_siblings","type":"AuthoringCommand","wire":{"kind":"SwapAdjacentSiblings","node":"52052052-0003-4052-8052-000000000003","sibling":"52052052-0001-4052-8052-000000000001","parent":null,"direction":"Up","expectedRevision":17}}
 {"case":"authoring.command.require_revision","type":"AuthoringCommand","wire":{"kind":"RequireDocumentRevision","expectedRevision":17}}
 {"case":"authoring.command.require_transform_revision","type":"AuthoringCommand","wire":{"kind":"RequireTransformBatchRevision","expectedRevision":18}}
+{"case":"authoring.command.require_duplicate_revision","type":"AuthoringCommand","wire":{"kind":"RequireDuplicateBatchRevision","expectedRevision":19}}
 {"case":"authoring.command.move_sibling","type":"AuthoringCommand","wire":{"kind":"MoveSiblingRelative","node":"52052052-0003-4052-8052-000000000003","anchor":"52052052-0001-4052-8052-000000000001","parent":null,"placement":"Before","expectedRevision":17}}
 {"case":"authoring.event.changed","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"f32":7}}}
 {"case":"authoring.event.changed.absent","type":"AuthoringEvent","wire":{"kind":"PropertyChanged","address":{"node":"52052052-0003-4052-8052-000000000003","component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"absent":true}}}
@@ -106,6 +107,7 @@
 {"case":"authoring.document","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"D:/Atlantis/assets/scenes/a \"b\" é.scene.txt","nodeCount":5}}
 {"case":"authoring.document.guarded","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"D:/scene.txt","nodeCount":3,"supportsGuardedPropertyTransactions":true}}
 {"case":"authoring.document.guarded_transform","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"D:/scene.txt","nodeCount":3,"supportsGuardedPropertyTransactions":true,"supportsGuardedTransformTransactions":true}}
+{"case":"authoring.document.guarded_duplicate","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"HandAuthored","source":"D:/scene.txt","nodeCount":3,"supportsGuardedPropertyTransactions":true,"supportsGuardedTransformTransactions":true,"supportsGuardedDuplicateTransactions":true}}
 {"case":"authoring.document.imported","type":"Document","wire":{"scene":"52052052-00aa-4052-8052-0000000000aa","provenance":"Imported","source":"D:/build/bistro/bistro.scene.txt","nodeCount":5992}}
 {"case":"authoring.node","type":"NodeSummary","wire":{"node":"52052052-0003-4052-8052-000000000003","parent":"52052052-0001-4052-8052-000000000001","name":""}}
 {"case":"authoring.node.root","type":"NodeSummary","wire":{"node":"52052052-0001-4052-8052-000000000001","parent":null,"name":""}}
@@ -141,6 +143,8 @@
 {"case":"authoring.error.InvalidSiblingMove","type":"AuthoringError","wire":"InvalidSiblingMove"}
 {"case":"authoring.error.InvalidGuardedPropertyBatch","type":"AuthoringError","wire":"InvalidGuardedPropertyBatch"}
 {"case":"authoring.error.PropertyBatchStaleRevision","type":"AuthoringError","wire":"PropertyBatchStaleRevision"}
+{"case":"authoring.error.InvalidGuardedDuplicateBatch","type":"AuthoringError","wire":"InvalidGuardedDuplicateBatch"}
+{"case":"authoring.error.DuplicateBatchStaleRevision","type":"AuthoringError","wire":"DuplicateBatchStaleRevision"}
 {"case":"authoring.open_error.SourceUnreadable","type":"OpenError","wire":"SourceUnreadable"}
 {"case":"authoring.open_error.SourceParseFailed","type":"OpenError","wire":"SourceParseFailed"}
 {"case":"authoring.open_error.SourceInvalid","type":"OpenError","wire":"SourceInvalid"}

@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <random>
 #include <span>
@@ -1962,15 +1963,16 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parent.isErr()) return ResultT::Err(parent.error());
     return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
   }
-  if (verb == "require-revision" || verb == "require-transform-revision") {
-    const bool transform = verb == "require-transform-revision";
-    if (t.size() != 2) return ResultT::Err(usageError(transform ? "require-transform-revision <revision> (first line of scene tx)"
-                                                               : "require-revision <revision> (first line of scene tx)"));
+  if (verb == "require-revision" || verb == "require-transform-revision" || verb == "require-duplicate-revision") {
+    if (t.size() != 2) return ResultT::Err(usageError(std::string(verb) + " <revision> (first line of scene tx)"));
     std::uint64_t revision{};
     const auto parsed = std::from_chars(t[1].data(), t[1].data() + t[1].size(), revision);
     if (parsed.ec != std::errc{} || parsed.ptr != t[1].data() + t[1].size())
       return ResultT::Err(textError(text::TextError::MalformedNumber, t[1]));
-    if (transform) return ResultT::Ok(std::vector<ac::Command>{ac::RequireTransformBatchRevision{revision}});
+    if (verb == "require-transform-revision")
+      return ResultT::Ok(std::vector<ac::Command>{ac::RequireTransformBatchRevision{revision}});
+    if (verb == "require-duplicate-revision")
+      return ResultT::Ok(std::vector<ac::Command>{ac::RequireDuplicateBatchRevision{revision}});
     return ResultT::Ok(std::vector<ac::Command>{ac::RequireDocumentRevision{revision}});
   }
   if (verb == "swap-siblings" || verb == "move-sibling") {
@@ -2034,11 +2036,17 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   const bool transformGuard = std::ranges::any_of(commands, [](const auto& edit) {
     return std::holds_alternative<ac::RequireTransformBatchRevision>(edit);
   });
-  const bool guarded = propertyGuard || transformGuard;
+  const bool duplicateGuard = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireDuplicateBatchRevision>(edit);
+  });
+  const bool guarded = propertyGuard || transformGuard || duplicateGuard;
   Value batchTargets = Value::array();
   std::string batchField;
   if (guarded) {
     const auto info = a->document();
+    if (duplicateGuard && (!info || !info->supportsGuardedDuplicateTransactions))
+      return failed(command, plainError("GuardedDuplicateBatchUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded duplicate transactions"));
     if (transformGuard && (!info || !info->supportsGuardedTransformTransactions))
       return failed(command, plainError("GuardedTransformBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded Transform transactions"));
@@ -2046,6 +2054,13 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       return failed(command, plainError("GuardedPropertyBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded property transactions"));
     for (const auto& edit : commands) {
+      if (duplicateGuard) {
+        if (const auto* create = std::get_if<ac::CreateNode>(&edit); create && create->node)
+          batchTargets.push(Value::string(text::formatEntity(*create->node)));
+        if (const auto* destroy = std::get_if<ac::DestroyNode>(&edit))
+          batchTargets.push(Value::string(text::formatEntity(destroy->node)));
+        continue;
+      }
       const auto* write = std::get_if<ac::SetProperty>(&edit);
       if (!write) continue;
       batchTargets.push(Value::string(text::formatEntity(write->address.node)));
@@ -2063,11 +2078,24 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     tickets = a->submitTransaction(std::move(commands));
   }
   const auto drained = a->drainFailures();
-  const bool validTicket = tickets.first.value != 0 && tickets.count == n;
+  const bool validTicket = tickets.first.value != 0 && tickets.count != 0 && tickets.count == n &&
+      tickets.count - 1 <= std::numeric_limits<std::uint64_t>::max() - tickets.first.value;
   const bool knownRefusal = validTicket && std::any_of(drained.begin(), drained.end(), [&](const auto& failure) {
     return tickets.contains(failure.ticket);
   });
   if (guarded && (!validTicket || (!knownRefusal && (!authoringEvents_ || a->applyStatus().isErr())))) {
+    if (duplicateGuard) {
+      std::string message = "Guarded duplicate batch outcome unknown";
+      std::string_view separator = " for ";
+      for (const auto& node : batchTargets.asArray()) {
+        message += separator;
+        message += node.asString();
+        separator = ", ";
+      }
+      message += ". Reconnect and inspect the document with scene nodes, then confirm the prior request ended before retrying.";
+      return failed(command, plainError("GuardedDuplicateBatchUnknown", ErrorCategory::Runtime,
+          std::move(message), subject({{"nodes", std::move(batchTargets)}})));
+    }
     std::string message = "Guarded property batch outcome unknown";
     if (!batchField.empty()) message += " for " + batchField;
     message += ". Reconnect and inspect the addressed properties before retrying.";

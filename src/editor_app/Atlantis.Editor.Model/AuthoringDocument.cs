@@ -104,10 +104,12 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
 
     public DocumentInfo? Info() => _session.Document();
 
-    public IReadOnlyList<NodeSummary> ListNodes()
+    public IReadOnlyList<NodeSummary> ListNodes() => ObserveNodes() ?? Array.Empty<NodeSummary>();
+
+    public IReadOnlyList<NodeSummary>? ObserveNodes()
     {
         var nodes = _session.ListNodes();
-        return nodes.IsOk ? nodes.Value! : Array.Empty<NodeSummary>();
+        return nodes.IsOk ? nodes.Value : null;
     }
 
     public IReadOnlyList<TypeId> ListComponents(EntityGuid node)
@@ -181,10 +183,13 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
         return value.IsOk ? value.Value : null;
     }
 
-    public EntityGuid? ActiveCamera()
+    public EntityGuid? ActiveCamera() => ObserveActiveCamera(out EntityGuid? camera) ? camera : null;
+
+    public bool ObserveActiveCamera(out EntityGuid? camera)
     {
-        var camera = _session.ActiveCamera();
-        return camera.IsOk ? camera.Value : null;
+        var result = _session.ActiveCamera();
+        camera = result.IsOk ? result.Value : null;
+        return result.IsOk;
     }
 
     public TransactionTicket SubmitTransaction(IReadOnlyList<Command> commands) => _session.SubmitTransaction(commands);

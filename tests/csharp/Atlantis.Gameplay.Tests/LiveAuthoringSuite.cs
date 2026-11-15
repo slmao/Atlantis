@@ -90,6 +90,22 @@ public static class LiveAuthoringSuite
             new A.RequireTransformBatchRevision(current + 1), new A.SetProperty(position, originalPosition),
             new A.SetProperty(targetA, beforeA), new A.SetProperty(targetB, beforeB) });
         t.Equal(0, a.DrainFailures().Count, "mixed Transform restore");
+
+        t.Check(a.Document()?.SupportsGuardedDuplicateTransactions == true, "capable hand-authored document");
+        var original = a.ListNodes().Value;
+        var copy = new EntityGuid(Guid.NewGuid());
+        current = a.ApplyStatus().Value!.CurrentDocumentRevision!.Value;
+        var append = a.SubmitTransaction(new A.Command[] {
+            new A.RequireDuplicateBatchRevision(current), new A.CreateNode(copy, (ulong)original.Count, Array.Empty<TypeId>()),
+            new A.SetNodeName(copy, "Copy") });
+        t.Check(append.Count == 3 && a.DrainFailures().Count == 0 &&
+            b.ListNodes().Value[^1].Node == copy, "SDK append observed by another client");
+        var stale = a.SubmitTransaction(new A.Command[] {
+            new A.RequireDuplicateBatchRevision(current), new A.DestroyNode(copy) });
+        t.Equal(new A.CommandFailure(stale.First, A.AuthoringError.DuplicateBatchStaleRevision),
+            a.DrainFailures().Single(), "SDK retains duplicate stale-refusal category");
+        a.SubmitTransaction(new A.Command[] { new A.RequireDuplicateBatchRevision(current + 1), new A.DestroyNode(copy) });
+        t.Check(a.DrainFailures().Count == 0 && b.ListNodes().Value.SequenceEqual(original), "SDK removes verified suffix");
     }
 
     private static void SiblingOrder(TestContext t, RemoteSession first, RemoteSession second)

@@ -1,9 +1,9 @@
 # ADR 0164 — Guarded Duplicate Transactions
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-16
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer accepted J1–J4 and this decision at [PR #381, `ced4e82b`](https://github.com/slmao/Atlantis/pull/381) on 2026-11-16
 - **Related Spec:** [Spec 0108](../specs/0108-batch-duplicate-subtrees.md)
 
 ## Context

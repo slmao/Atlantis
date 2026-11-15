@@ -237,13 +237,15 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 var commands = wireParameters.Find("commands")!.Items;
                 bool property = commands.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision");
                 bool transform = commands.Any(c => c.Find("kind")?.AsString == "RequireTransformBatchRevision");
-                if (property || transform)
+                bool duplicate = commands.Any(c => c.Find("kind")?.AsString == "RequireDuplicateBatchRevision");
+                if (property || transform || duplicate)
                 {
                     JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
                     if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
                     var info = document.Find("result") is JsonValue descriptor ? Codec.DecodeDocumentInfo(descriptor) : null;
                     if ((property && info?.SupportsGuardedPropertyTransactions != true) ||
-                        (transform && info?.SupportsGuardedTransformTransactions != true))
+                        (transform && info?.SupportsGuardedTransformTransactions != true) ||
+                        (duplicate && info?.SupportsGuardedDuplicateTransactions != true))
                         return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
                 }
             }

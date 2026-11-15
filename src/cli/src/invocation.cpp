@@ -58,6 +58,7 @@ constexpr std::string_view kUsage =
     "  assets import <name> [--resume] | assets import-status [<JobId>]   managed import\n"
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
+    "                    require-duplicate-revision <revision> leads a guarded scene tx (Spec 0108)\n"
     "  scene create <name>    create a camera-only scene source (Spec 0089); GUID/option forms create nodes\n"
     "  scene save-as <name>   create an independent hand-authored scene copy (Spec 0088);\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
@@ -372,7 +373,8 @@ int Invocation::finish(Reply reply) {
       failure->text = "error: " + failure->message;
     }
     if (checked.error && (checked.error->code == "SiblingOrderUnknown" ||
-                          checked.error->code == "GuardedPropertyBatchUnknown")) {
+                          checked.error->code == "GuardedPropertyBatchUnknown" ||
+                          checked.error->code == "GuardedDuplicateBatchUnknown")) {
       if (!failure->subject.isObject()) failure->subject = Value::object();
       for (const auto& [key, value] : checked.error->subject.asObject()) failure->subject.set(key, value);
       failure->message += "; " + checked.error->message;

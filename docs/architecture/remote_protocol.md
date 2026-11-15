@@ -804,6 +804,24 @@ emits no event. Shape and revision use the existing guarded refusal
 codes. A verified success advances one revision and publishes
 ordinary property events in write order. Apply stays separate.
 
+### Guarded subtree duplication transactions
+
+[ADR-0164](../adr/0164-guarded-duplicate-transactions.md) adds the optional
+`supportsGuardedDuplicateTransactions` member to the open document.
+Only literal true enables the new guard. Discovery is independent of
+the earlier guards and is scoped to the current open document.
+
+Put `RequireDuplicateBatchRevision` with unsigned `expectedRevision`
+first in `authoring.submitTransaction`. The payload either appends
+1–64 distinct explicit GUIDs and initializes only those copies, or
+destroys exactly the current suffix of 1–64 distinct nodes. Shape and
+revision refusals use the guard ticket and the corresponding
+`InvalidGuardedDuplicateBatch` or `DuplicateBatchStaleRevision` error.
+Success has one document revision and emits ordinary authored events.
+The guard takes one ticket and emits no event. Drain matching failures
+before requesting Apply. Older peers keep their existing commands,
+and an older host refuses this guard during transaction decoding.
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines

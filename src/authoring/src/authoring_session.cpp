@@ -12,6 +12,7 @@
 #include <atlantis/authoring/document_validation.h>
 
 #include <algorithm>
+#include <span>
 #include <fstream>
 #include <numbers>
 #include <random>
@@ -334,6 +335,91 @@ struct AuthoringSession::State {
     return ac::Error::InvalidGuardedPropertyBatch;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene&, const ac::RequireDuplicateBatchRevision&,
+                                 std::vector<ac::Event>&) const {
+    ATLANTIS_CHECK_MSG(false, "the transaction admits revision guards before candidate execution");
+    return ac::Error::InvalidGuardedDuplicateBatch;
+  }
+
+  struct DuplicateNode {
+    EntityGuid id;
+    std::uint64_t position = 0;
+    bool named = false;
+    bool parented = false;
+    std::vector<ac::PropertyAddress> addresses{};
+  };
+
+  // Check only the write shape here. Slots, GUID availability and suffix membership depend on the guarded revision.
+  static std::optional<std::vector<DuplicateNode>> duplicateShape(const std::vector<ac::Command>& commands) {
+    if (commands.size() < 2 || !std::holds_alternative<ac::RequireDuplicateBatchRevision>(commands.front()))
+      return std::nullopt;
+    const bool removing = std::holds_alternative<ac::DestroyNode>(commands[1]);
+    const auto optionalComponent = [](schema::TypeId type) {
+      return type == schema::typeId("asset_system::scene::Camera") ||
+             type == schema::typeId("asset_system::scene::Renderable") ||
+             type == schema::typeId("asset_system::scene::Light");
+    };
+    constexpr auto transform = schema::typeId("asset_system::scene::Transform");
+    std::vector<DuplicateNode> nodes;
+    const auto find = [&](EntityGuid id) {
+      return std::ranges::find(nodes, id, &DuplicateNode::id);
+    };
+    for (std::size_t i = 1; i < commands.size(); ++i) {
+      const auto& command = commands[i];
+      if (removing) {
+        const auto* destroy = std::get_if<ac::DestroyNode>(&command);
+        if (!destroy || destroy->node == EntityGuid{} || nodes.size() == ac::kMaxGuardedDuplicateNodes ||
+            find(destroy->node) != nodes.end()) return std::nullopt;
+        nodes.push_back(DuplicateNode{.id = destroy->node});
+      } else if (const auto* create = std::get_if<ac::CreateNode>(&command)) {
+        if (!create->node || *create->node == EntityGuid{} || nodes.size() == ac::kMaxGuardedDuplicateNodes ||
+            find(*create->node) != nodes.end()) return std::nullopt;
+        auto components = create->components;
+        std::ranges::sort(components);
+        if (std::ranges::adjacent_find(components) != components.end() ||
+            std::ranges::any_of(components, [&](auto type) { return !optionalComponent(type); })) return std::nullopt;
+        nodes.push_back(DuplicateNode{.id = *create->node, .position = create->position});
+      } else if (const auto* write = std::get_if<ac::SetProperty>(&command)) {
+        const auto node = find(write->address.node);
+        const auto component = write->address.component;
+        if (node == nodes.end() ||
+            (component != transform && !optionalComponent(component)))
+          return std::nullopt;
+        const auto field = detail::resolveField(component, write->address.field);
+        if (field.isErr() || !schema::hasFlags(field.value().flags, schema::FieldFlags::Serializable) ||
+            schema::hasFlags(field.value().flags, schema::FieldFlags::EntityReference) ||
+            field.value().primitive == schema::PrimitiveKind::EntityGuid ||
+            std::ranges::find(node->addresses, write->address) != node->addresses.end()) return std::nullopt;
+        node->addresses.push_back(write->address);
+      } else if (const auto* name = std::get_if<ac::SetNodeName>(&command)) {
+        const auto node = find(name->node);
+        if (node == nodes.end() || std::exchange(node->named, true)) return std::nullopt;
+      } else if (const auto* parent = std::get_if<ac::SetParent>(&command)) {
+        const auto node = find(parent->node);
+        if (node == nodes.end() || std::exchange(node->parented, true)) return std::nullopt;
+      } else {
+        return std::nullopt;
+      }
+    }
+    if (nodes.empty()) return std::nullopt;
+    return nodes;
+  }
+
+  bool matchesDuplicateBoundary(const std::vector<DuplicateNode>& nodes, bool removing) const {
+    const auto count = document->nodes.size();
+    if (removing) {
+      if (nodes.size() > count) return false;
+      const auto suffix = std::span(document->nodes).last(nodes.size());
+      return std::ranges::all_of(nodes, [&](const DuplicateNode& node) {
+        return std::ranges::find(suffix, node.id, &scene::AuthoringNode::guid) != suffix.end();
+      });
+    }
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+      if (nodes[i].position != count + i || findNode(*document, nodes[i].id)) return false;
+    }
+    return true;
+  }
+
   static bool validGuardedTransformBatch(const std::vector<ac::Command>& commands) {
     if (commands.size() < 2 || commands.size() > 1 + ac::kMaxGuardedTransformWrites ||
         !std::holds_alternative<ac::RequireTransformBatchRevision>(commands.front())) return false;
@@ -384,9 +470,20 @@ struct AuthoringSession::State {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
     const auto guard = std::ranges::find_if(commands, [](const ac::Command& command) {
       return std::holds_alternative<ac::RequireDocumentRevision>(command) ||
-             std::holds_alternative<ac::RequireTransformBatchRevision>(command);
+             std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
+             std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
     });
-    if (guard != commands.end()) {
+    const auto* duplicate = guard == commands.end() ? nullptr : std::get_if<ac::RequireDuplicateBatchRevision>(&*guard);
+    if (duplicate) {
+      const auto nodes = duplicateShape(commands);
+      const auto ticket = CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())};
+      if (!nodes || !std::holds_alternative<HandAuthored>(source.provenance))
+        return ac::CommandFailure{ticket, ac::Error::InvalidGuardedDuplicateBatch};
+      if (duplicate->expectedRevision != documentRevision)
+        return ac::CommandFailure{ticket, ac::Error::DuplicateBatchStaleRevision};
+      if (!matchesDuplicateBoundary(*nodes, std::holds_alternative<ac::DestroyNode>(commands[1])))
+        return ac::CommandFailure{ticket, ac::Error::InvalidGuardedDuplicateBatch};
+    } else if (guard != commands.end()) {
       const auto* transform = std::get_if<ac::RequireTransformBatchRevision>(&*guard);
       if (!(transform ? validGuardedTransformBatch(commands) : validGuardedPropertyBatch(commands))) {
         return ac::CommandFailure{CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())},
@@ -493,7 +590,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return ac::DocumentInfo{state_.source.scene,
                             imported ? ac::Provenance::Imported : ac::Provenance::HandAuthored,
                             sourcePathOf(state_.source.provenance).generic_string(),
-                            static_cast<std::uint64_t>(state_.document->nodes.size()), true, true};
+                            static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {

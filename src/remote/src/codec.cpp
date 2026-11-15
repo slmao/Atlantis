@@ -1264,6 +1264,7 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::SiblingOrderStaleRevision, authoring::Error::SiblingOrderRequiresHandAuthored,
     authoring::Error::InvalidSiblingSwap, authoring::Error::InvalidSiblingMove,
     authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
+    authoring::Error::InvalidGuardedDuplicateBatch, authoring::Error::DuplicateBatchStaleRevision,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -1424,6 +1425,9 @@ Value encode(const authoring::Command& command) {
         } else if constexpr (std::is_same_v<C, authoring::RequireTransformBatchRevision>) {
           out.set("kind", Value::string("RequireTransformBatchRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::RequireDuplicateBatchRevision>) {
+          out.set("kind", Value::string("RequireDuplicateBatchRevision"));
+          out.set("expectedRevision", Value::number(c.expectedRevision));
         } else if constexpr (std::is_same_v<C, authoring::RequireDocumentRevision>) {
           out.set("kind", Value::string("RequireDocumentRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
@@ -1518,6 +1522,12 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
     if (!expected) return std::nullopt;
     return authoring::Command(authoring::RequireTransformBatchRevision{*expected});
+  }
+  if (*kind == "RequireDuplicateBatchRevision") {
+    const auto* revision = value.find("expectedRevision");
+    const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
+    if (!expected) return std::nullopt;
+    return authoring::Command(authoring::RequireDuplicateBatchRevision{*expected});
   }
   if (*kind == "RequireDocumentRevision") {
     const auto* revision = value.find("expectedRevision");
@@ -1746,6 +1756,7 @@ Value encode(const authoring::DocumentInfo& document) {
   out.set("nodeCount", Value::number(document.nodeCount));
   if (document.supportsGuardedPropertyTransactions) out.set("supportsGuardedPropertyTransactions", Value::boolean(true));
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
+  if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
   return out;
 }
 
@@ -1766,6 +1777,8 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   out.supportsGuardedPropertyTransactions = capability && capability->isBool() && capability->asBool();
   const auto* transform = value.find("supportsGuardedTransformTransactions");
   out.supportsGuardedTransformTransactions = transform && transform->isBool() && transform->asBool();
+  const auto* duplicate = value.find("supportsGuardedDuplicateTransactions");
+  out.supportsGuardedDuplicateTransactions = duplicate && duplicate->isBool() && duplicate->asBool();
   if (provenance->asString() == "Imported") {
     out.provenance = authoring::Provenance::Imported;
   } else if (provenance->asString() != "HandAuthored") {

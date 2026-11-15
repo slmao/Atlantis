@@ -43,6 +43,7 @@ internal static class ToolSchemas
             ("placement", Enum("Before", "After")), ("expectedRevision", Integer)),
         Command("RequireDocumentRevision", ("expectedRevision", Integer)),
         Command("RequireTransformBatchRevision", ("expectedRevision", Integer)),
+        Command("RequireDuplicateBatchRevision", ("expectedRevision", Integer)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)));
 

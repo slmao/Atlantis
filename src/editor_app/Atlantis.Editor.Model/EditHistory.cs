@@ -174,12 +174,14 @@ public sealed class EditHistory
     }
 
     public HistoryResult Undo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
-        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null) =>
-        Take(_undo, Step.Undo, swap, batch);
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
+        Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null) =>
+        Take(_undo, Step.Undo, swap, batch, duplicate);
 
     public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
-        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null) =>
-        Take(_redo, Step.Redo, swap, batch);
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
+        Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null) =>
+        Take(_redo, Step.Redo, swap, batch, duplicate);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -231,7 +233,8 @@ public sealed class EditHistory
     // address nothing is submitted and the entry is dropped.
     private HistoryResult Take(List<EditTransaction> from, Step kind,
         Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap,
-        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch)
+        Func<BatchPropertyEdit, bool, BatchReplayResult>? batch,
+        Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate)
     {
         if (Waiting)
         {
@@ -245,16 +248,28 @@ public sealed class EditHistory
         {
             from.RemoveAt(from.Count - 1);
             if (swap is null) throw new InvalidOperationException("Sibling order replay requires a guarded settlement.");
-            var result = swap(order, forward);
-            Notice = result.Notice;
-            if (!result.Verified) return HistoryResult.ChangedElsewhere;
+            var orderResult = swap(order, forward);
+            Notice = orderResult.Notice;
+            if (!orderResult.Verified) return HistoryResult.ChangedElsewhere;
             Push(forward ? _undo : _redo, edit);
             return HistoryResult.Submitted;
         }
+        BatchReplayResult? guarded = null;
         if (edit.Structure is [BatchPropertyEdit properties])
+            guarded = (batch ?? throw new InvalidOperationException("Batch replay requires guarded settlement."))(properties, forward);
+        if (edit.Structure is [GuardedDuplicateEdit copies])
         {
-            if (batch is null) throw new InvalidOperationException("Batch replay requires guarded settlement.");
-            BatchReplayResult result = batch(properties, forward);
+            var removed = copies.CopyIdentities;
+            guarded = (duplicate ?? throw new InvalidOperationException("Duplicate replay requires guarded settlement."))(copies, forward);
+            if (forward && guarded.State == BatchReplayState.Committed)
+            {
+                foreach (GuardedDuplicateEdit dependent in _undo.Concat(_redo)
+                    .SelectMany(transaction => transaction.Structure.OfType<GuardedDuplicateEdit>()))
+                    dependent.RebindDependencies(removed, copies);
+            }
+        }
+        if (guarded is { } result)
+        {
             Notice = result.Notice;
             if (from.Count == 0 || !ReferenceEquals(from[^1], edit)) return HistoryResult.Invalidated;
             if (result.State == BatchReplayState.Retry) return HistoryResult.Waiting;

@@ -70,6 +70,8 @@ std::string_view toString(Error error) noexcept {
     case Error::InvalidSiblingMove: return "InvalidSiblingMove";
     case Error::InvalidGuardedPropertyBatch: return "InvalidGuardedPropertyBatch";
     case Error::PropertyBatchStaleRevision: return "PropertyBatchStaleRevision";
+    case Error::InvalidGuardedDuplicateBatch: return "InvalidGuardedDuplicateBatch";
+    case Error::DuplicateBatchStaleRevision: return "DuplicateBatchStaleRevision";
     case Error::NoDocument: return "NoDocument";
     case Error::UnknownNode: return "UnknownNode";
     case Error::UnknownComponentType: return "UnknownComponentType";

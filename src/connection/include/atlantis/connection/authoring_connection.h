@@ -48,6 +48,7 @@ struct DocumentInfo {
   std::uint64_t nodeCount = 0;
   bool supportsGuardedPropertyTransactions = false;
   bool supportsGuardedTransformTransactions = false;
+  bool supportsGuardedDuplicateTransactions = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -132,10 +133,16 @@ struct RequireTransformBatchRevision {
 inline constexpr std::size_t kMaxGuardedTransformNodes = 64;
 inline constexpr std::size_t kMaxGuardedTransformWrites = 3 * kMaxGuardedTransformNodes;
 
+/// First command of a guarded append or suffix removal (ADR-0164).
+struct RequireDuplicateBatchRevision {
+  std::uint64_t expectedRevision = 0;
+};
+inline constexpr std::size_t kMaxGuardedDuplicateNodes = 64;
+
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
                  SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
-                 RequireTransformBatchRevision>;
+                 RequireTransformBatchRevision, RequireDuplicateBatchRevision>;
 
 // ---------------------------------------------------------------- events
 
@@ -303,6 +310,8 @@ enum class Error : std::uint8_t {
   InvalidSiblingMove,
   InvalidGuardedPropertyBatch,
   PropertyBatchStaleRevision,
+  InvalidGuardedDuplicateBatch,
+  DuplicateBatchStaleRevision,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;
