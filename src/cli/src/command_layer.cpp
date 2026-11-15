@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <random>
 #include <span>
@@ -2077,15 +2078,24 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     tickets = a->submitTransaction(std::move(commands));
   }
   const auto drained = a->drainFailures();
-  const bool validTicket = tickets.first.value != 0 && tickets.count == n;
+  const bool validTicket = tickets.first.value != 0 && tickets.count != 0 && tickets.count == n &&
+      tickets.count - 1 <= std::numeric_limits<std::uint64_t>::max() - tickets.first.value;
   const bool knownRefusal = validTicket && std::any_of(drained.begin(), drained.end(), [&](const auto& failure) {
     return tickets.contains(failure.ticket);
   });
   if (guarded && (!validTicket || (!knownRefusal && (!authoringEvents_ || a->applyStatus().isErr())))) {
-    if (duplicateGuard)
+    if (duplicateGuard) {
+      std::string message = "Guarded duplicate batch outcome unknown";
+      std::string_view separator = " for ";
+      for (const auto& node : batchTargets.asArray()) {
+        message += separator;
+        message += node.asString();
+        separator = ", ";
+      }
+      message += ". Reconnect and inspect the document with scene nodes, then confirm the prior request ended before retrying.";
       return failed(command, plainError("GuardedDuplicateBatchUnknown", ErrorCategory::Runtime,
-          "Guarded duplicate batch outcome unknown. Reconnect, inspect the indicated GUIDs with scene nodes "
-          "and confirm the prior request ended before retrying.", subject({{"nodes", std::move(batchTargets)}})));
+          std::move(message), subject({{"nodes", std::move(batchTargets)}})));
+    }
     std::string message = "Guarded property batch outcome unknown";
     if (!batchField.empty()) message += " for " + batchField;
     message += ". Reconnect and inspect the addressed properties before retrying.";

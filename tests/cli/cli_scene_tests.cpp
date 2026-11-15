@@ -11,6 +11,7 @@
 
 #include <fstream>
 #include <iterator>
+#include <limits>
 
 namespace {
 
@@ -20,6 +21,11 @@ using atlantis::cli::test::Cli;
 using atlantis::cli::test::kSceneSource;
 namespace json = atlantis::connection::json;
 namespace fs = std::filesystem;
+namespace ac = atlantis::connection::authoring;
+namespace access = atlantis::world::access;
+namespace connection = atlantis::connection;
+namespace schema = atlantis::schema;
+using atlantis::Result;
 
 constexpr std::string_view kNode1 = "52052052-0001-4052-8052-000000000001";
 constexpr std::string_view kNode3 = "52052052-0003-4052-8052-000000000003";
@@ -120,6 +126,75 @@ struct SceneCli {
   std::optional<atlantis::connection::authoring::ReloadError> reloadError;
   std::uint64_t generation = 0;
 };
+
+// Run the real transaction and alter only the ticket delivered to the CLI.
+class DuplicateReceiptFault final : public connection::AuthoringConnection {
+ public:
+  enum class Mode { Overflow, LastAtMax, Disconnect };
+
+  DuplicateReceiptFault(SceneCli& scene, Mode mode) : scene_(scene), mode_(mode) {
+    scene_.invocation->setAuthoring([this] { return this; });
+  }
+
+  std::optional<ac::DocumentInfo> document() const override { return inner().document(); }
+  Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override { return inner().listNodes(); }
+  Result<std::vector<schema::TypeId>, ac::Error> listComponents(const ac::EntityGuid& node) const override {
+    return inner().listComponents(node);
+  }
+  Result<ac::PropertyValue, ac::Error> getProperty(const ac::PropertyAddress& address) const override {
+    return inner().getProperty(address);
+  }
+  Result<std::optional<ac::EntityGuid>, ac::Error> activeCamera() const override { return inner().activeCamera(); }
+  std::span<const schema::TypeDescriptor> schema() const override { return inner().schema(); }
+  access::CommandTicket submit(ac::Command command) override { return inner().submit(std::move(command)); }
+  access::TransactionTicket submitTransaction(std::vector<ac::Command> commands) override {
+    auto receipt = inner().submitTransaction(std::move(commands));
+    REQUIRE(receipt.count == 2);
+    if (mode_ == Mode::Disconnect) {
+      scene_.disconnected = true;
+      return {};
+    }
+    constexpr auto maxTicket = std::numeric_limits<std::uint64_t>::max();
+    receipt.first.value = mode_ == Mode::Overflow ? maxTicket : maxTicket - 1;
+    return receipt;
+  }
+  connection::SubscriptionId subscribe(ac::EventFilter filter) override { return inner().subscribe(filter); }
+  Result<std::monostate, connection::ConnectionError> unsubscribe(connection::SubscriptionId id) override {
+    return inner().unsubscribe(id);
+  }
+  Result<std::vector<ac::Event>, connection::ConnectionError> drainEvents(connection::SubscriptionId id) override {
+    return inner().drainEvents(id);
+  }
+  std::vector<ac::CommandFailure> drainFailures() override {
+    return scene_.disconnected ? std::vector<ac::CommandFailure>{} : inner().drainFailures();
+  }
+  Result<std::monostate, ac::OpenError> open() override { return inner().open(); }
+  Result<std::monostate, ac::ApplyError> apply() override { return inner().apply(); }
+  Result<ac::ApplyReceipt, ac::ApplyError> applyTracked() override { return inner().applyTracked(); }
+  Result<ac::ApplySnapshot, ac::ApplyLookupError> applyStatus(std::optional<ac::ApplyId> id) const override {
+    return inner().applyStatus(id);
+  }
+  Result<std::monostate, ac::SaveError> save() override { return inner().save(); }
+  Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override { return inner().saveAs(name); }
+
+ private:
+  connection::AuthoringConnection& inner() const { return *scene_.authoring; }
+  SceneCli& scene_;
+  Mode mode_;
+};
+
+constexpr std::string_view kDuplicateTarget = "52052052-0099-4052-8052-000000000099";
+
+int runDuplicate(SceneCli& scene, std::uint64_t revision) {
+  auto script = scene.source;
+  script += ".tx";
+  std::ofstream(script, std::ios::binary) << "require-duplicate-revision " << revision << "\n"
+                                         << "create " << kDuplicateTarget << "\n";
+  const int code = scene.run("scene tx " + script.generic_string());
+  std::error_code ignored;
+  fs::remove(script, ignored);
+  return code;
+}
 
 [[nodiscard]] std::string member(const json::Value& value, std::string_view key) {
   const json::Value* found = value.find(key);
@@ -309,6 +384,57 @@ TEST_CASE("cli scene: guarded duplicate uses an ordinary transaction file", "[cl
   CHECK(scene.cli.out.str().find("DuplicateBatchStaleRevision") != std::string::npos);
   std::error_code ignored;
   fs::remove(script, ignored);
+}
+
+TEST_CASE("cli scene: guarded duplicate checks the entire ticket range", "[cli][scene]") {
+  SceneCli scene(true);
+  REQUIRE(scene.run("scene open") == 0);
+  const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+  const auto rows = scene.authoring->listNodes().value();
+  using Mode = DuplicateReceiptFault::Mode;
+  SECTION("overflow cannot hide a real refusal") {
+    DuplicateReceiptFault fault(scene, Mode::Overflow);
+    REQUIRE(runDuplicate(scene, revision - 1) != 0);
+    const auto reply = scene.envelope();
+    REQUIRE(reply.find("error"));
+    CHECK(member(*reply.find("error"), "code") == "\"GuardedDuplicateBatchUnknown\"");
+    CHECK(reply.find("result")->isNull());
+    CHECK(scene.authoring->applyStatus().value().currentDocumentRevision == revision);
+    CHECK(scene.authoring->listNodes().value() == rows);
+  }
+  SECTION("a range ending exactly at the maximum is valid") {
+    DuplicateReceiptFault fault(scene, Mode::LastAtMax);
+    REQUIRE(runDuplicate(scene, revision) == 0);
+    CHECK(member(*scene.envelope().find("result"), "committed") == "true");
+    CHECK(scene.authoring->applyStatus().value().currentDocumentRevision == revision + 1);
+  }
+}
+
+TEST_CASE("cli scene: guarded duplicate reports its target on disconnect after submit", "[cli][scene]") {
+  for (bool jsonOutput : {false, true}) {
+    CAPTURE(jsonOutput);
+    SceneCli scene(jsonOutput);
+    REQUIRE(scene.run("scene open") == 0);
+    const auto revision = scene.authoring->applyStatus().value().currentDocumentRevision.value();
+    DuplicateReceiptFault fault(scene, DuplicateReceiptFault::Mode::Disconnect);
+    REQUIRE(runDuplicate(scene, revision) == 3);
+    CHECK(scene.authoring->applyStatus().value().currentDocumentRevision == revision + 1);
+    CHECK(scene.authoring->listNodes().value().back().node == atlantis::asset_system::parseEntityGuid(kDuplicateTarget).value());
+    if (jsonOutput) {
+      const auto reply = scene.envelope();
+      REQUIRE(reply.find("error"));
+      const auto& error = *reply.find("error");
+      CHECK(member(error, "code") == "\"ConnectionLost\"");
+      CHECK(member(error, "category") == "\"connection\"");
+      REQUIRE(error.find("subject"));
+      CHECK(member(*error.find("subject"), "nodes") == "[\"" + std::string(kDuplicateTarget) + "\"]");
+    }
+    const auto message = jsonOutput ? scene.cli.out.str() : scene.cli.err.str();
+    CHECK(message.find("outcome unknown") != std::string::npos);
+    CHECK(message.find(kDuplicateTarget) != std::string::npos);
+    CHECK(message.find("scene nodes") != std::string::npos);
+    CHECK(message.find("confirm the prior request ended before retrying") != std::string::npos);
+  }
 }
 
 TEST_CASE("cli scene: move-sibling rotates occupied slots and reports one move event",

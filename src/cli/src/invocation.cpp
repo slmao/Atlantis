@@ -373,7 +373,8 @@ int Invocation::finish(Reply reply) {
       failure->text = "error: " + failure->message;
     }
     if (checked.error && (checked.error->code == "SiblingOrderUnknown" ||
-                          checked.error->code == "GuardedPropertyBatchUnknown")) {
+                          checked.error->code == "GuardedPropertyBatchUnknown" ||
+                          checked.error->code == "GuardedDuplicateBatchUnknown")) {
       if (!failure->subject.isObject()) failure->subject = Value::object();
       for (const auto& [key, value] : checked.error->subject.asObject()) failure->subject.set(key, value);
       failure->message += "; " + checked.error->message;
