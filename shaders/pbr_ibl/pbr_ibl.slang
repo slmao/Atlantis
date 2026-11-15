@@ -118,7 +118,13 @@ static const float kMinAlpha = 1e-3;
 static const float kMinDot = 1e-4;
 // Spec 0099 adds this binding only to the opaque occlusion variant.
 #ifdef ATLANTIS_OCCLUSION
+#ifdef ATLANTIS_METALLIC_ROUGHNESS
 [[vk::binding(6, 0)]]
+Sampler2D<float4> metallicRoughnessSampler;
+[[vk::binding(7, 0)]]
+#else
+[[vk::binding(6, 0)]]
+#endif
 Sampler2D<float4> occlusionSampler;
 #endif
 
@@ -257,6 +263,11 @@ float4 fragmentMain(Varying input) : SV_Target {
 
     float metallic = clamp(pushConstants.metallicFactor, 0.0, 1.0);
     float roughness = clamp(pushConstants.roughnessFactor, 0.0, 1.0);
+  #ifdef ATLANTIS_METALLIC_ROUGHNESS
+    float4 packed = metallicRoughnessSampler.Sample(input.uv);
+    metallic *= packed.b;
+    roughness *= packed.g;
+#endif
     float alpha = max(roughness * roughness, kMinAlpha);
     float3 F0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
     float3 diffuseColor = baseColor * (1.0 - metallic);

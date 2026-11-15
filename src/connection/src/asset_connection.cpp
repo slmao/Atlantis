@@ -217,7 +217,9 @@ bool basicMaterialValues(const MaterialValues& values) noexcept {
 }
 bool representsMaterialValues(const MaterialValues& values, MaterialRecipeVersion version) noexcept {
   if (version == MaterialRecipeVersion::Basic) return basicMaterialValues(values);
-  if (version == MaterialRecipeVersion::WithOcclusion) return true;
+  if (version == MaterialRecipeVersion::WithCombinedMaps) return true;
+  if (version == MaterialRecipeVersion::WithOcclusion)
+    return !values.occlusionMap || (!values.normalMap && !values.metallicRoughnessMap);
   return !values.occlusionMap &&
          (version == MaterialRecipeVersion::WithMetallicRoughness || !values.metallicRoughnessMap);
 }
@@ -228,8 +230,7 @@ bool validMaterialValues(const MaterialValues& values) noexcept {
          (!values.normalMap || *values.normalMap != asset_system::AssetGuid{}) &&
          (!values.emissiveTexture || *values.emissiveTexture != asset_system::AssetGuid{}) &&
          (!values.metallicRoughnessMap || *values.metallicRoughnessMap != asset_system::AssetGuid{}) &&
-         (!values.occlusionMap || (*values.occlusionMap != asset_system::AssetGuid{} &&
-                                  !values.normalMap && !values.metallicRoughnessMap)) &&
+         (!values.occlusionMap || *values.occlusionMap != asset_system::AssetGuid{}) &&
          std::ranges::all_of(values.emissiveFactor, [](float value) {
            return std::isfinite(value) && value >= 0.0f && value <= 65504.0f;
          });
@@ -264,7 +265,7 @@ json::Value encodeMaterialValues(const MaterialValues& values, MaterialRecipeVer
     out.set("emissiveTexture", slot(values.emissiveTexture));
     if (version >= MaterialRecipeVersion::WithMetallicRoughness)
       out.set("metallicRoughnessMap", slot(values.metallicRoughnessMap));
-    if (version == MaterialRecipeVersion::WithOcclusion)
+    if (version >= MaterialRecipeVersion::WithOcclusion)
       out.set("occlusionMap", slot(values.occlusionMap));
     auto factor = json::Value::array();
     for (float component : values.emissiveFactor) factor.push(json::Value::number(component));
@@ -275,7 +276,7 @@ json::Value encodeMaterialValues(const MaterialValues& values, MaterialRecipeVer
 std::optional<MaterialValues> decodeMaterialValues(const json::Value& value, MaterialRecipeVersion version) {
   const bool withMaps = version != MaterialRecipeVersion::Basic;
   const bool packed = version >= MaterialRecipeVersion::WithMetallicRoughness;
-  const bool occlusion = version == MaterialRecipeVersion::WithOcclusion;
+  const bool occlusion = version >= MaterialRecipeVersion::WithOcclusion;
   if (!value.isObject() || value.asObject().size() != (occlusion ? 9u : packed ? 8u : withMaps ? 7u : 4u)) return std::nullopt;
   const auto* texture = value.find("texture");
   const auto* color = value.find("color");
@@ -308,7 +309,7 @@ std::optional<MaterialValues> decodeMaterialValues(const json::Value& value, Mat
     for (std::size_t i = 0; i < out.emissiveFactor.size(); ++i)
       if (!factor->asArray()[i].toFloat(out.emissiveFactor[i])) return std::nullopt;
   }
-  if (!validMaterialValues(out)) return std::nullopt;
+  if (!validMaterialValues(out) || !representsMaterialValues(out, version)) return std::nullopt;
   return out;
 }
 json::Value encodeMaterialRecipe(const MaterialRecipe& recipe, MaterialRecipeVersion version) {

@@ -160,11 +160,18 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     fullContract = litTexturedExpectedDescriptorContract();
   } else if (expectedContract == "pbr-direct-lit") {
     fullContract = pbrDirectLitExpectedDescriptorContract();
-  } else if (expectedContract == "pbr-ibl" || expectedContract == "pbr-ibl-occlusion") {
-    fullContract = pbrIblExpectedDescriptorContract();
-    if (expectedContract == "pbr-ibl-occlusion") {
-      fullContract.push_back({.set = 0, .binding = 6,
-                              .type = atlantis::shader_system::DescriptorType::Sampler,
+  } else if (expectedContract == "pbr-ibl" || expectedContract == "pbr-ibl-occlusion" ||
+             expectedContract == "pbr-ibl-occlusion-packed" || expectedContract == "pbr-ibl-normal-map-occlusion" ||
+             expectedContract == "pbr-ibl-normal-map-occlusion-packed") {
+    const bool normal = expectedContract.starts_with("pbr-ibl-normal-map");
+    fullContract = normal ? pbrIblNormalMapExpectedDescriptorContract() : pbrIblExpectedDescriptorContract();
+    auto binding = normal ? 7u : 6u;
+    if (expectedContract.ends_with("-packed")) {
+      fullContract.push_back({.set = 0, .binding = binding++, .type = atlantis::shader_system::DescriptorType::Sampler,
+                              .stage = ShaderStage::Fragment});
+    }
+    if (expectedContract != "pbr-ibl") {
+      fullContract.push_back({.set = 0, .binding = binding, .type = atlantis::shader_system::DescriptorType::Sampler,
                               .stage = ShaderStage::Fragment});
     }
   } else if (expectedContract == "pbr-direct-lit-metallic-roughness" ||
@@ -299,6 +306,9 @@ void logDiagnostics(const std::string& toolLabel, const std::string& diagnostics
     // static_assert (src/renderer/src/pbr_anisotropic_push_constants.h).
     const bool isPbr = expectedContract == "pbr-direct-lit" || expectedContract == "pbr-ibl" ||
                        expectedContract == "pbr-ibl-occlusion" ||
+                       expectedContract == "pbr-ibl-occlusion-packed" ||
+                       expectedContract == "pbr-ibl-normal-map-occlusion" ||
+                       expectedContract == "pbr-ibl-normal-map-occlusion-packed" ||
                        expectedContract == "pbr-direct-lit-metallic-roughness" ||
                        expectedContract == "pbr-direct-lit-normal-map-metallic-roughness" ||
                        expectedContract == "pbr-direct-lit-normal-map" || expectedContract == "pbr-ibl-normal-map" ||
@@ -500,6 +510,9 @@ int compileAndValidate(const CompileAndValidateRequest& request) {
       validateCrossStageInterface(vertexResult->metadata, fragmentResult->metadata);
   if (validationOk && (request.expectedContract == "pbr-direct-lit" || request.expectedContract == "pbr-ibl" ||
                        request.expectedContract == "pbr-ibl-occlusion" ||
+                       request.expectedContract == "pbr-ibl-occlusion-packed" ||
+                       request.expectedContract == "pbr-ibl-normal-map-occlusion" ||
+                       request.expectedContract == "pbr-ibl-normal-map-occlusion-packed" ||
                        request.expectedContract == "pbr-direct-lit-metallic-roughness" ||
                        request.expectedContract == "pbr-direct-lit-normal-map-metallic-roughness" ||
                        request.expectedContract == "pbr-direct-lit-normal-map" ||

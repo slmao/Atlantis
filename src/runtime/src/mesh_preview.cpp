@@ -254,10 +254,18 @@ PreviewPngExecution renderPreviewPng(rhi::Device& device, const BootstrapConfig&
     if (!pbr)
       return readPair(config.vertexShaderSpirvPath, config.fragmentShaderSpirvPath, config.vertexShaderReflectionPath,
                       {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactColorOffsetBytes}}, stride);
+    if (studioIbl && pbr->normal)
+      return readPair(config.pbrIblNormalMapVertexShaderSpirvPath,
+                      pbr->packed ? config.pbrIblOcclusionNormalPackedFragmentShaderSpirvPath
+                                  : config.pbrIblOcclusionNormalFragmentShaderSpirvPath,
+                      config.pbrIblNormalMapVertexShaderReflectionPath,
+                      {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
+                       {2, as::kMeshArtifactNormalOffsetBytes}, {3, as::kMeshArtifactTangentOffsetBytes}}, stride);
     if (studioIbl)
       return readPair(config.pbrIblVertexShaderSpirvPath,
-                      pbr->occlusion ? config.pbrIblOcclusionFragmentShaderSpirvPath
-                                     : config.pbrIblFragmentShaderSpirvPath,
+                      pbr->packed ? config.pbrIblOcclusionPackedFragmentShaderSpirvPath
+                      : pbr->occlusion ? config.pbrIblOcclusionFragmentShaderSpirvPath
+                                       : config.pbrIblFragmentShaderSpirvPath,
                       config.pbrIblVertexShaderReflectionPath,
                       {{0, as::kMeshArtifactPositionOffsetBytes}, {1, as::kMeshArtifactUv0OffsetBytes},
                        {2, as::kMeshArtifactNormalOffsetBytes}}, stride);

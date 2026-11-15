@@ -87,7 +87,7 @@ internal static class SessionChecks
             }), cancellationToken: deadline.Token))
             {
                 var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-                check(tools.Count == 65, "production host discovers all 65 tools after connecting");
+                check(tools.Count == 68, "production host discovers all 68 tools after connecting");
                 CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
                 check(status.IsError != true, "production host forwards control through the SDK");
                 CallToolResult preview = await client.CallToolAsync("assets.preview_mesh",

@@ -342,11 +342,11 @@ public static partial class Codec
 
     private static bool Exact(JsonValue value, int count) => value.IsObject && value.Members.Count == count;
 
-    internal static bool ValidMaterialValues(A.MaterialValues values, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false) =>
+    internal static bool ValidMaterialValues(A.MaterialValues values, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false) =>
         !values.Texture.IsNil && Factor(values.Red) && Factor(values.Green) && Factor(values.Blue) &&
         Factor(values.Metallic) && Factor(values.Roughness) &&
         (withOcclusion ? values.OcclusionMap is null || (values.OcclusionMap is { IsNil: false } &&
-            values.NormalMap is null && values.MetallicRoughnessMap is null) : values.OcclusionMap is null) &&
+            (withCombinedMaps || (values.NormalMap is null && values.MetallicRoughnessMap is null))) : values.OcclusionMap is null) &&
         (withMetallicRoughness || withOcclusion ? values.MetallicRoughnessMap is not { IsNil: true } : values.MetallicRoughnessMap is null) &&
         (withMaps || withMetallicRoughness || withOcclusion ? values.NormalMap is not { IsNil: true } && values.EmissiveTexture is not { IsNil: true } &&
             EmissiveComponent(values.EmissiveRed) && EmissiveComponent(values.EmissiveGreen) &&
@@ -387,7 +387,7 @@ public static partial class Codec
         return slot is not null;
     }
 
-    private static A.MaterialValues? DecodeMaterialValues(JsonValue value, bool withMaps, bool withMetallicRoughness, bool withOcclusion)
+    private static A.MaterialValues? DecodeMaterialValues(JsonValue value, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps)
     {
         if (!Exact(value, withOcclusion ? 9 : withMetallicRoughness ? 8 : withMaps ? 7 : 4) || RebuildGuid(value.Find("texture")) is not AssetGuid texture ||
             value.Find("color") is not { IsArray: true } color || color.Items.Count != 3 ||
@@ -413,23 +413,23 @@ public static partial class Codec
             if (!MaterialSlot(value.Find("occlusionMap"), out var occlusion)) return null;
             values = values with { OcclusionMap = occlusion };
         }
-        return ValidMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion) ? values : null;
+        return ValidMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) ? values : null;
     }
 
     public static JsonValue EncodeMaterialRecipe(A.MaterialRecipe recipe, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false) => JsonValue.NewObject()
         .Set("values", EncodeMaterialValues(recipe.Values, withMaps, withMetallicRoughness, withOcclusion)).Set("filter", JsonValue.String(recipe.Filter.ToString()))
         .Set("address", JsonValue.String(recipe.Address.ToString()));
 
-    public static A.MaterialRecipe? DecodeMaterialRecipe(JsonValue value, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public static A.MaterialRecipe? DecodeMaterialRecipe(JsonValue value, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         if (!Exact(value, 3) || value.Find("values") is not JsonValue fields ||
-            DecodeMaterialValues(fields, withMaps, withMetallicRoughness, withOcclusion) is not A.MaterialValues values ||
+            DecodeMaterialValues(fields, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) is not A.MaterialValues values ||
             RebuildToken<A.MaterialFilter>(value.Find("filter")) is not A.MaterialFilter filter ||
             RebuildToken<A.MaterialAddress>(value.Find("address")) is not A.MaterialAddress address) return null;
         return new(values, filter, address);
     }
 
-    internal static JsonValue? EncodeMaterialSave(A.MaterialSave request, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
+    internal static JsonValue? EncodeMaterialSave(A.MaterialSave request, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         var target = request.Target;
         if (target.Name is string name && !ValidImportName(name) || target.Material is { IsNil: true }) return null;
@@ -443,7 +443,7 @@ public static partial class Codec
             case A.MaterialSave.Create create: values = create.Values; break;
             case A.MaterialSave.Copy copy: values = copy.Values; break;
             case A.MaterialSave.Edit edit:
-                if (edit.ActiveGeneration is { Value.IsNil: true } || !ValidMaterialValues(edit.Expected, withMaps, withMetallicRoughness, withOcclusion)) return null;
+                if (edit.ActiveGeneration is { Value.IsNil: true } || !ValidMaterialValues(edit.Expected, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps)) return null;
                 parameters.Set("activeGeneration", edit.ActiveGeneration is A.GenerationId generation
                     ? Encode(generation.Value) : JsonValue.Null());
                 parameters.Set("expected", EncodeMaterialValues(edit.Expected, withMaps, withMetallicRoughness, withOcclusion));
@@ -452,16 +452,16 @@ public static partial class Codec
             case A.MaterialSave.Resume: return parameters;
             default: return null;
         }
-        return ValidMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion) ? parameters.Set("values", EncodeMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion)) : null;
+        return ValidMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) ? parameters.Set("values", EncodeMaterialValues(values, withMaps, withMetallicRoughness, withOcclusion)) : null;
     }
 
-    public static A.MaterialSave? DecodeMaterialSave(JsonValue parameters, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public static A.MaterialSave? DecodeMaterialSave(JsonValue parameters, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         var mode = RebuildToken<A.MaterialMode>(parameters.Find("mode"));
         var name = parameters.Find("name");
         var material = RebuildGuid(parameters.Find("material"));
         var fields = parameters.Find("values");
-        var values = fields is null ? null : DecodeMaterialValues(fields, withMaps, withMetallicRoughness, withOcclusion);
+        var values = fields is null ? null : DecodeMaterialValues(fields, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps);
         if (mode == A.MaterialMode.Resume && Exact(parameters, 2) && material is AssetGuid resume)
             return new A.MaterialSave.Resume(resume);
         if (values is not A.MaterialValues replacement) return null;
@@ -472,7 +472,7 @@ public static partial class Codec
             return new A.MaterialSave.Copy(name.AsString, copy, replacement);
         if (mode == A.MaterialMode.Edit && Exact(parameters, 5) && material is AssetGuid edit &&
             DecodeMaterialGeneration(parameters.Find("activeGeneration"), out var generation) &&
-            parameters.Find("expected") is JsonValue expected && DecodeMaterialValues(expected, withMaps, withMetallicRoughness, withOcclusion) is A.MaterialValues original)
+            parameters.Find("expected") is JsonValue expected && DecodeMaterialValues(expected, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) is A.MaterialValues original)
             return new A.MaterialSave.Edit(edit, generation, original, replacement);
         return null;
     }
@@ -487,10 +487,10 @@ public static partial class Codec
         return true;
     }
 
-    public static A.MaterialRead? DecodeMaterialRead(JsonValue value, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public static A.MaterialRead? DecodeMaterialRead(JsonValue value, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         if (!Exact(value, 4) || RebuildGuid(value.Find("material")) is not AssetGuid material ||
-            value.Find("recipe") is not JsonValue recipe || DecodeMaterialRecipe(recipe, withMaps, withMetallicRoughness, withOcclusion) is not A.MaterialRecipe decoded ||
+            value.Find("recipe") is not JsonValue recipe || DecodeMaterialRecipe(recipe, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) is not A.MaterialRecipe decoded ||
             value.Find("editable") is not { IsBool: true } editable ||
             !DecodeMaterialGeneration(value.Find("activeGeneration"), out var generation)) return null;
         return new(material, decoded, editable.AsBool, generation);
@@ -550,10 +550,10 @@ public static partial class Codec
         return new(generation, decoded, repair.AsBool);
     }
 
-    public static A.MaterialDraftPreview? DecodeMaterialDraftPreview(JsonValue value, AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false)
+    public static A.MaterialDraftPreview? DecodeMaterialDraftPreview(JsonValue value, AssetGuid mesh, A.MaterialRecipe recipe, bool withMaps = false, bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
     {
         if (!Exact(value, 6) || RebuildGuid(value.Find("mesh")) != mesh ||
-            value.Find("recipe") is not JsonValue fields || DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness, withOcclusion) != recipe) return null;
+            value.Find("recipe") is not JsonValue fields || DecodeMaterialRecipe(fields, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps) != recipe) return null;
         var bytes = DecodePreviewPng(value);
         return bytes is null ? null : new(mesh, recipe, PreviewDimension, PreviewDimension, bytes);
     }

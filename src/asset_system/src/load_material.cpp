@@ -6,6 +6,7 @@
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/material_artifact.h>
 #include <atlantis/asset_system/material_metadata.h>
+#include <atlantis/asset_system/material_source.h>
 
 #include <fstream>
 #include <sstream>
@@ -55,7 +56,9 @@ atlantis::Result<MaterialAssetData, MaterialLoadError> decodeLoadedMaterial(
   const MaterialMetadata& metadata = metadataResult.value();
 
   if (expected && (expected->artifactSchema != artifact.schemaVersion ||
-                   expected->guid != metadata.assetGuid || expected->assetId != metadata.assetId)) {
+                   expected->guid != metadata.assetGuid || expected->assetId != metadata.assetId ||
+                   (artifact.schemaVersion == kCombinedMaterialArtifactSchemaVersion) !=
+                       (expected->sourceSchema == kCombinedMaterialSourceSchemaVersion))) {
     return ResultT::Err(MaterialLoadError::MetadataArtifactMismatch);
   }
   if (artifact.kind != metadata.kind || artifact.textureAsset != metadata.textureAsset) {

@@ -45,7 +45,8 @@ using atlantis::asset_system::CatalogAssetType;
     case CatalogAssetType::Material:
       return schema == atlantis::asset_system::kMaterialArtifactSchemaVersion ||
              schema == atlantis::asset_system::kMappedMaterialArtifactSchemaVersion ||
-             schema == atlantis::asset_system::kOcclusionMaterialArtifactSchemaVersion;
+             schema == atlantis::asset_system::kOcclusionMaterialArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kCombinedMaterialArtifactSchemaVersion;
     case CatalogAssetType::Scene:
       return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
     case CatalogAssetType::Environment:

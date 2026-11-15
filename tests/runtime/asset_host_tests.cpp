@@ -312,4 +312,14 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   REQUIRE(second->previewMaterialDraftWithOcclusion(mesh, draft).isOk());
   CHECK(previewStudio);
   CHECK(first->previewMaterialDraft(mesh, draft).error() == E::Busy);
+  host.beginServiceInterval();
+  missingMap.values.occlusionMap = guid("missing occlusion texture");
+  CHECK(first->previewMaterialDraftWithOcclusion(mesh, missingMap).error() == E::InvalidRecipe);
+  CHECK(second->previewMaterialDraftWithCombinedMaps(mesh, missingMap).error() == E::DependencyUnavailable);
+  CHECK(first->previewMesh(mesh).error() == ac::PreviewError::Busy);
+  CHECK(first->previewMeshMaterial(mesh, material).error() == ac::MeshMaterialPreviewError::Busy);
+  host.beginServiceInterval();
+  REQUIRE(first->previewMaterialDraftWithCombinedMaps(mesh, draft).isOk());
+  CHECK(previewStudio);
+  CHECK(second->previewMaterialDraftWithOcclusion(mesh, draft).error() == E::Busy);
 }

@@ -201,7 +201,7 @@ struct TextureImportStatus {
 using TextureImportStartResult = Result<TextureImportJob, ImportError>;
 using TextureImportStatusResult = Result<TextureImportStatus, ImportError>;
 
-enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps, WithMetallicRoughness, WithOcclusion };
+enum class MaterialRecipeVersion : std::uint8_t { Basic, WithMaps, WithMetallicRoughness, WithOcclusion, WithCombinedMaps };
 
 struct MaterialValues {
   asset_system::AssetGuid texture;
@@ -431,10 +431,16 @@ class AssetConnection {
   [[nodiscard]] virtual assets::MaterialReadResult materialReadWithOcclusion(const asset_system::AssetGuid&) const {
     return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
   }
+  [[nodiscard]] virtual assets::MaterialReadResult materialReadWithCombinedMaps(const asset_system::AssetGuid&) const {
+    return assets::MaterialReadResult::Err(assets::MaterialError::Unsupported);
+  }
   [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithMetallicRoughness(const assets::MaterialSave&) {
     return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
   }
   [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithOcclusion(const assets::MaterialSave&) {
+    return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialSaveResult materialSaveWithCombinedMaps(const assets::MaterialSave&) {
     return assets::MaterialSaveResult::Err(assets::MaterialError::Unsupported);
   }
   [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithMetallicRoughness(
@@ -442,6 +448,10 @@ class AssetConnection {
     return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }
   [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithOcclusion(
+      const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
+    return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MaterialDraftPreviewResult previewMaterialDraftWithCombinedMaps(
       const asset_system::AssetGuid&, const assets::MaterialRecipe&) {
     return assets::MaterialDraftPreviewResult::Err(assets::MaterialError::Unsupported);
   }

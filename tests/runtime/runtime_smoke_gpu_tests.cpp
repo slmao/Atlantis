@@ -167,9 +167,11 @@ struct RuntimeSmokeTestAccess {
       RuntimeApplication& app, const BootstrapConfig& config, const asset_system::AssetGuid& meshGuid,
       const asset_system::AssetGuid& materialGuid, const asset_system::StaticMeshAssetData& mesh,
       const asset_system::MaterialAssetData& material, const asset_system::TextureAssetData& texture,
-      const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive) {
+      const asset_system::TextureAssetData* normal, const asset_system::TextureAssetData* emissive,
+      const asset_system::TextureAssetData* packed, const asset_system::TextureAssetData* occlusion) {
     return app.previewMeshMaterialWithCompletion(config, meshGuid, materialGuid, mesh, material, texture,
-        [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); }, normal, emissive);
+        [](rhi::Device&) { return Result<std::monostate, rhi::SubmitError>::Err(rhi::SubmitError::DeviceLost); },
+        normal, emissive, packed, occlusion, true);
   }
 
   [[nodiscard]] static atlantis::world::access::RuntimeWorldAccess& worldAccess(RuntimeApplication& app) {
@@ -964,7 +966,11 @@ TEST_CASE("Runtime previews a nonresident mesh between ordinary window frames", 
 TEST_CASE("Runtime retains pair upload and draw resources through its terminal drain", "[runtime][gpu][preview-pair]") {
   namespace as = atlantis::asset_system;
   namespace ac = atlantis::connection::assets;
-  const BootstrapConfig config = buildSmokeConfig();
+  auto config = buildSmokeConfig();
+  config.previewStudioArtifactPath = config.environmentArtifactPath;
+  config.previewStudioMetadataPath = config.environmentMetadataPath;
+  config.pbrIblOcclusionNormalPackedFragmentShaderSpirvPath =
+      std::string(ATLANTIS_RUNTIME_PBR_IBL_NORMAL_MAP_SHADER_DIR) + "/pbr_ibl_normal_map_occlusion_packed.frag.spv";
   auto appResult = createRuntimeApplication(config);
   REQUIRE(appResult.isOk());
   RuntimeApplication app = std::move(appResult.value());
@@ -993,10 +999,26 @@ TEST_CASE("Runtime retains pair upload and draw resources through its terminal d
   mapped.normalMapTexture = normalRecord->assetId;
   mapped.emissiveTexture = as::assetKey(materialGuid);
   mapped.emissiveFactor[0] = 0.5f;
+  mapped.metallicRoughnessMap = as::assetKey(materialGuid) + 1;
+  mapped.occlusionMap = as::assetKey(materialGuid) + 2;
+  auto packed = normal.value();
+  packed.width = packed.height = packed.mipCount = 1;
+  packed.pixelBytes.assign({0, 128, 180, 255});
+  auto occlusion = packed;
+  occlusion.pixelBytes.assign({192, 0, 0, 255});
   app.runFrame();
   REQUIRE(app.shouldContinue());
+  auto badStudio = config;
+  badStudio.previewStudioArtifactPath.clear();
+  CHECK(app.previewMeshMaterial(badStudio, meshGuid, materialGuid, mesh.value(), mapped, texture.value(),
+                                &normal.value(), &texture.value(), &packed, &occlusion, true).isErr());
+  CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
+  CHECK(app.previewMeshMaterial(config, meshGuid, materialGuid, mesh.value(), mapped, texture.value(),
+                                &normal.value(), &texture.value(), &packed, &occlusion, true).isOk());
+  CHECK_FALSE(RuntimeSmokeTestAccess::hasIncompletePreview(app));
   const auto failed = RuntimeSmokeTestAccess::failPairPreviewCompletion(
-      app, config, meshGuid, materialGuid, mesh.value(), mapped, texture.value(), &normal.value(), &texture.value());
+      app, config, meshGuid, materialGuid, mesh.value(), mapped, texture.value(), &normal.value(), &texture.value(),
+      &packed, &occlusion);
   CHECK(failed.error() == ac::MeshMaterialPreviewError::Unavailable);
   CHECK_FALSE(app.shouldContinue());
   CHECK(RuntimeSmokeTestAccess::hasIncompletePreview(app));

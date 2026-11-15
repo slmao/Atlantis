@@ -833,10 +833,12 @@ constexpr std::uint32_t kOcclusionMaterialSourceSchema = 12;
   if (mapped) dependencies.push_back(*material->metallicRoughnessMapAsset);
   const bool occluded = material->occlusionMapAsset.has_value();
   if (occluded) dependencies.push_back(*material->occlusionMapAsset);
+  const bool combined = occluded && (mapped || material->normalMapAsset);
   if (!writeCookFragment(request, CatalogAssetType::Material, *guid, artifactPath, metadataPath,
-      occluded ? kOcclusionMaterialArtifactSchemaVersion :
+      combined ? kCombinedMaterialArtifactSchemaVersion : occluded ? kOcclusionMaterialArtifactSchemaVersion :
           mapped ? kMappedMaterialArtifactSchemaVersion : kMaterialArtifactSchemaVersion,
-      occluded ? kOcclusionMaterialSourceSchema : mapped ? kMappedMaterialSourceSchema : kMaterialSourceSchema, std::move(dependencies))) {
+      combined ? kCombinedMaterialSourceSchemaVersion : occluded ? kOcclusionMaterialSourceSchema :
+          mapped ? kMappedMaterialSourceSchema : kMaterialSourceSchema, std::move(dependencies))) {
     return 1;
   }
 

@@ -89,10 +89,14 @@ struct RealizedMaterialCandidate {
   std::unique_ptr<atlantis::rhi::SampledTexture> newEmissiveTexture;
   std::optional<std::unique_ptr<atlantis::rhi::Buffer>> emissiveStagingBuffer;
   std::vector<atlantis::rhi::SampledTextureUploadRegion> emissiveUploadRegions;
-  atlantis::asset_system::AssetId surfaceDataTextureAssetId = 0;
-  std::unique_ptr<atlantis::rhi::SampledTexture> newSurfaceDataTexture;
-  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> surfaceDataStagingBuffer;
-  std::vector<atlantis::rhi::SampledTextureUploadRegion> surfaceDataUploadRegions;
+  atlantis::asset_system::AssetId packedTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newPackedTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> packedStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> packedUploadRegions;
+  atlantis::asset_system::AssetId occlusionTextureAssetId = 0;
+  std::unique_ptr<atlantis::rhi::SampledTexture> newOcclusionTexture;
+  std::optional<std::unique_ptr<atlantis::rhi::Buffer>> occlusionStagingBuffer;
+  std::vector<atlantis::rhi::SampledTextureUploadRegion> occlusionUploadRegions;
   std::unique_ptr<atlantis::rhi::Sampler> sampler;                       // always new -- keyed per material
   std::unique_ptr<atlantis::renderer::Material> material;                // always new -- keyed per material
 };
@@ -328,7 +332,10 @@ struct RealizedMaterialCandidate {
     const atlantis::rhi::SampledTexture& defaultEmissiveTexture,
     const std::vector<std::uint32_t>& packedFragmentSpirv = {},
     const std::vector<std::uint32_t>& packedNormalFragmentSpirv = {},
-    const std::vector<std::uint32_t>& occlusionFragmentSpirv = {});
+    const std::vector<std::uint32_t>& occlusionFragmentSpirv = {},
+    const std::vector<std::uint32_t>& occlusionPackedFragmentSpirv = {},
+    const std::vector<std::uint32_t>& occlusionNormalFragmentSpirv = {},
+    const std::vector<std::uint32_t>& occlusionNormalPackedFragmentSpirv = {});
 
 // Compatibility overload for every no-environment composition root. It keeps
 // the pre-Spec-0025 call shape and selects pbr_direct_lit exactly.

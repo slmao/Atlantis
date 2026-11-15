@@ -458,3 +458,23 @@ TEST_CASE("PBR maps do not treat an in-band Unsupported as a legacy refusal", "[
   CHECK(client->assets().materialReadWithMaps(materialGuid()).error() == ca::MaterialError::Unavailable);
   CHECK(client->failure() == atlantis::remote::RemoteError::ProtocolError);
 }
+
+TEST_CASE("Combined map recipe preserves the original and refuses legacy projection", "[remote][assets][combined-maps]") {
+  constexpr auto combined = ca::MaterialRecipeVersion::WithCombinedMaps;
+  constexpr auto legacy = ca::MaterialRecipeVersion::WithOcclusion;
+  ca::MaterialValues bound{guid()};
+  bound.normalMap = materialGuid();
+  bound.metallicRoughnessMap = materialGuid();
+  bound.occlusionMap = guid();
+  CHECK(ca::validMaterialValues(bound));
+  CHECK(ca::representsMaterialValues(bound, combined));
+  CHECK_FALSE(ca::representsMaterialValues(bound, legacy));
+  const auto cleared = ca::MaterialValues{guid()};
+  const auto edit = ca::MaterialSave{ca::EditMaterial{materialGuid(), {}, bound, cleared}};
+  const auto wire = ca::encodeMaterialSave(edit, combined);
+  const auto read = ca::decodeMaterialSave(wire, combined);
+  REQUIRE(read);
+  CHECK(std::get<ca::EditMaterial>(*read).expected == bound);
+  CHECK(std::get<ca::EditMaterial>(*read).values == cleared);
+  CHECK_FALSE(ca::decodeMaterialSave(wire, legacy));
+}

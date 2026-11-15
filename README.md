@@ -398,6 +398,14 @@ in an IBL scene. CLI offers `assets occlusion-import <name> [--resume]`,
 `assets occlusion-import-status [<JobId>]` and the `-with-occlusion` material
 commands. [Spec 0099](docs/specs/0099-occlusion-texture.md).
 
+On a supporting Runtime, opaque PBR materials can bind occlusion,
+normal and metallic–roughness together. Occlusion affects indirect
+lighting in scenes configured for IBL. Clearing occlusion while a
+metallic–roughness map remains returns to direct lighting. Shared
+clients use the material commands with the `-with-combined-maps` suffix.
+Save, publish and restart explicitly into the returned generation.
+[Spec 0101](docs/specs/0101-combined-pbr-maps.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary
