@@ -196,6 +196,7 @@ public sealed class AssetSession
         if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
             throw _session.Malformed(method);
         if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+            Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
             Codec.IsLegacyAssetRebuildRefusal(response))
             return Outcome<T, A.ImportError>.Err(A.ImportError.Unsupported);
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)

@@ -115,7 +115,7 @@ std::optional<PixelBuffer> renderMeshMaterialPreviewPixels(std::string_view mate
 std::optional<PixelBuffer> renderPbrMapPreviewPixels(
     bool normal, bool emissive, float emission, float metallic, float roughness,
     std::optional<std::array<std::uint8_t, 4>> packed, bool studioIbl,
-    std::optional<std::array<std::uint8_t, 4>> occlusion) {
+    std::optional<std::array<std::uint8_t, 4>> occlusion, bool readLinearRed) {
   namespace as = asset_system;
   const auto meshId = as::parseAssetGuid(kPreviewQuadGuid).value();
   const auto materialId = as::parseAssetGuid(kPreviewDielectricGuid).value();
@@ -158,7 +158,13 @@ std::optional<PixelBuffer> renderPbrMapPreviewPixels(
     packedTexture.pixelBytes.assign(packed->begin(), packed->end());
   }
   return renderPreviewPixels([&](auto& device, const auto& config, auto& incomplete) {
-    return runtime::detail::renderMeshMaterialPreview(device, config, mesh.value(), recipe, base.value(),
+    auto captureConfig = config;
+    if (readLinearRed) {
+      captureConfig.outputTransformUnormVertexShaderSpirvPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.vert.spv";
+      captureConfig.outputTransformUnormVertexShaderReflectionPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.vert.refl.json";
+      captureConfig.outputTransformUnormFragmentShaderSpirvPath = ATLANTIS_PREVIEW_LINEAR_DIR "/preview_linear_red.frag.spv";
+    }
+    return runtime::detail::renderMeshMaterialPreview(device, captureConfig, mesh.value(), recipe, base.value(),
         meshId, materialId, incomplete, nullptr, nullptr, normal ? &normalTexture.value() : nullptr,
         emissive ? &lightMask : nullptr, packed ? &packedTexture : nullptr,
         occlusion ? &occlusionTexture : nullptr, studioIbl);

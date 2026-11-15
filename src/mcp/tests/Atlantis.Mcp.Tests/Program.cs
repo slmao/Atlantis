@@ -218,7 +218,7 @@ internal static partial class Program
 
     private static string FixtureEnvelope(string method, string result)
     {
-        if (method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness")
+        if (method is "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness" or "assets.previewMaterialDraftWithOcclusion")
             result = result.Insert(result.Length - 2, ",\"pngBase64\":\"" + Convert.ToBase64String(PreviewPng) + "\"");
         return "{\"id\":7,\"result\":" + result + "}";
     }
@@ -236,7 +236,7 @@ internal static partial class Program
 
     private static void CheckAssetResult(CallToolResult result, string method, string expected, string context)
     {
-        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial" or "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness")) { CheckForward(result, expected, context); return; }
+        if (method is not ("assets.previewMesh" or "assets.previewMeshMaterial" or "assets.previewMaterialDraft" or "assets.previewMaterialDraftWithMaps" or "assets.previewMaterialDraftWithMetallicRoughness" or "assets.previewMaterialDraftWithOcclusion")) { CheckForward(result, expected, context); return; }
         CheckPreviewImage(result, context);
         CheckForward(new CallToolResult { Content = [result.Content[0]], StructuredContent = result.StructuredContent },
             expected, context + " metadata without duplicated PNG");
@@ -294,6 +294,7 @@ internal static partial class Program
             ("assets.metallic_roughness_import", """{"name":"sample","mode":"Unknown"}"""),
             ("assets.metallic_roughness_import_status", """{"jobId":null}"""),
             ("assets.preview_material_draft_with_metallic_roughness", MapArgs),
+            ("assets.preview_material_draft_with_occlusion", PackedArgs),
             ("assets.rebuild", "{}"), ("assets.rebuild_status", """{"jobId":null}"""),
             ("world.list_entities", """{"extra":1}"""), ("world.get_property", "{}"),
             ("world.get_property", """{"address":null}"""), ("world.get_property", "{\"address\":" + SceneAddress + "}"),

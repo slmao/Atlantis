@@ -427,13 +427,16 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   const auto guid = [](const char* value) { return as::parseAssetGuid(value).value(); };
   const auto baseColor = guid("859a82af-a31e-457d-bc46-274c1a80ffba");
   const auto normal = guid("5e99757a-d524-4aaf-b665-0d308aa7ae99");
-  const auto packed = as::deriveAssetGuid(f.guid, "metallic-roughness");
-  const std::string packedKey = "texture_sample/metallic-roughness.png";
-  const fs::path packedPng = fs::path("assets/managed-texture-sources") / packedKey;
-  const fs::path packedArtifact = "assets/texture_sample.atex";
-  const fs::path packedMetadata = "assets/texture_sample.atex.meta.txt";
-  const fs::path packedEvidence = "assets/texture_sample.texture-evidence";
-  const fs::path packedStamp = "assets/texture_sample.stamp";
+  const bool useOcclusion = GENERATE(false, true);
+  CAPTURE(useOcclusion);
+  const std::string leaf = useOcclusion ? "occlusion.png" : "metallic-roughness.png";
+  const auto mappedTexture = as::deriveAssetGuid(f.guid, leaf);
+  const std::string mappedKey = "texture_sample/" + leaf;
+  const fs::path mappedPng = fs::path("assets/managed-texture-sources") / mappedKey;
+  const fs::path mappedArtifact = "assets/texture_sample.atex";
+  const fs::path mappedMetadata = "assets/texture_sample.atex.meta.txt";
+  const fs::path mappedEvidence = "assets/texture_sample.texture-evidence";
+  const fs::path mappedStamp = "assets/texture_sample.stamp";
   const auto project = f.base / "project";
   const auto registered = project / "registered/material_sample";
   const fs::path frozenSource = "assets/managed-material-sources/material_sample/source.material.txt";
@@ -450,8 +453,8 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   const bool resume = mode == Mode::Resume;
   std::optional<Stage> failureStage = Stage::Validation;
   fs::path destination;
-  const auto damagePng = [packedPng](const fs::path& dir) {
-    std::ofstream file(dir / packedPng, std::ios::binary | std::ios::app);
+  const auto damagePng = [mappedPng](const fs::path& dir) {
+    std::ofstream file(dir / mappedPng, std::ios::binary | std::ios::app);
     if (!(file << 'x')) throw std::runtime_error("Cannot damage the frozen PNG");
   };
   SECTION("unchanged prepared files can commit and publish") { failureStage.reset(); }
@@ -499,9 +502,9 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   REQUIRE(fs::create_directories(registered));
   const auto registeredTexture = project / "registered/texture_sample";
   REQUIRE(fs::create_directories(registeredTexture));
-  const as::CatalogSourceEntry textureEntry{packed, as::CatalogAssetType::Texture, as::CatalogRoot::Content, packedKey};
+  const as::CatalogSourceEntry textureEntry{mappedTexture, as::CatalogAssetType::Texture, as::CatalogRoot::Content, mappedKey};
   write(registeredTexture / "catalog-source.txt", as::serializeAssetCatalogSource({textureEntry}));
-  write(registeredTexture / "metallic-roughness.png", kLinearPngBytes);
+  write(registeredTexture / leaf, kLinearPngBytes);
   const auto canonicalProject = fs::canonical(project);
   write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
       f.published.generic_string() + "\",\"importProject\":\"" + canonicalProject.generic_string() + "\"}");
@@ -510,8 +513,12 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   write(registered / "catalog-source.txt", fragment);
   ca::MaterialRecipe original{{baseColor}};
   auto updated = original;
-  updated.values.normalMap = normal;
-  updated.values.metallicRoughnessMap = packed;
+  if (useOcclusion) {
+    updated.values.occlusionMap = mappedTexture;
+  } else {
+    updated.values.normalMap = normal;
+    updated.values.metallicRoughnessMap = mappedTexture;
+  }
   updated.values.emissiveTexture = baseColor;
   updated.values.emissiveFactor = {0.5f, 0.25f, 0.125f};
   const auto originalSource = as::serializeMaterialSource(material::source(original));
@@ -523,20 +530,20 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   const auto fixtureCatalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
   REQUIRE(fixtureCatalog.isOk());
   const auto inventory = "atlantis.asset-producers/1\tfixture\nmaterial\tcontent\t" + key + "\t" +
-      as::toString(f.guid) + "\tassets/material_sample/source.stamp\t-\ntexture\tcontent\t" + packedKey + "\t" +
-      as::toString(packed) + "\t" + packedStamp.generic_string() + "\t-\n";
+      as::toString(f.guid) + "\tassets/material_sample/source.stamp\t-\ntexture\tcontent\t" + mappedKey + "\t" +
+      as::toString(mappedTexture) + "\t" + mappedStamp.generic_string() + "\t-\n";
   for (const auto& root : {f.seed, f.staging}) {
     write(root / "assets/producers-Debug.txt", inventory);
     write(root / "assets/managed-project.txt", canonicalProject.generic_string());
     write(root / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({entry, textureEntry}));
-    REQUIRE(fs::create_directories((root / packedPng).parent_path()));
-    write(root / packedPng, kLinearPngBytes);
+    REQUIRE(fs::create_directories((root / mappedPng).parent_path()));
+    write(root / mappedPng, kLinearPngBytes);
     constexpr std::uint8_t rgba[] = {128, 128, 255, 255};
-    REQUIRE(as::cookTexture(rgba, 1, 1, 4, as::TextureColorSpace::Unorm, packedKey, packed,
-                            root / packedArtifact, root / packedMetadata).isOk());
-    f.runCmake(L"-Dpng=" + quoted(root / packedPng) + L" -Dartifact=" + quoted(root / packedArtifact) +
-               L" -Dmetadata=" + quoted(root / packedMetadata) + L" -Devidence=" + quoted(root / packedEvidence) +
-               L" -Dstamp=" + quoted(root / packedStamp) + L" -P " + quoted(ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE));
+    REQUIRE(as::cookTexture(rgba, 1, 1, 4, as::TextureColorSpace::Unorm, mappedKey, mappedTexture,
+                            root / mappedArtifact, root / mappedMetadata).isOk());
+    f.runCmake(L"-Dpng=" + quoted(root / mappedPng) + L" -Dartifact=" + quoted(root / mappedArtifact) +
+               L" -Dmetadata=" + quoted(root / mappedMetadata) + L" -Devidence=" + quoted(root / mappedEvidence) +
+               L" -Dstamp=" + quoted(root / mappedStamp) + L" -P " + quoted(ATLANTIS_REBUILD_TEST_TEXTURE_EVIDENCE));
     REQUIRE(fs::create_directories((root / frozenSource).parent_path()));
     const auto& recipe = root == f.seed ? original : updated;
     write(root / frozenSource, as::serializeMaterialSource(material::source(recipe)));
@@ -546,15 +553,15 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
     target.source = {as::CatalogRoot::Content, key, {}};
     target.artifact = artifact.generic_string();
     target.metadata = metadata.generic_string();
-    target.artifactSchema = recipe.values.metallicRoughnessMap ? as::kMappedMaterialArtifactSchemaVersion :
-                                                                as::kMaterialArtifactSchemaVersion;
+    target.artifactSchema = recipe.values.occlusionMap ? as::kOcclusionMaterialArtifactSchemaVersion :
+        recipe.values.metallicRoughnessMap ? as::kMappedMaterialArtifactSchemaVersion : as::kMaterialArtifactSchemaVersion;
     target.dependencies = {baseColor};
     if (recipe.values.normalMap) target.dependencies.push_back(normal);
-    if (recipe.values.metallicRoughnessMap) target.dependencies.push_back(packed);
+    if (recipe.values.metallicRoughnessMap || recipe.values.occlusionMap) target.dependencies.push_back(mappedTexture);
     std::vector records{std::move(target),
-        as::AssetCatalogRecord{packed, as::assetKey(packed), as::CatalogAssetType::Texture,
-            {as::CatalogRoot::Content, packedKey, {}}, packedArtifact.generic_string(),
-            packedMetadata.generic_string(), as::kTextureArtifactSchemaVersion, {}, "fixture/1", {}}};
+        as::AssetCatalogRecord{mappedTexture, as::assetKey(mappedTexture), as::CatalogAssetType::Texture,
+            {as::CatalogRoot::Content, mappedKey, {}}, mappedArtifact.generic_string(),
+            mappedMetadata.generic_string(), as::kTextureArtifactSchemaVersion, {}, "fixture/1", {}}};
     for (const auto& id : {baseColor, normal}) {
       const auto* texture = fixtureCatalog.value().find(id);
       REQUIRE(texture != nullptr);
@@ -567,7 +574,7 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
     }
     write(root / "asset_catalog.txt", as::serializeAssetCatalog(std::move(records)));
   }
-  write(registeredTexture / "source.sha256", read(f.seed / packedEvidence).substr(0, 65));
+  write(registeredTexture / "source.sha256", read(f.seed / mappedEvidence).substr(0, 65));
   auto other = updated;
   other.values.emissiveFactor[0] = 0.75f;
   write(f.staging / "other.material.txt", as::serializeMaterialSource(material::source(other)));
@@ -582,7 +589,7 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
       ca::MaterialSave{ca::EditMaterial{f.guid, {}, original.values, updated.values}};
   const auto accepted = opened.value()->saveMaterial(request,
       std::make_shared<const as::AssetCatalog>(std::move(catalog.value())),
-      ca::MaterialRecipeVersion::WithMetallicRoughness);
+      useOcclusion ? ca::MaterialRecipeVersion::WithOcclusion : ca::MaterialRecipeVersion::WithMetallicRoughness);
   REQUIRE(accepted.isOk());
   const auto limit = std::chrono::steady_clock::now() + 20s;
   auto status = opened.value()->materialStatus(accepted.value().id);
@@ -611,7 +618,7 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
     CHECK(read(registered / "source.material.txt") == (publicationFailed ? updatedSource : committedSource));
     if (publicationFailed) {
       REQUIRE(fs::is_directory(destination));
-      CHECK(read(destination / packedPng) == std::string(kLinearPngBytes) + 'x');
+      CHECK(read(destination / mappedPng) == std::string(kLinearPngBytes) + 'x');
       opened.value().reset();
       config.generation = ca::GenerationId{as::parseAssetGuid(destination.filename().string()).value()};
       const auto reopened = AssetRebuildHost::open(config);

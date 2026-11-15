@@ -140,7 +140,7 @@ public sealed class MainWindow : Window
     private InspectorSnapshot? _inspectorDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
-    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map", "Metallic-roughness" }, SelectedIndex = 0 };
+    private readonly ComboBox _textureKind = new() { ItemsSource = new[] { "Base color", "Normal map", "Metallic-roughness", "Occlusion map" }, SelectedIndex = 0 };
     private readonly SelectableTextBlock _textureFormat = EditorVisuals.Details("");
     private readonly TextBox _textureName = new() { PlaceholderText = "Inbox texture name" };
     private readonly Button _textureRegister = new() { Content = "Register", IsEnabled = false };

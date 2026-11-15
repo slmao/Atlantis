@@ -1,3 +1,12 @@
+atlantis_add_slang_shader_pair(
+  NAME preview_linear_red
+  SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/preview_linear_red.slang
+  VERTEX_ENTRY vertexMain
+  FRAGMENT_ENTRY fragmentMain
+  OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders
+  EXPECTED_CONTRACT output-transform-unorm
+)
+
 add_library(atlantis_image_regression_fixture STATIC
   minimal_cube_fixture.cpp
   mesh_preview_fixture.cpp
@@ -30,11 +39,12 @@ target_compile_definitions(atlantis_image_regression_fixture PRIVATE
   ATLANTIS_PREVIEW_PACKED_DIR="${ATLANTIS_pbr_direct_lit_metallic_roughness_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_NORMAL_PACKED_DIR="${ATLANTIS_pbr_direct_lit_normal_map_metallic_roughness_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_SHADOW_DIR="${ATLANTIS_shadow_cast_SHADER_OUTPUT_DIR}"
+  ATLANTIS_PREVIEW_LINEAR_DIR="${ATLANTIS_preview_linear_red_SHADER_OUTPUT_DIR}"
   ATLANTIS_PREVIEW_OUTPUT_DIR="${ATLANTIS_output_transform_unorm_SHADER_OUTPUT_DIR}")
 add_dependencies(atlantis_image_regression_fixture
   atlantis_asset_catalog minimal_mesh_shaders pbr_direct_lit_shaders pbr_direct_lit_normal_map_shaders
   pbr_direct_lit_metallic_roughness_shaders pbr_direct_lit_normal_map_metallic_roughness_shaders
-  shadow_cast_shaders output_transform_unorm_shaders pbr_ibl_shaders pbr_ibl_occlusion_shaders
+  shadow_cast_shaders output_transform_unorm_shaders pbr_ibl_shaders pbr_ibl_occlusion_shaders preview_linear_red_shaders
   ${ATLANTIS_ibl_studio_TARGET})
 
 target_include_directories(atlantis_image_regression_fixture
