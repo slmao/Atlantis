@@ -418,6 +418,14 @@ Shared clients can compose the same edit as a single authoring
 transaction using explicit node GUIDs, property and name writes, and
 remapped parent links. [Spec 0102](docs/specs/0102-duplicate-scene-subtree.md).
 
+### Reparent a scene subtree
+
+In a hand-authored scene, drag a selected Hierarchy row onto its new
+parent. A successful move keeps the subtree's world placement and is one
+Undo step. Use **Move to root** in Hierarchy Actions to clear the parent.
+If Runtime reload fails, repair the document and use Apply explicitly.
+[Spec 0103](docs/specs/0103-hierarchy-reparent.md).
+
 ### Save a hand-authored scene copy
 
 In a Windows development checkout on local NTFS, create the ordinary

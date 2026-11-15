@@ -92,7 +92,11 @@ public static class IntegrationTest
         IReadOnlyList<SchemaType> schema = document.Schema;
         bool imported = document.Info()?.Provenance == Provenance.Imported;
         List<EntityGuid> originalNodes = tree.Order.ToList();
-        if (!imported) DuplicateWireChecks(document, sessionPath, cli, work, Check);
+        if (!imported)
+        {
+            DuplicateWireChecks(document, sessionPath, cli, work, Check);
+            ReparentWireChecks(document, Check);
+        }
 
         void Settle()
         {
@@ -431,6 +435,41 @@ public static class IntegrationTest
 
     // ASCII JSON escapes avoid depending on the Windows CRT argv code page.
     private static string QuoteName(string name) => System.Text.Json.JsonSerializer.Serialize(name);
+
+    private static void ReparentWireChecks(RemoteAuthoringDocument document, Action<string, bool, string> check)
+    {
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var source = new EntityGuid(Guid.NewGuid());
+        var child = new EntityGuid(Guid.NewGuid());
+        var parent = new EntityGuid(Guid.NewGuid());
+        ulong start = (ulong)tree.Count;
+        List<Command> fixture = [new CreateNode(source, start, []), new CreateNode(child, start + 1, []),
+            new CreateNode(parent, start + 2, []), new SetParent(child, source)];
+        fixture.AddRange(TransformMath.WriteLocal(document.Schema, parent, new LocalTransform(new(2, 1, 4), new(0.3f, 0.1f, 0), new(2, 2, 2))));
+
+        bool Submit(IReadOnlyList<Command> commands)
+        {
+            TransactionTicket ticket = document.SubmitTransaction(commands);
+            var failures = document.DrainFailures();
+            foreach (Event e in document.DrainEvents()) tree.Apply(e, document);
+            return ticket.Count == (ulong)commands.Count && !failures.Any(failure => ticket.Contains(failure.Ticket));
+        }
+
+        if (!Submit(fixture)) throw new InvalidOperationException("reparent fixture was refused");
+        var order = tree.Order.ToArray();
+        var childWorld = TransformMath.WorldOf(document, tree, child);
+        ulong? before = document.ApplyStatus().Value?.CurrentDocumentRevision;
+        var edit = HierarchyCommands.PlanReparent(document, tree, source, null, parent).Edit ??
+            throw new InvalidOperationException("reparent fixture could not be planned");
+        bool moved = Submit(StructuralSteps.Commands(edit, true, document.Schema));
+        check("reparent: ordinary SDK submit and drain move a subtree in one revision",
+            moved && before.HasValue && document.ApplyStatus().Value?.CurrentDocumentRevision == before + 1 &&
+            tree.ParentOf(source) == parent && tree.ParentOf(child) == source && tree.Order.SequenceEqual(order) &&
+            TransformMath.WorldOf(document, tree, child).Zip(childWorld).All(pair => MathF.Abs(pair.First - pair.Second) < 1e-4f), "");
+        if (!Submit([new DestroyNode(child), new DestroyNode(source), new DestroyNode(parent)]))
+            throw new InvalidOperationException("reparent fixture cleanup was refused");
+    }
 
     private static void DuplicateWireChecks(RemoteAuthoringDocument document, string sessionPath, string cli,
                                             string work, Action<string, bool, string> check)

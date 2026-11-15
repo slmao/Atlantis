@@ -447,6 +447,68 @@ public static partial class Program
         Check(HierarchyCommands.Reparent(doc3, tree3, uniform, child).Refusal == "a node cannot be its own ancestor",
               "reparent: a node under its own descendant is refused");
 
+        // Spec 0103: guard the captured source and prove that the same recorded
+        // before/after values replay without changing descendant locals or document order.
+        var moves = new FakeDocument();
+        var original = moves.Add(20, null, Local(new(1, 3, 0), new(0.2f, 0, 0), new(2, 2, 2)));
+        var moving = moves.Add(21, original, Local(new(2, 0, 1), new(0, 0.3f, 0), new(-1, 2, 1)));
+        var descendant = moves.Add(22, moving, Local(new(0, 1, 1), new(0, 0, 0.4f), Vector3.One), FakeDocument.CameraType);
+        var destination = moves.Add(23, null, Local(new(3, 2, 0), new(0.1f, 0.2f, 0), new(0.5f, 0.5f, 0.5f)));
+        var singular = moves.Add(24, null, Local(Vector3.Zero, Vector3.Zero, new(1, 0, 1)));
+        var invalid = moves.Add(25, null, Local(Vector3.Zero, Vector3.Zero, new(float.NaN, 1, 1)));
+        moves.SetCamera(descendant);
+        var moveTree = new DocumentTree();
+        moveTree.Rebuild(moves);
+        var moveOrder = moveTree.Order.ToArray();
+        var priorWorld = TransformMath.WorldOf(moves, moveTree, moving);
+        var descendantWorld = TransformMath.WorldOf(moves, moveTree, descendant);
+        var descendantLocal = TransformMath.LocalOf(moves, descendant);
+        moves.Unreadable = new SceneAddress(original, FakeDocument.Transform, FakeDocument.ScaleField);
+        Check(HierarchyCommands.PlanReparent(moves, moveTree, moving, original, destination).Edit is null &&
+              moves.Submissions == 0, "reparent: unreadable ancestor has no default fallback");
+        moves.Unreadable = null;
+        Check(HierarchyCommands.PlanReparent(moves, moveTree, moving, null, destination).Edit is null &&
+              HierarchyCommands.PlanReparent(moves, moveTree, moving, original, original).Edit is null &&
+              HierarchyCommands.PlanReparent(moves, moveTree, moving, original, FakeDocument.Guid(99)).Edit is null &&
+              HierarchyCommands.PlanReparent(moves, moveTree, moving, original, singular).Edit is null &&
+              HierarchyCommands.PlanReparent(moves, moveTree, moving, original, invalid).Edit is null &&
+              moves.Submissions == 0, "reparent: stale source, same or missing parent, singular and non-finite inputs refuse");
+        var nearLock = moves.Add(26, null, Local(Vector3.Zero, new(MathF.PI / 2 - 0.0003f, 0.2f, 0.1f), Vector3.One));
+        var identityParent = moves.Add(27, null, LocalTransform.Identity);
+        moveTree.Rebuild(moves);
+        moveOrder = moveTree.Order.ToArray();
+        Check(HierarchyCommands.PlanReparent(moves, moveTree, nearLock, null, identityParent).Edit is null &&
+              moves.Submissions == 0, "reparent: an Euler recompose outside the world tolerance refuses");
+        var edit = HierarchyCommands.PlanReparent(moves, moveTree, moving, original, destination).Edit ??
+            throw new InvalidOperationException("no reparent plan for the reflected fixture");
+        var sharedBatch = StructuralSteps.Commands(edit, true, moves.Schema);
+        Check(sharedBatch.Count == 4 && sharedBatch[0] is SetParent && sharedBatch.Skip(1).All(command => command is SetProperty) &&
+              Submit(moves, moveTree, new Selection(), new EditPlan(edit.Label, sharedBatch)) is null &&
+              NearMatrix(TransformMath.WorldOf(moves, moveTree, moving), priorWorld, 1e-4f) &&
+              NearMatrix(TransformMath.WorldOf(moves, moveTree, descendant), descendantWorld, 1e-4f) &&
+              TransformMath.LocalOf(moves, descendant) == descendantLocal && moves.ActiveCamera() == descendant &&
+              moveTree.Order.SequenceEqual(moveOrder),
+              "reparent: one batch preserves reflected source, descendant placement and identities");
+        var moved = TransformMath.LocalOf(moves, moving);
+        var moveTarget = new AuthoringEditTarget(moves, moveTree, new ApplyController(moves));
+        var moveHistory = new EditHistory(moveTarget);
+        moveHistory.Record(edit, moveTarget.Committed(Array.Empty<CommandFailure>()));
+        moveHistory.Update();
+        Check(moveHistory.Undo() == HistoryResult.Submitted, "reparent: one Undo submits the recorded parent and local values");
+        foreach (Event e in moves.DrainEvents()) moveTree.Apply(e, moves);
+        moveHistory.Update();
+        Check(moveTree.ParentOf(moving) == original && moveHistory.Redo() == HistoryResult.Submitted,
+              "reparent: one Redo reuses the same identities");
+        foreach (Event e in moves.DrainEvents()) moveTree.Apply(e, moves);
+        moveHistory.Update();
+        Check(moveTree.ParentOf(moving) == destination && TransformMath.LocalOf(moves, moving) == moved,
+              "reparent: redo restores the exact recorded local Transform");
+        Submit(moves, moveTree, new Selection(), new EditPlan("external move",
+            [new SetProperty(edit.Writes[0].Address, PropertyValue.FromVec3(new Vector3(8, 7, 6)))]));
+        int settled = moves.Submissions;
+        Check(moveHistory.Undo() == HistoryResult.ChangedElsewhere && moves.Submissions == settled,
+              "reparent: an external local edit refuses Undo without a submission");
+
         // Euler extraction round-trips through the World's composition.
         bool roundTrips = true;
         foreach (Vector3 euler in new[] { new Vector3(0.3f, -1.2f, 2.0f), new Vector3(-0.7f, 2.9f, -0.4f), new Vector3(1.4f, 0.2f, 0.3f) })

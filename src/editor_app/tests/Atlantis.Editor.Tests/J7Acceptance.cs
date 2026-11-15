@@ -91,10 +91,14 @@ public static class J7Acceptance
             bool reparented = false;
             if (isCreated && subjects.Alternative is EntityGuid target && target != underCamera)
             {
-                int moves = ui.Notices;
-                worker.Reparent(node, target);
-                reparented = ui.Await(() => ui.Notices > moves, "the reparent answers", 30000) &&
-                             !ui.LatestNotice.Contains("refused");
+                bool answered = false;
+                var source = worker.CaptureReparent(node, underCamera, worker.MeshDocumentLifetime);
+                if (source is not null && worker.Reparent(source, target, drag: false, (verified, _) =>
+                    {
+                        reparented = verified;
+                        answered = true;
+                    }))
+                    ui.Await(() => answered, "the reparent answers", 30000);
                 if (reparented) destroyTarget = target;
             }
             Step("5a. create under the camera and reparent it", isCreated,
