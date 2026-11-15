@@ -305,7 +305,7 @@ public sealed class ApplyController
         if (_stopped) return;
         if (_inFlight)
         {
-            if (!_recovering) _again = true;
+            if (!_recovering && !_suspended) _again = true;
             return;
         }
         _recovering |= _suspended;
@@ -346,6 +346,22 @@ public sealed class ApplyController
     }
 
     public void LostApplyAcceptance() => Suspend(ApplyStatus.Unknown, "apply reply lost after document commit");
+
+    public void RequireExplicitApplyAfterUnverifiedSwap()
+    {
+        if (_stopped || _suspended) return;
+        const string reason = "sibling swap could not be verified";
+        _needGlobalStatus = true;
+        if (!_inFlight)
+        {
+            Suspend(ApplyStatus.NeedsApply, reason);
+            return;
+        }
+        // Keep polling the accepted snapshot, but drop any follow-up based on the uncertain revision.
+        _again = false;
+        _suspended = true;
+        _notice = reason;
+    }
     public void SetPaused(bool paused)
     {
         _paused = paused;
@@ -385,6 +401,11 @@ public sealed class ApplyController
         if (record.State == ApplyState.Superseded)
         { Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy); return; }
         Generation = record.Generation!.Value; Status = ApplyStatus.Applied;
+        if (_suspended)
+        {
+            Suspend(ApplyStatus.NeedsApply, _notice);
+            return;
+        }
         if (_recovering &&
             (view.Projection is not ApplyProjection projection || projection.Receipt != expected ||
              projection.Generation != Generation ||

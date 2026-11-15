@@ -1984,10 +1984,14 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
   const std::span<const TypeDescriptor> schema = a->schema();
-  const bool swapping = std::any_of(commands.begin(), commands.end(), [](const ac::Command& edit) {
-        return std::holds_alternative<ac::SwapAdjacentSiblings>(edit);
-      });
-  if (swapping && !a->supportsSiblingOrder())
+  std::optional<ac::SwapAdjacentSiblings> swap;
+  for (const auto& edit : commands) {
+    if (const auto* sibling = std::get_if<ac::SwapAdjacentSiblings>(&edit)) {
+      swap = *sibling;
+      break;
+    }
+  }
+  if (swap && !a->supportsSiblingOrder())
     return failed(command, plainError("SiblingOrderUnavailable", ErrorCategory::Refused,
                                       "this Runtime does not support sibling order changes"));
   const bool isTransaction = command == "scene tx";
@@ -1995,16 +1999,20 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   (void)a->drainFailures();
   const std::size_t n = commands.size();
   access::TransactionTicket tickets;
-  if (!swapping && !isTransaction && n == 1) {
+  if (!swap && !isTransaction && n == 1) {
     tickets = access::TransactionTicket{a->submit(std::move(commands.front())), 1};
   } else {
     tickets = a->submitTransaction(std::move(commands));
   }
   const auto drained = a->drainFailures();
-  if (swapping && (tickets.first.value == 0 || tickets.count != n || !authoringEvents_ ||
-                   a->applyStatus().isErr()))
+  if (swap && (tickets.first.value == 0 || tickets.count != n || !authoringEvents_ || a->applyStatus().isErr())) {
+    const std::string node = text::formatEntity(swap->node);
+    const std::string sibling = text::formatEntity(swap->sibling);
     return failed(command, plainError("SiblingOrderUnknown", ErrorCategory::Runtime,
-        "inspect both sibling rows with scene nodes before retrying"));
+        "sibling swap outcome unknown for " + node + " and " + sibling +
+        ". Reconnect and inspect their order with scene nodes before retrying.",
+        subject({{"node", Value::string(node)}, {"sibling", Value::string(sibling)}})));
+  }
   const auto ticketValue = [&] {
     if (isTransaction) {
       Value ticket = Value::object();

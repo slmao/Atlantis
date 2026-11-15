@@ -1084,6 +1084,7 @@ public sealed class EditorWorker : IDisposable
             var failures = document.DrainFailures();
             if (ticket.First.Value == 0 || ticket.Count != 1)
             {
+                _apply?.RequireExplicitApplyAfterUnverifiedSwap();
                 Observe();
                 return (false, unknown);
             }
@@ -1104,6 +1105,7 @@ public sealed class EditorWorker : IDisposable
             {
                 if (Current())
                 {
+                    _apply?.RequireExplicitApplyAfterUnverifiedSwap();
                     _history?.DiscardRedo();
                     _history?.InvalidatePositional();
                 }
@@ -1113,8 +1115,12 @@ public sealed class EditorWorker : IDisposable
         }
         catch (Exception e) when (e is GameplayException or IOException)
         {
-            if (sent && Current()) _history?.InvalidatePositional();
-            if (committed && Current()) _history?.DiscardRedo();
+            if (sent && Current())
+            {
+                _apply?.RequireExplicitApplyAfterUnverifiedSwap();
+                _history?.InvalidatePositional();
+                if (committed) _history?.DiscardRedo();
+            }
             return (false, committed ? unverified : sent ? unknown : $"Sibling swap refused: {e.Message}");
         }
     }
@@ -1435,9 +1441,10 @@ public sealed class EditorWorker : IDisposable
         PollDocument(session);
         long start = Stopwatch.GetTimestamp();
         long lifetime = MeshDocumentLifetime;
-        bool reordered = false;
+        bool siblingReplay = false, reordered = false;
         (bool Verified, string Notice) Replay(SiblingOrderEntry order, bool forward)
         {
+            siblingReplay = true;
             var settlement = SettleSiblingOrder(session, order, forward, lifetime);
             reordered = settlement.Verified;
             return settlement;
@@ -1448,11 +1455,16 @@ public sealed class EditorWorker : IDisposable
                                  _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
         if (result == HistoryResult.Submitted) _commitTicks = start;
         string notice = reordered ? ApplySiblingOrder(lifetime, _history.Notice) : _history.Notice;
+        if (siblingReplay)
+        {
+            PostHistory(lifetime);
+            _post(() => { if (lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice); });
+        }
         PollDocument(session);
-        PostHistory();
+        if (!siblingReplay) PostHistory();
         PostInspector();
         SendOverlay(session);
-        _post(() => EditNotice?.Invoke(notice));
+        if (!siblingReplay) _post(() => EditNotice?.Invoke(notice));
     }
 
     /// <summary>Plan 0068 M6 (Spec 0068 R9): the Runtime's transport, through RuntimeControl. Play resumes the frames
