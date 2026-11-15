@@ -130,18 +130,48 @@ public static class TransformMath
                                   new Vector3(trs.Scale[0], trs.Scale[1], trs.Scale[2]));
     }
 
+    private static IEnumerable<SceneAddress?> LocalAddresses(IReadOnlyList<SchemaType> schema, EntityGuid node)
+    {
+        yield return SceneSchema.AddressOf(schema, node, "Transform", "localPosition");
+        yield return SceneSchema.AddressOf(schema, node, "Transform", "localEulerAnglesRadians");
+        yield return SceneSchema.AddressOf(schema, node, "Transform", "localScale");
+    }
+
     /// <summary>The three SetProperty commands writing a node's local Transform.</summary>
     public static IReadOnlyList<Command> WriteLocal(IReadOnlyList<SchemaType> schema, EntityGuid node, LocalTransform t)
     {
-        var commands = new List<Command>();
-        foreach (var (field, value) in new[] { ("localPosition", t.Position), ("localEulerAnglesRadians", t.EulerRadians), ("localScale", t.Scale) })
+        Vector3[] values = [t.Position, t.EulerRadians, t.Scale];
+        return LocalAddresses(schema, node).Zip(values)
+            .Where(write => write.First.HasValue)
+            .Select(write => (Command)new SetProperty(write.First!.Value, PropertyValue.FromVec3(write.Second))).ToList();
+    }
+
+    internal static IReadOnlyDictionary<EntityGuid, LocalTransform>? ReadCommittedLocals(
+        IAuthoringDocument document, IReadOnlyList<EntityGuid> nodes)
+    {
+        var addresses = new List<SceneAddress>();
+        foreach (EntityGuid node in nodes)
         {
-            if (SceneSchema.AddressOf(schema, node, "Transform", field) is SceneAddress address)
+            foreach (SceneAddress? address in LocalAddresses(document.Schema, node))
             {
-                commands.Add(new SetProperty(address, PropertyValue.FromVec3(value)));
+                if (address is not SceneAddress field) return null;
+                addresses.Add(field);
             }
         }
-        return commands;
+        var properties = document.GetProperties(addresses);
+        if (properties.Count != addresses.Count) return null;
+        var values = new List<Vector3>(properties.Count);
+        foreach (PropertyValue? property in properties)
+        {
+            if (property is not PropertyValue value || !value.TryGetVec3(out Vector3 vector) ||
+                !float.IsFinite(vector.X) || !float.IsFinite(vector.Y) || !float.IsFinite(vector.Z))
+                return null;
+            values.Add(vector);
+        }
+        var locals = new Dictionary<EntityGuid, LocalTransform>(nodes.Count);
+        for (int i = 0; i < nodes.Count; ++i)
+            locals.Add(nodes[i], new LocalTransform(values[3 * i], values[3 * i + 1], values[3 * i + 2]));
+        return locals;
     }
 }
 
@@ -286,24 +316,67 @@ public static class HierarchyCommands
         return new EditPlan(nodes.Count == 1 ? "destroy node" : $"destroy {nodes.Count} nodes", commands);
     }
 
-    /// <summary>
-    /// The node under <paramref name="parent"/> (null: the root), keeping its world placement; refused when the node
-    /// would become its own ancestor, or when the placement cannot be kept (J4).
-    /// </summary>
+    public const string ReparentLabel = "reparent";
+
     public static EditPlan Reparent(IAuthoringDocument document, DocumentTree tree, EntityGuid node, EntityGuid? parent)
     {
-        const string label = "reparent";
-        if (tree.ParentOf(node) == parent) return EditPlan.Refused(label, "it is already there");
-        if (parent is EntityGuid p && tree.IsSelfOrAncestor(node, p)) return EditPlan.Refused(label, "a node cannot be its own ancestor");
-        float[] world = TransformMath.WorldOf(document, tree, node);
-        float[] parentWorld = parent is EntityGuid q ? TransformMath.WorldOf(document, tree, q) : WorldMatrices.Identity();
-        if (TransformMath.InverseAffine(parentWorld) is not float[] inverse) return EditPlan.Refused(label, "the new parent's world matrix is not invertible");
-        if (TransformMath.ToLocalTransform(WorldMatrices.Multiply(inverse, world)) is not LocalTransform local)
+        var (edit, refusal) = PlanReparent(document, tree, node, tree.ParentOf(node), parent);
+        return edit is null ? EditPlan.Refused(ReparentLabel, refusal!)
+            : new EditPlan(ReparentLabel, StructuralSteps.Commands(edit, forward: true, document.Schema));
+    }
+
+    /// <summary>Capture both the edit and its inverse from the same committed transform reads.</summary>
+    public static (EditTransaction? Edit, string? Refusal) PlanReparent(IAuthoringDocument document, DocumentTree tree,
+        EntityGuid node, EntityGuid? expectedParent, EntityGuid? parent)
+    {
+        if (!tree.Contains(node) || (parent is EntityGuid target && !tree.Contains(target)))
+            return (null, "the source or destination is gone");
+        if (tree.ParentOf(node) != expectedParent) return (null, "the source parent changed");
+        if (expectedParent == parent) return (null, "it is already there");
+        if (parent is EntityGuid p && tree.IsSelfOrAncestor(node, p)) return (null, "a node cannot be its own ancestor");
+
+        List<EntityGuid>? Chain(EntityGuid? start)
         {
-            return EditPlan.Refused(label, NotRepresentable);
+            var chain = new List<EntityGuid>();
+            var seen = new HashSet<EntityGuid>();
+            for (EntityGuid? current = start; current is EntityGuid id; current = tree.ParentOf(id))
+            {
+                if (!tree.Contains(id) || !seen.Add(id)) return null;
+                chain.Add(id);
+            }
+            return chain;
         }
-        var commands = new List<Command> { new SetParent(node, parent) };
-        commands.AddRange(TransformMath.WriteLocal(document.Schema, node, local));
-        return new EditPlan(label, commands);
+
+        var sourceChain = Chain(node);
+        var parentChain = Chain(parent);
+        if (sourceChain is null || parentChain is null) return (null, "the source or destination hierarchy is incomplete");
+        var locals = TransformMath.ReadCommittedLocals(document, sourceChain.Union(parentChain).ToList());
+        if (locals is null) return (null, "the source or destination has an unreadable Transform");
+
+        float[] ComposeWorld(List<EntityGuid> chain)
+        {
+            float[] world = WorldMatrices.Identity();
+            for (int i = chain.Count - 1; i >= 0; --i)
+                world = WorldMatrices.Multiply(world, WorldMatrices.ComposeLocal(locals[chain[i]]));
+            return world;
+        }
+
+        float[] world = ComposeWorld(sourceChain);
+        float[] parentWorld = ComposeWorld(parentChain);
+        if (world.Any(value => !float.IsFinite(value)) || parentWorld.Any(value => !float.IsFinite(value)))
+            return (null, NotRepresentable);
+        if (TransformMath.InverseAffine(parentWorld) is not float[] inverse)
+            return (null, "the new parent's world matrix is not invertible");
+        float[] localMatrix = WorldMatrices.Multiply(inverse, world);
+        if (localMatrix.Any(value => !float.IsFinite(value)) || TransformMath.ToLocalTransform(localMatrix) is not LocalTransform local)
+            return (null, NotRepresentable);
+        float[] recomposed = WorldMatrices.Multiply(parentWorld, WorldMatrices.ComposeLocal(local));
+        if (!recomposed.Zip(world).All(entry => MathF.Abs(entry.First - entry.Second) < 1e-4f))
+            return (null, NotRepresentable);
+
+        var before = TransformMath.WriteLocal(document.Schema, node, locals[node]).Cast<SetProperty>();
+        var after = TransformMath.WriteLocal(document.Schema, node, local).Cast<SetProperty>();
+        var writes = before.Zip(after).Select(pair => new PropertyWrite(pair.First.Address, pair.First.Value, pair.Second.Value)).ToList();
+        return (new EditTransaction(ReparentLabel, writes, [new ParentEntry(node, expectedParent, parent)]), null);
     }
 }

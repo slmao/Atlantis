@@ -1,9 +1,9 @@
 # Plan: Reparent a Scene Subtree by Drag and Drop
 
 - **Spec:** [Spec 0103](../specs/0103-hierarchy-reparent.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
+- **Joint Human Review:** Atlantis maintainer, 2026-11-15, [PR #371](https://github.com/slmao/Atlantis/pull/371) at `d05358ff`. Approved Spec/Plan 0103 and J1–J4 and authorized S2–S4 after human merge at `3de5d65f`.
 - **Related ADRs:** None new. See the Spec's Architectural Impact.
 
 ## Objective

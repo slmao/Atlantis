@@ -45,6 +45,8 @@ public static class J7Acceptance
                 throw new InvalidOperationException("the worker did not open the document: " + ui.Apply);
             using Subjects subjects = Subjects.Open(info);
             Step("0. the editor opens the document", true, ui.Opened!.NodeCount + " nodes (" + ui.Opened.Provenance + ")");
+            if (!subjects.Imported)
+                CheckStaleReparentTargets(info, worker, ui, Step);
 
             // 1. Pick: a ray at a Renderable selects it; the overlay (outline + Gizmo) follows.
             Vector3 eye = subjects.Eye;
@@ -91,10 +93,17 @@ public static class J7Acceptance
             bool reparented = false;
             if (isCreated && subjects.Alternative is EntityGuid target && target != underCamera)
             {
-                int moves = ui.Notices;
-                worker.Reparent(node, target);
-                reparented = ui.Await(() => ui.Notices > moves, "the reparent answers", 30000) &&
-                             !ui.LatestNotice.Contains("refused");
+                bool answered = false;
+                var rows = ui.Hierarchy;
+                var movingRow = rows.SingleOrDefault(row => row.Node == node && row.Parent == underCamera);
+                var targetRow = rows.SingleOrDefault(row => row.Node == target);
+                var source = movingRow is null ? null : worker.CaptureReparent(movingRow, worker.MeshDocumentLifetime);
+                if (source is not null && targetRow is not null && worker.Reparent(source, targetRow, drag: false, (verified, _) =>
+                    {
+                        reparented = verified;
+                        answered = true;
+                    }))
+                    ui.Await(() => answered, "the reparent answers", 30000);
                 if (reparented) destroyTarget = target;
             }
             Step("5a. create under the camera and reparent it", isCreated,
@@ -245,6 +254,63 @@ public static class J7Acceptance
         return -1.0f;
     }
 
+    private static void CheckStaleReparentTargets(SessionInfo info, EditorWorker worker, Ui ui,
+        Action<string, bool, string> step)
+    {
+        using var observer = RemoteSession.Connect(info);
+        var document = observer.Authoring;
+        var source = new EntityGuid(Guid.NewGuid());
+        var target = new EntityGuid(Guid.NewGuid());
+        ulong position = (ulong)document.ListNodes().Value!.Count;
+        var createTarget = new CreateNode(target, position + 1, []);
+        TransactionTicket Commit(params Command[] commands)
+        {
+            TransactionTicket ticket = document.SubmitTransaction(commands);
+            if (document.DrainFailures().Any(failure => ticket.Contains(failure.Ticket)))
+                throw new InvalidOperationException("stale reparent fixture refused");
+            return ticket;
+        }
+        HierarchyRow? FindRow(EntityGuid node) => ui.Hierarchy.FirstOrDefault(row => row.Node == node);
+
+        Commit(new CreateNode(source, position, []), createTarget);
+        if (!ui.Await(() => FindRow(source) is not null && FindRow(target) is not null, "original rows", 10000))
+            throw new InvalidOperationException("the original rows were not published");
+        HierarchyRow original = FindRow(target)!;
+        var buttonSource = worker.CaptureReparent(FindRow(source)!, worker.MeshDocumentLifetime);
+        int destroyed = ui.Destroyed;
+        TransactionTicket replaced = Commit(new DestroyNode(target), createTarget);
+        if (!ui.Await(() => ui.Destroyed > destroyed && FindRow(target) is { } row && !ReferenceEquals(original, row),
+                     "replacement row", 10000))
+            throw new InvalidOperationException("the replacement row was not published");
+
+        // The old displayed row and its replacement have equal labels and GUIDs.
+        // Hold the old row as if the view has not yet applied the published update.
+        var snapshot = document.ApplyStatus().Value;
+        int historyUpdates = ui.HistoryUpdates;
+        bool Refuses(ReparentSource? captured, bool drag)
+        {
+            if (captured is null) return false;
+            string? notice = null;
+            bool admitted = worker.Reparent(captured, original, drag, (verified, message) =>
+                Volatile.Write(ref notice, verified ? "" : message));
+            return admitted && ui.Await(() => Volatile.Read(ref notice) is not null, "stale target refusal", 10000) &&
+                   notice!.StartsWith("Reparent refused", StringComparison.Ordinal);
+        }
+
+        bool buttonRefused = Refuses(buttonSource, drag: false);
+        var dragSource = worker.CaptureReparent(FindRow(source)!, worker.MeshDocumentLifetime);
+        bool dragRefused = Refuses(dragSource, drag: true);
+        bool unchanged = snapshot == document.ApplyStatus().Value && historyUpdates == ui.HistoryUpdates &&
+                         document.ListNodes().Value!.Single(row => row.Node == source).Parent is null;
+        // Ticket allocation is shared across clients, including refused transactions.
+        TransactionTicket cleanup = Commit(new DestroyNode(source), new DestroyNode(target));
+        bool noSubmit = cleanup.First.Value == replaced.First.Value + replaced.Count;
+        step("0a. stale reparent target from a button is refused", buttonRefused && unchanged && noSubmit,
+             "same GUID; no transaction, history or apply");
+        step("0b. stale reparent target from drag and drop is refused", dragRefused && unchanged && noSubmit,
+             "same GUID; no transaction, history or apply");
+    }
+
     /// <summary>The UI side of the worker: the panels' event contract, recorded as posted.</summary>
     private sealed class Ui
     {
@@ -257,7 +323,8 @@ public static class J7Acceptance
         public InspectorSnapshot? Inspector;
         public GizmoSnapshot? Gizmo;
         public EntityGuid CreatedNode;
-        public int Notices, Commits, Picks, Created, Destroyed, Plays;
+        public volatile IReadOnlyList<HierarchyRow> Hierarchy = Array.Empty<HierarchyRow>();
+        public int Notices, Commits, Picks, Created, Destroyed, Plays, HistoryUpdates;
 
         public void Post(Action action) => action();  // inline: the panels' handlers run on the worker thread
 
@@ -272,6 +339,8 @@ public static class J7Acceptance
             worker.GizmoChanged += snapshot => Gizmo = snapshot;
             worker.NodeCreatedByEditor += created => { CreatedNode = created; Interlocked.Increment(ref Created); };
             worker.NodesDestroyed += _ => Interlocked.Increment(ref Destroyed);
+            worker.HierarchyChanged += (rows, _) => Hierarchy = rows;
+            worker.HistoryChanged += _ => Interlocked.Increment(ref HistoryUpdates);
             worker.CommitApplied += (ms, _) => { LastCommitMs = (float)ms; Interlocked.Increment(ref Commits); };
         }
 

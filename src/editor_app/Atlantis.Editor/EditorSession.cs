@@ -18,6 +18,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using Atlantis.Gameplay;
@@ -253,6 +254,22 @@ public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<Inspec
                                        IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable,
                                        string Name = "");
 
+public sealed class ReparentSource
+{
+    internal ReparentSource(HierarchyRow row, object incarnation, long lifetime)
+    {
+        Node = row.Node;
+        Parent = row.Parent;
+        Incarnation = incarnation;
+        Lifetime = lifetime;
+    }
+
+    public EntityGuid Node { get; }
+    public EntityGuid? Parent { get; }
+    public long Lifetime { get; }
+    internal object Incarnation { get; }
+}
+
 public sealed class EditorWorker : IDisposable
 {
     private readonly SessionInfo _info;
@@ -308,6 +325,11 @@ public sealed class EditorWorker : IDisposable
     private long _gizmoRecoveryEpoch;
     private (bool Apply, bool Preview)? _applyControls;
     private bool _gizmoActive;  // set and cleared by the worker, read under _lock
+    // One drag, pickup, or settling move per worker. State is protected by _lock.
+    private ReparentSource? _reparentSource;
+    private bool _reparentQueued;
+    // Published rows keep the identity of the node they depicted, including while the UI holds an old row.
+    private readonly ConditionalWeakTable<HierarchyRow, object> _hierarchyIncarnations = new();
     private long? _commitTicks;  // the last commit's start, until its Applied dates it
     private int _previewBatches;
 
@@ -963,9 +985,168 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
     public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
 
-    /// <summary>Plan 0068 M2 (J4): the node under <paramref name="parent"/>, keeping its world placement, or refused.</summary>
-    public void Reparent(EntityGuid node, EntityGuid? parent) =>
-        Edit(document => (HierarchyCommands.Reparent(document, _tree, node, parent), null));
+    public ReparentSource? CaptureReparent(HierarchyRow row, long lifetime)
+    {
+        lock (_lock)
+        {
+            if (_stopping || lifetime != MeshDocumentLifetime || _gizmoActive || _reparentQueued ||
+                !_hierarchyIncarnations.TryGetValue(row, out object? incarnation)) return null;
+            _reparentSource = new ReparentSource(row, incarnation, lifetime);
+            return _reparentSource;
+        }
+    }
+
+    public void CancelReparent(ReparentSource source)
+    {
+        lock (_lock)
+        {
+            if (ReferenceEquals(source, _reparentSource) && !_reparentQueued) _reparentSource = null;
+        }
+    }
+
+    public bool Reparent(ReparentSource source, HierarchyRow? target, bool drag, Action<bool, string> settled)
+    {
+        lock (_lock)
+        {
+            object? targetIncarnation = null;
+            if (_stopping || source.Lifetime != MeshDocumentLifetime || _gizmoActive ||
+                !ReferenceEquals(source, _reparentSource) || _reparentQueued ||
+                (target is not null && !_hierarchyIncarnations.TryGetValue(target, out targetIncarnation)))
+                return false;
+            _reparentQueued = true;
+            Enqueue(session => SettleReparent(session, source, target?.Node, targetIncarnation, drag, settled));
+            return true;
+        }
+    }
+
+    private void SettleReparent(RemoteSession session, ReparentSource source, EntityGuid? parent, object? targetIncarnation,
+        bool drag, Action<bool, string> settled)
+    {
+        long lifetime = source.Lifetime;
+        void Report(bool verified, string notice)
+        {
+            lock (_lock)
+            {
+                _reparentQueued = false;
+                _reparentSource = null;
+            }
+            _log.Write(notice);
+            _post(() => settled(verified, notice));
+        }
+        bool IsCurrent()
+        {
+            lock (_lock) return !_stopping && lifetime == MeshDocumentLifetime;
+        }
+        bool CanSubmit()
+        {
+            lock (_lock)
+                return !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive && _gizmo?.Dragging != true &&
+                       ReferenceEquals(source, _reparentSource) &&
+                       ReferenceEquals(source.Incarnation, _tree.IncarnationOf(source.Node)) &&
+                       (parent is not EntityGuid target || ReferenceEquals(targetIncarnation, _tree.IncarnationOf(target)));
+        }
+        if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
+        {
+            Report(false, "Reparent refused: the authoring document is unavailable.");
+            return;
+        }
+        bool Observe()
+        {
+            if (!IsCurrent() || document.ObserveEvents() is not { } events) return false;
+            PollDocument(session, events, pollApply: false);
+            return IsCurrent();
+        }
+        ulong? Revision()
+        {
+            var status = document.ApplyStatus();
+            return status.IsOk ? status.Value!.CurrentDocumentRevision : null;
+        }
+
+        string destination = parent?.ToString() ?? "scene root";
+        string known = $"Reparented {source.Node} under {destination}.";
+        const string unavailable = "Undo unavailable for this move. Apply the current document explicitly.";
+        string unknown = $"Reparent outcome unknown for {source.Node} under {destination}. Inspect the document before retrying.";
+        bool sent = false, committed = false, applying = false;
+        try
+        {
+            if (!CanSubmit() || Revision() is not ulong before || !Observe() || !CanSubmit() ||
+                document.Info() is not { } info || (drag && info.Provenance != Provenance.HandAuthored))
+            {
+                Report(false, "Reparent refused: the document, source, destination or gesture is unavailable.");
+                return;
+            }
+            var (edit, refusal) = HierarchyCommands.PlanReparent(document, _tree, source.Node, source.Parent, parent);
+            if (edit is null)
+            {
+                Report(false, "Reparent refused: " + refusal);
+                return;
+            }
+            var commands = StructuralSteps.Commands(edit, forward: true, document.Schema);
+            if (!Observe() || Revision() != before || !CanSubmit())
+            {
+                Report(false, "Reparent refused: the document or gesture changed. Retry explicitly.");
+                return;
+            }
+
+            sent = true;
+            TransactionTicket ticket = document.SubmitTransaction(commands);
+            var drained = document.DrainFailures();
+            if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
+                ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
+            {
+                Report(false, unknown);
+                return;
+            }
+            var failures = drained.Where(failure => ticket.Contains(failure.Ticket)).ToList();
+            if (failures.Count != 0)
+            {
+                Report(false, "Reparent refused: " + failures[0].Error);
+                return;
+            }
+            committed = true;
+            if (IsCurrent())
+            {
+                _history?.DiscardRedo();
+                PostHistory(lifetime);
+            }
+
+            ulong? observing = Revision();
+            if (!Observe() || observing is not ulong verifiedRevision || verifiedRevision <= before || verifiedRevision - before != 1 ||
+                !_tree.Contains(source.Node) || _tree.ParentOf(source.Node) != parent)
+            {
+                Report(false, $"{known} {unavailable}");
+                return;
+            }
+
+            var locals = document.GetProperties(edit.Writes.Select(write => write.Address).ToList());
+            if (!Observe() || Revision() != verifiedRevision || !IsCurrent() ||
+                locals.Count != edit.Writes.Count || !locals.Zip(edit.Writes).All(pair => pair.First == pair.Second.After) ||
+                _history is not { } history || _historyTarget is not { } target)
+            {
+                Report(false, $"{known} {unavailable}");
+                return;
+            }
+            history.Record(edit, target.Committed(failures));
+            history.Update();
+            PostHistory(lifetime);
+            applying = true;
+            apply.AfterLocalEdit(true);
+            Report(true, known);
+        }
+        catch (Exception e) when (e is GameplayException or IOException)
+        {
+            if (applying)
+            {
+                apply.LostApplyAcceptance();
+                string status = apply.Text;
+                _post(() => { if (lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(ApplyStatus.Unknown, status); });
+            }
+            Report(applying, committed ? $"{known} {(applying ? "Apply outcome unknown." : unavailable)}"
+                : sent ? unknown : "Reparent refused: " + e.Message);
+            throw;
+        }
+        PostApplyState(lifetime);
+    }
 
     /// <summary>
     /// Plan 0068 M2 (Spec 0068 R6): the overlay for the selection -- the node outlined, a translate Gizmo at its world
@@ -1407,6 +1588,8 @@ public sealed class EditorWorker : IDisposable
         _postedGeneration = _tree.Generation;
         _transformsChanged = false;
         IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema);
+        foreach (HierarchyRow row in rows)
+            _hierarchyIncarnations.Add(row, _tree.IncarnationOf(row.Node)!);
         _markers = SceneMarkers.Of(_document, _tree, _transforms);
         IReadOnlyList<Marker> markers = _markers;
         _post(() => HierarchyChanged?.Invoke(rows, markers));

@@ -129,7 +129,15 @@ public sealed class MainWindow : Window
     private readonly TextBlock _assetTitle = EditorVisuals.Ellipsis("Selected asset");
     private IReadOnlyList<HierarchyRow> _hierarchyRows = Array.Empty<HierarchyRow>();
     private IReadOnlyList<Marker> _markers = Array.Empty<Marker>();
-    private EntityGuid? _pickedUp;
+    private ReparentSource? _pickedUp;
+    private bool _reparentDocumentOpen;
+    private bool _reparentPending;
+    private long _reparentRequest;
+    private readonly TextBlock _reparentState = EditorVisuals.Secondary("");
+    private (HierarchyRow Row, PointerPressedEventArgs Event, Point Position)? _hierarchyPress;
+    private (ReparentSource Source, string Token)? _hierarchyDrag;
+    private ListBoxItem? _reparentTargetRow;
+    private static readonly DataFormat<string> ReparentDragFormat = DataFormat.CreateStringApplicationFormat("atlantis-reparent");
     private bool _syncingSelection;
     // Plan 0068 M4: the Gizmo's settings, the selected node's matrix and availability, and the grab in progress.
     private readonly ComboBox _gizmoMode = new() { ItemsSource = new[] { "Move", "Rotate", "Scale" }, SelectedIndex = 0, MinWidth = 80 };
@@ -316,6 +324,13 @@ public sealed class MainWindow : Window
             return label;
         });
         _entities.SelectionChanged += (_, _) => OnHierarchySelected();
+        _entities.AddHandler(PointerPressedEvent, OnHierarchyPointerPressed, RoutingStrategies.Tunnel);
+        _entities.AddHandler(PointerMovedEvent, OnHierarchyPointerMoved, RoutingStrategies.Tunnel);
+        _entities.AddHandler(PointerReleasedEvent, (_, _) => _hierarchyPress = null, RoutingStrategies.Tunnel);
+        DragDrop.SetAllowDrop(_entities, true);
+        DragDrop.AddDragOverHandler(_entities, OnHierarchyDragOver);
+        DragDrop.AddDragLeaveHandler(_entities, (_, _) => HighlightReparentTarget(null));
+        DragDrop.AddDropHandler(_entities, OnHierarchyDrop);
 
         Content = BuildWorkspace();
 
@@ -363,19 +378,21 @@ public sealed class MainWindow : Window
         };
         _toRoot.Click += (_, _) =>
         {
-            if (_selection.Node is EntityGuid node) _worker?.Reparent(node, null);
+            if (CaptureSelectedReparent() is { } source) SubmitReparent(source, null, drag: false);
         };
         _pickUp.Click += (_, _) =>
         {
-            _pickedUp = _selection.Node;
-            _moveHere.IsEnabled = _pickedUp is not null;
-            _editLine.Text = _pickedUp is EntityGuid n ? "picked up " + n.Value.ToString("N")[..8] + ": select its new parent" : "";
+            _pickedUp = CaptureSelectedReparent();
+            if (_pickedUp is { } source) ShowReparentState($"Picked up {source.Node}. Select its new parent.");
+            UpdateHierarchyActions();
         };
         _moveHere.Click += (_, _) =>
         {
-            if (_pickedUp is EntityGuid node && _selection.Node is EntityGuid parent) _worker?.Reparent(node, parent);
-            _pickedUp = null;
-            _moveHere.IsEnabled = false;
+            if (_pickedUp is { } source && SelectedReparentRow() is { } target)
+            {
+                _pickedUp = null;
+                SubmitReparent(source, target, drag: false);
+            }
         };
         _applySize.Click += (_, _) => ApplyViewportSize();
         _measureLatency.IsCheckedChanged += (_, _) =>
@@ -437,6 +454,9 @@ public sealed class MainWindow : Window
         actions.Margin = new Thickness(4, 0, 0, 0);
         AddDocked(hierarchy, hierarchyCommands, Avalonia.Controls.Dock.Top);
         AddDocked(hierarchy, structural, Avalonia.Controls.Dock.Top);
+        _reparentState.TextWrapping = TextWrapping.Wrap;
+        ShowReparentState("");
+        AddDocked(hierarchy, _reparentState, Avalonia.Controls.Dock.Top);
         AddDocked(hierarchy, sceneSection, Avalonia.Controls.Dock.Bottom);
         hierarchy.Children.Add(_entities);
         AutomationProperties.SetName(_entities, "Scene hierarchy");
@@ -597,6 +617,8 @@ public sealed class MainWindow : Window
         _materialSettlement.LoseReceipt();
         _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialSupportsCombinedMaps = null;
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
+        ResetReparent("");
+        _reparentDocumentOpen = false;
         _worker?.Stop();
         ++_saveAsRequest;
         _saveAsPending = false;
@@ -613,7 +635,7 @@ public sealed class MainWindow : Window
         ++_duplicateRequest;
         _duplicating = false;
         ShowDuplicateState("");
-        UpdateDuplicateButton();
+        UpdateHierarchyActions();
         ++_referenceLaunch;
         _referenceWindow?.Close(); _referenceWindow = null;
         _referenceBusy = false; _referenceSessionFailed = false;
@@ -661,6 +683,8 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             EndPreviewSession();
             _referenceSessionFailed = true;
+            ResetReparent(_reparentPending ? "Reparent interrupted. Inspect the document before retrying." : null);
+            _reparentDocumentOpen = false;
             LoseTextureConnection();
             _materialSettlement.LoseReceipt();
             _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialSupportsCombinedMaps = null; _materialPoll.Stop();
@@ -681,7 +705,7 @@ public sealed class MainWindow : Window
             if (_duplicating) ShowDuplicateState("Duplicate interrupted. Inspect the document on reconnect before retrying.");
             _duplicating = false;
             ++_duplicateRequest;
-            UpdateDuplicateButton();
+            UpdateHierarchyActions();
             _importPoll.Stop();
             if (_importPending || _importRunning)
                 _importState.Text = _importJob is ImportId importId ? $"Import {importId} outcome unknown." : "Import admission unknown.";
@@ -746,7 +770,7 @@ public sealed class MainWindow : Window
             _gizmoMode.IsEnabled = _gizmoSpace.IsEnabled = _gizmoSnap.IsEnabled = canPreview;
             if (!canPreview) { _gizmoGrab = null; _gizmoShown = null; }
             UpdateAddMeshButton();
-            UpdateDuplicateButton();
+            UpdateHierarchyActions();
         };
         // Plan 0068 M6 (Spec 0068 R9): the transport follows the play state -- Step runs a frame while paused.
         worker.PlayStateChanged += playing =>
@@ -759,9 +783,10 @@ public sealed class MainWindow : Window
         worker.DocumentOpened += info =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _reparentDocumentOpen = info is not null;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
             UpdateAddMeshButton();
-            UpdateDuplicateButton();
+            UpdateHierarchyActions();
             UpdateSaveAsButton();
             _applyLine.Text = info is null ? "authoring: no document" :
                 "authoring: " + info.NodeCount + " nodes (" + info.Provenance + (info.Provenance == Atlantis.Gameplay.Authoring.Provenance.Imported ? ", edits apply but cannot be saved" : "") + ")";
@@ -771,6 +796,8 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
+            ResetReparent(_reparentPending || _pickedUp is not null || _hierarchyDrag is not null
+                ? "Scene reopened. Inspect the document before retrying the move." : null);
             if (_saveAsPending)
             {
                 ++_saveAsRequest;
@@ -784,12 +811,17 @@ public sealed class MainWindow : Window
             if (_duplicating) ShowDuplicateState("Scene reopened. Inspect the document before retrying.");
             ++_duplicateRequest;
             _duplicating = false;
-            UpdateDuplicateButton();
+            UpdateHierarchyActions();
         };
         worker.NodesDestroyed += nodes =>
         {
-            if (ReferenceEquals(_worker, worker) && _selection.Node is EntityGuid s && nodes.Contains(s))
-                SetSelection(null, true);
+            if (!ReferenceEquals(_worker, worker)) return;
+            if (_selection.Node is EntityGuid s && nodes.Contains(s)) SetSelection(null, true);
+            if (!_reparentPending && (_pickedUp ?? _hierarchyDrag?.Source) is { } source && nodes.Contains(source.Node))
+            {
+                ResetReparent("Reparent cancelled: the source was deleted.");
+                UpdateHierarchyActions();
+            }
         };
         worker.NodeCreatedByEditor += node => SetSelection(node, true);
         worker.CameraAcked += ack =>
@@ -968,7 +1000,7 @@ public sealed class MainWindow : Window
                 if (handles is null || Gizmo.Grab(handles, directions, camera, mode, new Vector2(e.X, e.Y)) is not GizmoGrab grab) return false;
                 _gizmoGrab = grab;
                 UpdateAddMeshButton();
-                UpdateDuplicateButton();
+                UpdateHierarchyActions();
                 _gizmoGrabMode = mode;
                 _pressed = null;
                 _worker.BeginGizmoDrag(grab.Axis);
@@ -982,7 +1014,7 @@ public sealed class MainWindow : Window
                 _worker?.EndGizmoDrag(Gizmo.DragAmount(_gizmoGrabMode, grab, new Vector2(e.X, e.Y)), e.ArrivalTicks);
                 _gizmoGrab = null;
                 UpdateAddMeshButton();
-                UpdateDuplicateButton();
+                UpdateHierarchyActions();
                 return true;
             default:
                 return false;
@@ -1114,7 +1146,7 @@ public sealed class MainWindow : Window
             _syncingSelection = false;
         }
         _worker?.ShowSelection(node);
-        UpdateDuplicateButton();
+        UpdateHierarchyActions();
     }
 
     private void OnHierarchySelected()
@@ -1124,10 +1156,10 @@ public sealed class MainWindow : Window
         if (node == _selection.Node) return;
         _selection.Select(node);
         _worker?.ShowSelection(node);
-        UpdateDuplicateButton();
+        UpdateHierarchyActions();
     }
 
-    private void UpdateDuplicateButton()
+    private void UpdateHierarchyActions()
     {
         string? reason = _worker is null || _referenceSessionFailed ? "Connect to an authoring session."
             : !_canAddMeshToDocument ? "Open a hand-authored scene to duplicate nodes."
@@ -1138,6 +1170,10 @@ public sealed class MainWindow : Window
                 : null;
         _duplicate.IsEnabled = reason is null;
         ToolTip.SetTip(_duplicate, reason);
+        bool canCapture = CanCaptureReparent(drag: false) && SelectedReparentRow() is not null;
+        _pickUp.IsEnabled = canCapture;
+        _toRoot.IsEnabled = canCapture && SelectedReparentRow()?.Parent is not null;
+        _moveHere.IsEnabled = canCapture && _pickedUp is { } pickup && _selection.Node != pickup.Node;
     }
 
     private void ShowDuplicateState(string notice)
@@ -1154,7 +1190,7 @@ public sealed class MainWindow : Window
         ulong selection = _selection.Generation;
         _duplicating = true;
         ShowDuplicateState("Duplicating subtree…");
-        UpdateDuplicateButton();
+        UpdateHierarchyActions();
         worker.DuplicateSubtree(source, lifetime, (node, notice) =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || request != _duplicateRequest ||
@@ -1164,8 +1200,153 @@ public sealed class MainWindow : Window
             if (_selection.Generation == selection && node is EntityGuid created &&
                 _hierarchyRows.Any(row => row.Node == created))
                 SetSelection(created, true);
-            UpdateDuplicateButton();
+            UpdateHierarchyActions();
         });
+    }
+
+    private bool CanCaptureReparent(bool drag) =>
+        _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen &&
+        (!drag || _canAddMeshToDocument) && !_reparentPending && _gizmoGrab is null;
+
+    private HierarchyRow? SelectedReparentRow() =>
+        _entities.SelectedItem is HierarchyRow row && row.Node == _selection.Node ? row : null;
+
+    private ReparentSource? CaptureSelectedReparent()
+    {
+        if (!CanCaptureReparent(drag: false) || SelectedReparentRow() is not { } row) return null;
+        _pickedUp = null;
+        return _worker?.CaptureReparent(row, _meshDocumentLifetime);
+    }
+
+    private static ListBoxItem? HierarchyItem(object? source) =>
+        source is ListBoxItem item ? item : (source as Visual)?.FindAncestorOfType<ListBoxItem>();
+
+    private void OnHierarchyPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _hierarchyPress = null;
+        if (CanCaptureReparent(drag: true) && e.GetCurrentPoint(_entities).Properties.IsLeftButtonPressed &&
+            HierarchyItem(e.Source)?.DataContext is HierarchyRow row)
+            _hierarchyPress = (row, e, e.GetPosition(_entities));
+    }
+
+    private async void OnHierarchyPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_hierarchyPress is not { } press) return;
+        if (e.Pointer != press.Event.Pointer || !e.GetCurrentPoint(_entities).Properties.IsLeftButtonPressed)
+        {
+            _hierarchyPress = null;
+            return;
+        }
+        var displacement = e.GetPosition(_entities) - press.Position;
+        if (Math.Max(Math.Abs(displacement.X), Math.Abs(displacement.Y)) < 5) return;
+        _hierarchyPress = null;
+        if (!CanCaptureReparent(drag: true) || !Equals(SelectedReparentRow(), press.Row) || _worker is not { } worker ||
+            worker.CaptureReparent(press.Row, _meshDocumentLifetime) is not { } source) return;
+
+        _pickedUp = null;
+        string token = Guid.NewGuid().ToString("N");
+        _hierarchyDrag = (source, token);
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.Create(ReparentDragFormat, token));
+        try
+        {
+            await DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Move);
+        }
+        finally
+        {
+            worker.CancelReparent(source);
+            if (_hierarchyDrag?.Source == source)
+            {
+                _hierarchyDrag = null;
+                HighlightReparentTarget(null);
+                UpdateHierarchyActions();
+            }
+        }
+    }
+
+    private ListBoxItem? ReparentDropTarget(DragEventArgs e)
+    {
+        if (_hierarchyDrag is not { } drag || !CanCaptureReparent(drag: true) ||
+            drag.Source.Lifetime != _worker?.MeshDocumentLifetime ||
+            e.DataTransfer.TryGetValue(ReparentDragFormat) != drag.Token ||
+            HierarchyItem(e.Source) is not { DataContext: HierarchyRow target } item ||
+            target.Node == drag.Source.Parent || !_hierarchyRows.Any(row => row.Node == drag.Source.Node))
+            return null;
+        for (HierarchyRow? current = target; current is not null;)
+        {
+            if (current.Node == drag.Source.Node) return null;
+            current = current.Parent is EntityGuid parent ? _hierarchyRows.FirstOrDefault(row => row.Node == parent) : null;
+        }
+        return item;
+    }
+
+    private void HighlightReparentTarget(ListBoxItem? item)
+    {
+        if (ReferenceEquals(_reparentTargetRow, item)) return;
+        _reparentTargetRow?.ClearValue(TemplatedControl.BackgroundProperty);
+        _reparentTargetRow?.ClearValue(TemplatedControl.BorderBrushProperty);
+        _reparentTargetRow?.ClearValue(TemplatedControl.BorderThicknessProperty);
+        _reparentTargetRow = item;
+        if (item is null) return;
+        item.Background = EditorVisuals.Selected;
+        item.BorderBrush = EditorVisuals.Focus;
+        item.BorderThickness = new Thickness(1);
+    }
+
+    private void OnHierarchyDragOver(object? sender, DragEventArgs e)
+    {
+        var item = ReparentDropTarget(e);
+        HighlightReparentTarget(item);
+        e.DragEffects = item is null ? DragDropEffects.None : DragDropEffects.Move;
+        e.Handled = true;
+    }
+
+    private void OnHierarchyDrop(object? sender, DragEventArgs e)
+    {
+        bool submitted = ReparentDropTarget(e)?.DataContext is HierarchyRow target &&
+            _hierarchyDrag is { } drag && SubmitReparent(drag.Source, target, drag: true);
+        HighlightReparentTarget(null);
+        e.DragEffects = submitted ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    private void ShowReparentState(string notice)
+    {
+        _reparentState.Text = notice;
+        _reparentState.IsVisible = notice.Length > 0;
+    }
+
+    private void ResetReparent(string? notice)
+    {
+        if ((_pickedUp ?? _hierarchyDrag?.Source) is { } source) _worker?.CancelReparent(source);
+        ++_reparentRequest;
+        _reparentPending = false;
+        _pickedUp = null;
+        _hierarchyPress = null;
+        _hierarchyDrag = null;
+        HighlightReparentTarget(null);
+        if (notice is not null) ShowReparentState(notice);
+    }
+
+    private bool SubmitReparent(ReparentSource source, HierarchyRow? target, bool drag)
+    {
+        if (_worker is not { } worker || !CanCaptureReparent(drag)) return false;
+        long request = ++_reparentRequest;
+        ulong selection = _selection.Generation;
+        _reparentPending = worker.Reparent(source, target, drag, (verified, notice) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || request != _reparentRequest ||
+                source.Lifetime != worker.MeshDocumentLifetime) return;
+            _reparentPending = false;
+            ShowReparentState(notice);
+            if (verified && drag && _selection.Generation == selection && _hierarchyRows.Any(row => row.Node == source.Node))
+                SetSelection(source.Node, true);
+            UpdateHierarchyActions();
+        });
+        if (!_reparentPending) worker.CancelReparent(source);
+        ShowReparentState(_reparentPending ? "Moving subtree…" : "Reparent refused: the document, source or gesture changed.");
+        UpdateHierarchyActions();
+        return _reparentPending;
     }
 
     // Plan 0068 M3 (Spec 0068 R4): one typed editor per field -- a text box committed on Enter or loss of focus (one
@@ -2564,6 +2745,7 @@ public sealed class MainWindow : Window
 
     private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)
     {
+        HighlightReparentTarget(null);
         _hierarchyRows = rows;
         _markers = markers;
         _syncingSelection = true;
@@ -2576,7 +2758,7 @@ public sealed class MainWindow : Window
         {
             _syncingSelection = false;
         }
-        UpdateDuplicateButton();
+        UpdateHierarchyActions();
     }
 
     // The UI thread's responsiveness (P5 U2, input-queue coupling): the gaps between 16 ms timer ticks.
@@ -2614,6 +2796,7 @@ public sealed class MainWindow : Window
         _rebuildPoll.Stop();
         ++_referenceLaunch; _referenceWindow?.Close(); _referenceWindow = null;
         if (!_driving) WriteDragReport();  // a manual run's report (a driven run writes its own)
+        ResetReparent(null);
         _worker?.Dispose();
         _worker = null;
         if (_runtime is not null)
