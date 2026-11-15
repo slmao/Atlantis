@@ -20,16 +20,20 @@ and material schemas encode this restriction.
 
 1. **Keep two independent data-map bindings.** Retain existing ordinary,
    normal and packed-only routes, and the existing AO-only IBL route.
-   Add IBL fragment variants for AO with normal, AO with packed G/B and
-   AO with both. Reuse their existing without/with-normal vertex
-   layouts. Preserve current binding indices for the base and existing
-   resources. For the new IBL variants append packed G/B when present,
-   then AO, after the existing emissive sampler. AO with normal or AO
-   with packed G/B uses seven samplers. All three use eight. The
-   Vulkan backend must admit eight sampled bindings, memoize through
-   binding 8 and account for eight combined image samplers in its
-   descriptor pool sizing. Keep legacy layouts unchanged and validate
-   the reflected shader and Pipeline counts.
+   Add IBL fragment variants matched to the existing IBL vertex
+   layout for each row. The existing base, environment, DFG and shadow
+   bindings stay at 1–4. Binding 0 remains the uniform buffer.
+
+   | IBL variant | Normal | Emissive | Packed G/B | AO | Samplers |
+   | --- | --- | --- | --- | --- | --- |
+   | AO + normal | 5 | 6 | Absent | 7 | 7 |
+   | AO + packed G/B | Absent | 5 | 6 | 7 | 7 |
+   | AO + normal + packed G/B | 5 | 6 | 7 | 8 | 8 |
+
+   The Vulkan backend must admit eight sampled bindings, memoize through
+   binding 8 and size its descriptor pools for eight combined image
+   samplers per set. Keep legacy layouts unchanged. Check reflected
+   binding types, indices and Pipeline counts against the layouts above.
 
 2. **Keep one owner and a deterministic fallback.** Runtime realizes
    distinct packed and AO textures, uploads each through RenderGraph,
@@ -37,19 +41,22 @@ and material schemas encode this restriction.
    preview completion. Renderer owns the binding order. With a usable
    environment, AO coexistence selects the combined IBL path. With no
    environment the existing direct variant uses the currently bound
-   normal and packed maps. Clearing AO from a packed recipe returns to
-   the existing packed direct-lit routing. AO-bound cooked pairs and
-   drafts use fixed studio IBL in the existing bounded preview service.
-   Preserve admission, lifetime and lighting behavior for prior callers
-   and AO-free recipes. Release both sets of request-local resources
-   on the existing completion or terminal drain.
+   normal and packed maps. The direct path keeps the checked AO
+   dependency without an AO upload or descriptor bind. Clearing AO
+   from a packed recipe returns to the existing packed direct-lit
+   routing. AO-bound cooked pairs and drafts use fixed studio IBL in
+   the existing bounded preview service. A normal-bound studio request
+   uses the IBL normal-map vertex layout and tangent attribute even
+   when live IBL is disabled. Preserve prior caller and AO-free lighting.
+   Retire both request-owned maps and staging on confirmed completion
+   or the existing terminal drain.
 
 3. **Version coexistence at the material boundary.** Use material
    source v13, cooked artifact v12 and sidecar v12 only when AO and
    at least one of normal or packed G/B coexist. Keep the existing
-   fields and canonical order, with a dedicated packed G/B key and AO
-   key in that order. AO is required, the packed key is optional, and
-   the existing normal field remains independent. In the artifact,
+   fields and canonical order. Source and sidecar retain their existing
+   normal field and append the packed G/B field when present, followed
+   by the required AO field. In the artifact,
    keep the legacy prefix and append separate 64-bit asset keys in that
    order, using zero for absent packed G/B. Require AO and at least
    one of normal and packed G/B in this version. Validate version, keys

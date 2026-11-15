@@ -37,7 +37,8 @@ reopen paths.
 | `src/runtime/android/android_main.cpp`, `android/app/build.gradle` | Package and load the new Vulkan variants through the existing Android build. |
 | `src/connection/{include/atlantis/connection/asset_connection.h,src/asset_connection.cpp}`, `src/remote/src/remote_{client,server}.cpp`, `src/cli/src/{command_layer,invocation}.cpp`, `src/csharp/Atlantis.Gameplay/Remote/{AssetSession,AssetCodec}.cs`, `src/mcp/Atlantis.Mcp/{ToolRegistry,ToolSchemas}.cs` and owning public headers where signatures are declared | Versioned exact operations, compatibility and shared status. |
 | `src/editor_app/Atlantis.Editor/{MainWindow,EditorSession,MaterialEditorWindow}.cs`, `src/editor_app/Atlantis.Editor.Model/AssetBrowser.cs` | Capability, controls, preview intent and recovery. |
-| Existing material/asset fixtures in `tests/{asset_system,runtime,renderer,image_regression,remote,cli,csharp}/`, `tests/tools/asset_cooker/` and corresponding MCP and Editor asset tests | Codec, rendering, lifetime, cross-version and publishing regression coverage. Add only cases needed for the approved checklist. |
+| Existing material/asset fixtures in `tests/{asset_system,runtime,renderer,image_regression,remote,cli,csharp}/`, `tests/tools/asset_cooker/` and corresponding MCP and Editor asset tests | Codec, rendering, lifetime, cross-version and publishing regression coverage. |
+| Existing `tests/vulkan_backend/` descriptor pool growth and descriptor set revisit fixtures | Binding 8 memoization, reuse and pool growth. Add only cases needed for the approved checklist. |
 | `README.md`, `docs/architecture/remote_protocol.md`, `docs/specs/README.md` | Operator and shared method documentation and navigation. |
 
 0090 launcher sources, import role contracts and generation manifest
@@ -59,45 +60,62 @@ build is needed for both cross-version directions.
   malformed/mismatched source, catalog, artifact and sidecar, and
   role/format refusals. Verify separate slot keys, unique dependencies,
   0100's base/emissive alias, and canonical downgrade on clear.
-- [ ] **R2 — GPU.** Validate reflected seven- and eight-sampler layouts
-  and both vertex layouts. In fixed IBL headless captures compare
-  R=0, midrange and R=255 with other inputs fixed. Compare in linear
-  HDR to verify that the change is confined to diffuse plus specular
-  IBL. Exercise the normal direction, G/B and scalar interaction,
-  separately varied channels and unchanged direct/shadow/emissive
-  contributions. In no-IBL capture verify retained normal and packed
-  shading. Check neutral AO clear for AO plus normal and the documented
-  return to packed direct lighting for the packed case. Verify apply
-  reuse, one-slot changes and retirement of each texture separately.
+- [ ] **R2 — GPU.** Validate reflected seven- and eight-sampler layouts,
+  both vertex layouts and pool allocation and descriptor writes and
+  reuse through binding 8. In each fixed IBL combination compare R=0,
+  midrange and R=255 with all other inputs fixed. In linear HDR check
+  that the contribution above R=0 scales with R and is confined to
+  diffuse and specular IBL. Exercise the normal direction, G/B and
+  scalar interaction, ignored channels and unchanged direct/shadow/
+  emissive contributions. Compare no-IBL rendering with the matching
+  existing direct variant. Verify that clear from AO + normal at
+  R=255 restores the same normal IBL result. Clear from a packed
+  coexistence recipe must match the existing packed path for the same
+  remaining recipe, even with an IBL environment configured. Exercise
+  apply reuse and independent upload, pinning and retirement of both
+  data maps as references change.
 - [ ] **R3 — Clients and durable state.** Verify exact methods and
   echoes through CLI, native client, C# SDK, Editor and MCP. Exercise
-  old peer capability refusal and legacy Read/Copy/Edit/Resume
-  refusal on a supporting Runtime. Check compatible old active Read
-  while the registry is ahead, stale Edit, and full Resume without
-  source rewrite. Keep the original receipt or target when settlement
-  is unknown. Verify precommit mismatch leaves source and publication
-  unmodified and damaged uncertain destination is unconfirmed.
+  old-peer capability refusal and rejection of malformed replies or
+  wrong draft echoes. On a supporting Runtime check legacy Read,
+  Copy, Edit attempting Clear, and Resume against coexistence. Verify
+  an explicit combined-method Clear can publish a legacy compatible
+  recipe. Check compatible old active Read while the registry is ahead,
+  stale Edit, and full Resume without source rewrite. Keep the original
+  target and available receipt when settlement is unknown and check
+  that no write replays. Cover Edit and Resume on a mixed recipe.
+  Change a frozen AO or packed input or remove its catalog edge before
+  commit and verify no source write or publication. Verify an intact
+  uncertain destination is confirmed and a damaged destination remains
+  unconfirmed.
   Compare activation of the previous compatible generation and the
   new coexistence generation on the same older build/profile. Check
   a build from coexistence source fails on the old cooker. Reuse
   applicable frozen evidence fault injection and client conformance
   where the relevant source and fixtures match.
 - [ ] **R4 — Preview and Windows.** Compare cooked and draft under the
-  same bounded studio lighting for all three combinations. Verify
-  old routes, one shared permit, absent/bad inputs, late responses,
-  release after confirmed completion and retention through terminal
-  failure. On Windows 100%, use standard and compact windows. Check
+  same bounded studio lighting for all three combinations, including
+  the tangent layout when live IBL is disabled. Verify old routes and
+  competing requests across clients and preview methods. Include an
+  admitted early failure that spends the permit, bad inputs and late
+  success or error. Verify both maps and studio scratch release after
+  success or pre-submit refusal and remain retained through a fatal
+  submit/completion failure until terminal drain. On Windows 100%,
+  use standard and compact windows. Check
   independent select/replace/clear, clear and no-IBL guidance, failure
   and restart states, focus, draft/history isolation and native captures.
 - [ ] **R5 — Both reopens.** On a real Windows desktop, run the
   Spec sequence using a disposable IBL scene such as
-  `ibl_material_demo`. Retain the combined reference captures,
-  configs and startup arguments. Compare the published
-  named-generation scene and the real 0090 child Editor at matched
-  inputs. Verify the complete recipe and edges in both cooked catalogs,
-  unchanged ordinary and both Save As file hashes and material source
-  digest, with no rebind or Apply. Verify the child uses committed
-  managed sources and its independent `saved_scene` build.
+  `ibl_material_demo`. Record the configured and resolved environment,
+  named generation, 0090 configure/build inputs and child command line.
+  Compare fixed-camera captures from both Editors while their independent
+  Runtime sessions are attached. Use the R2 same-route R=255 control to
+  establish the AO effect separately from the packed routing transition.
+  Verify the complete recipe and edges in both cooked catalogs, distinct
+  scene GUIDs, unchanged hashes of the ordinary and both Save As files,
+  and the same material source digest, with no rebind or Apply. Verify the
+  child builds from the same committed managed root and launches its
+  independent `saved_scene` without generation or profile flags.
 - [ ] **Gates.** Run affected builds, suites, Vulkan Validation Layers
   and impacted image/golden checks. Keep the old goldens and obtain
   human review for any changed golden. Verify Android build and

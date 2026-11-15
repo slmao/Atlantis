@@ -86,24 +86,28 @@ texture import/status, material status and the mesh/material GUID pair
 preview request. Validate both proposed values and the full original
 recipe for Edit and Copy. Resume validates the committed recipe. Older
 operations on a supporting Runtime keep their current representable
-subsets and refuse coexistence before mutation. An old active view does
-not authorize a write when the registry is ahead. Preserve existing
-stale generation and expected-value checks. A supporting client may
-fall back after the exact correlated unknown-method refusal on an old
-peer, using a representable workflow. An unsupported recipe, malformed
-reply or transport failure gives no basis for automatic write replay.
+subsets and refuse coexistence before mutation. Clearing a coexistence
+binding still requires the new Save method if the original recipe uses
+coexistence. A compatible active read may succeed while the registry is
+ahead. Preserve the existing stale generation, expected-value and
+ahead write guards. Discover support with Read and allow a representable
+legacy workflow only after the exact correlated unknown-method refusal
+for a well-formed request. Re-evaluate capability on reconnect. Writes
+remain explicit and never downgrade or replay automatically.
 
 Retain the existing writer, job and activation boundaries. Before
 committing or accepting an uncertain publication destination, validate
 the frozen producer inventory, source bytes, complete recipe and all
-texture evidence and dependency edges. After confirmed source commit,
-Resume uses the committed recipe, bytes and GUID. A lost, mismatched or
-evicted receipt leaves the outcome unknown until the known target and
-durable state are reconciled. Publication leaves the current catalog,
-scene projection, document and undo history intact until explicit
-restart. Verify an older Runtime refuses activation of the coexistence
-generation while retaining the ability to use a compatible older
-snapshot.
+texture evidence and dependency edges. A precommit mismatch leaves the
+registry unchanged. After confirmed source commit, Resume uses the
+committed recipe, bytes and GUID. Retain the target and any known job ID
+on an unknown outcome. A latest receipt is only a lead until correlated
+to that attempt. A lost, mismatched or evicted receipt leaves the
+outcome unknown until settlement and durable state are reconciled.
+Publication leaves the current catalog, scene projection, document and
+undo history intact until explicit restart. Verify an older Runtime
+refuses activation of the coexistence generation while retaining the
+ability to use a compatible older snapshot.
 
 ### R4. Editor and combination preview
 
@@ -118,12 +122,17 @@ For an AO-bound cooked pair or combined draft, use the bounded fixed
 0099 studio IBL, independently of the live scene. For AO-free input,
 keep the existing cooked routing and use the WithOcclusion draft
 lighting rules on the new method. Keep earlier methods' lighting.
-Use one retained catalog, one shared admission permit,
-request-owned mutable GPU resources, the existing byte and image
-bounds and the same terminal drain. A completion must match the current
-connection, snapshot, preview surface, mesh and material or full draft
-revision. Late results and failures cannot restore invalidated images.
-Preview leaves the live scene, resources and undo history isolated.
+Reuse the 0099 permit shared with geometry and cooked pair previews.
+The first eligible request consumes it before catalog or file work even
+if that work fails. Resolve every input from one retained catalog.
+Keep the existing per-input byte bounds and PNG bounds. Use
+request-owned mutable textures, descriptors and staging, releasing
+all pre-submit scratch on refusal and retaining the submitted bundle
+through confirmed completion or terminal drain. A completion must
+match the current connection, snapshot, surface, mesh, and material or
+full draft revision and method version. A changed input invalidates the
+old image immediately. Preview leaves the live scene, caches and history
+isolated.
 
 ### R5. Named generation and independent reopen
 
@@ -140,10 +149,12 @@ root in [0090 Saved Scenes](0090-saved-scene-build-open.md). Explicitly
 Build and Open in a second Editor. The child launches with
 `--scene saved_scene` and cooks the committed inputs through the saved
 slot without generation or profile override. Both sessions show the
-same material effect with matched camera, IBL and output size. Keep
-distinct scene identities, unchanged scene source hashes, stable node
-and material references and the same texture GUIDs and complete material
-recipe. Neither reopening needs a rebind or Apply.
+same material effect with matched camera, IBL and output size. Confirm
+both actually use the configured environment. Keep distinct scene
+identities, unchanged scene source hashes, stable node and material
+references and the same texture GUIDs and complete material recipe.
+The ordinary Editor stays attached to its named-generation Runtime
+while the second Editor runs. Neither reopening needs a rebind or Apply.
 
 ## Architectural Impact
 
