@@ -223,6 +223,11 @@ native `RuntimeControl::viewportNavigation`, C# `session.Control.ViewportNavigat
 and MCP `control.viewport_navigation` share the camera and bounds read.
 Pass no GUIDs for the active scene camera alone.
 
+Use **Viewport → Guides** to show the perspective frustum, point radius or
+directional emission of one selected node. The lines show committed authoring
+values. The Apply status describes the Runtime image. The toggle starts Off in
+each Editor window. [Spec 0111](docs/specs/0111-viewport-camera-light-guides.md).
+
 Cooked asset discovery (Spec 0081) uses the same shared interface in every client:
 `atlantis --session <file> asset list` or `asset get <guid>` (`--json` for structured
 output); C++ `gameplay::Assets(session.assets())`; C#

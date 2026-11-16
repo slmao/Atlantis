@@ -1,11 +1,11 @@
 # Spec 0111 — Viewport Camera and Light Guides
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-17
 - **Related Plan:** [Plan 0111](../plans/0111-viewport-camera-light-guides.md)
-- **Approval:** Pending joint human review.
-- **Related ADRs:** None proposed. See Architectural Impact.
+- **Approval:** Maintainer approved revision `a8222bf0` on 2026-11-17. See Plan 0111.
+- **Related ADRs:** No new ADR. See Architectural Impact.
 
 ## Summary
 

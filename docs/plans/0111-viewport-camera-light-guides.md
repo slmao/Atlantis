@@ -1,9 +1,9 @@
 # Plan 0111 — Viewport Camera and Light Guides
 
 - **Spec:** [Spec 0111](../specs/0111-viewport-camera-light-guides.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of both documents and authorization for S2–S4.
+- **Joint Human Review:** The maintainer approved J1–J4 and Spec/Plan 0111 at [PR #387](https://github.com/slmao/Atlantis/pull/387), revision `a8222bf0`, on 2026-11-17. No new ADR is needed. S2–S4 were authorized after manual design merge `bd56e5bc`.
 
 ## Objective
 
