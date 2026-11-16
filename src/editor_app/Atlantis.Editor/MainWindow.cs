@@ -269,6 +269,8 @@ public sealed class MainWindow : Window
     private readonly Button _measureFrames = new() { Content = "Measure 600 frames" };
     private readonly Button _resetCamera = new() { Content = "Scene camera" };
     private readonly Button _focusSelection = new() { Content = "Focus selection" };
+    private readonly ToggleButton _viewportGuides = new() { Content = "Guides", IsEnabled = false };
+    private string? _navigationFeedback, _guideFeedback;
     private readonly ComboBox _viewDirection = new()
     {
         ItemsSource = new[] { "View direction", "Front", "Back", "Left", "Right", "Top", "Bottom" }, SelectedIndex = 0,
@@ -384,7 +386,12 @@ public sealed class MainWindow : Window
         };
         _resetCamera.Click += (_, _) => ResetToSceneCamera();
         _focusSelection.Click += (_, _) => NavigateViewport(_selection.Nodes);
-        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed })
+        _viewportGuides.IsCheckedChanged += (_, _) =>
+        {
+            ShowGuideFeedback(null);
+            _worker?.SetGuidesEnabled(_viewportGuides.IsChecked == true);
+        };
+        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides })
             control.AddHandler(PointerPressedEvent, (_, _) =>
             {
                 _navigationToolbarPointer = true;
@@ -527,7 +534,7 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
-            _viewDirection, _navigationSpeed, _resetCamera);
+            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
@@ -540,6 +547,8 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(_focusSelection, "Focus selection");
         AutomationProperties.SetName(_viewDirection, "View direction");
         AutomationProperties.SetName(_navigationSpeed, "Navigation speed");
+        AutomationProperties.SetName(_viewportGuides, "Authoring camera and light guides");
+        ToolTip.SetTip(_viewportGuides, "Show read-only authoring camera and light guides for one selected node.");
 
         var tabs = new List<TabItem>
         {
@@ -755,6 +764,12 @@ public sealed class MainWindow : Window
             SessionPath = sessionPath,
             Recorder = _recorder,
         };
+        ShowGuideFeedback(null);
+        worker.SetGuidesEnabled(_viewportGuides.IsChecked == true);
+        worker.GuideFeedback += message =>
+        {
+            if (ReferenceEquals(_worker, worker) && !_referenceSessionFailed) ShowGuideFeedback(message);
+        };
         if (window is not null) worker.SetViewportExtent(window.Width, window.Height);
         worker.NavigationChanged += state =>
         {
@@ -788,6 +803,7 @@ public sealed class MainWindow : Window
             UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
+            ShowGuideFeedback("Session unavailable.");
             ResetReparent(_reparentPending ? "Reparent interrupted. Inspect the document before retrying." : null);
             _reparentDocumentOpen = false;
             LoseTextureConnection();
@@ -915,6 +931,7 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _reparentDocumentOpen = info is not null;
+            _viewportGuides.IsEnabled = _reparentDocumentOpen;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
             UpdateAddMeshButton();
             UpdateHierarchyActions();
@@ -1121,8 +1138,8 @@ public sealed class MainWindow : Window
 
     private void ShowNavigationMessage(string? message)
     {
-        _viewportNavFeedback.Text = message;
-        ToolTip.SetTip(_viewportNavFeedback, message);
+        _navigationFeedback = message;
+        UpdateViewportFeedback();
     }
 
     private void UpdateViewportNavigationActions()
@@ -1133,10 +1150,28 @@ public sealed class MainWindow : Window
         _focusSelection.IsEnabled = camera && _navigationSupported &&
             _selection.Nodes.Count is > 0 and <= ViewportNavigation.MaxTargets;
         _viewDirection.IsEnabled = camera && _navigationSupported;
+        _viewportGuides.IsEnabled = _worker is not null && _reparentDocumentOpen && !_referenceSessionFailed;
         string? tip = camera && !_navigationSupported ? "Focus and direction views require an updated Runtime." : null;
         ToolTip.SetTip(_focusSelection, tip ?? (_selection.Nodes.Count > ViewportNavigation.MaxTargets
             ? "Focus supports up to 64 selected nodes." : null));
         ToolTip.SetTip(_viewDirection, tip);
+    }
+
+    private void ShowGuideFeedback(string? message)
+    {
+        _guideFeedback = message;
+        UpdateViewportFeedback();
+    }
+
+    private void UpdateViewportFeedback()
+    {
+        string? guide = _viewportGuides.IsChecked == true
+            ? (_guideFeedback is null ? "Authoring guides" : "Authoring guides · " + _guideFeedback)
+            : null;
+        string? text = guide is null || _navigationFeedback is null
+            ? guide ?? _navigationFeedback : guide + " · " + _navigationFeedback;
+        _viewportNavFeedback.Text = text;
+        ToolTip.SetTip(_viewportNavFeedback, text);
     }
 
     private bool MovingFocusToNavigation()
@@ -1144,7 +1179,7 @@ public sealed class MainWindow : Window
         if (_navigationToolbarPointer) return true;
         var focused = FocusManager?.GetFocusedElement();
         return IsNavigationTarget(_resetCamera) || IsNavigationTarget(_focusSelection) ||
-            IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed);
+            IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed) || IsNavigationTarget(_viewportGuides);
 
         bool IsNavigationTarget(Control control) =>
             control.IsPointerOver || control.IsKeyboardFocusWithin || ReferenceEquals(focused, control) ||

@@ -291,6 +291,11 @@ public sealed class EditorWorker : IDisposable
     private long _cameraIntent;
     private (int Width, int Height) _viewportExtent;
     private ulong _viewportExtentRevision;
+    private bool _guidesEnabled, _guideRefreshQueued;
+    private ulong _guideRevision;
+    private sealed record GuideIntent(ulong Revision, ulong Selection, ulong Extent, long Lifetime);
+    private (GuideIntent Intent, ViewportGuides.Result Value)? _guides;
+    private IReadOnlyList<EntityGuid> _guideChain = Array.Empty<EntityGuid>();
     private bool _navigationSupported;
     private bool _navigationUncertain;
     private ulong _navigationGeneration;
@@ -393,6 +398,7 @@ public sealed class EditorWorker : IDisposable
     private long _meshDocumentLifetime;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
+    public event Action<string?>? GuideFeedback;
     private ApplyStatus? _postedApplyStatus;
     public event Action<ApplyStatus, string>? ApplyStateChanged;
     public event Action<bool, bool>? ApplyControlsChanged;
@@ -522,8 +528,32 @@ public sealed class EditorWorker : IDisposable
             if (_viewportExtent == (width, height)) return;
             _viewportExtent = (width, height);
             ++_viewportExtentRevision;
+            InvalidateGuidesLocked();
         }
     }
+
+    public void SetGuidesEnabled(bool enabled)
+    {
+        lock (_lock)
+        {
+            if (_guidesEnabled == enabled) return;
+            _guidesEnabled = enabled;
+            InvalidateGuidesLocked(clear: true);
+        }
+    }
+
+    private void InvalidateGuidesLocked(bool clear = false)
+    {
+        if (_stopping || (!_guidesEnabled && !clear)) return;
+        ++_guideRevision;
+        if (_guideRefreshQueued) return;
+        _guideRefreshQueued = true;
+        Enqueue(RefreshGuideOverlay);
+    }
+
+    private bool GuideCurrentLocked(GuideIntent intent) => !_stopping && intent.Revision == _guideRevision &&
+        intent.Selection == _requestedSelectionGeneration && intent.Extent == _viewportExtentRevision &&
+        intent.Lifetime == MeshDocumentLifetime;
 
     public long SetCamera(EditorCamera camera, long inputTicks)
     {
@@ -1199,6 +1229,7 @@ public sealed class EditorWorker : IDisposable
         {
             if (_stopping) return;
             ++_queuedGizmoBegins;
+            InvalidateGuidesLocked();
             Enqueue(session =>
             {
                 try
@@ -1214,7 +1245,14 @@ public sealed class EditorWorker : IDisposable
                     lock (_lock) _gizmoActive = true;
                     _log.Write("gizmo begin " + mode + " " + space + " " + axis + " on " + node + " (" + _gizmo.PreviewedDescendants + " descendants previewed)");
                 }
-                finally { lock (_lock) --_queuedGizmoBegins; }
+                finally
+                {
+                    lock (_lock)
+                    {
+                        --_queuedGizmoBegins;
+                        if (!_gizmoActive) InvalidateGuidesLocked();
+                    }
+                }
             });
         }
     }
@@ -1242,6 +1280,7 @@ public sealed class EditorWorker : IDisposable
         {
             lock (_lock) { if (epoch != _gizmoRecoveryEpoch) return; _gizmoActive = false; }
             ReleaseGizmo(session);
+            lock (_lock) InvalidateGuidesLocked();
         });
     }
 
@@ -1253,6 +1292,7 @@ public sealed class EditorWorker : IDisposable
                 shown.Lifetime != MeshDocumentLifetime || shown.Selection != _requestedSelectionGeneration) return null;
             var grab = new GroupGrab(++_nextGroupGrab, shown, axis);
             _requestedGroup = grab;
+            InvalidateGuidesLocked();
             Enqueue(session =>
             {
                 if (!GroupCurrent(grab)) return;
@@ -1288,6 +1328,7 @@ public sealed class EditorWorker : IDisposable
             if (_requestedGroup is not { } grab || (id is long specific && grab.Id != specific)) return false;
             _requestedGroup = null;
             _pendingGroup = null;
+            InvalidateGuidesLocked();
             Enqueue(session =>
             {
                 RetireGroup(grab);
@@ -1314,6 +1355,7 @@ public sealed class EditorWorker : IDisposable
                     {
                         if (ReferenceEquals(_requestedGroup, grab)) _requestedGroup = null;
                         _groupSettling = false;
+                        InvalidateGuidesLocked();
                     }
                     _post(() => GroupGrabEnded?.Invoke(grab.Id));
                 }
@@ -2235,6 +2277,7 @@ public sealed class EditorWorker : IDisposable
                     _gizmo.Revert();
                     lock (_lock) _gizmoActive = false;
                 }
+                lock (_lock) InvalidateGuidesLocked();
                 SendOverlay(session);
                 PostInspector();
             });
@@ -2753,6 +2796,13 @@ public sealed class EditorWorker : IDisposable
         _lastPoll = Stopwatch.GetTimestamp();
         if (_document is null || _apply is null) return;
         IReadOnlyList<Event> events = observed ?? _document.DrainEvents();
+        if (events.Count > 0)
+        {
+            lock (_lock)
+            {
+                if (_guidesEnabled && events.Any(GuideInputChanged)) InvalidateGuidesLocked();
+            }
+        }
         var destroyed = new List<EntityGuid>();
         bool historyChanged = false;
         foreach (Event e in events)
@@ -2888,7 +2938,10 @@ public sealed class EditorWorker : IDisposable
             lock (_lock)
             {
                 if (!canPreview && !_gizmoBlocked)
-                { ++_gizmoRecoveryEpoch; _pendingGizmo = null; _gizmoActive = false; _gizmo?.Abandon(); }
+                {
+                    if (_gizmoActive) InvalidateGuidesLocked();
+                    ++_gizmoRecoveryEpoch; _pendingGizmo = null; _gizmoActive = false; _gizmo?.Abandon();
+                }
                 _gizmoBlocked = !canPreview;
             }
             _applyControls = (canApply, canPreview);
@@ -2950,6 +3003,95 @@ public sealed class EditorWorker : IDisposable
         if (refreshOverlay) SendOverlay(session);
     }
 
+    private bool GuideInputChanged(Event e)
+    {
+        bool OnChain(EntityGuid node) => node == _selected || _guideChain.Contains(node);
+        return e switch
+        {
+            DocumentReopened => true,
+            NodeCreated n => OnChain(n.Node),
+            NodeDestroyed n => OnChain(n.Node),
+            ParentChanged n => OnChain(n.Node),
+            ComponentAdded n => OnChain(n.Node),
+            ComponentRemoved n => OnChain(n.Node),
+            PropertyChanged n => OnChain(n.Address.Node),
+            _ => false
+        };
+    }
+
+    private void RefreshGuideOverlay(RemoteSession session)
+    {
+        GuideIntent intent;
+        (int Width, int Height) extent;
+        bool eligible;
+        lock (_lock)
+        {
+            _guideRefreshQueued = false;
+            extent = _viewportExtent;
+            intent = new(_guideRevision, _selectionGeneration, _viewportExtentRevision, MeshDocumentLifetime);
+            eligible = _guidesEnabled && _queuedGizmoBegins == 0 && !_gizmoActive &&
+                _requestedGroup is null && !_groupSettling && _gizmo?.Dragging != true;
+        }
+
+        var value = ViewportGuides.Result.Empty;
+        _guideChain = Array.Empty<EntityGuid>();
+        if (eligible && extent.Width > 0 && extent.Height > 0 && _selected is EntityGuid node &&
+            _selectedNodes.Count == 1 && _document is RemoteAuthoringDocument document &&
+            _tree.IncarnationOf(node) is object incarnation)
+        {
+            _guideChain = ViewportGuides.Chain(_tree, node, out bool complete);
+            if (ReadOrderRevision(document) is ulong before)
+            {
+                var start = document.ObserveEvents();
+                if (start is { Count: > 0 })
+                    PollDocument(session, start, pollApply: false, allowOrderRefresh: false, refreshInspector: false,
+                        refreshOverlay: false, refreshHierarchy: false);
+                lock (_lock) if (!GuideCurrentLocked(intent)) return;
+                if (start is not null)
+                {
+                    value = ViewportGuides.Read(document, node, _guideChain, complete, extent.Width, extent.Height);
+                    var end = document.ObserveEvents();
+                    ulong? after = ReadOrderRevision(document);
+                    if (end is { Count: > 0 })
+                        PollDocument(session, end, pollApply: false, allowOrderRefresh: false, refreshInspector: false,
+                            refreshOverlay: false, refreshHierarchy: false);
+                    if (end is null || after != before || !ReferenceEquals(incarnation, _tree.IncarnationOf(node)))
+                        value = new([], "Guide inputs changed or could not be verified.");
+                }
+                else value = new([], "Guide inputs could not be verified.");
+            }
+            else value = new([], "Guide revision could not be verified.");
+        }
+
+        lock (_lock)
+        {
+            if (!GuideCurrentLocked(intent)) return;
+            _guides = (intent, value);
+        }
+        SendOverlay(session);
+    }
+
+    // Admit the send under the intent lock, then allow UI input while the shared reply is pending.
+    private bool SendGuideOverlay(RemoteSession session, ViewportOverlay? overlay, GuideIntent intent, out ControlError? refusal)
+    {
+        var parameters = JsonValue.NewObject().Set("overlay", overlay is null ? JsonValue.Null() : Codec.Encode(overlay));
+        ulong request;
+        refusal = null;
+        lock (_lock)
+        {
+            if (!GuideCurrentLocked(intent)) return false;
+            request = session.Send("control.setViewportOverlay", parameters);
+        }
+        var result = session.AwaitResult(request);
+        if (result.Find("ok") is { IsNull: true }) return true;
+        if (result.Find("err") is JsonValue error && Codec.DecodeControlError(error) is ControlError typed)
+        {
+            refusal = typed;
+            return true;
+        }
+        throw new RemoteException(RemoteError.ProtocolError, "Malformed guide overlay reply.");
+    }
+
     private void SendOverlay(RemoteSession session, GroupGrab? retiring = null)
     {
         OverlayGroup? gizmo = null;
@@ -2983,7 +3125,26 @@ public sealed class EditorWorker : IDisposable
         ViewportOverlay overlay = _selectedNodes.Count > 1
             ? GizmoOverlay.ForMultiselection(_selectedNodes, _markers, gizmo, preview)
             : GizmoOverlay.ForSelection(_selected, gizmo, _markers);
-        if (session.Control.SetViewportOverlay(overlay) is ControlError refused)
+        var guides = _guides;
+        lock (_lock)
+        {
+            if (guides is { } proposed && !GuideCurrentLocked(proposed.Intent)) guides = null;
+        }
+        if (guides is { } guide && guide.Value.Groups.Count > 0)
+        {
+            if (!SendGuideOverlay(session, ViewportGuides.Compose(overlay, guide.Value), guide.Intent, out ControlError? refusal))
+                return;
+            if (refusal is ControlError error)
+            {
+                string notice = "Guide overlay refused: " + error;
+                _log.Write(notice);
+                if (!SendGuideOverlay(session, overlay, guide.Intent, out ControlError? fallback)) return;
+                if (fallback is not null && !SendGuideOverlay(session, null, guide.Intent, out _)) return;
+                PostGuideFeedback(guide.Intent, notice);
+            }
+            else PostGuideFeedback(guide.Intent, guide.Value.Unavailable);
+        }
+        else if (session.Control.SetViewportOverlay(overlay) is ControlError refused)
         {
             _log.Write("overlay refused: " + refused);
             // A failed placement read can leave no Group snapshot while retiring guides.
@@ -2997,6 +3158,7 @@ public sealed class EditorWorker : IDisposable
                     session.Control.SetViewportOverlay(null);
             }
         }
+        else if (guides is { } empty) PostGuideFeedback(empty.Intent, empty.Value.Unavailable);
         _post(() =>
         {
             bool current;
@@ -3004,6 +3166,13 @@ public sealed class EditorWorker : IDisposable
             if (current) GizmoChanged?.Invoke(snapshot);
         });
     }
+
+    private void PostGuideFeedback(GuideIntent intent, string? message) => _post(() =>
+    {
+        bool current;
+        lock (_lock) current = GuideCurrentLocked(intent);
+        if (current) GuideFeedback?.Invoke(message);
+    });
 
     public void Measure(int frames) => Enqueue(session =>
     {

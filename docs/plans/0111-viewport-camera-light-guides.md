@@ -1,9 +1,15 @@
 # Plan 0111 — Viewport Camera and Light Guides
 
 - **Spec:** [Spec 0111](../specs/0111-viewport-camera-light-guides.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of both documents and authorization for S2–S4.
+- **Joint Human Review:** The maintainer approved J1–J4 and Spec/Plan 0111 at [PR #387](https://github.com/slmao/Atlantis/pull/387), revision `a8222bf0`, on 2026-11-17. No new ADR is needed. S2–S4 were authorized after manual design merge `bd56e5bc`.
+- **Approved scope revision:** On 2026-11-17, the maintainer approved the
+  ComponentExclusivity correction for the `b0b99b86` implementation in [PR #388](https://github.com/slmao/Atlantis/pull/388).
+  Real-scene guides use valid camera/light nodes, mesh picking uses a
+  separate Renderable, and mixed-component checks use real host refusal and
+  synthetic model inputs. The Windows 100%, capture, Vulkan and other
+  applicable gates remain required.
 
 ## Objective
 
@@ -83,16 +89,19 @@ Suggested one-time authorization for the reviewed revision:
   degeneracy. Select a camera with a lens different from the camera used
   to view it. Check point range under parent scale and directional
   emission independent of range, including vertical emission and the
-  projected shaft length when side-on. Cover either component missing
-  fields on a dual-component node, failed ancestor reads, 64/65-node
-  chains, zero extent, invalid lens/range, overflow and precision collapse.
-  Verify both the geometry cap and ordinary overlays with Guides Off or
-  an ineligible selection.
+  projected shaft length when side-on. Use a synthetic dual-component
+  fixture to cover composition within the cap and omission of one guide
+  when its required fields are missing. Cover failed ancestor reads,
+  64/65-node chains, zero extent, invalid lens/range, overflow and
+  precision collapse. Verify ordinary overlays with Guides Off or an
+  ineligible selection.
 - [ ] **R1/R3 — Picking and shared surface.** In the real Editor, cover an
-  existing origin marker, a renderable camera/light via mesh and Hierarchy,
-  a line across a mesh hit and a guide-only miss. Keep Gizmo priority and
-  the existing projection-settlement guard during a camera switch. Hold a
-  late mesh reply across a newer selection. In a two-client fixture, give
+  existing camera/light origin marker, a guide line across a separate
+  Renderable's mesh hit and a guide-only miss. Confirm that the real
+  authoring host refuses mixed-component edits atomically with
+  `ComponentExclusivity`, leaving the revision and Apply receipt intact.
+  Keep Gizmo priority and the projection-settlement guard during a camera
+  switch. Hold a late mesh reply across a newer selection. In a two-client fixture, give
   each connection distinguishable geometry with the existing overlay call.
   Verify each client's own-overlay capture, an overlay-free default capture
   and independent replace, clear and disconnect. For GPU captures, the
@@ -116,10 +125,11 @@ Suggested one-time authorization for the reviewed revision:
   dependency and explicitly Retry the latest revision. Check that toggling
   adds no history, document revision or Apply receipt.
 - [ ] **Windows 100% desktop.** In a disposable hand-authored scene, use
-  0110 to create a Camera, Point Light and Directional Light. Select each
-  with Guides enabled, edit a lens or light field, exercise Undo/Redo, Save
-  and reopen the same source. Verify the same authored guide after
-  reselecting and that fresh windows default Off. Check standard and
+  0110 to create separate Camera, Point Light and Directional Light nodes,
+  and use an independent Renderable for the pick check. Select each guide
+  subject with Guides enabled, edit a lens or light field, exercise
+  Undo/Redo, Save and reopen the same source. Verify the same authored
+  guide after reselecting and that fresh windows default Off. Check standard and
   compact layouts at actual Windows 100% scaling, a resized hosted
   Viewport, marker and mesh click alignment, and Inspector focus/draft
   retention when toggling. Inspect a guide with a visible part and a

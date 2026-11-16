@@ -1,11 +1,14 @@
 # Spec 0111 — Viewport Camera and Light Guides
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-17
 - **Related Plan:** [Plan 0111](../plans/0111-viewport-camera-light-guides.md)
-- **Approval:** Pending joint human review.
-- **Related ADRs:** None proposed. See Architectural Impact.
+- **Approval:** Maintainer approved revision `a8222bf0` on 2026-11-17. See Plan 0111.
+- **Approved scope revision:** The maintainer confirmed the existing
+  authoring component exclusivity on 2026-11-17 in [PR #388](https://github.com/slmao/Atlantis/pull/388).
+  The revised real-scene and synthetic acceptance is recorded in Plan 0111.
+- **Related ADRs:** No new ADR. See Architectural Impact.
 
 ## Summary
 
@@ -35,12 +38,13 @@ and settled projection for picking.
   in each Editor window. Keep the choice while working in that window,
   including a document reopen or reattachment. Opening another Editor starts
   Off. Respect the Viewport toolbar's Inspector focus and draft behavior.
-- When enabled, show guides for exactly one live selected node with a
-  supported component, regardless of whether it also has a Renderable.
-  Resolve the node from the existing Hierarchy/Viewport selection. A node
-  with both a supported Camera and Light can show both. Zero selection,
-  multiselection and other nodes show the ordinary overlay. A usable
-  authoring document and Viewport are required.
+- When enabled, show the guide for exactly one live selected Camera or
+  Light node in a valid authoring document. Resolve the node from the
+  existing Hierarchy/Viewport selection. [0065's authoring
+  constraint](0065-authoring-data-layer.md) allows at most one of Camera,
+  Light and Renderable on a node. Zero selection, multiselection and
+  other nodes show the ordinary overlay. A usable authoring document and
+  Viewport are required.
 - Use thin depth-tested wire segments with the Editor's selection accent,
   distinct from the on-top transform axes. A guide may be occluded or
   outside the view, including when looking through the camera it represents.
@@ -62,8 +66,10 @@ shared authoring schema.
 | Point Light | Three orthogonal world-space great circles, 24 segments each. The center is world translation and the radius is the positive authored range in world units, independent of ancestor or local scale. |
 | Directional Light | A short screen-constant arrow anchored at world translation and pointing along the normalized emission direction. Use one segment of one anchor unit with `pixelsPerUnit = 40`. Use four head segments around the shaft, with a perpendicular basis that works for vertical emission. The shaft can foreshorten in the view. Light range and shadow volume are outside this guide. |
 
-Cap the addition at two groups and 84 segments. Omit an individual
-unavailable guide if a required read fails, lens ordering/FOV or range is
+Cap the guide composition at two groups and 84 segments, the maximum
+exercised by the synthetic dual-component fixture. A valid authoring node
+supplies at most one guide. Omit an individual unavailable guide if a
+required read fails, lens ordering/FOV or range is
 invalid for display, or values cannot form usable Float32 geometry. Follow
 the existing Runtime forward and camera basis degeneracy threshold of
 `1e-6`. Reject nonfinite transforms, projection values or segment
@@ -78,9 +84,9 @@ eligible selection cannot be fully represented.
 
 - Guide strokes have no hit targets. Keep the existing order of group or
   single Gizmo handling, camera/light origin marker pick, and Runtime mesh
-  raycast.
-  A camera or light with a Renderable is reached through its mesh or the
-  Hierarchy. A guide edge delegates to ordinary picking, including the
+  raycast. Select camera/light nodes through their origin markers or the
+  Hierarchy. Select a separate Renderable node by its mesh or Hierarchy
+  row. A guide edge delegates to ordinary picking, including the
   existing miss behavior. Keep the current projection-readiness and
   late-pick guards from 0109.
 - Compose guides into the Editor connection's existing
