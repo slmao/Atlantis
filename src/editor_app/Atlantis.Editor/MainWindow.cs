@@ -40,6 +40,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Assets;
+using Doc = Atlantis.Gameplay.Authoring;
 using SceneAddress = Atlantis.Gameplay.Authoring.SceneAddress;
 using SiblingDirection = Atlantis.Gameplay.Authoring.SiblingDirection;
 using SiblingPlacement = Atlantis.Gameplay.Authoring.SiblingPlacement;
@@ -114,6 +115,17 @@ public sealed class MainWindow : Window
     // Plan 0068 M6 (Spec 0068 R9): the document's save and the Runtime's transport. The Runtime starts playing, so
     // Pause is the enabled action until the first play state says otherwise.
     private readonly Button _save = new() { Content = "Save" };
+    private readonly Button _reopen = new() { Content = "Reopen from Source", IsEnabled = false };
+    private readonly TextBlock _documentLine = EditorVisuals.Secondary("Document is opening");
+    private DocumentObservation _documentState = new(DocumentAvailability.Starting);
+    private sealed record SceneInput(TextBox Box, DocumentDraft Draft, int Caret, int Start, int End);
+    private readonly DocumentDraftProtection _draftProtection = new();
+    private SceneInput? _sceneInput;
+    private SceneInput? _leaveInput;
+    private TextBox? _invalidatedInput;
+    private DocumentLeaveWindow? _leaveDialog;
+    private Action? _pendingInspectorBlur;
+    private bool _leaveInputStale, _leaveInProgress, _leaveArmed, _leaveCloseApproved, _shuttingDown;
     private readonly Button _saveAs = new() { Content = "Save As", IsEnabled = false };
     private readonly TextBox _saveAsName = new() { PlaceholderText = "Copy name", Width = 115, MaxLength = 48 };
     private readonly TextBlock _saveAsState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
@@ -171,6 +183,7 @@ public sealed class MainWindow : Window
     private readonly StackPanel _inspectorPanel = new() { Spacing = 10, Margin = new Thickness(12) };
     private InspectorSnapshot? _inspectorShown;
     private InspectorSnapshot? _inspectorDeferred;
+    private BatchInspectorSnapshot? _leaveBatchDeferred;
     private readonly List<Action> _refreshReferenceLabels = new();
     private readonly AssetBrowser _assetBrowser = new();
     private const string ColorTextureLabel = "sRGB color";
@@ -413,7 +426,15 @@ public sealed class MainWindow : Window
         ToolTip.SetShowOnDisabled(_duplicate, true);
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
-        _save.Click += (_, _) => _worker?.Save();
+        _save.Click += (_, _) =>
+        {
+            SettleInspectorBlur();
+            _worker?.Save();
+        };
+        _reopen.AddHandler(PointerPressedEvent, (_, _) => _leaveArmed = true, RoutingStrategies.Tunnel);
+        _reopen.AddHandler(PointerReleasedEvent, (_, _) => Dispatcher.UIThread.Post(() => _leaveArmed = false),
+            RoutingStrategies.Tunnel);
+        _reopen.Click += async (_, _) => await AskToLeave(reopen: true);
         _saveAsName.TextChanged += (_, _) => UpdateSaveAsButton();
         _saveAs.Click += (_, _) => SaveSceneCopy();
         _newSceneName.TextChanged += (_, _) => UpdateNewSceneButton();
@@ -428,12 +449,24 @@ public sealed class MainWindow : Window
         _pause.Click += (_, _) => _worker?.Pause();
         _step.Click += (_, _) => _worker?.StepFrame();
         Deactivated += (_, _) => CancelGroupGesture();
+        AddHandler(GotFocusEvent, (_, e) =>
+        {
+            if (e.Source is Control next && !ReferenceEquals(next, _reopen) && TopLevel.GetTopLevel(next) == this)
+                SettleInspectorBlur();
+        }, RoutingStrategies.Bubble);
         AddHandler(KeyDownEvent, (_, e) =>
         {
+            if (e.Key == Key.R && e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift) && _reopen.IsEnabled)
+            {
+                e.Handled = true;
+                _ = AskToLeave(reopen: true);
+                return;
+            }
             if (e.Key == Key.Escape && CancelGroupGesture()) e.Handled = true;
         }, RoutingStrategies.Tunnel);
         KeyDown += (_, e) =>
         {
+            if (_leaveInProgress) return;
             // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
             if ((e.KeyModifiers & KeyModifiers.Control) == 0 || FocusManager?.GetFocusedElement() is TextBox) return;
             if (e.Key == Key.Z && (e.KeyModifiers & KeyModifiers.Shift) == 0) { _worker?.Undo(); e.Handled = true; }
@@ -472,14 +505,21 @@ public sealed class MainWindow : Window
         _uiTicker.Start();
         Closing += (_, e) =>
         {
+            if (_leaveCloseApproved)
+            {
+                _leaveCloseApproved = false;
+                _shuttingDown = true;
+                Shutdown();
+                return;
+            }
+            e.Cancel = true;
             if (_savedAttempts.Busy)
             {
-                e.Cancel = true;
                 _savedOpenResult.Text = "Wait for the saved scene operation to finish, then close again.";
                 _assetTabs.SelectedIndex = 2;
                 return;
             }
-            Shutdown();
+            _ = AskToLeave(reopen: false);
         };
         UpdateStatus();
     }
@@ -503,6 +543,7 @@ public sealed class MainWindow : Window
             EditorVisuals.Actions(_save, _undo, _redo), transport));
 
         var sceneFiles = EditorVisuals.Scroll(EditorVisuals.Stack(4,
+            EditorVisuals.Actions(_reopen),
             EditorVisuals.Actions(_newSceneName, _newScene), _newSceneState,
             EditorVisuals.Actions(_saveAsName, _saveAs), _saveAsState));
         sceneFiles.MaxHeight = 164;
@@ -621,7 +662,7 @@ public sealed class MainWindow : Window
         diagnosticPanel.IsVisible = diagnosticMode;
         diagnosticsToggle.IsCheckedChanged += (_, _) => diagnosticPanel.IsVisible = diagnosticsToggle.IsChecked == true;
         var status = EditorVisuals.Bar(EditorVisuals.Columns("*,*,2*,Auto,Auto,Auto",
-            _connectionLine, _editLine, _applyLine, _retryApply, statusToggle, diagnosticsToggle));
+            _connectionLine, _editLine, _documentLine, _applyLine, _retryApply, statusToggle, diagnosticsToggle));
         _connectionLine.Margin = _editLine.Margin = _applyLine.Margin = new Thickness(0, 0, 8, 0);
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto,Auto") };
         foreach (Control control in new Control[] { commands, grid, status, statusDetails, diagnosticPanel })
@@ -679,7 +720,11 @@ public sealed class MainWindow : Window
         Task.Run(() =>
         {
             RuntimeProcess runtime = RuntimeProcess.Start(launch);
-            Dispatcher.UIThread.Post(() => _runtime = runtime);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_shuttingDown) runtime.Dispose();
+                else _runtime = runtime;
+            });
             long started = Stopwatch.GetTimestamp();
             SessionInfo session = runtime.WaitForSession(TimeSpan.FromSeconds(120));
             double ms = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
@@ -688,9 +733,11 @@ public sealed class MainWindow : Window
         {
             if (task.Exception is null) return;
             string message = task.Exception.GetBaseException().Message;
-            _log.Write("runtime start failed: " + message);
             Dispatcher.UIThread.Post(() =>
             {
+                if (_shuttingDown) return;
+                _log.Write("runtime start failed: " + message);
+                ShowDocumentState(new(DocumentAvailability.Unavailable, Diagnostic: message));
                 _runtimeLine = "Runtime failed: " + message;
                 UpdateStatus();
             });
@@ -699,6 +746,7 @@ public sealed class MainWindow : Window
 
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
+        if (_shuttingDown) return;
         EndPreviewSession();
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
@@ -764,6 +812,14 @@ public sealed class MainWindow : Window
             SessionPath = sessionPath,
             Recorder = _recorder,
         };
+        worker.PersistenceChanged += state =>
+        {
+            if (ReferenceEquals(_worker, worker) && !_shuttingDown) ShowDocumentState(state);
+        };
+        worker.LeaveDocumentEvents += events =>
+        {
+            if (ReferenceEquals(_worker, worker)) ObserveDraftChanges(events);
+        };
         ShowGuideFeedback(null);
         worker.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         worker.GuideFeedback += message =>
@@ -798,6 +854,7 @@ public sealed class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            ShowDocumentState(new(DocumentAvailability.Unavailable, Diagnostic: message));
             _cameraInitialized = _navigationReady = _navigationPending = false;
             ShowNavigationMessage(message);
             UpdateViewportNavigationActions();
@@ -868,7 +925,10 @@ public sealed class MainWindow : Window
         };
         worker.BatchInspectorChanged += snapshot =>
         {
-            if (ReferenceEquals(_worker, worker)) OnBatchInspectorChanged(snapshot);
+            if (!ReferenceEquals(_worker, worker)) return;
+            if (_leaveInProgress && _leaveInput is not null && !_leaveInputStale)
+                _leaveBatchDeferred = snapshot;
+            else OnBatchInspectorChanged(snapshot);
         };
         worker.HistoryChanged += history =>
         {
@@ -949,7 +1009,7 @@ public sealed class MainWindow : Window
             _meshDocumentLifetime = lifetime;
             ++_pickRequest;
             ClearBatchInspector();
-            if (_selection.Nodes.Count > 1) SetSelection(null, false);
+            if (_selection.Nodes.Count > 0) SetSelection(null, false);
             ResetReparent(_reparentPending || _siblingMovePending || _pickedUp is not null || _hierarchyDrag is not null
                 ? "Scene reopened. Inspect the document before retrying the move." : null);
             if (_saveAsPending)
@@ -1349,6 +1409,7 @@ public sealed class MainWindow : Window
 
     private void OnPointer(ViewportPointerEvent e)
     {
+        if (_leaveInProgress) return;
         if (_recorder is not null && MeasureDrag(e)) return;
         if (GroupGizmoPointer(e)) return;
         if (GizmoPointer(e)) return;
@@ -1408,6 +1469,7 @@ public sealed class MainWindow : Window
 
     private void OnWheel(int delta, long arrivalTicks)
     {
+        if (_leaveInProgress) return;
         if (_groupGrab is not null || _gizmoGrab is not null || !(_navigationReady || _navigationPending)) return;
         MoveViewport(ViewportMotion.Dolly(delta / 120.0f * NavigationSpeed), arrivalTicks);
         _inputLine = "forwarded wheel " + delta;
@@ -3058,6 +3120,7 @@ public sealed class MainWindow : Window
         _inspectorShown = _inspectorDeferred = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
+        _invalidatedInput = null;
         _inspectorPanel.Children.Add(EditorVisuals.Heading($"{snapshot.Count} selected nodes", 17));
         if (snapshot.Notice is string note)
         {
@@ -3110,21 +3173,28 @@ public sealed class MainWindow : Window
                 set.IsEnabled = ReadValue(out _);
                 box.PropertyChanged += (sender, change) =>
                 {
-                    if (change.Property != TextBox.TextProperty) return;
+                    if (change.Property == TextBox.IsReadOnlyProperty)
+                    {
+                        set.IsEnabled = !box.IsReadOnly && ReadValue(out _);
+                        return;
+                    }
+                    if (change.Property != TextBox.TextProperty || box.IsReadOnly) return;
                     set.IsEnabled = ReadValue(out _);
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
                         DiscardBatchDraft(snapshot);
                     _batchDraft = (snapshot, field, box.Text ?? "");
+                    ShowDocumentState(_documentState);
                 };
                 void Submit()
                 {
-                    if (!ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
+                    if (box.IsReadOnly || !ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
                     var basis = _batchDraft is { } current && current.Field.Field.Path == definition.Path
                         ? (current.View, current.Field) : (snapshot, field);
                     if (_worker?.CommitBatch(basis.Item1, basis.Item2, value) == true)
                     {
                         _batchDraft = null;
+                        ShowDocumentState(_documentState);
                         set.IsEnabled = false;
                         box.IsEnabled = false;
                     }
@@ -3133,6 +3203,7 @@ public sealed class MainWindow : Window
                 set.Click += (_, _) => Submit();
                 box.KeyDown += (_, e) =>
                 {
+                    if (box.IsReadOnly) return;
                     if (e.Key == Key.Enter) { Submit(); e.Handled = true; }
                     if (e.Key == Key.Escape)
                     {
@@ -3153,6 +3224,11 @@ public sealed class MainWindow : Window
     {
         if (_selection.Nodes.Count > 1 || snapshot.Subject != _selection.Node) return;
         if (_referenceBusy) return; // the worker owns the captured target; refresh after settlement/cancel
+        if (_leaveInProgress && _leaveInput is not null && !_leaveInputStale)
+        {
+            _inspectorDeferred = snapshot;
+            return;
+        }
         // An observed external rename cancels a name draft immediately. Other
         // field refreshes retain the existing deferral while a user is typing.
         if (_nameBox?.IsFocused == true && _inspectorShown is InspectorSnapshot shown &&
@@ -3162,7 +3238,7 @@ public sealed class MainWindow : Window
             return;
         }
         if (_inspectorShown is not null && snapshot.Subject == _inspectorShown.Subject && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox focused &&
-            _inspectorPanel.GetVisualDescendants().Contains(focused))
+            !ReferenceEquals(focused, _invalidatedInput) && _inspectorPanel.GetVisualDescendants().Contains(focused))
         {
             _inspectorDeferred = snapshot;
             return;
@@ -3172,6 +3248,7 @@ public sealed class MainWindow : Window
 
     private void BuildInspector(InspectorSnapshot snapshot)
     {
+        if (!_leaveInProgress) _sceneInput = null;
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
         var focusedAddress = focused is Button { Tag: "asset chooser", DataContext: SceneAddress address }
             ? address : (SceneAddress?)null;
@@ -3180,6 +3257,7 @@ public sealed class MainWindow : Window
         _nameBox = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
+        _invalidatedInput = null;
         if (snapshot.Subject is not EntityGuid subject)
         {
             _inspectorPanel.Children.Add(new TextBlock { Text = "Select a node in the Hierarchy.", Opacity = 0.6 });
@@ -3193,16 +3271,19 @@ public sealed class MainWindow : Window
         nameRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
         var nameBox = new TextBox { Text = snapshot.Name, PlaceholderText = "Unnamed", MinWidth = 80 };
         _nameBox = nameBox;
+        TrackSceneInput(nameBox, "Name", null, null, () => snapshot.Name ?? "");
         AutomationProperties.SetName(nameBox, "Node name");
         Grid.SetColumn(nameBox, 1);
         nameRow.Children.Add(nameBox);
         _inspectorPanel.Children.Add(nameRow);
         nameBox.KeyDown += (_, e) =>
         {
+            if (nameBox.IsReadOnly) return;
             if (e.Key == Key.Enter)
             {
                 string name = nameBox.Text ?? "";
                 if (name != snapshot.Name) _worker?.CommitName(subject, snapshot.Name, name);
+                _sceneInput = null;
                 nameBox.Text = snapshot.Name;
                 Focus();
                 e.Handled = true;
@@ -3217,10 +3298,10 @@ public sealed class MainWindow : Window
         nameBox.LostFocus += (_, _) =>
         {
             if (MovingFocusToNavigation()) return;
-            nameBox.Text = snapshot.Name;
-            if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+            DeferInspectorBlur(nameBox, () =>
             {
-                if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+                if (!nameBox.IsReadOnly) nameBox.Text = snapshot.Name;
+                if (_inspectorDeferred is InspectorSnapshot waiting) BuildInspector(waiting);
             });
         };
         foreach (var (component, name) in snapshot.Components)
@@ -3388,6 +3469,7 @@ public sealed class MainWindow : Window
             if (vector)
                 AutomationProperties.SetName(box, name + ", X Y Z");
             string original = field.Text;
+            if (field.Editable) TrackSceneInput(box, field.Path, field.Component, field.Field.Id, () => original);
             void ReplaceDraft() { box.Text = field.Text; original = field.Text; }
             if (InspectorModel.CanChooseAsset(field) && referenceDetails is not null)
             {
@@ -3457,22 +3539,25 @@ public sealed class MainWindow : Window
             }
             void Commit()
             {
-                if (!field.Editable || (box.Text ?? "") == original) return;
+                if (box.IsReadOnly || !field.Editable || (box.Text ?? "") == original) return;
                 original = box.Text ?? "";
+                if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
                 _worker?.CommitField(field.Path, original);
+                ShowDocumentState(_documentState);
             }
             box.KeyDown += (_, e) =>
             {
+                if (box.IsReadOnly) return;
                 if (e.Key == Key.Enter) Commit();
                 if (e.Key == Key.Escape) box.Text = original;
             };
             box.LostFocus += (_, _) =>
             {
                 if (MovingFocusToNavigation()) return;
-                Commit();
-                if (_inspectorDeferred is InspectorSnapshot waiting) Dispatcher.UIThread.Post(() =>
+                DeferInspectorBlur(box, () =>
                 {
-                    if (ReferenceEquals(_inspectorDeferred, waiting)) BuildInspector(waiting);
+                    Commit();
+                    if (_inspectorDeferred is InspectorSnapshot waiting) BuildInspector(waiting);
                 });
             };
             if (vector)
@@ -3545,6 +3630,288 @@ public sealed class MainWindow : Window
         _uiLine = string.Format(CultureInfo.InvariantCulture, "UI tick gaps (2 s): p95 {0:F1} ms, max {1:F1} ms", gaps.P95Ms, gaps.MaxMs);
         _log.Write(string.Format(CultureInfo.InvariantCulture, "ui ticks {0} p95 {1:F1} ms max {2:F1} ms", gaps.Frames, gaps.P95Ms, gaps.MaxMs));
         UpdateStatus();
+    }
+
+    private void ShowDocumentState(DocumentObservation state)
+    {
+        _documentState = state;
+        bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
+        _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +
+            (_draftProtection.Stale is not null ? " · Stale input" : "");
+        ToolTip.SetTip(_documentLine, state.State?.Source ?? state.Diagnostic);
+        _reopen.Content = state.State is null && state.Diagnostic is null && state.Availability == DocumentAvailability.Known
+            ? "Open Source" : "Reopen from Source";
+        _reopen.IsEnabled = !_leaveInProgress && state.Availability == DocumentAvailability.Known &&
+            state.Diagnostic is null && _worker?.LeaveEditingAvailable == true;
+        ToolTip.SetTip(_reopen, state.Availability == DocumentAvailability.Legacy ? state.Diagnostic : "Ctrl+Shift+R");
+    }
+
+    private SceneInput CaptureInput(TextBox box, string key, TypeId? component, FieldId? field, string text) =>
+        new(box, new DocumentDraft(key, text, _selection.Nodes.ToArray(), component, field), box.CaretIndex,
+            box.SelectionStart, box.SelectionEnd);
+
+    private SceneInput? CurrentSceneInput()
+    {
+        if (_batchDraft is { } batch && batch.Text != batch.Field.Field.Text &&
+            _batchInputs.TryGetValue(batch.Field.Field.Path, out var box))
+        {
+            var field = batch.Field.Field;
+            return CaptureInput(box, field.Path, field.Component, field.Field.Id, batch.Text);
+        }
+        return _sceneInput;
+    }
+
+    private void TrackSceneInput(TextBox box, string key, TypeId? component, FieldId? field, Func<string> baseline)
+    {
+        box.PropertyChanged += (_, change) =>
+        {
+            if (change.Property != TextBox.TextProperty || box.IsReadOnly || _leaveInProgress ||
+                (!box.IsFocused && _sceneInput?.Box != box)) return;
+            string text = box.Text ?? "";
+            _sceneInput = text == baseline() ? null : CaptureInput(box, key, component, field, text);
+            ShowDocumentState(_documentState);
+        };
+    }
+
+    private void DeferInspectorBlur(TextBox box, Action settle)
+    {
+        if (_leaveArmed || _leaveInProgress || _shuttingDown) return;
+        void SettleIfCurrent()
+        {
+            if (_leaveArmed || _leaveInProgress || _shuttingDown || !IsActive ||
+                _reopen.IsFocused && _sceneInput?.Box == box) return;
+            if (TopLevel.GetTopLevel(box) != this) return;
+            if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
+            settle();
+            ShowDocumentState(_documentState);
+        }
+        // An ordinary focus destination settles this before its action. An
+        // ambiguous native blur waits for the Closing route to claim the draft.
+        Action pending = SettleIfCurrent;
+        _pendingInspectorBlur = pending;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ReferenceEquals(_pendingInspectorBlur, pending)) SettleInspectorBlur();
+        }, DispatcherPriority.Background);
+    }
+
+    private void SettleInspectorBlur()
+    {
+        var pending = _pendingInspectorBlur;
+        _pendingInspectorBlur = null;
+        pending?.Invoke();
+    }
+
+    private void ObserveDraftChanges(IReadOnlyList<Doc.Event> events)
+    {
+        var input = _leaveInProgress ? (_leaveInputStale ? null : _leaveInput) : CurrentSceneInput();
+        if (input is null || !_draftProtection.Observe(input.Draft, events)) return;
+        _invalidatedInput = input.Box;
+        input.Box.IsReadOnly = true;
+        _pendingInspectorBlur = null;
+        _sceneInput = null;
+        _batchDraft = null;
+        if (_leaveInput is not null) _leaveInputStale = true;
+        _leaveDialog?.ShowDraft(LeaveDraftSummary());
+        ShowDocumentState(_documentState);
+    }
+
+    private string? LeaveDraftSummary()
+    {
+        string? stale = _draftProtection.Stale is { } copy ? $"Stale input (copy only) · {copy.Key}\n{copy.Text}" : null;
+        if (_leaveInputStale || _leaveInput is not { } active) return stale;
+        string current = $"Unsubmitted input · {active.Draft.Key}\n{active.Draft.Text}";
+        return stale is null ? current : stale + "\n\n" + current;
+    }
+
+    private async Task AskToLeave(bool reopen)
+    {
+        if (_leaveInProgress || _shuttingDown || _savedAttempts.Busy) return;
+        _leaveArmed = false;
+        _leaveInProgress = true;
+        _pendingInspectorBlur = null;
+        var worker = _worker;
+        var originalFocus = FocusManager?.GetFocusedElement();
+        _leaveInput = CurrentSceneInput();
+        if (_leaveInput is { } input)
+            _leaveInput = input with { Caret = input.Box.CaretIndex, Start = input.Box.SelectionStart, End = input.Box.SelectionEnd };
+        _leaveInputStale = false;
+        if (_groupGrab is not null) CancelGroupGesture();
+        if (_gizmoGrab is not null)
+        {
+            worker?.CancelGizmoForLeave();
+            _gizmoGrab = null;
+        }
+        _pressed = null;
+        var content = Content as Control;
+        if (content is not null) content.IsEnabled = false;
+        ShowDocumentState(_documentState);
+        DocumentLeaveWindow? dialog = null;
+        Task? dialogExit = null;
+        bool closed = false, reopened = false, mustConfirm = false;
+        bool unknown = false, checkedUnknown = false;
+        Doc.DocumentState? attempted = null;
+        bool attemptedSave = false;
+        string? notice = null;
+
+        bool Current() => !_shuttingDown && ReferenceEquals(_worker, worker);
+        async Task<DocumentObservation> Read()
+        {
+            if (worker is null) return _documentState;
+            return worker.LeaveEditingAvailable ? await worker.ReviewDocument() : await worker.CheckOriginalDocument();
+        }
+
+        try
+        {
+            var reviewed = await Read();
+            while (Current())
+            {
+                if (reopen && reviewed.Availability == DocumentAvailability.Legacy) break;
+                bool prompt = mustConfirm || _draftProtection.RequiresConfirmation(reviewed, _leaveInput is not null && !_leaveInputStale);
+                var choice = LeaveChoice.Discard;
+                if (prompt)
+                {
+                    if (dialog is null)
+                    {
+                        dialog = new DocumentLeaveWindow(reopen);
+                        _leaveDialog = dialog;
+                        dialogExit = dialog.ShowDialog(this);
+                    }
+                    bool unavailable = reviewed.Availability != DocumentAvailability.Known;
+                    bool live = worker?.LeaveEditingAvailable == true;
+                    bool canWrite = live && (!unknown || checkedUnknown);
+                    bool canContinue = !unavailable && (reopen ? reviewed.State is not null && canWrite : !unknown || checkedUnknown);
+                    bool anyway = !reopen && (unavailable || unknown && !live && !checkedUnknown);
+                    string consequence = reopen ? "Reopen replaces the current document and clears its undo history."
+                        : _options.AttachSession is null ? "Closing stops this Editor’s Runtime."
+                        : "Closing leaves the attached Runtime and shared document running.";
+                    string summary = (reviewed.State?.Source is string source ? source + "\n" : "") + reviewed.Title + "\n" + consequence;
+                    choice = await dialog.Ask(summary, notice ?? reviewed.Diagnostic, LeaveDraftSummary(),
+                        canWrite && reviewed.Writable && reviewed.State?.Dirty == true, canContinue,
+                        worker is not null, reopen, anyway);
+                    if (!Current() || choice == LeaveChoice.Cancel) break;
+                    if (choice == LeaveChoice.Check)
+                    {
+                        reviewed = await Read();
+                        checkedUnknown = reviewed.Availability == DocumentAvailability.Known;
+                        if (unknown && attempted is { } target && checkedUnknown)
+                        {
+                            notice = attemptedSave && reviewed.ProvesSaved(target.Token)
+                                ? "The reviewed content is saved. Confirm again to continue."
+                                : !attemptedSave && reviewed.State is { } opened && opened.Token.DocumentId != target.Token.DocumentId
+                                    ? "The document was replaced. Confirm again against the current document."
+                                    : "The previous operation remains unconfirmed. Review the current state before continuing.";
+                        }
+                        else notice = reviewed.Diagnostic;
+                        continue;
+                    }
+                }
+
+                var latest = await Read();
+                if (!Current()) break;
+                if (!latest.Matches(reviewed))
+                {
+                    reviewed = latest;
+                    mustConfirm = true;
+                    checkedUnknown = false;
+                    notice = "The document changed. Review the current state and choose again.";
+                    continue;
+                }
+                if (choice == LeaveChoice.CloseAnyway)
+                {
+                    closed = true;
+                    break;
+                }
+
+                if (choice == LeaveChoice.Save)
+                {
+                    if (worker is null || latest.State is not { } target) break;
+                    var save = await worker.SaveOrReopen(target, saving: true);
+                    if (!Current()) break;
+                    if (save.State is null)
+                    {
+                        (unknown, checkedUnknown, attempted, attemptedSave) = (save.Unknown, false, target, true);
+                        notice = save.Diagnostic ?? "Save refused: " + save.Refusal;
+                        reviewed = await Read();
+                        mustConfirm = true;
+                        continue;
+                    }
+                    reviewed = new(DocumentAvailability.Known, save.State);
+                    if (!reopen)
+                    {
+                        latest = await Read();
+                        if (!Current()) break;
+                        if (!latest.Matches(reviewed))
+                        {
+                            reviewed = latest;
+                            notice = "Saved the reviewed changes. The document changed before closing.";
+                            mustConfirm = true;
+                            continue;
+                        }
+                    }
+                }
+
+                if (!reopen)
+                {
+                    closed = true;
+                    break;
+                }
+                if (worker is null || reviewed.Availability != DocumentAvailability.Known || reviewed.Diagnostic is not null) break;
+                var reopenTarget = reviewed.State;
+                var open = await worker.SaveOrReopen(reopenTarget, saving: false);
+                if (!Current()) break;
+                if (open.State is not null)
+                {
+                    reopened = true;
+                    SetSelection(null, false);
+                    _editLine.Text = "Reopened " + open.State.Source;
+                    break;
+                }
+                (unknown, checkedUnknown, attempted, attemptedSave) = (open.Unknown, false, reopenTarget, false);
+                notice = (choice == LeaveChoice.Save ? "Saved the reviewed changes. " : "") +
+                    (open.Diagnostic ?? "Reopen refused: " + open.Refusal);
+                reviewed = await Read();
+                mustConfirm = true;
+            }
+        }
+        finally
+        {
+            _leaveDialog = null;
+            dialog?.Finish();
+            if (!closed && !reopened && dialogExit is not null) await dialogExit;
+            if (content is not null) content.IsEnabled = true;
+            var captured = _leaveInput;
+            var batchDeferred = _leaveBatchDeferred;
+            _leaveBatchDeferred = null;
+            _leaveInput = null;
+            if (!closed && !reopened && !_leaveInputStale && captured is { } valid &&
+                TopLevel.GetTopLevel(valid.Box) == this && valid.Box.IsEnabled)
+            {
+                Activate();
+                valid.Box.Text = valid.Draft.Text;
+                valid.Box.Focus();
+                valid.Box.CaretIndex = valid.Caret;
+                valid.Box.SelectionStart = valid.Start;
+                valid.Box.SelectionEnd = valid.End;
+            }
+            else if (!closed && !reopened && !_leaveInputStale && originalFocus is Control control &&
+                control.IsEnabled && TopLevel.GetTopLevel(control) == this)
+                control.Focus();
+            else if (!closed && !reopened) _save.Focus();
+            if (closed || reopened)
+            {
+                _draftProtection.ConfirmLeave();
+                _sceneInput = null;
+                _batchDraft = null;
+            }
+            if (!closed && !reopened && (_leaveInputStale || captured is null) && batchDeferred is not null)
+                OnBatchInspectorChanged(batchDeferred);
+            _leaveInProgress = false;
+            if (!closed) ShowDocumentState(_documentState);
+        }
+        if (!closed || !Current()) return;
+        _leaveCloseApproved = true;
+        Close();
     }
 
     private void UpdateStatus()

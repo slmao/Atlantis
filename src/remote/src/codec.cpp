@@ -1866,6 +1866,67 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   return out;
 }
 
+Value encode(const authoring::DocumentToken& token) {
+  Value out = Value::object();
+  out.set("documentId", encodeEntity(token.documentId));
+  out.set("documentRevision", Value::number(token.documentRevision));
+  return out;
+}
+
+std::optional<authoring::DocumentToken> decodeDocumentToken(const Value& value) {
+  const auto* id = value.find("documentId");
+  const auto* rev = value.find("documentRevision");
+  if (!id || !rev || !id->isString()) return std::nullopt;
+  const auto guid = decodeEntity(*id);
+  const auto revision = decodeUInt64(*rev);
+  if (!guid || *guid == EntityGuid{} || asset_system::toString(*guid) != id->asString() || !revision || *revision == 0)
+    return std::nullopt;
+  return authoring::DocumentToken{*guid, *revision};
+}
+
+Value encode(const authoring::DocumentState& state) {
+  Value out = encode(state.token);
+  out.set("scene", encodeAsset(state.scene));
+  out.set("source", Value::string(state.source));
+  out.set("provenance", Value::string(state.provenance == authoring::Provenance::Imported ? "Imported" : "HandAuthored"));
+  out.set("lastPersistedRevision", Value::number(state.lastPersistedRevision));
+  out.set("dirty", Value::boolean(state.dirty));
+  return out;
+}
+
+std::optional<authoring::DocumentState> decodeDocumentState(const Value& value) {
+  if (!value.isObject() || value.asObject().size() != 7) return std::nullopt;
+  const auto token = decodeDocumentToken(value);
+  const auto* scene = value.find("scene");
+  const auto* source = value.find("source");
+  const auto* provenance = value.find("provenance");
+  const auto* persisted = value.find("lastPersistedRevision");
+  const auto* dirty = value.find("dirty");
+  if (!token || !scene || !scene->isString() || !source || !source->isString() || source->asString().empty() ||
+      !provenance || !provenance->isString() || !persisted || !dirty || !dirty->isBool()) return std::nullopt;
+  const auto guid = decodeAsset(*scene);
+  const auto revision = decodeUInt64(*persisted);
+  if (!guid || *guid == AssetGuid{} || asset_system::toString(*guid) != scene->asString() || !revision ||
+      *revision == 0 || *revision > token->documentRevision || (*revision == token->documentRevision && dirty->asBool()))
+    return std::nullopt;
+  const auto type = provenance->asString();
+  if (type != "Imported" && type != "HandAuthored") return std::nullopt;
+  return authoring::DocumentState{*token, *guid, source->asString(),
+      type == "Imported" ? authoring::Provenance::Imported : authoring::Provenance::HandAuthored, *revision, dirty->asBool()};
+}
+
+std::optional<authoring::DocumentError> decodeDocumentError(const Value& value, bool saving) {
+  using E = authoring::DocumentError;
+  constexpr E shared[]{E::NoDocument, E::StaleDocument};
+  constexpr E saves[]{E::ImportedSceneNotSavable, E::WriteFailed};
+  constexpr E opens[]{E::SourceUnreadable, E::SourceParseFailed, E::SourceInvalid};
+  if (!value.isString()) return std::nullopt;
+  for (E error : shared) if (value.asString() == authoring::toString(error)) return error;
+  for (E error : saving ? std::span<const E>(saves) : std::span<const E>(opens))
+    if (value.asString() == authoring::toString(error)) return error;
+  return std::nullopt;
+}
+
 Value encode(const authoring::NodeSummary& node) {
   Value out = Value::object();
   out.set("node", encodeEntity(node.node));

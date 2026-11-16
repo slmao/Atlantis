@@ -335,6 +335,31 @@ enum class SaveError : std::uint8_t {
   ImportedSceneNotSavable,  // ADR-0129 D4
   WriteFailed,              // the temporary file could not be written or renamed; the source is untouched
 };
+struct DocumentToken {
+  asset_system::EntityGuid documentId;
+  std::uint64_t documentRevision = 0;
+  friend bool operator==(const DocumentToken&, const DocumentToken&) = default;
+};
+struct DocumentState {
+  DocumentToken token;
+  asset_system::AssetGuid scene;
+  std::string source;
+  Provenance provenance = Provenance::HandAuthored;
+  std::uint64_t lastPersistedRevision = 0;
+  bool dirty = false;
+  friend bool operator==(const DocumentState&, const DocumentState&) = default;
+};
+enum class DocumentError : std::uint8_t {
+  NoDocument, StaleDocument, ImportedSceneNotSavable, WriteFailed,
+  SourceUnreadable, SourceParseFailed, SourceInvalid,
+  Unsupported, NoAuthoring, TransportFailure, ProtocolFailure, InvalidRequest,
+};
+struct DocumentFailure {
+  DocumentError error;
+  bool outcomeUnknown = false;  // The mutation may already have reached the host.
+  friend bool operator==(const DocumentFailure&, const DocumentFailure&) = default;
+};
+[[nodiscard]] std::string_view toString(DocumentError error) noexcept;
 enum class SaveAsError : std::uint8_t {
   Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
   Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome,
@@ -466,6 +491,20 @@ class AuthoringConnection {
   [[nodiscard]] virtual Result<authoring::ApplySnapshot, authoring::ApplyLookupError> applyStatus(
       std::optional<authoring::ApplyId> id = std::nullopt) const = 0;
   virtual atlantis::Result<std::monostate, authoring::SaveError> save() = 0;
+  // Host-dispatch calls with owned values. A null expected token on reopen means
+  // first open only; neither mutation applies the document to the Runtime.
+  [[nodiscard]] virtual Result<std::optional<authoring::DocumentState>, authoring::DocumentFailure>
+  documentState() const {
+    return decltype(documentState())::Err({authoring::DocumentError::Unsupported});
+  }
+  virtual Result<authoring::DocumentState, authoring::DocumentFailure>
+  saveIfCurrent(const authoring::DocumentToken&) {
+    return Result<authoring::DocumentState, authoring::DocumentFailure>::Err({authoring::DocumentError::Unsupported});
+  }
+  virtual Result<authoring::DocumentState, authoring::DocumentFailure>
+  reopenIfCurrent(std::optional<authoring::DocumentToken>) {
+    return Result<authoring::DocumentState, authoring::DocumentFailure>::Err({authoring::DocumentError::Unsupported});
+  }
   virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
   virtual Result<authoring::CreatedScene, authoring::CreateSceneError> createScene(std::string_view) {
     return Result<authoring::CreatedScene, authoring::CreateSceneError>::Err(authoring::CreateSceneError::Unavailable);

@@ -200,6 +200,9 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 |---|---|---|
 | `authoring.open` | — | `{"ok":null}` or `{"err":"<OpenError>"}` |
 | `authoring.document` | — | `<Document>` or `null` before a successful open |
+| `authoring.documentState` | `{}` | `{"ok":<DocumentState>}` or `{"ok":null}` before open |
+| `authoring.saveIfCurrent` | `{"expected":{"documentId":<GUID>,"documentRevision":<u64>}}` | `{"ok":<DocumentState>}` or `{"err":"<DocumentError>"}` |
+| `authoring.reopenIfCurrent` | Same token, or `{"expected":null}` for first open only | `{"ok":<DocumentState>}` or `{"err":"<DocumentError>"}` |
 | `authoring.listNodes` | — | `{"ok":[<NodeSummary>…]}` (the node order) or `{"err":"<AuthoringError>"}` |
 | `authoring.listComponents` | `node: <N>` | `{"ok":[<T>…]}` (sorted) or `{"err":"<AuthoringError>"}` |
 | `authoring.getProperty` | `address: <SA>` | `{"ok":<V>}` or `{"err":"<AuthoringError>"}` |
@@ -238,6 +241,15 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   event; use the correlated status below for its outcome;
 - `authoring.save` writes a hand-authored source atomically; an imported
   scene's save is refused.
+- The additive [0112 operations](../adr/0166-guarded-authoring-save-and-reopen.md)
+  observe source persistence separately from Apply. `DocumentState` carries
+  `documentId`, `documentRevision`, `scene`, `source`, `provenance`,
+  `lastPersistedRevision` and `dirty`. Save and Reopen compare the identity
+  and revision inside host dispatch. Both can refuse with `NoDocument` or
+  `StaleDocument`. Save can also refuse with `ImportedSceneNotSavable` or
+  `WriteFailed`; Reopen can refuse with the same source errors as legacy Open.
+  When the reply is lost, check state on the original host before
+  explicitly retrying. The legacy calls retain their behavior.
 - `authoring.saveAs` creates an independent source/catalog unit on an
   opted-in Windows development host. The source is relative to the assets
   root. The receipt names the copy and captured revision. Save As leaves the

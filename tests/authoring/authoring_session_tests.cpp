@@ -28,6 +28,65 @@ namespace {
 
 // ================================================================== queries
 
+TEST_CASE("authoring: guarded source persistence follows content independently of Apply", "[authoring][session][persistence]") {
+  Fixture unopened(baseScene(), false);
+  auto& a = *unopened.connection;
+  auto b = unopened.session.connect();
+  REQUIRE_FALSE(a.documentState().value());
+  const auto first = a.reopenIfCurrent(std::nullopt).value();
+  REQUIRE(first.token.documentRevision == 1);
+  CHECK(a.reopenIfCurrent(std::nullopt).error().error == ac::DocumentError::StaleDocument);
+  const auto onDisk = readText(unopened.source);
+  const auto node = entity(1);
+  const auto before = a.listNodes().value()[0].name;
+  CHECK_FALSE(refusalOf(*b, {ac::SetNodeName{node, "unsaved"}}));
+  const auto dirty = a.documentState().value().value();
+  REQUIRE(dirty.dirty);
+  CHECK(dirty.token.documentId == first.token.documentId);
+  CHECK(dirty.lastPersistedRevision == first.token.documentRevision);
+  CHECK(a.saveIfCurrent(first.token).error().error == ac::DocumentError::StaleDocument);
+  CHECK(a.reopenIfCurrent(first.token).error().error == ac::DocumentError::StaleDocument);
+  CHECK(readText(unopened.source) == onDisk);
+  CHECK_FALSE(refusalOf(*b, {ac::SetNodeName{node, before}}));
+  const auto undone = a.documentState().value().value();
+  CHECK_FALSE(undone.dirty);
+  CHECK(undone.lastPersistedRevision != undone.token.documentRevision);
+  CHECK_FALSE(refusalOf(*b, {ac::SetNodeName{node, "saved"}}));
+  const auto reviewed = a.documentState().value().value();
+  REQUIRE(b->save().isOk());
+  const auto saved = a.documentState().value().value();
+  CHECK(saved.token == reviewed.token);
+  CHECK(saved.lastPersistedRevision == saved.token.documentRevision);
+  CHECK_FALSE(saved.dirty);
+  CHECK(a.saveIfCurrent(saved.token).value() == saved);
+  unopened.session.setSceneSink([](ac::ApplyId, atlantis::asset_system::ValidatedSceneData) {
+    return atlantis::Result<std::optional<ac::ApplyId>, std::monostate>::Ok({});
+  });
+  const auto receipt = a.applyTracked().value();
+  writeText(unopened.source, "invalid source");
+  CHECK(a.reopenIfCurrent(saved.token).error().error == ac::DocumentError::SourceParseFailed);
+  CHECK(a.documentState().value().value() == saved);
+  REQUIRE(b->saveIfCurrent(saved.token).isOk());
+  const auto opened = a.reopenIfCurrent(saved.token).value();
+  CHECK(opened.token.documentId != saved.token.documentId);
+  CHECK(opened.token.documentRevision == saved.token.documentRevision + 1);
+  CHECK(a.reopenIfCurrent(saved.token).error().error == ac::DocumentError::StaleDocument);
+  CHECK(b->listNodes().value()[0].name == "saved");
+  CHECK(b->applyStatus(receipt.id).value().request->state == ac::ApplyState::Pending);
+  unopened.session.reportReload(receipt.id, atlantis::Result<std::uint64_t, ac::ReloadError>::Err(
+      ac::ReloadError::ScenePreparationFailed));
+  CHECK(b->applyStatus(receipt.id).value().request->state == ac::ApplyState::Failed);
+  CHECK(a.documentState().value() == opened);
+  const auto recovery = b->applyTracked().value();
+  CHECK(recovery.documentRevision == opened.token.documentRevision);
+  unopened.session.reportReload(recovery.id, atlantis::Result<std::uint64_t, ac::ReloadError>::Ok(1));
+  CHECK(a.applyStatus(recovery.id).value().request->state == ac::ApplyState::Applied);
+  CHECK(a.documentState().value() == opened);
+  Fixture restarted;
+  CHECK(restarted.connection->documentState().value()->token.documentRevision == first.token.documentRevision);
+  CHECK(restarted.connection->saveIfCurrent(first.token).error().error == ac::DocumentError::StaleDocument);
+}
+
 TEST_CASE("authoring: before open() there is no document; open() reads it and reports DocumentReopened",
           "[authoring][session]") {
   Fixture f(baseScene(), /*open=*/false);

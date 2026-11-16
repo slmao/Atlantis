@@ -249,6 +249,23 @@ TEST_CASE("cli scene: inspect shared target types without opening the document",
   CHECK(text.cli.out.str().find("target=material") != std::string::npos);
 }
 
+TEST_CASE("cli scene: guarded persistence leaves rejected revisions untouched", "[cli][scene][persistence]") {
+  SceneCli scene;
+  REQUIRE(scene.run("scene document-state") == 0);
+  REQUIRE(scene.run("scene reopen-if-current --if-absent") == 0);
+  CHECK(scene.run("scene reopen-if-current --if-absent") != 0);
+  const auto first = scene.authoring->documentState().value()->token;
+  const std::string id = atlantis::asset_system::toString(first.documentId);
+  (void)scene.authoring->submit(ac::SetNodeName{
+      atlantis::asset_system::parseEntityGuid(kNode1).value(), "prepared"});
+  REQUIRE(scene.authoring->drainFailures().empty());
+  CHECK(scene.run("scene save-if-current " + id + " 1") != 0);
+  CHECK(scene.run("scene save-if-current " + id + " 18446744073709551616") != 0);
+  CHECK(scene.run("scene save-if-current " + id + " 2") == 0);
+  CHECK(scene.run("scene reopen-if-current " + id + " 2") == 0);
+  CHECK(scene.authoring->listNodes().value().front().name == "prepared");
+}
+
 TEST_CASE("cli scene: open, nodes, get and camera read the document", "[cli][scene]") {
   SceneCli scene(/*json=*/true);
   REQUIRE(scene.run("scene open") == 0);

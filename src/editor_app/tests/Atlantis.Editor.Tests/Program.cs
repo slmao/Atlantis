@@ -86,6 +86,7 @@ public static partial class Program
             HierarchyChecks();
             SceneObjectCreationChecks(conformance);
             ViewportGuideChecks();
+            DocumentLeaveChecks();
             DuplicateSubtreeChecks();
             GuardedDuplicateChecks();
             ApplyControllerChecks();
@@ -108,6 +109,40 @@ public static partial class Program
         }
         Console.WriteLine($"camera convention: {s_passed} checks passed, {s_failed} failed");
         return s_failed == 0 && s_passed > 0 ? 0 : 1;
+    }
+
+    private static void DocumentLeaveChecks()
+    {
+        var scene = AssetGuid.Parse("b84cf769-9531-4fc1-b717-d2301320e166");
+        var id = new EntityGuid(Guid.Parse("1b77c263-148d-4080-8bfb-d8ab7a618a96"));
+        var saved = new Atlantis.Gameplay.Authoring.DocumentState(new(id, 7), scene, "scene.txt",
+            Atlantis.Gameplay.Authoring.Provenance.HandAuthored, 7, false);
+        var view = new DocumentObservation(DocumentAvailability.Known, saved);
+        Check(view.Clean && view.ProvesSaved(saved.Token), "leave: a matching persisted revision establishes saved content");
+        var undone = view with { State = saved with { LastPersistedRevision = 6 } };
+        Check(undone.Clean && !undone.ProvesSaved(saved.Token), "leave: clean Undo does not prove a particular save");
+        var replaced = view with { State = saved with { Token = new(new EntityGuid(Guid.NewGuid()), 7) } };
+        Check(!replaced.Matches(view), "leave: repeated numeric revision in another open is stale");
+        Check(!new DocumentObservation(DocumentAvailability.Unavailable).Clean &&
+            new DocumentObservation(DocumentAvailability.Known).Clean, "leave: disconnect is distinct from no document");
+
+        var draft = new DocumentDraft("Transform.localPosition", "0 2 47", [id], new TypeId(3), new FieldId(4));
+        var field = new Atlantis.Gameplay.Authoring.SceneAddress(id, draft.Component!.Value, draft.Field!.Value);
+        var protection = new DocumentDraftProtection();
+        Check(!protection.Observe(draft, [new Atlantis.Gameplay.Authoring.PropertyChanged(
+            field with { Field = new FieldId(5) }, PropertyValue.FromFloat32(12))]) && protection.Stale is null,
+            "leave: an external edit to another field does not invalidate the draft");
+        Check(protection.Observe(draft, [
+            new Atlantis.Gameplay.Authoring.PropertyChanged(field, PropertyValue.FromVec3(new(7, 11, 19))),
+            new Atlantis.Gameplay.Authoring.PropertyChanged(field, PropertyValue.FromVec3(new(0, 0, 0)))]) &&
+            protection.Stale?.Text == "0 2 47",
+            "leave: an external write and restore preserve the invalidated draft as a separate copy");
+        var cleanAfterWrite = view with { State = saved with { Token = new(id, 9) } };
+        Check(protection.RequiresConfirmation(cleanAfterWrite, hasEditableDraft: false),
+            "leave: retained stale text requires confirmation even when the source matches again");
+        protection.ConfirmLeave();
+        Check(!protection.RequiresConfirmation(cleanAfterWrite, hasEditableDraft: false),
+            "leave: confirmed leave clears the copy without changing persistence");
     }
 
     private static int Usage()

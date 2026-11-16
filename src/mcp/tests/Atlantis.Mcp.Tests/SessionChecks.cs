@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
@@ -87,7 +88,7 @@ internal static class SessionChecks
             }), cancellationToken: deadline.Token))
             {
                 var tools = await client.ListToolsAsync(cancellationToken: deadline.Token);
-                check(tools.Count == 69, "production host discovers all 69 tools after connecting");
+                check(tools.Count == 72, "production host discovers all 72 tools after connecting");
                 CallToolResult status = await client.CallToolAsync("control.status", cancellationToken: deadline.Token);
                 check(status.IsError != true, "production host forwards control through the SDK");
                 CallToolResult preview = await client.CallToolAsync("assets.preview_mesh",
@@ -136,7 +137,43 @@ internal static class SessionChecks
         }
     }
 
-    private static async Task Serve(TcpListener listener, ConcurrentQueue<JsonValue> requests, CancellationToken token)
+    internal static async Task DocumentHandoff(Action<bool, string> check)
+    {
+        using CancellationTokenSource deadline = new(TimeSpan.FromSeconds(10));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var requests = new ConcurrentQueue<JsonValue>();
+        Task server = Serve(listener, requests, deadline.Token, dropReplyTo: "authoring.saveIfCurrent");
+        var info = new SessionInfo((ushort)((IPEndPoint)listener.LocalEndpoint).Port, "M2-fixture", 1, default);
+        using var remote = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 3000 });
+        var registry = new ToolRegistry(new AtlantisSession(remote));
+        var expected = JsonSerializer.Deserialize<JsonElement>(
+            """{"documentId":"11111111-2222-4333-8444-555555555555","documentRevision":2}""");
+        CallToolResult Call(string name) => registry.Invoke(new CallToolRequestParams
+        {
+            Name = name,
+            Arguments = new Dictionary<string, JsonElement> { ["expected"] = expected }
+        });
+
+        var sent = Call("authoring.save_if_current");
+        var unsent = Call("authoring.reopen_if_current");
+        await server.WaitAsync(deadline.Token);
+        check(sent.IsError == true && sent.Content[0] is TextContentBlock first &&
+            first.Text.StartsWith("Disconnected:", StringComparison.Ordinal) &&
+            first.Text.Contains("authoring.saveIfCurrent outcome unknown", StringComparison.Ordinal),
+            "guarded Save with a lost reply preserves Disconnected and reports unknown outcome");
+        check(unsent.IsError == true && unsent.Content[0] is TextContentBlock second &&
+            second.Text.StartsWith("Disconnected:", StringComparison.Ordinal) &&
+            second.Text.Contains("authoring.reopenIfCurrent was not sent", StringComparison.Ordinal) &&
+            !second.Text.Contains("outcome unknown", StringComparison.Ordinal),
+            "guarded Reopen after a sticky SDK error preserves Disconnected and reports not sent");
+        check(requests.Select(request => request.Find("method")!.AsString)
+            .SequenceEqual(new[] { "hello", "connection.schema", "authoring.saveIfCurrent" }),
+            "only the first guarded mutation reaches the host");
+    }
+
+    private static async Task Serve(TcpListener listener, ConcurrentQueue<JsonValue> requests, CancellationToken token,
+        string? dropReplyTo = null)
     {
         using TcpClient client = await listener.AcceptTcpClientAsync(token);
         await using NetworkStream stream = client.GetStream();
@@ -147,6 +184,7 @@ internal static class SessionChecks
             JsonValue request = Json.Parse(line);
             requests.Enqueue(request);
             string method = request.Find("method")!.AsString;
+            if (method == dropReplyTo) return;
             JsonValue response = JsonValue.NewObject().Set("id", request.Find("id")!);
             if (method == "authoring.open")
                 response.Set("error", Json.Parse("{\"code\":\"NoAuthoring\",\"message\":\"原样 refusal\"}"));

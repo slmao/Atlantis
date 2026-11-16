@@ -124,6 +124,11 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("authoring.apply_status", "authoring.applyStatus", "Read a retained request and current projection non-destructively; absent/null id is global newest, never proof of a lost caller receipt. Inspect state, not tool success.", AuthoringModel,
             ToolSchemas.ApplyStatusParameters()),
         Declare("authoring.save", "authoring.save", "Save a hand-authored source; imported sources are refused.", AuthoringModel),
+        Declare("authoring.document_state", "authoring.documentState", "Read document identity, revision and source persistence; null before open.", AuthoringModel),
+        Declare("authoring.save_if_current", "authoring.saveIfCurrent", "Save only the reviewed hand-authored document revision.", AuthoringModel,
+            DocumentParameters(allowAbsent: false)),
+        Declare("authoring.reopen_if_current", "authoring.reopenIfCurrent", "Reopen only the reviewed revision. Explicit null opens only while absent.", AuthoringModel,
+            DocumentParameters(allowAbsent: true)),
         Declare("authoring.save_as", "authoring.saveAs", "Create a named hand-authored copy without retargeting the document. Inspect the destination and confirm settlement before retrying a lost reply.", AuthoringModel,
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
         Declare("authoring.create_scene", "authoring.createScene", "Create a camera-only scene source without opening it. Inspect both destination files and confirm settlement before retrying a lost reply.", AuthoringModel,
@@ -207,6 +212,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
+            if (mapping.Method is "authoring.documentState" or "authoring.saveIfCurrent" or "authoring.reopenIfCurrent")
+                return DocumentOperation(mapping.Method, wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
             bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
@@ -456,6 +463,43 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         CallToolResult result = Forward(JsonValue.NewObject().Set("ok", metadata), false);
         result.Content = [.. result.Content, ImageContentBlock.FromBytes(png, mime)];
         return result;
+    }
+
+    private static JsonElement DocumentParameters(bool allowAbsent)
+    {
+        var token = ToolSchemas.ParametersNode(("documentId", ToolSchemas.String),
+            ("documentRevision", ToolSchemas.Integer));
+        return ToolSchemas.Parameters(("expected", allowAbsent ? ToolSchemas.Nullable(token) : token));
+    }
+
+    private CallToolResult DocumentOperation(string method, JsonValue parameters)
+    {
+        bool reading = method == "authoring.documentState", saving = method == "authoring.saveIfCurrent";
+        var expected = parameters.Find("expected");
+        var token = expected is null ? null : Codec.DecodeDocumentToken(expected);
+        if (!reading && token is null && (saving || expected is not { IsNull: true }))
+            return Error("InvalidArguments: expected a non-nil document ID and positive unsigned revision");
+
+        string target = token is { } key ? $"{key.DocumentId}, revision {key.DocumentRevision}" : "the first open";
+        string unknown = $" {method} outcome unknown for {target}. Check document state on the original Runtime before retrying.";
+        JsonValue reply;
+        bool mayHaveSent = true;
+        try { reply = session.Request(method, parameters, out mayHaveSent); }
+        catch (RemoteException error)
+        {
+            return Error(reading ? error.Message :
+                error.Message + (mayHaveSent ? unknown : $" {method} was not sent."));
+        }
+        if (Codec.DocumentRpcRefusal(reply, method) is { } refusal) return Error(refusal.ToString());
+        if (Codec.DocumentResult(reply) is { } result)
+        {
+            if (result.Find("ok") is { } ok &&
+                (reading && ok.IsNull || Codec.DecodeDocumentState(ok) is { } state &&
+                    (reading || Codec.ValidDocumentReceipt(state, token, saving)))) return Forward(result, false);
+            if (!reading && result.Find("err") is { } err && Codec.DecodeDocumentError(err, saving) is not null)
+                return Forward(result, true);
+        }
+        return Error("ProtocolError: malformed document reply." + (reading ? "" : unknown));
     }
 
     private CallToolResult SaveAs(JsonValue parameters)

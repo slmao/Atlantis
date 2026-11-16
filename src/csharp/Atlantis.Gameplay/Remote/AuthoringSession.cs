@@ -82,6 +82,50 @@ public sealed class AuthoringSession
     /// <summary>Writes a hand-authored document to its source; null on success.</summary>
     public A.SaveError? Save() => Unit("authoring.save", Codec.DecodeSaveError);
 
+    /// <summary>Reads persistence independently of the Runtime's Apply projection.</summary>
+    public Outcome<A.DocumentState?, A.DocumentError> DocumentState()
+    {
+        const string method = "authoring.documentState";
+        var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject()));
+        if (Codec.DocumentRpcRefusal(reply, method) is { } refusal)
+            return Outcome<A.DocumentState?, A.DocumentError>.Err(refusal);
+        if (Codec.DocumentResult(reply)?.Find("ok") is not { } ok) throw _session.Malformed(method);
+        return Outcome<A.DocumentState?, A.DocumentError>.Ok(ok.IsNull ? null :
+            Codec.DecodeDocumentState(ok) ?? throw _session.Malformed(method));
+    }
+
+    /// <summary>Atomically saves the reviewed revision. A lost reply has an unknown outcome.</summary>
+    public Outcome<A.DocumentState, A.DocumentError> SaveIfCurrent(A.DocumentToken expected) => ChangeDocument(expected, true);
+
+    /// <summary>Reopens the reviewed document. Null opens the source only while no document exists.</summary>
+    public Outcome<A.DocumentState, A.DocumentError> ReopenIfCurrent(A.DocumentToken? expected) => ChangeDocument(expected, false);
+
+    private Outcome<A.DocumentState, A.DocumentError> ChangeDocument(A.DocumentToken? expected, bool saving)
+    {
+        if (expected is { } token && (token.DocumentId.IsNil || token.DocumentRevision == 0))
+            return Outcome<A.DocumentState, A.DocumentError>.Err(A.DocumentError.InvalidRequest);
+        string method = saving ? "authoring.saveIfCurrent" : "authoring.reopenIfCurrent";
+        var parameters = JsonValue.NewObject().Set("expected", expected is { } key ? Codec.Encode(key) : JsonValue.Null());
+        _session.ThrowIfFailed();
+        try
+        {
+            var reply = _session.AwaitResponse(_session.Send(method, parameters));
+            if (Codec.DocumentRpcRefusal(reply, method) is { } refusal)
+                return Outcome<A.DocumentState, A.DocumentError>.Err(refusal);
+            var result = Codec.DocumentResult(reply);
+            if (result?.Find("err") is { } err && Codec.DecodeDocumentError(err, saving) is { } error)
+                return Outcome<A.DocumentState, A.DocumentError>.Err(error);
+            if (result?.Find("ok") is { } ok && Codec.DecodeDocumentState(ok) is { } state &&
+                Codec.ValidDocumentReceipt(state, expected, saving)) return Outcome<A.DocumentState, A.DocumentError>.Ok(state);
+            throw _session.Malformed(method);
+        }
+        catch (RemoteException error)
+        {
+            string target = expected is { } known ? $"{known.DocumentId}, revision {known.DocumentRevision}" : "no open document";
+            throw new RemoteException(error, $"{method} outcome unknown for {target}. Check document state on the original Runtime before retrying.");
+        }
+    }
+
     /// <summary>Creates a source copy without changing the bound document. A lost reply throws and must not be replayed.</summary>
     public Outcome<A.SavedScene, A.SaveAsError> SaveAs(string name)
     {

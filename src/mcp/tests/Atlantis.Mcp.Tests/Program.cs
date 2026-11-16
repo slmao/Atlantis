@@ -121,6 +121,11 @@ internal static partial class Program
         ("authoring.apply_tracked", "authoring.applyTracked", "{}", $$$"""{"ok":{"id":"{{{Entity}}}","documentRevision":3}}"""),
         ("authoring.apply_status", "authoring.applyStatus", "{}", $$$"""{"ok":{"currentDocumentRevision":3,"request":{"receipt":{"id":"{{{Entity}}}","documentRevision":3},"state":"Failed","error":"ScenePreparationFailed"},"projection":null}}"""),
         ("authoring.save", "authoring.save", "{}", """{"ok":null}"""),
+        ("authoring.document_state", "authoring.documentState", "{}", """{"ok":null}"""),
+        ("authoring.save_if_current", "authoring.saveIfCurrent", $$$"""{"expected":{"documentId":"{{{Entity}}}","documentRevision":3}}""",
+            $$$"""{"ok":{"documentId":"{{{Entity}}}","documentRevision":3,"lastPersistedRevision":3,"dirty":false,"source":"scene.txt","scene":"{{{Entity}}}","provenance":"HandAuthored"}}"""),
+        ("authoring.reopen_if_current", "authoring.reopenIfCurrent", """{"expected":null}""",
+            $$$"""{"ok":{"documentId":"{{{Entity}}}","documentRevision":1,"lastPersistedRevision":1,"dirty":false,"source":"scene.txt","scene":"{{{Entity}}}","provenance":"HandAuthored"}}"""),
         ("authoring.create_scene", "authoring.createScene", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt"}}"""),
         ("authoring.save_as", "authoring.saveAs", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt","documentRevision":3}}"""),
         ("authoring.active_camera", "authoring.activeCamera", "{}", """{"ok":null}"""),
@@ -168,6 +173,7 @@ internal static partial class Program
             CaptureChecks();
             await M3McpChecks();
             await SessionChecks.Run(Check);
+            await SessionChecks.DocumentHandoff(Check);
             await SessionChecks.RunHost(Check);
             Console.WriteLine($"MCP M3: {_passed} checks passed, 0 failed");
             return 0;
@@ -496,7 +502,8 @@ internal static partial class Program
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
-                "authoring.saveAs" or "authoring.createScene" or "control.viewportNavigation")
+                "authoring.saveAs" or "authoring.createScene" or "authoring.documentState" or "authoring.saveIfCurrent" or
+                "authoring.reopenIfCurrent" or "control.viewportNavigation")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

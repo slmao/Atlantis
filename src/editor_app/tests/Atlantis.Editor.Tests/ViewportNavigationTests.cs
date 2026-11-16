@@ -136,6 +136,13 @@ public static partial class Program
                     case "connection.schema":
                     case "connection.listEntities": result = JsonValue.NewArray(); break;
                     case "authoring.applyStatus": result = Codec.Err(JsonValue.String("UnknownApply")); break;
+                    case "authoring.documentState":
+                        var unsupported = JsonValue.NewObject().Set("id", request.Find("id")!).Set("error",
+                            JsonValue.NewObject().Set("code", JsonValue.String("BadRequest"))
+                                .Set("message", JsonValue.String("unknown method authoring.documentState")));
+                        await writer.WriteLineAsync(Json.Write(unsupported).AsMemory(), token);
+                        continue;
+                    case "authoring.document": result = JsonValue.Null(); break;
                     case "control.viewportNavigation":
                         result = Codec.Ok(Codec.Encode(new ViewportNavigation(0, cleared ? newScene : oldScene, Array.Empty<ViewportBounds>())));
                         break;

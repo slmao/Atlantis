@@ -228,6 +228,12 @@ directional emission of one selected node. The lines show committed authoring
 values. The Apply status describes the Runtime image. The toggle starts Off in
 each Editor window. [Spec 0111](docs/specs/0111-viewport-camera-light-guides.md).
 
+Editor close and **Scene files → Reopen from Source** report unsubmitted
+input and unsaved document changes separately from Runtime Apply. Review
+the shared source state in the CLI with `scene document-state`, in C#
+with `session.Authoring.DocumentState()` or in MCP with
+`authoring.document_state`. [Spec 0112](docs/specs/0112-unsaved-document-protection.md).
+
 Cooked asset discovery (Spec 0081) uses the same shared interface in every client:
 `atlantis --session <file> asset list` or `asset get <guid>` (`--json` for structured
 output); C++ `gameplay::Assets(session.assets())`; C#

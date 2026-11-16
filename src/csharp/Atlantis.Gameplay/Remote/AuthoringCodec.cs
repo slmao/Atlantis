@@ -431,6 +431,66 @@ public static partial class Codec
     public static A.AuthoringError? DecodeAuthoringError(JsonValue value) => DecodeName<A.AuthoringError>(value);
     public static JsonValue Encode(A.OpenError error) => JsonValue.String(error.ToString());
     public static A.OpenError? DecodeOpenError(JsonValue value) => DecodeName<A.OpenError>(value);
+    public static JsonValue Encode(A.DocumentToken token) => JsonValue.NewObject()
+        .Set("documentId", Encode(token.DocumentId)).Set("documentRevision", JsonValue.Number(token.DocumentRevision));
+
+    public static A.DocumentToken? DecodeDocumentToken(JsonValue value)
+    {
+        if (value.Find("documentId") is not { IsString: true } id || DecodeEntity(id) is not EntityGuid guid ||
+            guid.IsNil || guid.ToString() != id.AsString || value.Find("documentRevision") is not { } revision ||
+            DecodeUInt64(revision) is not ulong number || number == 0) return null;
+        return new(guid, number);
+    }
+
+    public static A.DocumentState? DecodeDocumentState(JsonValue value)
+    {
+        if (!value.IsObject || value.Members.Count != 7 || DecodeDocumentToken(value) is not { } token ||
+            value.Find("scene") is not { IsString: true } scene || DecodeAsset(scene) is not AssetGuid guid ||
+            guid.IsNil || guid.ToString() != scene.AsString ||
+            value.Find("source") is not { IsString: true } source || source.AsString.Length == 0 ||
+            value.Find("provenance") is not { IsString: true } provenance ||
+            value.Find("lastPersistedRevision") is not { } last || DecodeUInt64(last) is not ulong persisted ||
+            value.Find("dirty") is not { IsBool: true } dirty || persisted == 0 || persisted > token.DocumentRevision ||
+            (persisted == token.DocumentRevision && dirty.AsBool)) return null;
+        return provenance.AsString switch
+        {
+            "HandAuthored" => new(token, guid, source.AsString, A.Provenance.HandAuthored, persisted, dirty.AsBool),
+            "Imported" => new(token, guid, source.AsString, A.Provenance.Imported, persisted, dirty.AsBool),
+            _ => null
+        };
+    }
+
+    public static bool ValidDocumentReceipt(A.DocumentState state, A.DocumentToken? token, bool saving)
+    {
+        if (state.Dirty || state.LastPersistedRevision != state.Token.DocumentRevision) return false;
+        if (saving) return state.Token == token && state.Provenance == A.Provenance.HandAuthored;
+        ulong before = token?.DocumentRevision ?? 0;
+        return state.Token.DocumentId != token?.DocumentId && state.Token.DocumentRevision > before &&
+            state.Token.DocumentRevision - before == 1;
+    }
+
+    public static A.DocumentError? DecodeDocumentError(JsonValue value, bool saving) =>
+        DecodeName<A.DocumentError>(value) switch
+        {
+            A.DocumentError.NoDocument or A.DocumentError.StaleDocument => DecodeName<A.DocumentError>(value),
+            A.DocumentError.ImportedSceneNotSavable or A.DocumentError.WriteFailed when saving => DecodeName<A.DocumentError>(value),
+            A.DocumentError.SourceUnreadable or A.DocumentError.SourceParseFailed or A.DocumentError.SourceInvalid when !saving => DecodeName<A.DocumentError>(value),
+            _ => null
+        };
+
+    public static A.DocumentError? DocumentRpcRefusal(JsonValue reply, string method)
+    {
+        if (reply.Find("result") is not null || reply.Find("error") is not { } error) return null;
+        if (error.Find("code") is { IsString: true, AsString: "NoAuthoring" }) return A.DocumentError.NoAuthoring;
+        if (error.Find("code") is not { IsString: true, AsString: "BadRequest" } ||
+            error.Find("message") is not { IsString: true } message) return null;
+        return message.AsString == "unknown method " + method ? A.DocumentError.Unsupported : A.DocumentError.InvalidRequest;
+    }
+
+    public static JsonValue? DocumentResult(JsonValue reply) =>
+        reply.Find("error") is null && reply.Find("result") is { IsObject: true } result && result.Members.Count == 1 &&
+        ((result.Find("ok") is null) != (result.Find("err") is null)) ? result : null;
+
     public static JsonValue Encode(A.SaveError error) => JsonValue.String(error.ToString());
     public static A.SaveError? DecodeSaveError(JsonValue value) => DecodeName<A.SaveError>(value);
     public static bool ValidSaveAsName(string? name)
