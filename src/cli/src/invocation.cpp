@@ -62,6 +62,8 @@ constexpr std::string_view kUsage =
     "                    require-duplicate-revision <revision> leads a guarded scene tx (Spec 0108)\n"
     "  scene create <name>    create a camera-only scene source (Spec 0089); GUID/option forms create nodes\n"
     "  scene save-as <name>   create an independent hand-authored scene copy (Spec 0088);\n"
+    "  scene document-state | scene save-if-current <document-id> <revision>\n"
+    "  scene reopen-if-current <document-id> <revision> | scene reopen-if-current --if-absent\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
@@ -372,6 +374,14 @@ int Invocation::finish(Reply reply) {
     if (checked.command == "scene create" && checked.error && checked.error->code == "UnknownOutcome") {
       failure->message += "; " + checked.error->message;
       failure->text = "error: " + failure->message;
+    }
+    if (checked.error && (checked.command == "scene save-if-current" || checked.command == "scene reopen-if-current")) {
+      const auto* unknown = checked.error->subject.find("outcomeUnknown");
+      if (unknown && unknown->isBool() && unknown->asBool()) {
+        failure->subject = checked.error->subject;
+        failure->message += "; " + checked.error->message;
+        failure->text = "error: " + failure->message;
+      }
     }
     if (checked.error && (checked.error->code == "SiblingOrderUnknown" ||
                           checked.error->code == "GuardedPropertyBatchUnknown" ||

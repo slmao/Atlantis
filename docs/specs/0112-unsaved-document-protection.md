@@ -1,11 +1,11 @@
 # Spec 0112 — Unsaved Document Protection
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-17
 - **Related Plan:** [Plan 0112](../plans/0112-unsaved-document-protection.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0166](../adr/0166-guarded-authoring-save-and-reopen.md) (Proposed)
+- **Approval:** Maintainer, 2026-11-17, [PR #389, `985fd010`](https://github.com/slmao/Atlantis/pull/389#issuecomment-6923439281)
+- **Related ADR:** [ADR-0166](../adr/0166-guarded-authoring-save-and-reopen.md) (Accepted)
 
 ## Summary and motivation
 

@@ -21,6 +21,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Assets;
@@ -279,6 +280,11 @@ public sealed class ReparentSource
 
 public sealed class EditorWorker : IDisposable
 {
+    private DocumentObservation _persistence = new(DocumentAvailability.Starting);
+    private long _persistenceRead;
+    private readonly TaskCompletionSource _workerExited = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public event Action<DocumentObservation>? PersistenceChanged;
+    public event Action<IReadOnlyList<Event>>? LeaveDocumentEvents;
     private readonly SessionInfo _info;
     private readonly Action<Action> _post;
     private readonly EditorLog _log;
@@ -2652,6 +2658,20 @@ public sealed class EditorWorker : IDisposable
     public void Save() => Enqueue(session =>
     {
         if (_document is null) return;
+        if (_persistence.Availability != DocumentAvailability.Legacy)
+        {
+            var reviewed = ObservePersistence(session);
+            if (reviewed.State is not { } target)
+            {
+                _post(() => EditNotice?.Invoke(reviewed.Diagnostic ?? reviewed.Title));
+                return;
+            }
+            var mutation = MutatePersistence(session, target, saving: true);
+            string notice = mutation.State is { } saved ? "Saved " + saved.Source :
+                mutation.Diagnostic ?? "Save refused: " + mutation.Refusal;
+            _post(() => EditNotice?.Invoke(notice));
+            return;
+        }
         long start = Stopwatch.GetTimestamp();
         SaveError? error = _document.Save();
         double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
@@ -2668,6 +2688,116 @@ public sealed class EditorWorker : IDisposable
         }
         _log.Write(string.Format(CultureInfo.InvariantCulture, "saved {0} in {1:F1} ms", info?.SourcePath, ms));
         _post(() => EditNotice?.Invoke("saved " + info?.SourcePath));
+    });
+
+    private static DocumentObservation ReadPersistence(RemoteSession session)
+    {
+        try
+        {
+            var result = session.Authoring.DocumentState();
+            if (result.IsOk)
+                return result.Value is { } state && state.Scene != session.Scene
+                    ? new(DocumentAvailability.Unavailable, Diagnostic: "ProtocolError: unexpected scene in document state.")
+                    : new(DocumentAvailability.Known, result.Value);
+            return result.Error switch
+            {
+                DocumentError.Unsupported => new(DocumentAvailability.Legacy, Diagnostic: "This Runtime does not support guarded Save or Reopen."),
+                DocumentError.NoAuthoring => new(DocumentAvailability.Known, Diagnostic: "This Runtime has no authoring session."),
+                _ => new(DocumentAvailability.Unavailable, Diagnostic: result.Error.ToString())
+            };
+        }
+        catch (RemoteException error) { return new(DocumentAvailability.Unavailable, Diagnostic: error.Message); }
+    }
+
+    private DocumentObservation ObservePersistence(RemoteSession session)
+    {
+        _persistenceRead = Stopwatch.GetTimestamp();
+        var observed = ReadPersistence(session);
+        if (observed != _persistence)
+        {
+            _persistence = observed;
+            _post(() => PersistenceChanged?.Invoke(observed));
+        }
+        return observed;
+    }
+
+    private DocumentMutation MutatePersistence(RemoteSession session, DocumentState? expected, bool saving)
+    {
+        try
+        {
+            var result = saving ? session.Authoring.SaveIfCurrent(expected!.Token) : session.Authoring.ReopenIfCurrent(expected?.Token);
+            if (!result.IsOk) return new(Refusal: result.Error);
+            var state = result.Value;
+            if (state.Scene != _info.Scene || expected is not null &&
+                (state.Source != expected.Source || state.Provenance != expected.Provenance))
+                return new(Diagnostic: "ProtocolError: document outcome unknown. Check the source on the original Runtime.", Unknown: true);
+            var observed = new DocumentObservation(DocumentAvailability.Known, state);
+            _persistence = observed;
+            _post(() => PersistenceChanged?.Invoke(observed));
+            return new(State: state);
+        }
+        catch (RemoteException error)
+        {
+            return new(Diagnostic: error.Message, Unknown: error.InnerException is RemoteException);
+        }
+    }
+
+    private async Task<T> DocumentWork<T>(Func<RemoteSession, T> action, T unavailable)
+    {
+        TaskCompletionSource<T> completed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Enqueue(session => completed.TrySetResult(action(session)));
+        await Task.WhenAny(completed.Task, _workerExited.Task).ConfigureAwait(false);
+        return completed.Task.IsCompletedSuccessfully ? completed.Task.Result : unavailable;
+    }
+
+    public Task<DocumentObservation> ReviewDocument() => DocumentWork(session =>
+    {
+        PollDocument(session, pollApply: false);
+        var state = ObservePersistence(session);
+        if (_document is null && state.State is not null) OpenDocument(session, tryFirstOpen: false);
+        return state;
+    }, new DocumentObservation(DocumentAvailability.Unavailable, Diagnostic: "Editing connection is unavailable."));
+
+    public bool LeaveEditingAvailable => !_workerExited.Task.IsCompleted && !_stopping;
+
+    public void CancelGizmoForLeave()
+    {
+        lock (_lock)
+        {
+            ++_gizmoRecoveryEpoch;
+            _pendingGizmo = null;
+            Enqueue(session =>
+            {
+                if (_gizmo?.Dragging == true) _gizmo.Revert();
+                lock (_lock) { _gizmoActive = false; InvalidateGuidesLocked(); }
+                SendOverlay(session);
+            });
+        }
+    }
+
+    public Task<DocumentMutation> SaveOrReopen(DocumentState? expected, bool saving) => DocumentWork(session =>
+    {
+        var result = MutatePersistence(session, expected, saving);
+        if (!saving && result.State is not null)
+        {
+            // Publish the receipt before refreshing later, independently fallible UI data.
+            Enqueue(current =>
+            {
+                if (_document is null) OpenDocument(current, tryFirstOpen: false);
+                else PollDocument(current);
+            });
+        }
+        return result;
+    }, new DocumentMutation(Diagnostic: "Editing connection ended before the operation was sent."));
+
+    public Task<DocumentObservation> CheckOriginalDocument() => Task.Run(() =>
+    {
+        try
+        {
+            using var session = RemoteSession.Connect(_info);
+            return ReadPersistence(session);
+        }
+        catch (RemoteException error) { return new DocumentObservation(DocumentAvailability.Unavailable, Diagnostic: error.Message); }
     });
 
     public void SaveAs(string name, long lifetime, Action<string, SavedSceneReceipt?> settled) => Enqueue(session =>
@@ -2744,20 +2874,45 @@ public sealed class EditorWorker : IDisposable
     });
 
     // Opens the Runtime's authoring document (Spec 0065 R2) and posts the first tree.
-    private void OpenDocument(RemoteSession session)
+    private void OpenDocument(RemoteSession session, bool tryFirstOpen = true)
     {
         try
         {
             // A read-only probe precedes automatic open and editable UI. An old
             // Runtime fails through the existing protocol rules without a document write.
-            var readiness = session.Authoring.ApplyStatus();
-            if (!readiness.IsOk) throw new InvalidOperationException("authoring apply tracking unavailable");
-            if (session.Authoring.Document() is null && session.Authoring.Open() is OpenError error)
+            var persistence = ObservePersistence(session);
+            if (persistence.Availability == DocumentAvailability.Known && persistence.Diagnostic is null && persistence.State is null)
             {
-                _log.Write("authoring: open refused: " + error);
-                _post(() => EditNotice?.Invoke("the authoring document cannot be opened: " + error));
+                if (!tryFirstOpen) return;
+                var initial = MutatePersistence(session, null, saving: false);
+                if (initial.State is null)
+                {
+                    if (initial.Refusal == DocumentError.StaleDocument) persistence = ObservePersistence(session);
+                    else
+                    {
+                        var message = initial.Diagnostic ?? "Source open refused: " + initial.Refusal;
+                        if (initial.Unknown)
+                        {
+                            var unknown = new DocumentObservation(DocumentAvailability.Unavailable, Diagnostic: message);
+                            _persistence = unknown;
+                            _post(() => PersistenceChanged?.Invoke(unknown));
+                        }
+                        _post(() => EditNotice?.Invoke(message));
+                        return;
+                    }
+                    if (persistence.State is null) return;
+                }
+            }
+            else if (persistence.State is null &&
+                (persistence.Availability != DocumentAvailability.Legacy || session.Authoring.Document() is null))
+            {
+                _post(() => EditNotice?.Invoke(persistence.Availability == DocumentAvailability.Legacy
+                    ? "Use a supported Runtime, or open its source explicitly with a legacy client before attaching."
+                    : persistence.Diagnostic ?? persistence.Title));
                 return;
             }
+            var readiness = session.Authoring.ApplyStatus();
+            if (!readiness.IsOk) throw new InvalidOperationException("authoring apply tracking unavailable");
             var document = new RemoteAuthoringDocument(session.Authoring, session);
             long start = Stopwatch.GetTimestamp();
             _tree.Rebuild(document);
@@ -2798,6 +2953,7 @@ public sealed class EditorWorker : IDisposable
         IReadOnlyList<Event> events = observed ?? _document.DrainEvents();
         if (events.Count > 0)
         {
+            _post(() => LeaveDocumentEvents?.Invoke(events));
             lock (_lock)
             {
                 if (_guidesEnabled && events.Any(GuideInputChanged)) InvalidateGuidesLocked();
@@ -3207,6 +3363,12 @@ public sealed class EditorWorker : IDisposable
 
     private void Run()
     {
+        try { RunConnected(); }
+        finally { _workerExited.TrySetResult(); }
+    }
+
+    private void RunConnected()
+    {
         RemoteSession? session = null;
         try
         {
@@ -3331,6 +3493,9 @@ public sealed class EditorWorker : IDisposable
                 // Plan 0068 M6: the play state rides the document's poll cadence, but never a pointer interaction's wire.
                 if (!interacting) PollStatus(session);
                 PollDocument(session);
+                if (_persistence.Availability != DocumentAvailability.Legacy &&
+                    Stopwatch.GetElapsedTime(_persistenceRead).TotalMilliseconds >= 250)
+                    ObservePersistence(session);
             }
         }
     }

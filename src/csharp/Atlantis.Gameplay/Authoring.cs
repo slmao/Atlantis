@@ -287,6 +287,14 @@ public enum SaveAsError
 }
 
 public sealed record SavedScene(AssetGuid Scene, string Source, ulong DocumentRevision);
+public readonly record struct DocumentToken(EntityGuid DocumentId, ulong DocumentRevision);
+public sealed record DocumentState(DocumentToken Token, AssetGuid Scene, string Source, Provenance Provenance,
+    ulong LastPersistedRevision, bool Dirty);
+public enum DocumentError
+{
+    NoDocument, StaleDocument, ImportedSceneNotSavable, WriteFailed,
+    SourceUnreadable, SourceParseFailed, SourceInvalid, Unsupported, NoAuthoring, InvalidRequest
+}
 
 public enum CreateSceneError
 {

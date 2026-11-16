@@ -1,9 +1,9 @@
 # Plan 0112 — Unsaved Document Protection
 
 - **Spec:** [Spec 0112](../specs/0112-unsaved-document-protection.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending for Spec/Plan 0112 and [ADR-0166](../adr/0166-guarded-authoring-save-and-reopen.md)
+- **Joint Human Review:** Maintainer approved J1–J4 and Spec/Plan 0112, accepted [ADR-0166](../adr/0166-guarded-authoring-save-and-reopen.md) and authorized S2–S4 on 2026-11-17 at [PR #389, `985fd010`](https://github.com/slmao/Atlantis/pull/389#issuecomment-6923439281). The design was manually merged at `e050bbce`.
 
 ## Objective and sequencing
 

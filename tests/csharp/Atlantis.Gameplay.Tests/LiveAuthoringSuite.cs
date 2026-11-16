@@ -47,6 +47,8 @@ public static class LiveAuthoringSuite
         LegacySiblingOrder(t, exactRefusal: false);
         CreateSceneUnknownOutcome(t, RemoteError.Disconnected, null);
         CreateSceneUnknownOutcome(t, RemoteError.ProtocolError, "scenes/saved/save_other/scene.scene.txt");
+        DocumentUnknownOutcome(t, saving: true);
+        DocumentUnknownOutcome(t, saving: false);
     }
 
     private static void GuardedProperties(TestContext t, RemoteSession first, RemoteSession second)
@@ -242,6 +244,45 @@ public static class LiveAuthoringSuite
         JsonValue request = peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
         t.Equal("authoring.createScene", request.Find("method")?.AsString, "peer received the CreateScene request");
         t.Equal(name, request.Find("params")?.Find("name")?.AsString, "peer received the attempted name");
+    }
+
+    private static void DocumentUnknownOutcome(TestContext t, bool saving)
+    {
+        const string scene = "52052052-00aa-4052-8052-0000000000aa";
+        var token = new A.DocumentToken(new EntityGuid(Guid.Parse(scene)), 4);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var clientOperation = Task.Run(() =>
+        {
+            using TcpClient socket = listener.AcceptTcpClient();
+            socket.ReceiveTimeout = 5000;
+            using var stream = socket.GetStream();
+            using var reader = new StreamReader(stream);
+            using var writer = new StreamWriter(stream) { AutoFlush = true };
+            JsonValue Read() => Json.Parse(reader.ReadLine() ?? throw new EndOfStreamException());
+            void Reply(JsonValue request, JsonValue result) => writer.WriteLine(Json.Write(JsonValue.NewObject()
+                .Set("id", request.Find("id")!).Set("result", result)));
+            Reply(Read(), JsonValue.NewObject().Set("scene", JsonValue.String(scene)));
+            Reply(Read(), Json.Parse("[]"));
+            var request = Read();
+            if (!saving) Reply(request, Json.Parse("""{"ok":{"dirty":false}}"""));
+            return request;
+        });
+        var info = new SessionInfo((ushort)((IPEndPoint)listener.LocalEndpoint).Port,
+            "00112233445566778899aabbccddeeff", 1, AssetGuid.Parse(scene));
+        using var client = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
+        var error = t.Throws<RemoteException>(() =>
+        {
+            if (saving) client.Authoring.SaveIfCurrent(token);
+            else client.Authoring.ReopenIfCurrent(token);
+        }, "guarded mutation throws for lost or invalid reply");
+        t.Equal<RemoteError?>(saving ? RemoteError.Disconnected : RemoteError.ProtocolError, error?.Error,
+            "guarded operation keeps the original remote error");
+        t.Check(error?.Message.Contains("outcome unknown") == true && error.Message.Contains(scene) &&
+            error.Message.Contains("revision 4") && error.Message.Contains("original Runtime"),
+            "unknown document outcome identifies the guard and read-before-retry");
+        var wire = clientOperation.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+        t.Equal<A.DocumentToken?>(token, Codec.DecodeDocumentToken(wire.Find("params")!.Find("expected")!), "attempted guard reached the peer");
     }
 
     private static void Names(TestContext t, RemoteSession first, RemoteSession second)

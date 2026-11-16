@@ -134,7 +134,7 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 69 tools", tools.Count == 69 && tools.Select(t => t.Name).Distinct().Count() == 69);
+            Require("real host discovers exactly 72 tools", tools.Count == 72 && tools.Select(t => t.Name).Distinct().Count() == 72);
         }
         var unavailableCreation = await first.CallToolAsync("authoring.create_scene",
             new Dictionary<string, object?> { ["name"] = "requires_opt_in" }, cancellationToken: _token);
@@ -143,7 +143,18 @@ internal sealed class IntegrationTest
                 content.Text.Contains("Unavailable", StringComparison.Ordinal)));
         await Query(first, "control.pause");
         Require("Runtime paused", (await Query(first, "control.status")).Find("paused")?.AsBool == true);
+        Require("shared state distinguishes no open document",
+            (await Query(first, "authoring.document_state")).Find("ok")?.IsNull == true);
+        JsonValue opened = (await Query(first, "authoring.reopen_if_current", Object("expected", JsonValue.Null()))).Find("ok")!;
+        Require("guarded first open reports same clean state to a second client", opened.Find("dirty")?.AsBool == false &&
+            Json.Write(opened) == Json.Write((await Query(second, "authoring.document_state")).Find("ok")!));
         await Query(first, "authoring.open");
+        var stale = await first.CallToolAsync("authoring.save_if_current", new Dictionary<string, object?> {
+            ["expected"] = JsonSerializer.Deserialize<JsonElement>(Json.Write(Object("documentId", opened.Find("documentId")!)
+                .Set("documentRevision", opened.Find("documentRevision")!)))
+        }, cancellationToken: _token);
+        Require("legacy reopen invalidates the old guarded Save", stale.IsError == true &&
+            stale.Content.OfType<TextContentBlock>().Any(content => content.Text.Contains("StaleDocument", StringComparison.Ordinal)));
         JsonValue document = await Query(first, "authoring.document");
         Require("source provenance", document.Find("provenance")?.AsString == (scene == "bistro" ? "Imported" : "HandAuthored"));
         string source = document.Find("source")!.AsString;

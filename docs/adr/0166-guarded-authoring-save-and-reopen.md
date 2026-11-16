@@ -1,9 +1,9 @@
 # ADR 0166 — Guarded Authoring Save and Reopen
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-17
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Maintainer, 2026-11-17, [PR #389, `985fd010`](https://github.com/slmao/Atlantis/pull/389#issuecomment-6923439281)
 - **Related Spec:** [Spec 0112](../specs/0112-unsaved-document-protection.md)
 
 ## Context

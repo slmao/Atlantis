@@ -1082,6 +1082,21 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return sessionCall<ac::SaveError>("authoring.save", &codec::decodeSaveError,
                                       ResultT::Err(ac::SaveError::NoDocument));
   }
+  Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentState() const override {
+    using R = Result<std::optional<ac::DocumentState>, ac::DocumentFailure>;
+    const auto response = documentCall("authoring.documentState", Value::object(), false);
+    if (response.isErr()) return R::Err(response.error());
+    const auto* ok = response.value().find("ok");
+    if (ok && ok->isNull()) return R::Ok(std::nullopt);
+    if (ok) if (auto view = codec::decodeDocumentState(*ok)) return R::Ok(std::move(view));
+    return failed(R::Err({ac::DocumentError::ProtocolFailure}));
+  }
+  Result<ac::DocumentState, ac::DocumentFailure> saveIfCurrent(const ac::DocumentToken& token) override {
+    return mutateDocument(token, true);
+  }
+  Result<ac::DocumentState, ac::DocumentFailure> reopenIfCurrent(std::optional<ac::DocumentToken> token) override {
+    return mutateDocument(token, false);
+  }
   Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
     using E = ac::SaveAsError;
     using R = Result<ac::SavedScene, E>;
@@ -1130,6 +1145,54 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   }
 
  private:
+  Result<Value, ac::DocumentFailure> documentCall(std::string_view method, Value params, bool mutation) const {
+    using R = Result<Value, ac::DocumentFailure>;
+    using E = ac::DocumentError;
+    const auto id = state_->send(method, std::move(params));
+    const auto reply = state_->awaitResponse(id);
+    if (!reply) return R::Err({state_->failure == RemoteError::ProtocolError ? E::ProtocolFailure : E::TransportFailure,
+                                mutation && id != 0});
+    const auto* result = reply->find("result");
+    const auto* error = reply->find("error");
+    if (result && !error && result->isObject() && result->asObject().size() == 1 &&
+        ((result->find("ok") != nullptr) != (result->find("err") != nullptr))) return R::Ok(*result);
+    if (error && !result) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString()) {
+        if (code->asString() == "NoAuthoring") return R::Err({E::NoAuthoring});
+        if (code->asString() == "BadRequest" && message && message->isString()) {
+          if (message->asString() == "unknown method " + std::string(method)) return R::Err({E::Unsupported});
+          return R::Err({E::InvalidRequest});
+        }
+      }
+    }
+    return failed(R::Err({E::ProtocolFailure, mutation}));
+  }
+
+  Result<ac::DocumentState, ac::DocumentFailure> mutateDocument(std::optional<ac::DocumentToken> token, bool saving) {
+    using R = Result<ac::DocumentState, ac::DocumentFailure>;
+    using E = ac::DocumentError;
+    if (token && (token->documentId == ac::EntityGuid{} || token->documentRevision == 0)) return R::Err({E::InvalidRequest});
+    Value params = Value::object();
+    params.set("expected", token ? codec::encode(*token) : Value());
+    const auto response = documentCall(saving ? "authoring.saveIfCurrent" : "authoring.reopenIfCurrent",
+                                       std::move(params), true);
+    if (response.isErr()) return R::Err(response.error());
+    if (const auto* err = response.value().find("err"))
+      if (const auto error = codec::decodeDocumentError(*err, saving)) return R::Err({*error});
+    if (const auto* ok = response.value().find("ok")) {
+      const auto view = codec::decodeDocumentState(*ok);
+      if (view && !view->dirty && view->lastPersistedRevision == view->token.documentRevision) {
+        if (saving && view->token == token && view->provenance == ac::Provenance::HandAuthored) return R::Ok(*view);
+        const auto before = token ? token->documentRevision : 0;
+        if (!saving && (!token || view->token.documentId != token->documentId) &&
+            view->token.documentRevision > before && view->token.documentRevision - before == 1) return R::Ok(*view);
+      }
+    }
+    return failed(R::Err({E::ProtocolFailure, true}));
+  }
+
   template <typename T>
   T failed(T empty) const {
     state_->fail(RemoteError::ProtocolError);  // no-op if a failure is already recorded

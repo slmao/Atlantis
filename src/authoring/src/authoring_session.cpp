@@ -138,6 +138,10 @@ struct AuthoringSession::State {
   SaveAsSink copySink;
   CreateSceneSink createSink;
   std::uint64_t documentRevision = 0;
+  asset_system::EntityGuid documentId;
+  std::uint64_t persistedRevision = 0;
+  std::string persistedSource;
+  mutable std::optional<bool> dirty;
   std::optional<ac::ApplyRecord> pendingApply;
   std::vector<ac::ApplyRecord> terminalApplies;
   std::optional<ac::ApplyProjection> projection;
@@ -510,6 +514,7 @@ struct AuthoringSession::State {
     if (const auto refusal = validateDocument(candidate, source.scene)) return ac::CommandFailure{first, *refusal};
     document = std::move(candidate);
     ++documentRevision;
+    dirty.reset();
     publish(events);
     return std::nullopt;
   }
@@ -528,6 +533,10 @@ struct AuthoringSession::State {
     if (validateDocument(mapped.value(), source.scene).has_value()) return ResultT::Err(ac::OpenError::SourceInvalid);
     document = std::move(mapped.value());
     ++documentRevision;
+    documentId = asset_system::mintEntityGuid();
+    persistedRevision = documentRevision;
+    persistedSource = canonicalSource();
+    dirty = false;
     publish({ac::DocumentReopened{source.scene}});
     return ResultT::Ok({});
   }
@@ -557,16 +566,33 @@ struct AuthoringSession::State {
     return ResultT::Ok(receipt);
   }
 
-  [[nodiscard]] atlantis::Result<std::monostate, ac::SaveError> save() const {
+  [[nodiscard]] std::string canonicalSource() const {
+    const auto parsed = scene::toParsedSceneSource(*document);
+    ATLANTIS_CHECK_MSG(parsed.isOk(), "a valid document failed to map to its source form");
+    return asset_system::serializeSceneSource(parsed.value());
+  }
+
+  [[nodiscard]] std::optional<ac::DocumentState> documentState() const {
+    if (!document) return std::nullopt;
+    if (!dirty) dirty = canonicalSource() != persistedSource;
+    return ac::DocumentState{{documentId, documentRevision}, source.scene,
+        sourcePathOf(source.provenance).generic_string(),
+        std::holds_alternative<HandAuthored>(source.provenance) ? ac::Provenance::HandAuthored : ac::Provenance::Imported,
+        persistedRevision, *dirty};
+  }
+
+  [[nodiscard]] atlantis::Result<std::monostate, ac::SaveError> save() {
     using ResultT = atlantis::Result<std::monostate, ac::SaveError>;
     if (!document.has_value()) return ResultT::Err(ac::SaveError::NoDocument);
     const auto* handAuthored = std::get_if<HandAuthored>(&source.provenance);
     if (handAuthored == nullptr) return ResultT::Err(ac::SaveError::ImportedSceneNotSavable);
-    const auto parsed = scene::toParsedSceneSource(*document);
-    ATLANTIS_CHECK_MSG(parsed.isOk(), "save(): a valid document failed to map to its source form");
-    if (!writeTextAtomically(handAuthored->sourcePath, asset_system::serializeSceneSource(parsed.value()))) {
+    auto canonical = canonicalSource();
+    if (!writeTextAtomically(handAuthored->sourcePath, canonical)) {
       return ResultT::Err(ac::SaveError::WriteFailed);
     }
+    persistedRevision = documentRevision;
+    persistedSource = std::move(canonical);
+    dirty = false;
     return ResultT::Ok({});
   }
 };
@@ -680,6 +706,35 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
   }
 
   atlantis::Result<std::monostate, ac::SaveError> save() override { return state_.save(); }
+  Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentState() const override {
+    return Result<std::optional<ac::DocumentState>, ac::DocumentFailure>::Ok(state_.documentState());
+  }
+  Result<ac::DocumentState, ac::DocumentFailure> saveIfCurrent(const ac::DocumentToken& expected) override {
+    using R = Result<ac::DocumentState, ac::DocumentFailure>;
+    using E = ac::DocumentError;
+    if (!state_.document) return R::Err({E::NoDocument});
+    if (expected != ac::DocumentToken{state_.documentId, state_.documentRevision}) return R::Err({E::StaleDocument});
+    const auto result = state_.save();
+    if (result.isErr()) {
+      return R::Err({result.error() == ac::SaveError::ImportedSceneNotSavable ? E::ImportedSceneNotSavable : E::WriteFailed});
+    }
+    return R::Ok(*state_.documentState());
+  }
+  Result<ac::DocumentState, ac::DocumentFailure> reopenIfCurrent(std::optional<ac::DocumentToken> expected) override {
+    using R = Result<ac::DocumentState, ac::DocumentFailure>;
+    using E = ac::DocumentError;
+    if (expected && !state_.document) return R::Err({E::NoDocument});
+    if (state_.document && expected != ac::DocumentToken{state_.documentId, state_.documentRevision}) return R::Err({E::StaleDocument});
+    const auto result = state_.open();
+    if (result.isErr()) {
+      switch (result.error()) {
+        case ac::OpenError::SourceUnreadable: return R::Err({E::SourceUnreadable});
+        case ac::OpenError::SourceParseFailed: return R::Err({E::SourceParseFailed});
+        case ac::OpenError::SourceInvalid: return R::Err({E::SourceInvalid});
+      }
+    }
+    return R::Ok(*state_.documentState());
+  }
   Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
     using R = Result<ac::SavedScene, ac::SaveAsError>;
     if (!ac::validSaveAsName(name)) return R::Err(ac::SaveAsError::InvalidName);

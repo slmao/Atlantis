@@ -2212,7 +2212,8 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
   const std::string command = t.size() >= 2 ? "scene " + std::string(t[1]) : std::string("scene");
   const bool createsSource = t.size() == 3 && t[1] == "create" && !t[2].starts_with("--") &&
                              text::parseEntity(t[2]).isErr();
-  connection::AuthoringConnection* a = authoring(!createsSource);
+  const bool documentCall = t.size() >= 2 && (t[1] == "document-state" || t[1] == "save-if-current" || t[1] == "reopen-if-current");
+  connection::AuthoringConnection* a = authoring(!createsSource && !documentCall);
   if (a == nullptr) {
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
@@ -2240,8 +2241,67 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
                 "build with -DATLANTIS_SAVED_SCENE=" + std::string(t[2]) +
                 ", build atlantis_runtime and launch --scene saved_scene.\n", std::move(result));
   }
-  const std::span<const TypeDescriptor> schema = a->schema();
   const std::string_view verb = t[1];
+  if (documentCall) {
+    const bool saving = verb == "save-if-current";
+    const bool reading = verb == "document-state";
+    std::optional<ac::DocumentToken> expected;
+    if (reading) {
+      if (t.size() != 2) return failed(command, usageError("scene document-state"));
+    } else if (t.size() == 4) {
+      const auto id = text::parseEntity(t[2]);
+      std::uint64_t revision = 0;
+      const auto parsed = std::from_chars(t[3].data(), t[3].data() + t[3].size(), revision);
+      if (id.isErr() || id.value() == ac::EntityGuid{} || atlantis::asset_system::toString(id.value()) != t[2] ||
+          parsed.ec != std::errc{} || parsed.ptr != t[3].data() + t[3].size() || revision == 0)
+        return failed(command, usageError(command + " <document-id> <document-revision>"));
+      expected = ac::DocumentToken{id.value(), revision};
+    } else if (saving || t.size() != 3 || t[2] != "--if-absent") {
+      return failed(command, usageError(command + " <document-id> <document-revision>" + (saving ? "" : " | --if-absent")));
+    }
+
+    auto refusal = [&](const ac::DocumentFailure& failure) {
+      using E = ac::DocumentError;
+      const std::string code(ac::toString(failure.error));
+      const auto category = failure.error == E::ProtocolFailure || failure.error == E::TransportFailure
+          ? ErrorCategory::Connection : ErrorCategory::Refused;
+      std::string message = code;
+      Value facts = Value::object();
+      facts.set("outcomeUnknown", Value::boolean(failure.outcomeUnknown));
+      if (failure.outcomeUnknown) {
+        message += ". Outcome unknown for ";
+        if (expected) {
+          auto id = atlantis::asset_system::toString(expected->documentId);
+          facts.set("documentId", Value::string(id));
+          facts.set("documentRevision", Value::number(expected->documentRevision));
+          message += id + ", revision " + std::to_string(expected->documentRevision);
+        } else message += "the first open";
+        message += ". Check document state on the original Runtime before retrying.";
+      }
+      return failed(command, plainError(code, category, message, std::move(facts)));
+    };
+    auto success = [&](const ac::DocumentState& state) {
+      Value result = Value::object();
+      result.set("documentId", Value::string(atlantis::asset_system::toString(state.token.documentId)));
+      result.set("documentRevision", Value::number(state.token.documentRevision));
+      result.set("lastPersistedRevision", Value::number(state.lastPersistedRevision));
+      result.set("scene", Value::string(atlantis::asset_system::toString(state.scene)));
+      result.set("source", Value::string(state.source));
+      result.set("provenance", Value::string(state.provenance == ac::Provenance::Imported ? "Imported" : "HandAuthored"));
+      result.set("dirty", Value::boolean(state.dirty));
+      return done(command, state.source + (state.dirty ? " (unsaved), " : " (saved), ") +
+          atlantis::asset_system::toString(state.token.documentId) + " revision " +
+          std::to_string(state.token.documentRevision) + "\n", std::move(result));
+    };
+    if (reading) {
+      const auto view = a->documentState();
+      if (view.isErr()) return refusal(view.error());
+      return view.value() ? success(*view.value()) : done(command, "No open document\n", Value());
+    }
+    const auto result = saving ? a->saveIfCurrent(*expected) : a->reopenIfCurrent(expected);
+    return result.isErr() ? refusal(result.error()) : success(result.value());
+  }
+  const std::span<const TypeDescriptor> schema = a->schema();
 
   if (verb == "schema") {
     if (t.size() != 3) return failed(command, usageError("scene schema <Type>"));

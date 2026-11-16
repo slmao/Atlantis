@@ -109,6 +109,24 @@ std::string_view toString(OpenError error) noexcept {
   return "Unknown";
 }
 
+std::string_view toString(DocumentError error) noexcept {
+  switch (error) {
+    case DocumentError::NoDocument: return "NoDocument";
+    case DocumentError::StaleDocument: return "StaleDocument";
+    case DocumentError::ImportedSceneNotSavable: return "ImportedSceneNotSavable";
+    case DocumentError::WriteFailed: return "WriteFailed";
+    case DocumentError::SourceUnreadable: return "SourceUnreadable";
+    case DocumentError::SourceParseFailed: return "SourceParseFailed";
+    case DocumentError::SourceInvalid: return "SourceInvalid";
+    case DocumentError::Unsupported: return "Unsupported";
+    case DocumentError::NoAuthoring: return "NoAuthoring";
+    case DocumentError::TransportFailure: return "TransportFailure";
+    case DocumentError::ProtocolFailure: return "ProtocolFailure";
+    case DocumentError::InvalidRequest: return "InvalidRequest";
+  }
+  return "Unknown";
+}
+
 std::string_view toString(SaveError error) noexcept {
   switch (error) {
     case SaveError::NoDocument: return "NoDocument";

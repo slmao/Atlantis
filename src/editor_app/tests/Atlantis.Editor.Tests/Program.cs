@@ -86,6 +86,7 @@ public static partial class Program
             HierarchyChecks();
             SceneObjectCreationChecks(conformance);
             ViewportGuideChecks();
+            DocumentLeaveChecks();
             DuplicateSubtreeChecks();
             GuardedDuplicateChecks();
             ApplyControllerChecks();
@@ -108,6 +109,22 @@ public static partial class Program
         }
         Console.WriteLine($"camera convention: {s_passed} checks passed, {s_failed} failed");
         return s_failed == 0 && s_passed > 0 ? 0 : 1;
+    }
+
+    private static void DocumentLeaveChecks()
+    {
+        var scene = AssetGuid.Parse("b84cf769-9531-4fc1-b717-d2301320e166");
+        var id = new EntityGuid(Guid.Parse("1b77c263-148d-4080-8bfb-d8ab7a618a96"));
+        var saved = new Atlantis.Gameplay.Authoring.DocumentState(new(id, 7), scene, "scene.txt",
+            Atlantis.Gameplay.Authoring.Provenance.HandAuthored, 7, false);
+        var view = new DocumentObservation(DocumentAvailability.Known, saved);
+        Check(view.Clean && view.ProvesSaved(saved.Token), "leave: a matching persisted revision establishes saved content");
+        var undone = view with { State = saved with { LastPersistedRevision = 6 } };
+        Check(undone.Clean && !undone.ProvesSaved(saved.Token), "leave: clean Undo does not prove a particular save");
+        var replaced = view with { State = saved with { Token = new(new EntityGuid(Guid.NewGuid()), 7) } };
+        Check(!replaced.Matches(view), "leave: repeated numeric revision in another open is stale");
+        Check(!new DocumentObservation(DocumentAvailability.Unavailable).Clean &&
+            new DocumentObservation(DocumentAvailability.Known).Clean, "leave: disconnect is distinct from no document");
     }
 
     private static int Usage()

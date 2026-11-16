@@ -225,6 +225,27 @@ namespace ac = atlantis::connection::authoring;
   if (method == "authoring.open") {
     return Outcome::Ok(inBand(authoring.open(), &encodeNull, &codec::encodeOpenError));
   }
+  if (method == "authoring.documentState") {
+    if (!p.isObject() || !p.asObject().empty()) return bad("expected empty parameters");
+    const auto state = authoring.documentState();
+    if (state.isErr()) return Outcome::Err("unknown method " + std::string(method));
+    Value reply = Value::object();
+    reply.set("ok", state.value() ? codec::encode(*state.value()) : Value());
+    return Outcome::Ok(std::move(reply));
+  }
+  if (method == "authoring.saveIfCurrent" || method == "authoring.reopenIfCurrent") {
+    const bool saving = method == "authoring.saveIfCurrent";
+    const auto* expected = p.find("expected");
+    if (!expected || p.asObject().size() != 1) return bad("expected");
+    const auto token = codec::decodeDocumentToken(*expected);
+    if ((!token && (saving || !expected->isNull())) || (token && expected->asObject().size() != 2))
+      return bad("expected document token");
+    const auto result = saving ? authoring.saveIfCurrent(*token) : authoring.reopenIfCurrent(token);
+    if (result.isErr() && result.error().error == ac::DocumentError::Unsupported)
+      return Outcome::Err("unknown method " + std::string(method));
+    return Outcome::Ok(inBand(result, [](const auto& state) { return codec::encode(state); },
+        [](auto failure) { return Value::string(std::string(ac::toString(failure.error))); }));
+  }
   if (method == "authoring.applyTracked") {
     return Outcome::Ok(inBand(authoring.applyTracked(),
         [](const auto& receipt) { return codec::encode(receipt); }, &codec::encodeApplyError));

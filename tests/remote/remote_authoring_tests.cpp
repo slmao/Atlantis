@@ -232,6 +232,34 @@ TEST_CASE("remote authoring: the document is reached, edited and observed over t
   CHECK_FALSE(second->failure().has_value());
 }
 
+TEST_CASE("remote authoring: guarded persistence on two clients", "[remote][authoring][persistence]") {
+  ServedAuthoring served;
+  auto first = served.world.attach();
+  auto second = served.world.attach();
+  auto& a = first->authoring();
+  auto& b = second->authoring();
+  REQUIRE_FALSE(a.documentState().value());
+  const auto state = a.reopenIfCurrent(std::nullopt).value();
+  roundTrips(state, &codec::decodeDocumentState);
+  REQUIRE(b.documentState().value() == state);
+  CHECK(b.reopenIfCurrent(std::nullopt).error().error == ac::DocumentError::StaleDocument);
+  (void)b.submit(ac::SetProperty{{node(3), kLight, kIntensity}, 7.0f});
+  REQUIRE(b.drainFailures().empty());
+  CHECK(a.saveIfCurrent(state.token).error().error == ac::DocumentError::StaleDocument);
+  const auto dirty = a.documentState().value().value();
+  REQUIRE(dirty.dirty);
+  const auto saved = b.saveIfCurrent(dirty.token).value();
+  CHECK_FALSE(saved.dirty);
+  CHECK(saved.token == dirty.token);
+  CHECK(a.reopenIfCurrent(saved.token).value().token.documentId != saved.token.documentId);
+  CHECK_FALSE(first->failure());
+  CHECK_FALSE(second->failure());
+  ServedAuthoring missing(false);
+  auto noAuthoring = missing.world.attach();
+  CHECK(noAuthoring->authoring().documentState().error().error == ac::DocumentError::NoAuthoring);
+  CHECK_FALSE(noAuthoring->failure());
+}
+
 TEST_CASE("remote authoring codec: names preserve legacy summaries and enforce received value domains",
           "[remote][authoring][codec][name]") {
   namespace json = atlantis::connection::json;
