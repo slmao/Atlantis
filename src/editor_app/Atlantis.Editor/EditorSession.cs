@@ -976,7 +976,7 @@ public sealed class EditorWorker : IDisposable
     });
 
     public bool CreateSceneObject(SceneObjectPreset preset, HierarchyRow? parent, long lifetime, ulong selection,
-        Action<string> settled, Action<EntityGuid> select)
+        Action<string> report, Action<EntityGuid> select, Action finished)
     {
         lock (_lock)
         {
@@ -1012,14 +1012,14 @@ public sealed class EditorWorker : IDisposable
                     }
                     PostHistory(lifetime);
                     _log.Write(notice);
-                    _post(() => { if (lifetime == MeshDocumentLifetime) settled(notice); });
+                    _post(() => { if (lifetime == MeshDocumentLifetime) report(notice); });
                     if (recorded && applyRevision is ulong revision)
                     {
                         string projection = ApplyVerifiedSceneObject(session, lifetime, revision, notice);
                         if (projection != notice)
                         {
                             _log.Write(projection);
-                            _post(() => { if (lifetime == MeshDocumentLifetime) settled(projection); });
+                            _post(() => { if (lifetime == MeshDocumentLifetime) report(projection); });
                         }
                     }
                     PostApplyState(lifetime);
@@ -1033,7 +1033,11 @@ public sealed class EditorWorker : IDisposable
                     }
                     PostInspector();
                 }
-                finally { lock (_lock) _sceneObjectQueued = false; }
+                finally
+                {
+                    lock (_lock) _sceneObjectQueued = false;
+                    _post(() => { if (lifetime == MeshDocumentLifetime) finished(); });
+                }
             });
             return true;
         }

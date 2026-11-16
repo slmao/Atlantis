@@ -1550,23 +1550,30 @@ public sealed class MainWindow : Window
     {
         UpdateSceneObjectMenu();
         if (!_createItems[preset].IsEnabled || _worker is not { } worker) return;
-        long request = ++_createRequest, lifetime = _meshDocumentLifetime;
+        long request = _createRequest + 1, lifetime = _meshDocumentLifetime;
         ulong selection = _selection.Generation;
         HierarchyRow? parent = preset == SceneObjectPreset.EmptyChild ? SelectedReparentRow() : null;
         bool Current() => ReferenceEquals(_worker, worker) && request == _createRequest &&
             !_referenceSessionFailed && lifetime == worker.MeshDocumentLifetime;
-        _creatingObject = worker.CreateSceneObject(preset, parent, lifetime, selection, notice =>
+        bool accepted = worker.CreateSceneObject(preset, parent, lifetime, selection, notice =>
         {
-            if (!Current()) return;
-            _creatingObject = false;
-            _editLine.Text = notice;
-            UpdateHierarchyActions();
+            if (Current()) _editLine.Text = notice;
         }, created =>
         {
             if (Current() && _selection.Generation == selection && _hierarchyRows.Any(row => row.Node == created))
                 SetSelection(created, true);
+        }, () =>
+        {
+            if (!Current()) return;
+            _creatingObject = false;
+            UpdateHierarchyActions();
         });
-        _editLine.Text = _creatingObject ? $"Creating {SceneObjectPresets.Label(preset)}…" : "Create refused. Refresh and try again.";
+        if (accepted)
+        {
+            _createRequest = request;
+            _creatingObject = true;
+        }
+        _editLine.Text = accepted ? $"Creating {SceneObjectPresets.Label(preset)}…" : "Create refused. Refresh and try again.";
         UpdateHierarchyActions();
     }
 

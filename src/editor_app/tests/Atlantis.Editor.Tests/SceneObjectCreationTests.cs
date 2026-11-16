@@ -1,18 +1,156 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Numerics;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Interactivity;
+using Avalonia.Themes.Fluent;
 using SetProperty = Atlantis.Gameplay.Authoring.SetProperty;
 
 namespace Atlantis.Editor.Tests;
 
 public static partial class Program
 {
+    private static int RunSceneObjectUi(string executable, string scene, bool dropReply)
+    {
+        string work = RuntimeProcess.NewWorkDirectory();
+        using var runtime = RuntimeProcess.Start(new RuntimeLaunch(Path.GetFullPath(executable), scene, null, work));
+        SessionInfo host = runtime.WaitForSession(TimeSpan.FromSeconds(25));
+        using var observer = RemoteSession.Connect(host);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        string attach = Path.Combine(work, "editor-relay.json");
+        File.WriteAllText(attach, JsonSerializer.Serialize(new { protocol = SessionFile.Protocol,
+            port = ((IPEndPoint)listener.LocalEndpoint).Port, token = host.Token, pid = host.Pid, scene = host.Scene.ToString() }));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        int submits = 0, applies = 0;
+        Task relay = Relay();
+        try
+        {
+            return AppBuilder.Configure(() => new SceneObjectUiApp(executable, scene, attach, CheckCreation))
+                .UsePlatformDetect().StartWithClassicDesktopLifetime([]);
+        }
+        finally
+        {
+            deadline.Cancel();
+            try { relay.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+            finally
+            {
+                File.Delete(attach);
+                runtime.CloseMainWindow();
+                runtime.WaitForExit(TimeSpan.FromSeconds(8));
+            }
+        }
+
+        async Task Relay()
+        {
+            CancellationToken token = deadline.Token;
+            using var editor = await listener.AcceptTcpClientAsync(token);
+            using var backend = new TcpClient();
+            await backend.ConnectAsync(IPAddress.Loopback, host.Port, token);
+            using var editorStream = editor.GetStream();
+            using var backendStream = backend.GetStream();
+            using var input = new StreamReader(editorStream);
+            using var output = new StreamWriter(editorStream) { AutoFlush = true, NewLine = "\n" };
+            using var forward = new StreamWriter(backendStream) { AutoFlush = true, NewLine = "\n" };
+            using var read = new StreamReader(backendStream);
+            while (await input.ReadLineAsync(token) is string request)
+            {
+                string method = Json.Parse(request).Find("method")!.AsString;
+                await forward.WriteLineAsync(request.AsMemory(), token);
+                string reply = await read.ReadLineAsync(token) ?? throw new IOException("Runtime closed the relay");
+                if (method == "authoring.submitTransaction") Interlocked.Increment(ref submits);
+                if (method == "authoring.applyTracked" && Interlocked.Increment(ref applies) == 1)
+                {
+                    held.SetResult();
+                    await release.Task.WaitAsync(token);
+                    if (dropReply) return;
+                }
+                await output.WriteLineAsync(reply.AsMemory(), token);
+            }
+        }
+
+        async Task CheckCreation(MainWindow window)
+        {
+            var button = NameUiField<Button>(window, "_create")!;
+            var item = NameUiField<Dictionary<SceneObjectPreset, MenuItem>>(window, "_createItems")![SceneObjectPreset.Empty];
+            var selection = NameUiField<Selection>(window, "_selection")!;
+            var feedback = NameUiField<TextBlock>(window, "_editLine")!;
+            var projection = NameUiField<TextBlock>(window, "_applyLine")!;
+            var connection = NameUiField<TextBlock>(window, "_connectionLine")!;
+            var undo = NameUiField<Button>(window, "_undo")!;
+            await NameUiWait(() => button.IsEnabled && item.IsEnabled, "Create is ready");
+            var before = observer.Authoring.ListNodes().Value.Select(node => node.Node).ToHashSet();
+            item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            await held.Task.WaitAsync(deadline.Token);
+            await NameUiWait(() => feedback.Text?.Contains("committed for", StringComparison.Ordinal) == true,
+                "known commit feedback appears before the Apply reply");
+            EntityGuid created = observer.Authoring.ListNodes().Value.Single(node => !before.Contains(node.Node)).Node;
+            string committed = feedback.Text!;
+            bool busy = !button.IsEnabled && !item.IsEnabled;
+            item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+            if (!busy || feedback.Text != committed || !committed.Contains(created.ToString(), StringComparison.Ordinal) || !undo.IsEnabled)
+                throw new InvalidOperationException("Create must remain busy and preserve the original commit and undo entry while Apply is held. " + feedback.Text);
+            release.SetResult();
+            if (dropReply)
+            {
+                await NameUiWait(() => projection.Text?.Contains("unknown completion", StringComparison.Ordinal) == true &&
+                    connection.Text?.StartsWith("session failed", StringComparison.Ordinal) == true,
+                    "lost Apply reply is reported independently of commit");
+                if (feedback.Text?.Contains(created + ". Apply outcome unknown.", StringComparison.Ordinal) != true)
+                    throw new InvalidOperationException("Lost Apply obscured the committed creation: " + feedback.Text);
+            }
+            else
+            {
+                await NameUiWait(() => button.IsEnabled && selection.Node == created &&
+                    projection.Text?.StartsWith("apply: applied", StringComparison.Ordinal) == true,
+                    "Create re-enables after projection settles and selects the committed node");
+                if (feedback.Text != committed) throw new InvalidOperationException("Final creation feedback changed: " + feedback.Text);
+            }
+            if (Volatile.Read(ref submits) != 1 || Volatile.Read(ref applies) != 1 ||
+                observer.Authoring.ListNodes().Value.Count != before.Count + 1 || !undo.IsEnabled)
+                throw new InvalidOperationException("Expected one transaction, one Apply, and one undo entry");
+            Console.WriteLine(dropReply ? "PASS held and lost Apply reply preserves known creation"
+                                        : "PASS held Apply reply preserves creation feedback and selection");
+        }
+    }
+
+    private sealed class SceneObjectUiApp(string executable, string scene, string attach, Func<MainWindow, Task> check) : Application
+    {
+        public override void Initialize() => Styles.Add(new FluentTheme());
+
+        public override void OnFrameworkInitializationCompleted()
+        {
+            var desktop = (IClassicDesktopStyleApplicationLifetime)ApplicationLifetime!;
+            var window = new MainWindow(new EditorOptions(executable, scene) { AttachSession = attach });
+            desktop.MainWindow = window;
+            window.Opened += async (_, _) =>
+            {
+                int exit = 1;
+                try { await check(window); exit = 0; }
+                catch (Exception error) { Console.Error.WriteLine(error); }
+                finally { desktop.Shutdown(exit); }
+            };
+            base.OnFrameworkInitializationCompleted();
+        }
+    }
+
     private static void SceneObjectCreationChecks(string conformance)
     {
         // Use the native-generated authoring schema rather than a hand-mirrored descriptor table.
