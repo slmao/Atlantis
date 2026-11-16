@@ -64,10 +64,6 @@ internal sealed class DocumentLeaveWindow : Window
         _summary.Text = summary;
         _notice.Text = notice ?? "";
         _notice.IsVisible = !string.IsNullOrEmpty(notice);
-        _draft.Text = draft;
-        _draft.IsVisible = draft is not null;
-        _dropDraft.IsVisible = canSave && draft is not null;
-        _dropDraft.IsChecked = false;
         _dropDraft.IsEnabled = true;
         _discardChoice = closeAnyway ? LeaveChoice.CloseAnyway : LeaveChoice.Discard;
         _discard.Content = closeAnyway ? "Close Anyway" : reopen ? "Reopen Without Saving" : "Close Without Saving";
@@ -75,10 +71,19 @@ internal sealed class DocumentLeaveWindow : Window
         _check.IsEnabled = _check.IsVisible = canCheck;
         _save.IsVisible = canSave;
         _saveAvailable = canSave;
-        UpdateSave();
+        ShowDraft(draft);
         _cancel.IsEnabled = true;
         _cancel.Focus();
         return _choice.Task;
+    }
+
+    public void ShowDraft(string? draft)
+    {
+        _draft.Text = draft;
+        _draft.IsVisible = draft is not null;
+        _dropDraft.IsVisible = _saveAvailable && draft is not null;
+        _dropDraft.IsChecked = false;
+        UpdateSave();
     }
 
     private void UpdateSave() => _save.IsEnabled = _saveAvailable && (!_dropDraft.IsVisible || _dropDraft.IsChecked == true);

@@ -173,6 +173,7 @@ internal static partial class Program
             CaptureChecks();
             await M3McpChecks();
             await SessionChecks.Run(Check);
+            await SessionChecks.DocumentHandoff(Check);
             await SessionChecks.RunHost(Check);
             Console.WriteLine($"MCP M3: {_passed} checks passed, 0 failed");
             return 0;

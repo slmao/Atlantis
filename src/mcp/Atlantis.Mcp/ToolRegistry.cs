@@ -483,8 +483,13 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         string target = token is { } key ? $"{key.DocumentId}, revision {key.DocumentRevision}" : "the first open";
         string unknown = $" {method} outcome unknown for {target}. Check document state on the original Runtime before retrying.";
         JsonValue reply;
-        try { reply = session.Request(method, parameters); }
-        catch (RemoteException error) { return Error(error.Message + (reading ? "" : unknown)); }
+        bool mayHaveSent = true;
+        try { reply = session.Request(method, parameters, out mayHaveSent); }
+        catch (RemoteException error)
+        {
+            return Error(reading ? error.Message :
+                error.Message + (mayHaveSent ? unknown : $" {method} was not sent."));
+        }
         if (Codec.DocumentRpcRefusal(reply, method) is { } refusal) return Error(refusal.ToString());
         if (Codec.DocumentResult(reply) is { } result)
         {

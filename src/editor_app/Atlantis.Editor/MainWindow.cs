@@ -118,10 +118,12 @@ public sealed class MainWindow : Window
     private readonly Button _reopen = new() { Content = "Reopen from Source", IsEnabled = false };
     private readonly TextBlock _documentLine = EditorVisuals.Secondary("Document is opening");
     private DocumentObservation _documentState = new(DocumentAvailability.Starting);
-    private sealed record SceneInput(TextBox Box, string Key, TypeId? Component, FieldId? Field, EntityGuid[] Targets,
-        string Text, int Caret, int Start, int End);
+    private sealed record SceneInput(TextBox Box, DocumentDraft Draft, int Caret, int Start, int End);
+    private readonly DocumentDraftProtection _draftProtection = new();
     private SceneInput? _sceneInput;
     private SceneInput? _leaveInput;
+    private TextBox? _invalidatedInput;
+    private DocumentLeaveWindow? _leaveDialog;
     private Action? _pendingInspectorBlur;
     private bool _leaveInputStale, _leaveInProgress, _leaveArmed, _leaveCloseApproved, _shuttingDown;
     private readonly Button _saveAs = new() { Content = "Save As", IsEnabled = false };
@@ -3118,6 +3120,7 @@ public sealed class MainWindow : Window
         _inspectorShown = _inspectorDeferred = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
+        _invalidatedInput = null;
         _inspectorPanel.Children.Add(EditorVisuals.Heading($"{snapshot.Count} selected nodes", 17));
         if (snapshot.Notice is string note)
         {
@@ -3170,7 +3173,12 @@ public sealed class MainWindow : Window
                 set.IsEnabled = ReadValue(out _);
                 box.PropertyChanged += (sender, change) =>
                 {
-                    if (change.Property != TextBox.TextProperty) return;
+                    if (change.Property == TextBox.IsReadOnlyProperty)
+                    {
+                        set.IsEnabled = !box.IsReadOnly && ReadValue(out _);
+                        return;
+                    }
+                    if (change.Property != TextBox.TextProperty || box.IsReadOnly) return;
                     set.IsEnabled = ReadValue(out _);
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
@@ -3180,7 +3188,7 @@ public sealed class MainWindow : Window
                 };
                 void Submit()
                 {
-                    if (!ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
+                    if (box.IsReadOnly || !ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
                     var basis = _batchDraft is { } current && current.Field.Field.Path == definition.Path
                         ? (current.View, current.Field) : (snapshot, field);
                     if (_worker?.CommitBatch(basis.Item1, basis.Item2, value) == true)
@@ -3195,6 +3203,7 @@ public sealed class MainWindow : Window
                 set.Click += (_, _) => Submit();
                 box.KeyDown += (_, e) =>
                 {
+                    if (box.IsReadOnly) return;
                     if (e.Key == Key.Enter) { Submit(); e.Handled = true; }
                     if (e.Key == Key.Escape)
                     {
@@ -3229,7 +3238,7 @@ public sealed class MainWindow : Window
             return;
         }
         if (_inspectorShown is not null && snapshot.Subject == _inspectorShown.Subject && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is TextBox focused &&
-            _inspectorPanel.GetVisualDescendants().Contains(focused))
+            !ReferenceEquals(focused, _invalidatedInput) && _inspectorPanel.GetVisualDescendants().Contains(focused))
         {
             _inspectorDeferred = snapshot;
             return;
@@ -3248,6 +3257,7 @@ public sealed class MainWindow : Window
         _nameBox = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
+        _invalidatedInput = null;
         if (snapshot.Subject is not EntityGuid subject)
         {
             _inspectorPanel.Children.Add(new TextBlock { Text = "Select a node in the Hierarchy.", Opacity = 0.6 });
@@ -3268,6 +3278,7 @@ public sealed class MainWindow : Window
         _inspectorPanel.Children.Add(nameRow);
         nameBox.KeyDown += (_, e) =>
         {
+            if (nameBox.IsReadOnly) return;
             if (e.Key == Key.Enter)
             {
                 string name = nameBox.Text ?? "";
@@ -3289,7 +3300,7 @@ public sealed class MainWindow : Window
             if (MovingFocusToNavigation()) return;
             DeferInspectorBlur(nameBox, () =>
             {
-                nameBox.Text = snapshot.Name;
+                if (!nameBox.IsReadOnly) nameBox.Text = snapshot.Name;
                 if (_inspectorDeferred is InspectorSnapshot waiting) BuildInspector(waiting);
             });
         };
@@ -3528,7 +3539,7 @@ public sealed class MainWindow : Window
             }
             void Commit()
             {
-                if (!field.Editable || (box.Text ?? "") == original) return;
+                if (box.IsReadOnly || !field.Editable || (box.Text ?? "") == original) return;
                 original = box.Text ?? "";
                 if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
                 _worker?.CommitField(field.Path, original);
@@ -3536,6 +3547,7 @@ public sealed class MainWindow : Window
             }
             box.KeyDown += (_, e) =>
             {
+                if (box.IsReadOnly) return;
                 if (e.Key == Key.Enter) Commit();
                 if (e.Key == Key.Escape) box.Text = original;
             };
@@ -3623,8 +3635,9 @@ public sealed class MainWindow : Window
     private void ShowDocumentState(DocumentObservation state)
     {
         _documentState = state;
-        bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null;
-        _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "");
+        bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
+        _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +
+            (_draftProtection.Stale is not null ? " · Stale input" : "");
         ToolTip.SetTip(_documentLine, state.State?.Source ?? state.Diagnostic);
         _reopen.Content = state.State is null && state.Diagnostic is null && state.Availability == DocumentAvailability.Known
             ? "Open Source" : "Reopen from Source";
@@ -3634,14 +3647,26 @@ public sealed class MainWindow : Window
     }
 
     private SceneInput CaptureInput(TextBox box, string key, TypeId? component, FieldId? field, string text) =>
-        new(box, key, component, field, _selection.Nodes.ToArray(), text, box.CaretIndex,
+        new(box, new DocumentDraft(key, text, _selection.Nodes.ToArray(), component, field), box.CaretIndex,
             box.SelectionStart, box.SelectionEnd);
+
+    private SceneInput? CurrentSceneInput()
+    {
+        if (_batchDraft is { } batch && batch.Text != batch.Field.Field.Text &&
+            _batchInputs.TryGetValue(batch.Field.Field.Path, out var box))
+        {
+            var field = batch.Field.Field;
+            return CaptureInput(box, field.Path, field.Component, field.Field.Id, batch.Text);
+        }
+        return _sceneInput;
+    }
 
     private void TrackSceneInput(TextBox box, string key, TypeId? component, FieldId? field, Func<string> baseline)
     {
         box.PropertyChanged += (_, change) =>
         {
-            if (change.Property != TextBox.TextProperty || _leaveInProgress || (!box.IsFocused && _sceneInput?.Box != box)) return;
+            if (change.Property != TextBox.TextProperty || box.IsReadOnly || _leaveInProgress ||
+                (!box.IsFocused && _sceneInput?.Box != box)) return;
             string text = box.Text ?? "";
             _sceneInput = text == baseline() ? null : CaptureInput(box, key, component, field, text);
             ShowDocumentState(_documentState);
@@ -3679,21 +3704,24 @@ public sealed class MainWindow : Window
 
     private void ObserveDraftChanges(IReadOnlyList<Doc.Event> events)
     {
-        var draft = _leaveInput ?? _sceneInput;
-        if (draft is null) return;
-        bool changed = events.Any(e => e switch
-        {
-            Doc.DocumentReopened => true,
-            Doc.NodeDestroyed gone => draft.Targets.Contains(gone.Node),
-            Doc.NodeNameChanged name => draft.Key == "Name" && draft.Targets.Contains(name.Node),
-            Doc.ComponentRemoved removed => draft.Component == removed.Component && draft.Targets.Contains(removed.Node),
-            Doc.PropertyChanged property => draft.Component == property.Address.Component &&
-                draft.Field == property.Address.Field && draft.Targets.Contains(property.Address.Node),
-            _ => false
-        });
-        if (!changed) return;
+        var input = _leaveInProgress ? (_leaveInputStale ? null : _leaveInput) : CurrentSceneInput();
+        if (input is null || !_draftProtection.Observe(input.Draft, events)) return;
+        _invalidatedInput = input.Box;
+        input.Box.IsReadOnly = true;
+        _pendingInspectorBlur = null;
         _sceneInput = null;
+        _batchDraft = null;
         if (_leaveInput is not null) _leaveInputStale = true;
+        _leaveDialog?.ShowDraft(LeaveDraftSummary());
+        ShowDocumentState(_documentState);
+    }
+
+    private string? LeaveDraftSummary()
+    {
+        string? stale = _draftProtection.Stale is { } copy ? $"Stale input (copy only) · {copy.Key}\n{copy.Text}" : null;
+        if (_leaveInputStale || _leaveInput is not { } active) return stale;
+        string current = $"Unsubmitted input · {active.Draft.Key}\n{active.Draft.Text}";
+        return stale is null ? current : stale + "\n\n" + current;
     }
 
     private async Task AskToLeave(bool reopen)
@@ -3704,15 +3732,9 @@ public sealed class MainWindow : Window
         _pendingInspectorBlur = null;
         var worker = _worker;
         var originalFocus = FocusManager?.GetFocusedElement();
-        _leaveInput = _sceneInput;
-        if (_batchDraft is { } batch && _batchInputs.TryGetValue(batch.Field.Field.Path, out var input) &&
-            batch.Text != batch.Field.Field.Text)
-        {
-            var definition = batch.Field.Field;
-            _leaveInput = CaptureInput(input, definition.Path, definition.Component, definition.Field.Id, batch.Text);
-        }
-        if (_leaveInput is { } draft)
-            _leaveInput = CaptureInput(draft.Box, draft.Key, draft.Component, draft.Field, draft.Text);
+        _leaveInput = CurrentSceneInput();
+        if (_leaveInput is { } input)
+            _leaveInput = input with { Caret = input.Box.CaretIndex, Start = input.Box.SelectionStart, End = input.Box.SelectionEnd };
         _leaveInputStale = false;
         if (_groupGrab is not null) CancelGroupGesture();
         if (_gizmoGrab is not null)
@@ -3745,13 +3767,14 @@ public sealed class MainWindow : Window
             while (Current())
             {
                 if (reopen && reviewed.Availability == DocumentAvailability.Legacy) break;
-                bool prompt = !reviewed.Clean || _leaveInput is not null || mustConfirm;
+                bool prompt = mustConfirm || _draftProtection.RequiresConfirmation(reviewed, _leaveInput is not null && !_leaveInputStale);
                 var choice = LeaveChoice.Discard;
                 if (prompt)
                 {
                     if (dialog is null)
                     {
                         dialog = new DocumentLeaveWindow(reopen);
+                        _leaveDialog = dialog;
                         dialogExit = dialog.ShowDialog(this);
                     }
                     bool unavailable = reviewed.Availability != DocumentAvailability.Known;
@@ -3763,9 +3786,7 @@ public sealed class MainWindow : Window
                         : _options.AttachSession is null ? "Closing stops this Editor’s Runtime."
                         : "Closing leaves the attached Runtime and shared document running.";
                     string summary = (reviewed.State?.Source is string source ? source + "\n" : "") + reviewed.Title + "\n" + consequence;
-                    string? inputSummary = _leaveInput is { } local ?
-                        ($"{(_leaveInputStale ? "Stale input (copy only)" : "Unsubmitted input")} · {local.Key}\n{local.Text}") : null;
-                    choice = await dialog.Ask(summary, notice ?? reviewed.Diagnostic, inputSummary,
+                    choice = await dialog.Ask(summary, notice ?? reviewed.Diagnostic, LeaveDraftSummary(),
                         canWrite && reviewed.Writable && reviewed.State?.Dirty == true, canContinue,
                         worker is not null, reopen, anyway);
                     if (!Current() || choice == LeaveChoice.Cancel) break;
@@ -3855,6 +3876,7 @@ public sealed class MainWindow : Window
         }
         finally
         {
+            _leaveDialog = null;
             dialog?.Finish();
             if (!closed && !reopened && dialogExit is not null) await dialogExit;
             if (content is not null) content.IsEnabled = true;
@@ -3866,7 +3888,7 @@ public sealed class MainWindow : Window
                 TopLevel.GetTopLevel(valid.Box) == this && valid.Box.IsEnabled)
             {
                 Activate();
-                valid.Box.Text = valid.Text;
+                valid.Box.Text = valid.Draft.Text;
                 valid.Box.Focus();
                 valid.Box.CaretIndex = valid.Caret;
                 valid.Box.SelectionStart = valid.Start;
@@ -3876,7 +3898,12 @@ public sealed class MainWindow : Window
                 control.IsEnabled && TopLevel.GetTopLevel(control) == this)
                 control.Focus();
             else if (!closed && !reopened) _save.Focus();
-            if (reopened) _sceneInput = null;
+            if (closed || reopened)
+            {
+                _draftProtection.ConfirmLeave();
+                _sceneInput = null;
+                _batchDraft = null;
+            }
             if (!closed && !reopened && (_leaveInputStale || captured is null) && batchDeferred is not null)
                 OnBatchInspectorChanged(batchDeferred);
             _leaveInProgress = false;

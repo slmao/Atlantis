@@ -125,6 +125,24 @@ public static partial class Program
         Check(!replaced.Matches(view), "leave: repeated numeric revision in another open is stale");
         Check(!new DocumentObservation(DocumentAvailability.Unavailable).Clean &&
             new DocumentObservation(DocumentAvailability.Known).Clean, "leave: disconnect is distinct from no document");
+
+        var draft = new DocumentDraft("Transform.localPosition", "0 2 47", [id], new TypeId(3), new FieldId(4));
+        var field = new Atlantis.Gameplay.Authoring.SceneAddress(id, draft.Component!.Value, draft.Field!.Value);
+        var protection = new DocumentDraftProtection();
+        Check(!protection.Observe(draft, [new Atlantis.Gameplay.Authoring.PropertyChanged(
+            field with { Field = new FieldId(5) }, PropertyValue.FromFloat32(12))]) && protection.Stale is null,
+            "leave: an external edit to another field does not invalidate the draft");
+        Check(protection.Observe(draft, [
+            new Atlantis.Gameplay.Authoring.PropertyChanged(field, PropertyValue.FromVec3(new(7, 11, 19))),
+            new Atlantis.Gameplay.Authoring.PropertyChanged(field, PropertyValue.FromVec3(new(0, 0, 0)))]) &&
+            protection.Stale?.Text == "0 2 47",
+            "leave: an external write and restore preserve the invalidated draft as a separate copy");
+        var cleanAfterWrite = view with { State = saved with { Token = new(id, 9) } };
+        Check(protection.RequiresConfirmation(cleanAfterWrite, hasEditableDraft: false),
+            "leave: retained stale text requires confirmation even when the source matches again");
+        protection.ConfirmLeave();
+        Check(!protection.RequiresConfirmation(cleanAfterWrite, hasEditableDraft: false),
+            "leave: confirmed leave clears the copy without changing persistence");
     }
 
     private static int Usage()
