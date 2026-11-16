@@ -1,10 +1,10 @@
 # Spec 0110 — Create Common Scene Objects
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-16
 - **Related Plan:** [Plan 0110](../plans/0110-common-scene-objects.md)
-- **Approval:** Pending joint human review.
+- **Approval:** Maintainer approved revision `f5b62b82` on 2026-11-16; see the joint review in Plan 0110.
 - **Related ADRs:** None new; see Architectural Impact.
 
 ## Summary

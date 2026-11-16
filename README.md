@@ -413,6 +413,19 @@ clients use the material commands with the `-with-combined-maps` suffix.
 Save, publish and restart explicitly into the returned generation.
 [Spec 0101](docs/specs/0101-combined-pbr-maps.md).
 
+### Create a common scene object
+
+In a hand-authored scene, use **Hierarchy → Create** to add an Empty,
+Camera, Directional Light, Point Light, Cube, Sphere, or Plane at the root.
+A new camera does not take over the view. The three shapes use stock meshes
+from the attached Runtime catalog and its fallback material. Use **Empty child**
+with one selected node to put an unnamed node under it.
+
+Creation is one undo step. If Runtime reload fails, inspect the committed
+node and use **Apply / Retry** without creating it again. **Save** persists
+the objects to the scene. Other clients can use the ordinary shared asset
+queries and authoring transaction. [Spec 0110](docs/specs/0110-common-scene-objects.md).
+
 ### Duplicate a scene subtree
 
 Select a node in a hand-authored scene and choose **Hierarchy → Actions →

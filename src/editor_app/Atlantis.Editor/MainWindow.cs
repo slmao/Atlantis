@@ -94,7 +94,10 @@ public sealed class MainWindow : Window
     // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
     private readonly Selection _selection = new();
-    private readonly Button _create = new() { Content = "Create child" };
+    private readonly Button _create = new() { Content = "Create" };
+    private readonly Dictionary<SceneObjectPreset, MenuItem> _createItems = new();
+    private long _createRequest;
+    private bool _creatingObject;
     private readonly Button _duplicate = new() { Content = "Duplicate subtree", IsEnabled = false };
     private readonly Button _destroy = new() { Content = "Destroy subtree" };
     private readonly TextBlock _duplicateState = EditorVisuals.Secondary("");
@@ -398,7 +401,7 @@ public sealed class MainWindow : Window
         _gizmoMode.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSpace.SelectionChanged += (_, _) => SendGizmoSettings();
         _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
-        _create.Click += (_, _) => _worker?.CreateChild(_selection.Node);
+        SetupSceneObjectMenu();
         _duplicate.Click += (_, _) => DuplicateSelectedSubtree();
         ToolTip.SetShowOnDisabled(_duplicate, true);
         _undo.Click += (_, _) => _worker?.Undo();
@@ -715,6 +718,8 @@ public sealed class MainWindow : Window
         _meshDocumentLifetime = 0;
         _canAddMeshToDocument = _addingMesh = false;
         _addMeshState.Text = "";
+        ++_createRequest;
+        _creatingObject = false;
         ++_duplicateRequest;
         _duplicating = false;
         ShowDuplicateState("");
@@ -920,6 +925,9 @@ public sealed class MainWindow : Window
         worker.MeshDocumentReopened += lifetime =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            if (_creatingObject) _editLine.Text = "Scene reopened. Inspect the document before retrying creation.";
+            ++_createRequest;
+            _creatingObject = false;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
             ++_pickRequest;
@@ -1489,6 +1497,79 @@ public sealed class MainWindow : Window
         }
     }
 
+    private void SetupSceneObjectMenu()
+    {
+        var flyout = new MenuFlyout { Placement = PlacementMode.BottomEdgeAlignedLeft };
+        void Add(params SceneObjectPreset[] presets)
+        {
+            if (flyout.Items.Count != 0) flyout.Items.Add(new Separator());
+            foreach (SceneObjectPreset preset in presets)
+            {
+                var item = new MenuItem { Header = SceneObjectPresets.Label(preset) };
+                ToolTip.SetShowOnDisabled(item, true);
+                item.Click += (_, _) => CreateSceneObject(preset);
+                _createItems.Add(preset, item);
+                flyout.Items.Add(item);
+            }
+        }
+        Add(SceneObjectPreset.Empty, SceneObjectPreset.Camera, SceneObjectPreset.UnnamedRoot, SceneObjectPreset.EmptyChild);
+        Add(SceneObjectPreset.DirectionalLight, SceneObjectPreset.PointLight);
+        Add(SceneObjectPreset.Cube, SceneObjectPreset.Sphere, SceneObjectPreset.Plane);
+        flyout.Opening += (_, _) => UpdateSceneObjectMenu();
+        _create.Flyout = flyout;
+        ToolTip.SetShowOnDisabled(_create, true);
+    }
+
+    private string? SceneObjectMenuUnavailable() => _worker is null || _referenceSessionFailed || !_reparentDocumentOpen
+        ? "Open an authoring document."
+        : _creatingObject ? "Creation is settling."
+        : _gizmoGrab is not null || _groupGrab is not null ? "Finish the Gizmo gesture first."
+        : _reparentPending || _siblingMovePending || _duplicating || _addingMesh || _hierarchyDrag is not null
+            ? "Finish the current scene edit first." : null;
+
+    private void UpdateSceneObjectMenu()
+    {
+        string? reason = SceneObjectMenuUnavailable();
+        _create.IsEnabled = reason is null;
+        ToolTip.SetTip(_create, reason);
+        foreach (var (preset, item) in _createItems)
+        {
+            bool allowed = SceneObjectPresets.Available(preset, _canAddMeshToDocument, _selection.Nodes.Count) &&
+                (preset != SceneObjectPreset.EmptyChild || SelectedReparentRow() is not null);
+            item.IsEnabled = reason is null && allowed;
+            ToolTip.SetTip(item, item.IsEnabled ? null : reason ?? (preset switch
+            {
+                SceneObjectPreset.EmptyChild => "Select exactly one live Hierarchy row.",
+                SceneObjectPreset.UnnamedRoot => "Clear the Hierarchy selection.",
+                _ => "Open a hand-authored scene to use named presets."
+            }));
+        }
+    }
+
+    private void CreateSceneObject(SceneObjectPreset preset)
+    {
+        UpdateSceneObjectMenu();
+        if (!_createItems[preset].IsEnabled || _worker is not { } worker) return;
+        long request = ++_createRequest, lifetime = _meshDocumentLifetime;
+        ulong selection = _selection.Generation;
+        HierarchyRow? parent = preset == SceneObjectPreset.EmptyChild ? SelectedReparentRow() : null;
+        bool Current() => ReferenceEquals(_worker, worker) && request == _createRequest &&
+            !_referenceSessionFailed && lifetime == worker.MeshDocumentLifetime;
+        _creatingObject = worker.CreateSceneObject(preset, parent, lifetime, selection, notice =>
+        {
+            if (!Current()) return;
+            _creatingObject = false;
+            _editLine.Text = notice;
+            UpdateHierarchyActions();
+        }, created =>
+        {
+            if (Current() && _selection.Generation == selection && _hierarchyRows.Any(row => row.Node == created))
+                SetSelection(created, true);
+        });
+        _editLine.Text = _creatingObject ? $"Creating {SceneObjectPresets.Label(preset)}…" : "Create refused. Refresh and try again.";
+        UpdateHierarchyActions();
+    }
+
     private void UpdateHierarchyActions()
     {
         UpdateViewportNavigationActions();
@@ -1503,7 +1584,7 @@ public sealed class MainWindow : Window
                 ? "Select live nodes in the Hierarchy."
                 : null;
         _duplicate.IsEnabled = reason is null;
-        _create.IsEnabled = _selection.Nodes.Count < 2;
+        UpdateSceneObjectMenu();
         _destroy.IsEnabled = _selection.Node is not null;
         bool gizmoTools = _allowGizmoPreview && _selection.Nodes.Count < 2;
         bool groupTools = _selection.Nodes.Count > 1 && _gizmoShown?.Group is { } group &&
