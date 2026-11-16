@@ -36,9 +36,10 @@ and settled projection for picking.
   including a document reopen or reattachment. Opening another Editor starts
   Off. Respect the Viewport toolbar's Inspector focus and draft behavior.
 - When enabled, show guides for exactly one live selected node with a
-  supported component, regardless of whether it also has a Renderable. A
-  node with both a supported Camera and Light can show both. Zero selection,
-  multiselection and other nodes show the normal overlay. A usable
+  supported component, regardless of whether it also has a Renderable.
+  Resolve the node from the existing Hierarchy/Viewport selection. A node
+  with both a supported Camera and Light can show both. Zero selection,
+  multiselection and other nodes show the ordinary overlay. A usable
   authoring document and Viewport are required.
 - Use thin depth-tested wire segments with the Editor's selection accent,
   distinct from the on-top transform axes. A guide may be occluded or
@@ -49,30 +50,35 @@ and settled projection for picking.
 
 ### R2 — Shape and numeric rules
 
-Use the selected node's authoring world transform resolved through its
-ancestors. Use the same forward convention as the Runtime extraction,
-normalizing the negative third basis column. Light kind is resolved from
-the shared authoring schema.
+Resolve the selected node's authoring world transform through its
+ancestors. For a camera or directional light, normalize the negative
+third basis column to match Runtime forward. A point light needs only
+world translation and its authored radius. Resolve light kind from the
+shared authoring schema.
 
 | Component | Guide |
 | --- | --- |
-| Perspective Camera | Twelve world-space edges joining the near and far rectangles from the selected Camera's vertical FOV and near/far fields. Use the hosted drawable width/height in pixels for aspect. Build the basis from forward and world +Y as the Runtime does, so camera roll does not rotate the frustum on its own. The current Viewport camera, including any navigation override, projects those lines into the image. |
+| Perspective Camera | Twelve world-space edges joining the near and far rectangles from the selected Camera's lens. Require finite `0 < fovY < π` and `0 < nearZ < farZ`, with FOV in radians. At distance `d`, the center is eye plus `d × forward`, half-height is `d × tan(fovY/2)` and half-width is half-height times the hosted drawable's pixel aspect. Build right/up from forward and world +Y as the Runtime does. Roll about forward leaves this basis unchanged. The current Viewport camera projects those lines into the image. |
 | Point Light | Three orthogonal world-space great circles, 24 segments each. The center is world translation and the radius is the positive authored range in world units, independent of ancestor or local scale. |
-| Directional Light | A short screen-constant arrow anchored at world translation and pointing along the normalized emission direction. Use a 40-pixel shaft scale and a simple line head; use no light range or shadow volume. |
+| Directional Light | A short screen-constant arrow anchored at world translation and pointing along the normalized emission direction. Use one segment of one anchor unit with `pixelsPerUnit = 40`. Use four head segments around the shaft, with a perpendicular basis that works for vertical emission. The shaft can foreshorten in the view. Light range and shadow volume are outside this guide. |
 
 Cap the addition at two groups and 84 segments. Omit an individual
 unavailable guide if a required read fails, lens ordering/FOV or range is
-invalid, the camera basis or light direction degenerates, or coordinates
-cannot form usable finite Float32 geometry. Reject overflow and collapsed
-edges instead of drawing a clamped range or frustum. A zero-sized drawable
-suppresses guides until its positive extent is available. Report unavailable
-data concisely in the existing Viewport status area when an otherwise
+invalid for display, or values cannot form usable Float32 geometry. Follow
+the existing Runtime forward and camera basis degeneracy threshold of
+`1e-6`. Reject nonfinite transforms, projection values or segment
+coordinates, and endpoints that collapse at Float32 precision. Omit the
+affected guide as a whole. This is a display check on otherwise editable
+scene data. A zero-sized drawable suppresses guides until its positive
+extent is available. Report unavailable data concisely in the existing
+Viewport status area when an otherwise
 eligible selection cannot be fully represented.
 
 ### R3 — Picking and shared overlay
 
-- Guide strokes have no hit targets. Keep the existing order of active
-  Gizmo handling, camera/light origin marker pick, and Runtime mesh raycast.
+- Guide strokes have no hit targets. Keep the existing order of group or
+  single Gizmo handling, camera/light origin marker pick, and Runtime mesh
+  raycast.
   A camera or light with a Renderable is reached through its mesh or the
   Hierarchy. A guide edge delegates to ordinary picking, including the
   existing miss behavior. Keep the current projection-readiness and
@@ -86,37 +92,45 @@ eligible selection cannot be fully represented.
   only the requesting client's overlay.
 - The call replaces the whole client overlay. On a definite guide overlay
   refusal, try the ordinary overlay once so an older guide is not retained;
-  use the existing clear fallback if that also refuses. Show a concise
-  diagnostic for the guide failure. A lost reply or disconnected session
-  follows existing connection cleanup and feedback.
+  use the existing clear fallback if that also refuses. Those fallbacks
+  apply only to the current Editor connection and intent. Show a concise
+  diagnostic for the guide failure. A lost reply has an unknown overlay
+  result until the connection settles. Follow existing session cleanup
+  and feedback.
 
 ### R4 — Edits, Apply and lifecycle
 
 - A guide represents the latest verified **committed authoring values**.
   Read these values from the document, including after an uncertain edit.
   A draft or write reply alone cannot establish guide values.
-  During a local single or group Gizmo preview, suppress the guide and
-  restore it from settled authoring values after commit or cancel. Undo
-  and Redo use the same document observations as other committed edits.
+  Suppress the guide from local Gizmo preview start through commit or
+  cancellation. Restore it from verified authoring values when the
+  preview ends. Undo and Redo use the same reads as other edits, including
+  while projection is suspended.
 - Display the source as **Authoring guides** when enabled. The existing
   Apply state describes the image separately, including pending/paused,
   failed, superseded, unknown and explicit recovery. After a failed Apply,
   the guide can show the committed edit over the last good Runtime image.
-  Retrying Apply affects the projection only. Observing a new Runtime
-  generation or an Apply receipt does not by itself certify a guide, move
-  selection or alter history. A live-only Runtime edit changes the image
-  without becoming authored guide data.
-- Build a bounded set of input reads for the selected node and its needed
-  ancestor transforms using the existing shared schema, reads and events.
-  Verify the selection, row incarnation, document lifetime, relevant
-  inputs and extent around refresh, using document revision and drained
-  events to reject observed interference. Handle selection and toggle
-  changes, resize, relevant field/component and ancestor changes, reopen,
-  removal and reconnect through the current worker. Clear obsolete
-  guide geometry when the current read cannot be verified. A late
-  result must not restore a hidden guide or one belonging to a previous
-  row, document, session or extent. Hold no new per-frame poll and
-  coalesce redundant refreshes.
+  Retry applies the latest committed document through 0083. A guide
+  snapshot does not certify that any Runtime image matches it. A live-only
+  Runtime edit changes the image without becoming authored guide data.
+- Read only the selected node and its ancestor chain, up to 64 nodes
+  including the selected node. A longer or broken chain is unavailable
+  for guides and leaves ordinary editing and overlays available. Use
+  complete typed reads for required component fields and all Transform
+  fields in the chain. Missing fields must not acquire identity Transform
+  or other display defaults.
+- Verify the read against drained document events and a stable observed
+  document revision. Capture session, document lifetime, row incarnation,
+  and the selection, toggle, preview and drawable extent intents. Recheck
+  them before the overlay send and again before publishing its feedback.
+  Treat an intent that changes away and back as newer. Coalesce refreshes
+  in the existing worker when inputs change. If verification fails, use
+  the ordinary overlay. A read already sent can finish, but its stale
+  result cannot submit a guide. If an overlay send already reached Runtime,
+  the latest intent replaces that connection's overlay at the next
+  available worker update and frame boundary. These are client observations
+  with refresh on later edits. Use the existing event cadence.
 - The guides and the toggle create no authoring or Runtime World
   transactions, history entries or Apply requests. Save writes only
   ordinary scene data. A reopened source can regenerate guides from its
