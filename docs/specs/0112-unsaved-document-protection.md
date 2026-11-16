@@ -47,8 +47,12 @@ recovery are outside scope.
 - **Runtime.** Keep the existing tracked Apply status and recovery from
   [0083](0083-authoring-apply-outcomes.md). Saved changes can coexist with a
   pending, failed or unknown Apply. Dirty changes can already be visible in
-  the Runtime. A Save or Reopen never issues Apply, Retry, Step or Resume.
-  Existing accepted Apply snapshots settle independently.
+  the Runtime. Leave actions issue no Apply, Retry, Step or Resume.
+  Existing accepted Apply snapshots settle independently. On
+  `DocumentReopened`, keep the current 0083 transition to explicit Apply
+  for the new document and suppress any queued follow-up for the old one.
+  An older accepted snapshot may still swap in or fail; its result belongs
+  to its own receipt and does not certify the new document or the saved file.
 
 ### R2 — One leave decision
 
@@ -60,12 +64,18 @@ still opens an independent Editor and [Save As](0088-scene-save-as.md) and
 [New Scene](0089-new-hand-authored-scene.md) still create independent sources.
 Retain existing busy-operation guards.
 
-Capture the current field, text and focus before a leave action can trigger
-blur submission. Suppress that submission during the decision. Settle already
-sent authoring commands through the existing worker and re-read the host
-state. Hold further local document commands and coalesce repeated leave
-requests while a decision or write is pending. Do not wait for an independent
-Apply to reach a terminal result.
+Track the draft as text changes, including its field, original value,
+selection and document lifetime. Starting a leave action must capture
+this state before focus loss can commit or reset it. Arm the guard before
+the Reopen control takes focus. For native title-bar close and Alt+F4,
+cancel the first close synchronously and suppress blur submission even if
+focus moves before the framework Closing callback. Ordinary focus movement
+within Inspector keeps its existing commit rules. Defer refreshes that
+would destroy a still-valid draft during the modal. Settle previously
+submitted authoring commands and preview cleanup through the existing
+worker, then re-read host state. Hold further local document commands and
+coalesce repeat leave requests until settlement. Do not wait for an
+independent Apply to reach a terminal result.
 
 For confirmed clean content with no draft, continue after the normal guard
 without a prompt. Otherwise show the current scene, the destination action,
@@ -77,15 +87,19 @@ status and focus and Cancel as the safe default.
 | --- | --- |
 | **Save and Close / Save and Reopen** | Save the reviewed committed content through the guarded shared call. With a draft present, the action requires explicit acknowledgement that the draft will be discarded. Offer guidance to cancel and finish editing to keep it. Save is unavailable for draft-only changes or an imported source. Leave only after the save and the appropriate leave guard succeed. |
 | **Close Without Saving / Reopen Without Saving** | Advance only for the reviewed document revision after recheck. On reopen, replace from the source and emit `DocumentReopened`. On close, the owned Runtime follows existing shutdown. An attached Runtime and its shared document remain live. Explain this distinction in the prompt. |
-| **Cancel** | Keep the current document, history and valid draft and restore focus if the field still exists. Cancel is also the effect of Escape or closing the prompt before sending a mutation. During an in-flight mutation, keep the window and progress visible until the result settles or is reported unknown. An interrupted pointer gesture remains cancelled. |
+| **Cancel** | Keep the current document, history and valid draft. Restore the originating field, its text and caret/selection if still valid, or focus the current Inspector or invoking control. Escape and closing the prompt act as Cancel before a mutation is sent or after its result has been shown. During an in-flight mutation, keep the window and progress visible until settlement or an unknown result. An interrupted pointer gesture remains cancelled. |
 
 Dropping a draft takes effect on confirmed leave. If a Save succeeds but the
 following Reopen fails, report that Save succeeded while Reopen failed.
 Keep the document, history and any still-valid draft. A successful Reopen
 uses existing document lifetime invalidation, clears its prior selection,
 draft and undo/redo history, and shows the resulting document and existing
-Runtime status separately. Closing the window ends only that window's
-draft and history.
+Runtime status separately. Reissue window close only via a one-use
+continuation for the same window, worker and reviewed decision. Closing
+the window ends that window's draft and history. Distinguish startup
+pending from confirmed document absence. Invalidate startup callbacks
+when closing and use existing ownership cleanup for a locally started
+Runtime.
 
 ### R3 — Shared state, conflicts and persistence
 
@@ -96,24 +110,29 @@ capable hosts, route the ordinary Editor Save button through the same guarded
 Save and report its receipt independently of Apply.
 
 Observe external edits, Save and Reopen. Read authoritatively when a leave
-starts and immediately before close, using the existing worker. A revision
-or incarnation change between observation and guarded write/reopen refuses
-the action. If the reviewed document key or revision has changed before
-consuming the decision, refresh the prompt and require a fresh choice. A
+starts and immediately before close, using the existing worker. A document
+identity or revision change between observation and guarded write/reopen
+refuses the action. If either has changed before consuming the decision,
+refresh the prompt and require a fresh choice. A
 same-revision external Save may update the dirty indication. Compare document
 state during ordinary connected refresh as well, so other clients' saves
 become visible even without a new transaction event. Preserve the existing
 legacy open/save calls for other clients; an external legacy Reopen bypasses
-this Editor's prompt and invalidates its leave intent and history. A draft
-that became stale is available to inspect or copy, and cannot submit against
-the replacement, including a node with the same GUID.
+this Editor's prompt and invalidates its leave intent and history. A changed
+draft subject, removed field, replaced node or external write to the draft
+field also invalidates that draft. Keep the captured text available to
+inspect or copy during the decision, with no editable restoration or submit
+against a changed target. An unrelated edit can invalidate the decision
+while leaving the draft valid.
 
-The final close check observes the latest host state. OS window teardown and
-host dispatch have no shared atomic boundary. An external edit can still
-land after that check before an owned Runtime exits. Keep that interval
-small, report this limit in the authorization, and add no lease or new process
-shutdown contract. An in-host guarded Reopen does have an atomic boundary
-with other clients' edits and opens.
+The final close check observes the latest host state. Finish local
+settlement and show all confirmations before that check. On success,
+consume the decision and start existing teardown in the UI continuation
+without another prompt, scheduled delay or new wait. Host dispatch and
+OS teardown are separate, including any existing cleanup on that path.
+An external edit after the final check can still be lost when an owned
+Runtime exits. Keep this limit in the authorization. Guarded Reopen is
+atomic with other clients' edits and opens on that host.
 
 ### R4 — Failure, unknown results and legacy hosts
 
@@ -126,28 +145,40 @@ an invalid success receipt after handoff, keep the original connection or
 protocol error and mark the operation result unknown. Stop the automatic
 leave continuation and never replay the mutation automatically.
 
-**Check Again** reads from a live connection to the same authenticated
-host launch. It may make a read-only probe using the existing session
-credentials after a disconnect. For unknown Save, proof that the reviewed
-revision is persisted in the same incarnation and is still current permits
-a new leave decision. Any other result shows what could be observed and
-keeps the original operation unconfirmed. For unknown Reopen, observe a
-replacement under the normal document lifecycle without attributing it to
-the lost request. A changed revision or incarnation makes the old guard
-unusable. If the requested pair is still current and the result remains
-unknown, keep the write blocked until the prior attempt is known settled.
-A read from a different host launch
-cannot reconcile either mutation. Leave, new writes and recovery controls
-continue to respect the current connection and document lifetime; late
-callbacks cannot dismiss a new dialog or close a new window.
+**Check Again** reads from the same authenticated host launch. After a
+disconnect it may use a read-only connection with the original session
+credentials. For unknown Save, the same document and current revision
+with a matching persisted anchor establishes that the reviewed content is
+saved. For unknown Reopen, a new document identity establishes that the
+old target can no longer be reopened by that request. Neither observation
+identifies who performed the operation. Present what was verified and wait
+for a new leave decision. A different host launch cannot reconcile either
+mutation. If the same token remains current and the outcome is unresolved,
+offer explicit retry only on a live editing connection, after a fresh
+read and renewed confirmation. Repeating guarded Save can write only the
+same reviewed content. At most one Reopen with that token can succeed.
+Without a live editing connection the probe cannot enable writes or
+restore editing. Show which checks were possible, keep the old result
+unconfirmed and allow Cancel or explicit Close Anyway. No automatic
+reconnect, mutation replay or leave continuation follows an unknown result.
+Ignore replies from old window, worker or decision lifetimes.
 
-When state is unavailable, show it as unknown. Keep a confirmed no-document
-state distinct. Offer **Close Anyway** with an explicit consequence prompt
-when the user chooses to exit despite unknown persistence; a reachable
-host is rechecked before that decision is consumed, and newly verified
+When state is unavailable, show it as unknown and retain captured text
+independently of Inspector cleanup on disconnect. With no usable editing
+field, keep the text available to inspect or copy. Keep a confirmed
+no-document state distinct. On a capable host, the initial automatic
+open uses the shared absence guard. If another client opens first, attach
+to that document without reopening it. An uncertain initial open follows
+the same check and no-automatic-replay rule. Offer **Close Anyway** with
+an explicit consequence prompt when persistence remains unknown. Recheck a
+reachable host before consuming that decision. Newly verified
 changes return to the normal prompt. Disable guarded Reopen when the host
-lacks the capability, and report why. Legacy explicit toolbar Save remains
-available with its existing semantics and cannot certify a guarded leave.
+lacks the capability, and report why. A legacy host with an open document
+can still be edited; explicit toolbar Save retains its legacy behavior and
+cannot certify a guarded leave. If a legacy host has no open document,
+show guidance to use a capable Runtime or open the source explicitly with
+a legacy client before attaching. The protected Editor does not
+automatically issue a legacy Open.
 
 ## Architectural impact
 
@@ -157,8 +188,9 @@ Use existing Authoring dispatch, C# SDK and Editor worker boundaries. Store
 one clean content anchor and the current dirty comparison per open document.
 Compare at most once per accepted current revision and use at most one
 background state read per 250 ms in the existing worker poll. Explicit
-leave and write settlement can request a fresh read. No new frame-path work,
-thread, dependency, scene format or Runtime projection control is planned.
+leave and write settlement can request a fresh read. The comparison runs
+on demand in the existing host dispatch. No new per-frame hook, thread,
+dependency, scene format or Runtime projection control is planned.
 
 ## Alternatives, verification and open decisions
 

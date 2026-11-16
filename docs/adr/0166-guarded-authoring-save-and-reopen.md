@@ -27,13 +27,15 @@ owned by Authoring. Runtime still owns the projection.
 ### State and lifetime
 
 The existing session revision advances on every accepted document edit
-and successful open as defined by 0083. Its value on successful open is
-the document's `openRevision`. The pair
-`{openRevision, documentRevision}` identifies a current document in the
-authenticated host launch. Across host launches the pair is incomparable.
-Clients bind it to the session launch identity already used to connect;
-an Editor window also binds any pending continuation to its own lifetime.
-The pair is an observation and mutation precondition, not a secret.
+and successful open as defined by 0083. Each successful open, including
+legacy Open, assigns a fresh non-nil `documentId` using the existing GUID
+mint. It identifies that open document independently of scene or node
+GUIDs and is never stored in a source file. The token
+`{documentId, documentRevision}` prevents two same-GUID opens or a Runtime
+restart with repeating counter values from accepting an old guard. The
+token is a mutation precondition and grants no access. The Editor also
+binds continuations to its own window lifetime. Outcome reconciliation
+requires the original authenticated host launch.
 
 On open, retain canonical lossless scene source bytes for the validated
 document and initialize `lastPersistedRevision` to the new revision. On
@@ -61,22 +63,26 @@ method-local `ok`/`err` envelope.
 | Method | Request | Success | Shared refusals |
 | --- | --- | --- | --- |
 | `authoring.documentState` | Empty | State or `null` for no open document | Standard RPC refusal if the host serves no Authoring |
-| `authoring.saveIfCurrent` | `{openRevision, documentRevision}` | State at successful atomic write | `NoDocument`, `StaleDocument`, `ImportedSceneNotSavable`, `WriteFailed` |
-| `authoring.reopenIfCurrent` | `{openRevision, documentRevision}` | State after successful source reload | `NoDocument`, `StaleDocument`, `SourceUnreadable`, `SourceParseFailed`, `SourceInvalid` |
+| `authoring.saveIfCurrent` | `{expected: <token>}` | State at successful atomic write | `NoDocument`, `StaleDocument`, `ImportedSceneNotSavable`, `WriteFailed` |
+| `authoring.reopenIfCurrent` | `{expected: <token or null>}` | State after successful source load | `NoDocument`, `StaleDocument`, `SourceUnreadable`, `SourceParseFailed`, `SourceInvalid` |
 
-State has the existing canonical `scene` (GUID), `source` and
-`provenance` encodings, both revisions, `lastPersistedRevision` and
-boolean `dirty`. Revisions are positive unsigned 64-bit integers and
-`openRevision <= lastPersistedRevision <= documentRevision`. Use the
-existing exact unsigned integer encoding; an invalid or inverted token
-uses RPC `BadRequest`. When
-`lastPersistedRevision == documentRevision`, `dirty` is false. Imported
-state keeps the open revision as its persisted anchor. Save echoes the
-requested pair, a matching persisted revision, hand-authored provenance
-and clean state. Reopen returns a clean state for the same scene and
-source with all three revisions equal to the previous document revision
-plus one. Ship only a source reopen of an already open document. Initial
-Open and clients with no current document retain their existing paths.
+State has the existing canonical encodings for `scene`, `source` and
+`provenance`, plus the token fields, `lastPersistedRevision` and boolean
+`dirty`. Use the existing canonical GUID encoding for `documentId` and
+exact unsigned integer encoding for positive revisions. A missing or
+malformed field, zero revision, nil identity or extra field in a request
+uses RPC `BadRequest`. In a state reply, `lastPersistedRevision` cannot
+exceed `documentRevision`. When equal, `dirty` is false. Imported state
+keeps its opening revision as the persisted anchor. Save echoes the
+requested token, a matching persisted revision, hand-authored provenance
+and clean state. Reopen returns a new identity and clean state, with both
+revisions equal to the previous document revision plus one for a
+token-guarded reopen. If `expected` is explicitly null, Reopen opens the
+configured source only while the host has no document and returns both
+revisions as 1 on success. A concurrent first
+open then returns `StaleDocument` so the Editor can attach to the observed
+document. This uses the same operation and prevents the startup
+read-then-unconditional-open race. Legacy Open retains its existing path.
 
 The two mutation handlers check current identity and revision before disk
 I/O, then use existing atomic write or validated source reopen without
@@ -87,11 +93,13 @@ Reopen publishes the existing `DocumentReopened`, advances the lifetime
 and leaves accepted Apply snapshots and projection untouched. There is no
 new file layout, lock, event or connection type.
 
-Expose CLI `scene document-state`, `scene save-if-current <open-revision>
-<document-revision>` and `scene reopen-if-current <open-revision>
-<document-revision>`. Expose MCP exact tools
+Expose CLI `scene document-state`, `scene save-if-current <document-id>
+<document-revision>` and `scene reopen-if-current <document-id>
+<document-revision>` (or `scene reopen-if-current --if-absent`). Expose MCP exact tools
 `authoring.document_state`, `authoring.save_if_current` and
-`authoring.reopen_if_current` via the managed SDK. Use the established
+`authoring.reopen_if_current` via the managed SDK. An absence guard is
+an explicit request for the connected host, never a token to carry across
+launches. Use the established
 nonzero CLI / MCP tool-error semantics for refusals and transport errors.
 Do not add an implicit open, drain or apply to these calls.
 
@@ -103,17 +111,22 @@ also map the exact existing `BadRequest` / `unknown method <name>` error
 for each new method to `Unsupported`, separately from no Authoring, no
 document, malformed responses and connection failures. A closed contract
 validates revision ranges, nullability and success invariants. Guarded
-mutation clients verify the requested pair where the success permits it;
-Editor also checks known source identity, the session and its dialog
+mutation clients verify the requested token where the success permits it.
+The Editor also checks known scene/source identity, session and dialog
 lifetime before acting on a reply.
 
 After handing off a mutation, a lost connection or malformed success is
 an unknown outcome. Preserve the original transport/protocol failure
-category and include the operation and requested pair in the diagnostic.
+category and include the operation and requested token or absence
+precondition in the diagnostic.
 Never fall back to the unconditional call. Reading the same launch can
 establish current persistence or that the old incarnation has been
 replaced. It cannot attribute another client's matching result to the
-lost request. An unknown write is never automatically retried.
+lost request. An explicit, freshly confirmed retry with the same live
+precondition is safe under host serialization. Concurrent Save retries
+for that token can only write the same reviewed bytes. Successful Reopen
+advances the token or consumes the absence precondition so a late twin
+is refused. An unknown write is never automatically retried.
 
 ## Consequences and alternatives
 

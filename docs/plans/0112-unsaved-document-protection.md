@@ -24,10 +24,10 @@ and [0093](../specs/0093-editor-visual-layout.md) visuals.
 2. **S2 — Shared contract and Editor.** Implement and verify the canonical
    content anchor and guarded operations in Authoring first. Expose them
    through Connection, Remote, SDK, CLI and MCP using existing dispatch and
-   encoding. Then wire a UI-free leave coordinator, worker settlement,
-   Inspector draft capture and an accessible prompt and feedback in the
-   ordinary Editor. Route confirmed leave through the existing shutdown
-   or document lifecycle, after the worker decision is current.
+   encoding. Then wire guarded startup, a UI-free leave coordinator,
+   worker settlement, Inspector draft capture and an accessible prompt
+   in the ordinary Editor. Route confirmed leave through the existing
+   shutdown or document lifecycle after the worker decision is current.
 3. **S3 — Verify.** Run the mapped affected checks and the Windows 100%
    flow against the final candidate. Record source, build and test
    provenance for any reused evidence and report the gate selector.
@@ -57,15 +57,17 @@ existing approval rule.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — State and draft** | Approve the three independent signals. Exact Undo-to-saved is clean. Save in the leave prompt persists committed content and requires explicit acknowledgement to discard any unsubmitted input. |
-| **J2 — Shared guard and compatibility** | Accept ADR-0166. Use the Authoring-owned canonical anchor, additive state read and revision-guarded Save/Reopen in all clients. Preserve legacy calls and distinguish Unsupported, NoAuthoring, NoDocument and unknown results. |
-| **J3 — Leave, external edits and recovery** | Approve close and source reopen, keeping 0090 independent. Require renewed confirmation after a changed revision, keep the window on failure or an unknown result, and reconcile only from the same host launch. Accept the final read-to-OS teardown race for an owned Runtime; Reopen is guarded in the host. |
+| **J1 — State and draft** | Approve the three independent signals, exact Undo-to-saved, and explicit draft discard acknowledgement when saving committed edits. Cancel restores valid text and focus. |
+| **J2 — Shared guard and compatibility** | Accept ADR-0166. Use the canonical saved anchor and the per-open document ID plus revision across clients. Use the same Reopen call with an absence precondition at startup. Preserve legacy calls, and keep automatic Open disabled in the protected Editor on an unsupported host. |
+| **J3 — Leave, external edits and recovery** | Approve fresh decisions on conflicts, same-launch observation and explicit retry using the same live guard when still current. Preserve the attached Runtime. Accept the last-read-to-teardown race for an owned Runtime. In-host Reopen remains atomic. |
 | **J4 — Verification and authorization** | Approve the mapped host/client and Windows 100% checks, with the existing applicable gates. Authorize S2–S4 together after design merge. |
 
 Suggested authorization for the reviewed revision:
 
 > I approve J1–J4 and Spec/Plan 0112 jointly and accept ADR-0166,
-> including the final observation boundary for owned Runtime close.
+> including guarded startup, the older-host fallback, explicit retry on
+> a live editing connection and the final observation boundary for owned
+> Runtime close.
 > After manual design merge, proceed from latest main through S2–S4,
 > covering implementation, scope-preserving fixes, applicable verification
 > and a review-ready PR. Reuse valid evidence and retain applicable gates.
@@ -81,43 +83,56 @@ Suggested authorization for the reviewed revision:
   Save As and New Scene leave the anchor unchanged. Imported edits remain
   visible with Save refused. No-document stays distinct from unknown.
 - [ ] **R1/R3 — Apply independence.** Hold a tracked Apply while paused,
-  then save or reopen. Confirm the accepted receipt settles by 0083 and
-  remains independently observable, including a controlled failed reload
-  and explicit recovery. Verify Save or Discard sends no implicit Apply,
-  Retry, Step or Resume and that a failed Apply does not make a successful
-  Save dirty. Exercise the absence of a writable source as a separate case.
+  then save or reopen. Query the original receipt by ID from a second
+  client through settlement and controlled reload failure. Verify Reopen
+  leaves the new document at Needs Apply and drops a queued follow-up for
+  the old document. Save and Discard send no implicit Apply, Retry, Step
+  or Resume. Failed Apply does not make a successful Save dirty. Verify
+  explicit recovery targets the new current document.
 - [ ] **R3 — Shared conflict and compatibility.** With separate real
   clients edit, save or reopen between the decision read and the guarded
-  action, including same-GUID replacement. Verify refusal before disk
-  mutation and unchanged document/Apply on refusal; successful Reopen
-  emits the existing event once. Test old server/new clients and new
-  server/old clients. Verify invalid revision encodings, impossible
-  success payloads, shared CLI/SDK/MCP parity and refusal/transport
-  categories. Guards must be exercised both from an Editor worker and
-  a non-Editor client.
+  action. Cover same-GUID replacement and a restarted process with the
+  same scene, source and numeric revision. Verify a stale token refuses
+  before disk I/O. Race the initial no-document check with an external
+  first open and edit, then attach without a second open or revision
+  advance. Refused calls leave the document, saved anchor and Apply state
+  intact. Success publishes the existing Reopen event once. Exercise
+  legacy calls against the new host, new calls against a legacy host, and
+  legacy Editor attach with and without an open document. Verify invalid
+  request fields, impossible success payloads and the same refusal and
+  transport distinctions across CLI, SDK and MCP.
 - [ ] **R2/R4 — Leave decision and faults.** Cover dirty, draft-only,
   dirty plus invalid draft, imported and clean. Use single and mixed-value
-  text fields. Test mouse and keyboard focus transitions, Cancel, Escape,
-  rapid repeated close/reopen, late callbacks and external reopen.
+  text fields. Test pre-Closing blur, Cancel, Escape, rapid repeated
+  close/reopen, late startup and operation callbacks, and cancellation
+  with a still-valid versus replaced or externally edited draft target.
   Force a write failure and an unreadable/unparseable reopen, including
   successful Save followed by failed Reopen. Test connection loss after
   send and invalid success for both operations, same-launch positive
-  persistence evidence, unresolved reads (including a request still queued
-  on the host) and rejected different-launch evidence. Assert no silent
-  retry, stale close, write or implicit Apply.
-  Verify an attached close leaves the Runtime and its document in place.
+  persistence evidence, unresolved reads with a request still queued
+  and rejected different-launch evidence. Verify explicit live retry
+  only writes the same bytes for Save and yields at most one Reopen
+  success for a token. An unresolved read while disconnected allows no
+  mutation. Verify a stale decision sends no new write or Apply and
+  never closes the window.
+  Inject a revision change before the final close read to verify fresh
+  confirmation. Verify an attached close leaves the Runtime and its
+  document in place.
 - [ ] **Windows 100% desktop.** On actual Windows with the normal hosted
   Viewport and a disposable hand-authored scene, exercise the standard
   and compact layouts. Edit a committed field and leave text unsubmitted
-  in another field. Invoke Reopen from Source and Alt+F4 with the input
-  focused. Verify Cancel restores focused text without a transaction.
+  in another field. Invoke Reopen from Source by keyboard and pointer,
+  and invoke native title-bar Close and Alt+F4 with the input focused.
+  Verify Cancel restores text, focus and caret/selection without a
+  transaction. Check normal blur commit on ordinary Inspector focus change.
   Save and reopen with explicit draft discard, confirm the committed
   value survives and the old draft/history are gone. Make another
   edit, discard and reopen to confirm the persisted value wins. Show
   Save failed and unknown-result feedback without dismissing the window,
   with long source paths readable by keyboard and pointer. Save and
   close an owned Editor, then open the same source through the existing
-  workflow and verify the persisted fields. Use an independent client
+  workflow. Verify the same scene and node GUIDs, persisted fields and fresh
+  Editor history on reopening. Use an independent client
   for reachable external edits and confirm the reviewed revision is
   refreshed. Retain native captures and the corresponding state evidence.
 - [ ] **Repository gates.** Build and run the affected native, CLI,
