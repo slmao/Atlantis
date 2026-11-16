@@ -41,7 +41,11 @@ public sealed record NodeState(EntityGuid Node, ulong Position, EntityGuid? Pare
 public abstract record EditEntry;
 
 /// <summary>A node created (absent before, present after) or destroyed (present before, absent after).</summary>
-public sealed record NodeLife(NodeState State, bool Created) : EditEntry;
+public sealed record NodeLife(NodeState State, bool Created) : EditEntry
+{
+    public SceneObjectPreset? Preset { get; init; }
+    public object? CreatedIncarnation { get; init; }
+}
 
 /// <summary>One duplicate suffix and the live identities on which guarded replay depends.</summary>
 public sealed record GuardedDuplicateEdit(IReadOnlyList<EntityGuid> Roots, IReadOnlyList<NodeLife> Copies,

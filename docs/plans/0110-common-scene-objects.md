@@ -1,9 +1,9 @@
 # Plan 0110 — Create Common Scene Objects
 
 - **Spec:** [Spec 0110](../specs/0110-common-scene-objects.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of both documents and authorization for S2–S4.
+- **Joint Human Review:** The maintainer approved J1–J4 and Spec/Plan 0110 together at [PR #385, `f5b62b82`](https://github.com/slmao/Atlantis/pull/385) on 2026-11-16, confirmed no new ADR and authorized S2–S4 after manual merge `9a3eb540`.
 
 ## Objective
 

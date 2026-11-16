@@ -334,6 +334,8 @@ public sealed class EditorWorker : IDisposable
     private bool _groupWritable;
     private volatile bool _duplicateBatchWritable;
     private bool _duplicateBatchQueued;
+    private bool _sceneObjectQueued;
+    private int _queuedGizmoBegins;
     public bool DuplicateBatchAvailable => _duplicateBatchWritable;
     private sealed record GroupGrab(long Id, GroupGizmoSnapshot View, GizmoAxis Axis);
     private long _nextGroupGrab;
@@ -973,6 +975,214 @@ public sealed class EditorWorker : IDisposable
         return (plan, node);
     });
 
+    public bool CreateSceneObject(SceneObjectPreset preset, HierarchyRow? parent, long lifetime, ulong selection,
+        Action<string> report, Action<EntityGuid> select, Action finished)
+    {
+        lock (_lock)
+        {
+            if (_sceneObjectQueued || !CanSettleSceneObject(lifetime) ||
+                (!SceneObjectPresets.Named(preset) && selection != _requestedSelectionGeneration)) return false;
+            object? parentIdentity = null;
+            if (preset == SceneObjectPreset.EmptyChild &&
+                (parent is null || !_hierarchyIncarnations.TryGetValue(parent, out parentIdentity))) return false;
+            _sceneObjectQueued = true;
+            Enqueue(session =>
+            {
+                try
+                {
+                    var (result, life, applyRevision) = SettleSceneObject(session, preset, lifetime, replay: null, forward: true,
+                        selection, parent?.Node, parentIdentity);
+                    bool recorded = false;
+                    string notice = result.Notice;
+                    if (result.State == BatchReplayState.Committed && life is not null && lifetime == MeshDocumentLifetime)
+                    {
+                        if (_history is { } history && _historyTarget is { } target)
+                        {
+                            history.Record(new EditTransaction("Create " + SceneObjectPresets.Label(preset), [], [life]),
+                                target.Committed(Array.Empty<CommandFailure>()));
+                            history.Update();
+                            recorded = true;
+                        }
+                        else
+                        {
+                            _history?.DiscardRedo();
+                            _apply?.RequireExplicitApply("creation history could not be verified");
+                            notice += " Undo unavailable. Apply the current document explicitly.";
+                        }
+                    }
+                    PostHistory(lifetime);
+                    _log.Write(notice);
+                    _post(() => { if (lifetime == MeshDocumentLifetime) report(notice); });
+                    if (recorded && applyRevision is ulong revision)
+                    {
+                        string projection = ApplyVerifiedSceneObject(session, lifetime, revision, notice);
+                        if (projection != notice)
+                        {
+                            _log.Write(projection);
+                            _post(() => { if (lifetime == MeshDocumentLifetime) report(projection); });
+                        }
+                    }
+                    PostApplyState(lifetime);
+                    // History, document outcome and Apply feedback do not depend on this refresh succeeding.
+                    PollDocument(session, pollApply: false, refreshInspector: false);
+                    if (recorded && life is not null && lifetime == MeshDocumentLifetime &&
+                        ReferenceEquals(life.CreatedIncarnation, _tree.IncarnationOf(life.State.Node)))
+                    {
+                        EntityGuid created = life.State.Node;
+                        _post(() => { if (lifetime == MeshDocumentLifetime) select(created); });
+                    }
+                    PostInspector();
+                }
+                finally
+                {
+                    lock (_lock) _sceneObjectQueued = false;
+                    _post(() => { if (lifetime == MeshDocumentLifetime) finished(); });
+                }
+            });
+            return true;
+        }
+    }
+
+    // Called with the intent lock immediately before sending, after worker-side observations.
+    private bool CanSettleSceneObject(long lifetime) => !_stopping && lifetime == MeshDocumentLifetime &&
+        _queuedGizmoBegins == 0 && !_gizmoActive && _gizmo?.Dragging != true && _requestedGroup is null && !_groupSettling &&
+        !_batchSettling && !_reparentQueued && !_siblingMoveQueued && !_duplicateBatchQueued;
+
+    private (BatchReplayResult Result, NodeLife? Life, ulong? ApplyRevision) SettleSceneObject(RemoteSession session,
+        SceneObjectPreset preset, long lifetime, NodeLife? replay, bool forward, ulong selection = 0,
+        EntityGuid? parent = null, object? parentIdentity = null)
+    {
+        bool initial = replay is null;
+        string operation = (initial ? "Create " : forward ? "Redo creation of " : "Undo creation of ") + SceneObjectPresets.Label(preset);
+        (BatchReplayResult, NodeLife?, ulong?) Refuse(string reason, bool drop = false) =>
+            (new(drop ? BatchReplayState.Drop : BatchReplayState.Retry, $"{operation} refused: {reason}"), null, null);
+        if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
+            return Refuse("open an authoring document");
+
+        bool SameDocument() => lifetime == MeshDocumentLifetime;
+        bool ContextCurrent() => CanSettleSceneObject(lifetime) &&
+            (!initial || SceneObjectPresets.Named(preset) ||
+                (selection == _requestedSelectionGeneration &&
+                    (preset == SceneObjectPreset.EmptyChild ? _selected == parent : _selectedNodes.Count == 0)));
+        bool ParentCurrent() => !initial || parent is not EntityGuid childOf ||
+            ReferenceEquals(parentIdentity, _tree.IncarnationOf(childOf));
+        IReadOnlyList<Event>? Observe()
+        {
+            if (document.ObserveEvents() is not { } events) return null;
+            PollDocument(session, events, pollApply: false, allowOrderRefresh: false,
+                refreshInspector: false, refreshOverlay: false, refreshHierarchy: false);
+            return SameDocument() ? events : null;
+        }
+
+        EntityGuid node = replay?.State.Node ?? new EntityGuid(Guid.NewGuid());
+        bool sent = false, committed = false;
+        (BatchReplayResult, NodeLife?, ulong?) Unverified()
+        {
+            if (SameDocument())
+            {
+                apply.RequireExplicitApply("creation transaction or replay could not be verified");
+                if (committed && initial) _history?.DiscardRedo();
+            }
+            return (new(BatchReplayState.Drop, committed
+                ? $"{operation} committed for {node}. History unavailable. Inspect and Apply the current document explicitly."
+                : $"{operation} outcome unknown for {node}. Reconnect if needed, confirm the prior request ended, and inspect the document before retrying."), null, null);
+        }
+
+        try
+        {
+            if (!SameDocument() || Observe() is null) return Refuse("the document changed or could not be observed");
+            if (document.Info() is not { } info || (SceneObjectPresets.Named(preset) && info.Provenance != Provenance.HandAuthored))
+                return Refuse("open a hand-authored scene for named presets");
+            if (forward && SceneObjectPresets.Mesh(preset) is AssetGuid mesh)
+            {
+                var detail = session.Assets.GetAsset(mesh);
+                if (!detail.IsOk || !SceneObjectPresets.MatchesMesh(mesh, detail.Value))
+                    return Refuse($"mesh {mesh} is unavailable in this Runtime catalog. Check the build and restart Runtime as needed");
+            }
+            if (ReadOrderRevision(document) is not ulong before || before == ulong.MaxValue || Observe() is null || !_tree.OrderSynchronized)
+                return Refuse("the current document revision or order could not be verified");
+            if (!ParentCurrent()) return Refuse("the selected Hierarchy row was replaced");
+
+            var schema = document.Schema;
+            NodeLife life;
+            IReadOnlyList<Command> commands;
+            if (initial)
+            {
+                if (SceneObjectPresets.Build(schema, preset, node, (ulong)_tree.Count, parent) is not { } plan)
+                    return Refuse("the authoring schema cannot represent this preset");
+                life = new NodeLife(plan.Expected, true) { Preset = preset };
+                commands = plan.Edit.Commands;
+            }
+            else
+            {
+                life = replay!;
+                var step = new EditTransaction(operation, [], [life]);
+                var view = new DocumentView(document, _tree);
+                if (forward && StructuralSteps.Check(step, forward, view) is not null)
+                    return Refuse("the node, position or parent changed elsewhere", drop: true);
+                if (!forward)
+                {
+                    if (!view.Exists(node)) return Refuse("the node no longer exists", drop: true);
+                    if (view.ReadCompleteNodes([node]) is not [NodeState undoState])
+                        return Refuse("the Undo target could not be read. Refresh before retrying");
+                    if (!life.State.SameAs(undoState)) return Refuse("the node or its children changed elsewhere", drop: true);
+                }
+                if (!forward && preset == SceneObjectPreset.Camera)
+                {
+                    if (!document.ObserveActiveCamera(out EntityGuid? active)) return Refuse("the active camera could not be verified");
+                    if (active == node) return Refuse("the created camera is now active", drop: true);
+                }
+                commands = StructuralSteps.Commands(step, forward, schema);
+            }
+
+            if (Observe() is null || ReadOrderRevision(document) != before)
+                return Refuse("the document changed during preflight. Refresh before retrying");
+            var encoded = JsonValue.NewArray();
+            foreach (Command command in commands) encoded.Push(Codec.Encode(command));
+            var parameters = JsonValue.NewObject().Set("commands", encoded);
+            ulong request;
+            lock (_lock)
+            {
+                if (!ContextCurrent() || !ParentCurrent()) return Refuse("the displayed edit context changed");
+                sent = true;
+                request = session.Send("authoring.submitTransaction", parameters);
+            }
+
+            if (Codec.DecodeTransactionTicket(session.AwaitResult(request)) is not TransactionTicket ticket ||
+                ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
+                ticket.First.Value > ulong.MaxValue - (ticket.Count - 1)) return Unverified();
+            var failures = document.DrainFailures();
+            if (failures.FirstOrDefault(failure => ticket.Contains(failure.Ticket)) is { Ticket.Value: not 0 } refused)
+                return Refuse(refused.Error.ToString(), drop: !initial);
+            committed = true;
+
+            if (ReadOrderRevision(document) is not ulong observing || observing <= before || Observe() is not { } authored ||
+                !_tree.OrderSynchronized) return Unverified();
+            object? incarnation = _tree.IncarnationOf(node);
+            bool verified = forward
+                ? incarnation is not null && authored.Count(e => e is NodeCreated c && c.Node == node) == 1 &&
+                    authored.Any(e => e is NodeCreated c && c.Node == node && c.Position == life.State.Position) &&
+                    !authored.Any(e => e is NodeDestroyed d && d.Node == node) &&
+                    new DocumentView(document, _tree).ReadCompleteNodes([node]) is [var actual] &&
+                    actual.Position == life.State.Position && life.State.SameAs(actual)
+                : incarnation is null && authored.Count(e => e is NodeDestroyed d && d.Node == node) == 1;
+            if (Observe() is not { } closing || !verified || !_tree.OrderSynchronized ||
+                closing.Any(e => (e is NodeCreated c && c.Node == node) || (e is NodeDestroyed d && d.Node == node)) ||
+                !ReferenceEquals(incarnation, _tree.IncarnationOf(node)) || ReadOrderRevision(document) != observing)
+                return Unverified();
+
+            if (observing != before + 1)
+                apply.RequireExplicitApply("document advanced during creation or replay");
+            return (new(BatchReplayState.Committed, $"{operation} committed for {node}." +
+                (observing == before + 1 ? "" : " Document advanced. Apply the current document explicitly.")),
+                life with { CreatedIncarnation = incarnation }, observing == before + 1 ? observing : null);
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            return sent ? Unverified() : Refuse(error.Message);
+        }
+    }
+
     /// <summary>Plan 0068 M4 (Spec 0068 R5): the Gizmo's mode, space and snapping (Ctrl held while dragging in E1).</summary>
     public void SetGizmo(GizmoMode mode, GizmoSpace space, bool snap) => Enqueue(session =>
     {
@@ -983,19 +1193,31 @@ public sealed class EditorWorker : IDisposable
     });
 
     /// <summary>Plan 0068 M4: the press grabbed <paramref name="axis"/> of the selected node's Gizmo.</summary>
-    public void BeginGizmoDrag(GizmoAxis axis) => Enqueue(session =>
+    public void BeginGizmoDrag(GizmoAxis axis)
     {
-        PollDocument(session);
-        if (_apply?.CanPreview != true) return;
-        if (_gizmo is null || _selected is not EntityGuid node) return;
-        GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
-        GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
-        GizmoSpace space = GizmoLayout.EffectiveSpace(_transforms.WorldOf(_document!, _tree, node), _gizmoSpace);
-        if (!_gizmo.Begin(node, mode, space, axis, _gizmoSnap)) return;
-        _previewBatches = 0;
-        lock (_lock) _gizmoActive = true;
-        _log.Write("gizmo begin " + mode + " " + space + " " + axis + " on " + node + " (" + _gizmo.PreviewedDescendants + " descendants previewed)");
-    });
+        lock (_lock)
+        {
+            if (_stopping) return;
+            ++_queuedGizmoBegins;
+            Enqueue(session =>
+            {
+                try
+                {
+                    PollDocument(session);
+                    if (_apply?.CanPreview != true) return;
+                    if (_gizmo is null || _selected is not EntityGuid node) return;
+                    GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
+                    GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
+                    GizmoSpace space = GizmoLayout.EffectiveSpace(_transforms.WorldOf(_document!, _tree, node), _gizmoSpace);
+                    if (!_gizmo.Begin(node, mode, space, axis, _gizmoSnap)) return;
+                    _previewBatches = 0;
+                    lock (_lock) _gizmoActive = true;
+                    _log.Write("gizmo begin " + mode + " " + space + " " + axis + " on " + node + " (" + _gizmo.PreviewedDescendants + " descendants previewed)");
+                }
+                finally { lock (_lock) --_queuedGizmoBegins; }
+            });
+        }
+    }
 
     /// <summary>Plan 0068 M4: the drag amount from the press (units, a factor or radians); batches coalesce like the camera's.</summary>
     public void GizmoDragTo(float amount, long inputTicks)
@@ -1794,6 +2016,32 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
+    private string ApplyVerifiedSceneObject(RemoteSession session, long lifetime, ulong expected, string notice)
+    {
+        if (lifetime != MeshDocumentLifetime || _document is not RemoteAuthoringDocument document ||
+            _apply is not { } apply) return notice;
+        // Document history has already settled. Before asking the projection controller to act,
+        // detect any observable new revision/reopen, including changes while that history was published.
+        try
+        {
+            if (document.ObserveEvents() is { } events)
+            {
+                PollDocument(session, events, pollApply: false, allowOrderRefresh: false,
+                    refreshInspector: false, refreshOverlay: false, refreshHierarchy: false);
+                if (lifetime != MeshDocumentLifetime) return notice;
+                if (ReadOrderRevision(document) == expected)
+                    return ApplyVerifiedEdit(lifetime, notice, publishStatus: false);
+            }
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            // No new Apply was sent by the revision check.
+        }
+        if (lifetime == MeshDocumentLifetime)
+            apply.RequireExplicitApply("the creation or replay revision is no longer verified");
+        return notice + " Verify and Apply the current document explicitly.";
+    }
+
     private static ulong? ReadOrderRevision(RemoteAuthoringDocument document)
     {
         var status = document.ApplyStatus();
@@ -2293,14 +2541,25 @@ public sealed class EditorWorker : IDisposable
             reordered = settlement.State == BatchReplayState.Committed;
             return settlement;
         }
-        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate) : _history.Redo(Replay, ReplayBatch, ReplayDuplicate);
+        ulong? presetApplyRevision = null;
+        BatchReplayResult ReplayPreset(NodeLife edit, bool forward)
+        {
+            batchReplay = true;
+            var (settlement, _, applyRevision) = SettleSceneObject(session, edit.Preset!.Value, lifetime, edit, forward);
+            presetApplyRevision = applyRevision;
+            return settlement;
+        }
+        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset) :
+            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset);
         siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
                                  _history.Notice, Stopwatch.GetElapsedTime(start).TotalMilliseconds));
         if (result == HistoryResult.Submitted) _commitTicks = start;
         if (batchReplay) PostHistory(lifetime);
-        string notice = reordered ? ApplyVerifiedEdit(lifetime, _history.Notice, publishStatus: !batchReplay) : _history.Notice;
+        string notice = presetApplyRevision is ulong revision
+            ? ApplyVerifiedSceneObject(session, lifetime, revision, _history.Notice)
+            : reordered ? ApplyVerifiedEdit(lifetime, _history.Notice, publishStatus: !batchReplay) : _history.Notice;
         if (siblingReplay)
         {
             if (!batchReplay) PostHistory(lifetime);
