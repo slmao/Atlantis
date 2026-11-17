@@ -1561,6 +1561,7 @@ public static partial class Program
             await NameUiWait(() => notes.IsEffectivelyVisible && notes.Bounds.Width > 0, "Diagnostics is arranged");
             Check("focus moves to another real TextBox", notes.Focus() && notes.IsFocused);
             diagnostics.IsChecked = false;
+            await NameUiWait(() => unfocus.Text == "UI smoke 灯", "deferred blur restores the name draft");
             Check("LostFocus restores actual text", unfocus.Text == "UI smoke 灯");
             await NoChange("LostFocus", "UI smoke 灯", generation);
 
