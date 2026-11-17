@@ -1683,6 +1683,7 @@ public static partial class Program
         Check("Clear filters restores selected GUID and search focus", search.IsFocused && browser.Selected == mesh.Guid &&
             sort.SelectedIndex == 1 && group.SelectedIndex == 1);
         Click(Field<Button>("_assetCopyGuid"));
+        await NameUiWait(async () => await window.Clipboard!.TryGetTextAsync() == mesh.Guid.ToString(), "GUID clipboard write");
         Check("selected GUID copies exactly", await window.Clipboard!.TryGetTextAsync() == mesh.Guid.ToString());
         var source = Field<StackPanel>("_assetDetails").Children.OfType<SelectableTextBlock>()
             .First(text => text.Text?.Contains(mesh.Source, StringComparison.Ordinal) == true);
@@ -1846,7 +1847,8 @@ public static partial class Program
         list.SelectedItem = browser.Visible.Single();
         await NameUiWait(() => browser.Details?.Guid == replacement.Guid, "replacement selected");
         copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        copied = await window.Clipboard!.TryGetTextAsync();
+        await NameUiWait(async () => (copied = await window.Clipboard!.TryGetTextAsync()) == replacement.Guid.ToString(),
+            "replacement clipboard write");
         tabs.SelectedIndex = 0;
         TextBox field = MaterialBox(); field.Focus(); field.Text = copied;
         NameUiKey(field, Key.Enter); window.Focus();
