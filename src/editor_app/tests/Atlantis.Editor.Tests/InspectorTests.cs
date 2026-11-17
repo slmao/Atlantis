@@ -166,7 +166,15 @@ public static partial class Program
                         }
                     }
                     catch (Exception e) { _checks.Add(new NameUiCheck("actual Name UI checks completed", false, e.ToString())); }
-                    finally { desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1); }
+                    finally
+                    {
+                        // The disposable fixture has finished its assertions. Close
+                        // through the normal teardown before scanning Runtime logs.
+                        typeof(MainWindow).GetField("_leaveCloseApproved", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .SetValue(window, true);
+                        window.Close();
+                        desktop.Shutdown(_checks.Count > 0 && _checks.All(c => c.Ok) ? 0 : 1);
+                    }
                 };
             }
             base.OnFrameworkInitializationCompleted();
@@ -1666,6 +1674,14 @@ public static partial class Program
         Check("group headers are disabled and keyboard cannot select them",
             list.GetVisualDescendants().OfType<ListBoxItem>().Where(item => item.DataContext is AssetGroupHeader)
                 .All(item => !item.IsEnabled && !item.Focusable));
+        await NameUiWait(() => list.ContainerFromItem(mesh) is ListBoxItem, "selected row remains in view after grouping");
+        var selectedRow = (ListBoxItem)list.ContainerFromItem(mesh)!;
+        selectedRow.Focus();
+        selectedRow.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Down });
+        await NameUiWait(() => list.SelectedItem is AssetSummary next && next.Guid != mesh.Guid, "keyboard crosses group boundary");
+        Check("Down skips the intervening group header", list.SelectedItem is AssetSummary { Type: AssetType.Texture });
+        list.SelectedItem = mesh;
+        await NameUiWait(() => browser.Details?.Guid == mesh.Guid, "restore selected mesh after keyboard navigation");
         var keptRows = list.ItemsSource;
         long obsolete = browser.Select(mesh.Guid);
         Invoke("RenderAssets");
@@ -1700,7 +1716,8 @@ public static partial class Program
         browser.ClearSelection();
         AssetGuid Id(int n) => new(new Guid(n, 114, 4114, new byte[] { 0x81, 0x14, 0, 0, 0, 0, 0, 1 }));
         var synthetic = Enumerable.Range(1, 10000).Select(n => new AssetSummary(Id(n), (AssetType)(n % 5),
-            (n % 2 == 0 ? "assets:" : "content:") + "deep/long/path/item_" + n.ToString("D5") + ".png")).ToArray();
+            (n % 2 == 0 ? "assets:" : "content:") + string.Concat(Enumerable.Repeat("long_source_directory/", 10)) +
+            "item_" + n.ToString("D5") + ".png")).ToArray();
         browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(synthetic));
         sort.SelectedIndex = 0; group.SelectedIndex = 0;
         Invoke("RenderAssets");
@@ -1711,6 +1728,12 @@ public static partial class Program
         await NameUiWait(() => list.ContainerFromItem(synthetic[^1]) is ListBoxItem, "last result reachable");
         Check("the final long-list asset is reachable with bounded realization",
             list.GetVisualDescendants().OfType<ListBoxItem>().Count() < 100);
+        list.SelectedItem = synthetic[^1];
+        await NameUiWait(() => browser.DetailState == nameof(AssetError.UnknownAsset), "unlisted synthetic detail diagnostic");
+        Check("detail failure retains searchable results and full selectable source",
+            browser.State == "Ready" && browser.Visible.Count == 10000 &&
+            Field<StackPanel>("_assetDetails").Children.OfType<SelectableTextBlock>()
+                .Any(text => text.Text?.Contains(synthetic[^1].Source, StringComparison.Ordinal) == true));
         await Capture("100-assets-long-list");
         Invoke("LoadAssets");
         await NameUiWait(() => browser.State == "Ready" && browser.Items.Count == peer.Assets.ListAssets().Value.Count &&
