@@ -215,6 +215,11 @@ internal static class EditorVisuals
 
     internal static void ConfigureAssetList(ListBox list)
     {
+        // Selection and projection have different scroll policies (Spec 0114 R3).
+        // Avalonia also scrolls when AutoScrollToSelectedItem is re-enabled, so
+        // keep it off and reveal actual selection changes explicitly.
+        list.AutoScrollToSelectedItem = false;
+        list.SelectionChanged += RevealAssetSelection;
         list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
         list.ItemTemplate = new FuncDataTemplate<object>((value, _) => value switch
         {
@@ -230,6 +235,12 @@ internal static class EditorVisuals
             AutomationProperties.SetName(e.Container, list.Items[e.Index] is AssetGroupHeader group
                 ? group.Label + ", " + group.Count + " assets" : null);
         };
+    }
+
+    private static void RevealAssetSelection(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ListBox list && ReferenceEquals(e.Source, list) && list.SelectedItem is AssetSummary asset)
+            list.ScrollIntoView(asset);
     }
 
     internal static void BindAssetList(ListBox list, IReadOnlyList<object> rows, AssetGuid? selected)
@@ -248,13 +259,20 @@ internal static class EditorVisuals
             .OrderBy(item => item.Y).ToArray();
         AssetGuid? anchor = inView.FirstOrDefault(item => item.Asset.Guid == selected).Asset?.Guid ??
             inView.FirstOrDefault().Asset?.Guid;
-        list.ItemsSource = rows;
-        list.SelectedItem = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == selected);
+        if ((list.SelectedItem as AssetSummary)?.Guid != selected && selected is not null) anchor = selected;
+        list.SelectionChanged -= RevealAssetSelection;
+        try
+        {
+            list.ItemsSource = rows;
+            list.SelectedItem = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == selected);
+        }
+        finally { list.SelectionChanged += RevealAssetSelection; }
         var target = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == anchor) ?? rows.OfType<AssetSummary>().FirstOrDefault();
         if (target is null) return;
         Dispatcher.UIThread.Post(() =>
         {
-            if (ReferenceEquals(list.ItemsSource, rows)) list.ScrollIntoView(target);
+            if (ReferenceEquals(list.ItemsSource, rows) && (list.SelectedItem as AssetSummary)?.Guid == selected)
+                list.ScrollIntoView(target);
         }, DispatcherPriority.Loaded);
     }
 

@@ -1672,6 +1672,66 @@ public static partial class Program
         await NameUiWait(() => list.Items.OfType<AssetGroupHeader>().Any(), "type grouping");
         Check("sort and grouping retain the selected GUID, details and preview", browser.Selected == mesh.Guid &&
             browser.Details == details && ReferenceEquals(image.Source, png));
+        bool AssetInView(AssetGuid guid)
+        {
+            var scroll = list.GetVisualDescendants().OfType<ScrollViewer>().First();
+            var item = list.GetVisualDescendants().OfType<ListBoxItem>()
+                .SingleOrDefault(row => row.DataContext is AssetSummary asset && asset.Guid == guid);
+            return item?.TranslatePoint(default, scroll) is Point point &&
+                point.Y + item.Bounds.Height > 0 && point.Y < scroll.Viewport.Height;
+        }
+        async Task SettleAssetLayout()
+        {
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            // Let deferred layout and selection scrolling finish before checking
+            // the final viewport, rather than a transient anchor restoration.
+            await Task.Delay(120);
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        }
+        async Task<AssetGuid> ScrollAwayFromSelection()
+        {
+            await SettleAssetLayout();
+            var assets = list.Items.OfType<AssetSummary>().ToArray();
+            int selectedIndex = Array.FindIndex(assets, asset => asset.Guid == mesh.Guid);
+            var far = assets[selectedIndex < assets.Length / 2 ? ^1 : 0];
+            list.ScrollIntoView(far);
+            await SettleAssetLayout();
+            Check("anchor regression starts with selected asset outside viewport", !AssetInView(mesh.Guid));
+            var scroll = list.GetVisualDescendants().OfType<ScrollViewer>().First();
+            return list.GetVisualDescendants().OfType<ListBoxItem>()
+                .Where(row => row.DataContext is AssetSummary asset && AssetInView(asset.Guid))
+                .OrderBy(row => row.TranslatePoint(default, scroll)!.Value.Y)
+                .Select(row => ((AssetSummary)row.DataContext!).Guid).First();
+        }
+        AssetGuid sortAnchor = await ScrollAwayFromSelection();
+        sort.SelectedIndex = 0;
+        await SettleAssetLayout();
+        Check("sorting preserves top GUID anchor with offscreen selection and unchanged details/PNG",
+            AssetInView(sortAnchor) && browser.Selected == mesh.Guid && browser.Details == details && ReferenceEquals(image.Source, png));
+        AssetGuid groupAnchor = await ScrollAwayFromSelection();
+        group.SelectedIndex = 2;
+        await SettleAssetLayout();
+        Check("grouping preserves top GUID anchor with offscreen selection and unchanged details/PNG",
+            AssetInView(groupAnchor) && browser.Selected == mesh.Guid && browser.Details == details && ReferenceEquals(image.Source, png));
+
+        var material = browser.Items.First(asset => asset.Type == AssetType.Material &&
+            peer.Assets.GetAsset(asset.Guid).Value.Dependencies.Any(guid => browser.Items.Any(item => item.Guid == guid)));
+        list.SelectedItem = browser.Visible.Single(asset => asset.Guid == material.Guid);
+        await NameUiWait(() => browser.Details?.Guid == material.Guid, "actively selected material details");
+        await SettleAssetLayout();
+        Check("active selection still reveals the selected asset", AssetInView(material.Guid));
+        search.Text = material.Guid.ToString();
+        await NameUiWait(() => list.ItemCount == 2, "single material plus group header");
+        AssetGuid dependency = browser.Details!.Dependencies.First(guid => browser.Items.Any(asset => asset.Guid == guid));
+        Click(Field<StackPanel>("_assetDetails").Children.OfType<Button>().Single(button => button.Content?.ToString() == dependency.ToString()));
+        await NameUiWait(() => browser.Selected == dependency && browser.Details?.Guid == dependency, "dependency navigation settles");
+        await SettleAssetLayout();
+        Check("dependency navigation clears filters and reveals target after queued anchor restoration",
+            search.Text == "" && Field<ComboBox>("_assetTypes").SelectedIndex == 0 && AssetInView(dependency));
+        sort.SelectedIndex = 1; group.SelectedIndex = 1;
+        list.SelectedItem = browser.Visible.Single(asset => asset.Guid == mesh.Guid);
+        await NameUiWait(() => browser.Details?.Guid == mesh.Guid, "restore mesh after anchor regressions");
+        await SettleAssetLayout();
         Check("group headers are disabled and keyboard cannot select them",
             list.GetVisualDescendants().OfType<ListBoxItem>().Where(item => item.DataContext is AssetGroupHeader)
                 .All(item => !item.IsEnabled && !item.Focusable));
