@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Assets;
@@ -9,6 +10,7 @@ public static partial class Program
 {
     private static void AssetBrowserChecks()
     {
+        AssetBrowseChecks();
         AssetGuid a = AssetGuid.Parse("00810081-0081-4081-8081-008100810081"), b = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
         var color = new AssetSummary(a, AssetType.Texture, "content:texture_sign/source.png");
         var alternate = new AssetSummary(b, AssetType.Texture, "content:texture_panel/source.png");
@@ -171,5 +173,74 @@ public static partial class Program
         preview.SetInputs(new(a, a, Surface: 10));
         Check(!preview.CanSend(secondChooser) && !preview.Settle(secondChooser) && preview.TakeNext() is null,
             "pair preview: material-only change cancels pending work without starting a preview");
+    }
+
+    private static void AssetBrowseChecks()
+    {
+        AssetGuid Id(int n) => new(new Guid(n, 114, 4114, new byte[] { 0x81, 0x14, 0, 0, 0, 0, 0, 1 }));
+        var texture = new AssetSummary(Id(1), AssetType.Texture, "content:texture_studio/source.png");
+        var sameA = new AssetSummary(Id(2), AssetType.Material, "assets:a/same.material.txt");
+        var sameB = new AssetSummary(Id(3), AssetType.Material, "content:b/same.material.txt");
+        var imported = new AssetSummary(Id(4), AssetType.Mesh, "content:room/scene.gltf#mesh/2");
+        var other = new AssetSummary(Id(5), AssetType.Scene, "future:world.scene.txt");
+        var values = new[] { other, sameB, texture, imported, sameA };
+        var browser = new AssetBrowser();
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(values));
+        browser.Search = " STUDIO ";
+        Check(browser.Visible.Single() == texture, "browse: displayed managed name matches a trimmed query");
+        browser.Search = "room" + (char)92 + "scene.gltf";
+        Check(browser.Visible.Single() == imported, "browse: Windows path separator matches logical source");
+        browser.Search = "mesh/2";
+        Check(browser.Visible.Single() == imported, "browse: imported sub-key remains searchable");
+        browser.Search = Id(3).Value.ToString("N").ToUpperInvariant();
+        Check(browser.Visible.Single() == sameB, "browse: compact canonical GUID matches");
+        browser.Type = AssetType.Texture;
+        Check(browser.Visible.Count == 0 && browser.ViewState == "No matching assets", "browse: type intersects GUID search");
+        browser.Type = null; browser.Search = "";
+        var beforeRows = browser.Rows;
+        browser.Select(sameA.Guid);
+        var intent = browser.DetailIntent!;
+        long detailRequest = browser.Select(sameA.Guid);
+        var detail = new AssetDetails(sameA.Guid, sameA.Type, sameA.Source, 7, null, "test", []);
+        Check(!intent.Current && browser.CompleteDetail(detailRequest, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
+            "browse: replacing a queued detail cancels its old intent");
+        browser.Sort = AssetBrowseSort.NameDescending;
+        Check(browser.Details == detail && browser.DetailIntent!.Current &&
+            browser.Visible.Where(asset => AssetBrowseProjection.AssetName(asset) == "same").SequenceEqual(new[] { sameA, sameB }),
+            "browse: descending name sort keeps ascending tie breakers and selected details");
+        browser.Group = AssetBrowseGroup.Type;
+        Check(browser.Rows.OfType<AssetGroupHeader>().Select(h => h.Label).SequenceEqual(new[] { "Mesh", "Texture", "Material", "Scene" }) &&
+            browser.Rows.OfType<AssetGroupHeader>().Sum(h => h.Count) == values.Length,
+            "browse: type headers have fixed order and exact counts");
+        browser.Group = AssetBrowseGroup.Source;
+        Check(browser.Rows.OfType<AssetGroupHeader>().Select(h => h.Label).SequenceEqual(new[] { "assets:", "content:", "Other" }) &&
+            browser.Details == detail, "browse: root groups include unknown sources without losing details");
+        var stableRows = browser.Rows;
+        browser.CompleteDetail(detailRequest, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail));
+        Check(ReferenceEquals(stableRows, browser.Rows), "browse: detail replies keep the result surface");
+        browser.Search = "studio";
+        Check(browser.Selected == sameA.Guid && !browser.SelectionVisible && browser.Details is null &&
+            !browser.CompleteDetail(detailRequest, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
+            "browse: hidden selection keeps identity while rejecting the old detail");
+        browser.Search = "";
+        Check(browser.NeedsDetail && browser.Selected == sameA.Guid, "browse: reveal requests one fresh detail");
+        long refreshed = browser.Select(sameA.Guid);
+        Check(browser.DetailState == "Loading" && !browser.NeedsDetail &&
+            !browser.CompleteDetail(detailRequest, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
+            "browse: A back to A never accepts the previous callback");
+        browser.Disconnect();
+        Check(browser.Selected is null && !browser.CompleteDetail(refreshed, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
+            "browse: reconnect cannot inherit selection or detail");
+
+        var longList = Enumerable.Range(1, 10000).Select(n => new AssetSummary(Id(n), (AssetType)(n % 5),
+            (n % 2 == 0 ? "assets:" : "content:") + "long/item_" + n.ToString("D5") + ".png")).Reverse().ToArray();
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(longList));
+        browser.Group = AssetBrowseGroup.None; browser.Sort = AssetBrowseSort.NameAscending;
+        Check(browser.Visible.Count == 10000 && browser.Visible[0].Guid == Id(1) && browser.Visible[^1].Guid == Id(10000),
+            "browse: long catalog has deterministic full membership and name order");
+        browser.Group = AssetBrowseGroup.Type;
+        Check(browser.Rows.OfType<AssetGroupHeader>().Count() == 5 &&
+            browser.Rows.OfType<AssetSummary>().Select(asset => asset.Guid).Distinct().Count() == 10000,
+            "browse: grouped long catalog retains every GUID once");
     }
 }

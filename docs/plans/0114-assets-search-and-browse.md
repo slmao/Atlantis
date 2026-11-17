@@ -1,9 +1,9 @@
 # Plan 0114 — Assets Search and Browse
 
 - **Spec:** [Spec 0114](../specs/0114-assets-search-and-browse.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** Maintainer approved J1–J4 and Spec/Plan 0114 jointly, confirmed no new ADR and authorized S2–S4 on 2026-11-17 at [PR #393, `c593b445`](https://github.com/slmao/Atlantis/pull/393#issuecomment-6952336127). The design was manually merged at `adb59b1d`.
 
 ## Objective and sequencing
 

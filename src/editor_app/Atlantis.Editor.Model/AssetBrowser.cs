@@ -6,45 +6,142 @@ using Atlantis.Gameplay.Assets;
 
 namespace Atlantis.Editor.Model;
 
+/// <summary>A caller can retire a queued or dispatched detail intent on the UI thread.</summary>
+public sealed class AssetDetailIntent
+{
+    private volatile bool _current = true;
+    public bool Current => _current;
+    internal void Cancel() => _current = false;
+}
+
 /// <summary>UI-free local view of a fixed server snapshot. Caller-thread only;
 /// request counters are local callback guards, not catalog revisions.</summary>
 public sealed class AssetBrowser
 {
     private IReadOnlyList<AssetSummary> _items = Array.Empty<AssetSummary>();
+    private IReadOnlyList<AssetBrowseProjection> _keys = Array.Empty<AssetBrowseProjection>();
+    private IReadOnlyList<AssetSummary> _visible = Array.Empty<AssetSummary>();
+    private IReadOnlyList<object> _rows = Array.Empty<object>();
+    private HashSet<AssetGuid> _visibleIds = new();
+    private AssetType? _type;
+    private string _search = "";
+    private AssetBrowseSort _sort;
+    private AssetBrowseGroup _group;
     private long _listRequest, _detailRequest;
     public string State { get; private set; } = "Not loaded";
-    public AssetType? Type { get; set; }
-    public string Search { get; set; } = "";
+    public AssetType? Type
+    {
+        get => _type;
+        set { if (_type != value) { _type = value; Project(); } }
+    }
+    public string Search
+    {
+        get => _search;
+        set
+        {
+            string query = value.Trim();
+            if (string.Equals(_search, query, StringComparison.OrdinalIgnoreCase)) return;
+            _search = query;
+            Project();
+        }
+    }
+    public AssetBrowseSort Sort
+    {
+        get => _sort;
+        set { if (_sort != value) { _sort = value; Project(); } }
+    }
+    public AssetBrowseGroup Group
+    {
+        get => _group;
+        set { if (_group != value) { _group = value; Project(); } }
+    }
     public AssetGuid? Selected { get; private set; }
     public AssetDetails? Details { get; private set; }
     public string DetailState { get; private set; } = "";
+    public AssetDetailIntent? DetailIntent { get; private set; }
     public IReadOnlyList<AssetSummary> Items => _items;
-    public IReadOnlyList<AssetSummary> Visible => _items.Where(v => (Type is null || v.Type == Type) &&
-        (v.Source.Contains(Search, StringComparison.OrdinalIgnoreCase) || v.Guid.ToString().Contains(Search, StringComparison.OrdinalIgnoreCase))).ToList();
-    public string ViewState => State == "Ready" ? (_items.Count == 0 ? "Catalog empty" : Visible.Count == 0 ? "No matching assets" : _items.Count + " assets") : State;
-    public long BeginList() { ++_detailRequest; State = "Loading"; return ++_listRequest; }
+    public IReadOnlyList<AssetSummary> Visible => _visible;
+    public IReadOnlyList<object> Rows => _rows;
+    public bool SelectionVisible => State == "Ready" && Selected is AssetGuid guid && _visibleIds.Contains(guid);
+    public bool NeedsDetail => SelectionVisible && DetailState == "";
+    public string ViewState => State == "Ready"
+        ? _items.Count == 0 ? "Catalog empty" : _visible.Count == 0 ? "No matching assets" : $"{_visible.Count} of {_items.Count} assets"
+        : State;
+
+    private void InvalidateDetail()
+    {
+        ++_detailRequest;
+        DetailIntent?.Cancel();
+        DetailIntent = null;
+        Details = null;
+        DetailState = "";
+    }
+
+    private void Project()
+    {
+        string path = _search.Replace((char)92, '/');
+        string? compact = AssetBrowseProjection.CompactQuery(_search);
+        var matching = _keys.Where(key => (_type is null || key.Asset.Type == _type) &&
+            key.Matches(_search, path, compact));
+        var ordered = AssetBrowseProjection.Order(matching, _sort);
+        _visible = ordered.Select(key => key.Asset).ToArray();
+        _visibleIds = _visible.Select(asset => asset.Guid).ToHashSet();
+        _rows = AssetBrowseProjection.Rows(ordered, _group);
+        if (!SelectionVisible) InvalidateDetail();
+    }
+
+    public long BeginList()
+    {
+        InvalidateDetail();
+        State = "Loading";
+        return ++_listRequest;
+    }
+
     public bool CompleteList(long request, Outcome<IReadOnlyList<AssetSummary>, AssetError> result)
     {
         if (request != _listRequest) return false;
         if (!result.IsOk) { State = result.Error.ToString(); return true; }
-        _items = result.Value.ToList(); State = "Ready";
-        if (Selected is AssetGuid selected && !_items.Any(v => v.Guid == selected))
-        { Selected = null; Details = null; DetailState = ""; ++_detailRequest; }
+        _items = result.Value.ToArray();
+        _keys = _items.Select(asset => new AssetBrowseProjection(asset)).ToArray();
+        State = "Ready";
+        if (Selected is AssetGuid guid && !_items.Any(asset => asset.Guid == guid)) ClearSelection();
+        Project();
         return true;
     }
+
     public long Select(AssetGuid guid)
-    { Selected = guid; Details = null; DetailState = "Loading"; return ++_detailRequest; }
+    {
+        InvalidateDetail();
+        Selected = guid;
+        if (SelectionVisible)
+        {
+            DetailState = "Loading";
+            DetailIntent = new();
+        }
+        return _detailRequest;
+    }
+
     public void ClearSelection()
-    { ++_detailRequest; Selected = null; Details = null; DetailState = ""; }
+    {
+        InvalidateDetail();
+        Selected = null;
+    }
+
     public bool CompleteDetail(long request, AssetGuid guid, Outcome<AssetDetails, AssetError> result)
     {
-        if (request != _detailRequest || Selected != guid) return false;
+        if (request != _detailRequest || Selected != guid || !SelectionVisible || DetailIntent?.Current != true) return false;
         Details = result.IsOk ? result.Value : null;
         DetailState = result.IsOk ? "Ready" : result.Error.ToString();
         return true;
     }
+
     public void Disconnect()
-    { ++_listRequest; ++_detailRequest; State = "Disconnected"; Details = null; DetailState = "Disconnected"; }
+    {
+        ++_listRequest;
+        ClearSelection();
+        State = "Disconnected";
+        DetailState = "Disconnected";
+    }
 }
 
 // Surface 0 is Assets. A chooser uses its unique request ID.

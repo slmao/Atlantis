@@ -1,10 +1,10 @@
 # Spec 0114 — Assets Search and Browse
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-17
 - **Related Plan:** [Plan 0114](../plans/0114-assets-search-and-browse.md)
-- **Approval:** Pending joint human review
+- **Approval:** Maintainer, 2026-11-17, [PR #393, `c593b445`](https://github.com/slmao/Atlantis/pull/393#issuecomment-6952336127)
 - **Related ADRs:** None (see Architectural Impact)
 
 ## Summary and motivation

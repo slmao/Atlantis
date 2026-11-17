@@ -115,6 +115,7 @@ public static partial class Program
                 bool savedPanel = savedWorkflow || savedOwnership;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
+                bool browse = _scene == "--assets-browse";
                 bool meshPreview = _scene == "--mesh-preview";
                 bool meshMaterialPreview = _scene == "--mesh-material-preview";
                 bool lostCreation = _scene == "--new-scene-lost-reply";
@@ -124,7 +125,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -153,6 +154,7 @@ public static partial class Program
                         else if (saveAs) await CheckSaveAsUi(window, _checks);
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
+                        else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
                         else if (meshMaterialPreview) await CheckMeshMaterialPreviewUi(window, _checks, _work);
                         else
@@ -482,7 +484,7 @@ public static partial class Program
             Check("non-mesh is ineligible", !add.IsEnabled);
             list.SelectedItem = visible.Single(a => a.Guid == mesh.Guid);
             await NameUiWait(() => add.IsEnabled, "selected mesh eligible");
-            var search = window.GetVisualDescendants().OfType<TextBox>().Single(box => box.PlaceholderText == "Source or GUID");
+            var search = window.GetVisualDescendants().OfType<TextBox>().Single(box => box.PlaceholderText == "Search name, path or GUID");
             search.Text = "no mesh matches this fixture";
             var browser = NameUiField<AssetBrowser>(window, "_assetBrowser")!;
             await NameUiWait(() => browser.Visible.Count == 0, "search filter observed");
@@ -900,7 +902,19 @@ public static partial class Program
             await NameUiWait(() => Retry().IsEnabled, stage + " Retry enabled"); Click(Retry());
             await NameUiWait(async () => Applied() && (await Task.Run(() => observer.Control.Status())).SceneGeneration > before, stage, 60);
         }
-        async Task Refreshed() => await NameUiWait(async () => !Busy() && window.IsEffectivelyEnabled && Box().Text ==
+        async Task Reselect()
+        {
+            await NameUiWait(() => NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!.Any(row => row.Node == node),
+                "reopened node returned to Hierarchy");
+            var rows = NameUiField<IReadOnlyList<HierarchyRow>>(window, "_hierarchyRows")!;
+            NameUiField<ListBox>(window, "_entities")!.SelectedItem = rows.Single(row => row.Node == node);
+            await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node &&
+                NameUiField<StackPanel>(window, "_inspectorPanel")!.GetVisualDescendants().OfType<Grid>()
+                    .Any(row => Equals(row.Tag, "Renderable.materialAsset")),
+                "reselect after document reopen");
+        }
+        async Task Refreshed() => await NameUiWait(async () => !Busy() && window.IsEffectivelyEnabled &&
+            NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == node && Box().Text ==
             ((await ReadValue()).IsAbsent ? "" : (await ReadValue()).AsAsset().ToString()), "picker target Inspector refreshed");
         async Task<AssetReferencePickerWindow> Open()
         {
@@ -994,7 +1008,7 @@ public static partial class Program
             deselectConfirm.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             Check("Confirm after old callback leaves target and generation unchanged", chooser.IsVisible &&
                 (await ReadValue()).Equals(original) && (await Task.Run(() => observer.Control.Status())).SceneGeneration == generation);
-            var search = chooser.GetVisualDescendants().OfType<TextBox>().Single(b => b.PlaceholderText == "Source or GUID");
+            var search = chooser.GetVisualDescendants().OfType<TextBox>().Single(b => b.PlaceholderText == "Search name, path or GUID");
             search.Text = "no-match-0082";
             await NameUiWait(() => PickerField<AssetBrowser>(chooser, "_browser").ViewState == "No matching assets", "picker local filter");
             Check("hidden candidate cannot confirm", !PickerField<Button>(chooser, "_confirm").IsEnabled);
@@ -1080,7 +1094,7 @@ public static partial class Program
                 Check("imported Save retains refusal", (await Task.Run(() => observer.Authoring.Save())) == SaveError.ImportedSceneNotSavable);
                 await Task.Run(() => { observer.Authoring.SubmitTransaction(new Command[] { new SetProperty(address, original) }); _ = observer.Authoring.DrainFailures(); observer.Authoring.Apply(); });
             }
-            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "persistence fixture restored"); await Refreshed();
+            await NameUiWait(async () => (await ReadValue()).Equals(original) && Applied(), "persistence fixture restored"); await Reselect(); await Refreshed();
 
             // A removed Inspector row cannot redirect its launch to the new node.
             var entities = NameUiField<ListBox>(window, "_entities")!;
@@ -1137,9 +1151,13 @@ public static partial class Program
             Check("document reopen accepted", (await Task.Run(() => observer.Authoring.Open())) is null);
             await NameUiWait(() => !PickerField<Button>(chooser, "_confirm").IsEnabled, "identical-value document reopen invalidates");
             Check("reopen with same GUID invalidates chooser", !PickerField<Button>(chooser, "_confirm").IsEnabled);
-            await Cancel(chooser);
+            chooser.Close();
+            await Reselect();
+            await Refreshed();
             await NameUiWait(() => ApplyText().Contains("reopened", StringComparison.Ordinal), "same-value reopen suspends automatic apply");
             await ApplyCurrent("apply current document after same-value reopen");
+            await Reselect();
+            await Refreshed();
 
             // Normal text editing after chooser cancellation must still commit.
             Box().Focus(); Box().Text = replacement.ToString(); NameUiKey(Box(), Key.Enter); window.Focus();
@@ -1316,7 +1334,7 @@ public static partial class Program
             Click(NameUiField<Button>(window, "_save")!);
             var saveNotice = NameUiField<TextBlock>(window, "_editLine")!;
             await NameUiWait(() => saveNotice.Text?.StartsWith(
-                info.Provenance == Provenance.Imported ? "save refused" : "saved ", StringComparison.Ordinal) == true,
+                info.Provenance == Provenance.Imported ? "save refused" : "saved ", StringComparison.OrdinalIgnoreCase) == true,
                 "save during recovery");
             var afterSave = (await Task.Run(() => observer.Authoring.ApplyStatus())).Value!;
             Check("Save during recovery keeps revision, receipt and Runtime projection",
@@ -1391,7 +1409,7 @@ public static partial class Program
                 ApplyText().Contains("reopened", StringComparison.Ordinal) && !undo.IsEnabled);
             Click(NameUiField<Button>(window, "_play")!);
             await NameUiWait(() => !stepButton.IsEnabled, "resume before final explicit apply");
-            await ApplyCurrent("reopened document explicitly projected"); await Refreshed();
+            await ApplyCurrent("reopened document explicitly projected"); await Reselect(); await Refreshed();
         }
         finally
         {
@@ -1596,6 +1614,132 @@ public static partial class Program
         }
     }
 
+    private static async Task CheckAssetBrowseUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        void Check(string name, bool ok) => checks.Add(new(name, ok));
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        void Invoke(string method) => typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => NameUiField<RuntimeProcess>(window, "_runtime") is { } runtime &&
+            File.Exists(runtime.SessionPath) && Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "hosted Editor ready", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        using var peer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        var originalDocument = peer.Authoring.DocumentState().Value!;
+        Field<TabControl>("_assetTabs").SelectedIndex = 1;
+        var browser = Field<AssetBrowser>("_assetBrowser");
+        var list = Field<ListBox>("_assetsList");
+        var search = Field<TextBox>("_assetSearch");
+        var sort = Field<ComboBox>("_assetSort");
+        var group = Field<ComboBox>("_assetGroup");
+        var clear = Field<Button>("_assetClearFilters");
+        var image = Field<Image>("_previewImage");
+        var preview = Field<Button>("_previewMesh");
+        await NameUiWait(() => browser.State == "Ready" && list.ItemCount > 0, "catalog ready");
+        var mesh = browser.Visible.First(asset => asset.Type == AssetType.Mesh);
+        var worker = Field<EditorWorker>("_worker");
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        typeof(EditorWorker).GetMethod("Enqueue", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(worker,
+            new object[] { (Action<RemoteSession>)(_ => { held.SetResult(); release.Task.GetAwaiter().GetResult(); }) });
+        await held.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            foreach (AssetSummary next in browser.Visible.Take(24)) list.SelectedItem = next;
+            list.SelectedItem = mesh;
+            var pending = (System.Collections.IDictionary)typeof(EditorWorker).GetField("_assetDetailWork",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker)!;
+            Check("rapid selection keeps one queued detail for the surface", pending.Count == 1);
+        }
+        finally { release.SetResult(); }
+        list.SelectedItem = mesh;
+        await NameUiWait(() => browser.Details?.Guid == mesh.Guid && preview.IsEnabled, "mesh details");
+        Click(preview);
+        await NameUiWait(() => image.Source is not null && image.IsVisible, "explicit mesh preview", 90);
+        object? png = image.Source;
+        var details = browser.Details;
+        object rows = list.ItemsSource!;
+        sort.SelectedIndex = 1; group.SelectedIndex = 1;
+        await NameUiWait(() => list.Items.OfType<AssetGroupHeader>().Any(), "type grouping");
+        Check("sort and grouping retain the selected GUID, details and preview", browser.Selected == mesh.Guid &&
+            browser.Details == details && ReferenceEquals(image.Source, png));
+        Check("group headers are disabled and keyboard cannot select them",
+            list.GetVisualDescendants().OfType<ListBoxItem>().Where(item => item.DataContext is AssetGroupHeader)
+                .All(item => !item.IsEnabled && !item.Focusable));
+        var keptRows = list.ItemsSource;
+        long obsolete = browser.Select(mesh.Guid);
+        Invoke("RenderAssets");
+        Check("detail render keeps the list surface", ReferenceEquals(keptRows, list.ItemsSource));
+        search.Focus(); search.Text = "no assets match this query";
+        await NameUiWait(() => list.ItemCount == 0 && browser.DetailIntent is null, "selection hidden");
+        Check("hidden selection keeps GUID and disables asset actions", browser.Selected == mesh.Guid && browser.Details is null &&
+            !preview.IsEnabled && !Field<Button>("_addMesh").IsEnabled && !Field<Button>("_rebuildStart").IsEnabled &&
+            !Field<Button>("_assetCopyGuid").IsEnabled && image.Source is null &&
+            Field<TextBlock>("_assetsState").Text!.Contains("Selected asset is hidden", StringComparison.Ordinal));
+        Check("late detail cannot restore a hidden asset", !browser.CompleteDetail(obsolete, mesh.Guid,
+            Outcome<AssetDetails, AssetError>.Ok(details!)));
+        Click(clear);
+        await NameUiWait(() => browser.Details?.Guid == mesh.Guid && list.SelectedItem is AssetSummary, "reveal selected asset");
+        Check("Clear filters restores selected GUID and search focus", search.IsFocused && browser.Selected == mesh.Guid &&
+            sort.SelectedIndex == 1 && group.SelectedIndex == 1);
+        Click(Field<Button>("_assetCopyGuid"));
+        Check("selected GUID copies exactly", await window.Clipboard!.TryGetTextAsync() == mesh.Guid.ToString());
+        var source = Field<StackPanel>("_assetDetails").Children.OfType<SelectableTextBlock>()
+            .First(text => text.Text?.Contains(mesh.Source, StringComparison.Ordinal) == true);
+        Check("full source and GUID are selectable", source.Text!.Contains(mesh.Guid.ToString(), StringComparison.Ordinal));
+        Click(preview);
+        await NameUiWait(() => image.Source is not null && image.IsVisible, "preview after reveal", 90);
+        await Capture("100-assets-standard");
+        window.Width = 960; window.Height = 650;
+        group.SelectedIndex = 2;
+        await NameUiWait(() => list.Items.OfType<AssetGroupHeader>().Any(), "source grouping at compact size");
+        Check("source grouping keeps current asset", browser.Selected == mesh.Guid && browser.SelectionVisible);
+        await Capture("100-assets-compact");
+
+        browser.ClearSelection();
+        AssetGuid Id(int n) => new(new Guid(n, 114, 4114, new byte[] { 0x81, 0x14, 0, 0, 0, 0, 0, 1 }));
+        var synthetic = Enumerable.Range(1, 10000).Select(n => new AssetSummary(Id(n), (AssetType)(n % 5),
+            (n % 2 == 0 ? "assets:" : "content:") + "deep/long/path/item_" + n.ToString("D5") + ".png")).ToArray();
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(synthetic));
+        sort.SelectedIndex = 0; group.SelectedIndex = 0;
+        Invoke("RenderAssets");
+        await NameUiWait(() => list.ItemCount == 10000 && list.GetVisualDescendants().OfType<ListBoxItem>().Any(), "long list layout");
+        int firstRealized = list.GetVisualDescendants().OfType<ListBoxItem>().Count();
+        Check("ten thousand summaries realize a bounded row buffer", firstRealized > 0 && firstRealized < 100);
+        list.ScrollIntoView(synthetic[^1]);
+        await NameUiWait(() => list.ContainerFromItem(synthetic[^1]) is ListBoxItem, "last result reachable");
+        Check("the final long-list asset is reachable with bounded realization",
+            list.GetVisualDescendants().OfType<ListBoxItem>().Count() < 100);
+        await Capture("100-assets-long-list");
+        Invoke("LoadAssets");
+        await NameUiWait(() => browser.State == "Ready" && browser.Items.Count == peer.Assets.ListAssets().Value.Count &&
+            browser.Items.Count != 10000, "restore Runtime catalog");
+        var target = browser.Visible.First(asset => asset.Type == AssetType.Mesh);
+        list.SelectedItem = target;
+        await NameUiWait(() => Field<Button>("_addMesh").IsEnabled, "Add to Scene");
+        var before = peer.Authoring.ListNodes().Value.Select(node => node.Node).ToHashSet();
+        Click(Field<Button>("_addMesh"));
+        search.Text = "no assets match this query";
+        await NameUiWait(() => Field<Button>("_undo").IsEnabled && peer.Authoring.ListNodes().Value.Count == before.Count + 1,
+            "admitted Add to Scene settles despite changed browser", 45);
+        Check("Add to Scene uses the admitted visible mesh", Field<Selection>("_selection").Node is EntityGuid created &&
+            !before.Contains(created));
+        Click(Field<Button>("_undo"));
+        await NameUiWait(() => peer.Authoring.ListNodes().Value.Count == before.Count && Field<Button>("_redo").IsEnabled,
+            "Undo restores scene");
+        Check("browse preserves the document and existing history contract",
+            peer.Authoring.ListNodes().Value.Select(node => node.Node).ToHashSet().SetEquals(before));
+        Click(clear);
+
+        async Task Capture(string name)
+        {
+            if (Environment.GetEnvironmentVariable("ATLANTIS_0114_CAPTURE_DIR") is not string folder) return;
+            Directory.CreateDirectory(folder);
+            File.WriteAllText(Path.Combine(folder, name + ".ready"), runtime.Launch.WorkDirectory);
+            await NameUiWait(() => File.Exists(Path.Combine(folder, name + ".done")), "native capture " + name, 180);
+        }
+    }
+
     private static async Task CheckAssetsUi(MainWindow window, List<NameUiCheck> checks)
     {
         void Check(string name, bool ok, string detail = "") => checks.Add(new NameUiCheck(name, ok, detail));
@@ -1616,7 +1760,7 @@ public static partial class Program
         long listRequests = ListRequests();
         var controls = window.GetVisualDescendants().OfType<Control>().ToArray();
         Check("assets UI: fixed snapshot recovery note", controls.OfType<TextBlock>().Any(b => b.Text?.Contains("restart Runtime", StringComparison.Ordinal) == true && b.Text.Contains("does not reread disk", StringComparison.Ordinal)));
-        TextBox search = controls.OfType<TextBox>().Single(b => b.PlaceholderText == "Source or GUID");
+        TextBox search = controls.OfType<TextBox>().Single(b => b.PlaceholderText == "Search name, path or GUID");
         ComboBox types = controls.OfType<ComboBox>().Single(b => b.Items.Cast<object>().Any(v => v?.ToString() == "All types"));
         ListBox list = NameUiField<ListBox>(window, "_assetsList")!;
         var material = browser.Items.First(v => v.Type == Atlantis.Gameplay.Assets.AssetType.Material && v.Source.StartsWith("assets:", StringComparison.Ordinal));

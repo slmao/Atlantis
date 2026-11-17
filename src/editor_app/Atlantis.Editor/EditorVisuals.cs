@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Avalonia;
 using Avalonia.Automation;
 using Avalonia.Controls;
@@ -8,6 +9,10 @@ using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.VisualTree;
+using Avalonia.Threading;
+using Atlantis.Editor.Model;
+using Atlantis.Gameplay;
 using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Remote;
 
@@ -204,32 +209,53 @@ internal static class EditorVisuals
     internal static void Glyph(Button button, string path, string? shortLabel = null) =>
         button.ContentTemplate = LabelTemplate(path, shortLabel);
 
-    internal static string? ManagedTextureName(AssetSummary asset, string suffix)
-    {
-        const string prefix = "content:texture_";
-        string source = asset.Source;
-        if (asset.Type != AssetType.Texture || source.Length <= prefix.Length + suffix.Length ||
-            !source.StartsWith(prefix, StringComparison.Ordinal) || !source.EndsWith(suffix, StringComparison.Ordinal))
-            return null;
+    internal static string AssetName(AssetSummary asset) => AssetBrowseProjection.AssetName(asset);
+    internal static string? ManagedTextureName(AssetSummary asset, string suffix) =>
+        AssetBrowseProjection.ManagedTextureName(asset, suffix);
 
-        string name = source[prefix.Length..^suffix.Length];
-        return Codec.ValidImportName(name) ? name : null;
+    internal static void ConfigureAssetList(ListBox list)
+    {
+        list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
+        list.ItemTemplate = new FuncDataTemplate<object>((value, _) => value switch
+        {
+            AssetSummary asset => AssetRow(asset),
+            AssetGroupHeader group => Heading(group.Label + " (" + group.Count + ")"),
+            _ => new TextBlock()
+        });
+        list.ContainerPrepared += (_, e) =>
+        {
+            bool asset = list.Items[e.Index] is AssetSummary;
+            e.Container.IsEnabled = asset;
+            e.Container.Focusable = asset;
+            AutomationProperties.SetName(e.Container, list.Items[e.Index] is AssetGroupHeader group
+                ? group.Label + ", " + group.Count + " assets" : null);
+        };
     }
 
-    internal static string AssetName(AssetSummary asset)
+    internal static void BindAssetList(ListBox list, IReadOnlyList<object> rows, AssetGuid? selected)
     {
-        if ((ManagedTextureName(asset, "/source.png") ?? ManagedTextureName(asset, "/occlusion.png")) is string name)
-            return name;
-        string source = asset.Source;
-        int separator = source.IndexOf(':');
-        if (separator >= 0) source = source[(separator + 1)..];
-        int fragment = source.IndexOf('#');
-        string file = fragment < 0 ? source : source[..fragment];
-        file = file[(file.LastIndexOf('/') + 1)..];
-        if (fragment >= 0) return file + " · " + source[(fragment + 1)..];
-        if (file.EndsWith(".txt", StringComparison.Ordinal)) file = file[..^4];
-        int extension = file.LastIndexOf('.');
-        return extension > 0 ? file[..extension] : file;
+        if (ReferenceEquals(list.ItemsSource, rows))
+        {
+            if ((list.SelectedItem as AssetSummary)?.Guid != selected)
+                list.SelectedItem = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == selected);
+            return;
+        }
+        var scroll = list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        var inView = list.GetVisualDescendants().OfType<ListBoxItem>()
+            .Where(item => item.DataContext is AssetSummary && scroll is not null)
+            .Select(item => (Asset: (AssetSummary)item.DataContext!, Y: item.TranslatePoint(default, scroll!)?.Y, item.Bounds.Height))
+            .Where(item => item.Y is double y && y + item.Height > 0 && y < scroll!.Viewport.Height)
+            .OrderBy(item => item.Y).ToArray();
+        AssetGuid? anchor = inView.FirstOrDefault(item => item.Asset.Guid == selected).Asset?.Guid ??
+            inView.FirstOrDefault().Asset?.Guid;
+        list.ItemsSource = rows;
+        list.SelectedItem = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == selected);
+        var target = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == anchor) ?? rows.OfType<AssetSummary>().FirstOrDefault();
+        if (target is null) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ReferenceEquals(list.ItemsSource, rows)) list.ScrollIntoView(target);
+        }, DispatcherPriority.Loaded);
     }
 
     internal static Control AssetRow(AssetSummary asset)
