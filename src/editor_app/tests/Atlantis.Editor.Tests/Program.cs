@@ -40,6 +40,7 @@ public static partial class Program
     {
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
+        bool hierarchyFilterRace = false;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
@@ -48,6 +49,7 @@ public static partial class Program
             else if (args[i] == "--scene-object-ui") sceneObjectUi = true;
             else if (args[i] == "--drop-apply-reply") dropApplyReply = true;
             else if (args[i] == "--guide-captures") guideCaptures = true;
+            else if (args[i] == "--hierarchy-filter-race") hierarchyFilterRace = true;
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
@@ -56,6 +58,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunSceneObjectUi(runtime, scene, dropApplyReply);
         if (guideCaptures)
             return runtime is null ? Usage() : RunGuideCaptures(runtime, scene);
+        if (hierarchyFilterRace)
+            return runtime is null ? Usage() : RunHierarchyFilterRace(runtime, scene);
         if (integration)
         {
             // Plan 0068 M7 (P5): the live scripted session against atlantis_runtime (GPU).
@@ -84,6 +88,7 @@ public static partial class Program
             HistoryTranscriptChecks(Path.Combine(conformance, "history_transcripts.jsonl"));
             // Plan 0068 M2: the Hierarchy's model, its commands (J4) and the apply controller, against a fake document.
             HierarchyChecks();
+            HierarchyFilterChecks();
             SceneObjectCreationChecks(conformance);
             ViewportGuideChecks();
             DocumentLeaveChecks();
@@ -151,6 +156,7 @@ public static partial class Program
         Console.Error.WriteLine("       Atlantis.Editor.Tests --integration --runtime <exe> [--scene <name>]");
         Console.Error.WriteLine("       Atlantis.Editor.Tests --scene-object-ui --runtime <exe> [--scene <name>] [--drop-apply-reply]");
         Console.Error.WriteLine("       Atlantis.Editor.Tests --guide-captures --runtime <exe> [--scene <name>]");
+        Console.Error.WriteLine("       Atlantis.Editor.Tests --hierarchy-filter-race --runtime <exe> [--scene <name>]");
         return 2;
     }
 

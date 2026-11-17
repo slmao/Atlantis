@@ -1,9 +1,9 @@
 # Plan 0113 — Hierarchy Search and Filter
 
 - **Spec:** [Spec 0113](../specs/0113-hierarchy-search-and-filter.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. No implementation is authorized yet.
+- **Joint Human Review:** Maintainer approved J1–J4 and Spec/Plan 0113 jointly, confirmed no new ADR and authorized S2–S4 on 2026-11-17 at [PR #391, `cecb5769`](https://github.com/slmao/Atlantis/pull/391#issuecomment-6950680552). The design was manually merged at `803fcf8f`.
 
 ## Objective and sequencing
 

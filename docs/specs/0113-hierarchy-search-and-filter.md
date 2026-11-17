@@ -1,10 +1,10 @@
 # Spec 0113 — Hierarchy Search and Filter
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-17
 - **Related Plan:** [Plan 0113](../plans/0113-hierarchy-search-and-filter.md)
-- **Approval:** Pending joint human review
+- **Approval:** Maintainer, 2026-11-17, [PR #391, `cecb5769`](https://github.com/slmao/Atlantis/pull/391#issuecomment-6950680552)
 - **Related ADRs:** None — see Architectural Impact
 
 ## Summary and motivation

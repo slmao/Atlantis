@@ -206,25 +206,47 @@ public sealed class RemoteAuthoringDocument : IAuthoringDocument
             var accepted = ApplyTracked();
             return new CommitOutcome(failures, true, accepted.IsOk ? null : accepted.Error, accepted.IsOk ? accepted.Value : null);
         }
-        // A refused submit still gets its apply: the document is then unchanged, so the reload is the same scene again.
-        JsonValue list = JsonValue.NewArray();
+        return CompleteCommit(_wire.Send("authoring.submitTransaction", EncodeTransaction(commands)), applyNow: true);
+    }
+
+    public static JsonValue EncodeTransaction(IReadOnlyList<Command> commands)
+    {
+        var list = JsonValue.NewArray();
         foreach (Command command in commands) list.Push(Codec.Encode(command));
-        ulong submit = _wire.Send("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
-        ulong drain = _wire.Send("authoring.drainFailures");
-        ulong apply = _wire.Send("authoring.applyTracked");
-        _wire.AwaitResult(submit);
+        return JsonValue.NewObject().Set("commands", list);
+    }
+
+    public CommitOutcome CompleteCommit(ulong submit, bool applyNow)
+    {
+        var wire = _wire ?? throw new InvalidOperationException("Completing a pipelined commit requires the session that sent it.");
+        if (!applyNow)
+        {
+            _ = ReadSentTransaction(wire, submit);
+            return new CommitOutcome(DrainFailures(), false, null);
+        }
+        // A refused submit still gets its apply: the document is then unchanged, so the reload is the same scene again.
+        ulong drain = wire.Send("authoring.drainFailures");
+        ulong apply = wire.Send("authoring.applyTracked");
+        wire.AwaitResult(submit);
         var refused = new List<CommandFailure>();
-        foreach (JsonValue item in _wire.AwaitResult(drain).Items)
+        foreach (JsonValue item in wire.AwaitResult(drain).Items)
         {
             if (Codec.DecodeAuthoringFailure(item) is CommandFailure failure) refused.Add(failure);
         }
-        JsonValue applied = _wire.AwaitResult(apply);
+        JsonValue applied = wire.AwaitResult(apply);
         if (applied.Find("ok") is JsonValue ok && Codec.DecodeApplyReceipt(ok) is ApplyReceipt receipt)
             return new CommitOutcome(refused, true, null, receipt);
         if (applied.Find("err") is JsonValue err && Codec.DecodeApplyError(err) is ApplyError error)
             return new CommitOutcome(refused, true, error);
-        _wire.Dispose();
+        wire.Dispose();
         throw new RemoteException(RemoteError.ProtocolError, "a malformed authoring.applyTracked result");
+    }
+
+    public static TransactionTicket ReadSentTransaction(RemoteSession session, ulong request)
+    {
+        if (Codec.DecodeTransactionTicket(session.AwaitResult(request)) is TransactionTicket ticket) return ticket;
+        session.Dispose();
+        throw new RemoteException(RemoteError.ProtocolError, "a malformed authoring.submitTransaction result");
     }
 
     public IReadOnlyList<Event> DrainEvents() => ObserveEvents() ?? Array.Empty<Event>();

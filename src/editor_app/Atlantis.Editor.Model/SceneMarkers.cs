@@ -91,7 +91,12 @@ public sealed class LocalTransforms
 }
 
 /// <summary>One Hierarchy row: the node, its depth under the roots, and its label.</summary>
-public sealed record HierarchyRow(EntityGuid Node, EntityGuid? Parent, int Depth, string Label);
+public sealed record HierarchyRow(EntityGuid Node, EntityGuid? Parent, int Depth, string Label)
+{
+    public string Name { get; init; } = "";
+    public IReadOnlyList<TypeId> ComponentTypes { get; init; } = Array.Empty<TypeId>();
+    public object Incarnation { get; init; } = new();
+}
 
 public static class SceneMarkers
 {
@@ -136,7 +141,12 @@ public static class SceneMarkers
         while (stack.Count > 0)
         {
             var (node, depth) = stack.Pop();
-            rows.Add(new HierarchyRow(node, tree.ParentOf(node), depth, tree.Label(node, schema)));
+            rows.Add(new HierarchyRow(node, tree.ParentOf(node), depth, tree.Label(node, schema))
+            {
+                Name = tree.NameOf(node),
+                ComponentTypes = tree.ComponentsOf(node).ToArray(),
+                Incarnation = tree.IncarnationOf(node)!
+            });
             foreach (EntityGuid child in tree.ChildrenOf(node).Reverse()) stack.Push((child, depth + 1));
         }
         return rows;

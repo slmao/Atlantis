@@ -386,16 +386,25 @@ public sealed class ApplyController
     }
     /// <summary>User recovery: duplicate clicks cannot queue an additional apply.</summary>
     public void Retry() { if (CanApply) Request(); }
-    public IReadOnlyList<CommandFailure> Commit(IReadOnlyList<Command> commands)
+    public IReadOnlyList<CommandFailure> Commit(IReadOnlyList<Command> commands) => Commit(commands, null)!;
+
+    public IReadOnlyList<CommandFailure>? Commit(IReadOnlyList<Command> commands,
+        Func<bool, CommitOutcome?>? guardedCommit)
     {
-        if (_suspended || _inFlight)
+        bool deferApply = _suspended || _inFlight;
+        CommitOutcome outcome;
+        if (guardedCommit is not null)
+        {
+            if (guardedCommit(!deferApply) is not { } guarded) return null;
+            outcome = guarded;
+        }
+        else if (deferApply)
         {
             _document.SubmitTransaction(commands);
-            var failures = _document.DrainFailures();
-            if (failures.Count == 0) AfterLocalEdit(commands.Count != 0);
-            return failures;
+            outcome = new CommitOutcome(_document.DrainFailures(), false, null);
         }
-        CommitOutcome outcome = _document.CommitAndApply(commands);
+        else outcome = _document.CommitAndApply(commands);
+        if (deferApply && outcome.Failures.Count == 0) AfterLocalEdit(commands.Count != 0);
         if (outcome.ApplySent)
         {
             ++Issued;

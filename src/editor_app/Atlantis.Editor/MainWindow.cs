@@ -94,6 +94,23 @@ public sealed class MainWindow : Window
 
     // Plan 0068 M2: the Hierarchy over the authoring document, the one shared selection, and the edit controls.
     private readonly ListBox _entities = new();
+    private readonly TextBox _hierarchySearch = new() { PlaceholderText = "Search by name" };
+    private readonly ComboBox _hierarchyComponent = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _clearHierarchyFilter = new() { Content = "Clear filters" };
+    private readonly Button _locateHierarchySelection = new() { Content = "Locate selection" };
+    private readonly TextBlock _hierarchyFilterStatus = EditorVisuals.Secondary("");
+    private readonly TextBlock _hiddenBatchStatus = EditorVisuals.Secondary("Selected nodes are hidden. Locate selection to edit them.");
+    private readonly List<Action> _batchButtons = new();
+    private readonly List<Button> _inspectorStructureButtons = new();
+    private static readonly HierarchyComponent AllHierarchyComponents = new(null, "All components");
+    private const string FilteredStructureReason = "Clear filters to change scene structure.";
+    private const string HiddenBatchReason = "Selected nodes are hidden. Locate selection to edit them.";
+    private HierarchyFilter _hierarchyFilter = HierarchyFilter.Empty;
+    private HierarchyProjection _hierarchyProjection = HierarchyFilter.Empty.Project(Array.Empty<HierarchyRow>());
+    private HierarchyScrollAnchor? _hierarchyBeforeFilter;
+    private ulong? _hierarchyViewGeneration;
+    private long _hierarchyScrollIntent;
+    private bool _updatingHierarchyControls;
     private readonly Selection _selection = new();
     private readonly Button _create = new() { Content = "Create" };
     private readonly Dictionary<SceneObjectPreset, MenuItem> _createItems = new();
@@ -368,9 +385,12 @@ public sealed class MainWindow : Window
         _entities.AddHandler(KeyDownEvent, OnHierarchyKeyDown, RoutingStrategies.Tunnel);
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
         {
-            var label = EditorVisuals.Ellipsis(row?.Label ?? "");
+            string text = row?.Label ?? "";
+            if (row is not null && _hierarchyFilter.Active && !_hierarchyProjection.Matches(row.Node))
+                text = "Path · " + text;
+            var label = EditorVisuals.Ellipsis(text);
             label.Margin = new Thickness(Math.Min(row?.Depth ?? 0, 7) * 12, 0, 0, 0);
-            ToolTip.SetTip(label, row?.Label);
+            ToolTip.SetTip(label, text);
             return label;
         });
         _entities.SelectionChanged += (_, _) => OnHierarchySelected();
@@ -474,7 +494,7 @@ public sealed class MainWindow : Window
         };
         _destroy.Click += (_, _) =>
         {
-            if (_selection.Node is EntityGuid node) _worker?.DestroySubtree(node);
+            if (!_hierarchyFilter.Active && SelectedReparentRow() is { } row) _worker?.DestroySubtree(row.Node, row);
         };
         _toRoot.Click += (_, _) =>
         {
@@ -560,6 +580,7 @@ public sealed class MainWindow : Window
         actions.IsCheckedChanged += (_, _) => structural.IsVisible = actions.IsChecked == true;
         var hierarchy = new DockPanel { Background = EditorVisuals.Pane };
         AddDocked(hierarchy, EditorVisuals.Bar(EditorVisuals.Heading("Hierarchy")), Avalonia.Controls.Dock.Top);
+        AddDocked(hierarchy, BuildHierarchyFilters(), Dock.Top);
         var hierarchyCommands = EditorVisuals.Columns("Auto,Auto", _create, actions);
         hierarchyCommands.Margin = new Thickness(4);
         actions.Margin = new Thickness(4, 0, 0, 0);
@@ -761,6 +782,7 @@ public sealed class MainWindow : Window
         _sceneProjection = null;
         ShowNavigationMessage(null);
         _selection.Select(null);
+        ResetHierarchyView();
         ++_pickRequest;
         ClearBatchInspector();
         ++_saveAsRequest;
@@ -860,6 +882,7 @@ public sealed class MainWindow : Window
             UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
+            ++_hierarchyScrollIntent;
             ShowGuideFeedback("Session unavailable.");
             ResetReparent(_reparentPending ? "Reparent interrupted. Inspect the document before retrying." : null);
             _reparentDocumentOpen = false;
@@ -910,9 +933,10 @@ public sealed class MainWindow : Window
             UpdateStatus();
         };
         worker.Picked += pick => { if (ReferenceEquals(_worker, worker)) OnPicked(pick); };
-        worker.HierarchyChanged += (rows, markers) =>
+        worker.HierarchyChanged += snapshot =>
         {
-            if (ReferenceEquals(_worker, worker)) OnHierarchyChanged(rows, markers);
+            if (ReferenceEquals(_worker, worker) && !_referenceSessionFailed &&
+                snapshot.Lifetime == worker.MeshDocumentLifetime) OnHierarchyChanged(snapshot);
         };
         worker.InspectorChanged += snapshot =>
         {
@@ -1010,6 +1034,7 @@ public sealed class MainWindow : Window
             ++_pickRequest;
             ClearBatchInspector();
             if (_selection.Nodes.Count > 0) SetSelection(null, false);
+            ResetHierarchyView();
             ResetReparent(_reparentPending || _siblingMovePending || _pickedUp is not null || _hierarchyDrag is not null
                 ? "Scene reopened. Inspect the document before retrying the move." : null);
             if (_saveAsPending)
@@ -1331,7 +1356,7 @@ public sealed class MainWindow : Window
             }
             return true;
         }
-        if (e.Kind != ViewportPointer.LeftDown || _selection.Nodes.Count < 2 || !_cameraInitialized ||
+        if (e.Kind != ViewportPointer.LeftDown || _selection.Nodes.Count < 2 || HasHiddenSelection() || !_cameraInitialized ||
             _worker is not { } worker || _viewport.Window is not { Width: > 0, Height: > 0 } window ||
             _gizmoShown?.Group is not { } shown || shown.Selection != _selection.Generation ||
             shown.Mode != ModeUi || shown.Snap != (_gizmoSnap.IsChecked == true)) return false;
@@ -1526,16 +1551,17 @@ public sealed class MainWindow : Window
 
     private void SyncHierarchySelection(bool scroll)
     {
+        bool wasSyncing = _syncingSelection;
         _syncingSelection = true;
         try
         {
             var selected = _entities.SelectedItems!;
             selected.Clear();
-            foreach (HierarchyRow row in _hierarchyRows.Where(row => _selection.Nodes.Contains(row.Node)))
+            foreach (HierarchyRow row in _hierarchyProjection.Rows.Where(row => _selection.Nodes.Contains(row.Node)))
                 selected.Add(row);
             if (scroll && selected.Count == 1 && selected[0] is object item) _entities.ScrollIntoView(item);
         }
-        finally { _syncingSelection = false; }
+        finally { _syncingSelection = wasSyncing; }
     }
 
     private void PublishSelection(bool scroll)
@@ -1575,6 +1601,7 @@ public sealed class MainWindow : Window
 
     private void ToggleHierarchyRow(HierarchyRow row)
     {
+        if (!_hierarchyProjection.Rows.Any(item => ReferenceEquals(item, row))) return;
         ++_pickRequest;
         if (_selection.Toggle(row.Node)) PublishSelection(scroll: false);
         else _editLine.Text = $"Select up to {Atlantis.Gameplay.Authoring.RequireDocumentRevision.MaxWrites} nodes.";
@@ -1632,11 +1659,11 @@ public sealed class MainWindow : Window
         foreach (var (preset, item) in _createItems)
         {
             bool allowed = SceneObjectPresets.Available(preset, _canAddMeshToDocument, _selection.Nodes.Count) &&
-                (preset != SceneObjectPreset.EmptyChild || SelectedReparentRow() is not null);
+                (preset != SceneObjectPreset.EmptyChild || (!_hierarchyFilter.Active && SelectedReparentRow() is not null));
             item.IsEnabled = reason is null && allowed;
             ToolTip.SetTip(item, item.IsEnabled ? null : reason ?? (preset switch
             {
-                SceneObjectPreset.EmptyChild => "Select exactly one live Hierarchy row.",
+                SceneObjectPreset.EmptyChild => _hierarchyFilter.Active ? FilteredStructureReason : "Select exactly one live Hierarchy row.",
                 SceneObjectPreset.UnnamedRoot => "Clear the Hierarchy selection.",
                 _ => "Open a hand-authored scene to use named presets."
             }));
@@ -1677,9 +1704,11 @@ public sealed class MainWindow : Window
     private void UpdateHierarchyActions()
     {
         UpdateViewportNavigationActions();
+        UpdateHierarchyFilterStatus();
         bool multiple = _selection.Nodes.Count > 1;
         _duplicate.Content = multiple ? "Duplicate subtrees" : "Duplicate subtree";
         string? reason = _worker is null || _referenceSessionFailed ? "Connect to an authoring session."
+            : _hierarchyFilter.Active ? FilteredStructureReason
             : !_canAddMeshToDocument ? "Open a hand-authored scene to duplicate nodes."
             : _duplicating ? "A duplicate is settling."
             : _gizmoGrab is not null || _groupGrab is not null ? "Finish the active Gizmo gesture."
@@ -1689,14 +1718,15 @@ public sealed class MainWindow : Window
                 : null;
         _duplicate.IsEnabled = reason is null;
         UpdateSceneObjectMenu();
-        _destroy.IsEnabled = _selection.Node is not null;
+        _destroy.IsEnabled = !_hierarchyFilter.Active && _selection.Node is not null;
         bool gizmoTools = _allowGizmoPreview && _selection.Nodes.Count < 2;
-        bool groupTools = _selection.Nodes.Count > 1 && _gizmoShown?.Group is { } group &&
+        bool groupTools = _selection.Nodes.Count > 1 && !HasHiddenSelection() && _gizmoShown?.Group is { } group &&
             group.Selection == _selection.Generation;
         _gizmoMode.IsEnabled = _gizmoSnap.IsEnabled = gizmoTools || groupTools;
         _gizmoSpace.IsEnabled = gizmoTools;
-        ToolTip.SetTip(_gizmoMode, _selection.Nodes.Count > 1 && !groupTools
-            ? "Group placement requires a current editable selection and guarded Transform support." : null);
+        foreach (Control control in new Control[] { _gizmoMode, _gizmoSnap })
+            ToolTip.SetTip(control, multiple && !groupTools ? HasHiddenSelection() ? HiddenBatchReason :
+                "Group placement requires a current editable selection and guarded Transform support." : null);
         ToolTip.SetTip(_duplicate, reason);
         bool canCapture = CanCaptureReparent(drag: false) && SelectedReparentRow() is not null;
         _pickUp.IsEnabled = canCapture;
@@ -1706,6 +1736,13 @@ public sealed class MainWindow : Window
             _pickedUp is null && _hierarchyDrag is null;
         _moveUp.IsEnabled = canReorder && DisplayedSibling(SiblingDirection.Up) is not null;
         _moveDown.IsEnabled = canReorder && DisplayedSibling(SiblingDirection.Down) is not null;
+        foreach (Button button in new[] { _destroy, _pickUp, _moveHere, _toRoot, _moveUp, _moveDown }.Concat(_inspectorStructureButtons))
+        {
+            if (_inspectorStructureButtons.Contains(button)) button.IsEnabled = !_hierarchyFilter.Active;
+            ToolTip.SetTip(button, _hierarchyFilter.Active ? FilteredStructureReason : null);
+        }
+        foreach (Action update in _batchButtons) update();
+        _hiddenBatchStatus.IsVisible = multiple && HasHiddenSelection();
     }
 
     private HierarchyRow? DisplayedSibling(SiblingDirection direction)
@@ -1748,7 +1785,8 @@ public sealed class MainWindow : Window
             DuplicateSelectedSubtrees(worker);
             return;
         }
-        if (_selection.Node is not EntityGuid source) return;
+        if (SelectedReparentRow() is not { } sourceRow) return;
+        EntityGuid source = sourceRow.Node;
         long request = ++_duplicateRequest;
         long lifetime = _meshDocumentLifetime;
         ulong selection = _selection.Generation;
@@ -1765,7 +1803,7 @@ public sealed class MainWindow : Window
                 _hierarchyRows.Any(row => row.Node == created))
                 SetSelection(created, true);
             UpdateHierarchyActions();
-        });
+        }, sourceRow);
     }
 
     private void DuplicateSelectedSubtrees(EditorWorker worker)
@@ -1794,7 +1832,7 @@ public sealed class MainWindow : Window
     }
 
     private bool CanCaptureReparent(bool drag) =>
-        _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen && _selection.Nodes.Count == 1 &&
+        !_hierarchyFilter.Active && _worker is not null && !_referenceSessionFailed && _reparentDocumentOpen && _selection.Nodes.Count == 1 &&
         (!drag || _canAddMeshToDocument) && !_reparentPending && !_siblingMovePending && _gizmoGrab is null;
 
     private HierarchyRow? SelectedReparentRow() =>
@@ -3078,6 +3116,7 @@ public sealed class MainWindow : Window
         _batchView = null;
         _batchDraft = null;
         _batchInputs.Clear();
+        _batchButtons.Clear();
     }
 
     private void DiscardBatchDraft(BatchInspectorSnapshot snapshot)
@@ -3116,12 +3155,16 @@ public sealed class MainWindow : Window
         var focused = _batchInputs.FirstOrDefault(pair => pair.Value.IsFocused);
         int caret = focused.Value?.CaretIndex ?? 0;
         _batchInputs.Clear();
+        _batchButtons.Clear();
+        _inspectorStructureButtons.Clear();
         _nameBox = null;
         _inspectorShown = _inspectorDeferred = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
         _invalidatedInput = null;
         _inspectorPanel.Children.Add(EditorVisuals.Heading($"{snapshot.Count} selected nodes", 17));
+        _hiddenBatchStatus.IsVisible = HasHiddenSelection();
+        _inspectorPanel.Children.Add(_hiddenBatchStatus);
         if (snapshot.Notice is string note)
         {
             _inspectorPanel.Children.Add(EditorVisuals.Secondary(note));
@@ -3170,16 +3213,18 @@ public sealed class MainWindow : Window
                 row.Children.Add(box);
                 row.Children.Add(set);
                 bool ReadValue(out PropertyValue value) => InspectorModel.TryParse(definition, box.Text ?? "", out value, out _);
-                set.IsEnabled = ReadValue(out _);
+                void UpdateSet() => set.IsEnabled = box.IsEnabled && !box.IsReadOnly && !HasHiddenSelection() && ReadValue(out _);
+                _batchButtons.Add(UpdateSet);
+                UpdateSet();
                 box.PropertyChanged += (sender, change) =>
                 {
                     if (change.Property == TextBox.IsReadOnlyProperty)
                     {
-                        set.IsEnabled = !box.IsReadOnly && ReadValue(out _);
+                        UpdateSet();
                         return;
                     }
                     if (change.Property != TextBox.TextProperty || box.IsReadOnly) return;
-                    set.IsEnabled = ReadValue(out _);
+                    UpdateSet();
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
                         DiscardBatchDraft(snapshot);
@@ -3188,7 +3233,8 @@ public sealed class MainWindow : Window
                 };
                 void Submit()
                 {
-                    if (box.IsReadOnly || !ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
+                    if (!set.IsEnabled || box.IsReadOnly || HasHiddenSelection() ||
+                        !ReferenceEquals(_batchView, snapshot) || !ReadValue(out PropertyValue value)) return;
                     var basis = _batchDraft is { } current && current.Field.Field.Path == definition.Path
                         ? (current.View, current.Field) : (snapshot, field);
                     if (_worker?.CommitBatch(basis.Item1, basis.Item2, value) == true)
@@ -3257,6 +3303,7 @@ public sealed class MainWindow : Window
         _nameBox = null;
         _refreshReferenceLabels.Clear();
         _inspectorPanel.Children.Clear();
+        _inspectorStructureButtons.Clear();
         _invalidatedInput = null;
         if (snapshot.Subject is not EntityGuid subject)
         {
@@ -3312,7 +3359,12 @@ public sealed class MainWindow : Window
                 var remove = new Button { Content = "Remove" };
                 AutomationProperties.SetName(remove, "Remove " + name + " component");
                 TypeId id = component;
-                remove.Click += (_, _) => _worker?.RemoveComponent(id);
+                AddInspectorStructureButton(remove);
+                remove.Click += (_, _) =>
+                {
+                    if (!_hierarchyFilter.Active && SelectedReparentRow() is { } row && row.Node == subject)
+                        _worker?.RemoveComponent(id, row);
+                };
                 AddDocked(header, remove, Dock.Right);
             }
             header.Children.Add(EditorVisuals.Heading(name));
@@ -3337,9 +3389,12 @@ public sealed class MainWindow : Window
             };
             AutomationProperties.SetName(choice, "Component type");
             var button = new Button { Content = "Add component" };
+            AddInspectorStructureButton(button);
             button.Click += (_, _) =>
             {
-                if (choice.SelectedIndex >= 0) _worker?.AddComponent(snapshot.Addable[choice.SelectedIndex].Id);
+                if (!_hierarchyFilter.Active && choice.SelectedIndex >= 0 && SelectedReparentRow() is { } row &&
+                    row.Node == subject)
+                    _worker?.AddComponent(snapshot.Addable[choice.SelectedIndex].Id, row);
             };
             _inspectorPanel.Children.Add(EditorVisuals.Actions(choice, button));
         }
@@ -3603,16 +3658,202 @@ public sealed class MainWindow : Window
         return row;
     }
 
-    private void OnHierarchyChanged(IReadOnlyList<HierarchyRow> rows, IReadOnlyList<Marker> markers)
+    private Control BuildHierarchyFilters()
     {
-        ClearHierarchyDropFeedback();
-        _hierarchyRows = rows;
-        _markers = markers;
+        AutomationProperties.SetName(_hierarchySearch, "Search by name");
+        AutomationProperties.SetName(_hierarchyComponent, "Filter by component");
+        _hierarchyComponent.ItemTemplate = new FuncDataTemplate<HierarchyComponent>((item, _) =>
+        {
+            var label = EditorVisuals.Ellipsis(item?.Label ?? "");
+            ToolTip.SetTip(label, item?.Label);
+            return label;
+        });
+        _hierarchyComponent.ItemsSource = new[] { AllHierarchyComponents };
+        _hierarchyComponent.SelectedIndex = 0;
+        _hierarchySearch.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == TextBox.TextProperty) ApplyHierarchyFilters();
+        };
+        _hierarchyComponent.SelectionChanged += (_, _) => ApplyHierarchyFilters();
+        _clearHierarchyFilter.Click += (_, _) =>
+        {
+            ClearHierarchyFilters();
+            _hierarchySearch.Focus();
+        };
+        _locateHierarchySelection.Click += (_, _) => LocateHierarchySelection();
+        _hierarchyFilterStatus.TextWrapping = TextWrapping.Wrap;
+        _hiddenBatchStatus.TextWrapping = TextWrapping.Wrap;
+        foreach (Control control in new Control[] { _gizmoMode, _gizmoSnap, _destroy, _pickUp, _moveHere, _toRoot, _moveUp, _moveDown })
+            ToolTip.SetShowOnDisabled(control, true);
+        var filterBar = EditorVisuals.Stack(4, _hierarchySearch, _hierarchyComponent,
+            EditorVisuals.Actions(_clearHierarchyFilter, _locateHierarchySelection), _hierarchyFilterStatus);
+        filterBar.Margin = new Thickness(4);
+        UpdateHierarchyFilterStatus();
+        return filterBar;
+    }
+
+    private bool HasHiddenSelection() =>
+        _hierarchyFilter.Active && _selection.Nodes.Any(node => !_hierarchyProjection.Visible(node));
+
+    private void UpdateHierarchyFilterStatus()
+    {
+        int total = _selection.Nodes.Count;
+        int hidden = _hierarchyFilter.Active ? _selection.Nodes.Count(node => !_hierarchyProjection.Visible(node)) : 0;
+        _hierarchyFilterStatus.Text = (total == 0 ? "No selection" : $"{total} selected") + (hidden > 0 ? $" · {hidden} hidden" : "");
+        if (_hierarchyFilter.Active)
+        {
+            string matches = _hierarchyProjection.MatchCount switch
+            {
+                0 => "No matching nodes",
+                1 => "1 match",
+                _ => $"{_hierarchyProjection.MatchCount} matches"
+            };
+            _hierarchyFilterStatus.Text = matches + " · " + _hierarchyFilterStatus.Text;
+        }
+        _clearHierarchyFilter.IsEnabled = _hierarchyFilter.Active || !string.IsNullOrEmpty(_hierarchySearch.Text);
+        _locateHierarchySelection.IsEnabled = !_referenceSessionFailed &&
+            _hierarchyRows.Any(row => _selection.Nodes.Contains(row.Node));
+    }
+
+    private void AddInspectorStructureButton(Button button)
+    {
+        _inspectorStructureButtons.Add(button);
+        button.IsEnabled = !_hierarchyFilter.Active;
+        ToolTip.SetShowOnDisabled(button, true);
+        ToolTip.SetTip(button, _hierarchyFilter.Active ? FilteredStructureReason : null);
+    }
+
+    private ScrollViewer? HierarchyScroll() => _entities.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+
+    private HierarchyScrollAnchor? CurrentHierarchyAnchor()
+    {
+        if (HierarchyScroll() is not { } scroll) return null;
+        var top = _entities.GetVisualDescendants().OfType<ListBoxItem>()
+            .Where(item => item.DataContext is HierarchyRow)
+            .Select(item => (Row: (HierarchyRow)item.DataContext!, Y: item.TranslatePoint(default, scroll)?.Y, item.Bounds.Height))
+            .Where(item => item.Y is double y && y + item.Height > 0 && y < scroll.Viewport.Height)
+            .OrderBy(item => item.Y).FirstOrDefault().Row;
+        return top is null ? null : new HierarchyScrollAnchor(_hierarchyProjection.Rows, top);
+    }
+
+    private void ProjectHierarchy(HierarchyScrollAnchor? anchor = null, HierarchyRow? reveal = null)
+    {
+        long intent = ++_hierarchyScrollIntent;
+        _hierarchyProjection = _hierarchyFilter.Project(_hierarchyRows);
         _syncingSelection = true;
-        try { _entities.ItemsSource = rows; }
+        try
+        {
+            _entities.ItemsSource = _hierarchyProjection.Rows;
+            SyncHierarchySelection(scroll: false);
+        }
         finally { _syncingSelection = false; }
-        SyncHierarchySelection(scroll: false);
+        if (HasHiddenSelection() && _groupGrab is not null) CancelGroupGesture();
         UpdateHierarchyActions();
+        HierarchyRow? target = reveal ?? anchor?.Restore(_hierarchyProjection.Rows);
+        if (target is not null) ScheduleHierarchyScroll(target, intent, reveal is not null);
+    }
+
+    private void ScheduleHierarchyScroll(HierarchyRow target, long intent, bool focus)
+    {
+        // Layout can realize a different set of rows after changing ItemsSource.
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (intent != _hierarchyScrollIntent || !_hierarchyProjection.Rows.Any(row => ReferenceEquals(row, target))) return;
+            if (focus && TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement() is Control current &&
+                !ReferenceEquals(current, _locateHierarchySelection) && !ReferenceEquals(current, _entities) &&
+                HierarchyItem(current) is null) return;
+            _entities.ScrollIntoView(target);
+            _entities.UpdateLayout();
+            if (_entities.ContainerFromItem(target) is not ListBoxItem item) return;
+            if (focus) item.Focus();
+            else if (HierarchyScroll() is { } scroll && item.TranslatePoint(default, scroll) is Point point)
+                scroll.Offset = new Avalonia.Vector(scroll.Offset.X, scroll.Offset.Y + point.Y);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ApplyHierarchyFilters(HierarchyRow? reveal = null)
+    {
+        if (_updatingHierarchyControls) return;
+        var filter = new HierarchyFilter(_hierarchySearch.Text, (_hierarchyComponent.SelectedItem as HierarchyComponent)?.Id);
+        if (_hierarchyFilter.EquivalentTo(filter))
+        {
+            UpdateHierarchyFilterStatus();
+            if (reveal is not null) ScheduleHierarchyScroll(reveal, ++_hierarchyScrollIntent, focus: true);
+            return;
+        }
+        HierarchyScrollAnchor? anchor = CurrentHierarchyAnchor();
+        if (!_hierarchyFilter.Active && filter.Active) _hierarchyBeforeFilter = anchor;
+        if (_hierarchyFilter.Active && !filter.Active)
+        {
+            anchor = _hierarchyBeforeFilter;
+            _hierarchyBeforeFilter = null;
+        }
+        _hierarchyFilter = filter;
+        _worker?.SetHierarchyFilter(filter);
+        if ((_pickedUp ?? _hierarchyDrag?.Source) is { } source) _worker?.CancelReparent(source);
+        _pickedUp = null;
+        _hierarchyPress = null;
+        _hierarchyDrag = null;
+        _hierarchyDropPointer = null;
+        ClearHierarchyDropFeedback();
+        if (!_reparentPending && !_siblingMovePending) ShowReparentState("");
+        ProjectHierarchy(anchor, reveal);
+    }
+
+    private void ClearHierarchyFilters(HierarchyRow? reveal = null)
+    {
+        _updatingHierarchyControls = true;
+        try
+        {
+            _hierarchySearch.Text = "";
+            _hierarchyComponent.SelectedIndex = 0;
+        }
+        finally { _updatingHierarchyControls = false; }
+        ApplyHierarchyFilters(reveal);
+    }
+
+    private void LocateHierarchySelection()
+    {
+        if (!_locateHierarchySelection.IsEnabled || _hierarchyProjection.Locate(_hierarchyRows, _selection.Nodes) is not { } row) return;
+        _locateHierarchySelection.Focus();
+        if (HasHiddenSelection()) ClearHierarchyFilters(row);
+        else ScheduleHierarchyScroll(row, ++_hierarchyScrollIntent, focus: true);
+    }
+
+    private void ResetHierarchyView()
+    {
+        _hierarchyBeforeFilter = null;
+        _hierarchyViewGeneration = null;
+        _hierarchyRows = Array.Empty<HierarchyRow>();
+        _updatingHierarchyControls = true;
+        try { _hierarchyComponent.ItemsSource = new[] { AllHierarchyComponents }; }
+        finally { _updatingHierarchyControls = false; }
+        ClearHierarchyFilters();
+        ProjectHierarchy();
+    }
+
+    private void OnHierarchyChanged(HierarchySnapshot snapshot)
+    {
+        if (_hierarchyViewGeneration is ulong generation && snapshot.Generation < generation) return;
+        _markers = snapshot.Markers;
+        if (_hierarchyViewGeneration == snapshot.Generation) return;
+        ClearHierarchyDropFeedback();
+        HierarchyScrollAnchor? anchor = CurrentHierarchyAnchor();
+        _hierarchyViewGeneration = snapshot.Generation;
+        _hierarchyRows = snapshot.Rows;
+        var options = snapshot.Components.Prepend(AllHierarchyComponents).ToArray();
+        if (_hierarchyComponent.ItemsSource?.OfType<HierarchyComponent>().SequenceEqual(options) != true)
+        {
+            _updatingHierarchyControls = true;
+            try
+            {
+                _hierarchyComponent.ItemsSource = options;
+                _hierarchyComponent.SelectedItem = options.FirstOrDefault(option => option.Id == _hierarchyFilter.Component) ?? options[0];
+            }
+            finally { _updatingHierarchyControls = false; }
+            ApplyHierarchyFilters();
+        }
+        ProjectHierarchy(anchor);
     }
 
     // The UI thread's responsiveness (P5 U2, input-queue coupling): the gaps between 16 ms timer ticks.
