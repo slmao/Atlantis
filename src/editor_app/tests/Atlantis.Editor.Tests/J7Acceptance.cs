@@ -339,7 +339,7 @@ public static class J7Acceptance
             worker.GizmoChanged += snapshot => Gizmo = snapshot;
             worker.NodeCreatedByEditor += created => { CreatedNode = created; Interlocked.Increment(ref Created); };
             worker.NodesDestroyed += _ => Interlocked.Increment(ref Destroyed);
-            worker.HierarchyChanged += (rows, _) => Hierarchy = rows;
+            worker.HierarchyChanged += snapshot => Hierarchy = snapshot.Rows;
             worker.HistoryChanged += _ => Interlocked.Increment(ref HistoryUpdates);
             worker.CommitApplied += (ms, _) => { LastCommitMs = (float)ms; Interlocked.Increment(ref Commits); };
         }

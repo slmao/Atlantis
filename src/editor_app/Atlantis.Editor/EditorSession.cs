@@ -264,18 +264,20 @@ public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<Inspec
 
 public sealed class ReparentSource
 {
-    internal ReparentSource(HierarchyRow row, object incarnation, long lifetime)
+    internal ReparentSource(HierarchyRow row, object incarnation, long lifetime, HierarchyFilter filter)
     {
         Node = row.Node;
         Parent = row.Parent;
         Incarnation = incarnation;
         Lifetime = lifetime;
+        Filter = filter;
     }
 
     public EntityGuid Node { get; }
     public EntityGuid? Parent { get; }
     public long Lifetime { get; }
     internal object Incarnation { get; }
+    internal HierarchyFilter Filter { get; }
 }
 
 public sealed class EditorWorker : IDisposable
@@ -341,6 +343,7 @@ public sealed class EditorWorker : IDisposable
     private IReadOnlyList<EntityGuid> _selectedNodes = Array.Empty<EntityGuid>();
     private ulong _selectionGeneration;
     private ulong _requestedSelectionGeneration;
+    private HierarchyFilter _hierarchyFilter = HierarchyFilter.Empty;
     private bool _batchWritable;
     private bool _groupWritable;
     private volatile bool _duplicateBatchWritable;
@@ -403,7 +406,24 @@ public sealed class EditorWorker : IDisposable
     public event Action<long>? MeshDocumentReopened;
     private long _meshDocumentLifetime;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
-    public event Action<IReadOnlyList<HierarchyRow>, IReadOnlyList<Marker>>? HierarchyChanged;
+    public event Action<HierarchySnapshot>? HierarchyChanged;
+
+    public void SetHierarchyFilter(HierarchyFilter filter)
+    {
+        lock (_lock)
+        {
+            if (!_hierarchyFilter.EquivalentTo(filter)) _hierarchyFilter = filter;
+        }
+    }
+
+    private bool StructureAllowed(HierarchyFilter? intent) =>
+        intent is null || (!intent.Active && ReferenceEquals(_hierarchyFilter, intent));
+
+    private ulong? SendGuardedEdit(RemoteSession session, JsonValue parameters, Func<bool> current)
+    {
+        lock (_lock)
+            return current() ? session.Send("authoring.submitTransaction", parameters) : null;
+    }
     public event Action<string?>? GuideFeedback;
     private ApplyStatus? _postedApplyStatus;
     public event Action<ApplyStatus, string>? ApplyStateChanged;
@@ -1009,7 +1029,7 @@ public sealed class EditorWorker : IDisposable
     {
         var (plan, node) = HierarchyCommands.CreateChild(document, _tree, parent);
         return (plan, node);
-    });
+    }, protectStructure: parent is not null);
 
     public bool CreateSceneObject(SceneObjectPreset preset, HierarchyRow? parent, long lifetime, ulong selection,
         Action<string> report, Action<EntityGuid> select, Action finished)
@@ -1020,14 +1040,15 @@ public sealed class EditorWorker : IDisposable
                 (!SceneObjectPresets.Named(preset) && selection != _requestedSelectionGeneration)) return false;
             object? parentIdentity = null;
             if (preset == SceneObjectPreset.EmptyChild &&
-                (parent is null || !_hierarchyIncarnations.TryGetValue(parent, out parentIdentity))) return false;
+                (_hierarchyFilter.Active || parent is null || !_hierarchyIncarnations.TryGetValue(parent, out parentIdentity))) return false;
+            HierarchyFilter? filter = preset == SceneObjectPreset.EmptyChild ? _hierarchyFilter : null;
             _sceneObjectQueued = true;
             Enqueue(session =>
             {
                 try
                 {
                     var (result, life, applyRevision) = SettleSceneObject(session, preset, lifetime, replay: null, forward: true,
-                        selection, parent?.Node, parentIdentity);
+                        selection, parent?.Node, parentIdentity, filter);
                     bool recorded = false;
                     string notice = result.Notice;
                     if (result.State == BatchReplayState.Committed && life is not null && lifetime == MeshDocumentLifetime)
@@ -1086,7 +1107,7 @@ public sealed class EditorWorker : IDisposable
 
     private (BatchReplayResult Result, NodeLife? Life, ulong? ApplyRevision) SettleSceneObject(RemoteSession session,
         SceneObjectPreset preset, long lifetime, NodeLife? replay, bool forward, ulong selection = 0,
-        EntityGuid? parent = null, object? parentIdentity = null)
+        EntityGuid? parent = null, object? parentIdentity = null, HierarchyFilter? filter = null)
     {
         bool initial = replay is null;
         string operation = (initial ? "Create " : forward ? "Redo creation of " : "Undo creation of ") + SceneObjectPresets.Label(preset);
@@ -1096,7 +1117,7 @@ public sealed class EditorWorker : IDisposable
             return Refuse("open an authoring document");
 
         bool SameDocument() => lifetime == MeshDocumentLifetime;
-        bool ContextCurrent() => CanSettleSceneObject(lifetime) &&
+        bool ContextCurrent() => CanSettleSceneObject(lifetime) && StructureAllowed(filter) &&
             (!initial || SceneObjectPresets.Named(preset) ||
                 (selection == _requestedSelectionGeneration &&
                     (preset == SceneObjectPreset.EmptyChild ? _selected == parent : _selectedNodes.Count == 0)));
@@ -1303,7 +1324,7 @@ public sealed class EditorWorker : IDisposable
             {
                 if (!GroupCurrent(grab)) return;
                 GroupGizmo? fresh = ReadGroupPlacement(session);
-                if (!GroupCurrent(grab) || fresh is null || !shown.Placement.SameLayout(fresh) ||
+                if (!GroupCurrent(grab) || !GroupFilterAllows() || fresh is null || !shown.Placement.SameLayout(fresh) ||
                     shown.Mode != _gizmoMode || shown.Snap != _gizmoSnap)
                 {
                     CancelGroupGizmo(grab.Id);
@@ -1352,9 +1373,10 @@ public sealed class EditorWorker : IDisposable
             if (_groupSettling || _requestedGroup is not { } grab || grab.Id != id) return;
             _groupSettling = true;
             _pendingGroup = null;
+            HierarchyFilter filter = _hierarchyFilter;
             Enqueue(session =>
             {
-                try { ReleaseGroup(session, grab, amount); }
+                try { ReleaseGroup(session, grab, amount, filter); }
                 finally
                 {
                     lock (_lock)
@@ -1374,6 +1396,13 @@ public sealed class EditorWorker : IDisposable
         lock (_lock)
             return ReferenceEquals(grab, _requestedGroup) && !_stopping &&
                 grab.View.Lifetime == MeshDocumentLifetime && grab.View.Selection == _requestedSelectionGeneration;
+    }
+
+    private bool GroupFilterAllows()
+    {
+        HierarchyFilter filter;
+        lock (_lock) filter = _hierarchyFilter;
+        return filter.IncludesSelection(_tree, _selectedNodes);
     }
 
     private void RetireGroup(GroupGrab grab)
@@ -1413,7 +1442,7 @@ public sealed class EditorWorker : IDisposable
         SendOverlay(session);
     }
 
-    private void ReleaseGroup(RemoteSession session, GroupGrab grab, float amount)
+    private void ReleaseGroup(RemoteSession session, GroupGrab grab, float amount, HierarchyFilter filter)
     {
         if (!ReferenceEquals(_groupGrab, grab) || !GroupCurrent(grab)) return;
         RetireGroup(grab);
@@ -1428,7 +1457,7 @@ public sealed class EditorWorker : IDisposable
         }
         string label = view.Mode + " group";
         var edit = new BatchPropertyEdit(label, view.Placement.Targets, result.Writes, view.Placement);
-        var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab);
+        var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab, filter);
         string notice = settled.Notice;
         bool recorded = false;
         if (settled.State == BatchReplayState.Committed && result.Writes.Count > 0 &&
@@ -1504,7 +1533,8 @@ public sealed class EditorWorker : IDisposable
     /// <summary>Plan 0068 M3: an optional field cleared.</summary>
     public void ClearField(string path) => Edit(document => (_inspector!.Clear(path), null));
 
-    public void AddComponent(TypeId component) => Edit(document => (_inspector!.AddComponent(component), null));
+    public void AddComponent(TypeId component, HierarchyRow? row = null) =>
+        Edit(document => (_inspector!.AddComponent(component), null), protectStructure: true, row: row);
 
     public void AddMesh(AssetGuid mesh, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
     {
@@ -1593,9 +1623,21 @@ public sealed class EditorWorker : IDisposable
         PostApplyState(lifetime);
     });
 
-    public void RemoveComponent(TypeId component) => Edit(document => (_inspector!.RemoveComponent(component), null));
+    public void RemoveComponent(TypeId component, HierarchyRow? row = null) =>
+        Edit(document => (_inspector!.RemoveComponent(component), null), protectStructure: true, row: row);
 
-    public void DuplicateSubtree(EntityGuid source, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
+    public void DuplicateSubtree(EntityGuid source, long lifetime, Action<EntityGuid?, string> settled, HierarchyRow? row = null)
+    {
+        lock (_lock)
+        {
+            HierarchyFilter filter = _hierarchyFilter;
+            ulong selection = _requestedSelectionGeneration;
+            Enqueue(session => DuplicateSubtree(session, source, lifetime, settled, filter, selection, row));
+        }
+    }
+
+    private void DuplicateSubtree(RemoteSession session, EntityGuid source, long lifetime,
+        Action<EntityGuid?, string> settled, HierarchyFilter filter, ulong selection, HierarchyRow? row)
     {
         void Report(EntityGuid? node, string notice)
         {
@@ -1608,7 +1650,9 @@ public sealed class EditorWorker : IDisposable
         }
         bool CanSubmit()
         {
-            lock (_lock) return !_stopping && MeshDocumentLifetime == lifetime && !_gizmoActive && _gizmo?.Dragging != true;
+            lock (_lock)
+                return !_stopping && MeshDocumentLifetime == lifetime && !_gizmoActive && _gizmo?.Dragging != true &&
+                    StructureAllowed(filter) && (row is null || RowCurrent(row, selection));
         }
         if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
         {
@@ -1653,8 +1697,18 @@ public sealed class EditorWorker : IDisposable
                 return;
             }
 
-            attempted = copy.Root;
-            TransactionTicket ticket = document.SubmitTransaction(commands);
+            ulong? request = SendGuardedEdit(session, RemoteAuthoringDocument.EncodeTransaction(commands), () =>
+            {
+                if (!CanSubmit()) return false;
+                attempted = copy.Root;
+                return true;
+            });
+            if (request is null)
+            {
+                Report(null, "Duplicate refused: the displayed edit context changed.");
+                return;
+            }
+            TransactionTicket ticket = RemoteAuthoringDocument.ReadSentTransaction(session, request.Value);
             var drained = document.DrainFailures();
             if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
                 ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
@@ -1721,14 +1775,14 @@ public sealed class EditorWorker : IDisposable
             throw;
         }
         PostApplyState(lifetime);
-    });
+    }
 
     public bool DuplicateSubtrees(IReadOnlyList<HierarchyRow> rows, long lifetime, ulong selection,
         Action<IReadOnlyList<EntityGuid>?, string> settled)
     {
         lock (_lock)
         {
-            if (_stopping || !_duplicateBatchWritable || lifetime != MeshDocumentLifetime ||
+            if (_stopping || _hierarchyFilter.Active || !_duplicateBatchWritable || lifetime != MeshDocumentLifetime ||
                 selection != _requestedSelectionGeneration || _duplicateBatchQueued || _batchSettling ||
                 _groupSettling || _requestedGroup is not null || _gizmoActive || _reparentQueued || _siblingMoveQueued ||
                 rows.Count < 2 || rows.Count > RequireDuplicateBatchRevision.MaxNodes) return false;
@@ -1739,11 +1793,12 @@ public sealed class EditorWorker : IDisposable
                     return false;
             }
             _duplicateBatchQueued = true;
+            HierarchyFilter filter = _hierarchyFilter;
             Enqueue(session =>
             {
                 try
                 {
-                    var (result, edit) = SettleDuplicateBatch(session, null, forward: true, lifetime, targets, selection);
+                    var (result, edit) = SettleDuplicateBatch(session, null, forward: true, lifetime, targets, selection, filter);
                     IReadOnlyList<EntityGuid>? copiedRoots = null;
                     if (result.State == BatchReplayState.Committed && edit is not null && lifetime == MeshDocumentLifetime &&
                         _history is { } history && _historyTarget is { } target)
@@ -1769,13 +1824,13 @@ public sealed class EditorWorker : IDisposable
 
     private (BatchReplayResult Result, GuardedDuplicateEdit? Edit) SettleDuplicateBatch(RemoteSession session,
         GuardedDuplicateEdit? edit, bool forward, long lifetime, IReadOnlyDictionary<EntityGuid, object>? targets = null,
-        ulong? selection = null)
+        ulong? selection = null, HierarchyFilter? filter = null)
     {
         bool initial = edit is null;
         if (_document is not RemoteAuthoringDocument document || !_duplicateBatchWritable)
             return (new(BatchReplayState.Retry, "Guarded duplicate is unavailable."), edit);
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive &&
-            _gizmo?.Dragging != true && _requestedGroup is null &&
+            _gizmo?.Dragging != true && _requestedGroup is null && StructureAllowed(filter) &&
             (selection is null || selection == _requestedSelectionGeneration);
         bool TargetsMatch() => targets is null || targets.All(target =>
             ReferenceEquals(target.Value, _tree.IncarnationOf(target.Key)));
@@ -1878,15 +1933,16 @@ public sealed class EditorWorker : IDisposable
     }
 
     /// <summary>Plan 0068 M2: the node and its whole subtree, one transaction.</summary>
-    public void DestroySubtree(EntityGuid node) => Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null));
+    public void DestroySubtree(EntityGuid node, HierarchyRow? row = null) =>
+        Edit(document => (HierarchyCommands.DestroySubtree(document, _tree, node), null), protectStructure: true, row: row);
 
     public ReparentSource? CaptureReparent(HierarchyRow row, long lifetime)
     {
         lock (_lock)
         {
-            if (_stopping || lifetime != MeshDocumentLifetime || _gizmoActive || _reparentQueued || _siblingMoveQueued ||
+            if (_stopping || _hierarchyFilter.Active || lifetime != MeshDocumentLifetime || _gizmoActive || _reparentQueued || _siblingMoveQueued ||
                 !_hierarchyIncarnations.TryGetValue(row, out object? incarnation)) return null;
-            _reparentSource = new ReparentSource(row, incarnation, lifetime);
+            _reparentSource = new ReparentSource(row, incarnation, lifetime, _hierarchyFilter);
             return _reparentSource;
         }
     }
@@ -1896,12 +1952,12 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
-            if (_stopping || lifetime != MeshDocumentLifetime || !_siblingOrderAvailable || _gizmoActive ||
+            if (_stopping || _hierarchyFilter.Active || lifetime != MeshDocumentLifetime || !_siblingOrderAvailable || _gizmoActive ||
                 _reparentSource is not null || _siblingMoveQueued || row.Parent != sibling.Parent ||
                 !_hierarchyIncarnations.TryGetValue(row, out object? nodeIdentity) ||
                 !_hierarchyIncarnations.TryGetValue(sibling, out object? siblingIdentity)) return false;
             var order = new SiblingOrderEntry(row.Node, sibling.Node, row.Parent, nodeIdentity, siblingIdentity, direction);
-            QueueSiblingOrder(order, lifetime, settled);
+            QueueSiblingOrder(order, lifetime, settled, _hierarchyFilter);
             return true;
         }
     }
@@ -1915,7 +1971,7 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
         {
-            if (_stopping || source.Lifetime != MeshDocumentLifetime || !_siblingMoveSupported || !_siblingOrderAvailable ||
+            if (_stopping || !StructureAllowed(source.Filter) || source.Lifetime != MeshDocumentLifetime || !_siblingMoveSupported || !_siblingOrderAvailable ||
                 _gizmoActive || _reparentQueued || _siblingMoveQueued || !ReferenceEquals(source, _reparentSource))
                 return false;
             var displayed = new List<(EntityGuid Node, object Identity)>(interval.Count);
@@ -1928,12 +1984,12 @@ public sealed class EditorWorker : IDisposable
             if (SiblingMoveEntry.Capture(source.Node, anchor.Node, source.Parent, placement, displayed) is not { } order)
                 return false;
             _reparentSource = null;
-            QueueSiblingOrder(order, source.Lifetime, settled);
+            QueueSiblingOrder(order, source.Lifetime, settled, source.Filter);
             return true;
         }
     }
 
-    private void QueueSiblingOrder(SiblingEditEntry order, long lifetime, Action<string> settled)
+    private void QueueSiblingOrder(SiblingEditEntry order, long lifetime, Action<string> settled, HierarchyFilter filter)
     {
         _siblingMoveQueued = true;
         Enqueue(session =>
@@ -1941,7 +1997,7 @@ public sealed class EditorWorker : IDisposable
             string notice;
             try
             {
-                var result = SettleSiblingOrder(session, order, forward: true, lifetime);
+                var result = SettleSiblingOrder(session, order, forward: true, lifetime, filter);
                 notice = result.Notice;
                 if (result.Verified && _history is { } history && _historyTarget is { } target)
                 {
@@ -1962,7 +2018,7 @@ public sealed class EditorWorker : IDisposable
     }
 
     private (bool Verified, string Notice) SettleSiblingOrder(RemoteSession session, SiblingEditEntry order,
-        bool forward, long lifetime)
+        bool forward, long lifetime, HierarchyFilter? filter = null)
     {
         bool relative = order is SiblingMoveEntry;
         if (_document is not RemoteAuthoringDocument document || !(relative ? document.SupportsSiblingMove : document.SupportsSiblingOrder))
@@ -2000,8 +2056,15 @@ public sealed class EditorWorker : IDisposable
             if (planned.Command is MoveSiblingRelative move) pair = $"{move.Node} and {move.Anchor}";
             unknown = $"{operation} outcome unknown for {pair}. Refresh and inspect before retrying.";
             unverified = $"{operation} committed for {pair}. Undo is unavailable for this edit. Inspect and Apply explicitly.";
-            sent = true;
-            var ticket = document.SubmitTransaction(new[] { planned.Command });
+            var parameters = RemoteAuthoringDocument.EncodeTransaction(new[] { planned.Command });
+            ulong? request = SendGuardedEdit(session, parameters, () =>
+            {
+                if (!StructureAllowed(filter) || Plan(expected) is null) return false;
+                sent = true;
+                return true;
+            });
+            if (request is null) return (false, stale);
+            var ticket = RemoteAuthoringDocument.ReadSentTransaction(session, request.Value);
             var failures = document.DrainFailures();
             if (ticket.First.Value == 0 || ticket.Count != 1)
             {
@@ -2109,7 +2172,7 @@ public sealed class EditorWorker : IDisposable
         lock (_lock)
         {
             object? targetIncarnation = null;
-            if (_stopping || source.Lifetime != MeshDocumentLifetime || _gizmoActive ||
+            if (_stopping || !StructureAllowed(source.Filter) || source.Lifetime != MeshDocumentLifetime || _gizmoActive ||
                 !ReferenceEquals(source, _reparentSource) || _reparentQueued ||
                 (target is not null && !_hierarchyIncarnations.TryGetValue(target, out targetIncarnation)))
                 return false;
@@ -2141,7 +2204,7 @@ public sealed class EditorWorker : IDisposable
         {
             lock (_lock)
                 return !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive && _gizmo?.Dragging != true &&
-                       ReferenceEquals(source, _reparentSource) &&
+                       StructureAllowed(source.Filter) && ReferenceEquals(source, _reparentSource) &&
                        ReferenceEquals(source.Incarnation, _tree.IncarnationOf(source.Node)) &&
                        (parent is not EntityGuid target || ReferenceEquals(targetIncarnation, _tree.IncarnationOf(target)));
         }
@@ -2188,8 +2251,19 @@ public sealed class EditorWorker : IDisposable
                 return;
             }
 
-            sent = true;
-            TransactionTicket ticket = document.SubmitTransaction(commands);
+            var parameters = RemoteAuthoringDocument.EncodeTransaction(commands);
+            ulong? request = SendGuardedEdit(session, parameters, () =>
+            {
+                if (!CanSubmit()) return false;
+                sent = true;
+                return true;
+            });
+            if (request is null)
+            {
+                Report(false, "Reparent refused: the displayed edit context changed.");
+                return;
+            }
+            TransactionTicket ticket = RemoteAuthoringDocument.ReadSentTransaction(session, request.Value);
             var drained = document.DrainFailures();
             if (ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
                 ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
@@ -2298,6 +2372,7 @@ public sealed class EditorWorker : IDisposable
                 snapshot.SelectionGeneration != _requestedSelectionGeneration ||
                 snapshot.Revision is null || !snapshot.Writable || !field.Field.Editable) return false;
             _batchSettling = true;
+            HierarchyFilter filter = _hierarchyFilter;
             Enqueue(session =>
             {
                 try
@@ -2305,7 +2380,7 @@ public sealed class EditorWorker : IDisposable
                     var writes = field.Targets.Where(target => target.Value is PropertyValue before && before != value)
                         .Select(target => new PropertyWrite(target.Address, target.Value!.Value, value)).ToArray();
                     var edit = new BatchPropertyEdit(field.Field.Path, field.Targets, writes);
-                    var result = SettlePropertyBatch(session, edit, true, snapshot.Lifetime, snapshot.SelectionGeneration);
+                    var result = SettlePropertyBatch(session, edit, true, snapshot.Lifetime, snapshot.SelectionGeneration, filter: filter);
                     string notice = result.Notice;
                     bool recorded = false;
                     if (result.State == BatchReplayState.Committed && writes.Length != 0 &&
@@ -2332,13 +2407,14 @@ public sealed class EditorWorker : IDisposable
     }
 
     private BatchReplayResult SettlePropertyBatch(RemoteSession session, BatchPropertyEdit edit, bool forward,
-        long lifetime, ulong? selection = null, GroupGrab? grab = null)
+        long lifetime, ulong? selection = null, GroupGrab? grab = null, HierarchyFilter? filter = null)
     {
         bool group = edit.Group is not null;
         if (_document is not RemoteAuthoringDocument document || !(group ? _groupWritable : _batchWritable))
             return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime &&
             (selection is null || selection == _requestedSelectionGeneration) &&
+            (filter is null || ReferenceEquals(_hierarchyFilter, filter)) &&
             (grab is null || ReferenceEquals(grab, _requestedGroup));
         bool Current()
         {
@@ -2397,6 +2473,12 @@ public sealed class EditorWorker : IDisposable
             DocumentInfo? info = document.Info();
             if (!(group ? info?.SupportsGuardedTransformTransactions == true : info?.SupportsGuardedPropertyTransactions == true))
                 return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
+            if (filter?.Active == true)
+            {
+                if (!Observe() || ReadOrderRevision(document) != revision) return Stale();
+                if (!filter.IncludesSelection(_tree, _selectedNodes))
+                    return new(BatchReplayState.Retry, "Some selected nodes are hidden. Locate selection before editing.");
+            }
             Command guard = group ? new RequireTransformBatchRevision(revision) : new RequireDocumentRevision(revision);
             var commands = JsonValue.NewArray().Push(Codec.Encode(guard));
             foreach (var command in changed) commands.Push(Codec.Encode(command));
@@ -2492,8 +2574,29 @@ public sealed class EditorWorker : IDisposable
     }
 
     // One edit: planned on this thread against the tree as of now, submitted as one transaction, then an apply.
-    private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan, Action? settled = null) => Enqueue(session =>
+    private bool RowCurrent(HierarchyRow row, ulong selection) =>
+        selection == _requestedSelectionGeneration && _selected == row.Node &&
+        ReferenceEquals(row.Incarnation, _tree.IncarnationOf(row.Node));
+
+    private void Edit(Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan, Action? settled = null,
+        bool protectStructure = false, HierarchyRow? row = null)
     {
+        lock (_lock)
+        {
+            HierarchyFilter? filter = protectStructure ? _hierarchyFilter : null;
+            long lifetime = MeshDocumentLifetime;
+            ulong selection = _requestedSelectionGeneration;
+            Enqueue(session => SettleEdit(session, plan, settled, filter, row, lifetime, selection));
+        }
+    }
+
+    private void SettleEdit(RemoteSession session, Func<IAuthoringDocument, (EditPlan Plan, EntityGuid? Created)> plan,
+        Action? settled, HierarchyFilter? filter, HierarchyRow? row, long lifetime, ulong selection)
+    {
+        bool CanSubmit() => !_stopping && lifetime == MeshDocumentLifetime && StructureAllowed(filter) &&
+            (row is null || RowCurrent(row, selection));
+        void RefuseStructure() => _post(() => EditNotice?.Invoke("Structure edit refused: clear filters or refresh the selection."));
+
         try
         {
             if (_document is null || _apply is null)
@@ -2502,6 +2605,11 @@ public sealed class EditorWorker : IDisposable
                 return;
             }
             PollDocument(session);
+            if (filter is not null)
+            {
+                lock (_lock)
+                    if (!CanSubmit()) { RefuseStructure(); return; }
+            }
             var (edit, created) = plan(_document);
             if (edit.Refusal is string reason)
             {
@@ -2512,7 +2620,18 @@ public sealed class EditorWorker : IDisposable
             }
             long start = Stopwatch.GetTimestamp();
             EditRecorder? recorder = EditRecorder.Begin(_document, _tree, edit);
-            IReadOnlyList<CommandFailure> failures = _apply.Commit(edit.Commands);
+            IReadOnlyList<CommandFailure>? failures;
+            if (filter is not null && _document is RemoteAuthoringDocument remote)
+            {
+                JsonValue parameters = RemoteAuthoringDocument.EncodeTransaction(edit.Commands);
+                failures = _apply.Commit(edit.Commands, applyNow =>
+                {
+                    ulong? request = SendGuardedEdit(session, parameters, CanSubmit);
+                    return request is ulong sent ? remote.CompleteCommit(sent, applyNow) : null;
+                });
+            }
+            else failures = _apply.Commit(edit.Commands);
+            if (failures is null) { RefuseStructure(); return; }
             double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
             if (failures.Count == 0) _commitTicks = start;
             if (failures.Count > 0)
@@ -2533,7 +2652,7 @@ public sealed class EditorWorker : IDisposable
             if (created is EntityGuid node) _post(() => NodeCreatedByEditor?.Invoke(node));
         }
         finally { settled?.Invoke(); }
-    });
+    }
 
     // A committed edit joins the history (settled at once: the commit was applied, or refused, when submitted).
     private void RecordEdit(EditRecorder? recorder, IReadOnlyList<CommandFailure> failures)
@@ -2977,6 +3096,7 @@ public sealed class EditorWorker : IDisposable
         if (events.Any(e => e is DocumentReopened))
         {
             long lifetime = Interlocked.Increment(ref _meshDocumentLifetime);
+            lock (_lock) _hierarchyFilter = HierarchyFilter.Empty;
             if (_selectedNodes.Count > 1)
             {
                 _selectedNodes = Array.Empty<EntityGuid>();
@@ -3027,7 +3147,8 @@ public sealed class EditorWorker : IDisposable
                 _tree.ReconcileOrder(snapshot))
                 _log.Write("Hierarchy order refreshed at document revision " + before);
         }
-        if (_groupGrab is { } group && (!group.View.Placement.IsCurrent(_tree, preview: true, checkStamps: true) ||
+        if (_groupGrab is { } group && ((_tree.Generation != _postedGeneration && !GroupFilterAllows()) ||
+            !group.View.Placement.IsCurrent(_tree, preview: true, checkStamps: true) ||
             group.View.Placement.Targets.Any(target => !target.IsCurrent(_tree, checkStamp: true))))
         {
             CancelGroupGizmo(group.Id);
@@ -3155,7 +3276,9 @@ public sealed class EditorWorker : IDisposable
             _hierarchyIncarnations.Add(row, _tree.IncarnationOf(row.Node)!);
         _markers = SceneMarkers.Of(_document, _tree, _transforms);
         IReadOnlyList<Marker> markers = _markers;
-        _post(() => HierarchyChanged?.Invoke(rows, markers));
+        var snapshot = new HierarchySnapshot(MeshDocumentLifetime, _tree.Generation, rows,
+            HierarchyFilter.ComponentChoices(_document.Schema), markers);
+        _post(() => { if (snapshot.Lifetime == MeshDocumentLifetime) HierarchyChanged?.Invoke(snapshot); });
         if (refreshOverlay) SendOverlay(session);
     }
 
