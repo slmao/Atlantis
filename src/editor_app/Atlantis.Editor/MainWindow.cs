@@ -235,7 +235,12 @@ public sealed class MainWindow : Window
         [new(TextureImportKind.Color), new(TextureImportKind.Normal), new(TextureImportKind.MetallicRoughness), new(TextureImportKind.Occlusion)];
     private TextureImportView SelectedTextureImport => _textureImports[Math.Max(0, _textureKind.SelectedIndex)];
     private bool _textureRepair;
-    private readonly ListBox _assetsList = new() { Height = 128 };
+    private readonly ListBox _assetsList = new() { Height = 224 };
+    private readonly TextBox _assetSearch = new() { PlaceholderText = "Search name, path or GUID" };
+    private readonly ComboBox _assetTypes = new() { ItemsSource = new[] { "All types", "Mesh", "Texture", "Material", "Scene", "Environment" }, SelectedIndex = 0 };
+    private readonly ComboBox _assetSort = new() { ItemsSource = new[] { "Name A–Z", "Name Z–A" }, SelectedIndex = 0 };
+    private readonly ComboBox _assetGroup = new() { ItemsSource = new[] { "No grouping", "By type", "By source" }, SelectedIndex = 0 };
+    private readonly Button _assetClearFilters = new() { Content = "Clear filters" };
     private readonly TextBlock _assetsState = new();
     private readonly AssetPreviewRequests _previewRequests = new();
     private readonly Button _previewMesh = new() { Content = "Preview geometry", IsEnabled = false };
@@ -286,6 +291,7 @@ public sealed class MainWindow : Window
     private bool _rebuildPending, _rebuildRunning;
     private readonly StackPanel _assetDetails = new() { Spacing = 4 };
     private bool _assetsSync;
+    private Button? _assetCopyGuid;
     private readonly TabControl _assetTabs = new();
     private TextBox? _nameBox;
     private AssetReferencePickerWindow? _referenceWindow;
@@ -2090,32 +2096,46 @@ public sealed class MainWindow : Window
     {
         var reload = new Button { Content = "Reload view" };
         reload.Click += (_, _) => LoadAssets();
-        var types = new ComboBox { ItemsSource = new[] { "All types", "Mesh", "Texture", "Material", "Scene", "Environment" }, SelectedIndex = 0 };
-        types.SelectionChanged += (_, _) => { _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (Atlantis.Gameplay.Assets.AssetType)(types.SelectedIndex - 1); RenderAssets(); };
+        var types = _assetTypes;
+        types.SelectionChanged += (_, _) => { _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (AssetType)(types.SelectedIndex - 1); RenderAssets(); };
         AutomationProperties.SetName(types, "Asset type");
-        var search = new TextBox { PlaceholderText = "Source or GUID" };
+        var search = _assetSearch;
         search.Classes.Add("editor-search");
-        AutomationProperties.SetName(search, "Search assets by source or GUID");
-        search.TextChanged += (_, _) => { _assetBrowser.Search = search.Text ?? ""; RenderAssets(); };
+        AutomationProperties.SetName(search, "Search name, path or GUID");
+        search.PropertyChanged += (_, change) =>
+        {
+            if (change.Property != TextBox.TextProperty) return;
+            _assetBrowser.Search = search.Text ?? "";
+            RenderAssets();
+        };
+        AutomationProperties.SetName(_assetSort, "Sort assets");
+        AutomationProperties.SetName(_assetGroup, "Group assets");
+        _assetSort.SelectionChanged += (_, _) => { _assetBrowser.Sort = (AssetBrowseSort)Math.Max(0, _assetSort.SelectedIndex); RenderAssets(); };
+        _assetGroup.SelectionChanged += (_, _) => { _assetBrowser.Group = (AssetBrowseGroup)Math.Max(0, _assetGroup.SelectedIndex); RenderAssets(); };
+        _assetClearFilters.Click += (_, _) =>
+        {
+            _assetSearch.Text = "";
+            _assetTypes.SelectedIndex = 0;
+            _assetSearch.Focus();
+        };
         _assetsState.TextWrapping = TextWrapping.Wrap;
         var heading = EditorVisuals.Bar(EditorVisuals.Stack(5,
             EditorVisuals.Columns("*,Auto", EditorVisuals.Heading("Asset catalog"), reload),
-            EditorVisuals.Columns("*,Auto", search, types),
+            search, EditorVisuals.Actions(types, _assetSort, _assetGroup, _assetClearFilters),
             _assetsState));
 
-        _assetsList.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
-            asset is null ? new TextBlock() : EditorVisuals.AssetRow(asset));
+        EditorVisuals.ConfigureAssetList(_assetsList);
         AutomationProperties.SetName(_assetsList, "Asset results");
         _assetsList.SelectionChanged += (_, _) =>
         {
-            if (_assetsSync) return;
+            if (_assetsSync || _assetsList.SelectedItem is AssetGroupHeader) return;
             if (_assetsList.SelectedItem is AssetSummary asset) ReadAsset(asset.Guid);
             else { _assetBrowser.ClearSelection(); RenderAssets(); }
         };
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) =>
         {
-            if (_assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
+            if (_assetBrowser.SelectionVisible && _assetBrowser.Selected is AssetGuid guid && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
                 await clipboard.SetTextAsync(guid.ToString());
         };
         _previewMesh.Click += (_, _) => RequestPreview(withMaterial: false);
@@ -2126,6 +2146,8 @@ public sealed class MainWindow : Window
         _previewPair.Click += (_, _) => RequestPreview(withMaterial: true);
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
+        copy.IsEnabled = false;
+        _assetCopyGuid = copy;
         var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
             EditorVisuals.Stack(5, _assetTitle, _addMesh, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
@@ -2181,7 +2203,7 @@ public sealed class MainWindow : Window
         panel.SizeChanged += (_, e) =>
         {
             bool compact = e.NewSize.Width < 330 || e.NewSize.Height < 510;
-            _assetsList.Height = compact ? 101 : 128;
+            _assetsList.Height = compact ? 180 : 256;
             _previewImage.Height = compact ? 156 : 192;
         };
         return panel;
@@ -2195,16 +2217,20 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(worker, _worker) || !_assetBrowser.CompleteList(request, result)) return;
             RenderAssets();
-            // BeginList invalidated pending details. Selection is restored under
-            // _assetsSync, so its event cannot request the replacement for us.
-            if (result.IsOk && _assetBrowser.Selected is AssetGuid guid) ReadAsset(guid);
         });
     }
     private void ReadAsset(AssetGuid guid)
     {
         var worker = _worker; if (worker is null) return;
-        long request = _assetBrowser.Select(guid); RenderAssets();
-        worker.ReadAsset(guid, result => { if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDetail(request, guid, result)) RenderAssets(); });
+        if (_assetBrowser.State != "Ready" || _referenceSessionFailed ||
+            !_assetBrowser.Visible.Any(asset => asset.Guid == guid)) return;
+        long request = _assetBrowser.Select(guid);
+        AssetDetailIntent? intent = _assetBrowser.DetailIntent;
+        RenderAssets();
+        worker.ReadAsset(guid, result =>
+        {
+            if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDetail(request, guid, result)) RenderAssets();
+        }, intent, _assetBrowser);
     }
     private void RenderAssets()
     {
@@ -2214,11 +2240,12 @@ public sealed class MainWindow : Window
             : _assetBrowser.ViewState;
         _assetsState.Foreground = catalogFailed ? EditorVisuals.Error : EditorVisuals.Muted;
         var visible = _assetBrowser.Visible;
+        _assetsList.IsEnabled = _assetBrowser.State == "Ready" && !_referenceSessionFailed;
         _assetsSync = true;
         try
         {
-            _assetsList.ItemsSource = visible;
-            _assetsList.SelectedItem = visible.FirstOrDefault(v => v.Guid == _assetBrowser.Selected);
+            EditorVisuals.BindAssetList(_assetsList, _assetBrowser.Rows,
+                _assetBrowser.SelectionVisible ? _assetBrowser.Selected : null);
             if (_assetBrowser.State == "Ready" && !ReferenceEquals(_previewCatalog, _assetBrowser.Items))
             {
                 _previewCatalog = _assetBrowser.Items;
@@ -2229,8 +2256,12 @@ public sealed class MainWindow : Window
             }
         }
         finally { _assetsSync = false; }
+        bool hidden = _assetBrowser.State == "Ready" && _assetBrowser.Selected is not null && !_assetBrowser.SelectionVisible;
+        if (hidden) _assetsState.Text += " · Selected asset is hidden";
+        if (_assetCopyGuid is not null) _assetCopyGuid.IsEnabled = _assetBrowser.SelectionVisible;
+        _assetClearFilters.IsEnabled = !string.IsNullOrEmpty(_assetSearch.Text) || _assetBrowser.Type is not null;
         _assetTitle.Text = _assetsList.SelectedItem is AssetSummary asset
-            ? EditorVisuals.AssetName(asset) : "Select an asset";
+            ? EditorVisuals.AssetName(asset) : hidden ? "Selected asset is hidden" : "Select an asset";
         ToolTip.SetTip(_assetTitle, _assetTitle.Text);
         foreach (Action refresh in _refreshReferenceLabels) refresh();
         SyncPreviewSelection();
@@ -2239,12 +2270,31 @@ public sealed class MainWindow : Window
         UpdateImportButtons();
         ReadSelectedMaterial();
         _assetDetails.Children.Clear();
+        if (_assetBrowser.NeedsDetail && _assetBrowser.Selected is AssetGuid pending)
+        {
+            ReadAsset(pending);
+            return;
+        }
+        if (!_assetBrowser.SelectionVisible) return;
+        if (_assetsList.SelectedItem is AssetSummary summary)
+            _assetDetails.Children.Add(EditorVisuals.Details(summary.Type + "\n" + summary.Source + "\n" + summary.Guid));
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
-        _assetDetails.Children.Add(EditorVisuals.Details(d.Type + "\n" + d.Source + "\n" + d.Guid +
-            "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
+        _assetDetails.Children.Add(EditorVisuals.Details("artifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
         foreach (AssetGuid guid in d.Dependencies)
-        { var button = new Button { Content = guid.ToString() }; button.Click += (_, _) => ReadAsset(guid); _assetDetails.Children.Add(button); }
+        {
+            if (!_assetBrowser.Items.Any(asset => asset.Guid == guid))
+            { _assetDetails.Children.Add(EditorVisuals.Details(guid.ToString())); continue; }
+            var button = new Button { Content = guid.ToString() };
+            button.Click += (_, _) =>
+            {
+                _assetSearch.Text = "";
+                _assetTypes.SelectedIndex = 0;
+                ReadAsset(guid);
+                _assetsList.ScrollIntoView(_assetsList.SelectedItem!);
+            };
+            _assetDetails.Children.Add(button);
+        }
     }
 
     private void ReadSelectedMaterial()

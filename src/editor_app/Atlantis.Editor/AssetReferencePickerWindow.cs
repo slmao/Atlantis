@@ -57,9 +57,9 @@ public sealed class AssetReferencePickerWindow : Window
         _catalogRecovery.IsVisible = false;
         _openingMesh.TextWrapping = TextWrapping.Wrap;
         _current.Text = "Current: " + (target.Before.IsAbsent ? "(absent)" : target.Before.AsAsset().ToString());
-        var search = new TextBox { PlaceholderText = "Source or GUID", MinWidth = 100 };
+        var search = new TextBox { PlaceholderText = "Search name, path or GUID", MinWidth = 100 };
         search.Classes.Add("editor-search");
-        AutomationProperties.SetName(search, "Search assets by source or GUID");
+        AutomationProperties.SetName(search, "Search name, path or GUID");
         var reload = new Button { Content = "Reload view" };
         _browser.Type = target.TargetAssetType;
         Control filters;
@@ -75,7 +75,12 @@ public sealed class AssetReferencePickerWindow : Window
             filters = EditorVisuals.Columns("Auto,*,Auto", types, search, reload);
         }
         else filters = EditorVisuals.Columns("*,Auto", search, reload);
-        search.TextChanged += (_, _) => { _browser.Search = search.Text ?? ""; Render(); };
+        search.PropertyChanged += (_, change) =>
+        {
+            if (change.Property != TextBox.TextProperty) return;
+            _browser.Search = search.Text ?? "";
+            Render();
+        };
         reload.Click += (_, _) => { if (!_invalid) Load(); };
         var top = EditorVisuals.Bar(EditorVisuals.Stack(5,
             EditorVisuals.Heading(title, 22), EditorVisuals.Secondary(target.Label), _current, filters, _state, _catalogRecovery));
@@ -99,8 +104,7 @@ public sealed class AssetReferencePickerWindow : Window
         root.Children.Add(buttons);
         _list.Height = 224;
         AutomationProperties.SetName(_list, "Matching assets");
-        _list.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
-            asset is null ? new TextBlock() : EditorVisuals.AssetRow(asset));
+        EditorVisuals.ConfigureAssetList(_list);
         _list.SelectionChanged += (_, e) =>
         {
             if (!ReferenceEquals(e.Source, _list) || _sync || _invalid) return;
@@ -185,21 +189,23 @@ public sealed class AssetReferencePickerWindow : Window
                     else
                     {
                         _current.Text = "Current: " + EditorVisuals.AssetName(listed);
-                        if (_browser.Visible.Any(a => a.Guid == current)) _browser.Select(current);
+                        if (_browser.Visible.Any(a => a.Guid == current)) Read(current);
                     }
                 }
             }
             Render();
-            if (result.IsOk && _browser.Selected is AssetGuid guid) Read(guid);
         });
     }
 
     private void Read(AssetGuid guid)
     {
-        if (Target.TargetAssetType is not null && !_browser.Visible.Any(a => a.Guid == guid)) return;
-        long request = _browser.Select(guid); Render();
+        if (_closed || _invalid || _submitted || _browser.State != "Ready" ||
+            !_browser.Visible.Any(a => a.Guid == guid)) return;
+        long request = _browser.Select(guid);
+        AssetDetailIntent? intent = _browser.DetailIntent;
+        Render();
         _worker.ReadAsset(guid, result =>
-        { if (!_closed && !_invalid && _browser.CompleteDetail(request, guid, result)) Render(); });
+        { if (!_closed && !_invalid && _browser.CompleteDetail(request, guid, result)) Render(); }, intent, _browser);
     }
 
     private void Render()
@@ -211,13 +217,15 @@ public sealed class AssetReferencePickerWindow : Window
         _catalogRecovery.IsVisible = _browser.State == nameof(AssetError.CatalogUnavailable);
         _state.Foreground = _catalogRecovery.IsVisible ? EditorVisuals.Error : EditorVisuals.Muted;
         var visible = _browser.Visible;
+        _list.IsEnabled = _browser.State == "Ready" && !_submitted;
         _sync = true;
-        try { _list.ItemsSource = visible; _list.SelectedItem = visible.FirstOrDefault(a => a.Guid == _browser.Selected); }
+        try { EditorVisuals.BindAssetList(_list, _browser.Rows, _browser.SelectionVisible ? _browser.Selected : null); }
         finally { _sync = false; }
         _confirm.IsEnabled = !_submitted && _browser.State == "Ready" &&
             _list.SelectedItem is AssetSummary candidate && candidate.Guid == _browser.Selected;
         _candidate.Text = _list.SelectedItem is AssetSummary selected
-            ? "Selected: " + EditorVisuals.AssetName(selected) : "No candidate selected";
+            ? "Selected: " + EditorVisuals.AssetName(selected) :
+                _browser.Selected is not null && _browser.State == "Ready" ? "Selected asset is hidden" : "No candidate selected";
         ToolTip.SetTip(_candidate, _candidate.Text);
         if (Target.SupportsMaterialPreview)
         {
@@ -232,9 +240,16 @@ public sealed class AssetReferencePickerWindow : Window
         }
         PreviewInputsChanged?.Invoke();
         _details.Children.Clear();
+        if (_browser.NeedsDetail && _browser.Selected is AssetGuid pending)
+        {
+            Read(pending);
+            return;
+        }
+        if (!_browser.SelectionVisible) return;
+        if (_list.SelectedItem is AssetSummary summary)
+            _details.Children.Add(EditorVisuals.Details(summary.Type + "\n" + summary.Source + "\n" + summary.Guid));
         if (_browser.Details is not AssetDetails d) { _details.Children.Add(new TextBlock { Text = _browser.DetailState }); return; }
-        _details.Children.Add(EditorVisuals.Details(d.Type + "\n" + d.Source + "\n" + d.Guid +
-            "\nartifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
+        _details.Children.Add(EditorVisuals.Details("artifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
         foreach (AssetGuid dependency in d.Dependencies)
         {
             if (Target.TargetAssetType is not null && !visible.Any(a => a.Guid == dependency))

@@ -467,8 +467,39 @@ public sealed class EditorWorker : IDisposable
             picker.CompleteList(listRequest, result);
             _post(() => done(result));
         });
-    public void ReadAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> done) =>
-        Enqueue(session => { var result = session.Assets.GetAsset(guid); _post(() => done(result)); });
+    private sealed record AssetDetailWork(AssetGuid Guid,
+        Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> Done, AssetDetailIntent? Intent);
+    private readonly Dictionary<object, AssetDetailWork> _assetDetailWork = new();
+
+    public void ReadAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.AssetDetails, Atlantis.Gameplay.Assets.AssetError>> done,
+        AssetDetailIntent? intent = null, object? surface = null)
+    {
+        var work = new AssetDetailWork(guid, done, intent);
+        if (surface is null) { Enqueue(session => ReadAsset(session, work)); return; }
+        lock (_lock)
+        {
+            bool queued = _assetDetailWork.ContainsKey(surface);
+            _assetDetailWork[surface] = work;
+            if (queued) return;
+            Enqueue(session =>
+            {
+                AssetDetailWork current;
+                lock (_lock)
+                {
+                    current = _assetDetailWork[surface];
+                    _assetDetailWork.Remove(surface);
+                }
+                ReadAsset(session, current);
+            });
+        }
+    }
+
+    private void ReadAsset(RemoteSession session, AssetDetailWork work)
+    {
+        if (work.Intent is not null && !work.Intent.Current) return;
+        var result = session.Assets.GetAsset(work.Guid);
+        _post(() => { if (work.Intent is null || work.Intent.Current) work.Done(result); });
+    }
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
     public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,
@@ -2341,14 +2372,16 @@ public sealed class EditorWorker : IDisposable
             if (_requestedGroup is { } group && group.View.Selection != generation) CancelGroupGizmo(group.Id);
             Enqueue(session =>
             {
-                lock (_lock)
-                {
-                    if (_requestedSelectionGeneration != generation) return;
-                }
+                // Every selection intent invalidates a captured picker, including an
+                // intermediate selection whose visual refresh is coalesced away.
                 EntityGuid? node = nodes.Count == 1 ? nodes[0] : null;
                 string? refusal = _referencePicker?.Refusal;
                 _referencePicker?.SelectionChanged(node);
                 ReferenceInvalidated(refusal);
+                lock (_lock)
+                {
+                    if (_requestedSelectionGeneration != generation) return;
+                }
                 _selectionGeneration = generation;
                 _selectedNodes = nodes;
                 _selected = node;
