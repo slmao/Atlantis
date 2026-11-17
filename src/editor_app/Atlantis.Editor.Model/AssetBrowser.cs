@@ -139,6 +139,11 @@ public sealed class AssetBrowser
     {
         ++_listRequest;
         ClearSelection();
+        _items = Array.Empty<AssetSummary>();
+        _keys = Array.Empty<AssetBrowseProjection>();
+        _visible = Array.Empty<AssetSummary>();
+        _rows = Array.Empty<object>();
+        _visibleIds.Clear();
         State = "Disconnected";
         DetailState = "Disconnected";
     }

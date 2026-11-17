@@ -229,8 +229,9 @@ public static partial class Program
             !browser.CompleteDetail(detailRequest, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
             "browse: A back to A never accepts the previous callback");
         browser.Disconnect();
-        Check(browser.Selected is null && !browser.CompleteDetail(refreshed, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
-            "browse: reconnect cannot inherit selection or detail");
+        Check(browser.Selected is null && browser.Rows.Count == 0 && browser.Items.Count == 0 &&
+            !browser.CompleteDetail(refreshed, sameA.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)),
+            "browse: reconnect cannot inherit selection, a row scroll anchor or detail");
 
         var longList = Enumerable.Range(1, 10000).Select(n => new AssetSummary(Id(n), (AssetType)(n % 5),
             (n % 2 == 0 ? "assets:" : "content:") + "long/item_" + n.ToString("D5") + ".png")).Reverse().ToArray();
