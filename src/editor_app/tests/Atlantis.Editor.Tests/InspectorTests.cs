@@ -1744,10 +1744,13 @@ public static partial class Program
         var before = peer.Authoring.ListNodes().Value.Select(node => node.Node).ToHashSet();
         Click(Field<Button>("_addMesh"));
         search.Text = "no assets match this query";
-        await NameUiWait(() => Field<Button>("_undo").IsEnabled && peer.Authoring.ListNodes().Value.Count == before.Count + 1,
+        await NameUiWait(() => Field<Button>("_undo").IsEnabled && peer.Authoring.ListNodes().Value.Count == before.Count + 1 &&
+            Field<Selection>("_selection").Node is EntityGuid added && !before.Contains(added),
             "admitted Add to Scene settles despite changed browser", 45);
-        Check("Add to Scene uses the admitted visible mesh", Field<Selection>("_selection").Node is EntityGuid created &&
-            !before.Contains(created));
+        EntityGuid created = Field<Selection>("_selection").Node!.Value;
+        SceneAddress meshAddress = SceneSchema.AddressOf(peer.Authoring.Schema, created, "Renderable", "meshAsset")!.Value;
+        Check("Add to Scene uses the admitted visible mesh",
+            peer.Authoring.GetProperty(meshAddress).Value.TryGetAsset(out AssetGuid referenced) && referenced == target.Guid);
         Click(Field<Button>("_undo"));
         await NameUiWait(() => peer.Authoring.ListNodes().Value.Count == before.Count && Field<Button>("_redo").IsEnabled,
             "Undo restores scene");
