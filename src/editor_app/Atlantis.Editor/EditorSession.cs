@@ -503,6 +503,35 @@ public sealed class EditorWorker : IDisposable
         var result = session.Assets.GetAsset(work.Guid);
         _post(() => { if (work.Intent is null || work.Intent.Current) work.Done(result); });
     }
+    public void ReadAffectedMaterials(AssetDependentScan scan, Action<AssetDependentResult> done)
+    {
+        var matches = new List<Atlantis.Gameplay.Assets.AssetSummary>();
+        bool complete = true;
+        int next = 0;
+        Enqueue(Slice);
+
+        void Slice(RemoteSession session)
+        {
+            if (!scan.Intent.Current) return;
+            if (next < scan.Candidates.Count)
+            {
+                var candidate = scan.Candidates[next++];
+                var result = session.Assets.GetAsset(candidate.Guid);
+                if (!scan.Intent.Current) return;
+                if (!result.IsOk || result.Value is not { } detail || detail.Guid != candidate.Guid ||
+                    detail.Type != Atlantis.Gameplay.Assets.AssetType.Material)
+                    complete = false;
+                else if (detail.Dependencies.Contains(scan.Texture)) matches.Add(candidate);
+            }
+            if (next < scan.Candidates.Count) Enqueue(Slice);
+            else
+            {
+                var result = new AssetDependentResult(matches.ToArray(), complete);
+                _post(() => { if (scan.Intent.Current) done(result); });
+            }
+        }
+    }
+
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
     public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,

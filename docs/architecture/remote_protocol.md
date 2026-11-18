@@ -371,6 +371,26 @@ new methods only, typed clients recognize the pinned legacy
 `Unsupported` and keep the shared session usable. Unexpected responses
 follow existing protocol-error handling.
 
+[Spec 0116](../specs/0116-registered-texture-reimport.md) and
+[ADR-0167](../adr/0167-managed-texture-source-replacement.md) admit one
+registered base color texture in an active named managed generation through
+the same rebuild call. The host resolves the GUID and takes the replacement
+from the original project inbox path; the wire never receives a path or PNG.
+Publication retains the asset GUID and bindings. A clean input refusal can be
+retried through rebuild after correction. An unverified exchange or publication
+leaves the workspace held for repair: the existing failure diagnostic describes
+the hold and starts are refused with `WorkspaceNeedsRepair`. Clients can query
+direct material references with the existing catalog list and details calls.
+No new request, result field or error token is introduced.
+
+For local recovery, retain the project's `.pending/<job-id>/replacement.json`
+and any `previous` backup or `replace/texture_<name>` unit under that job.
+The record names the texture, expected generation and old/new SHA-256 values.
+Stop writers and inspect those units and the expected complete generation
+before clearing either dirty marker. Verify the frozen evidence and sealed
+registry before preserving the new version or restoring the backup.
+A missing or ambiguous recovery record does not authorize either action.
+
 ### 5.2.2 Managed materials (Spec 0094 / ADR-0153)
 
 | Method | Parameters | Success |

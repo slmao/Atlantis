@@ -72,14 +72,16 @@ public static partial class Program
             checks.Add(new NameUiCheck("bounded UI lifetime", false, "fixture timed out"));
             exit = 1;
         }
-        bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview";
+        bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport";
         if (meshPreview && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene is "--asset-drag" or "--asset-drag-compact"
+            boundary = scene == "--texture-reimport"
+                ? "Actual 96-DPI Windows MainWindow and hosted Runtime; routed controls, shared preview PNG and optional native window captures."
+                : scene is "--asset-drag" or "--asset-drag-compact"
                 ? "Actual 96-DPI Windows MainWindow and Runtime; native mouse drag plus shared document and projection readback."
                 : "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events, plus controlled callback and Gizmo inputs. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
@@ -117,6 +119,7 @@ public static partial class Program
                 bool savedPanel = savedWorkflow || savedOwnership;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
+                bool reimport = _scene == "--texture-reimport";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
                 bool meshPreview = _scene == "--mesh-preview";
@@ -128,7 +131,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -137,9 +140,11 @@ public static partial class Program
                     SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,
                     AssetBuildProfile = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
+                        reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
                     AssetGeneration = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
+                        reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
@@ -157,6 +162,7 @@ public static partial class Program
                         else if (saveAs) await CheckSaveAsUi(window, _checks);
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
+                        else if (reimport) await CheckTextureReimportUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
@@ -194,6 +200,118 @@ public static partial class Program
         ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
             .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
         return row.Children.OfType<TextBox>().Single();
+    }
+
+    private static async Task CheckTextureReimportUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        void Check(string label, bool ok, string detail = "") => checks.Add(new(label, ok, detail));
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var mode = Environment.GetEnvironmentVariable("ATLANTIS_0116_MODE");
+        if (mode is not ("valid" or "invalid" or "preview")) throw new InvalidOperationException("Invalid UI fixture mode.");
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } runtime && File.Exists(runtime.SessionPath) &&
+            Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count != 0, "texture Runtime", 90);
+        var launch = Field<RuntimeProcess>("_runtime");
+        work(launch.Launch.WorkDirectory);
+        Check("real hosted Windows Editor at 100%", window.IsVisible && GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 &&
+            launch.Launch.ParentWindow is not null);
+        using var observer = RemoteSession.Connect(SessionFile.Read(launch.SessionPath));
+        var generation = observer.Assets.RebuildStatus().Value!.ActiveGeneration;
+        Check("explicitly selected named generation", generation is GenerationId active &&
+            active.ToString() == Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION"), generation?.ToString() ?? "");
+        var texture = AssetGuid.Parse("01160116-0001-4116-8116-011601160001");
+        var material = AssetGuid.Parse("01160116-0002-4116-8116-011601160002");
+        var otherMaterial = AssetGuid.Parse("01160116-0003-4116-8116-011601160003");
+        var mesh = AssetGuid.Parse("58e57a64-ad60-4925-b6d6-6561540e8476");
+        var catalog = observer.Assets.ListAssets().Value;
+        Check("same registered texture GUID and material bindings",
+            observer.Assets.GetAsset(texture).Value!.Source == "content:texture_probe_color/source.png" &&
+            observer.Assets.GetAsset(material).Value!.Dependencies.SequenceEqual(new[] { texture }) &&
+            observer.Assets.GetAsset(otherMaterial).Value!.Dependencies.SequenceEqual(new[] { texture }));
+        var list = Field<ListBox>("_assetsList");
+        Field<TabControl>("_assetTabs").SelectedIndex = 1;
+        await NameUiWait(() => Field<AssetBrowser>("_assetBrowser").State == "Ready", "catalog ready");
+        var search = Field<TextBox>("_assetSearch");
+
+        async Task RevealAsset(AssetGuid id)
+        {
+            search.Text = id.ToString();
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(item => item.Guid == id), "asset visible");
+            list.SelectedItem = list.Items.OfType<AssetSummary>().Single(item => item.Guid == id);
+        }
+        async Task Capture(string label, Control surface)
+        {
+            if (Environment.GetEnvironmentVariable("ATLANTIS_0116_CAPTURE") is not { } helper) return;
+            surface.BringIntoView();
+            await Task.Delay(400);
+            var start = new System.Diagnostics.ProcessStartInfo("python") { UseShellExecute = false, CreateNoWindow = true };
+            start.ArgumentList.Add(helper);
+            start.ArgumentList.Add(Environment.ProcessId.ToString());
+            start.ArgumentList.Add(Path.Combine(launch.Launch.WorkDirectory, label + "-window.png"));
+            using var process = System.Diagnostics.Process.Start(start)!;
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
+            Check(label + " native capture", process.ExitCode == 0);
+        }
+        async Task<byte[]> Preview(string label)
+        {
+            await RevealAsset(mesh);
+            var choice = Field<ComboBox>("_previewMaterial");
+            choice.SelectedItem = choice.Items.OfType<AssetSummary>().Single(item => item.Guid == material);
+            var preview = Field<Button>("_previewPair");
+            await NameUiWait(() => preview.IsEnabled, "paired preview available");
+            Click(preview);
+            var view = Field<Image>("_previewImage");
+            var state = Field<TextBlock>("_previewState");
+            await NameUiWait(() => view.Source is not null && view.IsVisible &&
+                state.Text?.Contains(material.ToString()) == true, "existing paired preview", 45);
+            var png = observer.Assets.PreviewMeshMaterial(mesh, material).Value!.PngBytes;
+            File.WriteAllBytes(Path.Combine(launch.Launch.WorkDirectory, label + ".png"), png);
+            Check(label + " shows the originally bound material", png.Length > 0);
+            await Capture(label, view);
+            return png;
+        }
+
+        window.Activate();
+        var before = await Preview("before");
+        if (mode == "preview") return;
+        await RevealAsset(texture);
+        var build = window.GetVisualDescendants().OfType<Expander>()
+            .Single(expander => Equals(expander.Header, "Rebuild / Reimport"));
+        build.IsExpanded = true;
+        var affect = Field<Button>("_affectedMaterials");
+        await NameUiWait(() => affect.IsEffectivelyVisible && affect.IsEnabled, "affected material action ready");
+        Click(affect);
+        var impact = Field<TextBlock>("_affectedMaterialsState");
+        await NameUiWait(() => impact.Text?.StartsWith("Complete:") == true, "complete direct dependency scan", 90);
+        Check("complete result lists exactly the two known materials once",
+            impact.Text!.Split('\n').Length == 3 && impact.Text!.Contains(material.ToString()) &&
+            impact.Text.Contains(otherMaterial.ToString()), impact.Text);
+        var action = Field<Button>("_rebuildStart");
+        Check("reimport action uses original inbox path", Equals(action.Content, "Reimport PNG") &&
+            Field<TextBlock>("_reimportInput").Text?.Contains("inbox/probe_color/source.png") == true);
+        Click(action);
+        Check("pending job blocks another submission", !action.IsEnabled);
+        var state = Field<TextBlock>("_rebuildState");
+        await NameUiWait(() => state.Text?.Contains(mode == "invalid" ? " · Failed" : " · Succeeded") == true,
+            "Editor job settles", 140);
+        var terminal = observer.Assets.RebuildStatus().Value!;
+        Check("settled named job matches input and active generation is unchanged", terminal.Job?.Asset == texture &&
+            terminal.ActiveGeneration == generation, state.Text ?? "");
+        if (mode == "invalid")
+        {
+            Check("bad PNG fails cleanly with correction and retry guidance", terminal.Job?.State == RebuildState.Failed &&
+                terminal.Job.Generation is null && state.Text?.Contains("Correct inbox/probe_color/source.png and retry") == true);
+        }
+        else
+        {
+            Check("successful job reports explicit restart and a distinct named generation", terminal.Job?.State == RebuildState.Succeeded &&
+                terminal.Job.Generation is GenerationId generated && generated != generation &&
+                state.Text?.Contains("--asset-generation " + generated) == true);
+            File.WriteAllText(Path.Combine(launch.Launch.WorkDirectory, "published-generation.txt"), terminal.Job!.Generation!.Value.ToString());
+        }
+        await Capture("settled", state);
+        var after = await Preview("attached-after");
+        Check("same attached Runtime still previews the old version", before.SequenceEqual(after));
     }
 
     private static async Task CheckAssetRebuildUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)

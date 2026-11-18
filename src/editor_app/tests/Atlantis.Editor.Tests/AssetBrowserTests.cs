@@ -11,6 +11,7 @@ public static partial class Program
     private static void AssetBrowserChecks()
     {
         AssetBrowseChecks();
+        AssetDependentChecks();
         AssetGuid a = AssetGuid.Parse("00810081-0081-4081-8081-008100810081"), b = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
         var color = new AssetSummary(a, AssetType.Texture, "content:texture_sign/source.png");
         var alternate = new AssetSummary(b, AssetType.Texture, "content:texture_panel/source.png");
@@ -173,6 +174,50 @@ public static partial class Program
         preview.SetInputs(new(a, a, Surface: 10));
         Check(!preview.CanSend(secondChooser) && !preview.Settle(secondChooser) && preview.TakeNext() is null,
             "pair preview: material-only change cancels pending work without starting a preview");
+    }
+
+    private static void AssetDependentChecks()
+    {
+        var texture = new AssetSummary(AssetGuid.Parse("01160116-0001-4116-8116-011601160001"), AssetType.Texture,
+            "content:texture_probe/source.png");
+        var late = new AssetSummary(AssetGuid.Parse("01160116-0002-4116-8116-011601160002"), AssetType.Material,
+            "assets:materials/z.material.txt");
+        var early = new AssetSummary(AssetGuid.Parse("01160116-0003-4116-8116-011601160003"), AssetType.Material,
+            "assets:materials/a.material.txt");
+        var linear = new AssetSummary(AssetGuid.Parse("01160116-0004-4116-8116-011601160004"), AssetType.Texture,
+            "content:texture_normal/normal.png");
+        var browser = new AssetBrowser();
+        var snapshot = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(new[] { texture, late, early, linear });
+        browser.CompleteList(browser.BeginList(), snapshot);
+        browser.Select(linear.Guid);
+        Check(browser.BeginDependents() is null && AssetBrowser.RegisteredColorName(texture) == "probe" &&
+            AssetBrowser.RegisteredColorName(texture with { Source = "content:texture_probe/source.png#subkey" }) is null &&
+            AssetBrowser.RegisteredColorName(texture with { Source = "content:texture_../source.png" }) is null,
+            "reimport: only a canonical registered color source is a provisional target");
+        browser.Select(texture.Guid);
+        var scan = browser.BeginDependents()!;
+        Check(scan.Candidates.SequenceEqual(new[] { early, late }) && browser.BeginDependents() is null,
+            "reimport: one scan, material rows only, deterministic source order");
+        browser.Group = AssetBrowseGroup.Source;
+        Check(scan.Intent.Current && browser.CompleteDependents(scan, new(new[] { early }, false)) &&
+            browser.DependentResult is { Complete: false } partial && partial.Matches.SequenceEqual(new[] { early }),
+            "reimport: grouping preserves the current scan and an incomplete result retains verified matches");
+        scan = browser.BeginDependents()!;
+        browser.Search = "hidden";
+        browser.Search = "";
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+            "reimport: hide/show cannot revive an obsolete dependent scan");
+        scan = browser.BeginDependents()!;
+        browser.CompleteList(browser.BeginList(), snapshot);
+        Check(!scan.Intent.Current && browser.DependentResult is null, "reimport: catalog reload cancels dependent feedback");
+        scan = browser.BeginDependents()!;
+        browser.CancelPendingDependents();
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+            "reimport: leaving the Assets pane suppresses pending dependent feedback");
+        scan = browser.BeginDependents()!;
+        browser.Disconnect();
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+            "reimport: disconnect suppresses late dependent feedback");
     }
 
     private static void AssetBrowseChecks()
