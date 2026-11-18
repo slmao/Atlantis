@@ -236,6 +236,16 @@ public sealed class MainWindow : Window
     private TextureImportView SelectedTextureImport => _textureImports[Math.Max(0, _textureKind.SelectedIndex)];
     private bool _textureRepair;
     private readonly ListBox _assetsList = new() { Height = 224 };
+    private static readonly DataFormat<string> AssetDragFormat = DataFormat.CreateStringApplicationFormat("atlantis-asset-drag");
+    private (AssetGuid Guid, PointerPressedEventArgs Event, Point Position)? _assetPress;
+    private AssetDragIntent? _assetDrag;
+    private bool _assetDropPending;
+    private int _pendingSceneFieldEdits;
+    private ulong _assetDropRequest, _assetDropInteraction;
+    private Border? _assetDropHighlight;
+    private readonly Dictionary<SceneAddress, AssetDropField> _assetDropFields = new();
+    private (Control Surface, AssetDropField? Field)? _advertisedAssetDrop;
+    private readonly TextBlock _rootDropLabel = EditorVisuals.Secondary("Drop mesh to add at scene root");
     private readonly TextBox _assetSearch = new() { PlaceholderText = "Search name, path or GUID" };
     private readonly ComboBox _assetTypes = new() { ItemsSource = new[] { "All types", "Mesh", "Texture", "Material", "Scene", "Environment" }, SelectedIndex = 0 };
     private readonly ComboBox _assetSort = new() { ItemsSource = new[] { "Name A–Z", "Name Z–A" }, SelectedIndex = 0 };
@@ -535,6 +545,7 @@ public sealed class MainWindow : Window
             {
                 _leaveCloseApproved = false;
                 _shuttingDown = true;
+                RetireAssetDrop();
                 Shutdown();
                 return;
             }
@@ -592,6 +603,16 @@ public sealed class MainWindow : Window
         actions.Margin = new Thickness(4, 0, 0, 0);
         AddDocked(hierarchy, hierarchyCommands, Avalonia.Controls.Dock.Top);
         AddDocked(hierarchy, structural, Avalonia.Controls.Dock.Top);
+        var assetDropZone = new Border
+        {
+            Background = EditorVisuals.Inset, BorderBrush = EditorVisuals.Line, BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(4), Child = _rootDropLabel, Padding = new Thickness(4, 2),
+        };
+        _rootDropLabel.TextWrapping = TextWrapping.NoWrap;
+        _rootDropLabel.TextTrimming = TextTrimming.CharacterEllipsis;
+        ConfigureAssetDropTarget(assetDropZone, assetDropZone, null);
+        AddDocked(hierarchy, assetDropZone, Dock.Top);
+
         _reparentState.TextWrapping = TextWrapping.Wrap;
         ShowReparentState("");
         AddDocked(hierarchy, _reparentState, Avalonia.Controls.Dock.Top);
@@ -625,6 +646,16 @@ public sealed class MainWindow : Window
             new() { Header = "Assets", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Catalog),
                     Content = BuildAssetsPanel() }
         };
+        // Assets and Inspector share this pane. A valid local drag can reveal
+        // Inspector via its header without making the tab itself a drop target.
+        DragDrop.SetAllowDrop(tabs[0], true);
+        DragDrop.AddDragOverHandler(tabs[0], (_, e) =>
+        {
+            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            _assetTabs.SelectedIndex = 0;
+            e.DragEffects = DragDropEffects.None;
+            e.Handled = true;
+        });
         if (_savedWorkspace is not null)
             tabs.Add(new TabItem { Header = "Saved Scenes", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.File),
                 Content = BuildSavedScenePanel() });
@@ -690,6 +721,7 @@ public sealed class MainWindow : Window
         diagnosticsToggle.IsCheckedChanged += (_, _) => diagnosticPanel.IsVisible = diagnosticsToggle.IsChecked == true;
         var status = EditorVisuals.Bar(EditorVisuals.Columns("*,*,2*,Auto,Auto,Auto",
             _connectionLine, _editLine, _documentLine, _applyLine, _retryApply, statusToggle, diagnosticsToggle));
+
         _connectionLine.Margin = _editLine.Margin = _applyLine.Margin = new Thickness(0, 0, 8, 0);
         var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto,Auto") };
         foreach (Control control in new Control[] { commands, grid, status, statusDetails, diagnosticPanel })
@@ -782,6 +814,7 @@ public sealed class MainWindow : Window
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
         ResetReparent("");
         _reparentDocumentOpen = false;
+        RetireAssetDrop();
         _worker?.Stop();
         _viewportCameraIntent = 0;
         _cameraInitialized = _navigationSupported = _navigationReady = _navigationPending = false;
@@ -907,6 +940,7 @@ public sealed class MainWindow : Window
             ++_saveAsRequest;
             UpdateSaveAsButton();
             if (_addingMesh) _addMeshState.Text = "Add interrupted. Inspect the document on reconnect before retrying.";
+            RetireAssetDrop();
             _addingMesh = false;
             ++_meshRequest;
             if (_duplicating) ShowDuplicateState("Duplicate interrupted. Inspect the document on reconnect before retrying.");
@@ -1050,6 +1084,7 @@ public sealed class MainWindow : Window
                 _saveAsState.Text = "Document reopened. Inspect the destination if the copy was already sent.";
                 UpdateSaveAsButton();
             }
+            RetireAssetDrop();
             _addingMesh = false;
             _addMeshState.Text = "Scene reopened.";
             UpdateAddMeshButton();
@@ -1572,6 +1607,8 @@ public sealed class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        if (_advertisedAssetDrop?.Field is { } field && field.Selection != _selection.Generation)
+            ClearAssetDropFeedback();
         if (_gizmoShown?.Group?.Selection != _selection.Generation) CancelGroupGesture();
         SetGroupControls(_selection.Nodes.Count > 1);
         if (_batchView?.SelectionGeneration != _selection.Generation) ClearBatchInspector();
@@ -2126,6 +2163,12 @@ public sealed class MainWindow : Window
 
         EditorVisuals.ConfigureAssetList(_assetsList);
         AutomationProperties.SetName(_assetsList, "Asset results");
+        _assetsList.AddHandler(PointerPressedEvent, OnAssetPointerPressed, RoutingStrategies.Tunnel);
+        _assetsList.AddHandler(PointerMovedEvent, OnAssetPointerMoved, RoutingStrategies.Tunnel);
+        _assetsList.AddHandler(PointerReleasedEvent, (_, _) => _assetPress = null, RoutingStrategies.Tunnel);
+        _assetsList.AddHandler(PointerCaptureLostEvent, (_, _) => _assetPress = null, RoutingStrategies.Bubble, true);
+        AddHandler(PointerPressedEvent, (_, _) => ++_assetDropInteraction, RoutingStrategies.Tunnel);
+        AddHandler(KeyDownEvent, (_, _) => ++_assetDropInteraction, RoutingStrategies.Tunnel);
         _assetsList.SelectionChanged += (_, _) =>
         {
             if (_assetsSync || _assetsList.SelectedItem is AssetGroupHeader) return;
@@ -2209,6 +2252,164 @@ public sealed class MainWindow : Window
         return panel;
     }
 
+    private void OnAssetPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        _assetPress = null;
+        if (_assetDropPending || _assetDrag is not null || !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
+            e.ClickCount != 1 || HierarchyItem(e.Source) is not { DataContext: AssetSummary row }) return;
+        _assetPress = (row.Guid, e, e.GetPosition(_assetsList));
+    }
+
+    private async void OnAssetPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (_assetPress is not { } press) return;
+        if (e.Pointer != press.Event.Pointer || !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed)
+        {
+            _assetPress = null;
+            return;
+        }
+        var move = e.GetPosition(_assetsList) - press.Position;
+        if (Math.Max(Math.Abs(move.X), Math.Abs(move.Y)) < 5) return;
+        _assetPress = null;
+        if (_assetDropPending || _assetDrag is not null || _referenceSessionFailed || _worker is null ||
+            !_assetBrowser.SelectionVisible || _assetsList.SelectedItem is not AssetSummary asset || asset.Guid != press.Guid) return;
+
+        SettleInspectorBlur();
+        var drag = new AssetDragIntent(asset, _assetBrowser.Items, _meshDocumentLifetime);
+        _assetDrag = drag;
+        var data = new DataTransfer();
+        data.Add(DataTransferItem.Create(AssetDragFormat, drag.Token));
+        try
+        {
+            await DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Copy);
+        }
+        finally
+        {
+            drag.Cancel(onlyUndropped: true);
+            ClearAssetDropFeedback();
+            _assetDropFields.Clear();
+            if (!_assetDropPending && ReferenceEquals(_assetDrag, drag)) _assetDrag = null;
+        }
+    }
+
+    private void RetireAssetDrop()
+    {
+        _assetPress = null;
+        _assetDrag?.Cancel();
+        _assetDrag = null;
+        _assetDropPending = false;
+        _pendingSceneFieldEdits = 0;
+        ++_assetDropRequest;
+        ClearAssetDropFeedback();
+    }
+
+    private void ClearAssetDropFeedback()
+    {
+        if (_assetDropHighlight is { } border) border.BorderBrush = EditorVisuals.Line;
+        _assetDropHighlight = null;
+        _advertisedAssetDrop = null;
+        _rootDropLabel.Text = "Drop mesh to add at scene root";
+        _rootDropLabel.Foreground = EditorVisuals.Muted;
+    }
+
+    private string? AssetDropRefusal(AssetDragIntent drag, AssetDropField? field)
+    {
+        if (_worker is null || drag.Lifetime != _worker.MeshDocumentLifetime || _referenceSessionFailed ||
+            !_assetBrowser.SelectionVisible || _assetBrowser.Selected != drag.Asset.Guid ||
+            !ReferenceEquals(drag.Catalog, _assetBrowser.Items)) return "Asset or document is no longer current.";
+        if (_pendingInspectorBlur is not null || _pendingSceneFieldEdits != 0 || CurrentSceneInput() is not null)
+            return "Finish or cancel the field edit first.";
+        if (_assetDropPending || _leaveInProgress || _referenceBusy || _materialWindow is not null ||
+            _gizmoGrab is not null || _hierarchyDrag is not null) return "Finish the current action first.";
+        if (field is null)
+        {
+            if (!_canAddMeshToDocument) return "Open a hand-authored scene.";
+            if (_addingMesh) return "Mesh addition is already in progress.";
+            return drag.Asset.Type == AssetType.Mesh ? null : "Only meshes can be added at scene root.";
+        }
+        if (_selection.Nodes.Count != 1 || _selection.Generation != field.Selection ||
+            field.Lifetime != drag.Lifetime || _inspectorShown?.AssetDropFields.Contains(field) != true)
+            return "The displayed reference field changed.";
+        return field.Accepts(drag.Asset.Type) ? null : "This field requires " + field.Field.TargetAssetType + ".";
+    }
+
+    private void ConfigureAssetDropTarget(Control surface, Border border, AssetDropField? field)
+    {
+        AutomationProperties.SetName(surface, field is null ? "Drop mesh to add at scene root" : "Drop asset on " + field.Field.Label);
+        DragDrop.SetAllowDrop(surface, true);
+        DragDrop.AddDragOverHandler(surface, (_, e) =>
+        {
+            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            ClearAssetDropFeedback();
+            string? refusal = AssetDropRefusal(drag, field);
+            if (field is not null && !_assetDropFields.TryAdd(field.Field.Address, field) &&
+                _assetDropFields[field.Field.Address] != field)
+                refusal = "The displayed reference field changed.";
+            string description = refusal ?? EditorVisuals.AssetName(drag.Asset) + " → " +
+                (field is null ? "Add mesh at scene root" : field.Field.Label);
+            _assetDropHighlight = border;
+            border.BorderBrush = refusal is null ? EditorVisuals.Focus : EditorVisuals.Error;
+            // Keep feedback in the fixed root-zone strip so it cannot move the drop surface.
+            string? compatibility = refusal is null ? field?.CompatibilityNotice : null;
+            _rootDropLabel.Text = compatibility is null ? description : "Compatibility unverified · " + description;
+            _rootDropLabel.Foreground = refusal is null ? EditorVisuals.Accent : EditorVisuals.Error;
+            AutomationProperties.SetHelpText(surface, compatibility is null ? description : compatibility + " " + description);
+            e.DragEffects = refusal is null ? DragDropEffects.Copy : DragDropEffects.None;
+            if (refusal is null) _advertisedAssetDrop = (surface, field);
+            e.Handled = true;
+        });
+        DragDrop.AddDragLeaveHandler(surface, (_, _) => { if (_assetDropHighlight == border) ClearAssetDropFeedback(); });
+        DragDrop.AddDropHandler(surface, (_, e) =>
+        {
+            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            e.Handled = true;
+            e.DragEffects = DragDropEffects.None;
+            bool advertised = _advertisedAssetDrop is { } target && target.Surface == surface && target.Field == field;
+            ClearAssetDropFeedback();
+            if (!advertised || AssetDropRefusal(drag, field) is not null || _worker is not { } worker || !drag.Queue()) return;
+            e.DragEffects = DragDropEffects.Copy;
+            StartAssetDrop(worker, drag, field);
+        });
+    }
+
+    private void StartAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field)
+    {
+        _assetDropPending = true;
+        ulong request = ++_assetDropRequest, interaction = _assetDropInteraction, selection = _selection.Generation;
+        var focused = FocusManager?.GetFocusedElement();
+        bool root = field is null;
+        if (root)
+        {
+            _addingMesh = true;
+            _addMeshState.Text = "Adding mesh…";
+            UpdateAddMeshButton();
+        }
+        worker.DropAsset(drag, field, (node, edited, notice, finished) =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed || request != _assetDropRequest ||
+                drag.Lifetime != worker.MeshDocumentLifetime) return;
+            bool currentInteraction = interaction == _assetDropInteraction && selection == _selection.Generation;
+            if (root) _addMeshState.Text = notice;
+            else if (currentInteraction) _editLine.Text = notice;
+            if (!finished) return;
+            _assetDropPending = false;
+            if (ReferenceEquals(drag, _assetDrag)) _assetDrag = null;
+            if (root)
+            {
+                _addingMesh = false;
+                UpdateAddMeshButton();
+                if (node is EntityGuid created && currentInteraction &&
+                    _hierarchyRows.Any(row => row.Node == created)) SetSelection(created, true);
+            }
+            if (edited && field is not null && currentInteraction &&
+                !_referenceBusy && _materialWindow is null && ReferenceEquals(focused, FocusManager?.GetFocusedElement()) &&
+                _inspectorShown?.AssetDropFields.Any(current => current.Field.Address == field.Field.Address &&
+                    ReferenceEquals(current.Identity.NodeIdentity, field.Identity.NodeIdentity) &&
+                    ReferenceEquals(current.Identity.ComponentIdentity, field.Identity.ComponentIdentity)) == true)
+                FocusReferenceLauncher(field.Field.Address);
+        });
+    }
+
     private void LoadAssets()
     {
         var worker = _worker; if (worker is null) return;
@@ -2234,6 +2435,12 @@ public sealed class MainWindow : Window
     }
     private void RenderAssets()
     {
+        if (_assetDrag is { } drag && (!_assetBrowser.SelectionVisible || _assetBrowser.Selected != drag.Asset.Guid ||
+            !ReferenceEquals(drag.Catalog, _assetBrowser.Items)))
+        {
+            drag.Cancel();
+            ClearAssetDropFeedback();
+        }
         bool catalogFailed = _assetBrowser.State == nameof(AssetError.CatalogUnavailable);
         _assetsState.Text = catalogFailed
             ? "Catalog unavailable. Restart Runtime after repairing the catalog."
@@ -2336,6 +2543,7 @@ public sealed class MainWindow : Window
     private void OpenMaterial(MaterialMode mode, Button origin)
     {
         if (!origin.IsEnabled || _materialWindow is not null) return;
+        _assetDrag?.Cancel();
         var original = mode == MaterialMode.Create ? null : _selectedMaterial;
         if (mode != MaterialMode.Create && original is null) return;
         var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
@@ -3278,7 +3486,9 @@ public sealed class MainWindow : Window
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
                         DiscardBatchDraft(snapshot);
-                    _batchDraft = (snapshot, field, box.Text ?? "");
+                    string text = box.Text ?? "";
+                    _batchDraft = (snapshot, field, text);
+                    if (text != definition.Text) _assetDrag?.Cancel();
                     ShowDocumentState(_documentState);
                 };
                 void Submit()
@@ -3472,6 +3682,7 @@ public sealed class MainWindow : Window
         if (_referenceBusy || _referenceSessionFailed || worker is null || _selection.Node is not EntityGuid node) return;
         if (sourceSubject != node || _inspectorShown?.Subject != node)
         { _editLine.Text = "choose asset refused: the Inspector target changed"; return; }
+        _assetDrag?.Cancel();
         _referenceBusy = true; _referenceFocus = launchControl; long launch = ++_referenceLaunch;
         _inspectorDeferred = null;
         UpdateReferenceButtons();
@@ -3647,7 +3858,16 @@ public sealed class MainWindow : Window
                 if (box.IsReadOnly || !field.Editable || (box.Text ?? "") == original) return;
                 original = box.Text ?? "";
                 if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
-                _worker?.CommitField(field.Path, original);
+                if (_worker is { } worker)
+                {
+                    ++_pendingSceneFieldEdits;
+                    long lifetime = worker.MeshDocumentLifetime;
+                    worker.CommitField(field.Path, original, () =>
+                    {
+                        if (ReferenceEquals(_worker, worker) && lifetime == worker.MeshDocumentLifetime && _pendingSceneFieldEdits > 0)
+                            --_pendingSceneFieldEdits;
+                    });
+                }
                 ShowDocumentState(_documentState);
             }
             box.KeyDown += (_, e) =>
@@ -3704,6 +3924,19 @@ public sealed class MainWindow : Window
             clear.Click += (_, _) => _worker?.ClearField(field.Path);
             Grid.SetColumn(clear, InspectorModel.CanChooseAsset(field) ? 3 : 2);
             row.Children.Add(clear);
+        }
+        var drop = _inspectorShown?.AssetDropFields.FirstOrDefault(target =>
+            target.Field.Address.Component == field.Component && target.Field.Address.Field == field.Field.Id);
+        if (drop is not null)
+        {
+            var outline = new Border { BorderBrush = EditorVisuals.Line, BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4), IsHitTestVisible = false };
+            outline.ZIndex = 1;
+            Grid.SetColumnSpan(outline, row.ColumnDefinitions.Count);
+            Grid.SetRowSpan(outline, row.RowDefinitions.Count);
+            row.Children.Add(outline);
+            row.Background = Brushes.Transparent;
+            ConfigureAssetDropTarget(row, outline, drop);
         }
         return row;
     }
@@ -3960,6 +4193,7 @@ public sealed class MainWindow : Window
                 (!box.IsFocused && _sceneInput?.Box != box)) return;
             string text = box.Text ?? "";
             _sceneInput = text == baseline() ? null : CaptureInput(box, key, component, field, text);
+            if (_sceneInput is not null) _assetDrag?.Cancel();
             ShowDocumentState(_documentState);
         };
     }
@@ -4019,6 +4253,7 @@ public sealed class MainWindow : Window
     {
         if (_leaveInProgress || _shuttingDown || _savedAttempts.Busy) return;
         _leaveArmed = false;
+        _assetDrag?.Cancel();
         _leaveInProgress = true;
         _pendingInspectorBlur = null;
         var worker = _worker;

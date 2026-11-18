@@ -1,10 +1,10 @@
 # Spec 0115 — Asset Drag and Drop
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-18
 - **Related Plan:** [Plan 0115](../plans/0115-asset-drag-drop.md)
-- **Approval:** Pending joint review
+- **Approval:** J1–J4 jointly approved on revision `c46a4adb`; see [PR #395](https://github.com/slmao/Atlantis/pull/395). No new ADR.
 - **Related ADRs:** None new — see Architectural Impact
 
 ## Summary

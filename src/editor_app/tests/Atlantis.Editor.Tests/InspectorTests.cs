@@ -79,7 +79,9 @@ public static partial class Program
         {
             kind = scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events, plus controlled callback and Gizmo inputs. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
+            boundary = scene is "--asset-drag" or "--asset-drag-compact"
+                ? "Actual 96-DPI Windows MainWindow and Runtime; native mouse drag plus shared document and projection readback."
+                : "Actual Windows MainWindow/worker/native Runtime; Avalonia focus and routed key/button/pointer events, plus controlled callback and Gizmo inputs. No OS scancode injection, UIAutomation, screenshots, timing or performance verdict.",
             runtime = Path.GetFullPath(runtimePath), workDirectory = work,
             passed = checks.Count(c => c.Ok), failed = checks.Count(c => !c.Ok), exitCode = exit, checks,
         };
@@ -116,6 +118,7 @@ public static partial class Program
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool browse = _scene == "--assets-browse";
+                bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
                 bool meshPreview = _scene == "--mesh-preview";
                 bool meshMaterialPreview = _scene == "--mesh-material-preview";
                 bool lostCreation = _scene == "--new-scene-lost-reply";
@@ -125,7 +128,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -155,6 +158,7 @@ public static partial class Program
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
+                        else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
                         else if (meshMaterialPreview) await CheckMeshMaterialPreviewUi(window, _checks, _work);
                         else

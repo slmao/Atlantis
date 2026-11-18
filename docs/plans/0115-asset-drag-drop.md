@@ -1,9 +1,9 @@
 # Plan 0115 — Asset Drag and Drop
 
 - **Spec:** [Spec 0115](../specs/0115-asset-drag-drop.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending, including Spec 0115 and S2–S4 authorization
+- **Joint Human Review:** Human approved J1–J4 and Spec/Plan on `c46a4adb` (no new ADR), authorizing S2–S4 after manual merge of [PR #395](https://github.com/slmao/Atlantis/pull/395) at `b530445c`. Windows 100% native drag and Save/reopen and applicable gates retained.
 
 ## Objective and baseline
 
