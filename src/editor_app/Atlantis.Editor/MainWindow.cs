@@ -2350,9 +2350,10 @@ public sealed class MainWindow : Window
             _assetDropHighlight = border;
             border.BorderBrush = refusal is null ? EditorVisuals.Focus : EditorVisuals.Error;
             // Keep feedback in the fixed root-zone strip so it cannot move the drop surface.
-            _rootDropLabel.Text = description;
+            string? compatibility = refusal is null ? field?.CompatibilityNotice : null;
+            _rootDropLabel.Text = compatibility is null ? description : "Compatibility unverified · " + description;
             _rootDropLabel.Foreground = refusal is null ? EditorVisuals.Accent : EditorVisuals.Error;
-            AutomationProperties.SetHelpText(surface, description);
+            AutomationProperties.SetHelpText(surface, compatibility is null ? description : compatibility + " " + description);
             e.DragEffects = refusal is null ? DragDropEffects.Copy : DragDropEffects.None;
             if (refusal is null) _advertisedAssetDrop = (surface, field);
             e.Handled = true;
@@ -3485,7 +3486,9 @@ public sealed class MainWindow : Window
                     if (_resettingBatchInput || !ReferenceEquals(_batchView, snapshot)) return;
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
                         DiscardBatchDraft(snapshot);
-                    _batchDraft = (snapshot, field, box.Text ?? "");
+                    string text = box.Text ?? "";
+                    _batchDraft = (snapshot, field, text);
+                    if (text != definition.Text) _assetDrag?.Cancel();
                     ShowDocumentState(_documentState);
                 };
                 void Submit()

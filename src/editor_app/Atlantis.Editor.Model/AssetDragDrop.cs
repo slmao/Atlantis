@@ -53,6 +53,9 @@ public sealed class AssetDragIntent(AssetSummary asset, object catalog, long lif
 public sealed record AssetDropField(AssetReferenceTarget Field, BatchPropertyTarget Identity,
     ulong Selection, long Lifetime)
 {
+    public string? CompatibilityNotice => Field.TargetAssetType is null
+        ? "Target type unspecified. Catalog presence does not guarantee compatibility." : null;
+
     public bool Accepts(AssetType type) => Enum.IsDefined(type) &&
         (Field.TargetAssetType is null || Field.TargetAssetType == type);
 

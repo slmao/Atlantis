@@ -37,9 +37,11 @@ public static partial class Program
         var field = new AssetDropField(picker.Target, new BatchPropertyTarget(address, doc.Value,
             tree.IncarnationOf(doc.Node), tree.ComponentIncarnationOf(address), tree.PropertyStamp(address)), 8, 5);
 
-        Check(field.Accepts(AssetType.Material) && !field.Accepts(mesh.Type) &&
-            (field with { Field = field.Field with { TargetAssetType = null } }).Accepts(mesh.Type),
+        var untyped = field with { Field = field.Field with { TargetAssetType = null } };
+        Check(field.Accepts(AssetType.Material) && !field.Accepts(mesh.Type) && untyped.Accepts(mesh.Type),
             "asset drag: typed reference and generic fallback");
+        Check(field.CompatibilityNotice is null && untyped.CompatibilityNotice?.Contains("does not guarantee compatibility") == true,
+            "asset drag: older hosts may use the generic fallback with a compatibility warning");
         Check(field.IsCurrent(tree, 8, 5) && !field.IsCurrent(tree, 10, 5) && !field.IsCurrent(tree, 8, 6),
             "asset drag: away/back selection and reopen expire display");
         tree.Apply(new Atlantis.Gameplay.Authoring.PropertyChanged(address, PropertyValue.FromAsset(mesh.Guid)), doc);

@@ -1594,6 +1594,14 @@ public sealed class EditorWorker : IDisposable
             return SameDocument();
         }
 
+        void RefuseTarget(string reason)
+        {
+            Report(null, false, "Drop refused: " + reason);
+            // The guard consumed events without refreshing the view. Publish
+            // the current field so the next gesture can bind a fresh target.
+            if (target is not null) PostInspector();
+        }
+
         EntityGuid? node = target is null ? new EntityGuid(Guid.NewGuid()) : null;
         object subject = (object?)target?.Field.Address ?? node!.Value;
         bool sent = false, committed = false, recorded = false;
@@ -1625,7 +1633,7 @@ public sealed class EditorWorker : IDisposable
 
             if (!Observe() || !Ready())
             {
-                Report(null, false, "Drop refused: the document or displayed target changed.");
+                RefuseTarget("the document or displayed target changed.");
                 return;
             }
 
@@ -1636,7 +1644,7 @@ public sealed class EditorWorker : IDisposable
                 var field = AssetReferencePicker.CurrentField(inspector, target.Field);
                 if (field is null)
                 {
-                    Report(null, false, "Drop refused: the reference field changed or cannot be read.");
+                    RefuseTarget("the reference field changed or cannot be read.");
                     return;
                 }
                 plan = inspector.Commit(field.Path, drag.Asset.Guid.ToString());
@@ -1659,7 +1667,7 @@ public sealed class EditorWorker : IDisposable
             if (!Observe() || !Ready() ||
                 (target is null && plan.Commands.FirstOrDefault() is CreateNode create && create.Position != (ulong)_tree.Count))
             {
-                Report(null, false, "Drop refused: the document or displayed target changed.");
+                RefuseTarget("the document or displayed target changed.");
                 return;
             }
 
@@ -1672,7 +1680,7 @@ public sealed class EditorWorker : IDisposable
                     sent = true;
                     return session.Send("authoring.submitTransaction", parameters);
                 }) : null;
-            if (request is null) { Report(null, false, "Drop expired before sending."); return; }
+            if (request is null) { RefuseTarget("the drop expired before sending."); return; }
 
             var ticket = RemoteAuthoringDocument.ReadSentTransaction(session, request.Value);
             var failures = document.DrainFailures().Where(failure => ticket.Contains(failure.Ticket)).ToArray();
@@ -1717,32 +1725,45 @@ public sealed class EditorWorker : IDisposable
             // Refresh can fail independently; publish the verified outcome first.
             string notice = node is EntityGuid added ? $"Added {added}." : "Assigned " + target!.Field.Label + ".";
             Report(null, false, notice, finished: false);
-            bool applying = false;
             try
             {
-                if (!Observe(refresh: true))
+                try
                 {
-                    apply.RequireExplicitApply("document unavailable after asset drop");
-                    PostApplyState(lifetime);
-                    return;
+                    if (!Observe(refresh: true))
+                    {
+                        if (SameDocument())
+                        {
+                            apply.RequireExplicitApply("document unavailable after asset drop");
+                            PostApplyState(lifetime, refreshOverlay: false);
+                        }
+                        return;
+                    }
+                    PostInspector();
                 }
-                PostInspector();
-                if (SameDocument())
+                catch (Exception error) when (error is GameplayException or IOException)
                 {
-                    applying = true;
+                    if (SameDocument())
+                    {
+                        apply.RequireExplicitApply("document refresh failed after asset drop");
+                        PostApplyState(lifetime, refreshOverlay: false);
+                    }
+                    throw;
+                }
+
+                if (!SameDocument()) return;
+                try
+                {
                     apply.AfterLocalEdit(true);
-                    PostApplyState(lifetime);
                 }
-            }
-            catch (Exception error) when (error is GameplayException or IOException)
-            {
-                if (SameDocument())
+                catch (Exception error) when (error is GameplayException or IOException)
                 {
-                    if (applying) apply.LostApplyAcceptance();
-                    else apply.RequireExplicitApply("document refresh failed after asset drop");
+                    apply.LostApplyAcceptance();
                     PostApplyState(lifetime, refreshOverlay: false);
+                    throw;
                 }
-                throw;
+                // This can also refresh the overlay. Failure there must not
+                // reclassify an already accepted Apply receipt.
+                PostApplyState(lifetime);
             }
             finally { Report(node, true, notice); }
         }

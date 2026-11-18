@@ -278,7 +278,8 @@ public static partial class Program
     // selected mutation/reply is changed; the shared Runtime settles all calls.
     private static int RunAssetDragReceipts(string executable, string scene, string scenario)
     {
-        if (scenario is not ("refused" or "lost-submit" or "lost-apply" or "retry-apply")) return 2;
+        if (scenario is not ("refused" or "lost-submit" or "lost-apply" or "retry-apply" or
+            "batch-draft" or "stale-target" or "accepted-apply-overlay-loss")) return 2;
         string work = RuntimeProcess.NewWorkDirectory();
         using var runtime = RuntimeProcess.Start(new RuntimeLaunch(Path.GetFullPath(executable), scene, null, work));
         SessionInfo host = runtime.WaitForSession(TimeSpan.FromSeconds(25));
@@ -292,6 +293,7 @@ public static partial class Program
         int submits = 0, applies = 0;
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ApplyReceipt? acceptedApply = null;
         Task relay = Relay();
         try
         {
@@ -324,6 +326,8 @@ public static partial class Program
             {
                 JsonValue request = Json.Parse(text);
                 string method = request.Find("method")!.AsString;
+                if (scenario == "accepted-apply-overlay-loss" && acceptedApply is not null &&
+                    method == "control.setViewportOverlay") return;
                 if (method == "authoring.submitTransaction")
                 {
                     Interlocked.Increment(ref submits);
@@ -352,6 +356,14 @@ public static partial class Program
                 }
                 await forward.WriteLineAsync(text.AsMemory(), token);
                 string reply = await read.ReadLineAsync(token) ?? throw new IOException("Runtime closed the relay");
+                if (method == "assets.get" && scenario is "batch-draft" or "stale-target")
+                {
+                    held.TrySetResult();
+                    await release.Task.WaitAsync(token);
+                }
+                if (method == "authoring.applyTracked" && scenario == "accepted-apply-overlay-loss" &&
+                    Json.Parse(reply).Find("result")?.Find("ok") is JsonValue ok)
+                    acceptedApply = Codec.DecodeApplyReceipt(ok) ?? throw new InvalidOperationException("Expected an accepted receipt.");
                 if (method == "authoring.submitTransaction" && scenario == "lost-submit") return;
                 if (method == "authoring.applyTracked" && scenario == "lost-apply")
                 {
@@ -370,12 +382,84 @@ public static partial class Program
             int count = observer.Authoring.ListNodes().Value.Count;
             var catalog = observer.Assets.ListAssets().Value;
             var worker = Field<EditorWorker>("_worker");
-            var drag = new AssetDragIntent(catalog.First(a => a.Type == AssetType.Mesh), catalog, worker.MeshDocumentLifetime);
-            drag.Queue();
-            typeof(MainWindow).GetMethod("StartAssetDrop", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                .Invoke(window, new object?[] { worker, drag, null });
+            const System.Reflection.BindingFlags instancePrivate =
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+            object? Call(string name, params object?[] parameters) =>
+                typeof(MainWindow).GetMethod(name, instancePrivate)!.Invoke(window, parameters);
+            void Queue(AssetSummary asset, AssetDropField? target = null)
+            {
+                var drag = new AssetDragIntent(asset, catalog, worker.MeshDocumentLifetime);
+                drag.Queue();
+                typeof(MainWindow).GetField("_assetDrag", instancePrivate)!.SetValue(window, drag);
+                Call("StartAssetDrop", worker, drag, target);
+            }
+            var mesh = catalog.First(a => a.Type == AssetType.Mesh);
             var feedback = Field<TextBlock>("_addMeshState");
             var undo = Field<Button>("_undo");
+            var line = Field<TextBlock>("_applyLine");
+
+            if (scenario == "batch-draft")
+            {
+                Field<Selection>("_selection").Set(Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows")
+                    .Take(2).Select(row => row.Node).ToArray());
+                Call("PublishSelection", false);
+                const string key = "Transform.localPosition";
+                await NameUiWait(() => Field<Dictionary<string, TextBox>>("_batchInputs").TryGetValue(key, out var box) &&
+                    box.IsEnabled, "editable multi-selection Inspector");
+                Queue(mesh);
+                await held.Task.WaitAsync(deadline.Token);
+                var input = Field<Dictionary<string, TextBox>>("_batchInputs")[key];
+                input.Text = input.Text == "1 2 3" ? "3 2 1" : "1 2 3";
+                if (Call("CurrentSceneInput") is null) throw new InvalidOperationException("Expected a live batch draft.");
+                release.TrySetResult();
+                await NameUiWait(() => !Equals(typeof(MainWindow).GetField("_assetDropPending", instancePrivate)!.GetValue(window),
+                    true), "cancelled root drop settles");
+                if (submits != 0 || applies != 0 || undo.IsEnabled ||
+                    observer.Authoring.ListNodes().Value.Count != count || Call("CurrentSceneInput") is null)
+                    throw new InvalidOperationException("The new batch draft did not cancel the queued root drop.");
+                Console.WriteLine("PASS batch-draft: input retained; no submit, history or Apply; work=" + work);
+                return;
+            }
+            if (scenario == "stale-target")
+            {
+                var doc = new RemoteAuthoringDocument(observer.Authoring, observer);
+                var address = doc.ListNodes().Select(node => SceneSchema.AddressOf(doc.Schema, node.Node,
+                    "Renderable", "materialAsset")).OfType<SceneAddress>().First(address => doc.GetProperty(address) is not null);
+                Call("SetSelection", address.Node, false);
+                AssetDropField? Displayed() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.AssetDropFields
+                    .FirstOrDefault(field => field.Field.Address == address);
+                await NameUiWait(() => Displayed() is not null, "initial Inspector reference");
+                var target = Displayed()!;
+                var materials = catalog.Where(asset => asset.Type == AssetType.Material &&
+                    PropertyValue.FromAsset(asset.Guid) != target.Field.Before).Take(2).ToArray();
+                Queue(materials[1], target);
+                await held.Task.WaitAsync(deadline.Token);
+                var value = PropertyValue.FromAsset(materials[0].Guid);
+                var external = doc.SubmitTransaction([new Atlantis.Gameplay.Authoring.SetProperty(address, value)]);
+                if (doc.DrainFailures().Any(failure => external.Contains(failure.Ticket)) || doc.GetProperty(address) != value)
+                    throw new InvalidOperationException("External reference update refused.");
+                release.TrySetResult();
+                await NameUiWait(() => Field<TextBlock>("_editLine").Text?.StartsWith("Drop refused:") == true, "stale target refused");
+                await NameUiWait(() => Displayed()?.Field.Before == value, "Inspector republishes the external value after refusal", 5);
+                if (submits != 0 || applies != 0 || undo.IsEnabled)
+                    throw new InvalidOperationException("Stale target sent a mutation or recorded local history.");
+                Console.WriteLine("PASS stale-target: external value republished without submit, history or Apply; work=" + work);
+                return;
+            }
+
+            Queue(mesh);
+            if (scenario == "accepted-apply-overlay-loss")
+            {
+                await NameUiWait(() => Field<TextBlock>("_connectionLine").Text?.StartsWith("session failed") == true,
+                    "post-Apply overlay connection loss");
+                var receipt = acceptedApply ?? throw new InvalidOperationException("The relay never received a valid Apply receipt.");
+                if (line.Text?.Contains(receipt.Id.ToString()) != true || line.Text.Contains("reply lost") ||
+                    !undo.IsEnabled || feedback.Text?.StartsWith("Added ") != true || submits != 1 || applies != 1 ||
+                    observer.Authoring.ApplyStatus(receipt.Id).Value?.Request?.Receipt != receipt)
+                    throw new InvalidOperationException("A verified Apply receipt was reclassified: " + line.Text);
+                Console.WriteLine("PASS accepted-apply-overlay-loss: committed history and accepted receipt retained; work=" + work);
+                return;
+            }
             if (scenario == "lost-apply")
             {
                 await held.Task.WaitAsync(deadline.Token);
@@ -386,7 +470,6 @@ public static partial class Program
             else if (scenario == "retry-apply")
             {
                 var retry = Field<Button>("_retryApply");
-                var line = Field<TextBlock>("_applyLine");
                 await NameUiWait(() => undo.IsEnabled && retry.IsEnabled && line.Text?.Contains("CookFailed") == true,
                     "known edit with failed Apply acceptance");
                 if (Volatile.Read(ref applies) != 1 || observer.Authoring.ApplyStatus().Value!.Request is not null)
