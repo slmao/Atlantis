@@ -49,18 +49,30 @@ public static partial class Program
         string size = compact ? "compact" : "standard";
         var initial = doc.ListNodes().Select(n => n.Node).ToHashSet();
 
-        async Task<ListBoxItem> Source(AssetSummary asset)
+        async Task<ListBoxItem> Source(AssetSummary asset, bool filtered = true)
         {
-            Field<TextBox>("_assetSearch").Text = asset.Guid.ToString();
+            Field<TextBox>("_assetSearch").Text = filtered ? asset.Guid.ToString() : "";
             var list = Field<ListBox>("_assetsList");
             await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(a => a.Guid == asset.Guid), "find asset by GUID");
-            list.ScrollIntoView(list.Items.OfType<AssetSummary>().Single());
+            list.ScrollIntoView(list.Items.OfType<AssetSummary>().Single(a => a.Guid == asset.Guid));
             await NameUiWait(() => list.GetVisualDescendants().OfType<ListBoxItem>().Any(Row), "realized asset row");
             return list.GetVisualDescendants().OfType<ListBoxItem>().Single(Row);
             bool Row(ListBoxItem item) => item is { DataContext: AssetSummary a, IsVisible: true } && a.Guid == asset.Guid;
         }
 
-        async Task NativeDrag(Control source, Func<Control> resolveTarget, string capture, bool escape = false, bool viaInspector = false)
+        async Task<TaskCompletionSource> HoldWorker()
+        {
+            var worker = Field<EditorWorker>("_worker");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            typeof(EditorWorker).GetMethod("Enqueue", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(worker, new object[] { (Action<RemoteSession>)(_ => { entered.SetResult(); release.Task.GetAwaiter().GetResult(); }) });
+            try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            catch { release.TrySetResult(); throw; }
+            return release;
+        }
+
+        async Task NativeDrag(Control source, Func<Control> resolveTarget, string capture, bool escape = false, bool viaInspector = false, bool filtered = true)
         {
             var tabs = Field<TabControl>("_assetTabs");
             var tab = tabs.Items.OfType<TabItem>().First();
@@ -71,7 +83,7 @@ public static partial class Program
             var to = Center(resolveTarget());
             if (viaInspector) tabs.SelectedIndex = 1;
             var asset = (AssetSummary)((ListBoxItem)source).DataContext!;
-            source = await Source(asset);
+            source = await Source(asset, filtered);
             source.BringIntoView();
             await Task.Delay(220);
             var from = Center(source);
@@ -149,7 +161,11 @@ public static partial class Program
             CheckHere("Escape leaves root, history and document unchanged", doc.ListNodes().Count == initial.Count &&
                 !Field<Button>("_undo").IsEnabled);
 
-            await NativeDrag(await Source(mesh), () => root, "root-copy");
+            var scrolled = await Source(mesh, filtered: false);
+            var assetList = Field<ListBox>("_assetsList");
+            CheckHere("source realized by scrolling the virtualized catalog", assetList.ItemCount > 1000 &&
+                assetList.GetVisualDescendants().OfType<ListBoxItem>().Count() < assetList.ItemCount);
+            await NativeDrag(scrolled, () => root, "root-copy", filtered: false);
             await NameUiWait(() => Field<TextBlock>("_addMeshState").Text?.StartsWith("Added ") == true, "root drop settlement");
             var added = doc.ListNodes().Single(n => !initial.Contains(n.Node));
             var meshAddress = SceneSchema.AddressOf(doc.Schema, added.Node, "Renderable", "meshAsset")!.Value;
@@ -171,14 +187,40 @@ public static partial class Program
             Control MaterialRow() => InspectorRow(window, "Renderable.materialAsset");
             if (!compact)
             {
+                // Route a real focus change before dragging. Its ordinary
+                // field commit owns the draft while the worker is busy.
+                var tabs = Field<TabControl>("_assetTabs");
+                tabs.SelectedIndex = 0;
+                var input = InspectorRow(window, "Transform.localPosition").GetVisualDescendants().OfType<TextBox>().First();
+                input.BringIntoView();
+                await Task.Delay(150);
+                if (!input.Focus()) throw new InvalidOperationException("Transform draft could not take focus.");
+                input.Text = "0.125 0 0";
+                var releaseBlur = await HoldWorker();
+                try
+                {
+                    Field<Button>("_save").Focus();
+                    var pendingEdits = typeof(MainWindow).GetField("_pendingSceneFieldEdits",
+                        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+                    await NameUiWait(() => (int)pendingEdits.GetValue(window)! == 1, "ordinary focus-loss write pending");
+                    tabs.SelectedIndex = 1;
+                    await NativeDrag(await Source(mesh), () => root, "pending-draft");
+                    CheckHere("draft settlement blocks native drop without consuming ordinary field edit",
+                        doc.ListNodes().Count == initial.Count + 1 &&
+                        !typeof(MainWindow).GetField("_assetDropPending",
+                            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(window)!.Equals(true));
+                    releaseBlur.SetResult();
+                    await NameUiWait(() => (int)pendingEdits.GetValue(window)! == 0, "ordinary field edit settles independently");
+                    CheckHere("normal focus-loss commit retains its exact input", TransformMath.LocalOf(doc, added.Node).Position.X == 0.125f);
+                }
+                finally { releaseBlur.TrySetResult(); }
+            }
+
+            if (!compact)
+            {
                 // Hold the worker before lookup, then make the source invisible and
                 // restore the filter. The native gesture already handed off a drop.
-                var worker = Field<EditorWorker>("_worker");
-                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                typeof(EditorWorker).GetMethod("Enqueue", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-                    .Invoke(worker, new object[] { (Action<RemoteSession>)(_ => { entered.SetResult(); release.Task.GetAwaiter().GetResult(); }) });
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(8));
+                var release = await HoldWorker();
                 try
                 {
                     var beforeDrop = doc.ApplyStatus().Value!;
@@ -202,6 +244,8 @@ public static partial class Program
             await NativeDrag(await Source(material), MaterialRow, "reference-copy", viaInspector: true);
             await NameUiWait(() => doc.GetProperty(materialAddress)?.Equals(PropertyValue.FromAsset(material.Guid)) == true, "reference drop");
             await NameUiWait(() => Field<TextBlock>("_editLine").Text?.StartsWith("Assigned ") == true, "verified reference history");
+            await NameUiWait(() => window.FocusManager?.GetFocusedElement() is Button { DataContext: SceneAddress address }
+                && address == materialAddress, "focus returns to the current reference launcher");
             Click(Field<Button>("_undo"));
             await NameUiWait(() => doc.GetProperty(materialAddress)?.IsAbsent == true && Field<Button>("_redo").IsEnabled, "reference Undo");
             Click(Field<Button>("_redo"));
