@@ -58,17 +58,20 @@ not authority. Reject tokens from another window/process, files, unknown
 formats, old drags and replayed completed tokens. Use Copy feedback, never
 Move; assets themselves are unchanged.
 
-Invalidate before admission if source becomes deselected, hidden or missing,
-Reload begins, connection/worker changes, or the window/document is closed
-or reopened. Pure sorting/grouping with the same eligible GUID and catalog
-does not cancel. Virtualization does not change the captured GUID. Escape,
-release outside a valid target, cancelled/completed drag and shutdown clear
-feedback and unadmitted state. Unexpected pointer capture loss before the
-framework drag handoff cancels; the normal native drag capture transfer does
-not cancel an otherwise valid gesture. Each intent admits at most one drop.
-None of hover, cancellation or rejection sends an edit, writes history,
-requests Apply or changes a preview. Independently completed normal
-focus-loss edits are not rolled back by cancelling the drag (R3).
+Until send, sticky-invalidate the intent if its source becomes deselected,
+hidden or missing, Reload begins, the connection/worker changes, or the
+window/document closes or reopens. Restoration of the same GUID does not
+revive it. Sorting/grouping with the same eligible GUID and accepted catalog
+and row virtualization do not themselves invalidate it. Escape, release
+outside a target, unexpected capture loss before native drag handoff, and
+native cancellation clear hover and cancel an undropped gesture. Normal
+native capture transfer is not cancellation. A valid Drop consumes the
+payload once and queues one intent; successful native drag completion
+clears hover but does not cancel that queued intent. An Escape consumed by
+the drag handler before send cancels; do not repurpose Escape after the
+native gesture or let it interrupt settlement (R5). Hover, cancellation
+and local refusal do not send an edit, write history or request Apply.
+An independently completed focus-loss edit is not rolled back (R3).
 
 ### R2 — Targets, feedback and final checks
 
@@ -80,19 +83,23 @@ targets have a no-drop cursor and a short reason. Do not use color alone.
 Hover is provisional, not a promise of successful commit. Do not synchronously
 query Runtime on every pointer move or fetch details/PNG to enable a drop.
 
-Capture the advertised destination's displayed values and incarnation, not
-just its control reference. On drop, recheck the same source intent and
-destination. In queued worker work, poll events, refresh the target and
-query shared assets.get for the captured GUID/type. After all awaited or
-blocking work, recheck cancellation, selection intent, document lifetime,
-node/component incarnation and eligibility immediately before sending.
-An observed destroy/recreate with the same node GUID is a different target;
-component removal/re-addition, changed value, selection-away-and-back or
-same-path reopen also expires the captured destination. Do not recapture a
-new target to make a stale drop succeed. UI disposal/recycling must not
-redirect the request. Only the owning current request can show feedback or
-restore focus. Rejection identifies the reason and leaves the document,
-history and Runtime projection untouched by this gesture.
+Bind hover and Drop to the worker-published identity of the displayed
+snapshot, instead of deriving target identity from the current control or
+resolving it afresh on the worker. If the displayed row cannot be verified,
+refuse it and allow a fresh gesture after refresh. In queued worker work,
+query shared assets.get for the captured GUID/type, consume authoring events
+and refresh the target. After all lookups and transaction preparation,
+recheck the source intent, document lifetime, draft/edit/busy state and
+applicable destination guards at the existing serialized send boundary.
+For Inspector this includes the captured selection intent, address, node
+and component incarnations, Before value/presence and observed property
+change stamp. Observed destroy/recreate of the same node GUID, component
+remove/re-add, a field change even if restored, selection-away-and-back or
+same-path reopen expires the target. For root add, guard the document and
+root-add eligibility; Hierarchy selection is not part of that intent.
+Neither UI recycling nor a late callback can redirect the edit. A refusal
+reports its reason in the current view; it changes no document, history
+or Runtime projection through the drop.
 
 Current catalog membership/type is the evidence of asset identity; a
 published inactive generation is unavailable. A missing/broken cooked
@@ -108,19 +115,24 @@ single-selection scene Inspector: writable, readable primitive AssetGuid
 with AssetReference metadata, including an optional field whose value is
 absent. No hard-coded mesh/material field allow-list. Shared targetAssetType
 is authoritative when present and must match the catalog type. An omitted
-annotation retains the chooser's generic behavior and warning; malformed
-schema is an error, not an unconstrained field. Type agreement does not
-prove complete asset-combination compatibility. Multi-selection, disabled
-or unreadable fields and an open chooser/material modal are ineligible.
+annotation retains the chooser's generic behavior and warning, including
+with an older host that omits metadata. Require a recognized catalog type
+matching the captured row even in this case. Malformed schema is an error,
+not an unconstrained field. Type agreement does not prove complete asset
+combination compatibility. Multi-selection, disabled or unreadable fields
+and an open chooser/material modal are ineligible.
 
-Entering a target does not focus it, select another scene node, edit text
-or discard a draft. The source pointer press may already have caused an
-ordinary LostFocus commit; it retains its own history and must settle and
-refresh the Inspector before a drop can be advertised. If an unsubmitted,
-invalid or stale copy-only document draft remains, or its commit is still
-pending, reject the drop with “Finish or cancel the field edit first”. Do
-not silently discard text, revive a cancelled value or bypass 0112's stale
-input/leave confirmation. No second LostFocus commit may duplicate the drop.
+Entering either target does not focus it, select a scene node, edit text
+or discard input. The source pointer press may already have caused an
+ordinary LostFocus commit; settle that edit independently and reflect its
+verified document value before advertising a drop. Pending Runtime Apply
+alone is not a pending field edit; retain the existing Apply policy. If an
+unsubmitted or invalid draft remains or its commit is still pending, refuse
+with “Finish or cancel the field edit first”. A new draft before send also
+expires the drop. An already-invalidated 0112 copy-only record is not an
+editable draft: preserve it for inspection and copy and keep the existing
+leave confirmation. A drop must not send that stale value, erase the text,
+or cause a second LostFocus write.
 
 Capture the displayed scene address, target type, Before value, document
 open lifetime, node/component incarnation and selection intent for the
@@ -160,10 +172,10 @@ selection, select the created node with existing Add to Scene behavior and,
 if hidden by the current Hierarchy filter, use its existing hidden-selection
 notice/Locate selection rather than implying the node was not created.
 
-Capture and invoke the existing AddMesh plan/worker settlement with the
-explicit captured mesh and document lifetime. Share its duplicate admission
-gate, feedback ownership and settlement with the Add to Scene button; neither
-entry may bypass an in-flight operation or overwrite its result. Create one
+Use the existing AddMesh plan and history with the explicit captured mesh
+and document lifetime. Share the Add to Scene button's admission gate and
+feedback ownership; neither entry may bypass an in-flight add or overwrite
+its result. The drag's pre-send guards do not change button eligibility. Create one
 fresh EntityGuid at root in the existing append document position, unnamed,
 with origin position, zero rotation, unit scale and absent optional material
 (Runtime fallback). One atomic create-plus-mesh transaction and one structural
@@ -172,19 +184,24 @@ No camera placement, world ray query or dependency-based material inference.
 
 ### R5 — Settlement, recovery and persistence
 
-Admission ends the drag's cancellation phase. Later filtering, selection
-changes or Escape must not discard settlement of a request already sent;
-follow the existing worker/document/request guards. Publish verified history
-before UI refresh, retaining Apply as its own correlated result. Transaction
-refusal creates no edit/history/Apply; a confirmed commit retains its history
-even if Runtime reload fails. Keep the last successful Runtime projection
-and use the existing suspended controller and explicit Apply/Retry policy;
-recovery reapplies the current document, never replays the drop.
+A queued Drop can still be refused before send (R1–R3). Once the guarded
+send begins, later view changes may suppress gesture feedback, selection or
+focus, but cannot abandon settlement in the owning document. For both targets,
+use the existing submit/ticket/failure settlement without pipelining Apply.
+Associate drained failures with the submitted ticket range and verify the
+committed edit in its owning document. A transaction refusal creates no
+edit/history/Apply. Publish verified history before the post-edit UI refresh
+and before requesting Apply. If history cannot be verified, report that
+separately; do not fabricate it or automatically Apply an unverified edit.
+Keep Apply correlated independently and retain verified history if Runtime
+reload fails. Keep the last successful Runtime projection and use the
+existing suspended controller and explicit Apply/Retry policy; recovery
+reapplies the current document, never replays the drop.
 
 Distinguish a proved unsent request from a possibly submitted transaction
-with no receipt. In the latter case show result unknown and the scene address
-or attempted created GUID; direct the user to inspect on reconnect before
-retrying. If commit was verified and only Apply's receipt is lost, retain
+with a missing or unusable receipt. In the latter case show result unknown
+and the scene address or attempted created GUID; direct the user to inspect
+on reconnect before retrying. If commit was verified and only Apply's receipt is lost, retain
 that commit/history and report only the projection result as unknown. No
 automatic retry. Do not replace known history with guessed rollback. Old
 callbacks cannot select/focus a target in another document or overwrite a
@@ -193,7 +210,9 @@ newer operation's feedback. Preserve the original transport error handling.
 Saving remains explicit through the existing hand-authored scene contract.
 After Save/reopen on the same active generation retain exact asset/node
 GUIDs, hierarchy, transform and optional material presence; reopen clears
-local history under the current policy. Other clients can perform these
+local history under the current policy. A reopened authoring document is
+not proof that Runtime reloaded it; use the existing explicit Apply when
+needed to verify the reopened projection. Other clients can perform these
 same assignments/creations through existing shared queries and transactions;
 there is no drag-specific engine command or serialized scene field.
 
