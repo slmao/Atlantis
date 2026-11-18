@@ -1,11 +1,11 @@
 # Spec 0116 — Reimport a Registered Base Color Texture
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-19
 - **Related Plan:** [Plan 0116](../plans/0116-registered-texture-reimport.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0167](../adr/0167-managed-texture-source-replacement.md) (Proposed)
+- **Approval:** Joint J1–J4 approval on `e2d5f5ab`, [PR #397](https://github.com/slmao/Atlantis/pull/397); design manually merged at `b25b3350`.
+- **Related ADR:** [ADR-0167](../adr/0167-managed-texture-source-replacement.md) (Accepted)
 
 ## Summary
 

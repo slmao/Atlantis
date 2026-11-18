@@ -1,9 +1,9 @@
 # Plan 0116 — Reimport a Registered Base Color Texture
 
 - **Spec:** [Spec 0116](../specs/0116-registered-texture-reimport.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending, including [ADR-0167](../adr/0167-managed-texture-source-replacement.md) and S2–S4 authorization
+- **Joint Human Review:** J1–J4 and [ADR-0167](../adr/0167-managed-texture-source-replacement.md) approved on `e2d5f5ab` in [PR #397](https://github.com/slmao/Atlantis/pull/397). S2–S4 authorized after manual merge `b25b3350`, retaining Windows 100% success and invalid/corrected retry, and the existing gates.
 
 ## Objective and baseline
 

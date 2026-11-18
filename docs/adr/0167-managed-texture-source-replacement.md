@@ -1,9 +1,9 @@
 # ADR 0167: Replace a Managed PNG With Its Existing Identity
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-19
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, [PR #397](https://github.com/slmao/Atlantis/pull/397) at `e2d5f5ab`. Design merged as `b25b3350`.
 - **Related Spec:** [Spec 0116](../specs/0116-registered-texture-reimport.md)
 
 ## Context
