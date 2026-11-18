@@ -79,9 +79,8 @@ public sealed class AssetReferencePicker
         Submitted = true;
         SelectionChanged(selection);
         if (Refusal is string reason) return EditPlan.Refused(label, reason);
-        InspectorField? field = inspector.Fields.FirstOrDefault(f => f.Component == Target.Address.Component && f.Field.Id == Target.Address.Field);
-        if (inspector.Subject != Target.Address.Node || field is null || !InspectorModel.CanChooseAsset(field) ||
-            field.Field.TargetAssetType != Target.TargetAssetType || !field.Value!.Value.Equals(Target.Before))
+        InspectorField? field = CurrentField(inspector, Target);
+        if (field is null)
         {
             Invalidate("the target changed or cannot be read");
             return EditPlan.Refused(label, Refusal!);
@@ -91,4 +90,12 @@ public sealed class AssetReferencePicker
             return EditPlan.Refused(label, "the asset is not eligible in the displayed list");
         return inspector.Commit(field.Path, candidate.ToString());
     }
+
+    public static InspectorField? CurrentField(InspectorModel inspector, AssetReferenceTarget target)
+    {
+        var field = inspector.Fields.FirstOrDefault(f => f.Component == target.Address.Component && f.Field.Id == target.Address.Field);
+        return inspector.Subject == target.Address.Node && field is not null && InspectorModel.CanChooseAsset(field) &&
+            field.Field.TargetAssetType == target.TargetAssetType && field.Value!.Value.Equals(target.Before) ? field : null;
+    }
+
 }

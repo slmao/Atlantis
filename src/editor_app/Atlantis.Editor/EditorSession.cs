@@ -260,7 +260,10 @@ public sealed class RuntimeWorldPreview : IWorldPreview
 /// <summary>The Inspector as the worker last read it: the subject's fields, its components and the ones it could add.</summary>
 public sealed record InspectorSnapshot(EntityGuid? Subject, IReadOnlyList<InspectorField> Fields,
                                        IReadOnlyList<(TypeId Id, string Name)> Components, IReadOnlyList<(TypeId Id, string Name)> Addable,
-                                       string Name = "");
+                                       string Name = "")
+{
+    public IReadOnlyList<AssetDropField> AssetDropFields { get; init; } = Array.Empty<AssetDropField>();
+}
 
 public sealed class ReparentSource
 {
@@ -1553,7 +1556,8 @@ public sealed class EditorWorker : IDisposable
     }
 
     /// <summary>Plan 0068 M3 (Spec 0068 R4): a field's text committed as one transaction (then an apply), or its refusal shown.</summary>
-    public void CommitField(string path, string text) => Edit(document => (_inspector!.Commit(path, text), null));
+    public void CommitField(string path, string text, Action? settled = null) =>
+        Edit(document => (_inspector!.Commit(path, text), null), settled is null ? null : () => _post(settled));
 
     /// <summary>A name draft commits only while its selection and last observed value are current.</summary>
     public void CommitName(EntityGuid node, string before, string name) =>
@@ -1566,6 +1570,189 @@ public sealed class EditorWorker : IDisposable
 
     public void AddComponent(TypeId component, HierarchyRow? row = null) =>
         Edit(document => (_inspector!.AddComponent(component), null), protectStructure: true, row: row);
+
+    public void DropAsset(AssetDragIntent drag, AssetDropField? target,
+        Action<EntityGuid?, bool, string, bool> settled) => Enqueue(session =>
+    {
+        long lifetime = drag.Lifetime;
+        bool SameDocument() => lifetime == MeshDocumentLifetime;
+        bool Ready() => !_stopping && SameDocument() && !_gizmoActive && _gizmo?.Dragging != true &&
+            (target is null || target.IsCurrent(_tree, _requestedSelectionGeneration, lifetime));
+        void Report(EntityGuid? created, bool edited, string text, bool finished = true) =>
+            _post(() => { if (SameDocument()) settled(created, edited, text, finished); });
+        if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
+        {
+            Report(null, false, "Drop refused: no authoring document.");
+            return;
+        }
+
+        bool Observe(bool refresh = false)
+        {
+            if (!SameDocument() || document.ObserveEvents() is not { } events) return false;
+            PollDocument(session, events, pollApply: false, refreshInspector: refresh,
+                refreshOverlay: refresh, refreshHierarchy: refresh);
+            return SameDocument();
+        }
+
+        EntityGuid? node = target is null ? new EntityGuid(Guid.NewGuid()) : null;
+        object subject = (object?)target?.Field.Address ?? node!.Value;
+        bool sent = false, committed = false, recorded = false;
+        void Unverified(bool disconnected = false)
+        {
+            // Outcome reporting must not depend on an overlay refresh on
+            // the connection that just lost the transaction reply.
+            Report(null, false, committed
+                ? $"Drop committed for {subject}. History unavailable; inspect and Apply the current document explicitly."
+                : $"Drop outcome unknown for {subject}. Confirm the previous request ended and inspect the document before retrying.");
+            if (SameDocument())
+            {
+                apply.RequireExplicitApply("asset drop could not be verified");
+                if (committed) _history?.DiscardRedo();
+                PostHistory(lifetime);
+                PostApplyState(lifetime, refreshOverlay: !disconnected);
+            }
+        }
+
+        try
+        {
+            var result = session.Assets.GetAsset(drag.Asset.Guid);
+            if (!result.IsOk || result.Value is not { } details || details.Guid != drag.Asset.Guid ||
+                details.Type != drag.Asset.Type || (target is null ? details.Type != AssetType.Mesh : !target.Accepts(details.Type)))
+            {
+                Report(null, false, "Drop refused: the asset is unavailable or has the wrong type.");
+                return;
+            }
+
+            if (!Observe() || !Ready())
+            {
+                Report(null, false, "Drop refused: the document or displayed target changed.");
+                return;
+            }
+
+            EditPlan plan;
+            if (target is not null && _inspector is { } inspector)
+            {
+                inspector.Refresh(target.Field.Address.Node);
+                var field = AssetReferencePicker.CurrentField(inspector, target.Field);
+                if (field is null)
+                {
+                    Report(null, false, "Drop refused: the reference field changed or cannot be read.");
+                    return;
+                }
+                plan = inspector.Commit(field.Path, drag.Asset.Guid.ToString());
+            }
+            else if (node is EntityGuid add && document.Info()?.Provenance == Provenance.HandAuthored)
+                plan = HierarchyCommands.AddMesh(document.Schema, (ulong)_tree.Count, add, drag.Asset.Guid);
+            else
+            {
+                Report(null, false, "Drop refused: open a compatible authoring document.");
+                return;
+            }
+
+            if (plan.Refusal is "unchanged")
+            {
+                Report(null, false, "The reference is unchanged.");
+                return;
+            }
+            if (plan.Refusal is { } refusal) { Report(null, false, "Drop refused: " + refusal); return; }
+            var parameters = RemoteAuthoringDocument.EncodeTransaction(plan.Commands);
+            if (!Observe() || !Ready() ||
+                (target is null && plan.Commands.FirstOrDefault() is CreateNode create && create.Position != (ulong)_tree.Count))
+            {
+                Report(null, false, "Drop refused: the document or displayed target changed.");
+                return;
+            }
+
+            // The chooser uses the same edit plan, but drop must verify the
+            // transaction before it can request a Runtime reload.
+            ulong? request;
+            lock (_lock)
+                request = Ready() ? drag.Send(() =>
+                {
+                    sent = true;
+                    return session.Send("authoring.submitTransaction", parameters);
+                }) : null;
+            if (request is null) { Report(null, false, "Drop expired before sending."); return; }
+
+            var ticket = RemoteAuthoringDocument.ReadSentTransaction(session, request.Value);
+            var failures = document.DrainFailures().Where(failure => ticket.Contains(failure.Ticket)).ToArray();
+            if (ticket.Count != (ulong)plan.Commands.Count ||
+                ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
+            {
+                Unverified();
+                return;
+            }
+            if (failures.Length != 0) { Report(null, false, "Drop refused: " + failures[0].Error); return; }
+            committed = true;
+
+            if (!Observe()) { Unverified(); return; }
+            EditTransaction? historyEdit = null;
+            if (target is not null && plan.Commands is [SetProperty write] &&
+                target.Identity.IsCurrent(_tree, checkStamp: false))
+            {
+                var stamp = _tree.PropertyStamp(write.Address);
+                if (document.GetProperties(new[] {write.Address}) is [PropertyValue actual] &&
+                    actual.Equals(write.Value) && Observe() && ReferenceEquals(stamp, _tree.PropertyStamp(write.Address)) &&
+                    target.Identity.IsCurrent(_tree, checkStamp: false))
+                    historyEdit = new EditTransaction(plan.Label,
+                        new[] { new PropertyWrite(write.Address, target.Field.Before, write.Value) });
+            }
+            else if (node is EntityGuid created && _tree.IncarnationOf(created) is { } identity)
+            {
+                var state = new DocumentView(document, _tree).ReadNode(created);
+                if (Observe() && ReferenceEquals(identity, _tree.IncarnationOf(created)))
+                    historyEdit = HierarchyCommands.AddedMeshHistory(document.Schema, state, drag.Asset.Guid);
+            }
+
+            if (historyEdit is null || _history is not { } history || _historyTarget is not { } historyTarget)
+            {
+                Unverified();
+                return;
+            }
+
+            history.Record(historyEdit, historyTarget.Committed(failures));
+            history.Update();
+            recorded = true;
+            PostHistory(lifetime);
+            // Refresh can fail independently; publish the verified outcome first.
+            string notice = node is EntityGuid added ? $"Added {added}." : "Assigned " + target!.Field.Label + ".";
+            Report(null, false, notice, finished: false);
+            bool applying = false;
+            try
+            {
+                if (!Observe(refresh: true))
+                {
+                    apply.RequireExplicitApply("document unavailable after asset drop");
+                    PostApplyState(lifetime);
+                    return;
+                }
+                PostInspector();
+                if (SameDocument())
+                {
+                    applying = true;
+                    apply.AfterLocalEdit(true);
+                    PostApplyState(lifetime);
+                }
+            }
+            catch (Exception error) when (error is GameplayException or IOException)
+            {
+                if (SameDocument())
+                {
+                    if (applying) apply.LostApplyAcceptance();
+                    else apply.RequireExplicitApply("document refresh failed after asset drop");
+                    PostApplyState(lifetime, refreshOverlay: false);
+                }
+                throw;
+            }
+            finally { Report(node, true, notice); }
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            if (sent && !recorded) Unverified(disconnected: true);
+            else if (!sent) Report(null, false, "Drop refused before sending: " + error.Message);
+            throw;
+        }
+    });
 
     public void AddMesh(AssetGuid mesh, long lifetime, Action<EntityGuid?, string> settled) => Enqueue(session =>
     {
@@ -3238,7 +3425,7 @@ public sealed class EditorWorker : IDisposable
     // The apply state line: the controller's text, with the play note appended while the Runtime plays.
     private const string PlayNote = " · playing: an apply replaces the scene, gameplay clients' changes included";
 
-    private void PostApplyState(long? lifetime = null)
+    private void PostApplyState(long? lifetime = null, bool refreshOverlay = true)
     {
         if (_apply is null) return;
         bool canApply = _apply.CanApply, canPreview = _apply.CanPreview;
@@ -3266,7 +3453,7 @@ public sealed class EditorWorker : IDisposable
             _log.Write("apply: " + text);
             _post(() => { if (lifetime is null || lifetime == MeshDocumentLifetime) ApplyStateChanged?.Invoke(status, text); });
         }
-        if (controlsChanged && _previewSession is RemoteSession session) SendOverlay(session);
+        if (refreshOverlay && controlsChanged && _previewSession is RemoteSession session) SendOverlay(session);
     }
 
     // Re-reads the selected node's components and fields (on this thread) and posts them.
@@ -3293,7 +3480,22 @@ public sealed class EditorWorker : IDisposable
                                              _inspector.Components.Select(c => (c, SceneSchema.NameOf(schema, c))).ToList(),
                                              _inspector.Addable().Select(t => (t.Id, t.ShortName)).ToList(),
                                              subject is EntityGuid named ? _tree.NameOf(named) : "");
-        _post(() => InspectorChanged?.Invoke(snapshot));
+        long displayedLifetime = MeshDocumentLifetime;
+        if (subject is EntityGuid node)
+        {
+            var dropFields = new List<AssetDropField>();
+            foreach (var field in snapshot.Fields)
+            {
+                if (AssetReferencePicker.Capture(0, node, field, snapshot.Fields) is not { } picker) continue;
+                var address = picker.Target.Address;
+                dropFields.Add(new AssetDropField(picker.Target,
+                    new BatchPropertyTarget(address, field.Value, _tree.IncarnationOf(node),
+                        _tree.ComponentIncarnationOf(address), _tree.PropertyStamp(address)),
+                    _selectionGeneration, displayedLifetime));
+            }
+            snapshot = snapshot with { AssetDropFields = dropFields };
+        }
+        _post(() => { if (displayedLifetime == MeshDocumentLifetime) InspectorChanged?.Invoke(snapshot); });
     }
 
     private void PostHierarchy(RemoteSession session, bool refreshOverlay = true)

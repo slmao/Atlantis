@@ -41,6 +41,7 @@ public static partial class Program
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
         bool hierarchyFilterRace = false;
+        string? assetDropReceipt = null;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
@@ -49,11 +50,14 @@ public static partial class Program
             else if (args[i] == "--scene-object-ui") sceneObjectUi = true;
             else if (args[i] == "--drop-apply-reply") dropApplyReply = true;
             else if (args[i] == "--guide-captures") guideCaptures = true;
+            else if (args[i] == "--asset-drop-receipt" && i + 1 < args.Length) assetDropReceipt = args[++i];
             else if (args[i] == "--hierarchy-filter-race") hierarchyFilterRace = true;
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
         }
+        if (assetDropReceipt is not null)
+            return runtime is null ? Usage() : RunAssetDragReceipts(runtime, scene, assetDropReceipt);
         if (sceneObjectUi)
             return runtime is null ? Usage() : RunSceneObjectUi(runtime, scene, dropApplyReply);
         if (guideCaptures)
@@ -100,6 +104,7 @@ public static partial class Program
             InspectorChecks();
             AssetBrowserChecks();
             AssetReferencePickerChecks();
+            AssetDragDropChecks();
             SavedSceneChecks();
             SavedSceneCMakeChecks();
             // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
