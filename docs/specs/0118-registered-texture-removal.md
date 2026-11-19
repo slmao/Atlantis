@@ -29,18 +29,27 @@ stored label that must be settled with the registration.
 
 Support one 0095 managed `source.png` texture in a Windows development
 Runtime attached to a named generation that matches the trusted managed
-project's committed state. Resolve its GUID, role, canonical logical key, original
-registration fragment and sealed PNG against the active producer view.
-Use the generation and GUID as inputs; derive paths and the original
+project's committed state. Use the ordinary managed build profile. A
+selected saved-slot build or an unverified producer configuration is
+ineligible for removal. Resolve its GUID, role, canonical logical key,
+original registration fragment and sealed PNG against the active producer view.
+The registration unit must be an ordinary directory containing exactly
+the canonical PNG, seal and fragment. Unexpected entries block removal.
+Use the generation and GUID as inputs. Derive paths and the original
 registration token on the host. Require the existing managed write
-authorization and workspace admission. Refuse seed-only and out-of-date
-snapshots for removal; they remain selectable for use.
+authorization and workspace ownership. The check can report a blocker
+even if the reviewed material sources differ from the active view.
+Only a confirmable verdict and mutation require full agreement with
+committed state. Seed-only and out-of-date snapshots remain usable for
+reading.
 
 Remove the sealed registration unit, its effective catalog entry and any
 0117 name override for that GUID. Preserve the original
 `inbox/<name>/source.png` byte for byte when present. A missing inbox PNG
-does not by itself prevent removal of a valid sealed registration. Keep
-other registrations, material recipes, bindings and prior named
+does not by itself prevent removal of a valid sealed registration. Reject
+an inbox path that cannot be proved separate from the unit and job paths,
+including aliases through junctions or hard links. Keep other
+registrations, material recipes, bindings and prior named
 generations intact. A later explicit Register from the kept inbox is a
 new registration with a new GUID. No reference is rebound automatically.
 
@@ -65,7 +74,9 @@ the host cannot account for all reference-bearing inputs. If a known
 reference is found before an incomplete scan stops, show it and mark the
 diagnostic list incomplete. Display an unused verdict only after the
 complete check. Bound the list and distinguish its truncation from an
-incomplete proof.
+incomplete proof. A safely established reference takes precedence over
+an incomplete or stale verdict. Readable evidence of a newer recipe may
+explain refusal even when that newer recipe could never authorize a write.
 
 The proof covers the one managed project and its declared build inputs.
 Previously published generations are self-contained. Other checkouts,
@@ -79,11 +90,12 @@ claim complete coverage.
 
 The host returns a short-lived check ID for the GUID, generation and
 checked inputs. After a complete unused verdict, require explicit
-confirmation with that ID. The worker takes the managed writer locks and
-revalidates the reviewed state before starting the candidate build and
-again before any registration or name-map change. Refuse a changed
-snapshot, registration, source set or checked source bytes, even if a new
-check might also find no references. Return `StaleCheck` at admission or
+confirmation with that ID. The host verifies the existing writer ownership
+and admits one work item. The worker revalidates the reviewed state before
+starting the candidate build and again before any registration or name-map
+change. Refuse a changed snapshot, registration, source set or checked
+source bytes, even if a new check might also find no references. Return
+`StaleCheck` at admission or
 settle the admitted job as `Validation/IdentityChanged` with stale-check
 guidance. Expired, consumed and foreign check IDs require another check.
 A fresh check and explicit confirmation are required for retry.

@@ -33,7 +33,7 @@ reference checks, safe publication and shared client access.
 
 | Files | Purpose |
 | --- | --- |
-| `cmake/AtlantisManagedImports.cmake` | Verify the supported producer roster and accept the private, exact one-texture omission for a candidate build. Keep ordinary configure and saved-scene builds on their existing paths. |
+| `cmake/AtlantisManagedImports.cmake` | Reuse ordinary configure to verify the current producer roster, accept the private one-texture omission and preserve the selected saved-slot refusal. |
 | `src/runtime/{asset_rebuild_host.cpp,asset_rebuild_host.h,asset_host.cpp,asset_host.h}` | Worker check, source reconciliation, confirmation, candidate validation, and joint registry/name-map recovery. |
 | `src/connection/include/atlantis/connection/asset_connection.h`, `src/connection/src/asset_connection.cpp`, `src/remote/src/{codec.h,codec.cpp,remote_client.cpp,remote_server.cpp}`, `src/remote/include/atlantis/remote/remote_client.h` | Shared calls, bounded receipt/readback and additive transport. |
 | `src/cli/src/{command_layer.cpp,invocation.cpp}`, `src/gameplay_sdk/include/atlantis/gameplay/assets.h`, `src/csharp/Atlantis.Gameplay/Assets.cs`, `src/csharp/Atlantis.Gameplay/Remote/{AssetCodec.cs,AssetSession.cs}` | Shared check/confirm commands and client facades. |
@@ -52,10 +52,10 @@ file-list adjustments under the reviewed scope rule.
 
 | Decision | Recommendation |
 | --- | --- |
-| **J1 — Scope and references** | Remove one registered sRGB PNG from a matching named-generation workspace. Keep the original inbox PNG. Require the complete source proof and refuse catalog edges, source-only references or incomplete coverage (R1–R2). |
-| **J2 — Confirmation and settlement** | Bind confirmation to the exact checked sources under existing writer locks. Build with a one-texture omission, settle the sealed unit and name override with publication, and hold uncertain cases for repair (R3). |
-| **J3 — Shared UX and compatibility** | Use a single bounded asynchronous check receipt, explicit confirm and existing job status across all clients. Require restart to observe published removal (R3–R4). |
-| **J4 — Verification and authorization** | Keep Windows 100% workflows and existing applicable gates. Approve a single S2–S4 execution after joint approval, ADR acceptance and manual design merge. |
+| **J1 — Scope and references** | Recommend approval. Limit removal to one registered sRGB PNG under the ordinary managed profile. Keep the original PNG. Require the current unmasked producer graph and authoritative references; refuse known edges or incomplete coverage (R1–R2). |
+| **J2 — Confirmation and settlement** | Recommend approval. Bind confirmation to exact checked inputs, build with a one-texture omission, and settle the sealed unit, name override and temporary selector with publication. Hold ambiguous workspaces for repair (R3). |
+| **J3 — Shared UX and compatibility** | Recommend approval. Use one host-scoped, expiring check receipt, explicit confirmation and existing job status across all clients. Activate by explicit restart (R3–R4). |
+| **J4 — Verification and authorization** | Recommend approval. Keep both Windows 100% paths and existing applicable gates. Authorize one S2–S4 execution after joint approval, ADR acceptance and manual design merge. |
 
 Suggested authorization after joint review and the design merge. Execute
 S2–S4 from latest main, including scoped fixes, applicable verification,
@@ -65,22 +65,29 @@ Final merge remains with the maintainer.
 ## Verification
 
 - [ ] **R1–R2 — Scope and complete proof.** Refuse ineligible role,
-  profile, seed, historical snapshot and mismatched sealed identity.
-  Cover a current catalog edge, a source-only base color or emissive edge
-  in a material outside the current scene, and a generated material
-  edge. Show that a material used only by a different saved scene still
-  blocks removal. Test malformed, unreadable, unaccounted, stale generated,
-  and over-budget inputs. A proof or blocker-list limit cannot produce a
-  Ready result when coverage was incomplete.
+  selected saved-slot profile, seed, historical snapshot and mismatched
+  sealed identity. Cover a catalog edge, a source-only managed recipe
+  edge hidden by stale cooked/staging evidence, and a case with fresh
+  importer evidence. Include base color and emissive. Show that a
+  material used only by a different saved scene still blocks removal.
+  Detect a current declaration or producer absent from the frozen
+  inventory. Test malformed, unreadable, missing, duplicate, stale
+  generated and over-budget inputs. Preserve a known blocker when
+  another input is incomplete. Cover an unexpected file in the
+  registered unit, a proven absent inbox, and an inbox alias to the
+  registered unit.
 - [ ] **R3 — Confirm and publish.** Change the contents of a checked recipe
   without adding an edge, add a reference-bearing input after review, and
-  add a reference after admission but before commit. Require stale refusal
-  and no registry, name or named generation change. Check receipt expiry,
-  consumption, supersession and cross-host refusal. Validate the exact
-  catalog delta, surviving edges/files and name-map bytes. Exercise
-  deadline, proven rollback, damaged prepared/final evidence, uncertain
-  publication, and verified success with failed cleanup. Inspect backup,
-  markers, post-restart write refusal and prior-generation readability.
+  add a reference after admission but before commit. Include a byte
+  change with the original timestamp. Require stale refusal and no
+  registry, name or named generation change. Check receipt expiry,
+  single admission on repeated confirmation, supersession and cross-host
+  refusal. Validate the exact catalog delta, surviving edges/files and
+  name-map bytes. Exercise deadline, rollback between the unit move and
+  name-map update, damaged prepared/final evidence, uncertain publication,
+  and verified success with failed cleanup. Check selector restoration
+  on refusal and rollback, and verify an unprovable reset retains evidence
+  and blocks writes after restart. Confirm prior-generation readability.
 - [ ] **R4 — Shared contract.** Verify old client/new host behavior, explicit
   Unsupported on old hosts, codec/vector parity and bounded typed results.
   Use separate authorized CLI/MCP connections for check and confirm.
@@ -98,9 +105,11 @@ Final merge remains with the maintainer.
 - [ ] **R2, R4 — Windows 100% referenced refusal.** Attempt removal of
   a registered texture bound to a material. Verify the blocking material
   is shown and confirmation is unavailable. Compare registry bytes,
-  material binding and preview on the same mesh before and after refusal.
-  Verify no new named generation and preserve the usable binding on
-  restart. Run the Vulkan validation layers for the live checks.
+  name map and original inbox hash before and after refusal. Use the
+  same material and mesh to verify the binding and preview are unchanged.
+  Verify no new named generation and restart the original generation
+  with the same usable binding and preview. Run the Vulkan validation
+  layers for both live paths.
 - [ ] **Existing gates.** Build and run affected Runtime, asset pipeline,
   Editor and shared client checks. Assess native shared compilation and
   golden applicability using the final inputs. Use `--gate --applies`
