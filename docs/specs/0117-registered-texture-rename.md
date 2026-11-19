@@ -1,11 +1,11 @@
 # Spec 0117 — Rename a Registered Base Color Texture
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-19
 - **Related Plan:** [Plan 0117](../plans/0117-registered-texture-rename.md)
-- **Approval:** Pending joint Spec/Plan review.
-- **Related ADR:** [ADR-0168](../adr/0168-generation-scoped-asset-display-names.md) (Proposed)
+- **Approval:** Joint J1–J4 approval at `10c8eea8`, [PR #399](https://github.com/slmao/Atlantis/pull/399), manually merged as `342d6587`.
+- **Related ADR:** [ADR-0168](../adr/0168-generation-scoped-asset-display-names.md) (Accepted)
 
 ## Summary
 
