@@ -29,6 +29,7 @@ class AssetRebuildHost {
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeMaterialPublication{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTexturePreparation{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeTexturePublication{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTextureBackup{};
 #endif
   };
 

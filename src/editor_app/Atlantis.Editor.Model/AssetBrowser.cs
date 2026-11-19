@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Assets;
+using Atlantis.Gameplay.Remote;
 
 namespace Atlantis.Editor.Model;
 
@@ -13,6 +14,9 @@ public sealed class AssetDetailIntent
     public bool Current => _current;
     internal void Cancel() => _current = false;
 }
+
+public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates, AssetDetailIntent Intent);
+public sealed record AssetDependentResult(IReadOnlyList<AssetSummary> Matches, bool Complete);
 
 /// <summary>UI-free local view of a fixed server snapshot. Caller-thread only;
 /// request counters are local callback guards, not catalog revisions.</summary>
@@ -68,6 +72,52 @@ public sealed class AssetBrowser
         ? _items.Count == 0 ? "Catalog empty" : _visible.Count == 0 ? "No matching assets" : $"{_visible.Count} of {_items.Count} assets"
         : State;
 
+    public AssetDependentScan? DependentScan { get; private set; }
+    public AssetDependentResult? DependentResult { get; private set; }
+
+    public static string? RegisteredColorName(AssetSummary? asset)
+    {
+        const string prefix = "content:texture_", suffix = "/source.png";
+        if (asset?.Type != AssetType.Texture || !asset.Source.StartsWith(prefix, StringComparison.Ordinal) ||
+            !asset.Source.EndsWith(suffix, StringComparison.Ordinal) || asset.Source.Length <= prefix.Length + suffix.Length)
+            return null;
+        string name = asset.Source[prefix.Length..^suffix.Length];
+        return Codec.ValidImportName(name) ? name : null;
+    }
+
+    public AssetDependentScan? BeginDependents()
+    {
+        if (!SelectionVisible || DependentScan is not null || Selected is not AssetGuid guid ||
+            RegisteredColorName(_items.FirstOrDefault(item => item.Guid == guid)) is null) return null;
+        DependentResult = null;
+        var materials = _items.Where(item => item.Type == AssetType.Material)
+            .DistinctBy(item => item.Guid).OrderBy(item => item.Source, StringComparer.Ordinal)
+            .ThenBy(item => item.Guid.ToString(), StringComparer.Ordinal).ToArray();
+        return DependentScan = new(guid, materials, new());
+    }
+
+    public bool CompleteDependents(AssetDependentScan scan, AssetDependentResult result)
+    {
+        if (!ReferenceEquals(scan, DependentScan) || !scan.Intent.Current || !SelectionVisible ||
+            Selected != scan.Texture) return false;
+        scan.Intent.Cancel();
+        DependentScan = null;
+        DependentResult = result;
+        return true;
+    }
+
+    public void CancelPendingDependents()
+    {
+        if (DependentScan is not null) InvalidateDependents();
+    }
+
+    private void InvalidateDependents()
+    {
+        DependentScan?.Intent.Cancel();
+        DependentScan = null;
+        DependentResult = null;
+    }
+
     private void InvalidateDetail()
     {
         ++_detailRequest;
@@ -87,11 +137,16 @@ public sealed class AssetBrowser
         _visible = ordered.Select(key => key.Asset).ToArray();
         _visibleIds = _visible.Select(asset => asset.Guid).ToHashSet();
         _rows = AssetBrowseProjection.Rows(ordered, _group);
-        if (!SelectionVisible) InvalidateDetail();
+        if (!SelectionVisible)
+        {
+            InvalidateDetail();
+            InvalidateDependents();
+        }
     }
 
     public long BeginList()
     {
+        InvalidateDependents();
         InvalidateDetail();
         State = "Loading";
         return ++_listRequest;
@@ -111,6 +166,7 @@ public sealed class AssetBrowser
 
     public long Select(AssetGuid guid)
     {
+        if (Selected != guid) InvalidateDependents();
         InvalidateDetail();
         Selected = guid;
         if (SelectionVisible)
@@ -123,6 +179,7 @@ public sealed class AssetBrowser
 
     public void ClearSelection()
     {
+        InvalidateDependents();
         InvalidateDetail();
         Selected = null;
     }

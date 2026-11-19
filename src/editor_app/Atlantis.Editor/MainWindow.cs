@@ -282,6 +282,9 @@ public sealed class MainWindow : Window
     private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
+    private readonly TextBlock _reimportInput = EditorVisuals.Secondary("");
+    private readonly Button _affectedMaterials = new() { Content = "View affected materials", IsVisible = false };
+    private readonly TextBlock _affectedMaterialsState = EditorVisuals.Details("");
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
     private readonly TextBox _importName = new() { PlaceholderText = "Inbox name (without .gltf)" };
     private readonly Button _importRegister = new() { Content = "Register and publish", IsEnabled = false };
@@ -672,6 +675,11 @@ public sealed class MainWindow : Window
                 QueryMaterial();
                 foreach (var state in _textureImports) QueryTexture(state);
             }
+            else
+            {
+                _assetBrowser.CancelPendingDependents();
+                UpdateAffectedMaterials();
+            }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
 
@@ -954,7 +962,9 @@ public sealed class MainWindow : Window
             UpdateImportButtons();
             _rebuildPoll.Stop();
             if (_rebuildPending || _rebuildRunning)
-                _rebuildState.Text = _rebuildJob is RebuildId job ? $"Rebuild {job} outcome unknown." : "Rebuild admission unknown.";
+                _rebuildState.Text = _rebuildJob is RebuildId job
+                    ? $"Rebuild {job} outcome unknown. Check its status before retrying."
+                    : "Rebuild admission unknown. Inspect the latest job before retrying; it may belong to another client.";
             _rebuildPending = _rebuildRunning = false;
             UpdateRebuildButtons();
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
@@ -2197,6 +2207,7 @@ public sealed class MainWindow : Window
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
         _rebuildStart.Click += (_, _) => StartAssetRebuild();
+        _affectedMaterials.Click += (_, _) => ViewAffectedMaterials();
         _rebuildRefresh.Click += (_, _) => ReadRebuildStatus();
         _rebuildPoll.Tick += (_, _) => ReadRebuildStatus();
         _importName.TextChanged += (_, _) => UpdateImportButtons();
@@ -2228,7 +2239,9 @@ public sealed class MainWindow : Window
             EditorVisuals.Actions(_newMaterial, _copyMaterial, _editMaterial),
             EditorVisuals.Actions(_materialRefresh, _materialResume), _materialState), expanded: true);
         var body = EditorVisuals.Stack(7, _assetsList, selected, material,
-            EditorVisuals.Disclosure("Rebuild", EditorVisuals.Actions(_rebuildStart, _rebuildRefresh)),
+            EditorVisuals.Disclosure("Rebuild / Reimport", EditorVisuals.Stack(5,
+                EditorVisuals.Actions(_rebuildStart, _rebuildRefresh), _reimportInput, _affectedMaterials,
+                new ScrollViewer { Content = _affectedMaterialsState, MaxHeight = 190 })),
             _rebuildState,
             EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
                 EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
@@ -3250,6 +3263,38 @@ public sealed class MainWindow : Window
         _rebuildStart.IsEnabled = available && !_rebuildRunning && _assetBrowser.State == "Ready" &&
                                   _assetsList.SelectedItem is AssetSummary;
         _rebuildRefresh.IsEnabled = available;
+        string? name = _assetBrowser.SelectionVisible
+            ? AssetBrowser.RegisteredColorName(_assetsList.SelectedItem as AssetSummary) : null;
+        _rebuildStart.Content = name is null ? "Rebuild selected" : "Reimport PNG";
+        _reimportInput.IsVisible = name is not null;
+        _reimportInput.Text = name is null ? "" : "Update inbox/" + name +
+            "/source.png in the configured project. Use the active named generation.";
+        UpdateAffectedMaterials();
+    }
+
+    private void UpdateAffectedMaterials()
+    {
+        bool eligible = _assetBrowser.SelectionVisible &&
+            AssetBrowser.RegisteredColorName(_assetsList.SelectedItem as AssetSummary) is not null;
+        _affectedMaterials.IsVisible = eligible;
+        _affectedMaterials.IsEnabled = eligible && _worker is not null && !_referenceSessionFailed &&
+            _assetBrowser.DependentScan is null;
+        _affectedMaterialsState.Text = _assetBrowser.DependentScan is not null ? "Checking current catalog material dependencies…" :
+            _assetBrowser.DependentResult is not { } result ? "" :
+            (result.Complete ? (result.Matches.Count == 0 ? "Complete: no direct material references." : "Complete: direct material references") :
+                "Incomplete: some material details could not be checked.") +
+            string.Concat(result.Matches.Select(asset => "\n" + EditorVisuals.AssetName(asset) + " · " + asset.Source + " · " + asset.Guid));
+    }
+
+    private void ViewAffectedMaterials()
+    {
+        if (!_affectedMaterials.IsEnabled || _worker is not { } worker || _assetBrowser.BeginDependents() is not { } scan) return;
+        UpdateAffectedMaterials();
+        worker.ReadAffectedMaterials(scan, result =>
+        {
+            if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDependents(scan, result))
+                UpdateAffectedMaterials();
+        });
     }
 
     private void StartAssetRebuild()
@@ -3264,7 +3309,17 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
             _rebuildPending = false;
             if (result.IsOk) ShowRebuild(result.Value!);
-            else _rebuildState.Text = "Rebuild refused: " + result.Error;
+            else
+            {
+                string guidance = AssetBrowser.RegisteredColorName(selected) is null ? "" : result.Error switch
+                {
+                    RebuildError.Unavailable => " Check the managed profile and activate the latest committed generation.",
+                    RebuildError.UnsupportedProducer => " Use an active named generation and a Runtime that supports this registered color texture.",
+                    RebuildError.WorkspaceNeedsRepair => " Keep using the previous generation and inspect the workspace offline.",
+                    _ => "",
+                };
+                _rebuildState.Text = "Rebuild refused: " + result.Error + "." + guidance;
+            }
             UpdateRebuildButtons();
         });
     }

@@ -48,6 +48,15 @@ constexpr unsigned char kLinearPng[] = {
       0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
 const std::string_view kLinearPngBytes{reinterpret_cast<const char*>(kLinearPng), sizeof(kLinearPng)};
 
+constexpr unsigned char kReplacementPng[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+    0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+    0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+    0x9c, 0x63, 0x10, 0xd9, 0x68, 0xff, 0x1f, 0x00, 0x03, 0xe5, 0x02, 0x04, 0x76, 0x96,
+    0xf2, 0x73, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+};
+const std::string_view kReplacementBytes{reinterpret_cast<const char*>(kReplacementPng), sizeof(kReplacementPng)};
+
 struct Fixture {
   static inline std::atomic<unsigned> next = 0;
   fs::path base = fs::temp_directory_path() / ("atlantis-rebuild-test-" + std::to_string(GetCurrentProcessId()) +
@@ -649,15 +658,15 @@ TEST_CASE("material edit and Resume verify the prepared and published generation
   }
 }
 
-TEST_CASE("linear texture import validates frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
+TEST_CASE("managed texture import and replacement validate frozen inventory and original fragment at settlement", "[runtime][asset-texture]") {
   Fixture f;
   const auto project = f.base / "project";
   const auto registered = project / "registered";
   const auto inbox = project / "inbox/sample/source.png";
   const fs::path inventory = "assets/producers-Debug.txt";
   using TextureKind = AssetRebuildHost::TextureKind;
-  const auto kind = GENERATE(TextureKind::Normal, TextureKind::MetallicRoughness, TextureKind::Occlusion);
-  const std::string leaf = kind == TextureKind::Occlusion ? "occlusion.png" :
+  const auto kind = GENERATE(TextureKind::Color, TextureKind::Normal, TextureKind::MetallicRoughness, TextureKind::Occlusion);
+  const std::string leaf = kind == TextureKind::Color ? "source.png" : kind == TextureKind::Occlusion ? "occlusion.png" :
       kind == TextureKind::MetallicRoughness ? "metallic-roughness.png" : "normal.png";
   CAPTURE(leaf);
   REQUIRE(fs::create_directories(registered));
@@ -683,6 +692,10 @@ set(frozen "${CMAKE_CURRENT_BINARY_DIR}/assets/managed-texture-sources")
 set(asset "${CMAKE_CURRENT_BINARY_DIR}/assets/texture_sample")
 file(READ "leaf.txt" leaf)
 set(key "texture_sample/${leaf}")
+set(color unorm)
+if(leaf STREQUAL "source.png")
+  set(color srgb)
+endif()
 file(MAKE_DIRECTORY "${frozen}/texture_sample")
 file(COPY_FILE "${project}/${pending}/${leaf}" "${frozen}/${key}")
 file(STRINGS "${project}/${pending}/catalog-source.txt" fragment)
@@ -695,7 +708,7 @@ file(WRITE "assets/managed-catalog-source.txt"
      "atlantis_asset_catalog_source_version: 1\nentry_count: 2\n${material}\n${texture}\n")
 file(READ "${CMAKE_CURRENT_LIST_DIR}/seed/assets/producers-Debug.txt" inventory)
 execute_process(COMMAND "${cooker}" --kind=texture "--source=${frozen}/${key}" "--asset-root=${frozen}"
-  "--output-dir=${CMAKE_CURRENT_BINARY_DIR}/assets" "--stamp=${asset}.stamp" --color-space=unorm
+  "--output-dir=${CMAKE_CURRENT_BINARY_DIR}/assets" "--stamp=${asset}.stamp" "--color-space=${color}"
   "--catalog-source=${CMAKE_CURRENT_BINARY_DIR}/assets/managed-catalog-source.txt" "--catalog-id=content:${key}"
   COMMAND_ERROR_IS_FATAL ANY)
 file(STRINGS "${asset}.atex.catalog.txt" texture_catalog REGEX "^record:")
@@ -725,6 +738,19 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
   auto code = ca::ImportFailureCode::InvalidOutput;
   bool moved = false;
   bool succeeds = false;
+  enum class Replacement { None, InvalidRetry, Frozen, Tamper, Exchange, PublishRefused, Unknown, Confirmed };
+  Replacement reimport = Replacement::None;
+  SECTION("registered color texture replacement") {
+    if (kind != TextureKind::Color) return;
+    succeeds = true;
+    SECTION("invalid input preserves the old registration and allows a corrected retry") { reimport = Replacement::InvalidRetry; }
+    SECTION("inbox edits after the snapshot do not affect the intended publication") { reimport = Replacement::Frozen; }
+    SECTION("frozen evidence tamper fails before the unit is exchanged") { reimport = Replacement::Tamper; }
+    SECTION("failed source placement restores the backup before permitting retry") { reimport = Replacement::Exchange; }
+    SECTION("definitely unpublished with a blocked rename restores the old unit") { reimport = Replacement::PublishRefused; }
+    SECTION("a damaged final destination remains unknown and holds the workspace") { reimport = Replacement::Unknown; }
+    SECTION("an intact destination proves publication even after an uncertain move") { reimport = Replacement::Confirmed; }
+  }
   SECTION("unchanged inputs publish and activate") { succeeds = true; }
   SECTION("changed prepared header refuses both renames") {
     config.afterTexturePreparation = [&](const fs::path& dir, const fs::path&) { changeHeader(dir); };
@@ -776,11 +802,114 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     CHECK(read(registered / "texture_sample" / leaf) == kLinearPngBytes);
     const auto wrong = kind == TextureKind::Normal ? TextureKind::Occlusion : TextureKind::Normal;
     CHECK(opened.value()->textureImportStatus(admission.value().id, wrong).error() == ca::ImportError::UnknownJob);
+    const auto previousGeneration = *job.generation;
+    REQUIRE(job.rootGuid);
+    const auto target = *job.rootGuid;
+    const auto oldRoot = f.published / as::toString(previousGeneration.value);
+    const auto unit = registered / "texture_sample";
+    const auto oldFragment = read(unit / "catalog-source.txt");
     opened.value().reset();
-    config.generation = job.generation;
-    const auto activated = AssetRebuildHost::open(config);
+    config.generation = previousGeneration;
+    if (reimport == Replacement::Frozen) config.afterTexturePreparation = [&](const fs::path&, const fs::path&) {
+      std::ofstream(inbox, std::ios::binary) << "a newer inbox edit";
+    };
+    if (reimport == Replacement::Tamper) config.afterTexturePreparation = [&](const fs::path& root, const fs::path&) {
+      changeHeader(root);
+    };
+    if (reimport == Replacement::Exchange) config.afterTextureBackup = [](const fs::path& candidate, const fs::path&) {
+      fs::rename(candidate, candidate.parent_path() / "held-fixture");
+    };
+    HANDLE blockedPublish = INVALID_HANDLE_VALUE;
+    if (reimport == Replacement::PublishRefused)
+      config.beforeTexturePublication = [&](const fs::path& from, const fs::path&) {
+        blockedPublish = CreateFileW(from.c_str(), FILE_LIST_DIRECTORY, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (blockedPublish == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot hold the prepared directory.");
+      };
+    if (reimport == Replacement::Confirmed || reimport == Replacement::Unknown)
+      config.beforeTexturePublication = [&](const fs::path& from, const fs::path& to) {
+        fs::rename(from, to);
+        if (reimport == Replacement::Unknown) changeHeader(to);
+      };
+    auto activated = AssetRebuildHost::open(config);
     INFO((activated.isErr() ? activated.error() : std::string{}));
     REQUIRE(activated.isOk());
+    auto loaded = as::loadAssetCatalog(activated.value()->catalogPath().generic_string());
+    REQUIRE(loaded.isOk());
+    auto snapshot = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
+    if (kind != TextureKind::Color) {
+      const auto refusal = activated.value()->start(target, snapshot);
+      REQUIRE(refusal.isErr());
+      CHECK(refusal.error() == ca::RebuildError::UnsupportedProducer);
+    }
+    if (reimport == Replacement::None) return;
+    const auto request = [&] {
+      const auto started = activated.value()->start(target, snapshot);
+      REQUIRE(started.isOk());
+      return f.complete(*activated.value(), started.value().id);
+    };
+    if (reimport == Replacement::InvalidRetry) {
+      write(inbox, "not a PNG");
+      const auto failed = request();
+      REQUIRE(failed.state == ca::RebuildState::Failed);
+      REQUIRE_FALSE(failed.generation);
+      CHECK(read(unit / "source.png") == kLinearPngBytes);
+      CHECK(read(unit / "catalog-source.txt") == oldFragment);
+      CHECK_FALSE(fs::exists(f.marker));
+      CHECK_FALSE(fs::exists(project / ".atlantis-import-dirty"));
+      CHECK(read(f.staging / "assets/managed-pending.txt").empty());
+    }
+    write(inbox, kReplacementBytes);
+    const auto replaced = request();
+    if (blockedPublish != INVALID_HANDLE_VALUE) CloseHandle(blockedPublish);
+    INFO((replaced.failure ? replaced.failure->diagnostic : "no replacement failure"));
+    CHECK(replaced.asset == target);
+    CHECK(read(unit / "catalog-source.txt") == oldFragment);
+    CHECK(read(oldRoot / "assets/managed-texture-sources/texture_sample/source.png") == kLinearPngBytes);
+    if (reimport == Replacement::Tamper || reimport == Replacement::Exchange ||
+        reimport == Replacement::PublishRefused || reimport == Replacement::Unknown) {
+      REQUIRE(replaced.state == ca::RebuildState::Failed);
+      REQUIRE_FALSE(replaced.generation);
+      if (reimport == Replacement::Unknown) {
+        CHECK(fs::exists(f.marker));
+        CHECK(fs::exists(project / ".atlantis-import-dirty"));
+        CHECK(read(unit / "source.png") == kReplacementBytes);
+        const auto held = activated.value()->start(target, snapshot);
+        REQUIRE(held.isErr());
+        CHECK(held.error() == ca::RebuildError::WorkspaceNeedsRepair);
+        activated.value().reset();
+        const auto fallback = AssetRebuildHost::open(config);
+        REQUIRE(fallback.isOk());
+        CHECK(fs::equivalent(fallback.value()->catalogPath(), oldRoot / "asset_catalog.txt"));
+      } else {
+        CHECK(read(unit / "source.png") == kLinearPngBytes);
+        const bool cleanupHeld = reimport == Replacement::PublishRefused;
+        CHECK(fs::exists(f.marker) == cleanupHeld);
+        CHECK(fs::exists(project / ".atlantis-import-dirty") == cleanupHeld);
+        for (const auto& entry : fs::directory_iterator(f.published))
+          if (entry.is_directory() && !entry.path().filename().string().starts_with(".pending-"))
+            CHECK(entry.path() == oldRoot);
+      }
+      return;
+    }
+    REQUIRE(replaced.state == ca::RebuildState::Succeeded);
+    REQUIRE(replaced.generation);
+    CHECK(replaced.generation != previousGeneration);
+    CHECK(read(unit / "source.png") == kReplacementBytes);
+    if (reimport == Replacement::Frozen) CHECK(read(inbox) == "a newer inbox edit");
+    CHECK(fs::equivalent(activated.value()->catalogPath(), oldRoot / "asset_catalog.txt"));
+    const auto ahead = activated.value()->start(target, snapshot);
+    REQUIRE(ahead.isErr());
+    CHECK(ahead.error() == ca::RebuildError::Unavailable);
+    activated.value().reset();
+    config.generation = replaced.generation;
+    const auto updated = AssetRebuildHost::open(config);
+    INFO((updated.isErr() ? updated.error() : std::string{}));
+    REQUIRE(updated.isOk());
+    auto freshCatalog = as::loadAssetCatalog(updated.value()->catalogPath().generic_string());
+    REQUIRE(freshCatalog.isOk());
+    REQUIRE(freshCatalog.value().find(target));
+    CHECK(as::toString(freshCatalog.value().find(target)->source) == "content:texture_sample/source.png");
   } else {
     REQUIRE(job.state == ca::RebuildState::Failed);
     REQUIRE(job.failure);
