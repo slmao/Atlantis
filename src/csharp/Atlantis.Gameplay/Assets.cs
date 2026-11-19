@@ -5,9 +5,15 @@ namespace Atlantis.Gameplay.Assets;
 public enum AssetType { Mesh, Texture, Material, Scene, Environment }
 public enum AssetError { CatalogUnavailable, UnknownAsset }
 /// <summary>Owned build-catalog facts; source is provenance, not a filesystem access path.</summary>
-public sealed record AssetSummary(AssetGuid Guid, AssetType Type, string Source);
+public sealed record AssetSummary(AssetGuid Guid, AssetType Type, string Source)
+{
+    public string? DisplayName { get; init; }
+}
 public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source, uint ArtifactSchema,
-                                  uint? SourceSchema, string Tool, IReadOnlyList<AssetGuid> Dependencies);
+                                  uint? SourceSchema, string Tool, IReadOnlyList<AssetGuid> Dependencies)
+{
+    public string? DisplayName { get; init; }
+}
 
 public enum PreviewError
 {
@@ -35,6 +41,11 @@ public readonly record struct GenerationId(AssetGuid Value)
     public override string ToString() => Value.ToString();
 }
 public enum RebuildError { Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset, UnsupportedProducer, UnknownJob, Unsupported }
+public enum RenameTextureError
+{
+    Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+    UnsupportedProducer, InvalidName, NameConflict, StaleSnapshot, Unchanged,
+}
 public enum RebuildState { Running, Succeeded, Failed }
 public enum RebuildStage { Launch, Pipeline, Validation, Publication }
 public enum RebuildFailureCode { LaunchFailed, BuildFailed, InvalidOutput, IdentityChanged, PublishFailed, TimedOut }

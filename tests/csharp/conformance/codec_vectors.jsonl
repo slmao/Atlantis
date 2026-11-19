@@ -190,6 +190,8 @@
 {"case":"assets.summary.environment","type":"AssetSummary","wire":{"guid":"00810081-0081-4081-8081-008100810081","type":"environment","source":"content:scene.gltf#mesh/0"}}
 {"case":"assets.detail.environment","type":"AssetDetails","wire":{"guid":"00810081-0081-4081-8081-008100810081","type":"environment","source":"assets:mesh.txt","artifactSchema":4294967295,"sourceSchema":null,"tool":"test/1","dependencies":[]}}
 {"case":"assets.detail.source_schema","type":"AssetDetails","wire":{"guid":"00810081-0081-4081-8081-008100810081","type":"scene","source":"assets:scene.txt","artifactSchema":7,"sourceSchema":8,"tool":"test/1","dependencies":["52052052-00aa-4052-8052-0000000000aa"]}}
+{"case":"assets.summary.display_name","type":"AssetSummary","wire":{"guid":"00810081-0081-4081-8081-008100810081","type":"texture","source":"content:texture_probe/source.png","displayName":"blue_probe"}}
+{"case":"assets.detail.display_name","type":"AssetDetails","wire":{"guid":"00810081-0081-4081-8081-008100810081","type":"texture","source":"content:texture_probe/source.png","displayName":"blue_probe","artifactSchema":3,"sourceSchema":null,"tool":"test/1","dependencies":[]}}
 {"case":"assets.error.CatalogUnavailable","type":"AssetError","wire":"CatalogUnavailable"}
 {"case":"assets.error.UnknownAsset","type":"AssetError","wire":"UnknownAsset"}
 {"case":"assets.rebuild.running","type":"RebuildJob","wire":{"id":"52052052-00aa-4052-8052-0000000000aa","asset":"00810081-0081-4081-8081-008100810081","state":"Running"}}

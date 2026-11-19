@@ -590,6 +590,25 @@ struct RemoteServer::State {
       if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
       return response(requestId, std::move(outcome.value()));
     }
+    if (name == "assets.renameTexture") {
+      namespace ca = connection::assets;
+      if (!p.isObject() || p.asObject().size() != 3 || !p.find("asset") ||
+          !p.find("expectedGeneration") || !p.find("displayName"))
+        return errorResponse(requestId, "BadRequest", "malformed texture rename request");
+      const auto asset = codec::decodeAsset(*p.find("asset"));
+      const auto generation = codec::decodeAsset(*p.find("expectedGeneration"));
+      const auto* label = p.find("displayName");
+      if (!asset || *asset == asset_system::AssetGuid{} || !generation || *generation == asset_system::AssetGuid{} ||
+          codec::encodeAsset(*asset) != *p.find("asset") || codec::encodeAsset(*generation) != *p.find("expectedGeneration") ||
+          !label->isString())
+        return errorResponse(requestId, "BadRequest", "texture rename requires two non-nil GUIDs and a name");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto result = client.assets
+          ? client.assets->renameTexture({*asset, {*generation}, label->asString()})
+          : ca::RenameTextureResult::Err(ca::RenameTextureError::Unavailable);
+      return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+          : codec::err(Value::string(std::string(ca::toString(result.error())))));
+    }
     if (name == "assets.rebuild" || name == "assets.rebuildStatus") {
       namespace ca = connection::assets;
       const bool start = name == "assets.rebuild";

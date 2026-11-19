@@ -15,6 +15,7 @@ public sealed class AssetDetailIntent
     internal void Cancel() => _current = false;
 }
 
+public sealed record TextureRenameIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates, AssetDetailIntent Intent);
 public sealed record AssetDependentResult(IReadOnlyList<AssetSummary> Matches, bool Complete);
 
@@ -71,6 +72,22 @@ public sealed class AssetBrowser
     public string ViewState => State == "Ready"
         ? _items.Count == 0 ? "Catalog empty" : _visible.Count == 0 ? "No matching assets" : $"{_visible.Count} of {_items.Count} assets"
         : State;
+
+    public TextureRenameIntent? RenameIntent { get; private set; }
+
+    public TextureRenameIntent? BeginRename()
+    {
+        CancelRename();
+        var asset = _items.FirstOrDefault(item => item.Guid == Selected);
+        return !SelectionVisible || asset is null || RegisteredColorName(asset) is null ? null :
+            RenameIntent = new(asset, new());
+    }
+
+    public void CancelRename()
+    {
+        RenameIntent?.Intent.Cancel();
+        RenameIntent = null;
+    }
 
     public AssetDependentScan? DependentScan { get; private set; }
     public AssetDependentResult? DependentResult { get; private set; }
@@ -141,11 +158,13 @@ public sealed class AssetBrowser
         {
             InvalidateDetail();
             InvalidateDependents();
+            CancelRename();
         }
     }
 
     public long BeginList()
     {
+        CancelRename();
         InvalidateDependents();
         InvalidateDetail();
         State = "Loading";
@@ -166,7 +185,11 @@ public sealed class AssetBrowser
 
     public long Select(AssetGuid guid)
     {
-        if (Selected != guid) InvalidateDependents();
+        if (Selected != guid)
+        {
+            InvalidateDependents();
+            CancelRename();
+        }
         InvalidateDetail();
         Selected = guid;
         if (SelectionVisible)
@@ -179,6 +202,7 @@ public sealed class AssetBrowser
 
     public void ClearSelection()
     {
+        CancelRename();
         InvalidateDependents();
         InvalidateDetail();
         Selected = null;

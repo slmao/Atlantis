@@ -740,6 +740,17 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
   bool succeeds = false;
   enum class Replacement { None, InvalidRetry, Frozen, Tamper, Exchange, PublishRefused, Unknown, Confirmed };
   Replacement reimport = Replacement::None;
+  enum class Rename { None, Success, CorruptPrepared, Rollback, Unknown, Confirmed };
+  Rename rename = Rename::None;
+  SECTION("registered color texture display rename") {
+    if (kind != TextureKind::Color) return;
+    succeeds = true;
+    SECTION("verified generation, stale writers, and return to the fallback") { rename = Rename::Success; }
+    SECTION("different valid label in prepared folder is refused") { rename = Rename::CorruptPrepared; }
+    SECTION("definitely unpublished after exchange rolls back") { rename = Rename::Rollback; }
+    SECTION("different valid label in final folder keeps repair evidence") { rename = Rename::Unknown; }
+    SECTION("exact final folder confirms publication") { rename = Rename::Confirmed; }
+  }
   SECTION("registered color texture replacement") {
     if (kind != TextureKind::Color) return;
     succeeds = true;
@@ -810,6 +821,29 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     const auto oldFragment = read(unit / "catalog-source.txt");
     opened.value().reset();
     config.generation = previousGeneration;
+    const auto substituteName = [](const fs::path& root) {
+      const auto file = root / "generation.json";
+      auto data = read(file);
+      const auto position = data.find("display_alias");
+      if (position == std::string::npos) throw std::runtime_error("Missing fixture label");
+      data.replace(position, std::string_view("display_alias").size(), "different_alias");
+      if (!(std::ofstream(file, std::ios::binary) << data)) throw std::runtime_error("Cannot replace label");
+    };
+    std::atomic<bool> waiting = false, proceed = false;
+    if (rename == Rename::Success) config.afterRenamePreparation = [&](const fs::path&) {
+      waiting = true;
+      const auto limit = std::chrono::steady_clock::now() + 5s;
+      while (!proceed && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(10ms);
+    };
+    if (rename == Rename::CorruptPrepared) config.afterRenamePreparation = substituteName;
+    if (rename == Rename::Rollback) config.beforeRenamePublication = [=](const fs::path& from, const fs::path&) {
+      substituteName(from);
+    };
+    if (rename == Rename::Unknown || rename == Rename::Confirmed)
+      config.beforeRenamePublication = [=](const fs::path& from, const fs::path& to) {
+        fs::rename(from, to);
+        if (rename == Rename::Unknown) substituteName(to);
+      };
     if (reimport == Replacement::Frozen) config.afterTexturePreparation = [&](const fs::path&, const fs::path&) {
       std::ofstream(inbox, std::ios::binary) << "a newer inbox edit";
     };
@@ -841,6 +875,107 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       const auto refusal = activated.value()->start(target, snapshot);
       REQUIRE(refusal.isErr());
       CHECK(refusal.error() == ca::RebuildError::UnsupportedProducer);
+      CHECK(activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot).error() ==
+            ca::RenameTextureError::UnsupportedProducer);
+    }
+    if (rename != Rename::None) {
+      const auto names = project / "texture-display-names.json";
+      CHECK_FALSE(activated.value()->displayName(target));
+      CHECK(activated.value()->renameTexture({target, {f.unknown}, "display_alias"}, snapshot).error() ==
+            ca::RenameTextureError::StaleSnapshot);
+      CHECK(activated.value()->renameTexture({target, previousGeneration, "sample"}, snapshot).error() ==
+            ca::RenameTextureError::Unchanged);
+      CHECK(activated.value()->renameTexture({target, previousGeneration, "Display Alias"}, snapshot).error() ==
+            ca::RenameTextureError::InvalidName);
+      CHECK_FALSE(fs::exists(names));
+      write(inbox, "rename must not use the inbox");
+      write(f.staging / "artifact", "rename must not use staging");
+      const auto admitted = activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot);
+      REQUIRE(admitted.isOk());
+      if (rename == Rename::Success) {
+        const auto preparationLimit = std::chrono::steady_clock::now() + 5s;
+        while (!waiting && std::chrono::steady_clock::now() < preparationLimit) std::this_thread::sleep_for(10ms);
+        CHECK(waiting);
+        CHECK(activated.value()->renameTexture({target, previousGeneration, "also_waiting"}, snapshot).error() ==
+              ca::RenameTextureError::Busy);
+        proceed = true;
+      }
+      const auto renamed = f.complete(*activated.value(), admitted.value().id);
+      INFO((renamed.failure ? renamed.failure->diagnostic : "no rename failure"));
+      CHECK(renamed.asset == target);
+      CHECK_FALSE(activated.value()->displayName(target));
+      CHECK(read(unit / "catalog-source.txt") == oldFragment);
+      CHECK(read(unit / "source.png") == kLinearPngBytes);
+      CHECK(read(inbox) == "rename must not use the inbox");
+      if (rename == Rename::CorruptPrepared || rename == Rename::Rollback || rename == Rename::Unknown) {
+        REQUIRE(renamed.state == ca::RebuildState::Failed);
+        CHECK_FALSE(renamed.generation);
+        CHECK(fs::exists(names) == (rename == Rename::Unknown));
+        CHECK(fs::exists(f.marker) == (rename == Rename::Unknown));
+        if (rename == Rename::Unknown) {
+          CHECK(activated.value()->renameTexture({target, previousGeneration, "again"}, snapshot).error() ==
+                ca::RenameTextureError::WorkspaceNeedsRepair);
+          activated.value().reset();
+          auto fallback = AssetRebuildHost::open(config);
+          REQUIRE(fallback.isOk());
+          CHECK_FALSE(fallback.value()->displayName(target));
+          CHECK(fallback.value()->admissionError() == ca::RebuildError::WorkspaceNeedsRepair);
+        }
+        return;
+      }
+      REQUIRE(renamed.state == ca::RebuildState::Succeeded);
+      REQUIRE(renamed.generation);
+      const auto renamedRoot = f.published / as::toString(renamed.generation->value);
+      CHECK(read(renamedRoot / "asset_catalog.txt") == read(oldRoot / "asset_catalog.txt"));
+      CHECK(read(renamedRoot / "artifact") == read(oldRoot / "artifact"));
+      CHECK(read(renamedRoot / "generation.json").find("\"version\":8") != std::string::npos);
+      CHECK(activated.value()->renameTexture({target, previousGeneration, "again"}, snapshot).error() ==
+            ca::RenameTextureError::StaleSnapshot);
+      CHECK(activated.value()->startTextureImport("unused", ca::ImportMode::Resume, snapshot).error() ==
+            ca::ImportError::ActivationRequired);
+      activated.value().reset();
+      config.generation = renamed.generation;
+      config.beforeRenamePublication = {};
+      config.afterRenamePreparation = {};
+      auto newer = AssetRebuildHost::open(config);
+      INFO((newer.isErr() ? newer.error() : std::string{}));
+      REQUIRE(newer.isOk());
+      CHECK(newer.value()->displayName(target) == "display_alias");
+      CHECK(newer.value()->startTextureImport("display_alias", ca::ImportMode::Register, snapshot).error() ==
+            ca::ImportError::NameConflict);
+      CHECK(newer.value()->renameTexture({target, previousGeneration, "again"}, snapshot).error() ==
+            ca::RenameTextureError::StaleSnapshot);
+      if (rename == Rename::Success) {
+        auto fromNew = as::loadAssetCatalog(newer.value()->catalogPath().generic_string());
+        REQUIRE(fromNew.isOk());
+        const auto current = std::make_shared<const as::AssetCatalog>(std::move(fromNew.value()));
+        write(inbox, kReplacementBytes);
+        write(f.staging / "artifact", read(oldRoot / "artifact"));
+        const auto reimported = newer.value()->start(target, current);
+        REQUIRE(reimported.isOk());
+        const auto updated = f.complete(*newer.value(), reimported.value().id);
+        INFO((updated.failure ? updated.failure->diagnostic : "no reimport failure"));
+        REQUIRE(updated.state == ca::RebuildState::Succeeded);
+        REQUIRE(updated.generation);
+        CHECK(read(unit / "source.png") == kReplacementBytes);
+        newer.value().reset();
+        config.generation = updated.generation;
+        newer = AssetRebuildHost::open(config);
+        REQUIRE(newer.isOk());
+        CHECK(newer.value()->displayName(target) == "display_alias");
+        auto updatedCatalog = as::loadAssetCatalog(newer.value()->catalogPath().generic_string());
+        REQUIRE(updatedCatalog.isOk());
+        const auto back = newer.value()->renameTexture({target, *updated.generation, "sample"},
+            std::make_shared<const as::AssetCatalog>(std::move(updatedCatalog.value())));
+        REQUIRE(back.isOk());
+        const auto restored = f.complete(*newer.value(), back.value().id);
+        REQUIRE(restored.state == ca::RebuildState::Succeeded);
+        REQUIRE(restored.generation);
+        CHECK_FALSE(fs::exists(names));
+        CHECK(read(f.published / as::toString(restored.generation->value) / "generation.json").find("textureDisplayNames") ==
+              std::string::npos);
+      }
+      return;
     }
     if (reimport == Replacement::None) return;
     const auto request = [&] {

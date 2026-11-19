@@ -28,6 +28,10 @@ class Assets {
   [[nodiscard]] connection::assets::RebuildStartResult rebuild(const asset_system::AssetGuid& guid) {
     return connection_.rebuild(guid);
   }
+  [[nodiscard]] connection::assets::RenameTextureResult renameTexture(
+      const connection::assets::RenameTextureRequest& request) {
+    return connection_.renameTexture(request);
+  }
   [[nodiscard]] connection::assets::RebuildStatusResult rebuildStatus(
       std::optional<connection::assets::RebuildId> id = std::nullopt) const {
     return connection_.rebuildStatus(id);

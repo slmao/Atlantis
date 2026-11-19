@@ -189,6 +189,10 @@ std::optional<MeshMaterialPreview> decodeMeshMaterialPreview(const json::Value& 
   return MeshMaterialPreview{meshGuid, materialGuid, kPreviewDimension, kPreviewDimension, std::move(*bytes)};
 }
 
+std::string_view toString(RenameTextureError value) noexcept {
+  return token(value, std::array{"Unsupported", "Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
+      "UnknownAsset", "UnsupportedProducer", "InvalidName", "NameConflict", "StaleSnapshot", "Unchanged"});
+}
 std::string_view toString(RebuildError value) noexcept {
   return token(value, std::array{"Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
                                  "UnknownAsset", "UnsupportedProducer", "UnknownJob", "Unsupported"});

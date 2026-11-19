@@ -488,6 +488,12 @@ void authoringVectors(std::vector<Vector>& out) {
     out.push_back({"assets.detail." + name, "AssetDetails", codec::encode(connection::assets::AssetDetails{asset, type, "assets:mesh.txt", UINT32_MAX, std::nullopt, "test/1", {}})});
   }
   out.push_back({"assets.detail.source_schema", "AssetDetails", codec::encode(connection::assets::AssetDetails{asset, connection::assets::AssetType::Scene, "assets:scene.txt", 7, 8, "test/1", {kAsset}})});
+  out.push_back({"assets.summary.display_name", "AssetSummary",
+      codec::encode(connection::assets::AssetSummary{asset, connection::assets::AssetType::Texture,
+                                                    "content:texture_probe/source.png", "blue_probe"})});
+  out.push_back({"assets.detail.display_name", "AssetDetails",
+      codec::encode(connection::assets::AssetDetails{asset, connection::assets::AssetType::Texture,
+          "content:texture_probe/source.png", 3, std::nullopt, "test/1", {}, "blue_probe"})});
   for (auto error : {connection::assets::AssetError::CatalogUnavailable, connection::assets::AssetError::UnknownAsset})
     out.push_back({"assets.error." + std::string(connection::assets::toString(error)), "AssetError", json::Value::string(std::string(connection::assets::toString(error)))});
   namespace ca = connection::assets;

@@ -27,10 +27,11 @@ Value encode(const connection::assets::AssetSummary& v) {
   out.set("guid", encodeAsset(v.guid));
   out.set("type", Value::string(std::string(connection::assets::toString(v.type))));
   out.set("source", Value::string(v.source));
+  if (v.displayName) out.set("displayName", Value::string(*v.displayName));
   return out;
 }
 Value encode(const connection::assets::AssetDetails& v) {
-  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source});
+  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source, v.displayName});
   out.set("artifactSchema", Value::number(static_cast<std::uint64_t>(v.artifactSchema)));
   out.set("sourceSchema", v.sourceSchema ? Value::number(static_cast<std::uint64_t>(*v.sourceSchema)) : Value());
   out.set("tool", Value::string(v.tool));
@@ -48,7 +49,14 @@ std::optional<connection::assets::AssetSummary> decodeAssetSummary(const Value& 
   if (!guid || *guid == asset_system::AssetGuid{}) return std::nullopt;
   const auto type = decodeAssetType(*t);
   if (!type) return std::nullopt;
-  return connection::assets::AssetSummary{*guid, *type, s->asString()};
+  std::optional<std::string> displayName;
+  for (const auto& [key, field] : v.asObject()) {
+    if (key != "displayName") continue;
+    if (displayName || *type != connection::assets::AssetType::Texture || !field.isString() ||
+        !connection::assets::validImportName(field.asString())) return std::nullopt;
+    displayName = field.asString();
+  }
+  return connection::assets::AssetSummary{*guid, *type, s->asString(), std::move(displayName)};
 }
 std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& v) {
   auto summary = decodeAssetSummary(v);
@@ -72,7 +80,7 @@ std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& 
     deps.push_back(*guid);
   }
   return connection::assets::AssetDetails{summary->guid, summary->type, summary->source,
-      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps)};
+      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps), std::move(summary->displayName)};
 }
 std::optional<connection::assets::AssetError> decodeAssetError(const Value& v) {
   if (!v.isString()) return std::nullopt;
@@ -164,6 +172,14 @@ std::optional<ca::RebuildStatus> decodeRebuildStatus(const Value& value) {
   }
   if (!job->isNull() && !(out.job = decodeRebuildJob(*job))) return std::nullopt;
   return out;
+}
+std::optional<ca::RenameTextureError> decodeRenameTextureError(const Value& value, bool) {
+  if (!value.isString()) return std::nullopt;
+  for (unsigned i = 0; i <= static_cast<unsigned>(ca::RenameTextureError::Unchanged); ++i) {
+    const auto error = static_cast<ca::RenameTextureError>(i);
+    if (value.asString() == ca::toString(error)) return error;
+  }
+  return std::nullopt;
 }
 std::optional<ca::RebuildError> decodeRebuildError(const Value& value, bool start) {
   const auto error = rebuildToken(&value, ca::RebuildError::UnknownJob);

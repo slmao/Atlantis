@@ -41,6 +41,7 @@ constexpr std::string_view kUsage =
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
+    "  assets rename-texture <GUID> <ExpectedGeneration> <DisplayName>\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
     "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
     "  assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]\n"
@@ -426,9 +427,22 @@ int Invocation::finish(Reply reply) {
       failure->message += "; material job outcome unknown; retain the job ID and query it after reconnecting";
       failure->text = "error: " + failure->message;
     }
+    if (checked.command == "assets rename-texture" && checked.result.find("asset")) {
+      failure->subject = checked.result;
+      failure->message += "; texture rename outcome unknown for " + checked.result.find("asset")->asString() +
+          " in generation " + checked.result.find("expectedGeneration")->asString() + " to '" +
+          checked.result.find("displayName")->asString() +
+          "'. Inspect the workspace and generations and confirm settlement before retrying.";
+      failure->text = "error: " + failure->message;
+    }
     if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {
-      failure->message += checked.command == "assets rebuild" ? "; rebuild admission unknown"
-                                                            : "; rebuild outcome unknown";
+      if (const auto* id = checked.result.find("id"); checked.command == "assets rebuild-status" && id && id->isString()) {
+        failure->subject = checked.result;
+        failure->message += "; asset job " + id->asString() + " outcome unknown. Retain the ID and check settlement.";
+      } else {
+        failure->message += checked.command == "assets rebuild" ? "; rebuild admission unknown"
+                                                              : "; rebuild outcome unknown";
+      }
       failure->text = "error: " + failure->message;
     }
     if (const auto deferred = layer_.takeDeferredApply()) {

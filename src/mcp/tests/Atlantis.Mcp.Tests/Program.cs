@@ -55,6 +55,9 @@ internal static partial class Program
     private static readonly (string Tool, string Method, string Args, string Result)[] Cases =
     [
         ("assets.list", "assets.list", "{}", """{"ok":[]}"""),
+        ("assets.rename_texture", "assets.renameTexture",
+            $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","displayName":"blue_probe"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
         ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
         ("assets.preview_mesh_material", "assets.previewMeshMaterial", PairPreviewArgs, PairPreviewMetadata),
@@ -212,6 +215,7 @@ internal static partial class Program
             CheckAssetResult(result, c.Method, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
+                c.Tool == "assets.rename_texture" ? description.Contains("display rename") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
                 (c.Tool is "assets.texture_import" or "assets.normal_map_import" or "assets.metallic_roughness_import" or "assets.occlusion_import") ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
                 (c.Tool is "assets.material_save" or "assets.material_save_with_maps" or "assets.material_save_with_metallic_roughness" or "assets.material_save_with_occlusion" or "assets.material_save_with_combined_maps") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
@@ -351,6 +355,14 @@ internal static partial class Program
     {
         Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.list");
         Refusals<Atlantis.Gameplay.Assets.AssetError>("assets.get");
+        var rename = Cases.Single(c => c.Tool == "assets.rename_texture");
+        var lostRename = new FakeSession { Failure = new RemoteException(RemoteError.Disconnected, "lost rename") };
+        var renameResult = new ToolRegistry(lostRename).Invoke(Request(rename.Tool, rename.Args));
+        Check(renameResult.IsError == true && renameResult.Content[0] is TextContentBlock renameDiagnostic &&
+              renameDiagnostic.Text.Contains(lostRename.Failure.Message) &&
+              renameDiagnostic.Text.Contains("outcome unknown") && renameDiagnostic.Text.Contains(Entity) &&
+              renameDiagnostic.Text.Contains("blue_probe") && lostRename.Calls.Count == 1,
+              "rename loss preserves category, GUID and proposed label without a resend");
         var preview = Request("assets.preview_mesh", Cases.Single(c => c.Method == "assets.previewMesh").Args);
         foreach (Assets.PreviewError reason in Enum.GetValues<Assets.PreviewError>())
         {
@@ -498,7 +510,7 @@ internal static partial class Program
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
             if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
-                "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
+                "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or

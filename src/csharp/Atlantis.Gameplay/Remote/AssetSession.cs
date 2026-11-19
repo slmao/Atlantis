@@ -77,15 +77,55 @@ public sealed class AssetSession
             A.RebuildError.Unsupported, v => Codec.DecodeRebuildError(v, true),
             value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null);
     }
+    /// <summary>Admits a display rename; query the returned ID using RebuildStatus. Never retries.</summary>
+    public Outcome<A.RebuildJob, A.RenameTextureError> RenameTexture(AssetGuid asset, A.GenerationId expectedGeneration, string displayName)
+    {
+        if (asset.IsNil || expectedGeneration.Value.IsNil) throw new ArgumentException("non-nil asset and generation GUIDs are required");
+        ArgumentNullException.ThrowIfNull(displayName);
+        _session.ThrowIfFailed(); // Known not sent.
+        const string method = "assets.renameTexture";
+        var request = JsonValue.NewObject().Set("asset", Codec.Encode(asset))
+            .Set("expectedGeneration", Codec.Encode(expectedGeneration.Value)).Set("displayName", JsonValue.String(displayName));
+        try
+        {
+            var response = _session.AwaitResponse(_session.Send(method, request));
+            if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1 ||
+                Codec.CountMember(response, "error") + Codec.CountMember(response, "result") != 1)
+                throw _session.Malformed(method);
+            if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+                Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                Codec.IsLegacyAssetRebuildRefusal(response))
+                return Outcome<A.RebuildJob, A.RenameTextureError>.Err(A.RenameTextureError.Unsupported);
+            if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1 ||
+                Codec.CountMember(result, "ok") + Codec.CountMember(result, "err") != 1)
+                throw _session.Malformed(method);
+            return _session.InBand<A.RebuildJob, A.RenameTextureError>(result, method,
+                value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null,
+                Codec.DecodeRenameTextureError);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Texture rename outcome unknown for {asset} in generation {expectedGeneration.Value} to '{displayName}'. " +
+                "Inspect the workspace and generations, and confirm the previous request settled before retrying.");
+        }
+    }
+
     public Outcome<A.RebuildStatus, A.RebuildError> RebuildStatus(A.RebuildId? jobId = null)
     {
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));
         JsonValue parameters = JsonValue.NewObject();
         if (jobId is A.RebuildId id) parameters.Set("jobId", Codec.Encode(id.Value));
-        return AssetRequest("assets.rebuildStatus", parameters, A.RebuildError.Unsupported,
-            v => Codec.DecodeRebuildError(v, false), value =>
-            Codec.DecodeRebuildStatus(value) is A.RebuildStatus status && (jobId is null || status.Job?.Id == jobId)
-                ? status : null);
+        try
+        {
+            return AssetRequest("assets.rebuildStatus", parameters, A.RebuildError.Unsupported,
+                v => Codec.DecodeRebuildError(v, false), value =>
+                Codec.DecodeRebuildStatus(value) is A.RebuildStatus status && (jobId is null || status.Job?.Id == jobId)
+                    ? status : null);
+        }
+        catch (RemoteException error) when (jobId is A.RebuildId retained)
+        {
+            throw new RemoteException(error, $"Asset job {retained.Value} outcome unknown. Retain the ID and check settlement before retrying.");
+        }
     }
     public Outcome<A.ImportJob, A.ImportError> ImportAsset(string name, A.ImportMode mode = A.ImportMode.Register)
     {

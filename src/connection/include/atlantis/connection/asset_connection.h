@@ -23,6 +23,7 @@ struct AssetSummary {
   asset_system::AssetGuid guid;
   AssetType type = AssetType::Mesh;
   std::string source;
+  std::optional<std::string> displayName{};
   friend bool operator==(const AssetSummary&, const AssetSummary&) = default;
 };
 struct AssetDetails {
@@ -33,6 +34,7 @@ struct AssetDetails {
   std::optional<std::uint32_t> sourceSchema;
   std::string tool;
   std::vector<asset_system::AssetGuid> dependencies;
+  std::optional<std::string> displayName{};
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
 
@@ -132,6 +134,18 @@ struct RebuildStatus {
 };
 using RebuildStartResult = Result<RebuildJob, RebuildError>;
 using RebuildStatusResult = Result<RebuildStatus, RebuildError>;
+
+enum class RenameTextureError : std::uint8_t {
+  Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+  UnsupportedProducer, InvalidName, NameConflict, StaleSnapshot, Unchanged,
+};
+[[nodiscard]] std::string_view toString(RenameTextureError value) noexcept;
+struct RenameTextureRequest {
+  asset_system::AssetGuid asset;
+  GenerationId expectedGeneration;
+  std::string displayName;
+};
+using RenameTextureResult = Result<RebuildJob, RenameTextureError>;
 struct ImportId {
   asset_system::AssetGuid value;
   friend bool operator==(const ImportId&, const ImportId&) = default;
@@ -362,6 +376,11 @@ class AssetConnection {
   // Remote failures use Unavailable as a sentinel; check the session first.
   [[nodiscard]] virtual assets::RebuildStartResult rebuild(const asset_system::AssetGuid&) {
     return assets::RebuildStartResult::Err(assets::RebuildError::Unavailable);
+  }
+  // On the connection owner thread; borrows the request only for this call.
+  // A success admits one job, settled through rebuildStatus by its returned ID.
+  [[nodiscard]] virtual assets::RenameTextureResult renameTexture(const assets::RenameTextureRequest&) {
+    return assets::RenameTextureResult::Err(assets::RenameTextureError::Unsupported);
   }
   [[nodiscard]] virtual assets::RebuildStatusResult rebuildStatus(std::optional<assets::RebuildId>) const {
     return assets::RebuildStatusResult::Err(assets::RebuildError::Unavailable);

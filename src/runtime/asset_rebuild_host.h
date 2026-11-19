@@ -30,6 +30,8 @@ class AssetRebuildHost {
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTexturePreparation{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeTexturePublication{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> afterTextureBackup{};
+    std::function<void(const std::filesystem::path&)> afterRenamePreparation{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeRenamePublication{};
 #endif
   };
 
@@ -45,6 +47,9 @@ class AssetRebuildHost {
       asset_system::AssetGuid asset, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::RebuildStatusResult status(
       std::optional<connection::assets::RebuildId> id) const;
+  [[nodiscard]] std::optional<std::string> displayName(asset_system::AssetGuid asset) const;
+  [[nodiscard]] connection::assets::RenameTextureResult renameTexture(
+      const connection::assets::RenameTextureRequest& request, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] std::filesystem::path generationCatalogSource() const;
   [[nodiscard]] connection::assets::ImportStartResult startImport(
       std::string_view name, connection::assets::ImportMode mode,

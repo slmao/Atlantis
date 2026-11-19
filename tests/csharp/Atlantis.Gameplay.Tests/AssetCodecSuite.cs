@@ -23,6 +23,17 @@ public static class AssetCodecSuite
             t.Check(Codec.DecodeAssetDetails(Codec.Encode(d).Set("dependencies", JsonValue.NewArray().Push(Codec.Encode(guid)).Push(Codec.Encode(guid)))) is null, "duplicate dependency");
         }
         t.Check(Codec.DecodeAssetError(JsonValue.String("wrong")) is null, "closed asset errors");
+        var renamed = new A.AssetSummary(guid, A.AssetType.Texture, "content:texture_probe/source.png") { DisplayName = "blue_probe" };
+        t.Equal<A.AssetSummary?>(renamed, Codec.DecodeAssetSummary(Codec.Encode(renamed)), "texture label leaves source and GUID alone");
+        t.Check(Codec.DecodeAssetSummary(Codec.Encode(renamed with { DisplayName = null }))?.DisplayName is null,
+            "legacy asset summaries omit the name");
+        t.Check(Codec.DecodeAssetSummary(Codec.Encode(renamed).Set("displayName", JsonValue.Null())) is null &&
+            Codec.DecodeAssetSummary(Json.Parse(Json.Write(Codec.Encode(renamed))[..^1] + ",\"displayName\":\"other\"}")) is null &&
+            Codec.DecodeAssetSummary(Codec.Encode(renamed with { DisplayName = "bad path" })) is null,
+            "asset summary rejects null, duplicate or malformed present names");
+        foreach (A.RenameTextureError error in Enum.GetValues<A.RenameTextureError>())
+            t.Equal<A.RenameTextureError?>(error, Codec.DecodeRenameTextureError(JsonValue.String(error.ToString())), "rename refusal " + error);
+        RenameReceipts(t, guid);
         JsonValue missingSchema = Codec.Encode(new A.AssetSummary(guid, A.AssetType.Mesh, "assets:mesh.txt"))
             .Set("artifactSchema", JsonValue.Number(0UL)).Set("tool", JsonValue.String("test/1")).Set("dependencies", JsonValue.NewArray());
         t.Check(Codec.DecodeAssetDetails(missingSchema) is null, "sourceSchema is required even when absent natively");
@@ -42,6 +53,61 @@ public static class AssetCodecSuite
                 Codec.DecodeRebuildError(JsonValue.String("Busy"), false) is null, "closed operation refusal sets");
         Preview(t, guid);
         PairPreview(t, guid);
+    }
+
+    private static void RenameReceipts(TestContext t, AssetGuid asset)
+    {
+        foreach (string scenario in new[] { "lost", "malformed", "legacy" })
+        {
+            using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            listener.Start();
+            var peer = System.Threading.Tasks.Task.Run(() =>
+            {
+                using var socket = listener.AcceptTcpClient();
+                socket.ReceiveTimeout = 5000;
+                using var stream = socket.GetStream();
+                using var reader = new System.IO.StreamReader(stream);
+                using var writer = new System.IO.StreamWriter(stream) { AutoFlush = true, NewLine = "\n" };
+                while (reader.ReadLine() is string line)
+                {
+                    var request = Json.Parse(line);
+                    var method = request.Find("method")!.AsString;
+                    var envelope = JsonValue.NewObject().Set("id", request.Find("id")!);
+                    if (method == "hello")
+                        envelope.Set("result", JsonValue.NewObject().Set("scene", Codec.Encode(asset)));
+                    else if (method == "connection.schema")
+                        envelope.Set("result", JsonValue.NewArray());
+                    else
+                    {
+                        if (method != "assets.renameTexture" || request.Find("params")?.Find("displayName")?.AsString != "blue_probe" ||
+                            request.Find("params")?.Find("asset")?.AsString != asset.ToString() ||
+                            request.Find("params")?.Find("expectedGeneration")?.AsString != asset.ToString())
+                            throw new InvalidOperationException("unexpected rename method or identity");
+                        if (scenario == "malformed") writer.WriteLine(Json.Write(envelope.Set("result", Codec.Ok(JsonValue.NewObject()))));
+                        if (scenario == "legacy") writer.WriteLine(Json.Write(envelope.Set("error", JsonValue.NewObject()
+                            .Set("code", JsonValue.String("BadRequest")).Set("message", JsonValue.String("unknown or malformed asset query")))));
+                        return 1;
+                    }
+                    writer.WriteLine(Json.Write(envelope));
+                }
+                return 0;
+            });
+            using var client = RemoteSession.Connect(new SessionInfo((ushort)((System.Net.IPEndPoint)listener.LocalEndpoint).Port,
+                "00112233445566778899aabbccddeeff", 1, asset), new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
+            if (scenario == "legacy")
+                t.Equal(A.RenameTextureError.Unsupported, client.Assets.RenameTexture(asset, new(asset), "blue_probe").Error,
+                    "only legacy refusal maps to Unsupported");
+            else
+            {
+                var failure = t.Throws<RemoteException>(() => client.Assets.RenameTexture(asset, new(asset), "blue_probe"), "rename " + scenario);
+                t.Check(failure?.Error == (scenario == "lost" ? RemoteError.Disconnected : RemoteError.ProtocolError) &&
+                    failure.Message.Contains("outcome unknown") && failure.Message.Contains(asset.ToString()),
+                    "rename retains category, target and unknown outcome");
+                var notSent = t.Throws<RemoteException>(() => client.Assets.RenameTexture(asset, new(asset), "not_sent"), "failed session");
+                t.Check(notSent is not null && !notSent.Message.Contains("not_sent"), "known unsent has no unknown-write attribution");
+            }
+            t.Equal(1, peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(), "rename sent at most once");
+        }
     }
 
     // Minimal PNG header for wire checks. The SDK deliberately does not decode image data.
