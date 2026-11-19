@@ -348,6 +348,19 @@ std::string nameBytes(const TextureNames& names) {
 bool absentFile(const fs::path& path) {
   return GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
 }
+bool hasPendingRemoval(const fs::path& project) {
+  const auto pending = project / ".pending";
+  if (absentFile(pending)) return false;
+  if (!realDirectory(pending)) return true;
+  std::error_code ec;
+  for (fs::directory_iterator at(pending, ec), end; !ec && at != end; at.increment(ec)) {
+    const auto name = utf8(at->path().filename());
+    const auto id = as::parseAssetGuid(name);
+    if (id.isErr() || as::toString(id.value()) != name) continue;
+    if (!realDirectory(at->path()) || !absentFile(at->path() / "removal.json")) return true;
+  }
+  return static_cast<bool>(ec);
+}
 bool labelClaimed(const TextureNames& names, const Textures& textures, as::AssetGuid except, std::string_view label) {
   const auto original = textures.find(label);
   if (original != textures.end() && original->second.kind == TextureKind::Color && original->second.guid != except)
@@ -1167,6 +1180,9 @@ struct AssetRebuildHost::State {
         incomplete = true;
         continue;
       }
+      // The ordinary Bistro rule also reads this checkout file, outside
+      // the imported content subtree. A current stamp cannot prove it.
+      if (!managedName(key) && !remember(checkout, "assets/bistro/bistro_overlay.scene.txt")) incomplete = true;
       // The configured import owns this content subtree, including its
       // external buffers and images. Unknown roots cannot authorize removal.
       std::error_code ec;
@@ -1368,6 +1384,7 @@ struct AssetRebuildHost::State {
     const auto unit = fs::path("registered") / textureDirectory(token);
     const auto pending = fs::path(".pending") / as::toString(work.job.id.value);
     const auto backup = pending / "previous";
+    const auto recoveryRecord = pending / "removal.json";
     const auto namePath = project / kTextureNames;
     const auto nameBefore = nameBytes(activeNames);
     auto remainingNames = activeNames;
@@ -1526,13 +1543,14 @@ struct AssetRebuildHost::State {
       if ((nameBefore != nameAfter &&
            ((!nameBefore.empty() && !createMarker(project / pending / "old-names", nameBefore)) ||
             (!nameAfter.empty() && !createMarker(project / pending / "new-names", nameAfter)))) ||
-          !createMarker(project / pending / "removal.json", json::write(record)))
+          !createMarker(project / recoveryRecord, json::write(record)))
         return fail(Stage::Publication, Code::PublishFailed, "Cannot flush the removal recovery record.");
       if (interrupted()) return cleanTimeout();
       const auto rollback = [&]() {
         const auto names = readNameBytes(project);
         if (!absentFile(final) || !registeredAfter() || !safeRemovalUnit(backup, token) ||
-            (names != nameBefore && names != nameAfter))
+            (names != nameBefore && names != nameAfter) ||
+            (names != nameBefore && !nameBefore.empty() && readNameFile(project, pending / "old-names") != nameBefore))
           return unknown("Cannot prove that the previous registration can be restored.");
         move(backup, unit);
         if (!absentFile(project / backup) || !safeRemovalUnit(unit, token) ||
@@ -1588,12 +1606,27 @@ struct AssetRebuildHost::State {
         fs::remove_all(project / backup, ec);
         if (ec) return false;
       }
-      if (!DeleteFileW((staging / kDirty).c_str()) || !DeleteFileW((project / kProjectDirty).c_str())) return false;
+      bool retireRecord = false;
       if (ownsPending) {
-        if (!realDirectory(project / pending) || !safeBuildTree(project / pending, [] { return false; })) return false;
-        fs::remove_all(project / pending, ec);
+        if (!realDirectory(project / pending)) return false;
+        for (fs::directory_iterator at(project / pending, ec), end; !ec && at != end; at.increment(ec)) {
+          const auto leaf = at->path().filename();
+          if ((leaf != "selection" && leaf != "old-names" && leaf != "new-names" && leaf != recoveryRecord.filename()) ||
+              !exactTexturePath(project, pending / leaf)) return false;
+        }
+        if (ec) return false;
+        for (const auto* leaf : {"selection", "old-names", "new-names"}) {
+          const auto path = project / pending / leaf;
+          if (!absentFile(path) && !DeleteFileW(path.c_str())) return false;
+        }
+        retireRecord = !absentFile(project / recoveryRecord);
       }
-      return !ec;
+      // Keep the record through all required cleanup, including removal
+      // of the markers. Bootstrap also treats a surviving record as a hold.
+      if (!DeleteFileW((staging / kDirty).c_str()) || !DeleteFileW((project / kProjectDirty).c_str()) ||
+          (retireRecord && !DeleteFileW((project / recoveryRecord).c_str()))) return false;
+      if (ownsPending) RemoveDirectoryW((project / pending).c_str());  // Only an empty directory may remain.
+      return true;
     };
     try {
       cleanupRepair = !cleanup();
@@ -3025,7 +3058,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       auto textures = registeredTextures(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
           ? readText(*stage / kPendingSelection) : std::nullopt;
-      state->dirty = state->dirty || !registered || !materials || !textures ||
+      state->dirty = state->dirty || !registered || !materials || !textures || hasPendingRemoval(state->project) ||
           !safeRelative(state->project, fs::path(kProjectDirty), true) ||
           fs::exists(state->project / kProjectDirty, ec) || ec || !pending || !pending->empty();
       if (registered) state->registered = std::move(*registered);

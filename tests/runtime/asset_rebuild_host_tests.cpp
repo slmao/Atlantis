@@ -17,6 +17,7 @@
 #include <atomic>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 #include <thread>
 
@@ -702,10 +703,12 @@ file(STRINGS "${project}/${pending}/catalog-source.txt" fragment)
 list(GET fragment 2 texture)
 string(REGEX MATCH "guid=([0-9a-f-]+)" matched "${texture}")
 set(guid "${CMAKE_MATCH_1}")
-file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/seed/assets/managed-catalog-source.txt" base)
-list(GET base 2 material)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/seed/assets/managed-catalog-source.txt" base REGEX "^asset:")
+list(APPEND base "${texture}")
+list(LENGTH base entry_count)
+list(JOIN base "\n" source_entries)
 file(WRITE "assets/managed-catalog-source.txt"
-     "atlantis_asset_catalog_source_version: 1\nentry_count: 2\n${material}\n${texture}\n")
+     "atlantis_asset_catalog_source_version: 1\nentry_count: ${entry_count}\n${source_entries}\n")
 file(READ "${CMAKE_CURRENT_LIST_DIR}/seed/assets/producers-Debug.txt" inventory)
 execute_process(COMMAND "${cooker}" --kind=texture "--source=${frozen}/${key}" "--asset-root=${frozen}"
   "--output-dir=${CMAKE_CURRENT_BINARY_DIR}/assets" "--stamp=${asset}.stamp" "--color-space=${color}"
@@ -745,7 +748,10 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     ActiveHeader, PreparedHeader, FinalHeader, StagedNext, LinkedNext, StagedPrevious, LateTimeout
   };
   Rename rename = Rename::None;
-  enum class Removal { None, Success, SourceOnly, Incomplete, Stale, LateStale, Rollback, Unknown, ExtraFile, LinkedInbox };
+  enum class Removal {
+    None, Success, SourceOnly, Incomplete, Stale, LateStale, Rollback, Unknown, ExtraFile, LinkedInbox,
+    OverlayChanged, OverlayChangedLate, CorruptOldNames, LockedSelection
+  };
   Removal removal = Removal::None;
   SECTION("registered color texture display rename") {
     if (kind != TextureKind::Color) return;
@@ -786,13 +792,39 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     SECTION("an altered final directory holds writes") { removal = Removal::Unknown; }
     SECTION("unexpected registered content is preserved") { removal = Removal::ExtraFile; }
     SECTION("an aliased inbox is refused") { removal = Removal::LinkedInbox; }
+    SECTION("an overlay edit with the original timestamp invalidates confirmation") { removal = Removal::OverlayChanged; }
+    SECTION("an overlay edit with the original timestamp before commit invalidates confirmation") {
+      removal = Removal::OverlayChangedLate;
+    }
+    SECTION("a damaged old name table prevents either rollback write") { removal = Removal::CorruptOldNames; }
+    SECTION("a locked temporary file leaves the published job and its recovery record") { removal = Removal::LockedSelection; }
   }
   const auto checkout = fs::canonical(f.base) / "checkout";
+  const auto overlay = checkout / "assets/bistro/bistro_overlay.scene.txt";
+  const bool bistroProof = removal == Removal::OverlayChanged || removal == Removal::OverlayChangedLate;
   if (removal != Removal::None) {
-    const std::string header = "atlantis.asset-producers/1\t" + checkout.generic_string() + "\tfixture\tx64\tDebug";
+    const auto bistro = fs::canonical(f.base) / "bistro";
+    const std::string header = "atlantis.asset-producers/1\t" + checkout.generic_string() + "\tfixture\tx64\tDebug" +
+        (bistroProof ? "\t" + bistro.generic_string() : "");
+    auto declarations = as::serializeAssetCatalogSource({baseEntry});
+    if (bistroProof) {
+      fs::create_directories(bistro);
+      write(bistro / "bistro.gltf", "fixture import input");
+      fs::create_directories(overlay.parent_path());
+      write(overlay, "fixture overlay");
+      declarations = as::serializeAssetCatalogSource({baseEntry,
+          {f.unknown, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, "bistro/bistro.gltf"}});
+    }
     for (const auto& build : {f.seed, f.staging}) {
       auto bytes = read(build / inventory);
       bytes.replace(0, bytes.find('\n'), header);
+      if (bistroProof) {
+        bytes += "gltf_import\tcontent\tbistro/bistro.gltf\t" + as::toString(f.unknown) +
+            "\tbistro/bistro.stamp\tbistro/generated.scene.txt\n";
+        fs::create_directories(build / "bistro");
+        write(build / "bistro/generated.scene.txt", "fixture generated scene");
+        write(build / "assets/managed-catalog-source.txt", declarations);
+      }
       write(build / inventory, bytes);
     }
     for (const fs::path relative : {"CMakeLists.txt", "assets/CMakeLists.txt", "src/asset_system/CMakeLists.txt",
@@ -800,7 +832,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       fs::create_directories((checkout / relative).parent_path());
       write(checkout / relative, "# configured fixture\n");
     }
-    write(checkout / "assets/asset_catalog.txt", as::serializeAssetCatalogSource({baseEntry}));
+    write(checkout / "assets/asset_catalog.txt", declarations);
   }
   SECTION("unchanged inputs publish and activate") { succeeds = true; }
   SECTION("changed prepared header refuses both renames") {
@@ -930,6 +962,15 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
         if (reimport == Replacement::Unknown) changeHeader(to);
       };
     const auto authored = checkout / "assets/a.material.txt";
+    const auto editOverlay = [overlay] {
+      const auto timestamp = fs::last_write_time(overlay);
+      if (!(std::ofstream(overlay, std::ios::binary) << "altered overlay"))
+        throw std::runtime_error("Could not edit the fixture overlay.");
+      fs::last_write_time(overlay, timestamp);
+    };
+    fs::path removalPending;
+    std::string recoveryBytes;
+    std::unique_ptr<void, decltype(&CloseHandle)> heldSelection(nullptr, &CloseHandle);
     if (removal != Removal::None) {
       const auto recipe = [&](as::AssetGuid referenced) {
         return "atlantis_material_source_version: 10\nkind: pbr_direct_lit\ntexture: " +
@@ -942,7 +983,10 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       fs::copy_file(f.staging / inventory, f.base / "registered-inventory.txt");
       fs::copy_file(f.staging / "assets/managed-catalog-source.txt", f.base / "registered-catalog.txt");
       write(f.base / "producer.cmake", R"cmake(
-configure_file("${CMAKE_CURRENT_LIST_DIR}/seed/asset_catalog.txt" "${CMAKE_CURRENT_BINARY_DIR}/asset_catalog.txt" COPYONLY)
+file(READ "assets/managed-pending.txt" pending)
+if(pending MATCHES "^remove:")
+  configure_file("${CMAKE_CURRENT_LIST_DIR}/seed/asset_catalog.txt" "${CMAKE_CURRENT_BINARY_DIR}/asset_catalog.txt" COPYONLY)
+endif()
 )cmake");
       write(f.base / "CMakeLists.txt", read(f.base / "CMakeLists.txt") + R"cmake(
 file(READ "${CMAKE_BINARY_DIR}/assets/managed-pending.txt" pending)
@@ -961,6 +1005,8 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
         if (!(std::ofstream(authored, std::ios::binary | std::ios::app) << "\n"))
           throw std::runtime_error("Could not edit the fixture recipe.");
       };
+      if (removal == Removal::OverlayChangedLate)
+        config.afterRemovalPreparation = [editOverlay](const fs::path&) { editOverlay(); };
       if (removal == Removal::Rollback) config.beforeRemovalPublication = [=](const fs::path& from, const fs::path&) {
         changeHeader(from);
       };
@@ -968,6 +1014,27 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
         fs::rename(from, to);
         changeHeader(to);
       };
+      if (removal == Removal::CorruptOldNames || removal == Removal::LockedSelection)
+        config.beforeRemovalPublication = [&](const fs::path& from, const fs::path&) {
+          for (const auto& attempt : fs::directory_iterator(project / ".pending")) {
+            if (fs::exists(attempt.path() / "removal.json")) {
+              removalPending = attempt.path();
+              break;
+            }
+          }
+          if (removalPending.empty()) throw std::runtime_error("Could not find the removal recovery record.");
+          recoveryBytes = read(removalPending / "removal.json");
+          if (removal == Removal::CorruptOldNames) {
+            if (!(std::ofstream(removalPending / "old-names", std::ios::binary) << "altered backup"))
+              throw std::runtime_error("Could not corrupt the staged name table.");
+            changeHeader(from);
+          } else {
+            const auto locked = CreateFileW((removalPending / "selection").c_str(), GENERIC_READ, FILE_SHARE_READ,
+                nullptr, OPEN_EXISTING, 0, nullptr);
+            if (locked == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not lock the staging selection.");
+            heldSelection.reset(locked);
+          }
+        };
       if (removal == Removal::ExtraFile) write(unit / "keep.txt", "unexpected");
     }
     auto activated = AssetRebuildHost::open(config);
@@ -986,11 +1053,26 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
     if (removal != Removal::None) {
       using State = ca::TextureRemovalState;
       CAPTURE(static_cast<int>(removal));
+      if (removal == Removal::CorruptOldNames) {
+        const auto labelJob = activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot);
+        REQUIRE(labelJob.isOk());
+        const auto named = f.complete(*activated.value(), labelJob.value().id);
+        REQUIRE(named.state == ca::RebuildState::Succeeded);
+        REQUIRE(named.generation);
+        activated.value().reset();
+        config.generation = named.generation;
+        activated = AssetRebuildHost::open(config);
+        REQUIRE(activated.isOk());
+        CHECK(activated.value()->displayName(target) == "display_alias");
+        auto namedCatalog = as::loadAssetCatalog(activated.value()->catalogPath().generic_string());
+        REQUIRE(namedCatalog.isOk());
+        snapshot = std::make_shared<const as::AssetCatalog>(std::move(namedCatalog.value()));
+      }
       if (removal == Removal::LinkedInbox) {
         REQUIRE(fs::remove(inbox));
         fs::create_hard_link(unit / "source.png", inbox);
       }
-      const ca::TextureRemovalTarget requested{target, previousGeneration};
+      const ca::TextureRemovalTarget requested{target, *config.generation};
       const auto admitted = activated.value()->checkTextureRemoval(requested, snapshot);
       INFO((admitted.isErr() ? ca::toString(admitted.error()) : std::string_view{}));
       REQUIRE(admitted.isOk());
@@ -1019,6 +1101,17 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
         return;
       }
       REQUIRE(receipt.state == State::Ready);
+      const auto publishedCount = [&] {
+        return std::ranges::count_if(fs::directory_iterator(f.published), [](const auto& entry) {
+          return as::parseAssetGuid(entry.path().filename().string()).isOk();
+        });
+      };
+      const auto publishedBefore = publishedCount();
+      if (removal == Removal::OverlayChanged) {
+        const auto timestamp = fs::last_write_time(overlay);
+        editOverlay();
+        CHECK(fs::last_write_time(overlay) == timestamp);
+      }
       if (removal == Removal::Stale) {
         const auto timestamp = fs::last_write_time(authored);
         auto bytes = read(authored);
@@ -1033,13 +1126,53 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
       INFO((settled.failure ? settled.failure->diagnostic : "remove succeeded"));
       CHECK(read(inbox) == kLinearPngBytes);
       CHECK(fs::exists(oldRoot));
+      if (removal == Removal::CorruptOldNames || removal == Removal::LockedSelection) {
+        REQUIRE_FALSE(removalPending.empty());
+        REQUIRE_FALSE(recoveryBytes.empty());
+        CHECK(read(removalPending / "removal.json") == recoveryBytes);
+        CHECK_FALSE(fs::exists(unit));
+        CHECK(fs::exists(f.marker));
+        CHECK(fs::exists(project / ".atlantis-import-dirty"));
+        CHECK(activated.value()->checkTextureRemoval(requested, snapshot).error() == ca::TextureRemovalError::WorkspaceNeedsRepair);
+        if (removal == Removal::CorruptOldNames) {
+          CHECK(settled.state == ca::RebuildState::Failed);
+          CHECK_FALSE(settled.generation);
+          CHECK(publishedCount() == publishedBefore);
+          CHECK(read(removalPending / "previous/source.png") == kLinearPngBytes);
+          CHECK(read(removalPending / "old-names") == "altered backup");
+          CHECK_FALSE(fs::exists(project / "texture-display-names.json"));
+        } else {
+          CHECK(heldSelection);
+          REQUIRE(settled.state == ca::RebuildState::Succeeded);
+          REQUIRE(settled.generation);
+          heldSelection.reset();
+          activated.value().reset();
+          config.generation = settled.generation;
+          auto reopened = AssetRebuildHost::open(config);
+          REQUIRE(reopened.isOk());
+          CHECK(reopened.value()->admissionError() == ca::RebuildError::WorkspaceNeedsRepair);
+          reopened.value().reset();
+          // A restart between clearing the markers and retiring the record
+          // must also retain the hold.
+          REQUIRE(fs::remove(f.marker));
+          REQUIRE(fs::remove(project / ".atlantis-import-dirty"));
+          reopened = AssetRebuildHost::open(config);
+          REQUIRE(reopened.isOk());
+          CHECK(reopened.value()->admissionError() == ca::RebuildError::WorkspaceNeedsRepair);
+        }
+        return;
+      }
       if (removal != Removal::Success) {
         REQUIRE(settled.state == ca::RebuildState::Failed);
         CHECK_FALSE(settled.generation);
         CHECK(fs::exists(unit) == (removal != Removal::Unknown));
         CHECK(fs::exists(f.marker) == (removal == Removal::Unknown));
-        if (removal == Removal::Stale || removal == Removal::LateStale)
+        if (removal == Removal::Stale || removal == Removal::LateStale || bistroProof)
           CHECK(settled.failure->code == ca::RebuildFailureCode::IdentityChanged);
+        if (bistroProof) {
+          CHECK(publishedCount() == publishedBefore);
+          CHECK(read(unit / "source.png") == kLinearPngBytes);
+        }
         return;
       }
       REQUIRE(settled.state == ca::RebuildState::Succeeded);
