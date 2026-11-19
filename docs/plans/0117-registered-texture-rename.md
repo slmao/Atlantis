@@ -65,8 +65,8 @@ behavior. The approved design and Accepted ADR must be merged before S2.
 | Joint decision | Recommendation |
 | --- | --- |
 | **J1 — Name and identity** | Use a separately editable lowercase display name; reserve other managed color labels and their original tokens; keep paths, GUID and bindings unchanged (R1). |
-| **J2 — Persistence and recovery** | Use the project map plus a frozen manifest copy, with reuse of verified outputs. Prove nonpublication before rollback and hold ambiguous writes for repair (R2–R3). |
-| **J3 — Shared contract and compatibility** | Add a guarded start and optional list/get name, reuse job status, preserve legacy client reads. Only updated Runtime writers may use an in-place renamed workspace; runtimes without v8 require an earlier compatible workspace (R4, ADR-0168). |
+| **J2 — Persistence and recovery** | Clone verified active outputs and freeze the name map. Guard it on every managed write, including Resume. Roll back only after proving nonpublication; hold uncertain writes for repair (R2–R3). |
+| **J3 — Shared contract and compatibility** | Add a guarded start and optional list/get name, reuse job status by ID and preserve legacy client reads. Accept v8 activation on updated Runtime only and require updated writers for a workspace with overrides; old Runtime writers are not fenced in place (R4, ADR-0168). |
 | **J4 — Acceptance and delivery** | Accept the Windows 100% and shared/host checks below and authorize one S2–S4 execution after human approval and merge. |
 
 Suggested authorization: “Approve Spec/Plan 0117 (J1–J4) and accept
@@ -79,26 +79,37 @@ hand.”
 
 - [ ] **R1/R3 — Admission and conflict.** Test another color texture's
   original token and assigned label, invalid form, same-name no-op, stale
-  generation and registry/name drift, wrong role and two clients competing.
-  Check no registry/assets mutation or publication on refusal. Show 0095
-  registration cannot steal a reserved label and an earlier read-only
-  generation never admits stale writes. Rename back to the original token
-  without altering bindings.
+  generation, registry/name drift and wrong role. Hold one job and prove
+  a second caller is refused when busy and remains stale after completion
+  on the still-attached generation. Reject an old expected generation
+  on a newly activated Runtime, and on an earlier activated Runtime
+  whose names differ from committed state. Compare committed file
+  bytes/absence and named-generation directories on clean refusals.
+  Exercise 0095 Register's reserved-label refusal and verify no managed
+  write bypasses name-map agreement when using other admission paths,
+  including Resume. Rename back to the original token without altering
+  bindings; removing the last override restores legacy-format publication.
 - [ ] **R2/R3 — Frozen publication and recovery.** Verify exact before/after
-  identity, source and output evidence; normal publications carry the map,
-  including 0116 reimport, and an unrelated publisher (material save or
-  texture Register/Resume). Target an altered frozen map, definitive
-  nonpublication after map exchange, and an uncertain or damaged destination.
-  Assert successful rollback only with proof; unverified state remains a
-  write hold across restart and does not erase the old valid snapshot.
-  Confirm known publication with later cleanup failure remains success.
+  identity and bytes, including with unrelated staging/inbox changes; the
+  rename must copy the active outputs. Verify 0116 reimport and a separate
+  publisher (material save or texture Register/Resume) carry the exact map.
+  Inject a different but syntactically valid name into the prepared manifest
+  and expect rejection before commit. Cover proved nonpublication after
+  exchange, a valid uncertain publication, and an uncertain destination
+  with damage or a different valid map. Assert rollback only with proof;
+  unverified state remains a write hold across restart and leaves the old
+  snapshot usable. Confirm publication with a later cleanup failure remains
+  success and blocks new writes.
 - [ ] **R4 — Shared contract.** Verify native and managed codec parity,
-  optional absence/presence, bounds, malformed values and old client/new
-  host versus new client/old host. Exercise CLI/SDK/MCP write and readback
-  against the same managed behavior, including typed refusals, transport
-  errors and unknown settlement without silent resends. Confirm legacy
-  named generations and seed discover with fallback on the upgraded host;
-  the previous Runtime rejects the new v8 generation. Verify full list
+  optional absence/presence, duplicate/malformed fields, receipt identity,
+  and both old-client/new-host and new-client/old-host directions. Exercise
+  CLI/SDK/MCP write and readback, including CLI text and structured output,
+  the exact legacy refusal, and connection errors before send versus a
+  possibly sent start or lost status, without silent resends. Verify the
+  upgraded Runtime opens prior named generations and seed with fallback, and
+  rejects malformed v8 maps and names on older manifests. With the same
+  usable legacy profile, show a pre-0117 Runtime opens the legacy control
+  generation but rejects v8 at manifest validation. Verify full list
   responses respect the existing limit.
 - [ ] **R1/R2/R4 — Real Windows Editor, 100%.** Start in a named generation
   with a registered texture bound to a material; capture name, source,
@@ -106,12 +117,14 @@ hand.”
   attached snapshot, then explicitly restart into that ID and find the
   texture by a label absent from the old path. Confirm name in list/detail,
   fixed path and GUID search, texture and material identities and unchanged
-  preview. Update the original inbox PNG, reimport and restart into its new
-  generation; confirm changed preview pixels, the renamed label and
-  untouched binding. Record original and both resulting generation IDs,
-  screenshots and pixel evidence. Exercise duplicate refusal and verify
-  stale UI drafts do not submit when their asset or snapshot changes; test
-  the stale wire request against a newer active generation in the host.
+  preview on the same material and mesh. Change only the original inbox
+  PNG, with no alias-named inbox entry. Reimport the same GUID, verify
+  the attached preview remains old, then restart into the reimport
+  generation and confirm changed pixels, the renamed label and untouched
+  binding. Record original and both resulting generation IDs, the source
+  and inbox evidence, screenshots and pixel comparisons. Exercise duplicate
+  refusal; at the UI/Worker boundary, queue a rename and invalidate its
+  selection or snapshot before send, then verify no request is sent.
 - [ ] **Existing gates.** Run affected Windows Runtime, Editor and shared
   client checks, and keep Vulkan validation clean during activation and
   preview. Assess golden evidence on the final inputs; the rename should

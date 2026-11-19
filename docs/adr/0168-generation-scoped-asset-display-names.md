@@ -20,19 +20,22 @@ format or an Editor-local store.
 
 1. Keep one Runtime-owned `texture-display-names.json` at the managed
    project root. It is a canonical JSON object from non-nil canonical
-   texture GUIDs to explicit labels, ordered by GUID, with no duplicates,
-   at most 4,096 entries and at most 512 KiB. An absent file means an empty
-   map; omit entries equal to the original registration token and remove
-   the empty file on commit. Validate canonical bytes, eligibility and
-   namespace against the sealed registry; reject malformed, foreign or
-   unsafe data. The map is edited only under the existing managed writer
-   locks; it is not a user-edited source or an input to CMake.
+   texture GUIDs to explicit labels: compact UTF-8 JSON from the existing
+   serializer with keys in GUID order, no BOM, trailing bytes or duplicate
+   keys, at most 4,096 entries and at most 512 KiB. Only a verified absent
+   file means an empty map; omit entries equal to the original registration
+   token and remove the file when removing the last override. Validate
+   canonical bytes, eligibility and namespace against the sealed registry;
+   reject malformed, foreign or unsafe data. Check capacity before admission
+   and report the limit without writing. The map is edited only under the
+   existing managed writer locks; it is not a user-edited source or a CMake input.
 2. The committed map is the write authority. A new named managed
    generation with any overrides has manifest v8, with the complete map
    embedded as `textureDisplayNames`. Keep existing frozen texture
    evidence according to the actual roles. With no overrides keep the
-   existing manifest format and no names member. Activation verifies the
-   complete canonical map against that generation's frozen producer,
+   existing manifest format and no names member. Reject a v8 manifest
+   with a missing or empty map, or a pre-v8 manifest with a names member.
+   Activation verifies the complete canonical map against that generation's frozen producer,
    catalog and texture evidence before exposing it; the approved existing
    frozen checks still apply. Never consult the mutable project map for
    the displayed names in a running process. Legacy generations/seed
@@ -43,27 +46,38 @@ format or an Editor-local store.
 3. In the common managed publication path, freeze the complete map,
    validate it against the resulting registry and catalog, and carry it
    into every new generation, including registration, Resume, material
-   save, rebuild and 0116 reimport. Recheck the committed map together
-   with the other frozen inputs before commit/publication and when
-   confirming uncertain outcomes. A rename-only job reuses the validated
-   active outputs as its source of publication files, so unrelated
-   staging changes cannot enter the result. No change to the cooked
+   save, rebuild and 0116 reimport. Guard the names on every managed
+   mutation, including entry points that use the slot guard rather than
+   ordinary rebuild admission. The existing Resume exceptions for one
+   committed source unit do not bypass name-map agreement. Freeze the
+   intended map with the job and recheck the committed map before any
+   source commit, before publication and when confirming an uncertain
+   result. Re-read any candidate or final manifest against the job's
+   exact intended map, not just a structurally legal map. A rename-only
+   job copies only the existing allow-list of files from validated active
+   outputs, verifies their bytes, and never reads stage outputs or the
+   inbox. No change to the cooked
    catalog file, artifact formats or logical-key derivation.
 4. Reuse the existing publication lock, dirty markers, recovery discipline
-   and no-replace generation rename. Before changing the registry map,
-   record and flush the job/GUID, intended generation and exact previous
-   (possibly absent) and candidate map evidence in private staging.
-   Replace the single metadata file atomically using ordinary, same-volume
-   paths; hold committed metadata and publication as one recoverable
-   operation. The named-generation rename commits publication. Before that
-   exchange, a proved clean refusal changes neither durable name nor
-   published generation. After metadata exchange, roll back only on
-   proved nonpublication and verified registry state. On uncertain
-   outcomes, verify the intended final directory and committed bytes or
-   retain the evidence and dirty markers across restart. Offline recovery
-   must stop writers and confirm the intended outcome before restoring or
-   keeping the map and clearing markers. Never delete an unrelated
-   or damaged destination. Existing generations stay usable read-only.
+   and no-replace generation rename. First prepare a private validated
+   generation. Under the commit guard, revalidate the old registry and
+   candidate and record and flush the job/GUID, expected active and intended
+   generation IDs and exact old/new map evidence (including absence).
+   Persist both dirty markers before the map exchange. Replace the single
+   metadata file atomically using ordinary same-volume paths; use no-replace
+   when creating and verify ownership before removal. Verify exact new
+   committed bytes (or absence) and recheck the candidate before the
+   named-generation rename, which is the publication commit point.
+   Shutdown or timeout before the exchange prevents it; after it starts,
+   settle the operation or retain repair evidence. Do not infer rollback
+   from a failed API return: only verified absence of the intended final
+   directory and exact recoverable state permit restoring the old map.
+   Both unreadable and damaged destinations require a write hold. A
+   verified complete intended generation plus the exact committed map
+   settle success, with a write hold if cleanup fails. Offline recovery
+   must stop writers and prove the intended outcome before restoring or
+   keeping the map and clearing markers. Never delete an unrelated or
+   damaged destination. Existing generations remain usable read-only.
 5. Discovery is additive on the existing Connection/Remote contract.
    Older clients using a new host can continue consuming old fields.
    Pre-0117 Runtime executables do not accept v8; existing v1–v7

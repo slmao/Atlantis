@@ -55,12 +55,16 @@ generation ID and requested display name. Resolve the GUID against the
 active catalog and frozen managed registry with 0116's source, producer,
 type, role and eligibility checks. Map the original name only from the
 validated source. Require the expected generation to match the active
-generation and the complete committed registry to agree with its frozen
-view, including the names. Repeat both guards and the conflict check under
-the existing workspace and publication locks before the commit. A Runtime
-on a seed, an old generation whose registry differs, or a nonmanaged
-profile cannot rename. Use the existing single job slot; concurrent requests
-cannot queue a second write behind a stale decision.
+named generation, and the complete committed registry, including the names,
+to agree with that snapshot. Check the cached state at admission; the
+worker re-reads disk evidence before preparing and again under the
+existing publication guard before commit. An active-generation mismatch
+or a verified registry mismatch is stale, even if the requested label
+would otherwise be free or unchanged. An unreadable or unverified
+registry blocks managed writes. A seed or nonmanaged profile cannot
+rename. Use the existing single job slot and update the committed names
+before freeing it after publication, so a second client on the old
+snapshot cannot write through the completion of the first job.
 
 Use the existing 0095 name grammar: 1–48 lowercase ASCII characters,
 starting with a letter, followed by letters, digits or underscore, excluding
@@ -70,9 +74,11 @@ registration tokens and assigned labels of other textures. Do not reserve
 labels of other asset classes or roles. Reject a collision or stale request
 without changing the registry or publishing a generation. An exact current
 label is a no-op refusal with no new publication; rename back to one's own
-original token removes the override. New 0095 Register checks the same
-namespace before allocation and on commit; Resume keeps its existing
-identity and cannot bypass the invariant.
+original token removes the override. The 0095 color Register checks the
+same namespace before GUID allocation and before source commit; Resume
+checks the namespace for its already registered unit without allocating
+a new identity. Existing shared registration-token collisions across
+texture roles remain enforced independently.
 
 ### R2 — Persist and publish one change
 
@@ -110,12 +116,15 @@ usable read-only. Confirm an uncertain publication only by validating the
 expected final directory and exact intended registry. A cleanup failure after
 verified publication preserves success and blocks further writes until repair.
 
-Return a bounded job receipt. Preserve transport error categories; if the
-start may have been sent and the receipt was lost, report the result as
-unknown with the target GUID and proposed label. Query by job ID when known;
-a latest matching asset is not proof of ownership. An expired or lost status
-is not proof of failure. Inspect retained status or the intended generation
-and ensure the prior request has settled before a fresh explicit attempt.
+Return a bounded job receipt. A provably unsent request is not admitted.
+Preserve transport error categories; if the start may have been sent and
+its receipt is missing or invalid, report an unknown outcome with the
+target GUID, expected generation and proposed label. Query by job ID
+when known and require the returned job to match that ID and asset. A
+latest matching asset or label is not proof of ownership. Keep the known
+job ID if a status reply is lost or the record has expired. If attribution
+cannot be recovered, inspect the workspace and relevant generations and
+ensure the prior request has settled before a fresh explicit attempt.
 No automatic retry or Register/Resume fallback.
 
 ### R4 — One shared surface and search behavior
@@ -127,27 +136,37 @@ history and workspace admission. For this new start method, expose distinct
 refusals: `Unsupported`, `Unavailable`, `Busy`, `WorkspaceNeedsRepair`,
 `CatalogUnavailable`, `UnknownAsset`, `UnsupportedProducer`, `InvalidName`,
 `NameConflict`, `StaleSnapshot`, `Unchanged`. Malformed wire shapes are
-protocol errors. A guard failing after admission reports a failed job, using
-existing failure codes with a diagnostic identifying the failed guard.
+protocol errors. A conflict or stale guard discovered after admission
+reports `Validation/IdentityChanged` with a diagnostic distinguishing the
+two; unverified state uses the existing repair behavior.
 Keep legacy rebuild/import method result shapes unchanged. Editor, CLI,
-both SDKs and MCP use these same operations. A legacy-host unknown-method
-refusal maps to Unsupported; retain other connection or protocol failures.
+both SDKs and MCP use these same operations. Only the existing exact
+legacy unknown-asset-method envelope (BadRequest, “unknown or malformed
+asset query”) maps to Unsupported for a well-formed request; retain other
+connection or protocol failures.
 
 Add one optional `displayName` string to the existing `assets.list` and
 `assets.get` item; omit it when no override is present, preserve `source`,
 old fields and GUID order. Both queries agree for a GUID in one snapshot.
-Old clients ignore the extra member; new clients read older snapshots/hosts
-with the existing path-derived presentation. A malformed present field is a
-codec error. No new catalog query, server-side search or transport limit.
-Use the same length bound as R1 and retain 0081's complete-list behavior.
+Only eligible textures with an override carry the member. Old clients
+ignore it; new clients read older snapshots/hosts
+with the existing path-derived presentation. New readers reject a duplicate,
+null, non-string or invalid present name; absent is the only fallback.
+Use R1's name grammar. CLI text displays the label separately from the
+source and retains the old presentation when absent; CLI JSON and MCP
+preserve the optional field. No new catalog query, server-side search or
+transport limit; retain 0081's complete-list behavior.
 
 Assets offers Rename for a single visible, provisionally eligible texture
 in a named generation, uses the name from the snapshot and shows the fixed
-source/inbox path separately. Retain the GUID and connection/snapshot
-intent; discard a draft if the target goes stale before submission and
-ignore late results for a replaced connection. Once admitted, status is
-tied to the job and cannot be retargeted by changing selection. Report
-publication and give the existing explicit-restart instruction. After
+source/inbox path separately. Capture the GUID, accepted catalog/list
+intent and the active generation reported by that connection's existing
+rebuild status. Before sending from the Worker, recheck that the draft
+still targets the same visible selection, list and connection; cancel on
+hide, reload, selection change or disconnect. Drop late UI replies for a
+replaced connection. Once sent, settlement is independent of selection;
+once admitted, poll only by the returned job ID. Report the published ID
+and unchanged active ID and give the explicit-restart instruction. After
 restarting, Assets uses the shared name for display, sorting and name
 search; the old path and GUID still match path/GUID search. The reference
 picker and asset labels use the same name when showing an asset. All
