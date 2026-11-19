@@ -1,10 +1,10 @@
 # Plan 0118 — Remove an Unused Registered Base Color Texture
 
 - **Spec:** [Spec 0118](../specs/0118-registered-texture-removal.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0169](../adr/0169-prove-unused-before-removing-managed-textures.md) (Proposed)
+- **Joint Human Review:** Atlantis maintainer, 2026-11-20, [PR #401](https://github.com/slmao/Atlantis/pull/401) at `3ffa6d55`: approved Spec/Plan 0118 and J1–J4, accepted ADR-0169, and authorized S2–S4 after manual merge `5c7fb5a1`. Both Windows 100% workflows and applicable gates retained.
+- **ADR:** [ADR-0169](../adr/0169-prove-unused-before-removing-managed-textures.md) (Accepted)
 
 ## Objective
 

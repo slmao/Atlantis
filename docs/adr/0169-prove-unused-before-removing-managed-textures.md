@@ -1,9 +1,9 @@
 # ADR 0169: Prove a Managed Texture Is Unused Before Removing Its Registration
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-20
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Atlantis maintainer, 2026-11-20, [PR #401](https://github.com/slmao/Atlantis/pull/401) at `3ffa6d55`, manually merged as `5c7fb5a1`.
 - **Related Spec:** [Spec 0118](../specs/0118-registered-texture-removal.md)
 
 ## Context

@@ -1,11 +1,11 @@
 # Spec 0118 — Remove an Unused Registered Base Color Texture
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-20
 - **Related Plan:** [Plan 0118](../plans/0118-registered-texture-removal.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0169](../adr/0169-prove-unused-before-removing-managed-textures.md) (Proposed)
+- **Approval:** Joint J1–J4 approval at `3ffa6d55`, [PR #401](https://github.com/slmao/Atlantis/pull/401), manually merged as `5c7fb5a1`.
+- **Related ADR:** [ADR-0169](../adr/0169-prove-unused-before-removing-managed-textures.md) (Accepted)
 
 ## Summary
 
