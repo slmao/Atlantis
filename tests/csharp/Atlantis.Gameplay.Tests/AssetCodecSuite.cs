@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Atlantis.Gameplay.Remote;
 using A = Atlantis.Gameplay.Assets;
 
@@ -33,13 +34,24 @@ public static class AssetCodecSuite
             "asset summary rejects null, duplicate or malformed present names");
         foreach (A.RenameTextureError error in Enum.GetValues<A.RenameTextureError>())
             t.Equal<A.RenameTextureError?>(error, Codec.DecodeRenameTextureError(JsonValue.String(error.ToString())), "rename refusal " + error);
-        RenameReceipts(t, guid);
+        TextureWriteReceipts(t, guid, remove: false);
+        TextureWriteReceipts(t, guid, remove: true);
         JsonValue missingSchema = Codec.Encode(new A.AssetSummary(guid, A.AssetType.Mesh, "assets:mesh.txt"))
             .Set("artifactSchema", JsonValue.Number(0UL)).Set("tool", JsonValue.String("test/1")).Set("dependencies", JsonValue.NewArray());
         t.Check(Codec.DecodeAssetDetails(missingSchema) is null, "sourceSchema is required even when absent natively");
         t.Check(Codec.DecodeAssetDetails(missingSchema.Set("sourceSchema", JsonValue.Number((ulong)uint.MaxValue))) is { ArtifactSchema: 0, SourceSchema: uint.MaxValue }, "both uint32 boundaries");
         t.Check(Codec.DecodeAssetDetails(missingSchema.Set("sourceSchema", JsonValue.Number(-1L))) is null, "negative schema refused");
         var running = new A.RebuildJob(new(guid), guid, A.RebuildState.Running);
+        var removal = new A.TextureRemovalCheck(new(guid), guid, new(guid), A.TextureRemovalState.Referenced,
+            [new(guid, "content:material_bound/source.material.txt", A.TextureReferenceSlot.Emissive)],
+            false, true, "One recipe was unavailable.");
+        var removalWire = Codec.Encode(removal);
+        var checkedRemoval = Codec.DecodeTextureRemovalCheck(removalWire);
+        t.Check(checkedRemoval is not null && checkedRemoval.Blockers.SequenceEqual(removal.Blockers) &&
+            Json.Write(Codec.Encode(checkedRemoval)) == Json.Write(removalWire), "typed removal check round trips");
+        t.Check(Codec.DecodeTextureRemovalCheck(Codec.Encode(removal).Set("state", JsonValue.String("Ready"))) is null &&
+            Codec.DecodeTextureRemovalCheck(Codec.Encode(removal).Set("truncated", JsonValue.Bool(true))) is null,
+            "a blocked or malformed removal check cannot be Ready");
         t.Equal<A.RebuildJob?>(running, Codec.DecodeRebuildJob(Codec.Encode(running)), "rebuild running receipt");
         t.Check(Codec.DecodeRebuildJob(Codec.Encode(running).Set("failure", JsonValue.Null())) is null,
                 "running does not carry failure, including explicit null");
@@ -55,8 +67,11 @@ public static class AssetCodecSuite
         PairPreview(t, guid);
     }
 
-    private static void RenameReceipts(TestContext t, AssetGuid asset)
+    private static void TextureWriteReceipts(TestContext t, AssetGuid asset, bool remove)
     {
+        string writeMethod = remove ? "assets.removeTexture" : "assets.renameTexture";
+        string field = remove ? "checkId" : "displayName";
+        string argument = remove ? asset.ToString() : "blue_probe";
         foreach (string scenario in new[] { "lost", "malformed", "legacy" })
         {
             using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
@@ -79,10 +94,10 @@ public static class AssetCodecSuite
                         envelope.Set("result", JsonValue.NewArray());
                     else
                     {
-                        if (method != "assets.renameTexture" || request.Find("params")?.Find("displayName")?.AsString != "blue_probe" ||
+                        if (method != writeMethod || request.Find("params")?.Find(field)?.AsString != argument ||
                             request.Find("params")?.Find("asset")?.AsString != asset.ToString() ||
                             request.Find("params")?.Find("expectedGeneration")?.AsString != asset.ToString())
-                            throw new InvalidOperationException("unexpected rename method or identity");
+                            throw new InvalidOperationException("unexpected texture method or identity");
                         if (scenario == "malformed") writer.WriteLine(Json.Write(envelope.Set("result", Codec.Ok(JsonValue.NewObject()))));
                         if (scenario == "legacy") writer.WriteLine(Json.Write(envelope.Set("error", JsonValue.NewObject()
                             .Set("code", JsonValue.String("BadRequest")).Set("message", JsonValue.String("unknown or malformed asset query")))));
@@ -94,19 +109,21 @@ public static class AssetCodecSuite
             });
             using var client = RemoteSession.Connect(new SessionInfo((ushort)((System.Net.IPEndPoint)listener.LocalEndpoint).Port,
                 "00112233445566778899aabbccddeeff", 1, asset), new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
+            string Send() => remove ? client.Assets.RemoveTexture(asset, new(asset), new(asset)).Error.ToString()
+                : client.Assets.RenameTexture(asset, new(asset), "blue_probe").Error.ToString();
             if (scenario == "legacy")
-                t.Equal(A.RenameTextureError.Unsupported, client.Assets.RenameTexture(asset, new(asset), "blue_probe").Error,
+                t.Equal("Unsupported", Send(),
                     "only legacy refusal maps to Unsupported");
             else
             {
-                var failure = t.Throws<RemoteException>(() => client.Assets.RenameTexture(asset, new(asset), "blue_probe"), "rename " + scenario);
+                var failure = t.Throws<RemoteException>(() => Send(), writeMethod + " " + scenario);
                 t.Check(failure?.Error == (scenario == "lost" ? RemoteError.Disconnected : RemoteError.ProtocolError) &&
                     failure.Message.Contains("outcome unknown") && failure.Message.Contains(asset.ToString()),
-                    "rename retains category, target and unknown outcome");
-                var notSent = t.Throws<RemoteException>(() => client.Assets.RenameTexture(asset, new(asset), "not_sent"), "failed session");
-                t.Check(notSent is not null && !notSent.Message.Contains("not_sent"), "known unsent has no unknown-write attribution");
+                    "texture write retains category, target and unknown outcome");
+                var notSent = t.Throws<RemoteException>(() => Send(), "failed session");
+                t.Check(notSent is not null && !notSent.Message.Contains("outcome unknown"), "known unsent has no unknown-write attribution");
             }
-            t.Equal(1, peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(), "rename sent at most once");
+            t.Equal(1, peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(), "texture write sent at most once");
         }
     }
 

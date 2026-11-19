@@ -58,6 +58,15 @@ internal static partial class Program
         ("assets.rename_texture", "assets.renameTexture",
             $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","displayName":"blue_probe"}""",
             $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.check_texture_removal", "assets.checkTextureRemoval",
+            $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","state":"Checking","blockers":[],"truncated":false,"incomplete":false,"diagnostic":""}}"""),
+        ("assets.texture_removal_check_status", "assets.textureRemovalCheckStatus",
+            $$$"""{"checkId":"{{{Material}}}"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","state":"Ready","blockers":[],"truncated":false,"incomplete":false,"diagnostic":""}}"""),
+        ("assets.remove_texture", "assets.removeTexture",
+            $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","checkId":"{{{Material}}}"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
         ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
         ("assets.preview_mesh_material", "assets.previewMeshMaterial", PairPreviewArgs, PairPreviewMetadata),
@@ -216,6 +225,8 @@ internal static partial class Program
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.rename_texture" ? description.Contains("display rename") && description.Contains("Runtime restart") :
+                c.Tool == "assets.check_texture_removal" ? description.Contains("reference check") && description.Contains("Runtime restart") :
+                c.Tool == "assets.remove_texture" ? description.Contains("Ready receipt") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
                 (c.Tool is "assets.texture_import" or "assets.normal_map_import" or "assets.metallic_roughness_import" or "assets.occlusion_import") ? description.Contains("Register one managed") && description.Contains("Runtime restart") :
                 (c.Tool is "assets.material_save" or "assets.material_save_with_maps" or "assets.material_save_with_metallic_roughness" or "assets.material_save_with_occlusion" or "assets.material_save_with_combined_maps") ? description.Contains("before retrying") && description.Contains("Runtime restart") :
@@ -515,7 +526,8 @@ internal static partial class Program
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
                 "authoring.saveAs" or "authoring.createScene" or "authoring.documentState" or "authoring.saveIfCurrent" or
-                "authoring.reopenIfCurrent" or "control.viewportNavigation")
+                "authoring.reopenIfCurrent" or "control.viewportNavigation" or
+                "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

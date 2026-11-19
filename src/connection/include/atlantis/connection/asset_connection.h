@@ -146,6 +146,44 @@ struct RenameTextureRequest {
   std::string displayName;
 };
 using RenameTextureResult = Result<RebuildJob, RenameTextureError>;
+
+struct TextureRemovalCheckId {
+  asset_system::AssetGuid value;
+  friend bool operator==(const TextureRemovalCheckId&, const TextureRemovalCheckId&) = default;
+};
+enum class TextureRemovalError : std::uint8_t {
+  Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+  UnsupportedProducer, StaleCheck, UnknownCheck,
+};
+enum class TextureRemovalState : std::uint8_t { Checking, Ready, Referenced, CheckIncomplete, StaleCheck };
+enum class TextureReferenceSlot : std::uint8_t { BaseColor, Normal, MetallicRoughness, Occlusion, Emissive };
+inline constexpr std::size_t kTextureRemovalBlockerLimit = 16;
+[[nodiscard]] std::string_view toString(TextureRemovalError value) noexcept;
+[[nodiscard]] std::string_view toString(TextureRemovalState value) noexcept;
+[[nodiscard]] std::string_view toString(TextureReferenceSlot value) noexcept;
+struct TextureRemovalTarget {
+  asset_system::AssetGuid asset;
+  GenerationId expectedGeneration;
+  friend bool operator==(const TextureRemovalTarget&, const TextureRemovalTarget&) = default;
+};
+struct TextureRemovalBlocker {
+  asset_system::AssetGuid asset;
+  std::string source;
+  std::optional<TextureReferenceSlot> slot;
+  friend bool operator==(const TextureRemovalBlocker&, const TextureRemovalBlocker&) = default;
+};
+struct TextureRemovalCheck {
+  TextureRemovalCheckId id;
+  TextureRemovalTarget target;
+  TextureRemovalState state = TextureRemovalState::Checking;
+  std::vector<TextureRemovalBlocker> blockers;
+  bool truncated = false;
+  bool incomplete = false;
+  std::string diagnostic;
+  friend bool operator==(const TextureRemovalCheck&, const TextureRemovalCheck&) = default;
+};
+using TextureRemovalCheckResult = Result<TextureRemovalCheck, TextureRemovalError>;
+using RemoveTextureResult = Result<RebuildJob, TextureRemovalError>;
 struct ImportId {
   asset_system::AssetGuid value;
   friend bool operator==(const ImportId&, const ImportId&) = default;
@@ -381,6 +419,16 @@ class AssetConnection {
   // A success admits one job, settled through rebuildStatus by its returned ID.
   [[nodiscard]] virtual assets::RenameTextureResult renameTexture(const assets::RenameTextureRequest&) {
     return assets::RenameTextureResult::Err(assets::RenameTextureError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::TextureRemovalCheckResult checkTextureRemoval(const assets::TextureRemovalTarget&) {
+    return assets::TextureRemovalCheckResult::Err(assets::TextureRemovalError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::TextureRemovalCheckResult textureRemovalCheckStatus(assets::TextureRemovalCheckId) const {
+    return assets::TextureRemovalCheckResult::Err(assets::TextureRemovalError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::RemoveTextureResult removeTexture(
+      const assets::TextureRemovalTarget&, assets::TextureRemovalCheckId) {
+    return assets::RemoveTextureResult::Err(assets::TextureRemovalError::Unsupported);
   }
   [[nodiscard]] virtual assets::RebuildStatusResult rebuildStatus(std::optional<assets::RebuildId>) const {
     return assets::RebuildStatusResult::Err(assets::RebuildError::Unavailable);

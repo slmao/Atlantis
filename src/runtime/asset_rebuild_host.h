@@ -33,6 +33,8 @@ class AssetRebuildHost {
     std::function<void(const std::filesystem::path&)> afterRenamePreparation{};
     std::function<void(const std::filesystem::path&, std::chrono::steady_clock::time_point)> beforeRenameExchange{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeRenamePublication{};
+    std::function<void(const std::filesystem::path&)> afterRemovalPreparation{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeRemovalPublication{};
 #endif
   };
 
@@ -51,6 +53,12 @@ class AssetRebuildHost {
   [[nodiscard]] std::optional<std::string> displayName(asset_system::AssetGuid asset) const;
   [[nodiscard]] connection::assets::RenameTextureResult renameTexture(
       const connection::assets::RenameTextureRequest& request, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::TextureRemovalCheckResult checkTextureRemoval(
+      const connection::assets::TextureRemovalTarget& target, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::TextureRemovalCheckResult textureRemovalCheckStatus(
+      connection::assets::TextureRemovalCheckId id) const;
+  [[nodiscard]] connection::assets::RemoveTextureResult removeTexture(
+      const connection::assets::TextureRemovalTarget& target, connection::assets::TextureRemovalCheckId id);
   [[nodiscard]] std::filesystem::path generationCatalogSource() const;
   [[nodiscard]] connection::assets::ImportStartResult startImport(
       std::string_view name, connection::assets::ImportMode mode,

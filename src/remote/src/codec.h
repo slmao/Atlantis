@@ -56,6 +56,11 @@ namespace atlantis::remote::codec {
 [[nodiscard]] std::optional<connection::assets::RebuildStatus> decodeRebuildStatus(const connection::json::Value& value);
 [[nodiscard]] std::optional<connection::assets::RenameTextureError> decodeRenameTextureError(
     const connection::json::Value& value, bool start);
+[[nodiscard]] connection::json::Value encode(const connection::assets::TextureRemovalCheck& value);
+[[nodiscard]] std::optional<connection::assets::TextureRemovalCheck> decodeTextureRemovalCheck(
+    const connection::json::Value& value);
+[[nodiscard]] std::optional<connection::assets::TextureRemovalError> decodeTextureRemovalError(
+    const connection::json::Value& value, bool start);
 [[nodiscard]] std::optional<connection::assets::RebuildError> decodeRebuildError(const connection::json::Value& value,
                                                                                  bool start);
 

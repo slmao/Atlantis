@@ -1,5 +1,6 @@
 #include "codec.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -180,6 +181,65 @@ std::optional<ca::RenameTextureError> decodeRenameTextureError(const Value& valu
     if (value.asString() == ca::toString(error)) return error;
   }
   return std::nullopt;
+}
+Value encode(const ca::TextureRemovalCheck& check) {
+  Value out = Value::object();
+  out.set("id", encodeAsset(check.id.value));
+  out.set("asset", encodeAsset(check.target.asset));
+  out.set("expectedGeneration", encodeAsset(check.target.expectedGeneration.value));
+  out.set("state", Value::string(std::string(ca::toString(check.state))));
+  Value blockers = Value::array();
+  for (const auto& blocker : check.blockers) {
+    Value entry = Value::object();
+    entry.set("asset", encodeAsset(blocker.asset));
+    entry.set("source", Value::string(blocker.source));
+    entry.set("slot", blocker.slot ? Value::string(std::string(ca::toString(*blocker.slot))) : Value());
+    blockers.push(std::move(entry));
+  }
+  out.set("blockers", std::move(blockers));
+  out.set("truncated", Value::boolean(check.truncated));
+  out.set("incomplete", Value::boolean(check.incomplete));
+  out.set("diagnostic", Value::string(check.diagnostic));
+  return out;
+}
+
+std::optional<ca::TextureRemovalCheck> decodeTextureRemovalCheck(const Value& value) {
+  using S = ca::TextureRemovalState;
+  const auto id = nonNilAsset(value.find("id"));
+  const auto asset = nonNilAsset(value.find("asset"));
+  const auto generation = nonNilAsset(value.find("expectedGeneration"));
+  const auto state = rebuildToken(value.find("state"), S::StaleCheck);
+  const auto* blockers = value.find("blockers");
+  const auto* truncated = value.find("truncated");
+  const auto* incomplete = value.find("incomplete");
+  const auto* diagnostic = value.find("diagnostic");
+  if (!value.isObject() || value.asObject().size() != 8 || !id || !asset || !generation || !state ||
+      !blockers || !blockers->isArray() || blockers->asArray().size() > ca::kTextureRemovalBlockerLimit ||
+      !truncated || !truncated->isBool() || !incomplete || !incomplete->isBool() ||
+      !diagnostic || !diagnostic->isString() || diagnostic->asString().size() > 4096) return {};
+  if ((*state == S::Referenced) != !blockers->asArray().empty() ||
+      (truncated->asBool() && blockers->asArray().size() != ca::kTextureRemovalBlockerLimit) ||
+      ((*state == S::Checking || *state == S::Ready) && (incomplete->asBool() || !diagnostic->asString().empty())) ||
+      (*state == S::CheckIncomplete && !incomplete->asBool())) return {};
+  ca::TextureRemovalCheck out{{*id}, {*asset, {*generation}}, *state, {},
+                             truncated->asBool(), incomplete->asBool(), diagnostic->asString()};
+  for (const auto& entry : blockers->asArray()) {
+    const auto dependent = nonNilAsset(entry.find("asset"));
+    const auto* source = entry.find("source");
+    const auto* slot = entry.find("slot");
+    if (!entry.isObject() || entry.asObject().size() != 3 || !dependent || !source ||
+        !source->isString() || source->asString().empty() || source->asString().size() > 4096 || !slot) return {};
+    const auto parsed = slot->isNull() ? std::nullopt : rebuildToken(slot, ca::TextureReferenceSlot::Emissive);
+    if (!parsed && !slot->isNull()) return {};
+    ca::TextureRemovalBlocker blocker{*dependent, source->asString(), parsed};
+    if (std::ranges::find(out.blockers, blocker) != out.blockers.end()) return {};
+    out.blockers.push_back(std::move(blocker));
+  }
+  return out;
+}
+
+std::optional<ca::TextureRemovalError> decodeTextureRemovalError(const Value& value, bool) {
+  return rebuildToken(&value, ca::TextureRemovalError::UnknownCheck);
 }
 std::optional<ca::RebuildError> decodeRebuildError(const Value& value, bool start) {
   const auto error = rebuildToken(&value, ca::RebuildError::UnknownJob);

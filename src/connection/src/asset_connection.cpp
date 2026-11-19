@@ -189,6 +189,46 @@ std::optional<MeshMaterialPreview> decodeMeshMaterialPreview(const json::Value& 
   return MeshMaterialPreview{meshGuid, materialGuid, kPreviewDimension, kPreviewDimension, std::move(*bytes)};
 }
 
+std::string_view toString(TextureRemovalError value) noexcept {
+  using E = TextureRemovalError;
+  switch (value) {
+    case E::Unsupported: return "Unsupported";
+    case E::Unavailable: return "Unavailable";
+    case E::Busy: return "Busy";
+    case E::WorkspaceNeedsRepair: return "WorkspaceNeedsRepair";
+    case E::CatalogUnavailable: return "CatalogUnavailable";
+    case E::UnknownAsset: return "UnknownAsset";
+    case E::UnsupportedProducer: return "UnsupportedProducer";
+    case E::StaleCheck: return "StaleCheck";
+    case E::UnknownCheck: return "UnknownCheck";
+  }
+  return "Unavailable";
+}
+
+std::string_view toString(TextureRemovalState value) noexcept {
+  using S = TextureRemovalState;
+  switch (value) {
+    case S::Checking: return "Checking";
+    case S::Ready: return "Ready";
+    case S::Referenced: return "Referenced";
+    case S::CheckIncomplete: return "CheckIncomplete";
+    case S::StaleCheck: return "StaleCheck";
+  }
+  return "CheckIncomplete";
+}
+
+std::string_view toString(TextureReferenceSlot value) noexcept {
+  using S = TextureReferenceSlot;
+  switch (value) {
+    case S::BaseColor: return "BaseColor";
+    case S::Normal: return "Normal";
+    case S::MetallicRoughness: return "MetallicRoughness";
+    case S::Occlusion: return "Occlusion";
+    case S::Emissive: return "Emissive";
+  }
+  return {};
+}
+
 std::string_view toString(RenameTextureError value) noexcept {
   return token(value, std::array{"Unsupported", "Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
       "UnknownAsset", "UnsupportedProducer", "InvalidName", "NameConflict", "StaleSnapshot", "Unchanged"});

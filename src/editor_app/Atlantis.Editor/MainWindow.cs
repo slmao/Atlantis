@@ -290,6 +290,14 @@ public sealed class MainWindow : Window
     private GenerationId? _renameDraftGeneration;
     private string? _renameRequestContext;
     private bool _renameUnknown;
+    private string _assetWriteLabel = "Rename";
+    private readonly Button _removeRegistration = new() { Content = "Remove registration…", IsVisible = false };
+    private readonly Button _confirmRemoval = new() { Content = "Confirm removal", IsVisible = false };
+    private readonly Button _cancelRemoval = new() { Content = "Cancel check", IsVisible = false };
+    private readonly TextBlock _removalState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly DispatcherTimer _removalPoll = new() { Interval = TimeSpan.FromSeconds(1) };
+    private TextureRemovalCheck? _removalReceipt;
+    private bool _removalQueryPending;
 
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly TextBlock _reimportInput = EditorVisuals.Secondary("");
@@ -689,6 +697,7 @@ public sealed class MainWindow : Window
             {
                 _assetBrowser.CancelPendingDependents();
                 _assetBrowser.CancelRename();
+                _assetBrowser.CancelRemoval();
                 UpdateRebuildButtons();
             }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
@@ -978,13 +987,14 @@ public sealed class MainWindow : Window
                 _renameUnknown = _renameRequestContext is not null;
                 _rebuildState.Text = _renameRequestContext is string target
                     ? (_rebuildJob is RebuildId renameJob
-                        ? $"Rename {target}, job {renameJob}: outcome unknown. Retain the ID and query after reconnecting."
-                        : $"Rename {target}: outcome unknown. Inspect the workspace and generations; confirm settlement before retrying.")
+                        ? $"{_assetWriteLabel} {target}, job {renameJob}: outcome unknown. Retain the ID and query after reconnecting."
+                        : $"{_assetWriteLabel} {target}: outcome unknown. Inspect the workspace and generations; confirm settlement before retrying.")
                     : _rebuildJob is RebuildId job
                         ? $"Rebuild {job} outcome unknown. Check its status before retrying."
                         : "Rebuild admission unknown. Inspect the latest job before retrying; it may belong to another client.";
             }
             _rebuildPending = _rebuildRunning = false;
+            _assetBrowser.CancelRemoval();
             UpdateRebuildButtons();
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
             _groupGrab = null;
@@ -2224,12 +2234,28 @@ public sealed class MainWindow : Window
         _renamePublish.Click += (_, _) => PublishTextureRename();
         _renameCancel.Click += (_, _) => { _assetBrowser.CancelRename(); UpdateRebuildButtons(); _renameTexture.Focus(); };
         _renameLabel.TextChanged += (_, _) => UpdateRebuildButtons();
+        _removeRegistration.Click += (_, _) => BeginTextureRemoval();
+        _confirmRemoval.Click += (_, _) => ConfirmTextureRemoval();
+        _cancelRemoval.Click += (_, _) =>
+        {
+            _assetBrowser.CancelRemoval();
+            UpdateRebuildButtons();
+            _removeRegistration.Focus();
+        };
+        _removalPoll.Tick += (_, _) =>
+        {
+            if (_worker is { } worker && _assetBrowser.RemovalIntent is { } intent &&
+                _removalReceipt is { State: TextureRemovalState.Checking } check)
+                ReadTextureRemoval(worker, intent, check.ExpectedGeneration, check.Id);
+        };
         AutomationProperties.SetName(_renameLabel, "Texture display name");
         _renameEditor = EditorVisuals.Stack(4, _renameLabel, _renamePath,
             EditorVisuals.Actions(_renamePublish, _renameCancel));
         _renameEditor.IsVisible = false;
         var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
-            EditorVisuals.Stack(5, _assetTitle, _renameTexture, _renameEditor, _addMesh, _addMeshState, _previewState,
+            EditorVisuals.Stack(5, _assetTitle, EditorVisuals.Actions(_renameTexture, _removeRegistration),
+                _renameEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
+                _addMesh, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
@@ -3298,11 +3324,108 @@ public sealed class MainWindow : Window
             "/source.png in the configured project. Use the active named generation.";
         UpdateAffectedMaterials();
         bool editing = _assetBrowser.RenameIntent is not null && _renameDraftGeneration is not null;
+        bool checkingRemoval = _assetBrowser.RemovalIntent is not null && !_referenceSessionFailed;
+        if (!checkingRemoval)
+        {
+            _removalPoll.Stop();
+            _removalReceipt = null;
+            _removalQueryPending = false;
+            _removalState.Text = "";
+        }
+        _removalState.IsVisible = checkingRemoval;
+        _removeRegistration.IsVisible = name is not null && !editing && !checkingRemoval;
+        _removeRegistration.IsEnabled = available && !_rebuildRunning && !_renameUnknown;
+        _confirmRemoval.IsVisible = checkingRemoval && _removalReceipt?.State == TextureRemovalState.Ready;
+        _confirmRemoval.IsEnabled = _confirmRemoval.IsVisible && available && !_rebuildRunning && !_renameUnknown;
+        _cancelRemoval.IsVisible = checkingRemoval;
         _renameTexture.IsVisible = name is not null && !editing;
-        _renameTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && name is not null;
+        _renameTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && name is not null && !checkingRemoval;
         if (_renameEditor is not null) _renameEditor.IsVisible = editing && !_referenceSessionFailed;
         _renamePublish.IsEnabled = editing && available && !_rebuildRunning && !_renameUnknown && Codec.ValidImportName(_renameLabel.Text);
         _renameCancel.IsEnabled = editing;
+    }
+
+    private void BeginTextureRemoval()
+    {
+        if (!_removeRegistration.IsEnabled || _worker is not { } worker ||
+            _assetBrowser.BeginRemoval() is not { } intent) return;
+        _removalState.Text = "Checking project references…";
+        UpdateRebuildButtons();
+        worker.QueryRebuild(null, status =>
+        {
+            if (!ReferenceEquals(worker, _worker) || !intent.Intent.Current || _referenceSessionFailed) return;
+            if (!status.IsOk || status.Value!.ActiveGeneration is not GenerationId generation)
+            {
+                _removalState.Text = "Removal requires a compatible Runtime and an active named generation.";
+                return;
+            }
+            _activeAssetGeneration = generation;
+            ReadTextureRemoval(worker, intent, generation, null);
+        });
+    }
+
+    private void ReadTextureRemoval(EditorWorker worker, TextureRemovalIntent intent, GenerationId generation,
+        TextureRemovalCheckId? id)
+    {
+        if (_removalQueryPending) return;
+        _removalQueryPending = true;
+        worker.CheckTextureRemoval(intent, generation, id, (result, diagnostic) =>
+        {
+            if (!ReferenceEquals(worker, _worker) || !intent.Intent.Current || _referenceSessionFailed) return;
+            _removalQueryPending = false;
+            if (result is not { IsOk: true } accepted || accepted.Value is not { } check ||
+                check.Asset != intent.Asset.Guid || check.ExpectedGeneration != generation ||
+                generation != _activeAssetGeneration || id is { } expected && check.Id != expected)
+            {
+                _removalReceipt = null;
+                _removalPoll.Stop();
+                _removalState.Text = diagnostic ?? "Cannot verify removal eligibility. Check again. " + result?.Error;
+                UpdateRebuildButtons();
+                return;
+            }
+            _removalReceipt = check;
+            if (check.State == TextureRemovalState.Checking) _removalPoll.Start(); else _removalPoll.Stop();
+            string png = "inbox/" + AssetBrowser.RegisteredColorName(intent.Asset) + "/source.png";
+            _removalState.Text = check.State switch
+            {
+                TextureRemovalState.Checking => "Checking project references…",
+                TextureRemovalState.Ready => $"Remove {EditorVisuals.AssetName(intent.Asset)} from the registry? The original {png} is kept.",
+                TextureRemovalState.Referenced => "Removal refused. Referenced by:\n" +
+                    string.Join("\n", check.Blockers.Select(blocker =>
+                        blocker.Source + (blocker.Slot is { } slot ? $" ({slot})" : ""))) +
+                    (check.Truncated ? "\nAdditional references omitted." : "") +
+                    (check.Incomplete ? "\nThe check was incomplete." : ""),
+                _ => "Removal refused. " + check.State + ". " + check.Diagnostic,
+            };
+            UpdateRebuildButtons();
+        });
+    }
+
+    private void ConfirmTextureRemoval()
+    {
+        if (!_confirmRemoval.IsEnabled || _worker is not { } worker || _assetBrowser.RemovalIntent is not { } intent ||
+            _removalReceipt is not { State: TextureRemovalState.Ready } check || check.Asset != intent.Asset.Guid ||
+            check.ExpectedGeneration != _activeAssetGeneration) return;
+        _rebuildPending = true;
+        _rebuildJob = null;
+        _assetWriteLabel = "Remove registration";
+        _renameRequestContext = $"{check.Asset} in generation {check.ExpectedGeneration}";
+        _rebuildState.Text = "Requesting removal…";
+        UpdateRebuildButtons();
+        worker.RemoveTexture(intent, check, (result, diagnostic) =>
+        {
+            if (!ReferenceEquals(worker, _worker)) return;
+            _rebuildPending = false;
+            _assetBrowser.CancelRemoval();
+            if (result is { IsOk: true } accepted) ShowRebuild(accepted.Value!);
+            else
+            {
+                _renameUnknown = diagnostic?.Contains("outcome unknown", StringComparison.Ordinal) == true;
+                _rebuildState.Text = diagnostic ?? "Removal refused. Check again. " + result?.Error;
+                if (!_renameUnknown) _renameRequestContext = null;
+            }
+            UpdateRebuildButtons();
+        });
     }
 
     private void BeginTextureRename()
@@ -3344,6 +3467,7 @@ public sealed class MainWindow : Window
         if (!_renamePublish.IsEnabled || _worker is not { } worker || _assetBrowser.RenameIntent is not { } intent ||
             _renameDraftGeneration is not GenerationId generation || _renameLabel.Text is not string label) return;
         _rebuildPending = true; _rebuildJob = null;
+        _assetWriteLabel = "Rename";
         _renameRequestContext = $"{intent.Asset.Guid} in generation {generation} to '{label}'";
         _rebuildState.Text = "Requesting rename…";
         UpdateRebuildButtons();
@@ -3447,7 +3571,7 @@ public sealed class MainWindow : Window
                 if (result.Error == RebuildError.UnknownJob && _renameRequestContext is string target && _rebuildJob is RebuildId id)
                 {
                     _renameUnknown = true;
-                    _rebuildState.Text = $"Rename {target}, job {id}: outcome unknown (record expired). Inspect the workspace before retrying.";
+                    _rebuildState.Text = $"{_assetWriteLabel} {target}, job {id}: outcome unknown (record expired). Inspect the workspace before retrying.";
                 }
                 else
                 {
@@ -3464,7 +3588,7 @@ public sealed class MainWindow : Window
         _rebuildJob = job?.Id;
         _rebuildRunning = job?.State == RebuildState.Running;
         if (_rebuildRunning) _rebuildPoll.Start(); else _rebuildPoll.Stop();
-        string action = _renameRequestContext is null ? "Rebuild" : "Rename";
+        string action = _renameRequestContext is null ? "Rebuild" : _assetWriteLabel;
         string state = job is null ? "No admitted job" : $"{action} {job.Id} · {job.State}";
         if (job?.Failure is RebuildFailure failure)
             state += $" · {failure.Stage}/{failure.Code}: {failure.Diagnostic}";

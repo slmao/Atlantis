@@ -400,6 +400,25 @@ A missing or ambiguous recovery record does not authorize either action.
 
 #### Display rename (Spec 0117 / ADR-0168)
 
+`assets.checkTextureRemoval` accepts `{asset,expectedGeneration}` and starts
+the bounded reference check for one registered base color texture.
+`assets.textureRemovalCheckStatus` accepts `{checkId}`. An OK result for
+either has `{id,asset,expectedGeneration,state,blockers,truncated,incomplete,diagnostic}`.
+State is Checking, Ready, Referenced, CheckIncomplete or StaleCheck.
+Blockers contain `{asset,source,slot}`, with a logical source and either null
+or BaseColor, Normal, MetallicRoughness, Occlusion or Emissive for the slot.
+There are at most 16 blockers. Truncation and incomplete coverage are independent.
+
+`assets.removeTexture` accepts `{asset,expectedGeneration,checkId}` and consumes
+the matching Ready check on admission. It returns a Running rebuild job.
+Observe its settlement through `assets.rebuildStatus`. A successful publication
+requires explicit restart into the returned generation. It keeps the original
+inbox PNG. No preview, document or running catalog is mutated in place.
+All identifiers are non-nil canonical GUID strings. The shared in-band
+refusals are Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable,
+UnknownAsset, UnsupportedProducer, StaleCheck and UnknownCheck. A legacy unknown
+asset method maps to Unsupported. Never silently retry a possibly sent confirmation.
+
 `assets.renameTexture` accepts exactly
 `{"asset":"<AssetGuid>","expectedGeneration":"<GenerationId>","displayName":"new_label"}`.
 It admits the same Running Job as rebuild; settle the returned ID through

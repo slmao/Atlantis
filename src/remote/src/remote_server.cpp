@@ -590,6 +590,36 @@ struct RemoteServer::State {
       if (outcome.isErr()) return errorResponse(requestId, "BadRequest", outcome.error());
       return response(requestId, std::move(outcome.value()));
     }
+    if (name == "assets.checkTextureRemoval" || name == "assets.textureRemovalCheckStatus" ||
+        name == "assets.removeTexture") {
+      namespace ca = connection::assets;
+      using Guid = asset_system::AssetGuid;
+      const bool status = name == "assets.textureRemovalCheckStatus";
+      const bool remove = name == "assets.removeTexture";
+      const auto guid = [&](std::string_view field) -> std::optional<Guid> {
+        const auto* value = p.find(field);
+        const auto id = value ? codec::decodeAsset(*value) : std::nullopt;
+        return id && *id != Guid{} && codec::encodeAsset(*id) == *value ? id : std::nullopt;
+      };
+      if (!p.isObject() || p.asObject().size() != (status ? 1u : remove ? 3u : 2u))
+        return errorResponse(requestId, "BadRequest", "malformed texture removal request");
+      const auto check = guid("checkId");
+      const auto asset = guid("asset");
+      const auto generation = guid("expectedGeneration");
+      if ((status && !check) || (!status && (!asset || !generation || (remove && !check))))
+        return errorResponse(requestId, "BadRequest", "texture removal requires canonical non-nil GUIDs");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto reply = [&](const auto& result) {
+        return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+            : codec::err(Value::string(std::string(ca::toString(result.error())))));
+      };
+      if (remove) return reply(client.assets ? client.assets->removeTexture({*asset, {*generation}}, {*check})
+          : ca::RemoveTextureResult::Err(ca::TextureRemovalError::Unavailable));
+      if (status) return reply(client.assets ? client.assets->textureRemovalCheckStatus({*check})
+          : ca::TextureRemovalCheckResult::Err(ca::TextureRemovalError::Unavailable));
+      return reply(client.assets ? client.assets->checkTextureRemoval({*asset, {*generation}})
+          : ca::TextureRemovalCheckResult::Err(ca::TextureRemovalError::Unavailable));
+    }
     if (name == "assets.renameTexture") {
       namespace ca = connection::assets;
       if (!p.isObject() || p.asObject().size() != 3 || !p.find("asset") ||

@@ -110,6 +110,15 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.rename_texture", "assets.renameTexture",
             "Publish a display rename for one registered base color texture. Query rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String), ("expectedGeneration", ToolSchemas.String), ("displayName", ToolSchemas.String))),
+        Declare("assets.check_texture_removal", "assets.checkTextureRemoval",
+            "Start a project reference check for one registered base color texture. Poll texture_removal_check_status.", RebuildModel,
+            ToolSchemas.TextureRemovalParameters(confirm: false)),
+        Declare("assets.texture_removal_check_status", "assets.textureRemovalCheckStatus",
+            "Read-only check receipt and blockers. Only a Ready receipt can be confirmed.", RebuildModel,
+            ToolSchemas.Parameters(("checkId", ToolSchemas.String))),
+        Declare("assets.remove_texture", "assets.removeTexture",
+            "Confirm one unused texture registration removal with a Ready receipt. Keep the original inbox PNG. Poll rebuild_status by job ID.", RebuildModel,
+            ToolSchemas.TextureRemovalParameters(confirm: true)),
         Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
             ToolSchemas.RebuildStatusParameters()),
         Declare("authoring.list_nodes", "authoring.listNodes", "List nodes in document order.", AuthoringModel),
@@ -219,6 +228,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return DocumentOperation(mapping.Method, wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
+            if (mapping.Method is "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
+                return TextureRemoval(mapping.Method, wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
             bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
             string? importName = import ? wireParameters.Find("name")?.AsString : null;
@@ -317,6 +328,49 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             return Error(e.Message);
         }
+    }
+
+    private CallToolResult TextureRemoval(string method, JsonValue parameters)
+    {
+        bool status = method == "assets.textureRemovalCheckStatus", confirm = method == "assets.removeTexture";
+        var asset = ReadGuid("asset");
+        var generation = ReadGuid("expectedGeneration");
+        var id = ReadGuid("checkId");
+        if ((!status && (asset is null || generation is null)) || ((status || confirm) && id is null))
+            return Error("InvalidArguments: expected non-nil canonical GUIDs");
+        string unknown = $"Texture removal outcome unknown for {asset} in generation {generation}. " +
+            "Inspect the workspace and generations and confirm settlement before checking again.";
+        bool mayHaveSent = false;
+        try
+        {
+            var response = session.Request(method, parameters, out mayHaveSent);
+            if (Codec.IsLegacyAssetRebuildRefusal(response))
+                return Forward(Codec.Err(JsonValue.String("Unsupported")), true);
+            if (response.IsObject && response.Members.Count == 2 && Codec.CountMember(response, "id") == 1 &&
+                response.Find("result") is { IsObject: true } result && result.Members.Count == 1)
+            {
+                if (result.Find("err") is JsonValue err && Codec.DecodeTextureRemovalError(err) is not null)
+                    return Forward(result, true);
+                if (result.Find("ok") is JsonValue ok)
+                {
+                    if (confirm && Codec.DecodeRebuildJob(ok) is { State: A.RebuildState.Running } job && job.Asset == asset)
+                        return Forward(result, false);
+                    if (!confirm && Codec.DecodeTextureRemovalCheck(ok) is { } receipt &&
+                        (status ? receipt.Id.Value == id : receipt.Asset == asset &&
+                            receipt.ExpectedGeneration.Value == generation && receipt.State == A.TextureRemovalState.Checking))
+                        return Forward(result, receipt.State is not (A.TextureRemovalState.Checking or A.TextureRemovalState.Ready));
+                }
+            }
+            return Error(confirm ? "ProtocolError: " + unknown : "ProtocolError: malformed texture removal check");
+        }
+        catch (RemoteException error)
+        {
+            return Error(confirm && mayHaveSent ? error.Message + " " + unknown : error.Message);
+        }
+
+        AssetGuid? ReadGuid(string field) => parameters.Find(field) is { IsString: true } value &&
+            Codec.DecodeAsset(value) is AssetGuid parsed && !parsed.IsNil && value.AsString == parsed.ToString()
+                ? parsed : null;
     }
 
     private CallToolResult RenameTexture(JsonValue parameters)

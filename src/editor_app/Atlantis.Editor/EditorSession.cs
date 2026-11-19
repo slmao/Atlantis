@@ -545,6 +545,33 @@ public sealed class EditorWorker : IDisposable
             catch (RemoteException error) { _post(() => done(null, error.Message)); }
         });
 
+    public void CheckTextureRemoval(TextureRemovalIntent intent, GenerationId generation, TextureRemovalCheckId? id,
+        Action<Outcome<TextureRemovalCheck, TextureRemovalError>?, string?> done) =>
+        Enqueue(session =>
+        {
+            if (!intent.Intent.Current) { _post(() => done(null, null)); return; }
+            try
+            {
+                var result = id is { } checkId ? session.Assets.TextureRemovalCheckStatus(checkId)
+                    : session.Assets.CheckTextureRemoval(intent.Asset.Guid, generation);
+                _post(() => done(result, null));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+        });
+
+    public void RemoveTexture(TextureRemovalIntent intent, TextureRemovalCheck check,
+        Action<Outcome<RebuildJob, TextureRemovalError>?, string?> done) =>
+        Enqueue(session =>
+        {
+            if (!intent.Intent.Current) { _post(() => done(null, "Removal canceled before sending.")); return; }
+            try
+            {
+                var result = session.Assets.RemoveTexture(intent.Asset.Guid, check.ExpectedGeneration, check.Id);
+                _post(() => done(result, null));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+        });
+
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
     public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,

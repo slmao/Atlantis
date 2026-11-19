@@ -135,6 +135,19 @@ struct AssetHost::State final : connection::AssetConnection {
     initialize();
     return rebuild_->renameTexture(request, catalog_);
   }
+  ac::TextureRemovalCheckResult checkTextureRemoval(const ac::TextureRemovalTarget& target) override {
+    if (!rebuild_) return ac::TextureRemovalCheckResult::Err(ac::TextureRemovalError::Unavailable);
+    initialize();
+    return rebuild_->checkTextureRemoval(target, catalog_);
+  }
+  ac::TextureRemovalCheckResult textureRemovalCheckStatus(ac::TextureRemovalCheckId id) const override {
+    return rebuild_ ? rebuild_->textureRemovalCheckStatus(id)
+                    : ac::TextureRemovalCheckResult::Err(ac::TextureRemovalError::Unavailable);
+  }
+  ac::RemoveTextureResult removeTexture(const ac::TextureRemovalTarget& target, ac::TextureRemovalCheckId id) override {
+    return rebuild_ ? rebuild_->removeTexture(target, id)
+                    : ac::RemoveTextureResult::Err(ac::TextureRemovalError::Unavailable);
+  }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
     if (auto error = rebuild_->admissionError()) return ac::RebuildStartResult::Err(*error);
@@ -316,6 +329,15 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
   ac::RenameTextureResult renameTexture(const ac::RenameTextureRequest& request) override {
     return host_.renameTexture(request);
+  }
+  ac::TextureRemovalCheckResult checkTextureRemoval(const ac::TextureRemovalTarget& target) override {
+    return host_.checkTextureRemoval(target);
+  }
+  ac::TextureRemovalCheckResult textureRemovalCheckStatus(ac::TextureRemovalCheckId id) const override {
+    return host_.textureRemovalCheckStatus(id);
+  }
+  ac::RemoveTextureResult removeTexture(const ac::TextureRemovalTarget& target, ac::TextureRemovalCheckId id) override {
+    return host_.removeTexture(target, id);
   }
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
   ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {

@@ -110,6 +110,48 @@ public sealed class AssetSession
         }
     }
 
+    public Outcome<A.TextureRemovalCheck, A.TextureRemovalError> CheckTextureRemoval(
+        AssetGuid asset, A.GenerationId expectedGeneration) =>
+        AssetRequest("assets.checkTextureRemoval", RemovalTarget(asset, expectedGeneration),
+            A.TextureRemovalError.Unsupported, Codec.DecodeTextureRemovalError,
+            v => Codec.DecodeTextureRemovalCheck(v) is { State: A.TextureRemovalState.Checking } check &&
+                 check.Asset == asset && check.ExpectedGeneration == expectedGeneration ? check : null);
+
+    public Outcome<A.TextureRemovalCheck, A.TextureRemovalError> TextureRemovalCheckStatus(A.TextureRemovalCheckId checkId) =>
+        AssetRequest("assets.textureRemovalCheckStatus", JsonValue.NewObject().Set("checkId", EncodeCheckId(checkId)),
+            A.TextureRemovalError.Unsupported, Codec.DecodeTextureRemovalError,
+            v => Codec.DecodeTextureRemovalCheck(v) is { } check && check.Id == checkId ? check : null);
+
+    public Outcome<A.RebuildJob, A.TextureRemovalError> RemoveTexture(
+        AssetGuid asset, A.GenerationId expectedGeneration, A.TextureRemovalCheckId checkId)
+    {
+        var request = RemovalTarget(asset, expectedGeneration).Set("checkId", EncodeCheckId(checkId));
+        _session.ThrowIfFailed();
+        try
+        {
+            return AssetRequest("assets.removeTexture", request, A.TextureRemovalError.Unsupported,
+                Codec.DecodeTextureRemovalError,
+                v => Codec.DecodeRebuildJob(v) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Texture removal outcome unknown for {asset} in generation {expectedGeneration.Value}. " +
+                "Inspect the workspace and published generations and confirm the request settled before checking again.");
+        }
+    }
+
+    private static JsonValue RemovalTarget(AssetGuid asset, A.GenerationId generation)
+    {
+        if (asset.IsNil || generation.Value.IsNil) throw new ArgumentException("non-nil asset and generation GUIDs are required");
+        return JsonValue.NewObject().Set("asset", Codec.Encode(asset)).Set("expectedGeneration", Codec.Encode(generation.Value));
+    }
+
+    private static JsonValue EncodeCheckId(A.TextureRemovalCheckId id)
+    {
+        if (id.Value.IsNil) throw new ArgumentException("a non-nil check GUID is required", nameof(id));
+        return Codec.Encode(id.Value);
+    }
+
     public Outcome<A.RebuildStatus, A.RebuildError> RebuildStatus(A.RebuildId? jobId = null)
     {
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));

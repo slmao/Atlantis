@@ -12,6 +12,17 @@ class Assets final : public atlantis::connection::AssetConnection {
   int pairPreviews = 0;
   bool renameReceiptLost = false;
   int renameCalls = 0;
+  int removalCalls = 0;
+  bool removalReceiptLost = false;
+  ca::TextureRemovalCheckResult textureRemovalCheckStatus(ca::TextureRemovalCheckId id) const override {
+    return ca::TextureRemovalCheckResult::Ok({id, {guid, {material}}, ca::TextureRemovalState::Referenced,
+        {{material, "assets:material.txt", ca::TextureReferenceSlot::BaseColor}}, false, false, {}});
+  }
+  ca::RemoveTextureResult removeTexture(const ca::TextureRemovalTarget& target, ca::TextureRemovalCheckId) override {
+    ++removalCalls;
+    if (removalReceiptLost) return ca::RemoveTextureResult::Err(ca::TextureRemovalError::Unavailable);
+    return ca::RemoveTextureResult::Ok({{material}, target.asset, ca::RebuildState::Running, {}, {}});
+  }
   ca::RenameTextureResult renameTexture(const ca::RenameTextureRequest& request) override {
     ++renameCalls;
     if (renameReceiptLost) return ca::RenameTextureResult::Err(ca::RenameTextureError::Unavailable);
@@ -199,6 +210,33 @@ TEST_CASE("texture rename CLI preserves the write target after a lost receipt", 
   CHECK(cli.out.str().find("outcome unknown") != std::string::npos);
   CHECK(cli.out.str().find(guid) != std::string::npos);
   CHECK(cli.out.str().find("display_blue") != std::string::npos);
+}
+
+TEST_CASE("texture removal CLI reports blockers and preserves an unknown write outcome", "[cli][assets]") {
+  using namespace atlantis::cli::test;
+  Assets assets;
+  Cli cli(true);
+  cli.invocation->setAssets([&] { return &assets; });
+  const auto guid = atlantis::asset_system::toString(assets.guid);
+  const auto generation = atlantis::asset_system::toString(assets.material);
+  CHECK(cli.run("assets texture-removal-check-status " + generation) == 1);
+  CHECK(cli.out.str().find("assets:material.txt") != std::string::npos);
+  cli.out.str("");
+  atlantis::cli::InvocationOptions options;
+  options.json = true;
+  options.transportFailure = [&]() -> std::optional<atlantis::cli::CliError> {
+    if (!assets.removalCalls) return std::nullopt;
+    return atlantis::cli::CliError{"Disconnected", atlantis::cli::ErrorCategory::Connection, "lost connection", {}, "lost connection\n"};
+  };
+  atlantis::cli::Invocation invocation(*cli.connection, nullptr, nullptr, cli.out, cli.err, options);
+  invocation.setAssets([&] { return &assets; });
+  assets.removalReceiptLost = true;
+  const std::vector<std::string> args{"assets", "remove-texture", guid, generation, generation};
+  CHECK(invocation.run(args) == 3);
+  CHECK(assets.removalCalls == 1);
+  CHECK(cli.out.str().find("Disconnected") != std::string::npos);
+  CHECK(cli.out.str().find("outcome unknown") != std::string::npos);
+  CHECK(cli.out.str().find(guid) != std::string::npos);
 }
 
 TEST_CASE("material CLI: terminal failure exits nonzero and retains the exact receipt", "[cli][assets][asset-material]") {
