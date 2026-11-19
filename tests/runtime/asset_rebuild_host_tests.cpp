@@ -740,7 +740,10 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
   bool succeeds = false;
   enum class Replacement { None, InvalidRetry, Frozen, Tamper, Exchange, PublishRefused, Unknown, Confirmed };
   Replacement reimport = Replacement::None;
-  enum class Rename { None, Success, CorruptPrepared, Rollback, Unknown, Confirmed };
+  enum class Rename {
+    None, Success, CorruptPrepared, Rollback, Unknown, Confirmed,
+    ActiveHeader, PreparedHeader, FinalHeader, StagedNext, LinkedNext, StagedPrevious, LateTimeout
+  };
   Rename rename = Rename::None;
   SECTION("registered color texture display rename") {
     if (kind != TextureKind::Color) return;
@@ -750,6 +753,13 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     SECTION("definitely unpublished after exchange rolls back") { rename = Rename::Rollback; }
     SECTION("different valid label in final folder keeps repair evidence") { rename = Rename::Unknown; }
     SECTION("exact final folder confirms publication") { rename = Rename::Confirmed; }
+    SECTION("an altered active inventory header is rejected after activation") { rename = Rename::ActiveHeader; }
+    SECTION("matching altered active and prepared headers are rejected") { rename = Rename::PreparedHeader; }
+    SECTION("matching altered active and final headers do not confirm publication") { rename = Rename::FinalHeader; }
+    SECTION("different staged name bytes cannot replace the committed map") { rename = Rename::StagedNext; }
+    SECTION("identical staged name bytes with multiple links are refused") { rename = Rename::LinkedNext; }
+    SECTION("a damaged staged backup cannot overwrite the committed map") { rename = Rename::StagedPrevious; }
+    SECTION("timeout during final pre-exchange validation prevents commit") { rename = Rename::LateTimeout; }
   }
   SECTION("registered color texture replacement") {
     if (kind != TextureKind::Color) return;
@@ -836,14 +846,38 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       while (!proceed && std::chrono::steady_clock::now() < limit) std::this_thread::sleep_for(10ms);
     };
     if (rename == Rename::CorruptPrepared) config.afterRenamePreparation = substituteName;
+    if (rename == Rename::PreparedHeader) config.afterRenamePreparation = [=](const fs::path& prepared) {
+      changeHeader(oldRoot);
+      changeHeader(prepared);
+    };
     if (rename == Rename::Rollback) config.beforeRenamePublication = [=](const fs::path& from, const fs::path&) {
       substituteName(from);
     };
-    if (rename == Rename::Unknown || rename == Rename::Confirmed)
+    if (rename == Rename::Unknown || rename == Rename::Confirmed || rename == Rename::FinalHeader)
       config.beforeRenamePublication = [=](const fs::path& from, const fs::path& to) {
         fs::rename(from, to);
         if (rename == Rename::Unknown) substituteName(to);
+        if (rename == Rename::FinalHeader) {
+          changeHeader(oldRoot);
+          changeHeader(to);
+        }
       };
+    if (rename == Rename::StagedNext) config.beforeRenameExchange = [](const fs::path& pending, auto) {
+      if (!(std::ofstream(pending / "next", std::ios::binary) << "altered staged bytes"))
+        throw std::runtime_error("Cannot change staged name bytes");
+    };
+    const auto linkedName = project / "linked-test-name";
+    if (rename == Rename::LinkedNext) config.beforeRenameExchange = [=](const fs::path& pending, auto) {
+      fs::create_hard_link(pending / "next", linkedName);
+    };
+    bool reachedDeadline = false;
+    if (rename == Rename::LateTimeout) {
+      config.timeout = 3s;
+      config.beforeRenameExchange = [&](const fs::path&, auto deadline) {
+        std::this_thread::sleep_until(deadline);
+        reachedDeadline = true;
+      };
+    }
     if (reimport == Replacement::Frozen) config.afterTexturePreparation = [&](const fs::path&, const fs::path&) {
       std::ofstream(inbox, std::ios::binary) << "a newer inbox edit";
     };
@@ -880,6 +914,11 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     }
     if (rename != Rename::None) {
       const auto names = project / "texture-display-names.json";
+      const auto originalInventory = read(oldRoot / inventory);
+      const auto publishedCount = [&] {
+        return std::distance(fs::directory_iterator(f.published), fs::directory_iterator{});
+      };
+      const auto priorCount = publishedCount();
       CHECK_FALSE(activated.value()->displayName(target));
       CHECK(activated.value()->renameTexture({target, {f.unknown}, "display_alias"}, snapshot).error() ==
             ca::RenameTextureError::StaleSnapshot);
@@ -890,6 +929,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       CHECK_FALSE(fs::exists(names));
       write(inbox, "rename must not use the inbox");
       write(f.staging / "artifact", "rename must not use staging");
+      if (rename == Rename::ActiveHeader) changeHeader(oldRoot);
       const auto admitted = activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot);
       REQUIRE(admitted.isOk());
       if (rename == Rename::Success) {
@@ -907,12 +947,25 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       CHECK(read(unit / "catalog-source.txt") == oldFragment);
       CHECK(read(unit / "source.png") == kLinearPngBytes);
       CHECK(read(inbox) == "rename must not use the inbox");
-      if (rename == Rename::CorruptPrepared || rename == Rename::Rollback || rename == Rename::Unknown) {
+      if (rename != Rename::Success && rename != Rename::Confirmed && rename != Rename::StagedPrevious) {
         REQUIRE(renamed.state == ca::RebuildState::Failed);
+        REQUIRE(renamed.failure);
         CHECK_FALSE(renamed.generation);
-        CHECK(fs::exists(names) == (rename == Rename::Unknown));
-        CHECK(fs::exists(f.marker) == (rename == Rename::Unknown));
-        if (rename == Rename::Unknown) {
+        const bool unconfirmed = rename == Rename::Unknown || rename == Rename::FinalHeader;
+        CHECK(fs::exists(names) == unconfirmed);
+        CHECK(fs::exists(f.marker) == unconfirmed);
+        CHECK(publishedCount() == priorCount + (unconfirmed ? 1 : 0));
+        if (rename == Rename::ActiveHeader || rename == Rename::PreparedHeader)
+          CHECK(renamed.failure->code == ca::RebuildFailureCode::InvalidOutput);
+        if (rename == Rename::StagedNext || rename == Rename::LinkedNext)
+          CHECK(renamed.failure->code == ca::RebuildFailureCode::PublishFailed);
+        if (rename == Rename::LinkedNext) CHECK(read(linkedName).find("display_alias") != std::string::npos);
+        if (rename == Rename::LateTimeout) {
+          CHECK(reachedDeadline);
+          CHECK(renamed.failure->code == ca::RebuildFailureCode::TimedOut);
+        }
+        if (unconfirmed) {
+          if (rename == Rename::FinalHeader) write(oldRoot / inventory, originalInventory);
           CHECK(activated.value()->renameTexture({target, previousGeneration, "again"}, snapshot).error() ==
                 ca::RenameTextureError::WorkspaceNeedsRepair);
           activated.value().reset();
@@ -937,6 +990,17 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       config.generation = renamed.generation;
       config.beforeRenamePublication = {};
       config.afterRenamePreparation = {};
+      fs::path rollbackRecord;
+      std::string exchangedNames;
+      if (rename == Rename::StagedPrevious) {
+        config.beforeRenameExchange = [&](const fs::path& pending, auto) { rollbackRecord = pending; };
+        config.beforeRenamePublication = [&](const fs::path& prepared, const fs::path&) {
+          exchangedNames = read(names);
+          if (!(std::ofstream(rollbackRecord / "previous", std::ios::binary) << "altered backup"))
+            throw std::runtime_error("Cannot change staged backup bytes");
+          changeHeader(prepared);
+        };
+      }
       auto newer = AssetRebuildHost::open(config);
       INFO((newer.isErr() ? newer.error() : std::string{}));
       REQUIRE(newer.isOk());
@@ -945,6 +1009,25 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
             ca::ImportError::NameConflict);
       CHECK(newer.value()->renameTexture({target, previousGeneration, "again"}, snapshot).error() ==
             ca::RenameTextureError::StaleSnapshot);
+      if (rename == Rename::StagedPrevious) {
+        auto current = as::loadAssetCatalog(newer.value()->catalogPath().generic_string());
+        REQUIRE(current.isOk());
+        const auto request = newer.value()->renameTexture({target, *renamed.generation, "next_alias"},
+            std::make_shared<const as::AssetCatalog>(std::move(current.value())));
+        REQUIRE(request.isOk());
+        const auto failed = f.complete(*newer.value(), request.value().id);
+        CHECK(failed.state == ca::RebuildState::Failed);
+        CHECK_FALSE(failed.generation);
+        CHECK(newer.value()->displayName(target) == "display_alias");
+        CHECK(exchangedNames.find("next_alias") != std::string::npos);
+        CHECK(read(names) == exchangedNames);
+        CHECK(fs::exists(rollbackRecord / "rename.json"));
+        CHECK(read(rollbackRecord / "previous") == "altered backup");
+        CHECK(fs::exists(f.marker));
+        CHECK(publishedCount() == priorCount + 2);  // The verified generation and private candidate.
+        CHECK(newer.value()->admissionError() == ca::RebuildError::WorkspaceNeedsRepair);
+        return;
+      }
       if (rename == Rename::Success) {
         auto fromNew = as::loadAssetCatalog(newer.value()->catalogPath().generic_string());
         REQUIRE(fromNew.isOk());

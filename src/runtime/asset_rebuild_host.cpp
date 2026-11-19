@@ -392,11 +392,9 @@ bool exactTexturePath(const fs::path& root, const fs::path& relative) {
   return true;
 }
 
-// An empty return value inside the optional means proven absence, never an empty file.
-std::optional<std::string> readNameBytes(const fs::path& root) {
-  const auto path = root / kTextureNames;
-  if (absentFile(path)) return std::string{};
-  if (!exactTexturePath(root, fs::path(kTextureNames))) return std::nullopt;
+std::optional<std::string> readNameFile(const fs::path& root, const fs::path& relative) {
+  if (!exactTexturePath(root, relative)) return std::nullopt;
+  const auto path = root / relative;
   Handle file(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                           FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
   BY_HANDLE_FILE_INFORMATION info{};
@@ -409,6 +407,12 @@ std::optional<std::string> readNameBytes(const fs::path& root) {
   if (!ReadFile(file.get(), bytes.data(), info.nFileSizeLow, &size, nullptr) || size != info.nFileSizeLow)
     return std::nullopt;
   return bytes;
+}
+
+// An empty return value inside the optional means proven absence, never an empty file.
+std::optional<std::string> readNameBytes(const fs::path& root) {
+  if (absentFile(root / kTextureNames)) return std::string{};
+  return readNameFile(root, fs::path(kTextureNames));
 }
 
 std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit) {
@@ -583,11 +587,13 @@ std::optional<Registrations> readRegistrations(const fs::path& root) {
   return result;
 }
 
-std::optional<Producers> readManagedView(const fs::path& root, const fs::path& inventory) {
+std::optional<Producers> readManagedView(const fs::path& root, const fs::path& inventory,
+                                       std::optional<std::string_view> expectedHeader = std::nullopt) {
   if (!safeRelative(root, inventory) || !safeRelative(root, fs::path(kManagedSource))) return std::nullopt;
   const auto producerText = readText(root / inventory);
   const auto catalogText = readText(root / kManagedSource);
-  if (!producerText || !catalogText) return std::nullopt;
+  if (!producerText || !catalogText || (expectedHeader && inventoryHeader(*producerText) != *expectedHeader))
+    return std::nullopt;
   auto producers = readProducers(*producerText);
   const auto catalog = as::parseAssetCatalogSource(*catalogText);
   if (!producers || catalog.isErr()) return std::nullopt;
@@ -1093,20 +1099,26 @@ struct AssetRebuildHost::State {
         return fail(Stage::Validation, Code::IdentityChanged, "The original registration fragment changed.");
       return std::nullopt;
     };
-    const auto replace = [&](const fs::path& input, std::string_view prior, std::string_view value) {
-      if (readNameBytes(project) != prior) return false;
+    enum class NameExchange { Applied, Refused, TimedOut };
+    const auto replace = [&](const fs::path& input, std::string_view prior, std::string_view value,
+                             bool firstExchange) {
+      if (readNameBytes(project) != prior ||
+          (!value.empty() && readNameFile(project, input.lexically_relative(project)) != value))
+        return NameExchange::Refused;
+      if (firstExchange && interrupted()) return NameExchange::TimedOut;
       if (value.empty()) {
         if (!prior.empty()) DeleteFileW(destination.c_str());
       } else {
         const DWORD flags = MOVEFILE_WRITE_THROUGH | (prior.empty() ? 0 : MOVEFILE_REPLACE_EXISTING);
         MoveFileExW(input.c_str(), destination.c_str(), flags);
       }
-      return readNameBytes(project) == value;
+      return readNameBytes(project) == value ? NameExchange::Applied : NameExchange::Refused;
     };
     const auto execute = [&]() -> std::variant<ca::GenerationId, End> {
       if (interrupted()) return timedOut(Stage::Launch);
       if (auto error = oldState()) return *error;
-      const auto frozen = readManagedView(root, inventoryRelative);
+      const auto expectedHeader = inventoryHeader(inventory);
+      const auto frozen = readManagedView(root, inventoryRelative, expectedHeader);
       const auto catalog = readCatalog(root);
       if (!frozen || *frozen != producers || !catalog || !matchesManagedCatalog(*catalog, *frozen) ||
           catalog->size() != work.catalog->size() || !retainsIdentity(*work.catalog, *catalog) ||
@@ -1133,6 +1145,7 @@ struct AssetRebuildHost::State {
       const auto matches = [&](const fs::path& directory) {
         if (!realDirectory(directory) || !safeRelative(directory, fs::path(kManifest)) ||
             readJson(directory / kManifest) != prepared->expectedManifest) return false;
+        if (readManagedView(directory, inventoryRelative, expectedHeader) != producers) return false;
         return std::ranges::all_of(files, [&](const auto& file) {
           return safeRelative(root, file) && safeRelative(directory, file) &&
               sameOutput(root / file, directory / file, [] { return false; });
@@ -1142,8 +1155,9 @@ struct AssetRebuildHost::State {
       if (config.afterRenamePreparation) config.afterRenamePreparation(prepared->directory);
 #endif
       std::lock_guard commit(publicationCommit);
-      if (!matches(prepared->directory) || interrupted())
-        return fail(Stage::Validation, Code::InvalidOutput, "Prepared rename was changed or stopped before commit.");
+      if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+      if (!matches(prepared->directory))
+        return fail(Stage::Validation, Code::InvalidOutput, "Prepared rename was changed before commit.");
       if (auto error = oldState()) return *error;
       if (!absentFile(final)) return unknown("Cannot prove that the generation destination is vacant.");
       std::error_code ec;
@@ -1163,13 +1177,20 @@ struct AssetRebuildHost::State {
           !createMarker(pending / "rename.json", json::write(proof)))
         return fail(Stage::Publication, Code::PublishFailed, "Cannot save the rename recovery record.");
       if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.beforeRenameExchange) config.beforeRenameExchange(pending, work.deadline);
+#endif
       if (auto error = oldState()) return *error;
       const auto rollback = [&]() {
-        if (!absentFile(final) || !unchangedRegistry() || !replace(pending / "previous", nextBytes, oldBytes))
+        if (!absentFile(final) || !unchangedRegistry() ||
+            replace(pending / "previous", nextBytes, oldBytes, false) != NameExchange::Applied)
           return unknown("Cannot prove nonpublication and restore the prior name.");
         return fail(Stage::Publication, Code::PublishFailed, "The previous name was restored; retry explicitly.");
       };
-      if (!replace(pending / "next", oldBytes, nextBytes)) {
+      const auto exchange = replace(pending / "next", oldBytes, nextBytes, true);
+      if (exchange == NameExchange::TimedOut)
+        return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+      if (exchange != NameExchange::Applied) {
         if (absentFile(final) && unchangedRegistry() && readNameBytes(project) == oldBytes)
           return fail(Stage::Publication, Code::PublishFailed, "Cannot change the committed display name.");
         return unknown("Cannot confirm the committed display name.");
@@ -2378,10 +2399,9 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     if (!catalog) return R::Err("Incomplete asset generation files.");
     TextureInputs selectedTextures;
     if (!state->project.empty()) {
-      auto frozen = readManagedView(selected, inventory);
-      const auto frozenInventory = readText(selected / inventory);
-      if (!frozen || !frozenInventory || inventoryHeader(*frozenInventory) != inventoryHeader(state->inventory) ||
-          baseProducers(*frozen) != baseProducers(state->producers) || !matchesManagedCatalog(*catalog, *frozen))
+      auto frozen = readManagedView(selected, inventory, inventoryHeader(state->inventory));
+      if (!frozen || baseProducers(*frozen) != baseProducers(state->producers) ||
+          !matchesManagedCatalog(*catalog, *frozen))
         return R::Err("Invalid managed generation metadata.");
       auto materials = materialInputs(selected, *frozen);
       if (!materials || !matchesFrozenMaterials(*catalog, *materials))
