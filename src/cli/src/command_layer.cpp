@@ -875,6 +875,75 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return done(command, "Draft material preview: " + std::to_string(image.value().png.size()) +
                            " bytes (image/png; use --json for bytes)\n", std::move(*png));
     }
+    if (t.size() > 1 && (t[1] == "check-texture-removal" ||
+        t[1] == "texture-removal-check-status" || t[1] == "remove-texture")) {
+      const bool status = t[1] == "texture-removal-check-status";
+      const bool removing = t[1] == "remove-texture";
+      const auto usage = "assets check-texture-removal <GUID> <ExpectedGeneration> | "
+          "assets texture-removal-check-status <CheckId> | assets remove-texture <GUID> <ExpectedGeneration> <CheckId>";
+      if (t.size() != (status ? 3u : removing ? 5u : 4u)) return failed(command, usageError(usage));
+      const auto guid = [](std::string_view text) -> std::optional<asset_system::AssetGuid> {
+        auto parsed = asset_system::parseAssetGuid(text);
+        return parsed.isOk() && asset_system::toString(parsed.value()) == text
+            ? std::optional{parsed.value()} : std::nullopt;
+      };
+      const auto asset = status ? std::nullopt : guid(t[2]);
+      const auto generation = status ? std::nullopt : guid(t[3]);
+      const auto check = status ? guid(t[2]) : removing ? guid(t[4]) : std::nullopt;
+      if ((!status && (!asset || !generation)) || ((status || removing) && !check))
+        return failed(command, usageError(usage));
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      const auto refused = [&](ca::TextureRemovalError error) {
+        const auto text = std::string(ca::toString(error));
+        auto reply = failed(command, plainError(text, ErrorCategory::Refused, text));
+        reply.result = Value::object();
+        if (asset) reply.result.set("asset", Value::string(asset_system::toString(*asset)));
+        if (generation) reply.result.set("expectedGeneration", Value::string(asset_system::toString(*generation)));
+        if (check) reply.result.set("checkId", Value::string(asset_system::toString(*check)));
+        return reply;
+      };
+      if (!endpoint) return refused(ca::TextureRemovalError::Unavailable);
+      if (removing) {
+        auto accepted = endpoint->removeTexture({*asset, {*generation}}, {*check});
+        if (accepted.isErr()) return refused(accepted.error());
+        Value out = Value::object();
+        out.set("id", Value::string(asset_system::toString(accepted.value().id.value)));
+        out.set("asset", Value::string(asset_system::toString(*asset)));
+        out.set("state", Value::string("Running"));
+        auto human = json::write(out) + "\n";
+        return done(command, std::move(human), std::move(out));
+      }
+      const auto result = status ? endpoint->textureRemovalCheckStatus({*check})
+                                 : endpoint->checkTextureRemoval({*asset, {*generation}});
+      if (result.isErr()) return refused(result.error());
+      const auto& receipt = result.value();
+      Value out = Value::object();
+      out.set("id", Value::string(asset_system::toString(receipt.id.value)));
+      out.set("asset", Value::string(asset_system::toString(receipt.target.asset)));
+      out.set("expectedGeneration", Value::string(asset_system::toString(receipt.target.expectedGeneration.value)));
+      out.set("state", Value::string(std::string(ca::toString(receipt.state))));
+      Value blockers = Value::array();
+      for (const auto& blocker : receipt.blockers) {
+        Value entry = Value::object();
+        entry.set("asset", Value::string(asset_system::toString(blocker.asset)));
+        entry.set("source", Value::string(blocker.source));
+        entry.set("slot", blocker.slot ? Value::string(std::string(ca::toString(*blocker.slot))) : Value());
+        blockers.push(std::move(entry));
+      }
+      out.set("blockers", std::move(blockers));
+      out.set("truncated", Value::boolean(receipt.truncated));
+      out.set("incomplete", Value::boolean(receipt.incomplete));
+      out.set("diagnostic", Value::string(receipt.diagnostic));
+      auto human = json::write(out) + "\n";
+      if (receipt.state == ca::TextureRemovalState::Checking || receipt.state == ca::TextureRemovalState::Ready)
+        return done(command, std::move(human), std::move(out));
+      const auto state = std::string(ca::toString(receipt.state));
+      auto reply = failed(command, plainError(state, ErrorCategory::Refused,
+          receipt.diagnostic.empty() ? state : receipt.diagnostic));
+      reply.text = std::move(human);
+      reply.result = std::move(out);
+      return reply;
+    }
     const bool rebuild = t.size() > 1 && t[1] == "rebuild";
     const bool rename = t.size() > 1 && t[1] == "rename-texture";
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";

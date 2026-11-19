@@ -16,6 +16,7 @@ public sealed class AssetDetailIntent
 }
 
 public sealed record TextureRenameIntent(AssetSummary Asset, AssetDetailIntent Intent);
+public sealed record TextureRemovalIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates, AssetDetailIntent Intent);
 public sealed record AssetDependentResult(IReadOnlyList<AssetSummary> Matches, bool Complete);
 
@@ -89,6 +90,22 @@ public sealed class AssetBrowser
         RenameIntent = null;
     }
 
+    public TextureRemovalIntent? RemovalIntent { get; private set; }
+
+    public TextureRemovalIntent? BeginRemoval()
+    {
+        CancelRemoval();
+        var asset = _items.FirstOrDefault(item => item.Guid == Selected);
+        return !SelectionVisible || RegisteredColorName(asset) is null ? null :
+            RemovalIntent = new(asset!, new());
+    }
+
+    public void CancelRemoval()
+    {
+        RemovalIntent?.Intent.Cancel();
+        RemovalIntent = null;
+    }
+
     public AssetDependentScan? DependentScan { get; private set; }
     public AssetDependentResult? DependentResult { get; private set; }
 
@@ -159,12 +176,14 @@ public sealed class AssetBrowser
             InvalidateDetail();
             InvalidateDependents();
             CancelRename();
+            CancelRemoval();
         }
     }
 
     public long BeginList()
     {
         CancelRename();
+        CancelRemoval();
         InvalidateDependents();
         InvalidateDetail();
         State = "Loading";
@@ -189,6 +208,7 @@ public sealed class AssetBrowser
         {
             InvalidateDependents();
             CancelRename();
+            CancelRemoval();
         }
         InvalidateDetail();
         Selected = guid;
@@ -203,6 +223,7 @@ public sealed class AssetBrowser
     public void ClearSelection()
     {
         CancelRename();
+        CancelRemoval();
         InvalidateDependents();
         InvalidateDetail();
         Selected = null;

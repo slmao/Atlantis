@@ -28,6 +28,7 @@ struct Assets final : atlantis::connection::AssetConnection {
   std::optional<ca::MeshMaterialPreviewError> pairError;
   ca::MeshMaterialPreview pairImage = pairPreview();
   std::optional<ca::RebuildJob> job;
+  std::optional<ca::TextureRemovalCheck> removal;
   std::optional<ca::ImportJob> imported;
   std::optional<ca::TextureImportJob> normal;
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
@@ -102,6 +103,24 @@ struct Borrow final : atlantis::connection::AssetConnection {
     if (request.asset != a_.detail.guid) return ca::RenameTextureResult::Err(ca::RenameTextureError::UnknownAsset);
     const auto started = a_.rebuild(request.asset);
     return started.isOk() ? ca::RenameTextureResult::Ok(started.value()) : ca::RenameTextureResult::Err(ca::RenameTextureError::Busy);
+  }
+  ca::TextureRemovalCheckResult checkTextureRemoval(const ca::TextureRemovalTarget& target) override {
+    a_.removal = ca::TextureRemovalCheck{{as::deriveAssetGuid(guid(), "check")}, target};
+    return ca::TextureRemovalCheckResult::Ok(*a_.removal);
+  }
+  ca::TextureRemovalCheckResult textureRemovalCheckStatus(ca::TextureRemovalCheckId id) const override {
+    if (!a_.removal || a_.removal->id != id)
+      return ca::TextureRemovalCheckResult::Err(ca::TextureRemovalError::UnknownCheck);
+    return ca::TextureRemovalCheckResult::Ok(*a_.removal);
+  }
+  ca::RemoveTextureResult removeTexture(const ca::TextureRemovalTarget& target, ca::TextureRemovalCheckId id) override {
+    if (!a_.removal || a_.removal->id != id || a_.removal->target != target ||
+        a_.removal->state != ca::TextureRemovalState::Ready)
+      return ca::RemoveTextureResult::Err(ca::TextureRemovalError::StaleCheck);
+    a_.removal.reset();
+    auto result = a_.rebuild(target.asset);
+    return result.isOk() ? ca::RemoveTextureResult::Ok(result.value())
+                         : ca::RemoveTextureResult::Err(ca::TextureRemovalError::Busy);
   }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
   ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
@@ -362,6 +381,37 @@ TEST_CASE("texture rename: optional discovery name and job ID use the shared ass
   auto encoded = codec::encode(listed.value().front());
   encoded.set("displayName", Value());
   CHECK_FALSE(codec::decodeAssetSummary(encoded));
+}
+
+TEST_CASE("texture removal receipt and confirmed job are shared across connections", "[remote][assets]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto a = served.attach(), b = served.attach();
+  const ca::TextureRemovalTarget target{guid(), {materialGuid()}};
+  const auto started = a->assets().checkTextureRemoval(target);
+  REQUIRE(started.isOk());
+  CHECK(started.value().target == target);
+  const auto id = started.value().id;
+  CHECK(b->assets().removeTexture(target, id).error() == ca::TextureRemovalError::StaleCheck);
+  assets.removal->state = ca::TextureRemovalState::Referenced;
+  assets.removal->incomplete = true;
+  assets.removal->blockers = {{materialGuid(), "content:material_bound/source.material.txt", ca::TextureReferenceSlot::Emissive}};
+  const auto referenced = b->assets().textureRemovalCheckStatus(id);
+  REQUIRE(referenced.isOk());
+  CHECK(referenced.value() == *assets.removal);
+  auto bad = codec::encode(referenced.value());
+  bad.set("state", Value::string("Ready"));
+  CHECK_FALSE(codec::decodeTextureRemovalCheck(bad));
+  assets.removal->state = ca::TextureRemovalState::Ready;
+  assets.removal->incomplete = false;
+  assets.removal->blockers.clear();
+  const auto removal = b->assets().removeTexture(target, id);
+  REQUIRE(removal.isOk());
+  CHECK(a->assets().rebuildStatus(removal.value().id).value().job == removal.value());
+  CHECK_FALSE(a->failure());
+  CHECK_FALSE(b->failure());
 }
 
 TEST_CASE("asset import: committed failure remains observable on a separate session", "[remote][assets][asset-import]") {

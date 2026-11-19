@@ -156,6 +156,58 @@ public static partial class Codec
         error.Find("message") is { IsString: true, AsString: "unknown or malformed asset query" };
 
     public static A.RenameTextureError? DecodeRenameTextureError(JsonValue value) => RebuildToken<A.RenameTextureError>(value);
+    public static A.TextureRemovalError? DecodeTextureRemovalError(JsonValue value) => RebuildToken<A.TextureRemovalError>(value);
+
+    public static A.TextureRemovalCheck? DecodeTextureRemovalCheck(JsonValue value)
+    {
+        if (!value.IsObject || value.Members.Count != 8 ||
+            value.Find("id") is not JsonValue idValue || DecodeAsset(idValue) is not AssetGuid id || id.IsNil ||
+            value.Find("asset") is not JsonValue assetValue || DecodeAsset(assetValue) is not AssetGuid asset || asset.IsNil ||
+            value.Find("expectedGeneration") is not JsonValue generationValue ||
+            DecodeAsset(generationValue) is not AssetGuid generation || generation.IsNil ||
+            value.Find("state") is not JsonValue stateValue ||
+            RebuildToken<A.TextureRemovalState>(stateValue) is not { } state ||
+            value.Find("blockers") is not { IsArray: true } blockers || blockers.Items.Count > 16 ||
+            value.Find("truncated") is not { IsBool: true } truncated ||
+            value.Find("incomplete") is not { IsBool: true } incomplete ||
+            value.Find("diagnostic") is not { IsString: true } diagnostic ||
+            System.Text.Encoding.UTF8.GetByteCount(diagnostic.AsString) > 4096) return null;
+        if ((state == A.TextureRemovalState.Referenced) != (blockers.Items.Count != 0) ||
+            (truncated.AsBool && blockers.Items.Count != 16) ||
+            (state is A.TextureRemovalState.Checking or A.TextureRemovalState.Ready &&
+                (incomplete.AsBool || diagnostic.AsString.Length != 0)) ||
+            (state == A.TextureRemovalState.CheckIncomplete && !incomplete.AsBool)) return null;
+        var entries = new List<A.TextureRemovalBlocker>();
+        foreach (var item in blockers.Items)
+        {
+            if (!item.IsObject || item.Members.Count != 3 ||
+                item.Find("asset") is not JsonValue assetItem || DecodeAsset(assetItem) is not AssetGuid dependent || dependent.IsNil ||
+                item.Find("source") is not { IsString: true } source ||
+                System.Text.Encoding.UTF8.GetByteCount(source.AsString) is 0 or > 4096 ||
+                item.Find("slot") is not JsonValue slotValue) return null;
+            A.TextureReferenceSlot? slot = slotValue.IsNull ? null : RebuildToken<A.TextureReferenceSlot>(slotValue);
+            if (slot is null && !slotValue.IsNull) return null;
+            var entry = new A.TextureRemovalBlocker(dependent, source.AsString, slot);
+            if (entries.Contains(entry)) return null;
+            entries.Add(entry);
+        }
+        return new(new(id), asset, new(generation), state, entries.AsReadOnly(), truncated.AsBool, incomplete.AsBool,
+            diagnostic.AsString);
+    }
+
+    public static JsonValue Encode(A.TextureRemovalCheck check)
+    {
+        var blockers = JsonValue.NewArray();
+        foreach (var blocker in check.Blockers)
+            blockers.Push(JsonValue.NewObject().Set("asset", Encode(blocker.Asset))
+                .Set("source", JsonValue.String(blocker.Source))
+                .Set("slot", blocker.Slot is { } slot ? JsonValue.String(slot.ToString()) : JsonValue.Null()));
+        return JsonValue.NewObject().Set("id", Encode(check.Id.Value)).Set("asset", Encode(check.Asset))
+            .Set("expectedGeneration", Encode(check.ExpectedGeneration.Value))
+            .Set("state", JsonValue.String(check.State.ToString())).Set("blockers", blockers)
+            .Set("truncated", JsonValue.Bool(check.Truncated)).Set("incomplete", JsonValue.Bool(check.Incomplete))
+            .Set("diagnostic", JsonValue.String(check.Diagnostic));
+    }
 
     public static A.RebuildError? DecodeRebuildError(JsonValue value, bool start)
     {

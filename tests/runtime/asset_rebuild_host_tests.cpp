@@ -745,6 +745,8 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     ActiveHeader, PreparedHeader, FinalHeader, StagedNext, LinkedNext, StagedPrevious, LateTimeout
   };
   Rename rename = Rename::None;
+  enum class Removal { None, Success, SourceOnly, Incomplete, Stale, LateStale, Rollback, Unknown, ExtraFile, LinkedInbox };
+  Removal removal = Removal::None;
   SECTION("registered color texture display rename") {
     if (kind != TextureKind::Color) return;
     succeeds = true;
@@ -771,6 +773,34 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     SECTION("definitely unpublished with a blocked rename restores the old unit") { reimport = Replacement::PublishRefused; }
     SECTION("a damaged final destination remains unknown and holds the workspace") { reimport = Replacement::Unknown; }
     SECTION("an intact destination proves publication even after an uncertain move") { reimport = Replacement::Confirmed; }
+  }
+  SECTION("registered color texture removal") {
+    if (kind != TextureKind::Color) return;
+    succeeds = true;
+    SECTION("successful removal retains PNG and permits activation") { removal = Removal::Success; }
+    SECTION("current recipe blocks even with no cooked edge") { removal = Removal::SourceOnly; }
+    SECTION("an unverified material recipe cannot produce Ready") { removal = Removal::Incomplete; }
+    SECTION("confirmed input bytes changed with a fixed timestamp") { removal = Removal::Stale; }
+    SECTION("input changes after candidate preparation") { removal = Removal::LateStale; }
+    SECTION("definite nonpublication restores the sealed unit") { removal = Removal::Rollback; }
+    SECTION("an altered final directory holds writes") { removal = Removal::Unknown; }
+    SECTION("unexpected registered content is preserved") { removal = Removal::ExtraFile; }
+    SECTION("an aliased inbox is refused") { removal = Removal::LinkedInbox; }
+  }
+  const auto checkout = fs::canonical(f.base) / "checkout";
+  if (removal != Removal::None) {
+    const std::string header = "atlantis.asset-producers/1\t" + checkout.generic_string() + "\tfixture\tx64\tDebug";
+    for (const auto& build : {f.seed, f.staging}) {
+      auto bytes = read(build / inventory);
+      bytes.replace(0, bytes.find('\n'), header);
+      write(build / inventory, bytes);
+    }
+    for (const fs::path relative : {"CMakeLists.txt", "assets/CMakeLists.txt", "src/asset_system/CMakeLists.txt",
+                                  "cmake/AtlantisManagedImports.cmake", "src/tools/gltf_importer/CMakeLists.txt"}) {
+      fs::create_directories((checkout / relative).parent_path());
+      write(checkout / relative, "# configured fixture\n");
+    }
+    write(checkout / "assets/asset_catalog.txt", as::serializeAssetCatalogSource({baseEntry}));
   }
   SECTION("unchanged inputs publish and activate") { succeeds = true; }
   SECTION("changed prepared header refuses both renames") {
@@ -899,6 +929,47 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
         fs::rename(from, to);
         if (reimport == Replacement::Unknown) changeHeader(to);
       };
+    const auto authored = checkout / "assets/a.material.txt";
+    if (removal != Removal::None) {
+      const auto recipe = [&](as::AssetGuid referenced) {
+        return "atlantis_material_source_version: 10\nkind: pbr_direct_lit\ntexture: " +
+            as::toString(referenced) + "\nfilter: linear\naddress_mode: repeat\nbase_color_factor: 1 1 1 1\n"
+            "metallic_factor: 0\nroughness_factor: 0.6\n";
+      };
+      write(authored, removal == Removal::Incomplete ? "invalid recipe" :
+          recipe(removal == Removal::SourceOnly ? target : f.unknown));
+      write(f.staging / "assets/texture-removal-profile.txt", "ordinary\n");
+      fs::copy_file(f.staging / inventory, f.base / "registered-inventory.txt");
+      fs::copy_file(f.staging / "assets/managed-catalog-source.txt", f.base / "registered-catalog.txt");
+      write(f.base / "producer.cmake", R"cmake(
+configure_file("${CMAKE_CURRENT_LIST_DIR}/seed/asset_catalog.txt" "${CMAKE_CURRENT_BINARY_DIR}/asset_catalog.txt" COPYONLY)
+)cmake");
+      write(f.base / "CMakeLists.txt", read(f.base / "CMakeLists.txt") + R"cmake(
+file(READ "${CMAKE_BINARY_DIR}/assets/managed-pending.txt" pending)
+if(pending MATCHES "^remove:" OR NOT EXISTS "${CMAKE_SOURCE_DIR}/project/registered/texture_sample")
+  set(evidence "${CMAKE_SOURCE_DIR}/seed/assets")
+  set(roster "${evidence}/producers-Debug.txt")
+  set(catalog "${evidence}/managed-catalog-source.txt")
+else()
+  set(roster "${CMAKE_SOURCE_DIR}/registered-inventory.txt")
+  set(catalog "${CMAKE_SOURCE_DIR}/registered-catalog.txt")
+endif()
+configure_file("${roster}" "${CMAKE_BINARY_DIR}/assets/producers-Debug.txt" COPYONLY)
+configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.txt" COPYONLY)
+)cmake");
+      if (removal == Removal::LateStale) config.afterRemovalPreparation = [=](const fs::path&) {
+        if (!(std::ofstream(authored, std::ios::binary | std::ios::app) << "\n"))
+          throw std::runtime_error("Could not edit the fixture recipe.");
+      };
+      if (removal == Removal::Rollback) config.beforeRemovalPublication = [=](const fs::path& from, const fs::path&) {
+        changeHeader(from);
+      };
+      if (removal == Removal::Unknown) config.beforeRemovalPublication = [=](const fs::path& from, const fs::path& to) {
+        fs::rename(from, to);
+        changeHeader(to);
+      };
+      if (removal == Removal::ExtraFile) write(unit / "keep.txt", "unexpected");
+    }
     auto activated = AssetRebuildHost::open(config);
     INFO((activated.isErr() ? activated.error() : std::string{}));
     REQUIRE(activated.isOk());
@@ -911,6 +982,78 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
       CHECK(refusal.error() == ca::RebuildError::UnsupportedProducer);
       CHECK(activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot).error() ==
             ca::RenameTextureError::UnsupportedProducer);
+    }
+    if (removal != Removal::None) {
+      using State = ca::TextureRemovalState;
+      CAPTURE(static_cast<int>(removal));
+      if (removal == Removal::LinkedInbox) {
+        REQUIRE(fs::remove(inbox));
+        fs::create_hard_link(unit / "source.png", inbox);
+      }
+      const ca::TextureRemovalTarget requested{target, previousGeneration};
+      const auto admitted = activated.value()->checkTextureRemoval(requested, snapshot);
+      INFO((admitted.isErr() ? ca::toString(admitted.error()) : std::string_view{}));
+      REQUIRE(admitted.isOk());
+      const auto checkLimit = std::chrono::steady_clock::now() + 20s;
+      auto checked = activated.value()->textureRemovalCheckStatus(admitted.value().id);
+      while (checked.isOk() && checked.value().state == State::Checking &&
+             std::chrono::steady_clock::now() < checkLimit) {
+        std::this_thread::sleep_for(20ms);
+        checked = activated.value()->textureRemovalCheckStatus(admitted.value().id);
+      }
+      REQUIRE(checked.isOk());
+      const auto& receipt = checked.value();
+      INFO(receipt.diagnostic);
+      CHECK(receipt.target == requested);
+      if (removal == Removal::SourceOnly || removal == Removal::Incomplete ||
+          removal == Removal::ExtraFile || removal == Removal::LinkedInbox) {
+        CHECK(receipt.state == (removal == Removal::SourceOnly ? State::Referenced : State::CheckIncomplete));
+        if (removal == Removal::SourceOnly) {
+          REQUIRE(receipt.blockers.size() == 1);
+          CHECK(receipt.blockers.front().asset == f.guid);
+          CHECK(receipt.blockers.front().slot == ca::TextureReferenceSlot::BaseColor);
+        }
+        CHECK(activated.value()->removeTexture(requested, receipt.id).error() == ca::TextureRemovalError::StaleCheck);
+        CHECK(fs::exists(unit));
+        CHECK(read(inbox) == kLinearPngBytes);
+        return;
+      }
+      REQUIRE(receipt.state == State::Ready);
+      if (removal == Removal::Stale) {
+        const auto timestamp = fs::last_write_time(authored);
+        auto bytes = read(authored);
+        bytes.replace(bytes.find("0.6"), 3, "0.7");
+        write(authored, bytes);
+        fs::last_write_time(authored, timestamp);
+      }
+      const auto request = activated.value()->removeTexture(requested, receipt.id);
+      REQUIRE(request.isOk());
+      CHECK(activated.value()->removeTexture(requested, receipt.id).error() == ca::TextureRemovalError::StaleCheck);
+      const auto settled = f.complete(*activated.value(), request.value().id);
+      INFO((settled.failure ? settled.failure->diagnostic : "remove succeeded"));
+      CHECK(read(inbox) == kLinearPngBytes);
+      CHECK(fs::exists(oldRoot));
+      if (removal != Removal::Success) {
+        REQUIRE(settled.state == ca::RebuildState::Failed);
+        CHECK_FALSE(settled.generation);
+        CHECK(fs::exists(unit) == (removal != Removal::Unknown));
+        CHECK(fs::exists(f.marker) == (removal == Removal::Unknown));
+        if (removal == Removal::Stale || removal == Removal::LateStale)
+          CHECK(settled.failure->code == ca::RebuildFailureCode::IdentityChanged);
+        return;
+      }
+      REQUIRE(settled.state == ca::RebuildState::Succeeded);
+      REQUIRE(settled.generation);
+      CHECK_FALSE(fs::exists(unit));
+      CHECK_FALSE(fs::exists(f.marker));
+      activated.value().reset();
+      config.generation = settled.generation;
+      auto reopened = AssetRebuildHost::open(config);
+      REQUIRE(reopened.isOk());
+      const auto current = as::loadAssetCatalog(reopened.value()->catalogPath().generic_string());
+      REQUIRE(current.isOk());
+      CHECK(current.value().find(target) == nullptr);
+      return;
     }
     if (rename != Rename::None) {
       const auto names = project / "texture-display-names.json";

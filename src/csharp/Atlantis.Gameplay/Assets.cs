@@ -46,6 +46,17 @@ public enum RenameTextureError
     Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
     UnsupportedProducer, InvalidName, NameConflict, StaleSnapshot, Unchanged,
 }
+public readonly record struct TextureRemovalCheckId(AssetGuid Value);
+public enum TextureRemovalError
+{
+    Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+    UnsupportedProducer, StaleCheck, UnknownCheck,
+}
+public enum TextureRemovalState { Checking, Ready, Referenced, CheckIncomplete, StaleCheck }
+public enum TextureReferenceSlot { BaseColor, Normal, MetallicRoughness, Occlusion, Emissive }
+public sealed record TextureRemovalBlocker(AssetGuid Asset, string Source, TextureReferenceSlot? Slot);
+public sealed record TextureRemovalCheck(TextureRemovalCheckId Id, AssetGuid Asset, GenerationId ExpectedGeneration,
+    TextureRemovalState State, IReadOnlyList<TextureRemovalBlocker> Blockers, bool Truncated, bool Incomplete, string Diagnostic);
 public enum RebuildState { Running, Succeeded, Failed }
 public enum RebuildStage { Launch, Pipeline, Validation, Publication }
 public enum RebuildFailureCode { LaunchFailed, BuildFailed, InvalidOutput, IdentityChanged, PublishFailed, TimedOut }

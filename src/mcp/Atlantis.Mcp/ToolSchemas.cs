@@ -112,6 +112,10 @@ internal static class ToolSchemas
             Object(("mode", Enum("Resume")), ("material", String)))["oneOf"]!.DeepClone() });
     }
 
+    internal static JsonElement TextureRemovalParameters(bool confirm) => confirm
+        ? Parameters(("asset", String), ("expectedGeneration", String), ("checkId", String))
+        : Parameters(("asset", String), ("expectedGeneration", String));
+
     internal static JsonElement RebuildStatusParameters()
     {
         JsonObject shape = Object(("jobId", String));

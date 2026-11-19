@@ -32,6 +32,18 @@ class Assets {
       const connection::assets::RenameTextureRequest& request) {
     return connection_.renameTexture(request);
   }
+  [[nodiscard]] connection::assets::TextureRemovalCheckResult checkTextureRemoval(
+      const connection::assets::TextureRemovalTarget& target) {
+    return connection_.checkTextureRemoval(target);
+  }
+  [[nodiscard]] connection::assets::TextureRemovalCheckResult textureRemovalCheckStatus(
+      connection::assets::TextureRemovalCheckId id) const {
+    return connection_.textureRemovalCheckStatus(id);
+  }
+  [[nodiscard]] connection::assets::RemoveTextureResult removeTexture(
+      const connection::assets::TextureRemovalTarget& target, connection::assets::TextureRemovalCheckId id) {
+    return connection_.removeTexture(target, id);
+  }
   [[nodiscard]] connection::assets::RebuildStatusResult rebuildStatus(
       std::optional<connection::assets::RebuildId> id = std::nullopt) const {
     return connection_.rebuildStatus(id);

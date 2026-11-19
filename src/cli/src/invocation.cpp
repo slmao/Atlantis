@@ -42,6 +42,9 @@ constexpr std::string_view kUsage =
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
     "  assets rename-texture <GUID> <ExpectedGeneration> <DisplayName>\n"
+    "  assets check-texture-removal <GUID> <ExpectedGeneration>\n"
+    "  assets texture-removal-check-status <CheckId>\n"
+    "  assets remove-texture <GUID> <ExpectedGeneration> <CheckId>\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
     "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
     "  assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]\n"
@@ -433,6 +436,13 @@ int Invocation::finish(Reply reply) {
           " in generation " + checked.result.find("expectedGeneration")->asString() + " to '" +
           checked.result.find("displayName")->asString() +
           "'. Inspect the workspace and generations and confirm settlement before retrying.";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets remove-texture" && checked.result.find("asset")) {
+      failure->subject = checked.result;
+      failure->message += "; texture removal outcome unknown for " + checked.result.find("asset")->asString() +
+          " in generation " + checked.result.find("expectedGeneration")->asString() +
+          ". Inspect the workspace and generations and confirm settlement before checking again.";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {

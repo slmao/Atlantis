@@ -37,6 +37,19 @@ public static partial class Program
         rename = names.BeginRename()!;
         names.BeginList();
         Check(!rename.Intent.Current, "rename: view reload retires a queued intent even for the same GUID");
+        names.CompleteList(names.BeginList(), renamedList);
+        var removal = names.BeginRemoval()!;
+        names.Select(b);
+        Check(!removal.Intent.Current && names.RemovalIntent is null,
+            "removal: another selection retires a queued confirm before send");
+        removal = names.BeginRemoval()!;
+        names.Search = "absent";
+        Check(!removal.Intent.Current && names.RemovalIntent is null && names.BeginRemoval() is null,
+            "removal: an invisible texture cannot retain or create an intent");
+        names.Search = "";
+        removal = names.BeginRemoval()!;
+        names.BeginList();
+        Check(!removal.Intent.Current, "removal: Reload view rejects late receipts for the unchanged GUID");
 
         var model = new AssetBrowser();
         var data = new[] { new AssetSummary(a, AssetType.Mesh, "content:Scene.gltf#mesh/0"), new AssetSummary(b, AssetType.Material, "assets:material.txt") };

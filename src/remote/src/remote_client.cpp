@@ -586,6 +586,41 @@ class RemoteAssets final : public connection::AssetConnection {
     state_.fail(RemoteError::ProtocolError);
     return R::Err(E::Unavailable);
   }
+  ca::TextureRemovalCheckResult checkTextureRemoval(const ca::TextureRemovalTarget& target) override {
+    ATLANTIS_CHECK(target.asset != AssetGuid{} && target.expectedGeneration.value != AssetGuid{});
+    Value params = Value::object();
+    params.set("asset", codec::encodeAsset(target.asset));
+    params.set("expectedGeneration", codec::encodeAsset(target.expectedGeneration.value));
+    return jobRequest<ca::TextureRemovalCheck>("assets.checkTextureRemoval", std::move(params), true,
+        codec::decodeTextureRemovalError, [&](const Value& value) {
+          auto check = codec::decodeTextureRemovalCheck(value);
+          return check && check->target == target && check->state == ca::TextureRemovalState::Checking
+              ? check : std::nullopt;
+        });
+  }
+  ca::TextureRemovalCheckResult textureRemovalCheckStatus(ca::TextureRemovalCheckId id) const override {
+    ATLANTIS_CHECK(id.value != AssetGuid{});
+    Value params = Value::object();
+    params.set("checkId", codec::encodeAsset(id.value));
+    return jobRequest<ca::TextureRemovalCheck>("assets.textureRemovalCheckStatus", std::move(params), false,
+        codec::decodeTextureRemovalError, [&](const Value& value) {
+          auto check = codec::decodeTextureRemovalCheck(value);
+          return check && check->id == id ? check : std::nullopt;
+        });
+  }
+  ca::RemoveTextureResult removeTexture(
+      const ca::TextureRemovalTarget& target, ca::TextureRemovalCheckId id) override {
+    ATLANTIS_CHECK(target.asset != AssetGuid{} && target.expectedGeneration.value != AssetGuid{} && id.value != AssetGuid{});
+    Value params = Value::object();
+    params.set("asset", codec::encodeAsset(target.asset));
+    params.set("expectedGeneration", codec::encodeAsset(target.expectedGeneration.value));
+    params.set("checkId", codec::encodeAsset(id.value));
+    return jobRequest<ca::RebuildJob>("assets.removeTexture", std::move(params), true,
+        codec::decodeTextureRemovalError, [&](const Value& value) {
+          auto job = codec::decodeRebuildJob(value);
+          return job && job->asset == target.asset && job->state == ca::RebuildState::Running ? job : std::nullopt;
+        });
+  }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override {
     ATLANTIS_CHECK(!id || id->value != AssetGuid{});
     Value params = Value::object();

@@ -44,6 +44,7 @@ constexpr std::string_view kDirty = ".atlantis-rebuild-dirty";
 constexpr std::string_view kOwner = ".atlantis-rebuild-profile";
 constexpr std::string_view kManagedProject = "assets/managed-project.txt";
 constexpr std::string_view kPendingSelection = "assets/managed-pending.txt";
+constexpr std::string_view kRemovalProfile = "assets/texture-removal-profile.txt";
 constexpr std::string_view kManagedSource = "assets/managed-catalog-source.txt";
 constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
 constexpr std::string_view kMaterialSources = "assets/managed-material-sources";
@@ -415,13 +416,15 @@ std::optional<std::string> readNameBytes(const fs::path& root) {
   return readNameFile(root, fs::path(kTextureNames));
 }
 
-std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit) {
+std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit,
+                                      bool allowEmpty = false) {
   if (!exactTexturePath(root, relative)) return {};
   const auto path = root / relative;
   Handle file(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                           FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
   BY_HANDLE_FILE_INFORMATION info{};
-  if (!file || !GetFileInformationByHandle(file.get(), &info) || info.nFileSizeHigh || !info.nFileSizeLow ||
+  if (!file || !GetFileInformationByHandle(file.get(), &info) || info.nFileSizeHigh ||
+      (!allowEmpty && !info.nFileSizeLow) ||
       info.nFileSizeLow > limit || info.nNumberOfLinks != 1 ||
       (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
     return {};
@@ -892,6 +895,18 @@ bool copyInbox(const fs::path& from, const fs::path& to, Interrupted interrupted
 }  // namespace
 
 struct AssetRebuildHost::State {
+  using RemovalInputs = std::map<fs::path, std::string>;
+  struct RemovalRead {
+    ca::TextureRemovalCheck check;
+    std::string token;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    Clock::time_point deadline;
+  };
+  struct RemovalProof {
+    RemovalInputs inputs;
+    Producers view;
+    Clock::time_point expires;
+  };
   struct Work {
     ca::RebuildJob job;
     const Producer* producer;
@@ -899,6 +914,7 @@ struct AssetRebuildHost::State {
     Clock::time_point deadline;
     std::optional<std::string> colorReplacement;
     std::optional<ca::RenameTextureRequest> rename{};
+    std::optional<RemovalProof> removal{};
   };
 
   struct ImportWork {
@@ -945,6 +961,8 @@ struct AssetRebuildHost::State {
   std::mutex publicationCommit;
   std::condition_variable changed;
   std::optional<Work> running;
+  std::optional<RemovalRead> removalCheck;
+  std::optional<RemovalProof> removalProof;
   std::deque<ca::RebuildJob> completed;
   std::thread worker;
 
@@ -961,7 +979,8 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
-    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork)
+    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork ||
+        (removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking))
       return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
     return std::nullopt;
@@ -987,9 +1006,9 @@ struct AssetRebuildHost::State {
   template<class Interrupted>
   std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted,
                                       std::optional<Prepared>* ownedStaging = nullptr, const TextureNames* rename = nullptr,
-                                      Files* cloned = nullptr) {
+                                      Files* cloned = nullptr, const TextureNames* removalNames = nullptr) {
     const auto root = rename ? active.parent_path() : staging;
-    const auto& names = rename ? *rename : activeNames;
+    const auto& names = rename ? *rename : removalNames ? *removalNames : activeNames;
     auto files = outputFiles(root, catalog, view);
     if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
     Materials materials;
@@ -1045,6 +1064,549 @@ struct AssetRebuildHost::State {
         readJson(generation.directory / kManifest) != generation.expectedManifest) return false;
     return MoveFileExW(generation.directory.c_str(),
                       (publication / as::toString(generation.id.value)).c_str(), 0);
+  }
+
+  bool ordinaryRemovalProfile() const {
+    if (!safeRelative(staging, fs::path(kRemovalProfile))) return false;
+    const auto profile = readText(staging / kRemovalProfile);
+    return profile == "ordinary\n" || profile == "ordinary\r\n";
+  }
+
+  bool inactiveFixtureMaterial(std::string_view key) const {
+    // The asset declarations include this recipe even in ordinary builds
+    // configured without the test targets. Its source is still checked.
+    if (key != "assets:_test_fixtures/cmake_material_declaration_test.material.txt") return false;
+    const auto cache = readText(staging / "CMakeCache.txt");
+    return cache && (cache->find("\nATLANTIS_BUILD_TESTS:BOOL=OFF\n") != std::string::npos ||
+                     cache->find("\nATLANTIS_BUILD_TESTS:BOOL=OFF\r\n") != std::string::npos);
+  }
+
+  std::optional<End> removalInputs(const Producers& roster, RemovalInputs& inputs,
+                                   const auto& interrupted, ca::TextureRemovalCheck* check = nullptr) const {
+    constexpr DWORD maxInput = 256 * 1024 * 1024;
+    constexpr std::size_t maxFiles = 32768;
+    auto header = columns(std::string(inventoryHeader(inventory)));
+    const auto unverified = [](std::string reason) {
+      return fail(Stage::Validation, Code::InvalidOutput, std::move(reason));
+    };
+    if (header.size() < 5) return unverified("Incomplete configured producer identity.");
+    if (!header.back().empty() && header.back().back() == '\r') header.back().pop_back();
+    const auto checkout = fromUtf8(header[1]).make_preferred();
+    if (!checkout.is_absolute() || !safeProjectRoot(checkout, checkout))
+      return unverified("The configured checkout is missing or unsafe.");
+    const auto bistro = header.size() > 5 ? fs::path(fromUtf8(header[5]).make_preferred()) : fs::path{};
+    const auto remember = [&](const fs::path& root, const fs::path& relative) {
+      if (interrupted() || inputs.size() >= maxFiles) return false;
+      const auto digest = fileDigest(root, relative, maxInput, true);
+      return digest && inputs.try_emplace(root / relative, *digest).first->second == *digest;
+    };
+    bool incomplete = false;
+    for (const auto& path : {fs::path("CMakeLists.txt"), fs::path("assets/CMakeLists.txt"),
+          fs::path("assets/asset_catalog.txt"), fs::path("src/asset_system/CMakeLists.txt"),
+          fs::path("cmake/AtlantisManagedImports.cmake"), fs::path("src/tools/gltf_importer/CMakeLists.txt")})
+      if (!remember(checkout, path)) incomplete = true;
+    if (!remember(staging, "CMakeCache.txt")) incomplete = true;
+
+    auto sources = roster;
+    constexpr std::string_view fixture = "assets:_test_fixtures/cmake_material_declaration_test.material.txt";
+    if (!sources.contains(fixture) && inactiveFixtureMaterial(fixture)) {
+      const auto text = readMaterialText(checkout, "assets/asset_catalog.txt");
+      if (!text) return unverified("Cannot read declared material sources.");
+      const auto catalog = as::parseAssetCatalogSource(*text);
+      const auto* entry = catalog.isOk()
+          ? catalog.value().find(as::CatalogRoot::Assets, fixture.substr(7)) : nullptr;
+      if (!entry || entry->type != as::CatalogAssetType::Material)
+        return unverified("Cannot verify the inactive material declaration.");
+      sources.emplace(fixture, Producer{entry->guid, entry->type, {}, {}});
+    }
+    for (const auto& [key, producer] : sources) {
+      if (interrupted()) return unverified("Reference checking did not finish before the deadline.");
+      const auto source = as::parseCatalogSourceId(key);
+      if (!source) return unverified("A configured source could not be resolved.");
+      if (producer.type == as::CatalogAssetType::Material) {
+        const auto name = materialName(key);
+        if (!name && source->root != as::CatalogRoot::Assets) {
+          incomplete = true;
+          continue;
+        }
+        const auto root = name ? project / "registered" : checkout / "assets";
+        const auto recipe = fromUtf8(source->path);
+        const auto bytes = remember(root, recipe) ? readMaterialText(root, recipe) : std::nullopt;
+        if (!bytes) {
+          incomplete = true;
+          continue;
+        }
+        const auto parsed = as::parseMaterialSource(*bytes);
+        if (parsed.isErr()) {
+          incomplete = true;
+          continue;
+        }
+        using Slot = ca::TextureReferenceSlot;
+        const auto inspect = [&](std::optional<as::AssetGuid> ref, Slot slot) {
+          if (check && ref == check->target.asset) addRemovalBlocker(*check, {producer.root, key, slot});
+        };
+        const auto& material = parsed.value();
+        inspect(material.textureAsset, Slot::BaseColor);
+        inspect(material.normalMapAsset, Slot::Normal);
+        inspect(material.metallicRoughnessMapAsset, Slot::MetallicRoughness);
+        inspect(material.occlusionMapAsset, Slot::Occlusion);
+        inspect(material.emissiveTextureAsset, Slot::Emissive);
+      }
+      if (materialName(key) || managedName(key) || textureName(key)) {
+        const auto unit = fromUtf8(source->path).parent_path();
+        if (!remember(project, fs::path("registered") / unit / "catalog-source.txt")) incomplete = true;
+      }
+      if (producer.type != as::CatalogAssetType::GltfImport) continue;
+      const auto keyPath = fromUtf8(source->path);
+      const auto root = managedName(key)
+          ? project / "registered" / keyPath.parent_path()
+          : bistro;
+      if (root.empty() || (!managedName(key) &&
+          (keyPath.parent_path() != root.filename() || source->root != as::CatalogRoot::Content)) ||
+          !realDirectory(root) || !safeProjectRoot(root, root) || !exactTexturePath(root, keyPath.filename())) {
+        incomplete = true;
+        continue;
+      }
+      // The configured import owns this content subtree, including its
+      // external buffers and images. Unknown roots cannot authorize removal.
+      std::error_code ec;
+      for (fs::recursive_directory_iterator at(root, ec), end; !ec && at != end; at.increment(ec)) {
+        const DWORD attributes = GetFileAttributesW(at->path().c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT) ||
+            interrupted() || inputs.size() >= maxFiles) {
+          incomplete = true;
+          break;
+        }
+        if (!(attributes & FILE_ATTRIBUTE_DIRECTORY) && !remember(root, at->path().lexically_relative(root))) {
+          incomplete = true;
+          break;
+        }
+      }
+      if (ec) incomplete = true;
+    }
+    if (incomplete) return unverified("Cannot verify all configured material, import or build inputs.");
+    return std::nullopt;
+  }
+
+  static void addRemovalBlocker(ca::TextureRemovalCheck& check, ca::TextureRemovalBlocker blocker) {
+    if (std::ranges::find(check.blockers, blocker) != check.blockers.end()) return;
+    if (check.blockers.size() == ca::kTextureRemovalBlockerLimit) {
+      check.truncated = true;
+      return;
+    }
+    check.blockers.push_back(std::move(blocker));
+  }
+
+  static void checkRemovalEdges(const as::AssetCatalog& catalog, ca::TextureRemovalCheck& check) {
+    for (const auto& record : catalog.records()) {
+      if (std::ranges::find(record.dependencies, check.target.asset) != record.dependencies.end())
+        addRemovalBlocker(check, {record.guid, as::toString(record.source), {}});
+    }
+  }
+
+  std::optional<Producers> removalView() const {
+    const auto view = readManagedView(staging, inventoryRelative, inventoryHeader(inventory));
+    if (!view || !ordinaryRemovalProfile()) return {};
+    const auto sourceText = readText(staging / kManagedSource);
+    if (!sourceText) return {};
+    const auto source = as::parseAssetCatalogSource(*sourceText);
+    if (source.isErr()) return {};
+    for (const auto& entry : source.value().entries()) {
+      const auto key = as::toString({entry.root, entry.path, {}});
+      if ((entry.type == as::CatalogAssetType::Material || entry.type == as::CatalogAssetType::GltfImport) &&
+          !view->contains(key) && !inactiveFixtureMaterial(key)) return {};
+    }
+    return view;
+  }
+
+  bool removalRegistryMatches() const {
+    return readRegistrations(project) == activeRegistered && registeredMaterials(project) == activeMaterials &&
+        registeredTextures(project) == activeTextures && namesMatch(activeNames);
+  }
+
+  bool safeRemovalUnit(const fs::path& unit, std::string_view token) const {
+    if (!realDirectory(project / unit) || !safeRelative(project, unit / "source.png")) return false;
+    std::set<std::string> entries;
+    std::error_code ec;
+    for (fs::directory_iterator at(project / unit, ec), end; !ec && at != end; at.increment(ec)) {
+      const auto leaf = at->path().filename();
+      if (!safeRelative(project, unit / leaf)) return false;
+      entries.insert(utf8(leaf));
+      if (entries.size() > 3) return false;
+    }
+    const auto original = activeTextures.find(token);
+    if (ec || entries != std::set<std::string>{"catalog-source.txt", "source.png", "source.sha256"} ||
+        original == activeTextures.end() || readTextureUnit(project, unit, token) != original->second ||
+        !fileDigest(project, unit / "catalog-source.txt", 64 * 1024) ||
+        !fileDigest(project, unit / "source.sha256", 64 * 1024)) return false;
+    const auto expected = as::serializeAssetCatalogSource({{original->second.guid, as::CatalogAssetType::Texture,
+        as::CatalogRoot::Content, textureKey(token, TextureKind::Color).substr(8)}});
+    return readMaterialText(project, unit / "catalog-source.txt") == expected;
+  }
+
+  bool safeRemovalInbox(std::string_view token) const {
+    const auto inbox = fs::path("inbox") / fromUtf8(token) / "source.png";
+    if (!safeRelative(project, inbox, true)) return false;
+    if (!fs::exists(project / inbox)) return true;
+    Handle file(CreateFileW((project / inbox).c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                           nullptr, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+    BY_HANDLE_FILE_INFORMATION info{};
+    return file && GetFileInformationByHandle(file.get(), &info) && info.nNumberOfLinks == 1 &&
+        !(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+  }
+
+  void settleRemovalCheck(RemovalRead work) {
+    using S = ca::TextureRemovalState;
+    auto& check = work.check;
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto unit = fs::path("registered") / textureDirectory(work.token);
+    bool repair = false;
+    bool marked = false;
+    std::optional<RemovalProof> proof;
+    checkRemovalEdges(*work.catalog, check);
+    const auto inspect = [&]() -> S {
+      if (!safeRemovalUnit(unit, work.token) || !safeRemovalInbox(work.token)) {
+        check.diagnostic = "The registered unit or original inbox path cannot be verified.";
+        check.incomplete = true;
+        return S::CheckIncomplete;
+      }
+      if (!safeBuildTree(staging, interrupted) || !safeRelative(staging, fs::path(kPendingSelection)) ||
+          readText(staging / kPendingSelection) != "") {
+        check.diagnostic = "Staging is unsafe or has a pending selection.";
+        check.incomplete = true;
+        repair = true;
+        return S::CheckIncomplete;
+      }
+      if (!createMarker(staging / kDirty, {})) {
+        check.diagnostic = "Cannot reserve staging for the check.";
+        check.incomplete = true;
+        repair = true;
+        return S::CheckIncomplete;
+      }
+      marked = true;
+      const auto configure = runBuild(config.cmake, staging, config.configuration, interrupted, true);
+      const auto view = configure ? std::nullopt : removalView();
+      if (!view) {
+        check.diagnostic = "Cannot reconcile the current configured producer graph.";
+        check.incomplete = true;
+        repair = configure && configure->repair;
+        return S::CheckIncomplete;
+      }
+      RemovalInputs before;
+      if (auto error = removalInputs(*view, before, interrupted, &check)) {
+        check.diagnostic = error->failure.diagnostic;
+        check.incomplete = true;
+        return S::CheckIncomplete;
+      }
+      if (!check.blockers.empty()) return S::Referenced;
+
+      bool refreshImports = false;
+      for (const auto& [key, entry] : *view) {
+        if (entry.type != as::CatalogAssetType::GltfImport) continue;
+        if (!safeRelative(staging, entry.stamp, true)) {
+          check.diagnostic = "A generated producer stamp is unsafe.";
+          check.incomplete = true;
+          return S::CheckIncomplete;
+        }
+        std::error_code ec;
+        fs::remove(staging / entry.stamp, ec);
+        if (ec) {
+          check.diagnostic = "Cannot obtain fresh importer evidence.";
+          check.incomplete = true;
+          return S::CheckIncomplete;
+        }
+        refreshImports = true;
+      }
+      if (refreshImports) {
+        const auto built = runBuild(config.cmake, staging, config.configuration, interrupted);
+        const auto catalog = built ? std::nullopt : readCatalog(staging);
+        if (!catalog || removalView() != view || !matchesManagedCatalog(*catalog, *view)) {
+          check.diagnostic = "Cannot validate current importer output.";
+          check.incomplete = true;
+          repair = built && built->repair;
+          return S::CheckIncomplete;
+        }
+        checkRemovalEdges(*catalog, check);
+      }
+      RemovalInputs after;
+      if (removalView() != view || removalInputs(*view, after, interrupted) || before != after ||
+          *view != producers || !removalRegistryMatches() || !safeRemovalUnit(unit, work.token) ||
+          !safeRemovalInbox(work.token) || interrupted()) {
+        check.diagnostic = "Project sources or registrations differ from the active generation. Refresh and check again.";
+        return S::StaleCheck;
+      }
+      proof.emplace(RemovalProof{std::move(after), *view, {}});
+      return S::Ready;
+    };
+    try {
+      check.state = inspect();
+    } catch (const std::exception&) {
+      check.state = S::CheckIncomplete;
+      check.incomplete = true;
+      check.diagnostic = "Cannot verify all project inputs.";
+      repair = marked;
+    }
+    if (marked && !repair) repair = DeleteFileW((staging / kDirty).c_str()) == FALSE;
+    if (repair) {
+      check.state = S::CheckIncomplete;
+      check.incomplete = true;
+      check.diagnostic = "Cannot settle check staging. Inspect the workspace before retrying.";
+    }
+    if (!check.blockers.empty()) check.state = S::Referenced;
+    if (check.state != S::Ready) proof.reset();
+    else proof->expires = Clock::now() + std::chrono::minutes(2);
+    std::lock_guard lock(mutex);
+    dirty = dirty || repair;
+    removalProof = std::move(proof);
+    removalCheck->check = std::move(check);
+  }
+
+  std::variant<ca::GenerationId, End> removeColor(const Work& work, bool& cleanupRepair) {
+    const auto& proof = *work.removal;
+    const auto token = *work.colorReplacement;
+    const auto key = textureKey(token, TextureKind::Color);
+    const auto unit = fs::path("registered") / textureDirectory(token);
+    const auto pending = fs::path(".pending") / as::toString(work.job.id.value);
+    const auto backup = pending / "previous";
+    const auto namePath = project / kTextureNames;
+    const auto nameBefore = nameBytes(activeNames);
+    auto remainingNames = activeNames;
+    remainingNames.erase(work.job.asset);
+    const auto nameAfter = nameBytes(remainingNames);
+    auto remainingTextures = activeTextures;
+    remainingTextures.erase(token);
+    auto remainingView = proof.view;
+    remainingView.erase(key);
+    const auto selection = "remove:" + as::toString(work.job.asset) + ":" + utf8(unit.filename());
+    const auto selectionPath = staging / kPendingSelection;
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto stale = [] {
+      return fail(Stage::Validation, Code::IdentityChanged,
+                  "The checked inputs changed. Check this registration again before removing it.");
+    };
+    const auto unknown = [](std::string text) {
+      return fail(Stage::Publication, Code::PublishFailed,
+                  std::move(text) + " Keep the recovery record and inspect the workspace offline.", true);
+    };
+    const auto cleanTimeout = [] {
+      return fail(Stage::Publication, Code::TimedOut, "Removal stopped before changing the registration.");
+    };
+    std::optional<Prepared> prepared;
+    bool marked = false, ownsPending = false, ownsSelection = false;
+    const auto checkedInputsMatch = [&](bool removed = false) {
+      RemovalInputs current;
+      if (removalInputs(removed ? remainingView : proof.view, current, interrupted)) return false;
+      if (!removed) return current == proof.inputs;
+      auto expected = proof.inputs;
+      expected.erase(project / unit / "catalog-source.txt");
+      return current == expected;
+    };
+    const auto registeredAfter = [&] {
+      return absentFile(project / unit) && registeredTextures(project) == remainingTextures &&
+          registeredMaterials(project) == activeMaterials && readRegistrations(project) == activeRegistered;
+    };
+    const auto move = [&](const fs::path& from, const fs::path& to) {
+      return MoveFileExW((project / from).c_str(), (project / to).c_str(), MOVEFILE_WRITE_THROUGH) != FALSE;
+    };
+    const auto replaceNames = [&](std::string_view current, std::string_view intended, const fs::path& input) {
+      if (readNameBytes(project) != current) return false;
+      if (current == intended) return true;
+      if (intended.empty()) DeleteFileW(namePath.c_str());
+      else {
+        if (readNameFile(project, input) != intended) return false;
+        const DWORD flags = MOVEFILE_WRITE_THROUGH | (current.empty() ? 0 : MOVEFILE_REPLACE_EXISTING);
+        MoveFileExW((project / input).c_str(), namePath.c_str(), flags);
+      }
+      return readNameBytes(project) == intended;
+    };
+    const auto validateCatalog = [&](const as::AssetCatalog& catalog) {
+      if (catalog.find(work.job.asset) || catalog.size() + 1 != work.catalog->size() ||
+          !matchesManagedCatalog(catalog, remainingView)) return false;
+      for (const auto& record : catalog.records()) {
+        const auto* previous = work.catalog->find(record.guid);
+        if (!previous || previous->type != record.type || as::toString(previous->source) != as::toString(record.source) ||
+            previous->assetId != record.assetId || previous->dependencies != record.dependencies ||
+            previous->artifactSchema != record.artifactSchema || previous->sourceSchema != record.sourceSchema ||
+            previous->tool != record.tool || std::ranges::find(record.dependencies, work.job.asset) != record.dependencies.end())
+          return false;
+      }
+      return true;
+    };
+    const auto execute = [&]() -> std::variant<ca::GenerationId, End> {
+      if (interrupted()) return cleanTimeout();
+      if (!safeBuildTree(staging, interrupted) || !safeRelative(staging, fs::path(kPendingSelection)) ||
+          readText(selectionPath) != "") return unknown("Cannot establish staging ownership.");
+      if (!removalRegistryMatches() || !safeRemovalUnit(unit, token) || !safeRemovalInbox(token) ||
+          !checkedInputsMatch()) return stale();
+      if (!createMarker(staging / kDirty, {}) ||
+          !createMarker(project / kProjectDirty, utf8(staging) + "\n" + utf8(publication) + "\n"))
+        return unknown("Cannot record both workspace markers.");
+      marked = true;
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true)) return *error;
+      if (removalView() != proof.view || !checkedInputsMatch()) return stale();
+      std::error_code ec;
+      if (absentFile(project / pending.parent_path())) fs::create_directory(project / pending.parent_path(), ec);
+      if (ec || !realDirectory(project / pending.parent_path()) ||
+          !fs::create_directory(project / pending, ec) || ec) return unknown("Cannot reserve private removal staging.");
+      ownsPending = true;
+      if (!createMarker(project / pending / "selection", selection))
+        return fail(Stage::Launch, Code::LaunchFailed, "Cannot record the owned removal selection.");
+      ownsSelection = true;
+      if (!writeText(selectionPath, selection)) return unknown("Cannot set the removal selection.");
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true)) return *error;
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) return *error;
+      const auto catalog = readCatalog(staging);
+      const auto inputs = catalog ? textureInputs(staging, remainingView, *catalog) : std::nullopt;
+      const auto oldRoot = active.parent_path();
+      if (removalView() != remainingView || !catalog || !validateCatalog(*catalog) || !inputs ||
+          textureRegistrations(remainingView, *inputs) != remainingTextures ||
+          materialInputs(staging, remainingView) != activeMaterials || !matchesFrozenMaterials(*catalog, activeMaterials))
+        return fail(Stage::Validation, Code::InvalidOutput, "Removal candidate differs from the intended catalog delta.");
+      for (const auto& record : catalog->records()) {
+        const auto* previous = work.catalog->find(record.guid);
+        const auto sameFile = [&](std::string_view oldPath, std::string_view newPath) {
+          const auto from = fromUtf8(oldPath);
+          const auto to = fromUtf8(newPath);
+          return safeRelative(oldRoot, from.lexically_relative(oldRoot)) &&
+              safeRelative(staging, to.lexically_relative(staging)) && sameOutput(from, to, interrupted);
+        };
+        if (!sameFile(previous->artifact, record.artifact) || !sameFile(previous->metadata, record.metadata))
+          return fail(Stage::Validation, Code::InvalidOutput, "A surviving cooked asset changed while building removal.");
+      }
+      auto result = prepare(*catalog, remainingView, interrupted, &prepared, nullptr, nullptr, &remainingNames);
+      if (const auto* error = std::get_if<End>(&result)) return *error;
+      prepared = std::get<Prepared>(std::move(result));
+      const auto final = publication / as::toString(prepared->id.value);
+      RemovalInputs frozen;
+      for (fs::recursive_directory_iterator at(prepared->directory, ec), end; !ec && at != end; at.increment(ec)) {
+        if (at->is_directory(ec)) continue;
+        const auto file = at->path().lexically_relative(prepared->directory);
+        const auto digest = fileDigest(prepared->directory, file, 256 * 1024 * 1024, true);
+        if (!digest || interrupted()) return fail(Stage::Validation, Code::InvalidOutput, "Cannot freeze the prepared generation.");
+        frozen.emplace(file, *digest);
+      }
+      if (ec) return fail(Stage::Validation, Code::InvalidOutput, "Cannot enumerate the prepared generation.");
+      const auto frozenMatches = [&](const fs::path& path) {
+        if (!realDirectory(path) || readManagedView(path, inventoryRelative, inventoryHeader(inventory)) != remainingView ||
+            !safeRelative(path, fs::path(kManifest)) || readJson(path / kManifest) != prepared->expectedManifest)
+          return false;
+        const auto candidate = readCatalog(path);
+        const auto candidateInputs = candidate ? textureInputs(path, remainingView, *candidate) : std::nullopt;
+        return candidate && validateCatalog(*candidate) && candidateInputs &&
+            textureRegistrations(remainingView, *candidateInputs) == remainingTextures &&
+            materialInputs(path, remainingView) == activeMaterials &&
+            std::ranges::all_of(frozen, [&](const auto& file) {
+              return fileDigest(path, file.first, 256 * 1024 * 1024, true) == file.second;
+            });
+      };
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.afterRemovalPreparation) config.afterRemovalPreparation(prepared->directory);
+#endif
+      std::lock_guard commit(publicationCommit);
+      if (interrupted()) return cleanTimeout();
+      if (!frozenMatches(prepared->directory) || readText(selectionPath) != selection ||
+          !checkedInputsMatch() || !removalRegistryMatches() || !safeRemovalInbox(token) || !safeRemovalUnit(unit, token))
+        return stale();
+      if (!absentFile(final) || !absentFile(project / backup)) return unknown("Cannot prove the removal destinations are vacant.");
+      auto record = json::Value::object();
+      record.set("job", json::Value::string(as::toString(work.job.id.value)));
+      record.set("asset", json::Value::string(as::toString(work.job.asset)));
+      record.set("activeGeneration", json::Value::string(as::toString(config.generation->value)));
+      record.set("generation", json::Value::string(as::toString(prepared->id.value)));
+      record.set("unit", json::Value::string(utf8(unit)));
+      record.set("backup", json::Value::string(utf8(backup)));
+      record.set("digest", json::Value::string(activeTextures.at(token).digest));
+      record.set("fragment", json::Value::string(as::serializeAssetCatalogSource({
+          {work.job.asset, as::CatalogAssetType::Texture, as::CatalogRoot::Content, key.substr(8)}})));
+      record.set("oldNames", json::Value::string(nameBefore));
+      record.set("newNames", json::Value::string(nameAfter));
+      auto intended = json::Value::object();
+      for (const auto& [file, digest] : frozen) intended.set(utf8(file), json::Value::string(digest));
+      record.set("frozen", std::move(intended));
+      if ((nameBefore != nameAfter &&
+           ((!nameBefore.empty() && !createMarker(project / pending / "old-names", nameBefore)) ||
+            (!nameAfter.empty() && !createMarker(project / pending / "new-names", nameAfter)))) ||
+          !createMarker(project / pending / "removal.json", json::write(record)))
+        return fail(Stage::Publication, Code::PublishFailed, "Cannot flush the removal recovery record.");
+      if (interrupted()) return cleanTimeout();
+      const auto rollback = [&]() {
+        const auto names = readNameBytes(project);
+        if (!absentFile(final) || !registeredAfter() || !safeRemovalUnit(backup, token) ||
+            (names != nameBefore && names != nameAfter))
+          return unknown("Cannot prove that the previous registration can be restored.");
+        move(backup, unit);
+        if (!absentFile(project / backup) || !safeRemovalUnit(unit, token) ||
+            !replaceNames(*names, nameBefore, pending / "old-names") || !removalRegistryMatches())
+          return unknown("Cannot verify the restored registration and name map.");
+        return fail(Stage::Publication, Code::PublishFailed, "The previous registration was restored. Check and retry.");
+      };
+      move(unit, backup);
+      if (!registeredAfter() || !safeRemovalUnit(backup, token)) {
+        if (absentFile(project / backup) && safeRemovalUnit(unit, token) && removalRegistryMatches())
+          return fail(Stage::Publication, Code::PublishFailed, "Could not move the registration. Check and retry.");
+        return unknown("Cannot verify the registration backup.");
+      }
+      if (!replaceNames(nameBefore, nameAfter, pending / "new-names")) return rollback();
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.beforeRemovalPublication) config.beforeRemovalPublication(prepared->directory, final);
+#endif
+      const auto committedMatches = [&] {
+        return registeredAfter() && safeRemovalUnit(backup, token) && namesMatch(remainingNames) &&
+            checkedInputsMatch(true);
+      };
+      if (!frozenMatches(prepared->directory) || !committedMatches() || !publish(*prepared, &remainingNames)) {
+        if (absentFile(prepared->directory) && frozenMatches(final) && committedMatches()) return prepared->id;
+        return rollback();
+      }
+      return prepared->id;
+    };
+    auto result = [&]() -> std::variant<ca::GenerationId, End> {
+      try { return execute(); }
+      catch (const std::exception&) { return unknown("Cannot confirm removal settlement."); }
+    }();
+    auto* failure = std::get_if<End>(&result);
+    if (!marked || (failure && failure->repair)) return result;
+
+    const auto cleanup = [&] {
+      if (ownsSelection) {
+        const auto deadline = Clock::now() + std::chrono::minutes(1);
+        if (!safeRelative(staging, fs::path(kPendingSelection)) || readText(selectionPath) != selection ||
+            !writeText(selectionPath, {}) ||
+            runBuild(config.cmake, staging, config.configuration, [&] { return Clock::now() >= deadline; }, true) ||
+            !removalView()) return false;
+        if (!failure && removalView() != remainingView) return false;
+        if (failure && !removalRegistryMatches()) return false;
+      }
+      std::error_code ec;
+      if (prepared && failure && !absentFile(prepared->directory)) {
+        if (!realDirectory(prepared->directory) || !safeBuildTree(prepared->directory, [] { return false; })) return false;
+        fs::remove_all(prepared->directory, ec);
+        if (ec) return false;
+      }
+      if (!failure) {
+        if (!safeRemovalUnit(backup, token)) return false;
+        fs::remove_all(project / backup, ec);
+        if (ec) return false;
+      }
+      if (!DeleteFileW((staging / kDirty).c_str()) || !DeleteFileW((project / kProjectDirty).c_str())) return false;
+      if (ownsPending) {
+        if (!realDirectory(project / pending) || !safeBuildTree(project / pending, [] { return false; })) return false;
+        fs::remove_all(project / pending, ec);
+      }
+      return !ec;
+    };
+    try {
+      cleanupRepair = !cleanup();
+    } catch (const std::exception&) {
+      cleanupRepair = true;
+    }
+    if (cleanupRepair) {
+      if (absentFile(staging / kDirty)) createMarker(staging / kDirty, {});
+      if (absentFile(project / kProjectDirty))
+        createMarker(project / kProjectDirty, utf8(staging) + "\n" + utf8(publication) + "\n");
+      if (failure) return unknown("Cannot verify removal staging cleanup.");
+    }
+    return result;
   }
 
   std::variant<ca::GenerationId, End> renameColor(const Work& work, bool& cleanupRepair) {
@@ -2208,14 +2770,21 @@ struct AssetRebuildHost::State {
       std::optional<ImportWork> import;
       std::optional<MaterialWork> material;
       std::optional<TextureWork> texture;
+      std::optional<RemovalRead> removal;
       {
         std::unique_lock lock(mutex);
-        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork; });
-        if (stopping && !running && !importing && !materialWork && !textureWork) return;
+        const auto checking = [&] { return removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking; };
+        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork || checking(); });
+        if (stopping && !running && !importing && !materialWork && !textureWork && !checking()) return;
         work = running;
         import = importing;
         material = materialWork;
         texture = textureWork;
+        if (checking()) removal = removalCheck;
+      }
+      if (removal) {
+        settleRemovalCheck(std::move(*removal));
+        continue;
       }
       if (texture) {
         settleTexture(*texture);
@@ -2230,22 +2799,22 @@ struct AssetRebuildHost::State {
         continue;
       }
       bool cleanupRepair = false;
-      auto result = work->rename ? renameColor(*work, cleanupRepair) :
+      auto result = work->removal ? removeColor(*work, cleanupRepair) : work->rename ? renameColor(*work, cleanupRepair) :
           work->colorReplacement ? reimportColor(*work, cleanupRepair) : build(*work);
-      const auto names = work->rename ? readNameBytes(project) : std::nullopt;
+      const auto disk = work->colorReplacement ? registeredTextures(project) : std::nullopt;
+      const auto names = (work->rename || work->removal) ? readNameBytes(project) : std::nullopt;
       std::optional<TextureNames> settledNames;
       if (names) {
         if (names->empty()) settledNames.emplace();
         else if (const auto parsed = json::parse(*names); parsed.isOk()) {
-          settledNames = parseNames(parsed.value(), activeTextures);
+          settledNames = parseNames(parsed.value(), disk ? *disk : activeTextures);
           if (settledNames && nameBytes(*settledNames) != *names) settledNames.reset();
         }
       }
-      const auto disk = work->colorReplacement ? registeredTextures(project) : std::nullopt;
       auto& job = work->job;
       const auto* failure = std::get_if<End>(&result);
       bool repair = cleanupRepair || (failure && failure->repair) || (work->colorReplacement && !disk) ||
-          (work->rename && !settledNames);
+          ((work->rename || work->removal) && !settledNames);
       if (!repair && !work->colorReplacement && !work->rename) {
         std::error_code ec;
         fs::remove(staging / kDirty, ec);
@@ -2580,6 +3149,79 @@ ca::RenameTextureResult AssetRebuildHost::renameTexture(
   ca::RebuildJob job{{*id}, request.asset, ca::RebuildState::Running, {}, {}};
   state_->running.emplace(State::Work{job, &producer->second, std::move(catalog), Clock::now() + state_->config.timeout,
                                       std::nullopt, request});
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+ca::TextureRemovalCheckResult AssetRebuildHost::checkTextureRemoval(
+    const ca::TextureRemovalTarget& target, std::shared_ptr<const as::AssetCatalog> catalog) {
+  using E = ca::TextureRemovalError;
+  using R = ca::TextureRemovalCheckResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty() || !state_->config.generation) return R::Err(E::Unavailable);
+  if (const auto error = state_->slotError()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::Unavailable);
+  }
+  if (state_->config.generation != target.expectedGeneration) return R::Err(E::StaleCheck);
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto* record = catalog->find(target.asset);
+  if (!record) return R::Err(E::UnknownAsset);
+  const auto key = as::toString(record->source);
+  const auto name = textureName(key);
+  const auto producer = state_->producers.find(key);
+  if (!name || !record->source.subKey.empty() || record->type != as::CatalogAssetType::Texture ||
+      textureKind(key) != TextureKind::Color || producer == state_->producers.end() ||
+      producer->second.root != target.asset || producer->second.type != record->type)
+    return R::Err(E::UnsupportedProducer);
+  const auto unit = state_->activeTextures.find(*name);
+  if (unit == state_->activeTextures.end() || unit->second.guid != target.asset ||
+      unit->second.kind != TextureKind::Color) return R::Err(E::UnsupportedProducer);
+  const auto id = newGuid();
+  if (!id) return R::Err(E::Unavailable);
+  ca::TextureRemovalCheck check{{*id}, target};
+  state_->removalProof.reset();
+  state_->removalCheck.emplace(State::RemovalRead{check, std::string(*name), std::move(catalog),
+                                                Clock::now() + state_->config.timeout});
+  state_->changed.notify_one();
+  return R::Ok(std::move(check));
+}
+ca::TextureRemovalCheckResult AssetRebuildHost::textureRemovalCheckStatus(ca::TextureRemovalCheckId id) const {
+  using R = ca::TextureRemovalCheckResult;
+  std::lock_guard lock(state_->mutex);
+  if (!state_->removalCheck || state_->removalCheck->check.id != id)
+    return R::Err(ca::TextureRemovalError::UnknownCheck);
+  auto check = state_->removalCheck->check;
+  if (check.state == ca::TextureRemovalState::Ready &&
+      (!state_->removalProof || Clock::now() >= state_->removalProof->expires)) {
+    check.state = ca::TextureRemovalState::StaleCheck;
+    check.diagnostic = "The check has expired or was consumed. Check again.";
+  }
+  return R::Ok(std::move(check));
+}
+ca::RemoveTextureResult AssetRebuildHost::removeTexture(
+    const ca::TextureRemovalTarget& target, ca::TextureRemovalCheckId id) {
+  using E = ca::TextureRemovalError;
+  using R = ca::RemoveTextureResult;
+  std::lock_guard lock(state_->mutex);
+  if (!state_->removalCheck || state_->removalCheck->check.id != id) return R::Err(E::UnknownCheck);
+  const auto& checked = *state_->removalCheck;
+  if (checked.check.target != target || state_->config.generation != target.expectedGeneration ||
+      checked.check.state != ca::TextureRemovalState::Ready || !state_->removalProof ||
+      Clock::now() >= state_->removalProof->expires) return R::Err(E::StaleCheck);
+  if (const auto error = state_->admissionLocked()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::StaleCheck);
+  }
+  const auto idValue = newGuid();
+  if (!idValue) return R::Err(E::Unavailable);
+  ca::RebuildJob job{{*idValue}, target.asset, ca::RebuildState::Running, {}, {}};
+  const auto producer = state_->producers.find(textureKey(checked.token, TextureKind::Color));
+  if (producer == state_->producers.end()) return R::Err(E::StaleCheck);
+  state_->running.emplace(State::Work{job, &producer->second, checked.catalog, Clock::now() + state_->config.timeout,
+                                      checked.token, {}, std::move(state_->removalProof)});
+  state_->removalProof.reset();
   state_->changed.notify_one();
   return R::Ok(job);
 }
