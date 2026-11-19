@@ -47,10 +47,11 @@ struct AssetHost::State final : connection::AssetConnection {
         case as::CatalogAssetType::Environment: type = ac::AssetType::Environment; break;
         case as::CatalogAssetType::GltfImport: ATLANTIS_CHECK(false); break;
       }
-      details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies});
+      details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies,
+                          rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt});
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
-    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source});
+    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName});
     catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
@@ -128,6 +129,11 @@ struct AssetHost::State final : connection::AssetConnection {
                                maps.normal ? &*maps.normal : nullptr, maps.emissive ? &*maps.emissive : nullptr,
                                maps.packed ? &*maps.packed : nullptr,
                                maps.occlusion ? &*maps.occlusion : nullptr, maps.occlusion.has_value());
+  }
+  ac::RenameTextureResult renameTexture(const ac::RenameTextureRequest& request) override {
+    if (!rebuild_) return ac::RenameTextureResult::Err(ac::RenameTextureError::Unavailable);
+    initialize();
+    return rebuild_->renameTexture(request, catalog_);
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override {
     if (!rebuild_) return ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
@@ -308,6 +314,9 @@ class BorrowedAssets final : public connection::AssetConnection {
     return host_.previewMeshMaterial(meshGuid, materialGuid);
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
+  ac::RenameTextureResult renameTexture(const ac::RenameTextureRequest& request) override {
+    return host_.renameTexture(request);
+  }
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override { return host_.rebuildStatus(id); }
   ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {
     return host_.importAsset(name, mode);

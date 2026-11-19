@@ -561,6 +561,31 @@ class RemoteAssets final : public connection::AssetConnection {
       return job && job->asset == guid && job->state == ca::RebuildState::Running ? job : std::nullopt;
     });
   }
+  ca::RenameTextureResult renameTexture(const ca::RenameTextureRequest& request) override {
+    ATLANTIS_CHECK(request.asset != AssetGuid{} && request.expectedGeneration.value != AssetGuid{});
+    Value params = Value::object();
+    params.set("asset", codec::encodeAsset(request.asset));
+    params.set("expectedGeneration", codec::encodeAsset(request.expectedGeneration.value));
+    params.set("displayName", Value::string(request.displayName));
+    using R = ca::RenameTextureResult;
+    using E = ca::RenameTextureError;
+    const auto envelope = state_.awaitResponse(state_.send("assets.renameTexture", std::move(params)));
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
+      if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+        if (const auto* ok = result->find("ok")) {
+          auto job = codec::decodeRebuildJob(*ok);
+          if (job && job->asset == request.asset && job->state == ca::RebuildState::Running) return R::Ok(std::move(*job));
+        } else if (const auto* err = result->find("err")) {
+          if (auto reason = codec::decodeRenameTextureError(*err, true)) return R::Err(*reason);
+        }
+      } else if (const auto* err = envelope->find("error"); err && err->isObject() && err->asObject().size() == 2 &&
+                 memberCount(*err, "code") == 1 && memberCount(*err, "message") == 1 && legacyAssetRefusal(*err)) {
+        return R::Err(E::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(E::Unavailable);
+  }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override {
     ATLANTIS_CHECK(!id || id->value != AssetGuid{});
     Value params = Value::object();

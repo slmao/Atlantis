@@ -10,6 +10,14 @@ class Assets final : public atlantis::connection::AssetConnection {
   bool unavailable = false;
   int previews = 0;
   int pairPreviews = 0;
+  bool renameReceiptLost = false;
+  int renameCalls = 0;
+  ca::RenameTextureResult renameTexture(const ca::RenameTextureRequest& request) override {
+    ++renameCalls;
+    if (renameReceiptLost) return ca::RenameTextureResult::Err(ca::RenameTextureError::Unavailable);
+    if (request.expectedGeneration.value != material) return ca::RenameTextureResult::Err(ca::RenameTextureError::StaleSnapshot);
+    return ca::RenameTextureResult::Ok({{material}, request.asset, ca::RebuildState::Running, {}, {}});
+  }
   ca::MaterialStatusResult materialStatus(std::optional<ca::MaterialJobId> id) const override {
     if (!id || id->value != guid) return ca::MaterialStatusResult::Err(ca::MaterialError::UnknownJob);
     ca::MaterialJob job{*id, {ca::MaterialMode::Edit, {}, material}, ca::RebuildState::Failed, {}, {},
@@ -160,6 +168,37 @@ TEST_CASE("asset CLI: human JSON REPL and exec use injected shared queries", "[c
   assets.unavailable = true;
   const std::vector<std::string> args{"asset", "list"};
   CHECK(failed.run(args) == 3);  // Transport failure overrides the catalog sentinel.
+}
+
+TEST_CASE("texture rename CLI preserves the write target after a lost receipt", "[cli][assets]") {
+  using namespace atlantis::cli::test;
+  Assets assets;
+  Cli cli(true);
+  cli.invocation->setAssets([&] { return &assets; });
+  auto guid = atlantis::asset_system::toString(assets.guid);
+  auto generation = atlantis::asset_system::toString(assets.material);
+  CHECK(cli.run("assets rename-texture " + guid + " " + guid + " display_blue") == 1);
+  CHECK(cli.out.str().find("StaleSnapshot") != std::string::npos);
+  cli.out.str("");
+  CHECK(cli.run("assets rename-texture " + guid + " " + generation + " display_blue") == 0);
+  CHECK(cli.out.str().find(generation) != std::string::npos);
+  cli.out.str("");
+  atlantis::cli::InvocationOptions options;
+  options.json = true;
+  options.transportFailure = [&]() -> std::optional<atlantis::cli::CliError> {
+    if (assets.renameCalls < 3) return std::nullopt;
+    return atlantis::cli::CliError{"Disconnected", atlantis::cli::ErrorCategory::Connection, "lost connection", {}, "lost connection\n"};
+  };
+  atlantis::cli::Invocation invocation(*cli.connection, nullptr, nullptr, cli.out, cli.err, options);
+  invocation.setAssets([&] { return &assets; });
+  assets.renameReceiptLost = true;
+  const std::vector<std::string> args{"assets", "rename-texture", guid, generation, "display_blue"};
+  CHECK(invocation.run(args) == 3);
+  CHECK(assets.renameCalls == 3);
+  CHECK(cli.out.str().find("Disconnected") != std::string::npos);
+  CHECK(cli.out.str().find("outcome unknown") != std::string::npos);
+  CHECK(cli.out.str().find(guid) != std::string::npos);
+  CHECK(cli.out.str().find("display_blue") != std::string::npos);
 }
 
 TEST_CASE("material CLI: terminal failure exits nonzero and retains the exact receipt", "[cli][assets][asset-material]") {

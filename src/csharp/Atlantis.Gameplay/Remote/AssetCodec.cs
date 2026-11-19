@@ -17,11 +17,15 @@ public static partial class Codec
         "mesh" => A.AssetType.Mesh, "texture" => A.AssetType.Texture, "material" => A.AssetType.Material,
         "scene" => A.AssetType.Scene, "environment" => A.AssetType.Environment, _ => null,
     } : null;
-    public static JsonValue Encode(A.AssetSummary v) => JsonValue.NewObject().Set("guid", Encode(v.Guid))
-        .Set("type", JsonValue.String(AssetTypeText(v.Type))).Set("source", JsonValue.String(v.Source));
+    public static JsonValue Encode(A.AssetSummary v)
+    {
+        var result = JsonValue.NewObject().Set("guid", Encode(v.Guid))
+            .Set("type", JsonValue.String(AssetTypeText(v.Type))).Set("source", JsonValue.String(v.Source));
+        return v.DisplayName is string name ? result.Set("displayName", JsonValue.String(name)) : result;
+    }
     public static JsonValue Encode(A.AssetDetails v)
     {
-        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source));
+        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source) { DisplayName = v.DisplayName });
         JsonValue deps = JsonValue.NewArray();
         foreach (AssetGuid guid in v.Dependencies) deps.Push(Encode(guid));
         return result.Set("artifactSchema", JsonValue.Number((ulong)v.ArtifactSchema))
@@ -33,7 +37,11 @@ public static partial class Codec
         if (v.Find("guid") is not JsonValue g || DecodeAsset(g) is not AssetGuid guid || guid.IsNil ||
             v.Find("type") is not { IsString: true } t || v.Find("source") is not { IsString: true } s) return null;
         A.AssetType? type = DecodeAssetType(t);
-        return type is A.AssetType known ? new A.AssetSummary(guid, known, s.AsString) : null;
+        if (type is not A.AssetType known || CountMember(v, "displayName") > 1) return null;
+        var optional = v.Find("displayName");
+        if (optional is not null && (known != A.AssetType.Texture || !optional.IsString || !ValidImportName(optional.AsString)))
+            return null;
+        return new A.AssetSummary(guid, known, s.AsString) { DisplayName = optional?.AsString };
     }
     public static A.AssetDetails? DecodeAssetDetails(JsonValue v)
     {
@@ -54,7 +62,7 @@ public static partial class Codec
                 string.CompareOrdinal(deps[^1].ToString(), guid.ToString()) >= 0) return null;
             deps.Add(guid);
         }
-        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps);
+        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps) { DisplayName = s.DisplayName };
     }
     public static JsonValue Encode(A.AssetError e) => JsonValue.String(e.ToString());
     public static A.AssetError? DecodeAssetError(JsonValue v) => v.IsString ? v.AsString switch
@@ -146,6 +154,8 @@ public static partial class Codec
         envelope.Find("result") is null && envelope.Find("error") is JsonValue error &&
         error.Find("code") is { IsString: true, AsString: "BadRequest" } &&
         error.Find("message") is { IsString: true, AsString: "unknown or malformed asset query" };
+
+    public static A.RenameTextureError? DecodeRenameTextureError(JsonValue value) => RebuildToken<A.RenameTextureError>(value);
 
     public static A.RebuildError? DecodeRebuildError(JsonValue value, bool start)
     {

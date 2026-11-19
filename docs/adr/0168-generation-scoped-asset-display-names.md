@@ -1,9 +1,9 @@
 # ADR 0168: Store Managed Texture Display Names with Immutable Generations
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-19
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending.
+- **Acceptance:** Atlantis maintainer, 2026-11-19, [PR #399](https://github.com/slmao/Atlantis/pull/399) at `10c8eea8`. Design manually merged as `342d6587`.
 - **Related Spec:** [Spec 0117](../specs/0117-registered-texture-rename.md)
 
 ## Context

@@ -532,6 +532,19 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
+    public void RenameTexture(TextureRenameIntent intent, Atlantis.Gameplay.Assets.GenerationId generation, string label,
+        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RenameTextureError>?, string?> done) =>
+        Enqueue(session =>
+        {
+            if (!intent.Intent.Current) { _post(() => done(null, "Rename canceled before sending.")); return; }
+            try
+            {
+                var result = session.Assets.RenameTexture(intent.Asset.Guid, generation, label);
+                _post(() => done(result, null));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+        });
+
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
     public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,

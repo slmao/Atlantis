@@ -70,6 +70,7 @@ public sealed class AssetBrowseProjection
 
     public static string AssetName(AssetSummary asset)
     {
+        if (asset.DisplayName is string displayName) return displayName;
         if ((ManagedTextureName(asset, "/source.png") ?? ManagedTextureName(asset, "/occlusion.png")) is string name)
             return name;
         string source = asset.Source;

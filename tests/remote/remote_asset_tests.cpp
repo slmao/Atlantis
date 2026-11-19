@@ -33,7 +33,7 @@ struct Assets final : atlantis::connection::AssetConnection {
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override {
     using R = atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError>;
     if (unavailable) return R::Err(ca::AssetError::CatalogUnavailable);
-    std::vector<ca::AssetSummary> list{{detail.guid, detail.type, detail.source}};
+    std::vector<ca::AssetSummary> list{{detail.guid, detail.type, detail.source, detail.displayName}};
     if (unordered) list.push_back(list[0]);
     return R::Ok(std::move(list));
   }
@@ -96,6 +96,13 @@ struct Borrow final : atlantis::connection::AssetConnection {
     return a_.previewMeshMaterial(mesh, material);
   }
   ca::RebuildStartResult rebuild(const as::AssetGuid& asset) override { return a_.rebuild(asset); }
+  ca::RenameTextureResult renameTexture(const ca::RenameTextureRequest& request) override {
+    if (request.expectedGeneration.value != materialGuid()) return ca::RenameTextureResult::Err(ca::RenameTextureError::StaleSnapshot);
+    if (!ca::validImportName(request.displayName)) return ca::RenameTextureResult::Err(ca::RenameTextureError::InvalidName);
+    if (request.asset != a_.detail.guid) return ca::RenameTextureResult::Err(ca::RenameTextureError::UnknownAsset);
+    const auto started = a_.rebuild(request.asset);
+    return started.isOk() ? ca::RenameTextureResult::Ok(started.value()) : ca::RenameTextureResult::Err(ca::RenameTextureError::Busy);
+  }
   ca::RebuildStatusResult rebuildStatus(std::optional<ca::RebuildId> id) const override { return a_.rebuildStatus(id); }
   ca::ImportStartResult importAsset(std::string_view name, ca::ImportMode mode) override {
     return a_.importAsset(name, mode);
@@ -329,6 +336,32 @@ TEST_CASE("asset rebuild: typed receipts and status use the same shared provider
   encoded.set("generation", codec::encodeAsset(guid()));
   CHECK_FALSE(codec::decodeRebuildJob(encoded));
   CHECK_FALSE(codec::decodeRebuildError(Value::string("UnknownJob"), true));
+}
+
+TEST_CASE("texture rename: optional discovery name and job ID use the shared asset connection", "[remote][assets]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets assets;
+  assets.detail.type = ca::AssetType::Texture;
+  assets.detail.source = "content:texture_original/source.png";
+  assets.detail.displayName = "display_blue";
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto a = served.attach(), b = served.attach();
+  const auto listed = a->assets().listAssets();
+  const auto detail = b->assets().getAsset(guid());
+  REQUIRE(listed.isOk());
+  REQUIRE(detail.isOk());
+  CHECK(listed.value().front().displayName == "display_blue");
+  CHECK(detail.value().displayName == listed.value().front().displayName);
+  CHECK(detail.value().source == assets.detail.source);
+  CHECK(a->assets().renameTexture({guid(), {guid()}, "another"}).error() == ca::RenameTextureError::StaleSnapshot);
+  const auto job = a->assets().renameTexture({guid(), {materialGuid()}, "another"});
+  REQUIRE(job.isOk());
+  CHECK(b->assets().rebuildStatus(job.value().id).value().job == job.value());
+  CHECK_FALSE(a->failure());
+  auto encoded = codec::encode(listed.value().front());
+  encoded.set("displayName", Value());
+  CHECK_FALSE(codec::decodeAssetSummary(encoded));
 }
 
 TEST_CASE("asset import: committed failure remains observable on a separate session", "[remote][assets][asset-import]") {

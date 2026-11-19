@@ -72,14 +72,14 @@ public static partial class Program
             checks.Add(new NameUiCheck("bounded UI lifetime", false, "fixture timed out"));
             exit = 1;
         }
-        bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport";
+        bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
         if (meshPreview && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--texture-reimport"
+            boundary = scene is "--texture-reimport" or "--texture-rename"
                 ? "Actual 96-DPI Windows MainWindow and hosted Runtime; routed controls, shared preview PNG and optional native window captures."
                 : scene is "--asset-drag" or "--asset-drag-compact"
                 ? "Actual 96-DPI Windows MainWindow and Runtime; native mouse drag plus shared document and projection readback."
@@ -119,7 +119,7 @@ public static partial class Program
                 bool savedPanel = savedWorkflow || savedOwnership;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
-                bool reimport = _scene == "--texture-reimport";
+                bool reimport = _scene is "--texture-reimport" or "--texture-rename";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
                 bool meshPreview = _scene == "--mesh-preview";
@@ -208,7 +208,10 @@ public static partial class Program
         void Check(string label, bool ok, string detail = "") => checks.Add(new(label, ok, detail));
         static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var mode = Environment.GetEnvironmentVariable("ATLANTIS_0116_MODE");
-        if (mode is not ("valid" or "invalid" or "preview")) throw new InvalidOperationException("Invalid UI fixture mode.");
+        if (mode is not ("valid" or "invalid" or "preview" or "rename" or "rename-reimport" or "rename-final"))
+            throw new InvalidOperationException("Invalid UI fixture mode.");
+        bool renamedGeneration = mode is "rename-reimport" or "rename-final";
+        const string alias = "harbor_blue";
         await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } runtime && File.Exists(runtime.SessionPath) &&
             Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count != 0, "texture Runtime", 90);
         var launch = Field<RuntimeProcess>("_runtime");
@@ -272,9 +275,84 @@ public static partial class Program
         }
 
         window.Activate();
+        if (renamedGeneration)
+        {
+            search.Text = alias;
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(item => item.Guid == texture), "search by new label");
+            var found = list.Items.OfType<AssetSummary>().Single(item => item.Guid == texture);
+            list.SelectedItem = found;
+            Check("search resolves same GUID; name and original source are separate", found.DisplayName == alias &&
+                found.Source == "content:texture_probe_color/source.png" &&
+                observer.Assets.GetAsset(texture).Value?.DisplayName == alias &&
+                Field<TextBlock>("_assetTitle").Text == alias);
+            await Capture("search-by-new-name", list);
+            search.Text = "texture_probe_color/source.png";
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(item => item.Guid == texture), "search by original path");
+            Check("original path search stays usable", list.Items.OfType<AssetSummary>().Single().Guid == texture);
+            await RevealAsset(texture);
+            Check("GUID search stays usable", list.SelectedItem is AssetSummary row && row.Guid == texture);
+        }
         var before = await Preview("before");
-        if (mode == "preview") return;
+        if (mode is "preview" or "rename-final") return;
         await RevealAsset(texture);
+        if (mode == "rename")
+        {
+            var rename = Field<Button>("_renameTexture");
+            var confirmRename = Field<Button>("_renamePublish");
+            var label = Field<TextBox>("_renameLabel");
+            var status = Field<TextBlock>("_rebuildState");
+            async Task EditName(string proposed)
+            {
+                await NameUiWait(() => rename.IsEnabled && rename.IsEffectivelyVisible, "rename action ready");
+                Click(rename);
+                await NameUiWait(() => label.IsEffectivelyVisible && label.IsFocused, "rename input focus");
+                label.Text = proposed;
+                Check("rename draft shows stable original inbox path",
+                    Field<SelectableTextBlock>("_renamePath").Text?.Contains("inbox/probe_color/source.png") == true);
+                await NameUiWait(() => confirmRename.IsEnabled, "rename confirmation ready");
+            }
+
+            await EditName("probe_other");
+            Click(confirmRename);
+            await NameUiWait(() => status.Text?.Contains("NameConflict") == true, "rename collision");
+            Check("duplicate refusal leaves name unchanged", observer.Assets.GetAsset(texture).Value!.DisplayName is null);
+            await Capture("duplicate-refused", status);
+
+            await EditName(alias);
+            var worker = Field<EditorWorker>("_worker");
+            using var entered = new System.Threading.ManualResetEventSlim();
+            using var release = new System.Threading.ManualResetEventSlim();
+            var enqueue = typeof(EditorWorker).GetMethod("Enqueue", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+            enqueue.Invoke(worker, [new Action<RemoteSession>(_ => { entered.Set(); release.Wait(TimeSpan.FromSeconds(8)); })]);
+            try
+            {
+                await NameUiWait(() => entered.IsSet, "worker operation latched");
+                Click(confirmRename);
+                search.Text = "probe_other";
+            }
+            finally { release.Set(); }
+            await NameUiWait(() => status.Text?.Contains("canceled before sending", StringComparison.OrdinalIgnoreCase) == true,
+                "queued rename canceled before wire send");
+            Check("canceled rename leaves no job in the Runtime", observer.Assets.RebuildStatus().Value!.Job is null);
+
+            await RevealAsset(texture);
+            await EditName(alias);
+            await Capture("rename-original-inbox", label);
+            Click(confirmRename);
+            await NameUiWait(() => status.Text?.Contains(" · Succeeded") == true, "rename published", 140);
+            var receipt = observer.Assets.RebuildStatus().Value!;
+            Check("rename publishes a distinct generation for the original GUID",
+                receipt.Job?.Asset == texture && receipt.Job.Generation is GenerationId renamed && renamed != generation &&
+                receipt.ActiveGeneration == generation && status.Text?.Contains("--asset-generation " + renamed) == true);
+            File.WriteAllText(Path.Combine(launch.Launch.WorkDirectory, "published-generation.txt"), receipt.Job!.Generation!.Value.ToString());
+            search.Text = alias;
+            Check("attached Runtime cannot search for the new name", list.Items.OfType<AssetSummary>().All(item => item.Guid != texture) &&
+                observer.Assets.GetAsset(texture).Value!.DisplayName is null);
+            await Capture("published-awaiting-restart", status);
+            var afterRename = await Preview("attached-after");
+            Check("same attached Runtime still draws original pixels", before.SequenceEqual(afterRename));
+            return;
+        }
         var build = window.GetVisualDescendants().OfType<Expander>()
             .Single(expander => Equals(expander.Header, "Rebuild / Reimport"));
         build.IsExpanded = true;

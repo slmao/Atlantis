@@ -294,6 +294,13 @@ AssetDetails {"guid":"<GUID>","type":"<same closed type>","source":"<source key>
               "tool":"<catalog tool>","dependencies":["<GUID>"…]}
 ```
 
+Spec 0117 adds optional `displayName` to either item for a registered
+base color texture with an override. It is the immutable active-generation
+label, has the same grammar as an import name, and never replaces
+`source`. The field is absent when there is no override. Updated typed
+readers reject a malformed, null or duplicate present member; older
+readers can continue to use the unchanged original fields.
+
 Dependencies are sorted unique non-nil GUIDs, direct only. No artifact path,
 internal AssetId or GPU state is exposed. Typed clients require all fields, known
 types/errors, non-nil canonical GUIDs, strict list/dependency order and a matching
@@ -390,6 +397,34 @@ Stop writers and inspect those units and the expected complete generation
 before clearing either dirty marker. Verify the frozen evidence and sealed
 registry before preserving the new version or restoring the backup.
 A missing or ambiguous recovery record does not authorize either action.
+
+#### Display rename (Spec 0117 / ADR-0168)
+
+`assets.renameTexture` accepts exactly
+`{"asset":"<AssetGuid>","expectedGeneration":"<GenerationId>","displayName":"new_label"}`.
+It admits the same Running Job as rebuild; settle the returned ID through
+`assets.rebuildStatus`. A known expired or unavailable query does not
+prove a failed write. Treat loss or invalidity of a possibly sent start's
+receipt as unknown, retain the identity and proposal, and verify settlement
+before retrying. The exact legacy unknown-method refusal maps to Unsupported.
+
+Start refusals are `Unsupported`, `Unavailable`, `Busy`,
+`WorkspaceNeedsRepair`, `CatalogUnavailable`, `UnknownAsset`,
+`UnsupportedProducer`, `InvalidName`, `NameConflict`, `StaleSnapshot`
+and `Unchanged`. Only a matching active named managed generation can rename
+one registered sRGB color PNG. Publication keeps the texture GUID, logical
+source, registered files, original inbox and bindings. Clients see the new
+name after an explicit restart into the published generation. The host
+stores overrides in `texture-display-names.json` and freezes them at
+`textureDisplayNames` in manifest v8. An older Runtime cannot activate v8;
+use only updated writers on a workspace with overrides. Older snapshots
+whose map differs from the committed map stay readable but cannot write.
+
+If rename publication is unverified, the dirty markers hold managed writes.
+Use the owned `.pending/<job-id>/rename.json` record and exact previous and
+requested map bytes, under the offline settlement rules in
+[ADR-0168](../adr/0168-generation-scoped-asset-display-names.md). Querying
+discovery never reads or alters this mutable recovery state.
 
 ### 5.2.2 Managed materials (Spec 0094 / ADR-0153)
 

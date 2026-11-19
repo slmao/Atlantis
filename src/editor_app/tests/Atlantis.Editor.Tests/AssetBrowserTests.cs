@@ -20,6 +20,23 @@ public static partial class Program
         Check(EditorVisuals.AssetName(color with { Source = "assets:texture_sign/source.png" }) == "source" &&
               EditorVisuals.AssetName(color with { Source = "content:texture_sign/occlusion.png" }) == "sign",
             "assets: new color label preserves ordinary filenames and managed occlusion labels");
+        var renamed = color with { DisplayName = "renamed_blue" };
+        var names = new AssetBrowser();
+        var renamedList = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([renamed, alternate]);
+        names.CompleteList(names.BeginList(), renamedList);
+        names.Search = "RENAMED_BLUE";
+        Check(names.Visible.Single().Guid == a && EditorVisuals.AssetName(names.Visible.Single()) == "renamed_blue" &&
+              AssetBrowser.RegisteredColorName(renamed) == "sign", "rename search and original inbox token are independent");
+        names.Search = "texture_sign/source.png";
+        Check(names.Visible.Single().Guid == a, "rename: old source still searches and resolves to the same GUID");
+        names.Select(a);
+        var rename = names.BeginRename()!;
+        names.Search = "panel";
+        Check(!rename.Intent.Current && names.RenameIntent is null, "rename: hiding the target retires the queued intent");
+        names.Search = "";
+        rename = names.BeginRename()!;
+        names.BeginList();
+        Check(!rename.Intent.Current, "rename: view reload retires a queued intent even for the same GUID");
 
         var model = new AssetBrowser();
         var data = new[] { new AssetSummary(a, AssetType.Mesh, "content:Scene.gltf#mesh/0"), new AssetSummary(b, AssetType.Material, "assets:material.txt") };

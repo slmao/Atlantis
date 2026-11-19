@@ -281,6 +281,16 @@ public sealed class MainWindow : Window
     private bool _materialResumeWithCombinedMaps;
     private long _materialReadEpoch, _materialSurface;
     private readonly TextBlock _rebuildState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+    private readonly Button _renameTexture = new() { Content = "Rename…", IsVisible = false };
+    private readonly Button _renamePublish = new() { Content = "Publish rename" };
+    private readonly Button _renameCancel = new() { Content = "Cancel" };
+    private readonly TextBox _renameLabel = new() { PlaceholderText = "Display name", MaxLength = 48 };
+    private readonly SelectableTextBlock _renamePath = EditorVisuals.Details("");
+    private StackPanel? _renameEditor;
+    private GenerationId? _renameDraftGeneration;
+    private string? _renameRequestContext;
+    private bool _renameUnknown;
+
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly TextBlock _reimportInput = EditorVisuals.Secondary("");
     private readonly Button _affectedMaterials = new() { Content = "View affected materials", IsVisible = false };
@@ -678,7 +688,8 @@ public sealed class MainWindow : Window
             else
             {
                 _assetBrowser.CancelPendingDependents();
-                UpdateAffectedMaterials();
+                _assetBrowser.CancelRename();
+                UpdateRebuildButtons();
             }
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
@@ -857,6 +868,7 @@ public sealed class MainWindow : Window
         _importState.Text = "";
         UpdateImportButtons();
         _rebuildPoll.Stop(); _rebuildJob = null; _activeAssetGeneration = null;
+        _renameDraftGeneration = null; _renameRequestContext = null; _renameUnknown = false;
         _rebuildPending = _rebuildRunning = false; _rebuildState.Text = "";
         _assetBrowser.Disconnect();
         RenderAssets();
@@ -962,9 +974,16 @@ public sealed class MainWindow : Window
             UpdateImportButtons();
             _rebuildPoll.Stop();
             if (_rebuildPending || _rebuildRunning)
-                _rebuildState.Text = _rebuildJob is RebuildId job
-                    ? $"Rebuild {job} outcome unknown. Check its status before retrying."
-                    : "Rebuild admission unknown. Inspect the latest job before retrying; it may belong to another client.";
+            {
+                _renameUnknown = _renameRequestContext is not null;
+                _rebuildState.Text = _renameRequestContext is string target
+                    ? (_rebuildJob is RebuildId renameJob
+                        ? $"Rename {target}, job {renameJob}: outcome unknown. Retain the ID and query after reconnecting."
+                        : $"Rename {target}: outcome unknown. Inspect the workspace and generations; confirm settlement before retrying.")
+                    : _rebuildJob is RebuildId job
+                        ? $"Rebuild {job} outcome unknown. Check its status before retrying."
+                        : "Rebuild admission unknown. Inspect the latest job before retrying; it may belong to another client.";
+            }
             _rebuildPending = _rebuildRunning = false;
             UpdateRebuildButtons();
             _retryApply.IsEnabled = false; _allowGizmoPreview = false; _gizmoGrab = null;
@@ -2201,8 +2220,16 @@ public sealed class MainWindow : Window
         _addMesh.Click += (_, _) => AddMeshToScene();
         copy.IsEnabled = false;
         _assetCopyGuid = copy;
+        _renameTexture.Click += (_, _) => BeginTextureRename();
+        _renamePublish.Click += (_, _) => PublishTextureRename();
+        _renameCancel.Click += (_, _) => { _assetBrowser.CancelRename(); UpdateRebuildButtons(); _renameTexture.Focus(); };
+        _renameLabel.TextChanged += (_, _) => UpdateRebuildButtons();
+        AutomationProperties.SetName(_renameLabel, "Texture display name");
+        _renameEditor = EditorVisuals.Stack(4, _renameLabel, _renamePath,
+            EditorVisuals.Actions(_renamePublish, _renameCancel));
+        _renameEditor.IsVisible = false;
         var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
-            EditorVisuals.Stack(5, _assetTitle, _addMesh, _addMeshState, _previewState,
+            EditorVisuals.Stack(5, _assetTitle, _renameTexture, _renameEditor, _addMesh, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
@@ -3260,9 +3287,9 @@ public sealed class MainWindow : Window
     private void UpdateRebuildButtons()
     {
         bool available = _worker is not null && !_referenceSessionFailed && !_rebuildPending;
-        _rebuildStart.IsEnabled = available && !_rebuildRunning && _assetBrowser.State == "Ready" &&
+        _rebuildStart.IsEnabled = available && !_rebuildRunning && !_renameUnknown && _assetBrowser.State == "Ready" &&
                                   _assetsList.SelectedItem is AssetSummary;
-        _rebuildRefresh.IsEnabled = available;
+        _rebuildRefresh.IsEnabled = available && (!_renameUnknown || _rebuildJob is not null);
         string? name = _assetBrowser.SelectionVisible
             ? AssetBrowser.RegisteredColorName(_assetsList.SelectedItem as AssetSummary) : null;
         _rebuildStart.Content = name is null ? "Rebuild selected" : "Reimport PNG";
@@ -3270,6 +3297,77 @@ public sealed class MainWindow : Window
         _reimportInput.Text = name is null ? "" : "Update inbox/" + name +
             "/source.png in the configured project. Use the active named generation.";
         UpdateAffectedMaterials();
+        bool editing = _assetBrowser.RenameIntent is not null && _renameDraftGeneration is not null;
+        _renameTexture.IsVisible = name is not null && !editing;
+        _renameTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && name is not null;
+        if (_renameEditor is not null) _renameEditor.IsVisible = editing && !_referenceSessionFailed;
+        _renamePublish.IsEnabled = editing && available && !_rebuildRunning && !_renameUnknown && Codec.ValidImportName(_renameLabel.Text);
+        _renameCancel.IsEnabled = editing;
+    }
+
+    private void BeginTextureRename()
+    {
+        if (!_renameTexture.IsEnabled || _worker is not { } worker || _assetBrowser.BeginRename() is not { } intent) return;
+        _renameDraftGeneration = null;
+        _rebuildPending = true;
+        // Discovery and status come from the same worker connection.
+        UpdateRebuildButtons();
+        worker.QueryRebuild(null, status =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _rebuildPending = false;
+            if (!intent.Intent.Current) { UpdateRebuildButtons(); return; }
+            if (!status.IsOk || status.Value!.ActiveGeneration is not GenerationId generation)
+            {
+                _assetBrowser.CancelRename();
+                _rebuildState.Text = status.IsOk ? "Rename requires an active named generation." :
+                    "Rename requires a compatible managed Runtime: " + status.Error;
+            }
+            else if (status.Value.Job?.State == RebuildState.Running)
+            {
+                _assetBrowser.CancelRename();
+                _rebuildState.Text = "A managed asset job is running. Check its status before renaming.";
+            }
+            else
+            {
+                _activeAssetGeneration = _renameDraftGeneration = generation;
+                _renamePath.Text = "Original input: inbox/" + AssetBrowser.RegisteredColorName(intent.Asset) + "/source.png";
+                _renameLabel.Text = EditorVisuals.AssetName(intent.Asset);
+            }
+            UpdateRebuildButtons();
+            if (_renameEditor?.IsVisible == true) { _renameLabel.Focus(); _renameLabel.SelectAll(); }
+        });
+    }
+
+    private void PublishTextureRename()
+    {
+        if (!_renamePublish.IsEnabled || _worker is not { } worker || _assetBrowser.RenameIntent is not { } intent ||
+            _renameDraftGeneration is not GenerationId generation || _renameLabel.Text is not string label) return;
+        _rebuildPending = true; _rebuildJob = null;
+        _renameRequestContext = $"{intent.Asset.Guid} in generation {generation} to '{label}'";
+        _rebuildState.Text = "Requesting rename…";
+        UpdateRebuildButtons();
+        worker.RenameTexture(intent, generation, label, (result, diagnostic) =>
+        {
+            if (!ReferenceEquals(worker, _worker)) return;
+            _rebuildPending = false;
+            _assetBrowser.CancelRename();
+            _renameDraftGeneration = null;
+            if (result is { IsOk: true } accepted) ShowRebuild(accepted.Value!);
+            else
+            {
+                _renameUnknown = diagnostic?.Contains("outcome unknown", StringComparison.Ordinal) == true;
+                _rebuildState.Text = diagnostic ?? (result?.Error switch
+                {
+                    RenameTextureError.NameConflict => "Rename refused: NameConflict. Choose an unused display name.",
+                    RenameTextureError.StaleSnapshot => "Rename refused: StaleSnapshot. Restart into the committed generation and check the asset.",
+                    RenameTextureError.Unsupported => "Rename is unsupported by the connected Runtime.",
+                    _ => "Rename refused: " + result?.Error,
+                });
+                if (!_renameUnknown) _renameRequestContext = null;
+            }
+            UpdateRebuildButtons();
+        });
     }
 
     private void UpdateAffectedMaterials()
@@ -3301,6 +3399,8 @@ public sealed class MainWindow : Window
     {
         if (!_rebuildStart.IsEnabled || _worker is not { } worker ||
             _assetsList.SelectedItem is not AssetSummary selected) return;
+        _assetBrowser.CancelRename();
+        _renameRequestContext = null;
         _rebuildPending = true; _rebuildJob = null;
         _rebuildState.Text = "Requesting rebuild…";
         UpdateRebuildButtons();
@@ -3336,13 +3436,24 @@ public sealed class MainWindow : Window
             if (result.IsOk)
             {
                 _activeAssetGeneration = result.Value!.ActiveGeneration;
+                _renameUnknown = false;
+                if (_assetBrowser.RenameIntent is not null && _renameDraftGeneration != _activeAssetGeneration)
+                    _assetBrowser.CancelRename();
                 ShowRebuild(result.Value.Job);
             }
             else
             {
                 _rebuildPoll.Stop(); _rebuildRunning = false;
-                if (result.Error == RebuildError.UnknownJob) _rebuildJob = null;
-                _rebuildState.Text = "Rebuild status: " + result.Error;
+                if (result.Error == RebuildError.UnknownJob && _renameRequestContext is string target && _rebuildJob is RebuildId id)
+                {
+                    _renameUnknown = true;
+                    _rebuildState.Text = $"Rename {target}, job {id}: outcome unknown (record expired). Inspect the workspace before retrying.";
+                }
+                else
+                {
+                    if (result.Error == RebuildError.UnknownJob) _rebuildJob = null;
+                    _rebuildState.Text = "Rebuild status: " + result.Error;
+                }
             }
             UpdateRebuildButtons();
         });
@@ -3353,7 +3464,8 @@ public sealed class MainWindow : Window
         _rebuildJob = job?.Id;
         _rebuildRunning = job?.State == RebuildState.Running;
         if (_rebuildRunning) _rebuildPoll.Start(); else _rebuildPoll.Stop();
-        string state = job is null ? "No admitted job" : $"Rebuild {job.Id} · {job.State}";
+        string action = _renameRequestContext is null ? "Rebuild" : "Rename";
+        string state = job is null ? "No admitted job" : $"{action} {job.Id} · {job.State}";
         if (job?.Failure is RebuildFailure failure)
             state += $" · {failure.Stage}/{failure.Code}: {failure.Diagnostic}";
         if (job?.Generation is GenerationId published)
