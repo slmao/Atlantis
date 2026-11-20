@@ -1,11 +1,11 @@
 # Spec 0123 — Reuse the Last Saved Scene Build
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0123](../plans/0123-saved-scene-build-reuse.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0172](../adr/0172-saved-scene-build-receipts.md) (Proposed)
+- **Approval:** Jointly approved at `022bc4d5` in [PR #411](https://github.com/slmao/Atlantis/pull/411). See Plan 0123.
+- **Related ADR:** [ADR-0172](../adr/0172-saved-scene-build-receipts.md) (Accepted)
 
 ## Summary
 

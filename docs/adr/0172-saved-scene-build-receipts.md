@@ -1,9 +1,9 @@
 # ADR 0172 — Local Receipt for the Last Saved Scene Build
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
-- **Deciders:** Maintainer (pending)
-- **Acceptance:** Pending joint review
+- **Deciders:** Maintainer
+- **Acceptance:** Accepted at `022bc4d5` in [PR #411](https://github.com/slmao/Atlantis/pull/411), merged by the maintainer at `b081db2f`.
 - **Related Spec:** [Spec 0123](../specs/0123-saved-scene-build-reuse.md)
 
 ## Context
