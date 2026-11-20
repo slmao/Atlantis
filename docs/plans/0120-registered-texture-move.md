@@ -1,10 +1,10 @@
 # Plan 0120 — Move a Registered Base Color Texture in Assets
 
 - **Spec:** [Spec 0120](../specs/0120-registered-texture-move.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **Related ADR:** [ADR-0170](../adr/0170-generation-scoped-texture-locations.md) (Proposed)
+- **Joint Human Review:** Atlantis maintainer, 2026-11-20, [PR #405](https://github.com/slmao/Atlantis/pull/405) at `491e5b0c`: approved Spec/Plan 0120 and J1–J4, accepted ADR-0170 and authorized S2–S4 after manual merge `87e9beb9`.
+- **Related ADR:** [ADR-0170](../adr/0170-generation-scoped-texture-locations.md) (Accepted)
 
 ## Objective and sequence
 
