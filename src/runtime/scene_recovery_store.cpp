@@ -442,7 +442,7 @@ void SceneRecoveryStore::settle() {
   if (item->epoch != s.epoch) return;
   if (!item->file) { s.capture = more ? ac::RecoveryCapture::Writing : ac::RecoveryCapture::Failed; return; }
   {
-    const auto current = openFile(s.slot, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING);
+    auto current = openFile(s.slot, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_DELETE, OPEN_EXISTING);
     const DWORD openError = current ? ERROR_SUCCESS : GetLastError();
     if ((s.slotIdentity && identity(current) != s.slotIdentity) ||
         (!s.slotIdentity && (current || !absent(openError)))) {
@@ -451,6 +451,9 @@ void SceneRecoveryStore::settle() {
       s.capture = ac::RecoveryCapture::Failed;
       return;
     }
+    // A Windows rename over an open destination can fail even with delete
+    // sharing. Release our metadata handle under the exclusive recovery lease.
+    current.reset();
     if (!replaceSlot(item->file, s.slot)) {
       s.capture = more ? ac::RecoveryCapture::Writing : ac::RecoveryCapture::Failed;
       return;

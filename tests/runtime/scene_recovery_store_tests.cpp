@@ -46,6 +46,7 @@ void awaitCopy(SceneRecoveryStore& store, std::uint64_t revision) {
     if (store.status().protectedRevision == revision) return;
     std::this_thread::sleep_for(4ms);
   }
+  INFO("waiting for revision " << revision << ", capture " << ac::toString(store.status().capture));
   FAIL("the prepared checkpoint did not publish");
 }
 }
