@@ -1,10 +1,10 @@
 # Plan 0122 — Automatic Recovery Copy for Hand-Authored Scenes
 
 - **Spec:** [Spec 0122](../specs/0122-hand-authored-scene-recovery.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0171](../adr/0171-authoring-recovery-copy.md) (Proposed)
+- **Joint Human Review:** J1–J4 approved and S2–S4 authorized for [PR #409](https://github.com/slmao/Atlantis/pull/409) at `2f3a2642`. ADR-0171 accepted. Maintainer merge `20315fef`.
+- **ADR:** [ADR-0171](../adr/0171-authoring-recovery-copy.md) (Accepted)
 
 ## Objective and milestones
 
