@@ -73,13 +73,14 @@ public static partial class Program
             exit = 1;
         }
         bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
-        if ((meshPreview || scene is "--texture-references" or "--texture-move") && work is not null) CheckMeshPreviewValidation(work, checks);
+        if ((meshPreview || scene is "--texture-references" or "--texture-move" or "--tasks-ui") && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
+            boundary = scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
+                : scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
                 : scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
                 : scene is "--texture-reimport" or "--texture-rename"
                 ? "Actual 96-DPI Windows MainWindow and hosted Runtime; routed controls, shared preview PNG and optional native window captures."
@@ -123,6 +124,7 @@ public static partial class Program
                 bool rebuild = _scene == "--asset-rebuild";
                 bool reimport = _scene is "--texture-reimport" or "--texture-rename";
                 bool references = _scene == "--texture-references";
+                bool tasks = _scene == "--tasks-ui";
                 bool moveTexture = _scene == "--texture-move";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
@@ -135,20 +137,20 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
                     SavedSceneCheckout = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT") : null,
                     SavedSceneCMake = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CMAKE") : null,
                     SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,
-                    AssetBuildProfile = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
+                    AssetBuildProfile = tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_PROFILE") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_PROFILE") :
                         moveTexture ? Environment.GetEnvironmentVariable("ATLANTIS_0120_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
+                    AssetGeneration = tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_GENERATION") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_GENERATION") :
@@ -157,6 +159,15 @@ public static partial class Program
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
+                if (tasks)
+                {
+                    EditorVisuals.Install(this);
+                    if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
+                    {
+                        window.Width = 1050;
+                        window.Height = 700;
+                    }
+                }
                 desktop.MainWindow = window;
                 window.Opened += async (_, _) =>
                 {
@@ -173,6 +184,7 @@ public static partial class Program
                         else if (reimport) await CheckTextureReimportUi(window, _checks, _work);
                         else if (references) await CheckTextureReferenceUi(window, _checks, _work);
                         else if (moveTexture) await CheckTextureMoveUi(window, _checks, _work);
+                        else if (tasks) await CheckTaskIssuesUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
@@ -210,6 +222,229 @@ public static partial class Program
         ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
             .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
         return row.Children.OfType<TextBox>().Single();
+    }
+
+    private static async Task CheckTaskIssuesUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        void Verify(string name, bool ok)
+        {
+            checks.Add(new(name, ok));
+            if (!ok) throw new InvalidOperationException(name);
+        }
+        string phase = Environment.GetEnvironmentVariable("ATLANTIS_0121_PHASE") ?? "apply";
+        string evidence = Environment.GetEnvironmentVariable("ATLANTIS_0121_EVIDENCE") ?? throw new InvalidOperationException("Missing evidence path.");
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } running && File.Exists(running.SessionPath) &&
+            Field<Button>("_pause").IsEnabled, "native Editor attached", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        Verify("Native Windows Editor at 100% with hosted Runtime",
+            window.IsVisible && GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && runtime.Launch.ParentWindow is not null);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var toggle = window.GetVisualDescendants().OfType<ToggleButton>().Single(button => Equals(button.Content, "Tasks & Issues"));
+        var panel = Field<TaskIssuesPanel>("_tasksPanel");
+        T PanelField<T>(string name) where T : class =>
+            (T)typeof(TaskIssuesPanel).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(panel)!;
+        var tasks = Field<TaskIssues>("_taskIssues");
+        var list = PanelField<ListBox>("_list");
+        var locate = PanelField<Button>("_locate");
+        var copy = PanelField<Button>("_copy");
+        var details = PanelField<SelectableTextBlock>("_details");
+        var notice = PanelField<TextBlock>("_notice");
+        var tabs = Field<TabControl>("_assetTabs");
+        var browser = Field<AssetBrowser>("_assetBrowser");
+        var search = Field<TextBox>("_assetSearch");
+        var assetList = Field<ListBox>("_assetsList");
+        Verify("Panel is initially closed with no local rows", !panel.IsVisible && tasks.Rows.Count == 0);
+
+        void Show() { toggle.IsChecked = true; window.UpdateLayout(); }
+        async Task Capture(string name)
+        {
+            if (Environment.GetEnvironmentVariable("ATLANTIS_0121_CAPTURE") != "1") return;
+            window.Activate();
+            string path = Path.Combine(evidence, name);
+            File.WriteAllText(path + ".ready", runtime.Launch.WorkDirectory);
+            await NameUiWait(() => File.Exists(path + ".done"), "native capture " + name, 60);
+        }
+        async Task<string> Copy(TaskIssue row)
+        {
+            Click(copy);
+            string expected = row.Details(tasks.ActivationKnown, tasks.ActiveGeneration);
+            await NameUiWait(async () => (await window.Clipboard!.TryGetTextAsync()) == expected, "native clipboard contains selected diagnostics");
+            return expected;
+        }
+        string textureName = Environment.GetEnvironmentVariable("ATLANTIS_0121_TEXTURE_NAME") ?? "task_issue_color";
+        if (phase is "import" or "reopen")
+        {
+            tabs.SelectedIndex = 1;
+            await NameUiWait(() => browser.State == "Ready", "Assets catalog ready");
+            if (phase == "reopen")
+            {
+                var guid = AssetGuid.Parse(File.ReadAllText(Path.Combine(evidence, "texture.guid")).Trim());
+                search.Text = textureName;
+                await NameUiWait(() => browser.Visible.Any(item => item.Guid == guid), "published texture found after explicit restart");
+                Verify("Explicit named generation activates the same GUID in a clean session",
+                    tasks.Rows.Count == 0 && tasks.ActivationKnown &&
+                    tasks.ActiveGeneration?.ToString() == runtime.Launch.AssetGeneration);
+                assetList.SelectedItem = browser.Visible.Single(item => item.Guid == guid);
+                await NameUiWait(() => browser.Details?.Guid == guid, "activated asset details available");
+                Show();
+                await Capture("texture-activated");
+                // Controlled panel inputs exercise same-label navigation and the real clipboard
+                // without changing the newly activated project or sending another asset operation.
+                var alternative = browser.Items.First(item => item.Type == AssetType.Texture && item.Guid != guid);
+                long intended = tasks.Begin("Rebuild asset", "Same label", guid);
+                string longDiagnostic = new string('x', 1400) + " diagnostic end";
+                var jobId = new RebuildId(new AssetGuid(Guid.NewGuid()));
+                tasks.Admit(intended, AssetTaskReceipt.From(new RebuildJob(jobId, guid, RebuildState.Failed,
+                    Failure: new RebuildFailure(RebuildStage.Pipeline, RebuildFailureCode.BuildFailed, longDiagnostic, 1))));
+                long otherAttempt = tasks.Begin("Rebuild asset", "Same label", alternative.Guid);
+                tasks.Admit(otherAttempt, null, "Unrelated refusal");
+                search.Text = alternative.Guid.ToString();
+                await NameUiWait(() => browser.Visible.Any(item => item.Guid == alternative.Guid), "unrelated asset filter applied");
+                assetList.SelectedItem = browser.Visible.Single(item => item.Guid == alternative.Guid);
+                list.SelectedItem = list.Items.OfType<TaskIssueItem>().Single(item => item.Row.Sequence == otherAttempt);
+                window.UpdateLayout();
+                var firstRow = list.ContainerFromIndex(0)!;
+                firstRow.Focus();
+                firstRow.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Source = firstRow, Key = Key.Down });
+                await NameUiWait(() => list.SelectedItem is TaskIssueItem item && item.Row.Sequence == intended,
+                    "keyboard selects the intended same-label row");
+                var beforeJobs = observer.Assets.RebuildStatus().Value;
+                string diagnostic = await Copy(tasks.Find(intended)!);
+                Verify("Long diagnostics copy in full for only the selected operation",
+                    diagnostic.Contains(longDiagnostic, StringComparison.Ordinal) && !diagnostic.Contains("Unrelated refusal", StringComparison.Ordinal));
+                Click(locate);
+                await NameUiWait(() => browser.Selected == guid && browser.Details?.Guid == guid, "exact GUID reveal under a different active filter");
+                Verify("Same-label Locate and Copy do not submit a task",
+                    browser.SelectionVisible && observer.Assets.RebuildStatus().Value == beforeJobs);
+                return;
+            }
+
+            var other = browser.Items.First(asset => asset.Type == AssetType.Texture);
+            search.Text = other.Guid.ToString();
+            await NameUiWait(() => browser.Visible.Any(asset => asset.Guid == other.Guid), "existing selected texture remains visible");
+            assetList.SelectedItem = browser.Visible.First(asset => asset.Guid == other.Guid);
+            var basis = (browser.Search, browser.Selected);
+            var input = Field<TextBox>("_textureName");
+            input.Text = textureName;
+            var register = Field<Button>("_textureRegister");
+            await NameUiWait(() => register.IsEnabled, "registered import available");
+            Click(register);
+            await NameUiWait(() => tasks.Rows.FirstOrDefault() is { Result: TaskResult.Succeeded, Published: not null }, "texture publication settles", 180);
+            var row = tasks.Rows[0];
+            Show();
+            Verify("Published generation differs from the active catalog",
+                details.Text!.Contains("Published · restart required", StringComparison.Ordinal) && tasks.ActivationKnown &&
+                row.Published != tasks.ActiveGeneration && row.Asset is not null && row.Receipt is TextureImportId);
+            Click(locate);
+            Verify("Locate cannot reveal an unpublished-in-this-catalog GUID and keeps current state",
+                notice.Text!.Contains("explicitly restart", StringComparison.Ordinal) && (browser.Search, browser.Selected) == basis);
+            string diagnosis = await Copy(row);
+            Verify("Copy contains only selected job, texture and generation identities",
+                diagnosis.Contains(row.Asset!.Value.ToString(), StringComparison.Ordinal) &&
+                diagnosis.Contains(row.Receipt!.ToString()!, StringComparison.Ordinal) &&
+                diagnosis.Contains(row.Published!.Value.ToString(), StringComparison.Ordinal) &&
+                !diagnosis.Contains("SessionToken", StringComparison.OrdinalIgnoreCase));
+            toggle.IsChecked = false;
+            Show();
+            Verify("Reopening the panel retains the same settled job", tasks.Rows.Count == 1 && list.SelectedItem is TaskIssueItem item && item.Row.Sequence == row.Sequence);
+            File.WriteAllText(Path.Combine(evidence, "texture.guid"), row.Asset.Value.ToString());
+            File.WriteAllText(Path.Combine(evidence, "texture.generation"), row.Published!.Value.ToString());
+            await Capture("texture-published");
+            return;
+        }
+
+        await NameUiWait(() => observer.Authoring.Document() is not null, "authoring document opened by Editor");
+        var document = new RemoteAuthoringDocument(observer.Authoring, observer);
+        TypeId renderable = SceneSchema.TypeOf(document.Schema, "Renderable")!.Value;
+        var node = observer.Authoring.ListNodes().Value.First(n => observer.Authoring.ListComponents(n.Node).Value.Contains(renderable)).Node;
+        SceneAddress address = SceneSchema.AddressOf(document.Schema, node, "Renderable", "materialAsset")!.Value;
+        var original = document.GetProperty(address)!.Value;
+        var info = document.Info()!;
+        var dependencies = observer.Assets.GetAsset(info.Scene).Value.Dependencies;
+        var candidate = observer.Assets.ListAssets().Value.First(a => a.Type == AssetType.Material &&
+            a.Source.StartsWith("assets:", StringComparison.Ordinal) && !dependencies.Contains(a.Guid) &&
+            (original.IsAbsent || a.Guid != original.AsAsset()));
+
+        string catalog = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runtime.Launch.RuntimePath)!, "..", "..", "..", "asset_catalog.txt"));
+        if (!StringComparer.OrdinalIgnoreCase.Equals(catalog, Environment.GetEnvironmentVariable("ATLANTIS_0121_DISPOSABLE_CATALOG")))
+            throw new InvalidOperationException("Apply failure requires the explicit disposable Runtime catalog.");
+        string artifact = File.ReadLines(catalog).Single(line => line.StartsWith("record: guid=" + candidate.Guid + " ", StringComparison.Ordinal))
+            .Split(' ').Single(part => part.StartsWith("artifact=", StringComparison.Ordinal))[9..];
+        string root = Path.GetDirectoryName(catalog)! + Path.DirectorySeparatorChar;
+        string broken = Path.GetFullPath(Path.Combine(root, artifact));
+        if (!broken.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The test artifact is outside the disposable build.");
+
+        var before = observer.Authoring.ApplyStatus().Value!;
+        ulong generation = observer.Control.Status().SceneGeneration;
+        var undo = Field<Button>("_undo");
+        var retry = Field<Button>("_retryApply");
+        var entityList = Field<ListBox>("_entities");
+        await NameUiWait(() => Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Any(row => row.Node == node), "Hierarchy row available");
+        entityList.SelectedItem = Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Single(row => row.Node == node);
+        await NameUiWait(() => Field<InspectorSnapshot>("_inspectorShown")?.Subject == node, "material Inspector ready");
+        byte[] originalBytes = File.ReadAllBytes(broken);
+        try
+        {
+            File.WriteAllBytes(broken, Array.Empty<byte>());
+            Click(Field<Button>("_pause"));
+            await NameUiWait(() => Field<Button>("_step").IsEnabled, "pause before committed edit");
+            TextBox input = RevealGuidBox(InspectorRow(window, "Renderable.materialAsset"));
+            input.Focus();
+            input.Text = candidate.Guid.ToString();
+            NameUiKey(input, Key.Enter);
+            await NameUiWait(() => tasks.Rows.FirstOrDefault() is { Result: TaskResult.Paused, EditCommitted: true }, "edit committed with paused Apply");
+            var pending = observer.Authoring.ApplyStatus().Value!.Request!.Receipt;
+            Show();
+            var focused = list.SelectedItem;
+            toggle.Focus();
+            Click(Field<Button>("_step"));
+            await NameUiWait(() => tasks.Rows.FirstOrDefault() is { Result: TaskResult.Failed }, "real reload refuses the invalid artifact", 60);
+            var failed = observer.Authoring.ApplyStatus(pending.Id).Value!;
+            var row = tasks.Rows[0];
+            Verify("Failed Apply retains committed revision, prior projection and Undo history",
+                failed.Request?.Error == ReloadError.ScenePreparationFailed && Equals(row.Receipt, pending.Id) &&
+                row.Revision == pending.DocumentRevision && failed.CurrentDocumentRevision > before.CurrentDocumentRevision &&
+                document.GetProperty(address)!.Value.AsAsset() == candidate.Guid && undo.IsEnabled &&
+                observer.Control.Status().SceneGeneration == generation && details.Text!.Contains("Edit committed · Apply failed", StringComparison.Ordinal));
+            Verify("Receipt updates preserve panel selection and focus",
+                ReferenceEquals(focused, list.SelectedItem) && toggle.IsFocused &&
+                PanelField<TextBlock>("_nextStep").Text!.Contains("existing Apply control", StringComparison.Ordinal));
+            await NameUiWait(() => retry.IsEnabled, "existing Apply control reflects the settled reload");
+            Click(locate);
+            await NameUiWait(() => retry.IsFocused, "Locate focuses the current Apply surface");
+            Verify("Locate focuses the current Apply surface", retry.IsFocused);
+            string diagnostic = await Copy(row);
+            Verify("Copy contains the document, exact receipt and typed error without transport data",
+                diagnostic.Contains(info.SourcePath, StringComparison.Ordinal) &&
+                diagnostic.Contains(pending.Id.ToString(), StringComparison.Ordinal) &&
+                diagnostic.Contains(nameof(ReloadError.ScenePreparationFailed), StringComparison.Ordinal) &&
+                !diagnostic.Contains("SessionToken", StringComparison.OrdinalIgnoreCase));
+            await Capture(Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1" ? "apply-failed-compact" : "apply-failed");
+
+            Click(undo);
+            await NameUiWait(() => document.GetProperty(address)!.Value.Equals(original), "suspended Undo repairs the document");
+            Verify("Undo does not auto-retry after the reload failure",
+                observer.Authoring.ApplyStatus().Value!.Request!.Receipt == pending);
+            File.WriteAllBytes(broken, originalBytes);
+            Click(retry);
+            await NameUiWait(() => tasks.Rows[0].Result == TaskResult.Paused, "one explicit Apply after repair");
+            Click(Field<Button>("_step"));
+            await NameUiWait(() => tasks.Rows[0].Result == TaskResult.Succeeded, "explicit Apply succeeds after correction", 60);
+            Verify("Explicit Apply settles a new row and preserves the failed record",
+                tasks.Rows.Count == 2 && tasks.Rows[1] == row && observer.Control.Status().SceneGeneration > generation);
+            list.SelectedItem = list.Items.OfType<TaskIssueItem>().Single(item => item.Row.Sequence == row.Sequence);
+            Verify("The old row is locatable before reopening the document", locate.IsEnabled);
+            if (observer.Authoring.Open() is not null) throw new InvalidOperationException("Fixture refused same-source reopen.");
+            await NameUiWait(() => !locate.IsEnabled, "stale document row cannot navigate");
+            Verify("Stale row remains copyable and neither identifies a replacement document nor sends a write",
+                copy.IsEnabled && (await Copy(row)).Contains(pending.Id.ToString(), StringComparison.Ordinal) &&
+                tasks.Rows.Count == 2);
+        }
+        finally { File.WriteAllBytes(broken, originalBytes); }
     }
 
     private static async Task CheckTextureMoveUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)

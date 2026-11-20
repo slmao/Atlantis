@@ -430,6 +430,8 @@ public sealed class EditorWorker : IDisposable
     public event Action<string?>? GuideFeedback;
     private ApplyStatus? _postedApplyStatus;
     public event Action<ApplyStatus, string>? ApplyStateChanged;
+    public event Action<long, DocumentInfo?, ApplyTaskUpdate>? ApplyTaskObserved;
+    private DocumentInfo? _taskDocument;
     public event Action<bool, bool>? ApplyControlsChanged;
     // Plan 0068 M6: whether the Runtime is playing (false: paused).
     public event Action<bool>? PlayStateChanged;
@@ -596,29 +598,29 @@ public sealed class EditorWorker : IDisposable
     });
 
     public void RenameTexture(TextureRenameIntent intent, Atlantis.Gameplay.Assets.GenerationId generation, string label,
-        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RenameTextureError>?, string?> done) =>
+        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RenameTextureError>?, string?, TaskResult, RemoteError?> done) =>
         Enqueue(session =>
         {
-            if (!intent.Intent.Current) { _post(() => done(null, "Rename canceled before sending.")); return; }
+            if (!intent.Intent.Current) { _post(() => done(null, "Rename canceled before sending.", TaskResult.NotSent, null)); return; }
             try
             {
                 var result = session.Assets.RenameTexture(intent.Asset.Guid, generation, label);
-                _post(() => done(result, null));
+                _post(() => done(result, null, TaskResult.Refused, null));
             }
-            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+            catch (RemoteException error) { _post(() => done(null, error.Message, TaskResult.Unknown, error.Error)); }
         });
 
     public void MoveTexture(TextureMoveIntent intent, Atlantis.Gameplay.Assets.GenerationId generation, string expectedPath, string destination,
-        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.MoveTextureError>?, string?> done) =>
+        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.MoveTextureError>?, string?, TaskResult, RemoteError?> done) =>
         Enqueue(session =>
         {
-            if (!intent.Intent.Current) { _post(() => done(null, "Move canceled before sending.")); return; }
+            if (!intent.Intent.Current) { _post(() => done(null, "Move canceled before sending.", TaskResult.NotSent, null)); return; }
             try
             {
                 var result = session.Assets.MoveTexture(intent.Asset.Guid, generation, expectedPath, destination);
-                _post(() => done(result, null));
+                _post(() => done(result, null, TaskResult.Refused, null));
             }
-            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+            catch (RemoteException error) { _post(() => done(null, error.Message, TaskResult.Unknown, error.Error)); }
         });
 
     public void CheckTextureRemoval(TextureRemovalIntent intent, GenerationId generation, TextureRemovalCheckId? id,
@@ -636,16 +638,16 @@ public sealed class EditorWorker : IDisposable
         });
 
     public void RemoveTexture(TextureRemovalIntent intent, TextureRemovalCheck check,
-        Action<Outcome<RebuildJob, TextureRemovalError>?, string?> done) =>
+        Action<Outcome<RebuildJob, TextureRemovalError>?, string?, TaskResult, RemoteError?> done) =>
         Enqueue(session =>
         {
-            if (!intent.Intent.Current) { _post(() => done(null, "Removal canceled before sending.")); return; }
+            if (!intent.Intent.Current) { _post(() => done(null, "Removal canceled before sending.", TaskResult.NotSent, null)); return; }
             try
             {
                 var result = session.Assets.RemoveTexture(intent.Asset.Guid, check.ExpectedGeneration, check.Id);
-                _post(() => done(result, null));
+                _post(() => done(result, null, TaskResult.Refused, null));
             }
-            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+            catch (RemoteException error) { _post(() => done(null, error.Message, TaskResult.Unknown, error.Error)); }
         });
 
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
@@ -3431,6 +3433,13 @@ public sealed class EditorWorker : IDisposable
             _previewSession = session;
             PostApplyState();
             DocumentInfo? info = document.Info();
+            _taskDocument = info;
+            _apply.TaskObserved += update =>
+            {
+                long lifetime = MeshDocumentLifetime;
+                var target = _taskDocument;
+                _post(() => ApplyTaskObserved?.Invoke(lifetime, target, update));
+            };
             _batchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             _duplicateBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
@@ -3496,6 +3505,7 @@ public sealed class EditorWorker : IDisposable
             _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
             PostHistory();
             DocumentInfo? reopened = _document.Info();
+            _taskDocument = reopened;
             _batchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             _duplicateBatchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };

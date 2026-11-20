@@ -1,10 +1,10 @@
 # Spec 0121 — Editor Tasks & Issues for the Current Session
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-20
 - **Related Plan:** [Plan 0121](../plans/0121-editor-tasks-and-issues.md)
-- **Approval:** Pending joint review
+- **Approval:** J1–J4 approved and S2–S4 authorized for design [PR #407](https://github.com/slmao/Atlantis/pull/407) at `a44068b5`; maintainer merge `1249f3e4`. No ADR or shared interface.
 - **Related ADRs:** None proposed. See Architectural Impact.
 
 ## Summary and scope

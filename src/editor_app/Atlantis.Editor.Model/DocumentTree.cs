@@ -330,6 +330,27 @@ public sealed class ApplyController
     private ApplySnapshot? _snapshot;
     private ulong _localRecoveryCommits;
     private string _notice = "";
+    private int _taskAttempt;
+    private bool _taskInProgress, _taskCommitProof, _coalescedCommitProof;
+    public event Action<ApplyTaskUpdate>? TaskObserved;
+
+    private void BeginTask(bool committed)
+    {
+        ++_taskAttempt;
+        _taskInProgress = true;
+        _taskCommitProof = committed;
+        ObserveTask(TaskResult.Requesting, started: true);
+    }
+
+    private void ObserveTask(TaskResult result, string? diagnostic = null, bool started = false, ReloadError? error = null, bool withoutReceipt = false)
+    {
+        if (!_taskInProgress) return;
+        if (result is not (TaskResult.Requesting or TaskResult.Running or TaskResult.Paused)) _taskInProgress = false;
+        var receipt = started || withoutReceipt ? null : _receipt;
+        TaskObserved?.Invoke(new(_taskAttempt, result, _taskCommitProof, receipt,
+            receipt?.DocumentRevision ?? _snapshot?.CurrentDocumentRevision, diagnostic, started, error));
+    }
+
     public ApplyController(IAuthoringDocument document) => _document = document;
     public ApplyStatus Status { get; private set; } = ApplyStatus.Idle;
     public ulong Generation { get; private set; }
@@ -382,7 +403,7 @@ public sealed class ApplyController
             return;
         }
         _recovering |= _suspended;
-        Issue();
+        Issue(committed: false);
     }
     /// <summary>User recovery: duplicate clicks cannot queue an additional apply.</summary>
     public void Retry() { if (CanApply) Request(); }
@@ -393,24 +414,46 @@ public sealed class ApplyController
     {
         bool deferApply = _suspended || _inFlight;
         CommitOutcome outcome;
-        if (guardedCommit is not null)
+        try
         {
-            if (guardedCommit(!deferApply) is not { } guarded) return null;
-            outcome = guarded;
+            if (guardedCommit is not null)
+            {
+                if (guardedCommit(!deferApply) is not { } guarded) return null;
+                outcome = guarded;
+            }
+            else if (deferApply)
+            {
+                _document.SubmitTransaction(commands);
+                outcome = new CommitOutcome(_document.DrainFailures(), false, null);
+            }
+            else outcome = _document.CommitAndApply(commands);
         }
-        else if (deferApply)
+        catch (RemoteException error) when (!deferApply)
         {
-            _document.SubmitTransaction(commands);
-            outcome = new CommitOutcome(_document.DrainFailures(), false, null);
+            // A pipelined commit can fail before its Apply acceptance is decoded.
+            // The transport provides no proof of the commit or Apply in this case.
+            BeginTask(committed: false);
+            ObserveTask(TaskResult.Unknown, "Commit or Apply acceptance unavailable: " + error.Error, withoutReceipt: true);
+            throw;
         }
-        else outcome = _document.CommitAndApply(commands);
         if (deferApply && outcome.Failures.Count == 0) AfterLocalEdit(commands.Count != 0);
         if (outcome.ApplySent)
         {
             ++Issued;
-            if (outcome.ApplyError is ApplyError error) { _receipt = null; LastError = error; Suspend(ApplyStatus.Failed, error.ToString()); }
+            _receipt = null;
+            BeginTask(commands.Count != 0 && outcome.Failures.Count == 0);
+            if (outcome.ApplyError is ApplyError error)
+            {
+                LastError = error;
+                ObserveTask(TaskResult.Refused, "Apply refusal: " + error);
+                Suspend(ApplyStatus.Failed, error.ToString());
+            }
             else if (outcome.Receipt is ApplyReceipt receipt) Accepted(receipt);
-            else Suspend(ApplyStatus.Unknown, "acceptance reply had no receipt");
+            else
+            {
+                ObserveTask(TaskResult.Unknown, "Acceptance reply had no receipt.");
+                Suspend(ApplyStatus.Unknown, "acceptance reply had no receipt");
+            }
         }
         return outcome.Failures;
     }
@@ -421,13 +464,18 @@ public sealed class ApplyController
         if (_inFlight)
         {
             if (!_recovering || hasCommands) _again = true;
+            _coalescedCommitProof |= hasCommands;
             if (_recovering && hasCommands) ++_localRecoveryCommits;
             return;
         }
-        Issue();
+        Issue(committed: hasCommands);
     }
 
-    public void LostApplyAcceptance() => Suspend(ApplyStatus.Unknown, "apply reply lost after document commit");
+    public void LostApplyAcceptance()
+    {
+        ObserveTask(TaskResult.Unknown, "Apply reply lost after document commit.");
+        Suspend(ApplyStatus.Unknown, "apply reply lost after document commit");
+    }
 
     public void RequireExplicitApplyAfterUnverifiedSwap()
     {
@@ -446,18 +494,24 @@ public sealed class ApplyController
         }
         // Keep polling the accepted snapshot, but drop any follow-up based on the uncertain revision.
         _again = false;
+        _coalescedCommitProof = false;
         _suspended = true;
         _notice = reason;
     }
     public void SetPaused(bool paused)
     {
         _paused = paused;
-        if (_inFlight) Status = paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
+        if (_inFlight)
+        {
+            Status = paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
+            ObserveTask(paused ? TaskResult.Paused : TaskResult.Running);
+        }
     }
     public void Apply(Event e)
     {
         if (e is DocumentReopened)
         {
+            ObserveTask(TaskResult.Unknown, "The document was replaced before the Apply settled.");
             _receipt = null; _needGlobalStatus = true;
             Suspend(ApplyStatus.NeedsApply, "document reopened; a previously accepted snapshot may still swap");
         }
@@ -474,20 +528,37 @@ public sealed class ApplyController
             return;
         }
         var queried = _document.ApplyStatus(expected.Id);
-        if (!queried.IsOk) { Suspend(ApplyStatus.Unknown, "UnknownApply " + expected.Id); return; }
+        if (!queried.IsOk)
+        {
+            ObserveTask(TaskResult.Unknown, "UnknownApply " + expected.Id);
+            Suspend(ApplyStatus.Unknown, "UnknownApply " + expected.Id);
+            return;
+        }
         ApplySnapshot view = queried.Value!; _snapshot = view; _needGlobalStatus = false;
         if (view.Request is not ApplyRecord record || record.Receipt != expected)
-        { Suspend(ApplyStatus.Unknown, "mismatched receipt"); return; }
+        {
+            ObserveTask(TaskResult.Unknown, "The returned Apply receipt did not match.");
+            Suspend(ApplyStatus.Unknown, "mismatched receipt");
+            return;
+        }
         if (record.State == ApplyState.Pending) return;
         _inFlight = false;
         if (record.State == ApplyState.Failed)
         {
             LastReloadError = record.Error; _stopped = record.Error == ReloadError.RuntimeStopped;
+            ObserveTask(TaskResult.Failed,
+                $"Runtime reload: {record.Error}. " + (record.Error == ReloadError.RuntimeStopped
+                    ? "The Runtime stopped." : "The previous Runtime projection remains active."), error: record.Error);
             Suspend(ApplyStatus.Failed, record.Error.ToString()!); return;
         }
         if (record.State == ApplyState.Superseded)
-        { Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy); return; }
+        {
+            ObserveTask(TaskResult.Superseded, "Superseded by Apply " + record.SupersededBy);
+            Suspend(ApplyStatus.Superseded, "by " + record.SupersededBy);
+            return;
+        }
         Generation = record.Generation!.Value; Status = ApplyStatus.Applied;
+        ObserveTask(TaskResult.Succeeded, "Runtime projection generation: " + Generation);
         if (_suspended)
         {
             Suspend(ApplyStatus.NeedsApply, _notice);
@@ -501,7 +572,13 @@ public sealed class ApplyController
             Suspend(ApplyStatus.NeedsApply, "document/projection changed");
             return;
         }
-        if (_again) { _again = false; Issue(); return; }
+        if (_again)
+        {
+            bool committed = _coalescedCommitProof;
+            _again = _coalescedCommitProof = false;
+            Issue(committed);
+            return;
+        }
         if (_recovering)
         {
             _recovering = false;
@@ -510,7 +587,7 @@ public sealed class ApplyController
     }
     private void Suspend(ApplyStatus status, string notice)
     {
-        _inFlight = false; _again = false; _suspended = true; _recovering = true;
+        _inFlight = false; _again = _coalescedCommitProof = false; _suspended = true; _recovering = true;
         _localRecoveryCommits = 0;
         _notice = notice; Status = status;
     }
@@ -521,12 +598,28 @@ public sealed class ApplyController
         _snapshot = new ApplySnapshot(receipt.DocumentRevision, new ApplyRecord(receipt, ApplyState.Pending), _snapshot?.Projection);
         LastError = null; LastReloadError = null; _notice = "";
         Status = _paused ? ApplyStatus.PendingPaused : ApplyStatus.Applying;
+        ObserveTask(_paused ? TaskResult.Paused : TaskResult.Running);
     }
-    private void Issue()
+    private void Issue(bool committed)
     {
         ++Issued; _receipt = null;
-        var accepted = _document.ApplyTracked();
-        if (!accepted.IsOk) { LastError = accepted.Error; Suspend(ApplyStatus.Failed, accepted.Error.ToString()); return; }
-        Accepted(accepted.Value!);
+        BeginTask(committed);
+        try
+        {
+            var accepted = _document.ApplyTracked();
+            if (!accepted.IsOk)
+            {
+                LastError = accepted.Error;
+                ObserveTask(TaskResult.Refused, "Apply refusal: " + accepted.Error);
+                Suspend(ApplyStatus.Failed, accepted.Error.ToString());
+                return;
+            }
+            Accepted(accepted.Value!);
+        }
+        catch (RemoteException error)
+        {
+            ObserveTask(TaskResult.Unknown, "Apply acceptance unavailable: " + error.Error);
+            throw;
+        }
     }
 }

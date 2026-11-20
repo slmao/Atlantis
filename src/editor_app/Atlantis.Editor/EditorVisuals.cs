@@ -6,6 +6,7 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
+using Avalonia.Data;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
@@ -168,6 +169,17 @@ internal static class EditorVisuals
             grid.Children.Add(children[index]);
         }
         return grid;
+    }
+
+    internal static Control TaskIssueLine()
+    {
+        var outcome = Ellipsis("");
+        outcome.Bind(TextBlock.TextProperty, new Binding(nameof(TaskIssueItem.Outcome)));
+        outcome.Bind(TextBlock.ForegroundProperty, new Binding(nameof(TaskIssueItem.Tone)));
+        var target = Ellipsis("");
+        target.Bind(TextBlock.TextProperty, new Binding(nameof(TaskIssueItem.Label)));
+        target.Margin = new Thickness(0, 0, 8, 0);
+        return Columns("3*,2*", target, outcome);
     }
 
     internal static TextBlock Ellipsis(string text) => new()
