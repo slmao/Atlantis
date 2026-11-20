@@ -217,4 +217,46 @@ std::string_view toString(ReloadError error) noexcept {
 }
 std::string_view toString(ApplyLookupError) noexcept { return "UnknownApply"; }
 
+std::string_view toString(RecoveryError error) noexcept {
+  switch (error) {
+    case RecoveryError::Unsupported: return "Unsupported";
+    case RecoveryError::NoDocument: return "NoDocument";
+    case RecoveryError::NoAuthoring: return "NoAuthoring";
+    case RecoveryError::Busy: return "Busy";
+    case RecoveryError::Unavailable: return "Unavailable";
+    case RecoveryError::StaleDocument: return "StaleDocument";
+    case RecoveryError::StaleCopy: return "StaleCopy";
+    case RecoveryError::DirtyDocument: return "DirtyDocument";
+    case RecoveryError::SourceChanged: return "SourceChanged";
+    case RecoveryError::SourceUnreadable: return "SourceUnreadable";
+    case RecoveryError::InvalidCopy: return "InvalidCopy";
+    case RecoveryError::IoFailed: return "IoFailed";
+    case RecoveryError::TransportFailure: return "TransportFailure";
+    case RecoveryError::ProtocolFailure: return "ProtocolFailure";
+    case RecoveryError::InvalidRequest: return "InvalidRequest";
+  }
+  return "Unknown";
+}
+
+std::string_view toString(RecoveryCapture state) noexcept {
+  switch (state) {
+    case RecoveryCapture::Idle: return "Idle";
+    case RecoveryCapture::Writing: return "Writing";
+    case RecoveryCapture::Failed: return "Failed";
+    case RecoveryCapture::Unavailable: return "Unavailable";
+  }
+  return "Unknown";
+}
+
+std::string_view toString(RecoverySource state) noexcept {
+  switch (state) {
+    case RecoverySource::Matches: return "Matches";
+    case RecoverySource::Changed: return "Changed";
+    case RecoverySource::Unreadable: return "Unreadable";
+    case RecoverySource::AlreadySaved: return "AlreadySaved";
+    case RecoverySource::DirtyDocument: return "DirtyDocument";
+  }
+  return "Unknown";
+}
+
 }  // namespace atlantis::connection::authoring

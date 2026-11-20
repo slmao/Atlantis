@@ -3225,6 +3225,7 @@ public sealed class EditorWorker : IDisposable
             _persistence = observed;
             _post(() => PersistenceChanged?.Invoke(observed));
         }
+        ObserveRecovery(session, observed.State);
         return observed;
     }
 
@@ -3256,6 +3257,84 @@ public sealed class EditorWorker : IDisposable
         await Task.WhenAny(completed.Task, _workerExited.Task).ConfigureAwait(false);
         return completed.Task.IsCompletedSuccessfully ? completed.Task.Result : unavailable;
     }
+
+    public event Action<RecoveryObservation>? RecoveryChanged;
+    private RecoveryObservation? _recovery;
+    private bool _recoveryUnsupported;
+
+    private static RecoveryObservation ReadRecovery(RemoteSession session, DocumentState? doc, EntityGuid? copyId = null)
+    {
+        if (doc is not { Provenance: Provenance.HandAuthored }) return new(doc);
+        try
+        {
+            var result = session.Authoring.RecoveryStatus(copyId);
+            return result.IsOk ? new(doc, result.Value) : new(doc, Refusal: result.Error);
+        }
+        catch (RemoteException error) { return new(doc, Diagnostic: error.Message); }
+    }
+
+    private void ObserveRecovery(RemoteSession session, DocumentState? document)
+    {
+        if (_recoveryUnsupported || document is not { Provenance: Provenance.HandAuthored }) return;
+        var view = ReadRecovery(session, document);
+        _recoveryUnsupported = view.Refusal == RecoveryError.Unsupported;
+        if (view == _recovery) return;
+        _recovery = view;
+        long lifetime = MeshDocumentLifetime;
+        _post(() => { if (lifetime == MeshDocumentLifetime) RecoveryChanged?.Invoke(view); });
+    }
+
+    public Task<RecoveryObservation> PreviewRecovery(DocumentToken expected, EntityGuid id) => DocumentWork(session =>
+    {
+        PollDocument(session, pollApply: false);
+        var document = ObservePersistence(session).State;
+        if (document?.Token != expected) return new(Refusal: RecoveryError.StaleDocument);
+        var preview = ReadRecovery(session, document, id);
+        return ReadPersistence(session).State?.Token == expected ? preview : new(Refusal: RecoveryError.StaleDocument);
+    }, new RecoveryObservation(Diagnostic: "Editing connection is unavailable."));
+
+    public Task<RecoveryMutation> ResolveRecovery(DocumentState reviewed, EntityGuid id, bool restore) =>
+        DocumentWork(session =>
+        {
+            try
+            {
+                var result = restore ? session.Authoring.RestoreRecovery(reviewed.Token, id)
+                                     : session.Authoring.DiscardRecovery(reviewed.Token, id);
+                if (!result.IsOk) return new(Refusal: result.Error);
+                var receipt = result.Value;
+                if (receipt.Document.Scene != reviewed.Scene || receipt.Document.Source != reviewed.Source ||
+                    receipt.Document.Provenance != reviewed.Provenance)
+                    return new(Diagnostic: "ProtocolError: recovery outcome unknown. Check the original Runtime.", Unknown: true);
+                // Publish verified persistence before refreshing the hierarchy or projection.
+                var observed = new DocumentObservation(DocumentAvailability.Known, receipt.Document);
+                if (_persistence != observed)
+                {
+                    _persistence = observed;
+                    _post(() => PersistenceChanged?.Invoke(observed));
+                }
+                Enqueue(current =>
+                {
+                    PollDocument(current, pollApply: false);
+                    if (restore) PostApplyState();
+                    ObservePersistence(current);
+                });
+                return new(Receipt: receipt);
+            }
+            catch (RemoteException error)
+            {
+                return new(Diagnostic: error.Message, Unknown: error.InnerException is RemoteException);
+            }
+        }, new RecoveryMutation(Diagnostic: "Editing connection is unavailable."));
+
+    public Task<RecoveryObservation> CheckOriginalRecovery() => Task.Run(() =>
+    {
+        try
+        {
+            using var session = RemoteSession.Connect(_info);
+            return ReadRecovery(session, ReadPersistence(session).State);
+        }
+        catch (RemoteException error) { return new RecoveryObservation(Diagnostic: error.Message); }
+    });
 
     public Task<DocumentObservation> ReviewDocument() => DocumentWork(session =>
     {

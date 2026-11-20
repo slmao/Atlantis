@@ -360,6 +360,52 @@ struct DocumentFailure {
   friend bool operator==(const DocumentFailure&, const DocumentFailure&) = default;
 };
 [[nodiscard]] std::string_view toString(DocumentError error) noexcept;
+// Spec 0122: copied authoring state and official source are separate.
+inline constexpr std::size_t kRecoveryMaxSourceBytes = 16 * 1024 * 1024;
+inline constexpr std::size_t kRecoveryPreviewLines = 20;
+inline constexpr std::size_t kRecoveryPreviewScalars = 256;
+enum class RecoveryCapture : std::uint8_t { Idle, Writing, Failed, Unavailable };
+enum class RecoverySource : std::uint8_t { Matches, Changed, Unreadable, AlreadySaved, DirtyDocument };
+enum class RecoveryError : std::uint8_t {
+  Unsupported, NoDocument, NoAuthoring, Busy, Unavailable, StaleDocument, StaleCopy, DirtyDocument,
+  SourceChanged, SourceUnreadable, InvalidCopy, IoFailed, TransportFailure, ProtocolFailure, InvalidRequest,
+};
+struct RecoveryFailure {
+  RecoveryError error;
+  bool outcomeUnknown = false;
+  friend bool operator==(const RecoveryFailure&, const RecoveryFailure&) = default;
+};
+struct RecoveryCopy {
+  asset_system::EntityGuid id;
+  std::uint64_t revision = 0;
+  std::uint64_t capturedUnixSeconds = 0;
+  bool pending = false;
+  friend bool operator==(const RecoveryCopy&, const RecoveryCopy&) = default;
+};
+struct RecoveryPreview {
+  RecoverySource source;
+  std::uint64_t copyNodes = 0;
+  std::optional<std::uint64_t> sourceNodes;
+  std::vector<std::string> sourceLines;
+  std::vector<std::string> copyLines;
+  bool truncated = false;
+  friend bool operator==(const RecoveryPreview&, const RecoveryPreview&) = default;
+};
+struct RecoveryStatus {
+  RecoveryCapture capture = RecoveryCapture::Unavailable;
+  std::optional<std::uint64_t> protectedRevision;
+  std::optional<RecoveryCopy> copy;
+  std::optional<RecoveryPreview> preview;
+  friend bool operator==(const RecoveryStatus&, const RecoveryStatus&) = default;
+};
+struct RecoveryReceipt {
+  asset_system::EntityGuid copyId;
+  DocumentState document;
+  friend bool operator==(const RecoveryReceipt&, const RecoveryReceipt&) = default;
+};
+[[nodiscard]] std::string_view toString(RecoveryError error) noexcept;
+[[nodiscard]] std::string_view toString(RecoveryCapture state) noexcept;
+[[nodiscard]] std::string_view toString(RecoverySource state) noexcept;
 enum class SaveAsError : std::uint8_t {
   Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
   Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome,
@@ -504,6 +550,18 @@ class AuthoringConnection {
   virtual Result<authoring::DocumentState, authoring::DocumentFailure>
   reopenIfCurrent(std::optional<authoring::DocumentToken>) {
     return Result<authoring::DocumentState, authoring::DocumentFailure>::Err({authoring::DocumentError::Unsupported});
+  }
+  [[nodiscard]] virtual Result<authoring::RecoveryStatus, authoring::RecoveryFailure>
+  recoveryStatus(std::optional<asset_system::EntityGuid> = std::nullopt) const {
+    return Result<authoring::RecoveryStatus, authoring::RecoveryFailure>::Err({authoring::RecoveryError::Unsupported});
+  }
+  virtual Result<authoring::RecoveryReceipt, authoring::RecoveryFailure>
+  restoreRecovery(const authoring::DocumentToken&, const asset_system::EntityGuid&) {
+    return Result<authoring::RecoveryReceipt, authoring::RecoveryFailure>::Err({authoring::RecoveryError::Unsupported});
+  }
+  virtual Result<authoring::RecoveryReceipt, authoring::RecoveryFailure>
+  discardRecovery(const authoring::DocumentToken&, const asset_system::EntityGuid&) {
+    return Result<authoring::RecoveryReceipt, authoring::RecoveryFailure>::Err({authoring::RecoveryError::Unsupported});
   }
   virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
   virtual Result<authoring::CreatedScene, authoring::CreateSceneError> createScene(std::string_view) {

@@ -17,6 +17,8 @@ add_compile_definitions(ATLANTIS_ASSET_CATALOG_PATH="${ATLANTIS_ASSET_CATALOG_PA
 add_executable(atlantis_runtime_tests
   asset_host_tests.cpp
   asset_rebuild_host_tests.cpp
+  scene_recovery_store_tests.cpp
+  ../../src/runtime/scene_recovery_store.cpp
   ../../src/runtime/asset_host.cpp
   ../../src/runtime/asset_rebuild_host.cpp
   lifecycle_state_tests.cpp
@@ -80,6 +82,7 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
 target_link_libraries(atlantis_runtime_tests
   PRIVATE
     Atlantis::RuntimeHost
+    Atlantis::Authoring  # executable-private recovery store test seam
     Atlantis::Editor
     Catch2::Catch2WithMain
     ole32

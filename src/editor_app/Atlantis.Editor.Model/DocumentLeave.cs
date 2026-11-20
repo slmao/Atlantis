@@ -6,6 +6,12 @@ using A = Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Editor.Model;
 
+public sealed record RecoveryObservation(DocumentState? Document = null, RecoveryStatus? Status = null,
+    RecoveryError? Refusal = null, string? Diagnostic = null);
+
+public sealed record RecoveryMutation(RecoveryReceipt? Receipt = null, RecoveryError? Refusal = null,
+    string? Diagnostic = null, bool Unknown = false);
+
 public enum DocumentAvailability { Starting, Known, Legacy, Unavailable }
 
 public sealed record DocumentObservation(DocumentAvailability Availability, DocumentState? State = null,

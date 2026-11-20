@@ -2024,6 +2024,140 @@ std::optional<authoring::DocumentError> decodeDocumentError(const Value& value, 
   return std::nullopt;
 }
 
+namespace {
+template <typename T, std::size_t N>
+std::optional<T> decodeRecoveryName(const Value* value, const T (&known)[N]) {
+  if (!value || !value->isString()) return std::nullopt;
+  for (const T item : known) if (value->asString() == authoring::toString(item)) return item;
+  return std::nullopt;
+}
+
+const Value* required(const Value& object, std::string_view name, bool (Value::*isType)() const noexcept) {
+  const auto* member = object.find(name);
+  return member && (member->*isType)() ? member : nullptr;
+}
+
+std::optional<std::uint64_t> recoveryNumber(const Value& object, std::string_view key) {
+  const auto* member = object.find(key);
+  return member ? decodeUInt64(*member) : std::nullopt;
+}
+
+std::optional<std::vector<std::string>> recoveryLines(const Value* value) {
+  if (!value || !value->isArray() || value->asArray().size() > authoring::kRecoveryPreviewLines) return std::nullopt;
+  std::vector<std::string> lines;
+  for (const Value& line : value->asArray()) {
+    if (!line.isString()) return std::nullopt;
+    const auto& text = line.asString();
+    const auto scalars = std::count_if(text.begin(), text.end(),
+        [](unsigned char byte) { return (byte & 0xc0) != 0x80; });
+    if (static_cast<std::size_t>(scalars) > authoring::kRecoveryPreviewScalars ||
+        text.size() > 4 * authoring::kRecoveryPreviewScalars || text.find_first_of("\r\n") != std::string::npos)
+      return std::nullopt;
+    lines.emplace_back(text);
+  }
+  return lines;
+}
+}  // namespace
+
+Value encode(const authoring::RecoveryStatus& status) {
+  Value out = Value::object();
+  out.set("capture", Value::string(std::string(authoring::toString(status.capture))));
+  out.set("protectedRevision", status.protectedRevision ? Value::number(*status.protectedRevision) : Value());
+  Value copy;
+  if (status.copy) {
+    copy = Value::object();
+    copy.set("id", encodeEntity(status.copy->id));
+    copy.set("revision", Value::number(status.copy->revision));
+    copy.set("capturedUnixSeconds", Value::number(status.copy->capturedUnixSeconds));
+    copy.set("pending", Value::boolean(status.copy->pending));
+  }
+  out.set("copy", std::move(copy));
+  Value preview;
+  if (status.preview) {
+    const auto& source = *status.preview;
+    preview = Value::object();
+    preview.set("source", Value::string(std::string(authoring::toString(source.source))));
+    preview.set("copyNodes", Value::number(source.copyNodes));
+    preview.set("sourceNodes", source.sourceNodes ? Value::number(*source.sourceNodes) : Value());
+    Value before = Value::array(), after = Value::array();
+    for (const auto& line : source.sourceLines) before.push(Value::string(line));
+    for (const auto& line : source.copyLines) after.push(Value::string(line));
+    preview.set("sourceLines", std::move(before));
+    preview.set("copyLines", std::move(after));
+    preview.set("truncated", Value::boolean(source.truncated));
+  }
+  out.set("preview", std::move(preview));
+  return out;
+}
+
+std::optional<authoring::RecoveryStatus> decodeRecoveryStatus(const Value& value) {
+  using C = authoring::RecoveryCapture;
+  using S = authoring::RecoverySource;
+  constexpr C captures[]{C::Idle, C::Writing, C::Failed, C::Unavailable};
+  constexpr S sources[]{S::Matches, S::Changed, S::Unreadable, S::AlreadySaved, S::DirtyDocument};
+  if (!value.isObject() || value.asObject().size() != 4) return std::nullopt;
+  const auto capture = decodeRecoveryName(value.find("capture"), captures);
+  const auto* revision = value.find("protectedRevision");
+  const auto* copy = value.find("copy");
+  const auto* preview = value.find("preview");
+  if (!capture || !revision || !copy || !preview) return std::nullopt;
+  authoring::RecoveryStatus out{*capture, {}, {}, {}};
+  if (!revision->isNull()) {
+    out.protectedRevision = decodeUInt64(*revision);
+    if (!out.protectedRevision || *out.protectedRevision == 0) return std::nullopt;
+  }
+  if (!copy->isNull()) {
+    if (!copy->isObject() || copy->asObject().size() != 4) return std::nullopt;
+    const auto* id = copy->find("id");
+    const auto guid = id ? decodeEntity(*id) : std::nullopt;
+    const auto rev = recoveryNumber(*copy, "revision");
+    const auto time = recoveryNumber(*copy, "capturedUnixSeconds");
+    const auto* pending = required(*copy, "pending", &Value::isBool);
+    if (!guid || !rev || *rev == 0 || !time || *time == 0 || *time > 253402300799ull || !pending) return std::nullopt;
+    out.copy = authoring::RecoveryCopy{*guid, *rev, *time, pending->asBool()};
+  }
+  if (out.protectedRevision && (!out.copy || out.copy->pending)) return std::nullopt;
+  if (!preview->isNull()) {
+    if (!out.copy || !out.copy->pending || !preview->isObject() || preview->asObject().size() != 6) return std::nullopt;
+    const auto source = decodeRecoveryName(preview->find("source"), sources);
+    const auto count = recoveryNumber(*preview, "copyNodes");
+    const auto* official = preview->find("sourceNodes");
+    auto before = recoveryLines(preview->find("sourceLines"));
+    auto after = recoveryLines(preview->find("copyLines"));
+    const auto* truncated = required(*preview, "truncated", &Value::isBool);
+    if (!source || !count || !official || !before || !after || !truncated) return std::nullopt;
+    const auto sourceCount = official->isNull() ? std::nullopt : decodeUInt64(*official);
+    if ((*source == S::Unreadable) != official->isNull() || (!official->isNull() && !sourceCount)) return std::nullopt;
+    out.preview = authoring::RecoveryPreview{*source, *count, sourceCount, std::move(*before), std::move(*after),
+                                              truncated->asBool()};
+  }
+  return out;
+}
+
+Value encode(const authoring::RecoveryReceipt& receipt) {
+  Value out = Value::object();
+  out.set("copyId", encodeEntity(receipt.copyId));
+  out.set("document", encode(receipt.document));
+  return out;
+}
+
+std::optional<authoring::RecoveryReceipt> decodeRecoveryReceipt(const Value& value) {
+  if (!value.isObject() || value.asObject().size() != 2) return std::nullopt;
+  const auto* id = value.find("copyId");
+  const auto* document = value.find("document");
+  const auto guid = id ? decodeEntity(*id) : std::nullopt;
+  const auto state = document ? decodeDocumentState(*document) : std::nullopt;
+  if (!guid || !state || state->provenance != authoring::Provenance::HandAuthored) return std::nullopt;
+  return authoring::RecoveryReceipt{*guid, *state};
+}
+
+std::optional<authoring::RecoveryError> decodeRecoveryError(const Value& value) {
+  using E = authoring::RecoveryError;
+  constexpr E errors[]{E::NoDocument, E::Busy, E::Unavailable, E::StaleDocument, E::StaleCopy,
+      E::DirtyDocument, E::SourceChanged, E::SourceUnreadable, E::InvalidCopy, E::IoFailed};
+  return decodeRecoveryName(&value, errors);
+}
+
 Value encode(const authoring::NodeSummary& node) {
   Value out = Value::object();
   out.set("node", encodeEntity(node.node));

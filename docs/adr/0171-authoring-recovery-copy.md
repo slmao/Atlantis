@@ -1,9 +1,9 @@
 # ADR 0171 — Host-Owned Recovery Copy for Hand-Authored Scenes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** J1–J4 approved and S2–S4 authorized for [PR #409](https://github.com/slmao/Atlantis/pull/409) at `2f3a2642`. ADR-0171 accepted. Maintainer merge `20315fef`.
 - **Related Spec:** [Spec 0122](../specs/0122-hand-authored-scene-recovery.md)
 
 ## Context

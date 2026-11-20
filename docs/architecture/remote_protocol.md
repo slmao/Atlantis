@@ -203,6 +203,9 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 | `authoring.documentState` | `{}` | `{"ok":<DocumentState>}` or `{"ok":null}` before open |
 | `authoring.saveIfCurrent` | `{"expected":{"documentId":<GUID>,"documentRevision":<u64>}}` | `{"ok":<DocumentState>}` or `{"err":"<DocumentError>"}` |
 | `authoring.reopenIfCurrent` | Same token, or `{"expected":null}` for first open only | `{"ok":<DocumentState>}` or `{"err":"<DocumentError>"}` |
+| `authoring.recoveryStatus` | `{}` for status, or `{"copyId":<GUID>}` for preview | `{"ok":<RecoveryStatus>}` or `{"err":"<RecoveryError>"}` |
+| `authoring.restoreRecovery` | `{"copyId":<GUID>,"expected":<DocumentToken>}` | `{"ok":<RecoveryReceipt>}` or `{"err":"<RecoveryError>"}` |
+| `authoring.discardRecovery` | Same guarded decision shape | `{"ok":<RecoveryReceipt>}` or `{"err":"<RecoveryError>"}` |
 | `authoring.listNodes` | — | `{"ok":[<NodeSummary>…]}` (the node order) or `{"err":"<AuthoringError>"}` |
 | `authoring.listComponents` | `node: <N>` | `{"ok":[<T>…]}` (sorted) or `{"err":"<AuthoringError>"}` |
 | `authoring.getProperty` | `address: <SA>` | `{"ok":<V>}` or `{"err":"<AuthoringError>"}` |
@@ -256,6 +259,27 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
   existing authoring binding and Runtime projection alone. A lost reply is
   an unknown outcome. See [Spec 0088](../specs/0088-scene-save-as.md) for names,
   refusals and recovery.
+
+Spec 0122 recovery is additive and uses the standard retargeting guard.
+`RecoveryStatus` has `capture` (`Idle`, `Writing`, `Failed` or `Unavailable`),
+`protectedRevision` (a positive u64 for the current document, or null),
+`copy` (null or `{id,revision,capturedUnixSeconds,pending}`) and `preview`
+(null unless an exact pending copy was requested). Preview has `source`
+(`Matches`, `Changed`, `Unreadable`, `AlreadySaved` or `DirtyDocument`),
+`copyNodes`, nullable `sourceNodes`, `sourceLines`, `copyLines` and `truncated`.
+Each excerpt has at most 20 lines and 256 Unicode scalar values per line.
+The local store path and full payload are private.
+
+A recovery receipt carries the reviewed `copyId` and `document`
+(`DocumentState`). Restore advances the revision and changes the lifetime
+while preserving the source and setting dirty. Discard preserves the
+reviewed token. Both leave source bytes and the Apply projection alone.
+Shared refusals are `NoDocument`, `Busy`, `Unavailable`, `StaleDocument`,
+`StaleCopy`, `DirtyDocument`, `SourceChanged`, `SourceUnreadable`,
+`InvalidCopy` and `IoFailed`. Legacy unknown method means unsupported.
+Missing or malformed mutation replies leave the outcome unknown. Check
+the same Runtime launch before taking another explicit action.
+
 
 - `authoring.createScene` uses the same host opt-in and fixed saved-unit path
   as Save As. It writes an independent camera-only source with fresh scene

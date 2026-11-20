@@ -137,6 +137,8 @@ struct AuthoringSession::State {
   SceneSink sink;
   SaveAsSink copySink;
   CreateSceneSink createSink;
+  RecoveryStore* recovery = nullptr;
+  std::optional<std::string> recoveryBase;
   std::uint64_t documentRevision = 0;
   asset_system::EntityGuid documentId;
   std::uint64_t persistedRevision = 0;
@@ -515,6 +517,7 @@ struct AuthoringSession::State {
     document = std::move(candidate);
     ++documentRevision;
     dirty.reset();
+    captureRecovery();
     publish(events);
     return std::nullopt;
   }
@@ -526,7 +529,8 @@ struct AuthoringSession::State {
     std::ostringstream text;
     text << file.rdbuf();
     if (file.bad()) return ResultT::Err(ac::OpenError::SourceUnreadable);
-    const auto parsed = asset_system::parseSceneSource(text.str());
+    const auto raw = std::move(text).str();
+    const auto parsed = asset_system::parseSceneSource(raw);
     if (parsed.isErr()) return ResultT::Err(ac::OpenError::SourceParseFailed);
     auto mapped = scene::toAuthoringScene(parsed.value());
     if (mapped.isErr()) return ResultT::Err(ac::OpenError::SourceInvalid);
@@ -537,6 +541,10 @@ struct AuthoringSession::State {
     persistedRevision = documentRevision;
     persistedSource = canonicalSource();
     dirty = false;
+    if (recovery) {
+      recovery->opened();
+      recoveryBase = recovery->fingerprint(raw);
+    }
     publish({ac::DocumentReopened{source.scene}});
     return ResultT::Ok({});
   }
@@ -581,6 +589,113 @@ struct AuthoringSession::State {
         persistedRevision, *dirty};
   }
 
+  void captureRecovery() {
+    if (!recovery || !recoveryBase) return;
+    const auto status = recovery->status();
+    if (status.capture == ac::RecoveryCapture::Unavailable || (status.copy && status.copy->pending)) return;
+    auto canonical = canonicalSource();
+    dirty = canonical != persistedSource;
+    if (*dirty) recovery->capture(documentRevision, *recoveryBase, std::move(canonical));
+    else recovery->retire();
+  }
+
+  [[nodiscard]] std::optional<scene::AuthoringScene> decodeRecovery(std::string_view text) const {
+    const auto parsed = asset_system::parseSceneSource(text);
+    if (parsed.isErr()) return std::nullopt;
+    auto candidate = scene::toAuthoringScene(parsed.value());
+    if (candidate.isErr() || validateDocument(candidate.value(), source.scene)) return std::nullopt;
+    return std::move(candidate.value());
+  }
+
+  static void recoveryLines(std::string_view text, std::vector<std::string>& lines, bool& truncated) {
+    for (std::size_t row = 0; !text.empty() && row < ac::kRecoveryPreviewLines; ++row) {
+      const auto newline = text.find('\n');
+      const auto line = text.substr(0, newline);
+      std::size_t scalars = 0, bytes = 0;
+      for (; bytes < line.size(); ++bytes) {
+        const auto byte = static_cast<unsigned char>(line[bytes]);
+        if ((byte & 0xc0) != 0x80 && ++scalars > ac::kRecoveryPreviewScalars) break;
+      }
+      lines.emplace_back(line.substr(0, bytes));
+      truncated |= bytes != line.size();
+      text = newline == std::string_view::npos ? std::string_view{} : text.substr(newline + 1);
+    }
+    truncated |= !text.empty();
+  }
+
+  [[nodiscard]] Result<ac::RecoveryStatus, ac::RecoveryFailure> recoveryStatus(
+      std::optional<EntityGuid> id) const {
+    using R = Result<ac::RecoveryStatus, ac::RecoveryFailure>;
+    using E = ac::RecoveryError;
+    using S = ac::RecoverySource;
+    if (!recovery) return R::Err({E::Unsupported});
+    if (!document) return R::Err({E::NoDocument});
+    auto status = recovery->status();
+    if (!recoveryBase) status.capture = ac::RecoveryCapture::Unavailable;
+    if (!id) return R::Ok(std::move(status));
+    const auto copy = recovery->pending(*id);
+    if (copy.isErr()) return R::Err({copy.error()});
+    const auto loaded = decodeRecovery(copy.value().payload);
+    if (!loaded) return R::Err({E::InvalidCopy});
+    ac::RecoveryPreview preview{S::Unreadable, loaded->nodes.size(), {}, {}, {}, false};
+    if (const auto raw = recovery->readSource()) {
+      if (const auto official = decodeRecovery(*raw)) {
+        preview.sourceNodes = official->nodes.size();
+        if (*raw == copy.value().payload) preview.source = S::AlreadySaved;
+        else if (recovery->fingerprint(*raw) != copy.value().baseDigest || recoveryBase != copy.value().baseDigest)
+          preview.source = S::Changed;
+        else preview.source = documentState()->dirty ? S::DirtyDocument : S::Matches;
+        const auto canonical = asset_system::serializeSceneSource(scene::toParsedSceneSource(*official).value());
+        std::string_view before = canonical, after = copy.value().payload;
+        while (!before.empty() && !after.empty()) {
+          const auto a = before.find('\n'), b = after.find('\n');
+          if (before.substr(0, a) != after.substr(0, b) || a == std::string_view::npos || b == std::string_view::npos)
+            break;
+          before.remove_prefix(a + 1);
+          after.remove_prefix(b + 1);
+        }
+        if (before != after) {
+          recoveryLines(before, preview.sourceLines, preview.truncated);
+          recoveryLines(after, preview.copyLines, preview.truncated);
+        }
+      }
+    }
+    if (!preview.sourceNodes) recoveryLines(copy.value().payload, preview.copyLines, preview.truncated);
+    status.preview = std::move(preview);
+    return R::Ok(std::move(status));
+  }
+
+  [[nodiscard]] Result<ac::RecoveryReceipt, ac::RecoveryFailure> resolveRecovery(
+      const ac::DocumentToken& expected, const EntityGuid& id, bool restore) {
+    using R = Result<ac::RecoveryReceipt, ac::RecoveryFailure>;
+    using E = ac::RecoveryError;
+    if (!recovery) return R::Err({E::Unsupported});
+    const auto current = documentState();
+    if (!current) return R::Err({E::NoDocument});
+    if (expected != current->token) return R::Err({E::StaleDocument});
+    if (!restore) {
+      if (const auto error = recovery->discard(id)) return R::Err({*error});
+      captureRecovery();  // If the retained live document is dirty, this is a new copy.
+      return R::Ok({id, *current});
+    }
+    if (current->dirty) return R::Err({E::DirtyDocument});
+    const auto copy = recovery->pending(id);
+    if (copy.isErr()) return R::Err({copy.error()});
+    auto candidate = decodeRecovery(copy.value().payload);
+    if (!candidate || copy.value().payload == persistedSource) return R::Err({E::InvalidCopy});
+    const auto raw = recovery->readSource();
+    if (!raw) return R::Err({E::SourceUnreadable});
+    if (recoveryBase != copy.value().baseDigest || recovery->fingerprint(*raw) != copy.value().baseDigest)
+      return R::Err({E::SourceChanged});
+    document = std::move(*candidate);
+    ++documentRevision;
+    documentId = asset_system::mintEntityGuid();
+    dirty = true;
+    recovery->adopted(documentRevision);
+    publish({ac::DocumentReopened{source.scene}});
+    return R::Ok({id, *documentState()});
+  }
+
   [[nodiscard]] atlantis::Result<std::monostate, ac::SaveError> save() {
     using ResultT = atlantis::Result<std::monostate, ac::SaveError>;
     if (!document.has_value()) return ResultT::Err(ac::SaveError::NoDocument);
@@ -591,6 +706,10 @@ struct AuthoringSession::State {
       return ResultT::Err(ac::SaveError::WriteFailed);
     }
     persistedRevision = documentRevision;
+    if (recovery) {
+      recoveryBase = recovery->fingerprint(canonical);
+      recovery->retire();
+    }
     persistedSource = std::move(canonical);
     dirty = false;
     return ResultT::Ok({});
@@ -735,6 +854,18 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     }
     return R::Ok(*state_.documentState());
   }
+  Result<ac::RecoveryStatus, ac::RecoveryFailure> recoveryStatus(
+      std::optional<EntityGuid> id) const override {
+    return state_.recoveryStatus(id);
+  }
+  Result<ac::RecoveryReceipt, ac::RecoveryFailure> restoreRecovery(
+      const ac::DocumentToken& token, const EntityGuid& id) override {
+    return state_.resolveRecovery(token, id, true);
+  }
+  Result<ac::RecoveryReceipt, ac::RecoveryFailure> discardRecovery(
+      const ac::DocumentToken& token, const EntityGuid& id) override {
+    return state_.resolveRecovery(token, id, false);
+  }
   Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
     using R = Result<ac::SavedScene, ac::SaveAsError>;
     if (!ac::validSaveAsName(name)) return R::Err(ac::SaveAsError::InvalidName);
@@ -795,6 +926,7 @@ const scene::AuthoringScene* AuthoringSession::document() const noexcept {
   return state_->document.has_value() ? &*state_->document : nullptr;
 }
 
+void AuthoringSession::setRecoveryStore(RecoveryStore& store) { state_->recovery = &store; }
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }
 void AuthoringSession::setCreateSceneSink(CreateSceneSink sink) { state_->createSink = std::move(sink); }

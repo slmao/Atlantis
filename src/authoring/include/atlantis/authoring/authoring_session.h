@@ -88,6 +88,30 @@ using CreateSceneSink = std::function<Result<connection::authoring::CreatedScene
     std::string_view name, asset_system::AssetGuid scene, std::string source)>;
 
 
+// Spec 0122: the executable supplies its recovery store. All callbacks run
+// at the Authoring serialization point, and the store owns any worker input.
+struct RecoverySnapshot {
+  connection::authoring::RecoveryCopy copy;
+  std::string baseDigest;
+  std::string payload;
+};
+
+class RecoveryStore {
+ public:
+  virtual ~RecoveryStore() = default;
+  virtual void opened() = 0;
+  [[nodiscard]] virtual std::optional<std::string> fingerprint(std::string_view bytes) const = 0;
+  [[nodiscard]] virtual std::optional<std::string> readSource() const = 0;
+  [[nodiscard]] virtual connection::authoring::RecoveryStatus status() const = 0;
+  virtual void capture(std::uint64_t revision, std::string baseDigest, std::string payload) = 0;
+  virtual void retire() = 0;
+  [[nodiscard]] virtual Result<RecoverySnapshot, connection::authoring::RecoveryError>
+  pending(const asset_system::EntityGuid& id) const = 0;
+  virtual void adopted(std::uint64_t revision) = 0;
+  [[nodiscard]] virtual std::optional<connection::authoring::RecoveryError>
+  discard(const asset_system::EntityGuid& id) = 0;
+};
+
 // At most one open document (ADR-0129 D1): the scene `source` names, read by
 // open(). Every client reaches it through a connection(); commands apply to a
 // copy of the document, which is validated (validateDocument()) and swapped in
@@ -121,6 +145,7 @@ class AuthoringSession {
   void setSceneSink(SceneSink sink);
   void setSaveAsSink(SaveAsSink sink);
   void setCreateSceneSink(CreateSceneSink sink);
+  void setRecoveryStore(RecoveryStore& store);
 
   // The host reports that the Runtime swapped in an applied document (Plan
   // 0065 P4, ADR-0131 D5): every subscription receives Applied{generation}.

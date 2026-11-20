@@ -1183,6 +1183,31 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
   Result<ac::DocumentState, ac::DocumentFailure> reopenIfCurrent(std::optional<ac::DocumentToken> token) override {
     return mutateDocument(token, false);
   }
+  Result<ac::RecoveryStatus, ac::RecoveryFailure> recoveryStatus(
+      std::optional<ac::EntityGuid> id) const override {
+    using R = Result<ac::RecoveryStatus, ac::RecoveryFailure>;
+    using E = ac::RecoveryError;
+    if (id && *id == ac::EntityGuid{}) return R::Err({E::InvalidRequest});
+    Value params = Value::object();
+    if (id) params.set("copyId", codec::encodeEntity(*id));
+    const auto response = documentCall("authoring.recoveryStatus", std::move(params), false);
+    if (response.isErr()) return R::Err(recoveryFailure(response.error()));
+    if (const auto* err = response.value().find("err"))
+      if (const auto error = codec::decodeRecoveryError(*err)) return R::Err({*error});
+    if (const auto* ok = response.value().find("ok")) {
+      auto view = codec::decodeRecoveryStatus(*ok);
+      if (view && ((!id && !view->preview) || (id && view->preview && view->copy && view->copy->id == id)))
+        return R::Ok(std::move(*view));
+    }
+    return failed(R::Err({E::ProtocolFailure}));
+  }
+
+  Result<ac::RecoveryReceipt, ac::RecoveryFailure> restoreRecovery(
+      const ac::DocumentToken& token, const ac::EntityGuid& id) override { return resolveRecovery(token, id, true); }
+
+  Result<ac::RecoveryReceipt, ac::RecoveryFailure> discardRecovery(
+      const ac::DocumentToken& token, const ac::EntityGuid& id) override { return resolveRecovery(token, id, false); }
+
   Result<ac::SavedScene, ac::SaveAsError> saveAs(std::string_view name) override {
     using E = ac::SaveAsError;
     using R = Result<ac::SavedScene, E>;
@@ -1254,6 +1279,45 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
       }
     }
     return failed(R::Err({E::ProtocolFailure, mutation}));
+  }
+
+  static ac::RecoveryFailure recoveryFailure(const ac::DocumentFailure& failure) {
+    using E = ac::RecoveryError;
+    using D = ac::DocumentError;
+    switch (failure.error) {
+      case D::Unsupported: return {E::Unsupported};
+      case D::NoAuthoring: return {E::NoAuthoring};
+      case D::InvalidRequest: return {E::InvalidRequest};
+      case D::TransportFailure: return {E::TransportFailure, failure.outcomeUnknown};
+      default: return {E::ProtocolFailure, failure.outcomeUnknown};
+    }
+  }
+
+  Result<ac::RecoveryReceipt, ac::RecoveryFailure> resolveRecovery(
+      const ac::DocumentToken& token, const ac::EntityGuid& id, bool restoring) {
+    using R = Result<ac::RecoveryReceipt, ac::RecoveryFailure>;
+    using E = ac::RecoveryError;
+    if (id == ac::EntityGuid{} || token.documentId == ac::EntityGuid{} || token.documentRevision == 0)
+      return R::Err({E::InvalidRequest});
+    Value params = Value::object();
+    params.set("expected", codec::encode(token));
+    params.set("copyId", codec::encodeEntity(id));
+    const auto response = documentCall(restoring ? "authoring.restoreRecovery" : "authoring.discardRecovery",
+                                       std::move(params), true);
+    if (response.isErr()) return R::Err(recoveryFailure(response.error()));
+    if (const auto* err = response.value().find("err"))
+      if (const auto error = codec::decodeRecoveryError(*err)) return R::Err({*error});
+    if (const auto* ok = response.value().find("ok")) {
+      const auto receipt = codec::decodeRecoveryReceipt(*ok);
+      if (receipt && receipt->copyId == id) {
+        const auto& doc = receipt->document;
+        if (restoring ? doc.dirty && doc.token.documentId != token.documentId &&
+                          doc.token.documentRevision > token.documentRevision &&
+                          doc.token.documentRevision - token.documentRevision == 1
+                      : doc.token == token) return R::Ok(*receipt);
+      }
+    }
+    return failed(R::Err({E::ProtocolFailure, true}));
   }
 
   Result<ac::DocumentState, ac::DocumentFailure> mutateDocument(std::optional<ac::DocumentToken> token, bool saving) {

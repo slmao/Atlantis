@@ -5,6 +5,7 @@
 // member, and decoders accept what it accepts and return null for anything
 // malformed. Pure functions.
 using System.Collections.Generic;
+using System.Text;
 using A = Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Gameplay.Remote;
@@ -490,6 +491,83 @@ public static partial class Codec
     public static JsonValue? DocumentResult(JsonValue reply) =>
         reply.Find("error") is null && reply.Find("result") is { IsObject: true } result && result.Members.Count == 1 &&
         ((result.Find("ok") is null) != (result.Find("err") is null)) ? result : null;
+
+    public static A.RecoveryError? RecoveryRpcRefusal(JsonValue reply, string method) =>
+        DocumentRpcRefusal(reply, method) switch
+        {
+            A.DocumentError.Unsupported => A.RecoveryError.Unsupported,
+            A.DocumentError.NoAuthoring => A.RecoveryError.NoAuthoring,
+            A.DocumentError.InvalidRequest => A.RecoveryError.InvalidRequest,
+            _ => null,
+        };
+
+    public static A.RecoveryError? DecodeRecoveryError(JsonValue value) => DecodeName<A.RecoveryError>(value) switch
+    {
+        A.RecoveryError.Unsupported or A.RecoveryError.NoAuthoring or A.RecoveryError.InvalidRequest => null,
+        var error => error,
+    };
+
+    private static ulong? RecoveryNumber(JsonValue obj, string member) =>
+        obj.Find(member) is { } field ? DecodeUInt64(field) : null;
+
+    private static string[]? DecodeRecoveryLines(JsonValue? list)
+    {
+        if (list is not { IsArray: true } || list.Items.Count > 20) return null;
+        string[] lines = new string[list.Items.Count];
+        for (int i = 0; i < lines.Length; ++i)
+        {
+            if (!list.Items[i].IsString) return null;
+            string text = list.Items[i].AsString;
+            if (text.Contains('\r') || text.Contains('\n')) return null;
+            int scalars = 0;
+            foreach (Rune scalar in text.EnumerateRunes()) if (++scalars > 256) return null;
+            lines[i] = text;
+        }
+        return lines;
+    }
+
+    public static A.RecoveryStatus? DecodeRecoveryStatus(JsonValue value, EntityGuid? requested)
+    {
+        if (!value.IsObject || value.Members.Count != 4 || value.Find("capture") is not { } capture ||
+            DecodeName<A.RecoveryCapture>(capture) is not { } phase || value.Find("protectedRevision") is not { } protectedValue ||
+            value.Find("copy") is not { } copy || value.Find("preview") is not { } preview) return null;
+        ulong? protectedRevision = protectedValue.IsNull ? null : DecodeUInt64(protectedValue);
+        if (!protectedValue.IsNull && (protectedRevision is null or 0)) return null;
+        A.RecoveryCopy? known = null;
+        if (!copy.IsNull)
+        {
+            if (!copy.IsObject || copy.Members.Count != 4 || copy.Find("id") is not { } id ||
+                DecodeEntity(id) is not { IsNil: false } guid || guid.ToString() != id.AsString ||
+                RecoveryNumber(copy, "revision") is not ulong revision || revision == 0 ||
+                RecoveryNumber(copy, "capturedUnixSeconds") is not ulong time || time == 0 || time > 253402300799UL ||
+                copy.Find("pending") is not { IsBool: true } pending) return null;
+            known = new(guid, revision, time, pending.AsBool);
+        }
+        if (protectedRevision is not null && known is not { Pending: false }) return null;
+        if (requested is null) return preview.IsNull ? new(phase, protectedRevision, known, null) : null;
+        if (known is not { Pending: true } || known.Id != requested || !preview.IsObject ||
+            preview.Members.Count != 6 || preview.Find("source") is not { } sourceValue ||
+            DecodeName<A.RecoverySource>(sourceValue) is not { } source ||
+            RecoveryNumber(preview, "copyNodes") is not { } copyNodes || preview.Find("sourceNodes") is not { } official ||
+            DecodeRecoveryLines(preview.Find("sourceLines")) is not { } before ||
+            DecodeRecoveryLines(preview.Find("copyLines")) is not { } after ||
+            preview.Find("truncated") is not { IsBool: true } truncated) return null;
+        ulong? sourceNodes = official.IsNull ? null : DecodeUInt64(official);
+        if ((source == A.RecoverySource.Unreadable) != official.IsNull || (!official.IsNull && sourceNodes is null)) return null;
+        return new(phase, protectedRevision, known, new(source, copyNodes, sourceNodes, before, after, truncated.AsBool));
+    }
+
+    public static A.RecoveryReceipt? DecodeRecoveryReceipt(JsonValue value, A.DocumentToken token, EntityGuid id, bool restoring)
+    {
+        if (!value.IsObject || value.Members.Count != 2 || value.Find("copyId") is not { } copy ||
+            DecodeEntity(copy) != id || copy.AsString != id.ToString() ||
+            value.Find("document") is not { } document || DecodeDocumentState(document) is not { } state ||
+            state.Provenance != A.Provenance.HandAuthored) return null;
+        bool valid = restoring ? state.Dirty && state.Token.DocumentId != token.DocumentId &&
+            state.Token.DocumentRevision > token.DocumentRevision && state.Token.DocumentRevision - token.DocumentRevision == 1
+            : state.Token == token;
+        return valid ? new(id, state) : null;
+    }
 
     public static JsonValue Encode(A.SaveError error) => JsonValue.String(error.ToString());
     public static A.SaveError? DecodeSaveError(JsonValue value) => DecodeName<A.SaveError>(value);

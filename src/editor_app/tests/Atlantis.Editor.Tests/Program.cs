@@ -41,7 +41,7 @@ public static partial class Program
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
         bool hierarchyFilterRace = false;
-        string? assetDropReceipt = null, tasksReport = null;
+        string? assetDropReceipt = null, tasksReport = null, recoveryReport = null;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
@@ -52,11 +52,14 @@ public static partial class Program
             else if (args[i] == "--guide-captures") guideCaptures = true;
             else if (args[i] == "--asset-drop-receipt" && i + 1 < args.Length) assetDropReceipt = args[++i];
             else if (args[i] == "--hierarchy-filter-race") hierarchyFilterRace = true;
+            else if (args[i] == "--scene-recovery-ui" && i + 1 < args.Length) recoveryReport = args[++i];
             else if (args[i] == "--tasks-ui" && i + 1 < args.Length) tasksReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
         }
+        if (recoveryReport is not null)
+            return runtime is null ? Usage() : RunNameUiSmoke(runtime, recoveryReport, "--scene-recovery-ui");
         if (tasksReport is not null)
             return runtime is null ? Usage() : RunNameUiSmoke(runtime, tasksReport, "--tasks-ui");
         if (assetDropReceipt is not null)

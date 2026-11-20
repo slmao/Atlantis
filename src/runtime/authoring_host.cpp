@@ -1,5 +1,6 @@
 #include "authoring_host.h"
 #include "scene_save_as.h"
+#include "scene_recovery_store.h"
 
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/log.h>
@@ -65,6 +66,10 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
       return nullptr;
     }
     session_ = std::make_unique<atlantis::authoring::AuthoringSession>(std::move(*source));
+    if (const auto* hand = std::get_if<authoring::HandAuthored>(&session_->source().provenance)) {
+      recovery_ = std::make_unique<SceneRecoveryStore>(hand->sourcePath, session_->source().scene);
+      session_->setRecoveryStore(*recovery_);
+    }
     session_->setSceneSink([this](connection::authoring::ApplyId id, as::ValidatedSceneData scene) {
       return application_.requestSceneReload(id, std::move(scene));
     });
@@ -85,6 +90,7 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
 }
 
 void AuthoringHost::afterFrame() {
+  if (recovery_) recovery_->settle();
   if (auto result = application_.takeSceneReloadResult(); result && session_)
     session_->reportReload(result->first, std::move(result->second));
 }

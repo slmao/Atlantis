@@ -9,6 +9,8 @@
 
 namespace atlantis::runtime {
 
+class SceneRecoveryStore;
+
 // Plan 0065 P5 (Spec 0065 R1, R2; ADR-0129 D2, D3; ADR-0131 D3, D5): the
 // atlantis_runtime executable as the authoring session's host. Executable-
 // private like editor_attachment.cpp: Atlantis::RuntimeHost does not link
@@ -50,6 +52,7 @@ class AuthoringHost {
  private:
   RuntimeApplication& application_;
   AuthoringSources sources_;
+  std::unique_ptr<SceneRecoveryStore> recovery_;
   std::unique_ptr<atlantis::authoring::AuthoringSession> session_;
   bool unavailable_ = false;
 };

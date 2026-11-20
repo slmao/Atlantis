@@ -41,8 +41,19 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 77 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 77,
-            "77 unique approved tools including guarded document and texture operations");
+        Check(ToolRegistry.AllMappings.Length == 80 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 80,
+            "80 unique approved tools including recovery, guarded document and texture operations");
+        FakeSession recoveryStatus = new() { Response =
+            """{"result":{"ok":{"capture":"Idle","protectedRevision":null,"copy":null,"preview":null}}}""" };
+        var read = new ToolRegistry(recoveryStatus).Invoke(Request("authoring.recovery_status", "{}"));
+        Check(read.IsError != true && recoveryStatus.Calls.Single().Method == "authoring.recoveryStatus",
+            "recovery status uses exactly one shared read");
+        FakeSession recoveryRefused = new() { Response = """{"result":{"err":"SourceChanged"}}""" };
+        var decision = new ToolRegistry(recoveryRefused).Invoke(Request("authoring.restore_recovery",
+            "{\"copyId\":\"" + Entity + "\",\"expected\":{\"documentId\":\"" + Entity +
+            "\",\"documentRevision\":7}}"));
+        Check(decision.IsError == true && recoveryRefused.Calls.Single().Method == "authoring.restoreRecovery",
+            "recovery source conflict remains a refusal without any fallback or Apply");
         foreach (var c in CompositionCases)
         {
             FakeSession session = new() { Response = "{\"result\":{\"first\":100,\"count\":1}}" };

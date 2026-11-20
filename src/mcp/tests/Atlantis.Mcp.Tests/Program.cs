@@ -142,6 +142,14 @@ internal static partial class Program
         ("authoring.reopen_if_current", "authoring.reopenIfCurrent", """{"expected":null}""",
             $$$"""{"ok":{"documentId":"{{{Entity}}}","documentRevision":1,"lastPersistedRevision":1,"dirty":false,"source":"scene.txt","scene":"{{{Entity}}}","provenance":"HandAuthored"}}"""),
         ("authoring.create_scene", "authoring.createScene", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt"}}"""),
+        ("authoring.recovery_status", "authoring.recoveryStatus", "{}",
+            """{"ok":{"capture":"Idle","protectedRevision":null,"copy":null,"preview":null}}"""),
+        ("authoring.restore_recovery", "authoring.restoreRecovery",
+            $$$$"""{"copyId":"{{{{Entity}}}}","expected":{"documentId":"{{{{Entity}}}}","documentRevision":3}}""",
+            $$$$"""{"ok":{"copyId":"{{{{Entity}}}}","document":{"documentId":"52052052-0002-4052-8052-000000000002","documentRevision":4,"lastPersistedRevision":3,"scene":"{{{{Material}}}}","source":"recovery.scene.txt","provenance":"HandAuthored","dirty":true}}}"""),
+        ("authoring.discard_recovery", "authoring.discardRecovery",
+            $$$$"""{"copyId":"{{{{Entity}}}}","expected":{"documentId":"{{{{Entity}}}}","documentRevision":3}}""",
+            $$$$"""{"ok":{"copyId":"{{{{Entity}}}}","document":{"documentId":"{{{{Entity}}}}","documentRevision":3,"lastPersistedRevision":3,"scene":"{{{{Material}}}}","source":"recovery.scene.txt","provenance":"HandAuthored","dirty":false}}}"""),
         ("authoring.save_as", "authoring.saveAs", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt","documentRevision":3}}"""),
         ("authoring.active_camera", "authoring.activeCamera", "{}", """{"ok":null}"""),
         ("authoring.schema", "authoring.schema", "{}", """[{"id":"0x123456789abcdef0","name":"scene::Light","kind":"Enum","version":2,"fields":[],"constants":[{"name":"Point","value":-1}]}]"""),
@@ -530,7 +538,8 @@ internal static partial class Program
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
                 "authoring.saveAs" or "authoring.createScene" or "authoring.documentState" or "authoring.saveIfCurrent" or
-                "authoring.reopenIfCurrent" or "control.viewportNavigation" or
+                "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
+                "authoring.discardRecovery" or "control.viewportNavigation" or
                 "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
