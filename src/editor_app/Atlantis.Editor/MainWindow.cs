@@ -154,6 +154,9 @@ public sealed class MainWindow : Window
     private long _newSceneRequest;
     private string? _newScenePendingName;
     private bool _newSceneSessionReady;
+    private readonly TaskIssues _taskIssues = new();
+    private TaskIssuesPanel? _tasksPanel;
+    private long _importTask, _rebuildTask, _materialTask;
     private readonly Button _retryApply = new() { Content = "Apply current document / Retry", IsEnabled = false };
     private bool _allowGizmoPreview;
     private readonly Button _play = new() { Content = "Play", IsEnabled = false };
@@ -223,6 +226,7 @@ public sealed class MainWindow : Window
             _ => ColorTextureLabel
         };
         public TextureImportJob? Job;
+        public long Task;
         public (string Name, ImportMode Mode)? Target;
         public bool Admission, Polling, Unknown, Writable;
         public ImportError? Error;
@@ -761,12 +765,19 @@ public sealed class MainWindow : Window
         diagnosticPanel.MaxHeight = 162;
         diagnosticPanel.IsVisible = diagnosticMode;
         diagnosticsToggle.IsCheckedChanged += (_, _) => diagnosticPanel.IsVisible = diagnosticsToggle.IsChecked == true;
-        var status = EditorVisuals.Bar(EditorVisuals.Columns("*,*,2*,Auto,Auto,Auto",
-            _connectionLine, _editLine, _documentLine, _applyLine, _retryApply, statusToggle, diagnosticsToggle));
+        var tasksToggle = new ToggleButton { Content = "Tasks & Issues" };
+        _tasksPanel = new TaskIssuesPanel(_taskIssues, CanLocateTask, LocateTask);
+        tasksToggle.IsCheckedChanged += (_, _) =>
+        {
+            _tasksPanel.IsVisible = tasksToggle.IsChecked == true;
+            _tasksPanel.Refresh();
+        };
+        var status = EditorVisuals.Bar(EditorVisuals.Columns("*,*,2*,*,Auto,Auto,Auto,Auto",
+            _connectionLine, _editLine, _documentLine, _applyLine, _retryApply, tasksToggle, statusToggle, diagnosticsToggle));
 
         _connectionLine.Margin = _editLine.Margin = _applyLine.Margin = new Thickness(0, 0, 8, 0);
-        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto,Auto") };
-        foreach (Control control in new Control[] { commands, grid, status, statusDetails, diagnosticPanel })
+        var root = new Grid { RowDefinitions = new RowDefinitions("Auto,*,Auto,Auto,Auto,Auto") };
+        foreach (Control control in new Control[] { commands, grid, status, _tasksPanel, statusDetails, diagnosticPanel })
         {
             Grid.SetRow(control, root.Children.Count);
             root.Children.Add(control);
@@ -848,6 +859,9 @@ public sealed class MainWindow : Window
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         if (_shuttingDown) return;
+        _taskIssues.Reset();
+        _importTask = _rebuildTask = _materialTask = 0;
+        foreach (var texture in _textureImports) texture.Task = 0;
         EndPreviewSession();
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
@@ -965,6 +979,7 @@ public sealed class MainWindow : Window
             UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
+            _taskIssues.Disconnect();
             ++_hierarchyScrollIntent;
             ShowGuideFeedback("Session unavailable.");
             ResetReparent(_reparentPending ? "Reparent interrupted. Inspect the document before retrying." : null);
@@ -1074,6 +1089,15 @@ public sealed class MainWindow : Window
             _pressed = null;
         };
         worker.CommitApplied += (ms, state) => _editLine.Text = string.Format(CultureInfo.InvariantCulture, "{0} -- committed, applied in {1:F0} ms", _editLine.Text, ms);
+        worker.ApplyTaskObserved += (lifetime, target, update) =>
+        {
+            if (ReferenceEquals(_worker, worker))
+                _taskIssues.ObserveApply(lifetime, target?.SourcePath ?? "Current authoring document", target?.Scene, update);
+        };
+        worker.MeshDocumentReopened += lifetime =>
+        {
+            if (ReferenceEquals(_worker, worker)) _taskIssues.RetireDocuments(lifetime);
+        };
         worker.ApplyStateChanged += (status, text) =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
@@ -2605,6 +2629,44 @@ public sealed class MainWindow : Window
         }
     }
 
+    private bool CanLocateTask(TaskIssue row) => _taskIssues.Connected && !_referenceSessionFailed &&
+        _worker is { } worker && (row.DocumentLifetime is not long lifetime ||
+            (worker.MeshDocumentLifetime == lifetime && _reparentDocumentOpen));
+
+    private string? LocateTask(TaskIssue row)
+    {
+        if (!CanLocateTask(row)) return "The original target is no longer available.";
+        if (row.DocumentLifetime is not null)
+        {
+            if (_retryApply.IsEnabled) _retryApply.Focus();
+            else
+            {
+                _applyLine.Focusable = true;
+                _applyLine.Focus();
+            }
+            return null;
+        }
+        if (row.Asset is not AssetGuid guid) return "The operation has no confirmed asset GUID.";
+        if (_assetBrowser.State != "Ready") return "The current Assets catalog is unavailable.";
+        if (!_assetBrowser.Items.Any(asset => asset.Guid == guid))
+            return row.Published is not null && (!_taskIssues.ActivationKnown || row.Published != _taskIssues.ActiveGeneration)
+                ? "This asset is absent from the active catalog. Check the generation and explicitly restart to activate it."
+                : "The asset is no longer in the active catalog.";
+        RevealAsset(guid);
+        _assetTabs.SelectedIndex = 1;
+        _assetsList.Focus();
+        return null;
+    }
+
+    private void ObserveImportTask<T>(long attempt, object? requestedId, Outcome<T, ImportError> result,
+        Func<T, GenerationId?> active, Func<T, AssetTaskReceipt?> receipt)
+    {
+        if (result.IsOk) _taskIssues.ObserveActivation(active(result.Value!));
+        if (requestedId is not null)
+            _taskIssues.Observe(attempt, requestedId, result.IsOk ? receipt(result.Value!) : null,
+                result.IsOk ? null : result.Error.ToString());
+    }
+
     private void RevealAsset(AssetGuid guid, LocatedAssetReference? located = null)
     {
         if (_referenceSessionFailed) return;
@@ -2724,6 +2786,7 @@ public sealed class MainWindow : Window
         var state = SelectedTextureImport;
         string name = mode == ImportMode.Resume && state.Committed ? state.Job!.Name : _textureName.Text!;
         state.Target = (name, mode);
+        long task = state.Task = _taskIssues.Begin(state.Kind + " " + mode, name);
         state.Admission = true;
         state.Error = null;
         RenderTextureStatus();
@@ -2731,6 +2794,11 @@ public sealed class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || state.Target != (name, mode)) return;
             state.Admission = false;
+            if (result.IsOk && result.Value is { } job && (job.Name, job.Mode) == (name, mode))
+                _taskIssues.Admit(task, AssetTaskReceipt.From(job));
+            else
+                _taskIssues.Admit(task, null, result.IsOk ? "The returned job did not match the import." : result.Error.ToString(),
+                    result.IsOk ? TaskResult.Unknown : TaskResult.Refused);
             if (!result.IsOk)
             {
                 _textureRepair |= result.Error == ImportError.WorkspaceNeedsRepair;
@@ -2753,6 +2821,8 @@ public sealed class MainWindow : Window
         if (_worker is not { } worker || _referenceSessionFailed || state.Polling || state.Admission) return;
         // Latest status can confirm active generation, but only an explicit ID can settle a known running job.
         var id = state.Running ? state.Job?.Id : null;
+        long task = state.Task;
+        var target = state.Target;
         state.Polling = true;
         UpdateTextureButtons();
         worker.QueryTexture(id, state.Mode, result =>
@@ -2760,6 +2830,10 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
             state.Polling = false;
             if (state.Admission) { UpdateTextureButtons(); return; }
+            ObserveImportTask(task, id, result, status => status.ActiveGeneration, status =>
+                status.Job is { } job && target == (job.Name, job.Mode) ? AssetTaskReceipt.From(job) : null);
+            if (result.IsOk && result.Value.WorkspaceNeedsRepair && state.Task == task)
+                _taskIssues.NeedsRepair(task);
             if (!result.IsOk)
             {
                 if (id is not null) state.Unknown = true;
@@ -2841,10 +2915,18 @@ public sealed class MainWindow : Window
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
         _materialSettlement.Begin(request.Target);
+        var target = request.Target;
+        long task = _materialTask = _taskIssues.Begin(target.Mode + " material",
+            target.Name ?? target.Material?.ToString() ?? "Material", target.Mode == MaterialMode.Copy ? null : target.Material);
         ShowMaterialState();
         worker.SaveMaterial(request, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed || _materialSettlement.Target != request.Target) return;
+            if (result.IsOk && result.Value is { } job && job.Target == target)
+                _taskIssues.Admit(task, AssetTaskReceipt.From(job));
+            else
+                _taskIssues.Admit(task, null, result.IsOk ? "The returned job did not match the material." : result.Error.ToString(),
+                    result.IsOk ? TaskResult.Unknown : TaskResult.Refused);
             if (!result.IsOk)
             {
                 _materialSettlement.Refused();
@@ -2890,12 +2972,21 @@ public sealed class MainWindow : Window
         if (_materialPolling || _materialSettlement.AwaitingAdmission || _referenceSessionFailed || _worker is not { } worker) return;
         _materialPolling = true;
         var id = _materialSettlement.Id;
+        long task = _materialTask;
+        var target = _materialSettlement.Target;
         UpdateMaterialButtons();
         worker.QueryMaterial(id, result =>
         {
             if (!ReferenceEquals(_worker, worker) || _referenceSessionFailed) return;
             _materialPolling = false;
             if (id != _materialSettlement.Id) { UpdateMaterialButtons(); return; }
+            if (result.IsOk) _taskIssues.ObserveActivation(result.Value.ActiveGeneration);
+            if (id is MaterialJobId expected)
+                _taskIssues.Observe(task, expected,
+                    result.IsOk && result.Value.Job is { } job && job.Target == target ? AssetTaskReceipt.From(job) : null,
+                    result.IsOk ? null : result.Error.ToString());
+            if (result.IsOk && result.Value.WorkspaceNeedsRepair && task == _materialTask)
+                _taskIssues.NeedsRepair(task);
             if (!result.IsOk)
             {
                 _materialPoll.Stop();
@@ -3473,10 +3564,12 @@ public sealed class MainWindow : Window
         _assetWriteLabel = "Remove registration";
         _renameRequestContext = $"{check.Asset} in generation {check.ExpectedGeneration}";
         _rebuildState.Text = "Requesting removal…";
+        long task = _rebuildTask = _taskIssues.Begin("Remove registration", EditorVisuals.AssetName(intent.Asset), check.Asset);
         UpdateRebuildButtons();
-        worker.RemoveTexture(intent, check, (result, diagnostic) =>
+        worker.RemoveTexture(intent, check, (result, diagnostic, refusal, remoteError) =>
         {
             if (!ReferenceEquals(worker, _worker)) return;
+            CompleteAssetMutation(task, check.Asset, result, remoteError?.ToString() ?? diagnostic, refusal);
             _rebuildPending = false;
             _assetBrowser.CancelRemoval();
             if (result is { IsOk: true } accepted) ShowRebuild(accepted.Value!);
@@ -3532,10 +3625,12 @@ public sealed class MainWindow : Window
         _assetWriteLabel = "Rename";
         _renameRequestContext = $"{intent.Asset.Guid} in generation {generation} to '{label}'";
         _rebuildState.Text = "Requesting rename…";
+        long task = _rebuildTask = _taskIssues.Begin("Rename texture", EditorVisuals.AssetName(intent.Asset) + " → " + label, intent.Asset.Guid);
         UpdateRebuildButtons();
-        worker.RenameTexture(intent, generation, label, (result, diagnostic) =>
+        worker.RenameTexture(intent, generation, label, (result, diagnostic, refusal, remoteError) =>
         {
             if (!ReferenceEquals(worker, _worker)) return;
+            CompleteAssetMutation(task, intent.Asset.Guid, result, remoteError?.ToString() ?? diagnostic, refusal);
             _rebuildPending = false;
             _assetBrowser.CancelRename();
             _renameDraftGeneration = null;
@@ -3599,10 +3694,12 @@ public sealed class MainWindow : Window
         _assetWriteLabel = "Move";
         _renameRequestContext = $"{intent.Asset.Guid} in generation {generation} to '{destination}'";
         _rebuildState.Text = "Requesting move…";
+        long task = _rebuildTask = _taskIssues.Begin("Move texture", expectedPath + " → " + destination, intent.Asset.Guid);
         UpdateRebuildButtons();
-        worker.MoveTexture(intent, generation, expectedPath, destination, (result, diagnostic) =>
+        worker.MoveTexture(intent, generation, expectedPath, destination, (result, diagnostic, refusal, remoteError) =>
         {
             if (!ReferenceEquals(worker, _worker)) return;
+            CompleteAssetMutation(task, intent.Asset.Guid, result, remoteError?.ToString() ?? diagnostic, refusal);
             _rebuildPending = false;
             _assetBrowser.CancelMove();
             _moveDraftGeneration = null;
@@ -3704,6 +3801,17 @@ public sealed class MainWindow : Window
         });
     }
 
+    private void CompleteAssetMutation<TError>(long task, AssetGuid target, Outcome<RebuildJob, TError>? result,
+        string? diagnostic, TaskResult refusal) where TError : struct, Enum
+    {
+        if (result is { IsOk: true, Value: { } job })
+        {
+            if (job.Asset == target) _taskIssues.Admit(task, AssetTaskReceipt.From(job));
+            else _taskIssues.Admit(task, null, "The returned job did not match the asset.", TaskResult.Unknown);
+        }
+        else _taskIssues.Admit(task, null, diagnostic ?? result?.Error.ToString(), refusal);
+    }
+
     private void StartAssetRebuild()
     {
         if (!_rebuildStart.IsEnabled || _worker is not { } worker ||
@@ -3711,12 +3819,14 @@ public sealed class MainWindow : Window
         _assetBrowser.CancelRename();
         _renameRequestContext = null;
         _rebuildPending = true; _rebuildJob = null;
+        long task = _rebuildTask = _taskIssues.Begin("Rebuild asset", EditorVisuals.AssetName(selected), selected.Guid);
         _rebuildState.Text = "Requesting rebuild…";
         UpdateRebuildButtons();
         worker.RebuildAsset(selected.Guid, result =>
         {
             if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
             _rebuildPending = false;
+            CompleteAssetMutation(task, selected.Guid, (Outcome<RebuildJob, RebuildError>?)result, null, TaskResult.Refused);
             if (result.IsOk) ShowRebuild(result.Value!);
             else
             {
@@ -3738,10 +3848,17 @@ public sealed class MainWindow : Window
         if (!_rebuildRefresh.IsEnabled || _worker is not { } worker) return;
         _rebuildPending = true;
         UpdateRebuildButtons();
-        worker.QueryRebuild(_rebuildJob, result =>
+        var id = _rebuildJob;
+        long task = _rebuildTask;
+        worker.QueryRebuild(id, result =>
         {
             if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
             _rebuildPending = false;
+            if (result.IsOk) _taskIssues.ObserveActivation(result.Value.ActiveGeneration);
+            if (id is RebuildId expected)
+                _taskIssues.Observe(task, expected, result.IsOk && result.Value.Job is { } observed &&
+                    _taskIssues.Find(task)?.Asset == observed.Asset ? AssetTaskReceipt.From(observed) : null,
+                    result.IsOk ? null : result.Error.ToString());
             if (result.IsOk)
             {
                 _activeAssetGeneration = result.Value!.ActiveGeneration;
@@ -3795,12 +3912,18 @@ public sealed class MainWindow : Window
         if (!_importRegister.IsEnabled || _worker is not { } worker || _importName.Text is not { } name) return;
         _importPending = true;
         _importJob = null;
+        long task = _importTask = _taskIssues.Begin(mode + " scene import", name);
         _importState.Text = "Requesting import…";
         UpdateImportButtons();
         worker.ImportAsset(name, mode, result =>
         {
             if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
             _importPending = false;
+            if (result.IsOk && result.Value is { } job && (job.Name, job.Mode) == (name, mode))
+                _taskIssues.Admit(task, AssetTaskReceipt.From(job));
+            else
+                _taskIssues.Admit(task, null, result.IsOk ? "The returned job did not match the import." : result.Error.ToString(),
+                    result.IsOk ? TaskResult.Unknown : TaskResult.Refused);
             if (result.IsOk) ShowImport(result.Value!);
             else _importState.Text = "Import refused: " + result.Error;
             UpdateImportButtons();
@@ -3812,10 +3935,15 @@ public sealed class MainWindow : Window
         if (!_importRefresh.IsEnabled || _worker is not { } worker) return;
         _importPending = true;
         UpdateImportButtons();
-        worker.QueryImport(_importJob, result =>
+        var id = _importJob;
+        long task = _importTask;
+        worker.QueryImport(id, result =>
         {
             if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
             _importPending = false;
+            ObserveImportTask(task, id, result, status => status.ActiveGeneration, status =>
+                status.Job is { } job && _taskIssues.Find(task) is { } row &&
+                row.Target == job.Name && row.Operation == job.Mode + " scene import" ? AssetTaskReceipt.From(job) : null);
             if (result.IsOk) ShowImport(result.Value!.Job);
             else
             {
