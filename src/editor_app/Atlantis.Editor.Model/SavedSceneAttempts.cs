@@ -6,12 +6,13 @@ namespace Atlantis.Editor.Model;
 public sealed record SavedSceneInput(string Name, string? ManagedRoot);
 public sealed record SavedSceneFiles(string Source, string Catalog);
 public sealed record SavedSceneBuild(SavedSceneInput Input, string Directory, string Executable,
-                                     SavedSceneFiles Files, string ExecutableFingerprint);
+                                     SavedSceneFiles Files, string ExecutableFingerprint, bool Recorded = false);
 
-/// <summary>Session-local admission and eligibility for Spec 0090. The shell owns filesystem and processes.</summary>
+/// <summary>Session-local admission and eligibility. The shell owns filesystem and processes.</summary>
 public sealed class SavedSceneAttempts
 {
     private readonly HashSet<string> _children = new(StringComparer.Ordinal);
+    private long _check;
     public SavedSceneBuild? Result { get; private set; }
     public bool Building { get; private set; }
     public bool Starting { get; private set; }
@@ -23,7 +24,7 @@ public sealed class SavedSceneAttempts
     public bool BeginBuild(SavedSceneInput input)
     {
         if (!CanBuild(input)) return false;
-        Result = null;
+        Invalidate();
         Building = true;
         return true;
     }
@@ -49,6 +50,13 @@ public sealed class SavedSceneAttempts
     }
 
     public void ChildExited(string name) => _children.Remove(name);
-    public void Invalidate() => Result = null;
+    public void Invalidate() { ++_check; Result = null; }
+    public long BeginCheck() { Invalidate(); return _check; }
+    public bool FinishCheck(long check, SavedSceneBuild? result)
+    {
+        if (check != _check || Busy) return false;
+        Result = result;
+        return true;
+    }
     public bool HasChild(string name) => _children.Contains(name);
 }

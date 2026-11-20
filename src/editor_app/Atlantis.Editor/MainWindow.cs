@@ -80,6 +80,8 @@ public sealed class MainWindow : Window
     private readonly string _workDirectory = RuntimeProcess.NewWorkDirectory();
     private readonly EditorLog _log;
     private readonly SavedSceneAttempts _savedAttempts = new();
+    private SavedSceneBuild? _savedFresh;
+    private System.Threading.CancellationTokenSource? _savedCheck;
     private readonly SavedSceneWorkspace? _savedWorkspace;
     private readonly ListBox _savedList = new() { Height = 140, SelectionMode = SelectionMode.Single };
     private readonly Button _savedRefresh = new() { Content = "Refresh" };
@@ -3271,14 +3273,8 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(_savedList, "Local saved scenes");
         AutomationProperties.SetName(_savedManaged, "Committed managed import root");
         _savedRefresh.Click += (_, _) => RefreshSavedScenes();
-        _savedList.SelectionChanged += (_, _) => UpdateSavedSceneButtons();
-        _savedManaged.TextChanged += (_, _) =>
-        {
-            if (_savedAttempts.Busy) return;
-            if (_savedAttempts.Result is not null)
-                InvalidateSavedResult("Managed input changed. Build again.");
-            UpdateSavedSceneButtons();
-        };
+        _savedList.SelectionChanged += async (_, _) => await CheckSavedSelection();
+        _savedManaged.TextChanged += async (_, _) => await CheckSavedSelection();
         _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
         _savedOpen.Click += async (_, _) => await OpenSelectedSavedScene();
         return panel;
@@ -3291,9 +3287,17 @@ public sealed class MainWindow : Window
             "Refresh and select the local unit explicitly. A matching name does not verify the checkout.";
     }
 
-    private SavedSceneInput? SelectedSavedInput() => _savedList.SelectedItem is string name
-        ? new(name, string.IsNullOrWhiteSpace(_savedManaged.Text) ? null : _savedManaged.Text.Trim())
-        : null;
+    private SavedSceneInput? SelectedSavedInput()
+    {
+        if (_savedList.SelectedItem is not string name) return null;
+        string? text = string.IsNullOrWhiteSpace(_savedManaged.Text) ? null : _savedManaged.Text.Trim();
+        if (text is not null && Path.IsPathFullyQualified(text))
+        {
+            try { text = Path.TrimEndingDirectorySeparator(Path.GetFullPath(text)); }
+            catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { }
+        }
+        return new(name, text);
+    }
 
     private void UpdateSavedSceneButtons()
     {
@@ -3309,6 +3313,49 @@ public sealed class MainWindow : Window
         _savedAttempts.Invalidate();
         _savedOpenResult.Text = "Stale. " + why;
         _savedOpenResult.Foreground = EditorVisuals.Warning;
+    }
+
+    private async Task CheckSavedSelection()
+    {
+        if (_savedWorkspace is not { } workspace || _savedAttempts.Busy || _shuttingDown) return;
+        _savedCheck?.Cancel();
+        long check = _savedAttempts.BeginCheck();
+        UpdateSavedSceneButtons();
+        if (SelectedSavedInput() is not { } input)
+        {
+            _savedOpenResult.Text = "Select a saved scene to check the previous build.";
+            _savedOpenResult.Foreground = EditorVisuals.Muted;
+            return;
+        }
+
+        _savedOpenResult.Text = "Checking the previous build for " + input.Name + "…";
+        _savedOpenResult.Foreground = EditorVisuals.Muted;
+        var fresh = _savedFresh is { Recorded: false } current && current.Input == input ? current : null;
+        using var cancel = new System.Threading.CancellationTokenSource();
+        _savedCheck = cancel;
+        SavedSceneEligibility eligibility;
+        try
+        {
+            eligibility = await Task.Run(() => fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh));
+        }
+        catch (OperationCanceledException) when (cancel.IsCancellationRequested) { return; }
+        finally { if (ReferenceEquals(_savedCheck, cancel)) _savedCheck = null; }
+        if (_shuttingDown || input != SelectedSavedInput() || !_savedAttempts.FinishCheck(check, eligibility.Build)) return;
+
+        _savedOpenResult.Text = eligibility.Detail;
+        _savedOpenResult.Foreground = eligibility.Build is null ? EditorVisuals.Warning : EditorVisuals.Success;
+        if (eligibility.Build is { Recorded: true } recorded)
+        {
+            ShowSavedBuild(input, new("Succeeded", "Previous build verified", recorded.Directory,
+                Path.Combine(recorded.Directory, "build.log"), recorded));
+        }
+        else if (fresh is null)
+        {
+            _savedBuildSummary.Text = "Build required";
+            _savedBuildSummary.Foreground = EditorVisuals.Muted;
+            _savedBuildResult.Text = eligibility.Detail;
+        }
+        UpdateSavedSceneButtons();
     }
 
     private void RefreshSavedScenes()
@@ -3330,9 +3377,10 @@ public sealed class MainWindow : Window
         }
         _savedList.ItemsSource = names;
         _savedList.SelectedItem = names.Contains(selected, StringComparer.Ordinal) ? selected : null;
+        if (_savedFresh is { } fresh && !names.Contains(fresh.Input.Name, StringComparer.Ordinal)) _savedFresh = null;
         if (_savedAttempts.Result is { } result && !names.Contains(result.Input.Name, StringComparer.Ordinal))
             InvalidateSavedResult("The built unit is no longer listed. Build again after restoring it.");
-        UpdateSavedSceneButtons();
+        _ = CheckSavedSelection();
     }
 
     private void ShowSavedBuild(SavedSceneInput input, SavedSceneBuildReport report)
@@ -3350,6 +3398,8 @@ public sealed class MainWindow : Window
     {
         if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
             !_savedAttempts.BeginBuild(input)) return;
+        _savedCheck?.Cancel();
+        _savedFresh = null;
         _savedOpenResult.Text = "";
         _savedBuildResult.Text = _savedBuildSummary.Text = "Preparing a fresh build for " + input.Name;
         _savedBuildSummary.Foreground = EditorVisuals.Muted;
@@ -3360,6 +3410,7 @@ public sealed class MainWindow : Window
         });
         var result = await Task.Run(() => workspace.BuildAsync(input, ((IProgress<SavedSceneBuildReport>)progress).Report));
         _savedAttempts.FinishBuild(result.Result);
+        _savedFresh = result.Result;
         ShowSavedBuild(input, result);
         UpdateSavedSceneButtons();
     }
@@ -3374,14 +3425,13 @@ public sealed class MainWindow : Window
         Process? child = null;
         try
         {
-            child = await Task.Run(() =>
+            string? refusal;
+            (child, refusal) = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!));
+            if (refusal is not null)
             {
-                if (!workspace.IsCurrent(result)) return null;
-                return Process.Start(SavedSceneWorkspace.ChildStart(_options.SavedSceneAppHost!, result.Executable))
-                    ?? throw new IOException("The Editor process did not start.");
-            });
-            if (child is null)
-                InvalidateSavedResult("The saved unit or executable changed or is unavailable. Build again.");
+                _savedFresh = null;
+                InvalidateSavedResult(refusal);
+            }
             else
                 _savedOpenResult.Text = $"Editor started for {input.Name}. Check its window for Runtime and document readiness.";
         }
@@ -3399,10 +3449,15 @@ public sealed class MainWindow : Window
         {
             using (child)
                 await child.WaitForExitAsync();
-            if (ReferenceEquals(_savedAttempts.Result, result) &&
-                !await Task.Run(() => workspace.IsCurrent(result)) &&
-                ReferenceEquals(_savedAttempts.Result, result))
-                InvalidateSavedResult("The child closed and the saved unit or executable changed. Build again.");
+            if (ReferenceEquals(_savedAttempts.Result, result))
+            {
+                bool current = await Task.Run(() => (result.Recorded ? workspace.CheckStored(input) : workspace.CheckFresh(result)).Build == result);
+                if (!current && ReferenceEquals(_savedAttempts.Result, result))
+                {
+                    _savedFresh = null;
+                    InvalidateSavedResult("The child closed and the saved unit or build inputs changed. Build again.");
+                }
+            }
             _savedAttempts.ChildExited(input.Name);
             UpdateSavedSceneButtons();
         }
