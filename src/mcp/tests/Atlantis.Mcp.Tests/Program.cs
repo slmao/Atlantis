@@ -538,7 +538,8 @@ internal static partial class Program
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
                 "authoring.saveAs" or "authoring.createScene" or "authoring.documentState" or "authoring.saveIfCurrent" or
-                "authoring.reopenIfCurrent" or "control.viewportNavigation" or
+                "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
+                "authoring.discardRecovery" or "control.viewportNavigation" or
                 "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");

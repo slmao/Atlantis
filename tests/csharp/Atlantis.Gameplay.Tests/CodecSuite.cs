@@ -77,6 +77,21 @@ public static class CodecSuite
             {"error":{"code":"BadRequest","message":"unknown method authoring.recoveryStatus"}}
             """), "authoring.recoveryStatus") == A.RecoveryError.Unsupported,
             "old host refusal stays distinct from an unknown recovery result");
+        var parameters = JsonValue.NewObject().Set("expected", Codec.Encode(token)).Set("copyId", Codec.Encode(id));
+        foreach (bool lost in new[] { true, false })
+        {
+            LiveAssetSuite.WithPeer(t, AssetGuid.Parse("52052052-0004-4052-8052-000000000004"),
+                method => lost ? null : JsonValue.NewObject().Set("result", Codec.Ok(JsonValue.NewObject())),
+                client =>
+                {
+                    var failure = t.Throws<RemoteException>(() => client.Authoring.RestoreRecovery(token, id),
+                        "a lost or malformed recovery response reports unknown");
+                    t.Check(failure?.Error == (lost ? RemoteError.Disconnected : RemoteError.ProtocolError) &&
+                        failure.Message.Contains("outcome unknown", StringComparison.Ordinal) &&
+                        failure.Message.Contains(id.ToString(), StringComparison.Ordinal),
+                        "recovery retains its original transport category, exact copy and explicit check guidance");
+                }, exact: ("authoring.restoreRecovery", parameters));
+        }
     }
 
     // Plan 0066 P2: the overlay vectors decode to exact C# values; a step request without withOverlay (an older

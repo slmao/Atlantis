@@ -82,6 +82,7 @@ target_compile_definitions(atlantis_runtime_tests PRIVATE
 target_link_libraries(atlantis_runtime_tests
   PRIVATE
     Atlantis::RuntimeHost
+    Atlantis::Authoring  # executable-private recovery store test seam
     Atlantis::Editor
     Catch2::Catch2WithMain
     ole32

@@ -471,8 +471,9 @@ public static class LiveAssetSuite
         }, expectedPreviews: 0);
     }
 
-    private static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,
-        int expectedPreviews = 1, AssetGuid? material = null, JsonValue? materialParameters = null)
+    internal static void WithPeer(TestContext t, AssetGuid guid, Func<string, JsonValue?> reply, Action<RemoteSession> run,
+        int expectedPreviews = 1, AssetGuid? material = null, JsonValue? materialParameters = null,
+        (string Method, JsonValue Parameters)? exact = null)
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -494,15 +495,15 @@ public static class LiveAssetSuite
                     "connection.schema" => JsonValue.NewObject().Set("result", JsonValue.NewArray()),
                     _ => reply(method),
                 };
-                if (method == (materialParameters is not null ? "assets.materialSave" :
-                    material is null ? "assets.previewMesh" : "assets.previewMeshMaterial"))
+                if (method == (exact?.Method ?? (materialParameters is not null ? "assets.materialSave" :
+                    material is null ? "assets.previewMesh" : "assets.previewMeshMaterial")))
                 {
                     ++requests;
-                    var parameters = materialParameters ?? (material is AssetGuid asset
+                    var parameters = exact?.Parameters ?? materialParameters ?? (material is AssetGuid asset
                         ? JsonValue.NewObject().Set("meshGuid", Codec.Encode(guid)).Set("materialGuid", Codec.Encode(asset))
                         : JsonValue.NewObject().Set("guid", Codec.Encode(guid)));
                     if (Json.Write(request.Find("params")!) != Json.Write(parameters))
-                        throw new InvalidOperationException("preview did not send the exact expected GUID parameters");
+                        throw new InvalidOperationException("peer did not receive the exact expected parameters");
                 }
                 if (envelope is null) break;
                 writer.WriteLine(Json.Write(envelope.Set("id", request.Find("id")!)));
@@ -514,6 +515,6 @@ public static class LiveAssetSuite
             "00112233445566778899aabbccddeeff", 1, guid);
         using (RemoteSession client = RemoteSession.Connect(info, new RemoteOptions { ResponseTimeoutMilliseconds = 5000 })) run(client);
         t.Equal(expectedPreviews, peer.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult(),
-            "preview peer received exactly the requested number of GUID-only calls");
+            "peer received exactly the requested number of calls");
     }
 }
