@@ -154,6 +154,17 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         catch (Exception e) when (IsLocalFailure(e)) { return Unavailable("Cannot verify the previous build. " + e.Message); }
     }
 
+    internal SavedSceneEligibility CheckFresh(SavedSceneBuild result)
+    {
+        try
+        {
+            if (!_store.IsCurrentAttempt(result.Directory)) return Unavailable("The build was superseded.");
+            return IsCurrent(result) ? new(result, "Ready to open the build from this session.") :
+                Unavailable("The saved unit or executable changed or is unavailable.");
+        }
+        catch (Exception e) when (IsLocalFailure(e)) { return Unavailable("Cannot verify the current build. " + e.Message); }
+    }
+
     private SavedSceneEligibility VerifyStored(SavedSceneInput input, CancellationToken cancellation = default)
     {
         var receipt = _store.Read();
@@ -202,7 +213,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
             if (eligibility.Build != result)
                 return (null, eligibility.Build is null ? eligibility.Detail : "The build was superseded. Build again.");
         }
-        else if (!IsCurrent(result)) return (null, "The saved unit or executable changed or is unavailable. Build again.");
+        else if (CheckFresh(result) is { Build: null } ineligible) return (null, ineligible.Detail);
         return (Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."), null);
     }
 
@@ -214,9 +225,9 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         try
         {
             using var lease = _store.Lease();
-            _store.Write(null);
-            phase = "Preparing";
             attempt = _store.ReserveAttempt();
+            _store.Write(attempt, null);
+            phase = "Preparing";
             string logPath = Path.Combine(attempt, "build.log");
             Directory.CreateDirectory(attempt);
             Ordinary(attempt, directory: true);
@@ -275,15 +286,18 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
                 var build = new SavedSceneBuild(input, attempt, executable, files, fingerprint);
                 if (configuration is not null && assets is not null && resolved is not null)
+                {
+                    string? outputs = Capture(() => SavedSceneBuildEvidence.Outputs(attempt, executable), out reason);
+                    if (outputs is null) return Stale("Cannot verify the required Runtime outputs. " + reason);
                     try
                     {
-                        string outputs = SavedSceneBuildEvidence.Outputs(attempt, executable);
                         var recorded = build with { Recorded = true };
-                        _store.Write(new(SavedSceneReceiptStore.Version, checkout, recorded,
+                        _store.Write(attempt, new(SavedSceneReceiptStore.Version, checkout, recorded,
                             new(_evidence.Scene(files), assets, configuration), resolved, outputs));
                         build = recorded;
                     }
                     catch (Exception e) when (IsLocalFailure(e)) { reason = e.Message; }
+                }
                 string detail = build.Recorded ? "Build succeeded and was recorded for reuse." :
                     "Build succeeded for this session. Reuse after restart unavailable. " + reason;
                 log.WriteLine(detail);

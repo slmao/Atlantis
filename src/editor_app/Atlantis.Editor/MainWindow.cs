@@ -3336,9 +3336,7 @@ public sealed class MainWindow : Window
         SavedSceneEligibility eligibility;
         try
         {
-            eligibility = await Task.Run(() => fresh is null ? workspace.CheckStored(input, cancel.Token) :
-                workspace.IsCurrent(fresh) ? new(fresh, "Ready to open the build from this session.") :
-                new SavedSceneEligibility(null, "The saved unit or executable changed. Build again."));
+            eligibility = await Task.Run(() => fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh));
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested) { return; }
         finally { if (ReferenceEquals(_savedCheck, cancel)) _savedCheck = null; }
@@ -3348,7 +3346,7 @@ public sealed class MainWindow : Window
         _savedOpenResult.Foreground = eligibility.Build is null ? EditorVisuals.Warning : EditorVisuals.Success;
         if (eligibility.Build is { Recorded: true } recorded)
         {
-            ShowSavedBuild(input, new("Ready to open", "Verified recorded build", recorded.Directory,
+            ShowSavedBuild(input, new("Succeeded", "Previous build verified", recorded.Directory,
                 Path.Combine(recorded.Directory, "build.log"), recorded));
         }
         else if (fresh is null)
@@ -3453,7 +3451,7 @@ public sealed class MainWindow : Window
                 await child.WaitForExitAsync();
             if (ReferenceEquals(_savedAttempts.Result, result))
             {
-                bool current = await Task.Run(() => result.Recorded ? workspace.CheckStored(input).Build == result : workspace.IsCurrent(result));
+                bool current = await Task.Run(() => (result.Recorded ? workspace.CheckStored(input) : workspace.CheckFresh(result)).Build == result);
                 if (!current && ReferenceEquals(_savedAttempts.Result, result))
                 {
                     _savedFresh = null;

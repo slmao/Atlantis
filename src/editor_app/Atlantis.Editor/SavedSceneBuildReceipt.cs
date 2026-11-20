@@ -22,6 +22,7 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
 {
     internal const int Version = 1;
     private const int MaxReceiptBytes = 16 * 1024;
+    private sealed record SlotState(string Attempt, SavedSceneBuildReceipt? Receipt);
     internal static string Scope(string checkout) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(checkout).ToUpperInvariant())));
 
@@ -58,12 +59,12 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
         }
     }
 
-    internal void Write(SavedSceneBuildReceipt? receipt)
+    internal void Write(string attempt, SavedSceneBuildReceipt? receipt)
     {
         string stage = Path.Combine(root, "receipt-" + Guid.NewGuid().ToString("N") + ".tmp");
         try
         {
-            byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(receipt);
+            byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new SlotState(attempt, receipt));
             if (bytes.Length > MaxReceiptBytes) throw new IOException("The build receipt exceeds its size limit.");
             using (var stream = new FileStream(stage, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
@@ -80,23 +81,29 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
         }
     }
 
-    internal SavedSceneBuildReceipt? Read()
+    internal SavedSceneBuildReceipt? Read() => ReadSlot()?.Receipt;
+    internal bool IsCurrentAttempt(string attempt) => ReadSlot()?.Attempt == attempt;
+
+    private SlotState? ReadSlot()
     {
         try { SavedSceneWorkspace.Ordinary(Slot, directory: false); }
         catch (FileNotFoundException) { return null; }
         catch (DirectoryNotFoundException) { return null; }
         using var stream = new FileStream(Slot, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         if (stream.Length > MaxReceiptBytes) throw new IOException("The recorded build receipt is too large.");
-        var receipt = JsonSerializer.Deserialize<SavedSceneBuildReceipt>(stream);
-        if (receipt is null) return null;
+        var state = JsonSerializer.Deserialize<SlotState>(stream);
+        if (state is null) return null;
+        if (state.Attempt is not { } attempt) throw new IOException("Missing attempt in the recorded build slot.");
+        string leaf = Path.GetFileName(attempt);
+        if (Path.GetDirectoryName(attempt) != attempts || leaf.Length != 16 || !leaf.All(Uri.IsHexDigit))
+            throw new IOException("The recorded attempt is outside the local build area.");
+        if (state.Receipt is not { } receipt) return state;
         if (receipt.Version != Version || receipt.Checkout != checkout || receipt.Inputs is null ||
             receipt.Build is not { Recorded: true, Input: not null, Files: not null, Directory: not null, Executable: not null } build ||
             string.IsNullOrWhiteSpace(receipt.ConfiguredInputs) || string.IsNullOrWhiteSpace(receipt.Outputs))
             throw new IOException("The recorded build receipt has an unsupported version, checkout or shape.");
-        string leaf = Path.GetFileName(build.Directory);
-        if (Path.GetDirectoryName(build.Directory) != attempts || leaf.Length != 16 || !leaf.All(Uri.IsHexDigit))
-            throw new IOException("The recorded attempt is outside this checkout's local build area.");
-        return receipt;
+        if (build.Directory != attempt) throw new IOException("The completed build does not match the current attempt.");
+        return state;
     }
 }
 

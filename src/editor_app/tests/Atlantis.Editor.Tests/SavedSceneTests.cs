@@ -136,7 +136,7 @@ public static partial class Program
                 var record = new SavedSceneBuildReceipt(SavedSceneReceiptStore.Version, checkout,
                     artifact with { Directory = recordedDirectory, Recorded = true }, new("scene", "assets", "settings"),
                     "configure", "sidecars");
-                store.Write(record);
+                store.Write(recordedDirectory, record);
                 Check(reopenedStore.Read() == record, "a new launcher reads the complete durable build receipt");
                 bool busy = false;
                 try { using var competing = reopenedStore.Lease(); }
@@ -147,14 +147,16 @@ public static partial class Program
                 using (File.OpenRead(slotFile))
                 {
                     bool refused = false;
-                    try { store.Write(null); }
-                    catch (IOException) { refused = true; }
+                    try { store.Write(recordedDirectory, null); }
+                    catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { refused = true; }
                     Check(refused && reopenedStore.Read() == record,
                         "failed invalidation leaves the complete previous receipt and refuses Build admission");
                 }
-                store.Write(null);
-                Check(reopenedStore.Read() is null, "an admitted, unsettled Build never falls back to the previous receipt");
-                store.Write(record with { Version = 99 });
+                string next = store.ReserveAttempt();
+                store.Write(next, null);
+                Check(reopenedStore.Read() is null && !reopenedStore.IsCurrentAttempt(recordedDirectory) &&
+                    reopenedStore.IsCurrentAttempt(next), "a new admission supersedes even an in-memory fresh build from another launcher");
+                store.Write(recordedDirectory, record with { Version = 99 });
                 bool unsupported = false;
                 try { _ = reopenedStore.Read(); }
                 catch (IOException) { unsupported = true; }
