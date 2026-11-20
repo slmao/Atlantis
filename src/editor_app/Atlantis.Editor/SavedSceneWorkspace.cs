@@ -5,7 +5,9 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
+using System.Runtime.Versioning;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay.Remote;
@@ -17,11 +19,16 @@ namespace Atlantis.Editor;
 internal sealed record SavedSceneBuildReport(string Phase, string Detail, string Directory, string Log,
                                              SavedSceneBuild? Result = null);
 
-internal sealed class SavedSceneWorkspace(string checkout, string cmake, string workDirectory)
+[SupportedOSPlatform("windows")]
+internal sealed class SavedSceneWorkspace(string checkout, string cmake, string workDirectory, string? receiptRoot = null)
 {
-    private const string Generator = "Visual Studio 18 2026";
+    internal const string Generator = "Visual Studio 18 2026";
     private const string SourceLeaf = "scene.scene.txt", CatalogLeaf = "catalog-source.txt";
+    private static readonly string BuildArea = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AtlB");
     private readonly string _root = Path.Combine(checkout, "assets", "scenes", "saved");
+    private readonly SavedSceneReceiptStore _store = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)),
+        Path.Combine(receiptRoot ?? BuildArea, "a"), checkout);
+    private readonly SavedSceneBuildEvidence _evidence = new(checkout, cmake);
 
     internal static string CheckoutPath(string path)
     {
@@ -55,7 +62,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         ? Path.TrimEndingDirectorySeparator(Path.GetFullPath(path))
         : throw new IOException("An absolute local path is required.");
 
-    private static void Ordinary(string path, bool directory)
+    internal static void Ordinary(string path, bool directory)
     {
         string? current = path;
         while (current is not null)
@@ -115,7 +122,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         _ = File.GetAttributes(Path.Combine(parent, alternate));
     }
 
-    private static string Fingerprint(string path)
+    internal static string Fingerprint(string path)
     {
         Ordinary(path, directory: false);
         using var stream = File.OpenRead(path);
@@ -138,25 +145,96 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         catch (Exception e) when (IsLocalFailure(e)) { return false; }
     }
 
-    internal async Task<SavedSceneBuildReport> BuildAsync(SavedSceneInput input, Action<SavedSceneBuildReport> progress)
+    private SavedSceneInput Normalize(SavedSceneInput input) => input.ManagedRoot is { } managed
+        ? input with { ManagedRoot = ManagedPath(managed) } : input;
+
+    internal SavedSceneEligibility CheckStored(SavedSceneInput input, CancellationToken cancellation = default)
     {
-        string attempt = Path.Combine(workDirectory, "saved-build-" + Guid.NewGuid().ToString("N"));
-        string logPath = Path.Combine(attempt, "build.log");
-        string phase = "Preparing";
-        string? retainedLog = null;
+        try { return VerifyStored(Normalize(input), cancellation); }
+        catch (Exception e) when (IsLocalFailure(e)) { return Unavailable("Cannot verify the previous build. " + e.Message); }
+    }
+
+    private SavedSceneEligibility VerifyStored(SavedSceneInput input, CancellationToken cancellation = default)
+    {
+        var receipt = _store.Read();
+        if (receipt is null || receipt.Build.Input.Name != input.Name)
+            return Unavailable("No recorded build for the selected scene.");
+        var build = receipt.Build;
+        if (!string.Equals(build.Input.ManagedRoot, input.ManagedRoot, StringComparison.OrdinalIgnoreCase))
+            return Unavailable("The committed managed input setting changed.");
+        string phase = "saved scene inputs";
         try
         {
+            var files = Files(input.Name);
+            if (files != build.Files || _evidence.Scene(files) != receipt.Inputs.Scene)
+                return Unavailable("The saved scene source or catalog fragment changed.");
+            phase = "asset inputs";
+            if (_evidence.Assets(input, cancellation) != receipt.Inputs.Assets) return Unavailable("Asset inputs changed.");
+            phase = "build configuration";
+            if (_evidence.Configuration(cancellation) != receipt.Inputs.Configuration ||
+                _evidence.Configured(build.Directory, input, cancellation) != receipt.ConfiguredInputs)
+                return Unavailable("Build configuration or tool inputs changed.");
+            phase = "Runtime executable";
+            if (Fingerprint(Under(build.Directory, build.Executable)) != build.ExecutableFingerprint)
+                return Unavailable("The Runtime executable changed.");
+            phase = "Runtime sidecar outputs";
+            if (SavedSceneBuildEvidence.Outputs(build.Directory, build.Executable, cancellation) != receipt.Outputs)
+                return Unavailable("Runtime assets or shader outputs changed.");
+            phase = "current build receipt";
+            if (_store.Read() != receipt) return Unavailable("The build was superseded.");
+            return new(build, "Ready to open the recorded build.");
+        }
+        catch (Exception e) when (IsLocalFailure(e)) { return Unavailable($"Cannot verify {phase}. {e.Message}"); }
+    }
+
+    private static SavedSceneEligibility Unavailable(string reason) => new(null, reason + " Build again.");
+
+    internal (Process? Child, string? Refusal) Open(SavedSceneBuild result, string apphost)
+    {
+        FileStream lease;
+        try { lease = _store.Lease(); }
+        catch (Exception e) when (IsLocalFailure(e))
+        { return (null, "Cannot verify the current build. Another launcher may be using the build slot. " + e.Message); }
+        using var held = lease;
+        if (result.Recorded)
+        {
+            var eligibility = VerifyStored(result.Input);
+            if (eligibility.Build != result)
+                return (null, eligibility.Build is null ? eligibility.Detail : "The build was superseded. Build again.");
+        }
+        else if (!IsCurrent(result)) return (null, "The saved unit or executable changed or is unavailable. Build again.");
+        return (Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."), null);
+    }
+
+    internal async Task<SavedSceneBuildReport> BuildAsync(SavedSceneInput input, Action<SavedSceneBuildReport> progress)
+    {
+        string phase = "Admitting Build";
+        string? retainedLog = null;
+        string attempt = workDirectory;
+        try
+        {
+            using var lease = _store.Lease();
+            _store.Write(null);
+            phase = "Preparing";
+            attempt = _store.ReserveAttempt();
+            string logPath = Path.Combine(attempt, "build.log");
             Directory.CreateDirectory(attempt);
+            Ordinary(attempt, directory: true);
             using var writer = new StreamWriter(logPath) { AutoFlush = true };
             TextWriter log = TextWriter.Synchronized(writer);
             retainedLog = logPath;
             try
             {
+                input = Normalize(input);
                 SavedSceneFiles files = Files(input.Name);
+                string? configuration = Capture(() => _evidence.Configuration(), out string? reason);
+                string? assets = Capture(() => _evidence.Assets(input), out string? assetReason);
+                reason ??= assetReason;
                 Ordinary(cmake, directory: false);
                 string query = Path.Combine(attempt, ".cmake", "api", "v1", "query");
                 Directory.CreateDirectory(query);
                 File.WriteAllText(Path.Combine(query, "codemodel-v2"), "");
+                File.WriteAllText(Path.Combine(query, "cmakeFiles-v1"), "");
                 string[] configure = ["-S", checkout, "-B", attempt, "-G", Generator, "-A", "x64",
                                       "-DATLANTIS_SAVED_SCENE=" + input.Name];
                 if (input.ManagedRoot is { } managed)
@@ -167,6 +245,22 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
                 int configured = await RunAsync(configure, log);
                 if (configured != 0) return new("Failed", $"Configure exited with code {configured}.", attempt, logPath);
 
+                string? VerifyInputs() =>
+                    Files(input.Name) != files ? "The saved unit changed during the build." :
+                    assets is not null && _evidence.Assets(input) != assets ? "Asset inputs changed during the build." :
+                    configuration is not null && _evidence.Configuration() != configuration ? "Build configuration changed during the build." : null;
+
+                SavedSceneBuildReport Stale(string message) => new("Stale", message + " Build again.", attempt, logPath);
+                string? CheckInputs()
+                {
+                    try { return VerifyInputs(); }
+                    catch (Exception e) when (IsLocalFailure(e))
+                    { return "Build inputs became unverifiable. " + e.Message; }
+                }
+                if (CheckInputs() is { } prebuildFailure) return Stale(prebuildFailure);
+                string? resolved = Capture(() => _evidence.Configured(attempt, input), out string? resolvedReason);
+                reason ??= resolvedReason;
+
                 phase = "Building";
                 progress(new(phase, "Building atlantis_runtime (Debug)", attempt, logPath));
                 int built = await RunAsync(["--build", attempt, "--config", "Debug", "--target", "atlantis_runtime"], log);
@@ -175,18 +269,25 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
                 phase = "Checking output";
                 string executable = ResolveExecutable(attempt);
                 string fingerprint = Fingerprint(executable);
-                try
-                {
-                    if (Files(input.Name) != files)
-                        return new("Stale", "The saved unit changed during the build. Build again.", attempt, logPath);
-                }
-                catch (Exception e) when (IsLocalFailure(e))
-                {
-                    log.WriteLine(e.Message);
-                    return new("Stale", "The saved unit is unavailable after the build. Build again.", attempt, logPath);
-                }
-                return new("Succeeded", "Configure and build exited with code 0.", attempt, logPath,
-                    new(input, attempt, executable, files, fingerprint));
+                if (CheckInputs() is { } postbuildFailure) return Stale(postbuildFailure);
+                if (resolved is not null && Capture(() => _evidence.Configured(attempt, input), out _) != resolved)
+                    return Stale("Effective build configuration changed during the build.");
+
+                var build = new SavedSceneBuild(input, attempt, executable, files, fingerprint);
+                if (configuration is not null && assets is not null && resolved is not null)
+                    try
+                    {
+                        string outputs = SavedSceneBuildEvidence.Outputs(attempt, executable);
+                        var recorded = build with { Recorded = true };
+                        _store.Write(new(SavedSceneReceiptStore.Version, checkout, recorded,
+                            new(_evidence.Scene(files), assets, configuration), resolved, outputs));
+                        build = recorded;
+                    }
+                    catch (Exception e) when (IsLocalFailure(e)) { reason = e.Message; }
+                string detail = build.Recorded ? "Build succeeded and was recorded for reuse." :
+                    "Build succeeded for this session. Reuse after restart unavailable. " + reason;
+                log.WriteLine(detail);
+                return new("Succeeded", detail, attempt, logPath, build);
             }
             catch (Exception e) when (IsLocalFailure(e))
             {
@@ -196,8 +297,14 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         }
         catch (Exception e) when (IsLocalFailure(e))
         {
-            return new("Failed", phase + ": " + e.Message, attempt, retainedLog ?? "");
+            return new("Failed", phase + ": " + e.Message, retainedLog is null ? workDirectory : attempt, retainedLog ?? "");
         }
+    }
+
+    private static string? Capture(Func<string> read, out string? failure)
+    {
+        try { failure = null; return read(); }
+        catch (Exception e) when (IsLocalFailure(e)) { failure = e.Message; return null; }
     }
 
     private async Task<int> RunAsync(string[] arguments, TextWriter log)
@@ -231,14 +338,14 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         return full;
     }
 
-    private static JsonDocument ReadJson(string directory, string path)
+    internal static JsonDocument ReadJson(string directory, string path)
     {
         string full = Under(directory, path);
         Ordinary(full, directory: false);
         return JsonDocument.Parse(File.ReadAllBytes(full));
     }
 
-    private static string FileApiPath(JsonElement entry, string property, string description)
+    internal static string FileApiPath(JsonElement entry, string property, string description)
     {
         if (entry.ValueKind == JsonValueKind.Object && entry.TryGetProperty(property, out var value) &&
             value.ValueKind == JsonValueKind.String && value.GetString() is { } path &&
@@ -247,13 +354,17 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         throw new IOException("Invalid CMake File API " + description + ".");
     }
 
+    internal static string FileApiIndex(string reply)
+    {
+        Ordinary(reply, directory: true);
+        return Directory.EnumerateFiles(reply, "index-*.json").OrderDescending(StringComparer.Ordinal).FirstOrDefault()
+            ?? throw new IOException("CMake produced no File API reply.");
+    }
+
     internal static string ResolveExecutable(string attempt)
     {
         string reply = Path.Combine(attempt, ".cmake", "api", "v1", "reply");
-        Ordinary(reply, directory: true);
-        string indexPath = Directory.EnumerateFiles(reply, "index-*.json").OrderDescending(StringComparer.Ordinal).FirstOrDefault()
-            ?? throw new IOException("CMake produced no File API reply.");
-        using var index = ReadJson(reply, indexPath);
+        using var index = ReadJson(reply, FileApiIndex(reply));
         string modelPath = FileApiPath(index.RootElement.GetProperty("reply").GetProperty("codemodel-v2"),
                                        "jsonFile", "codemodel path");
         using var model = ReadJson(reply, modelPath);
@@ -288,5 +399,6 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     }
 
     internal static bool IsLocalFailure(Exception e) => e is IOException or UnauthorizedAccessException or
-        ArgumentException or Win32Exception or JsonException or InvalidOperationException or System.Collections.Generic.KeyNotFoundException;
+        ArgumentException or Win32Exception or JsonException or InvalidOperationException or System.Security.SecurityException or
+        System.Collections.Generic.KeyNotFoundException;
 }

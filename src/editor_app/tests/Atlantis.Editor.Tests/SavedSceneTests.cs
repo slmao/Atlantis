@@ -40,6 +40,12 @@ public static partial class Program
         Check(attempts.BeginBuild(second) && attempts.Result is null, "admission clears an older eligible artifact");
         attempts.FinishBuild(null);
         Check(!attempts.CanOpen(first) && !attempts.CanOpen(second), "failed build has no fallback artifact");
+        long obsolete = attempts.BeginCheck(), latest = attempts.BeginCheck();
+        Check(!attempts.FinishCheck(obsolete, built) && attempts.FinishCheck(latest, built) && attempts.CanOpen(first),
+            "only the latest saved-scene eligibility check can enable Open");
+        long beforeBuild = attempts.BeginCheck();
+        Check(attempts.BeginBuild(second) && !attempts.FinishCheck(beforeBuild, built),
+            "Build invalidates an older selection check and its receipt");
 
         if (!OperatingSystem.IsWindows()) return;
         string root = Path.Combine(Path.GetTempPath(), "atlantis_saved_scene_" + Guid.NewGuid().ToString("N"));
@@ -119,6 +125,41 @@ public static partial class Program
             var child = SavedSceneWorkspace.ChildStart(Path.Combine(root, "Editor App", "Atlantis.Editor.exe"), exe);
             Check(!child.UseShellExecute && child.ArgumentList.SequenceEqual(new[] { "--runtime", exe, "--scene", "saved_scene" }),
                 "child launch carries only its built Runtime path and saved scene alias");
+
+            string slot = Path.Combine(root, "receipt"), recordedAttempts = Path.Combine(root, "attempts");
+            var store = new SavedSceneReceiptStore(slot, recordedAttempts, checkout);
+            var reopenedStore = new SavedSceneReceiptStore(slot, recordedAttempts, checkout);
+            string recordedDirectory;
+            using (store.Lease())
+            {
+                recordedDirectory = store.ReserveAttempt();
+                var record = new SavedSceneBuildReceipt(SavedSceneReceiptStore.Version, checkout,
+                    artifact with { Directory = recordedDirectory, Recorded = true }, new("scene", "assets", "settings"),
+                    "configure", "sidecars");
+                store.Write(record);
+                Check(reopenedStore.Read() == record, "a new launcher reads the complete durable build receipt");
+                bool busy = false;
+                try { using var competing = reopenedStore.Lease(); }
+                catch (IOException) { busy = true; }
+                Check(busy, "same checkout cannot admit competing Build or Open while the lease is held");
+
+                string slotFile = Path.Combine(slot, "last-build.json");
+                using (File.OpenRead(slotFile))
+                {
+                    bool refused = false;
+                    try { store.Write(null); }
+                    catch (IOException) { refused = true; }
+                    Check(refused && reopenedStore.Read() == record,
+                        "failed invalidation leaves the complete previous receipt and refuses Build admission");
+                }
+                store.Write(null);
+                Check(reopenedStore.Read() is null, "an admitted, unsettled Build never falls back to the previous receipt");
+                store.Write(record with { Version = 99 });
+                bool unsupported = false;
+                try { _ = reopenedStore.Read(); }
+                catch (IOException) { unsupported = true; }
+                Check(unsupported, "an unknown receipt version cannot become eligible");
+            }
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -157,7 +198,8 @@ public static partial class Program
             AddUnit("build_fail");
             string changing = AddUnit("changes");
             AddUnit("valid");
-            var workspace = new SavedSceneWorkspace(SavedSceneWorkspace.CheckoutPath(checkout), SavedSceneWorkspace.CMakePath(cmake), work);
+            var workspace = new SavedSceneWorkspace(SavedSceneWorkspace.CheckoutPath(checkout), SavedSceneWorkspace.CMakePath(cmake), work,
+                Path.Combine(root, "receipt"));
             SavedSceneBuildReport Build(string name, Action<SavedSceneBuildReport>? progress = null) =>
                 workspace.BuildAsync(new(name, null), progress ?? (_ => { })).GetAwaiter().GetResult();
             var configured = Build("configure_fail");
@@ -254,6 +296,11 @@ public static partial class Program
 
     private static async Task CheckSavedSceneWorkflow(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0123_TEST_PHASE") is { } phase)
+        {
+            await CheckSavedSceneRestart(window, checks, work, phase);
+            return;
+        }
         string checkout = Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT")!;
         string managed = Environment.GetEnvironmentVariable("ATLANTIS_0090_MANAGED")!;
         string generation = Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION")!;
@@ -451,6 +498,120 @@ public static partial class Program
             (await Task.Run(() => original.Authoring.Document())) == doc &&
             (await Task.Run(() => original.Authoring.ListNodes())).Value.Any(n => n.Node == parent.Node && n.Name == "Unsaved launcher edit 0090") &&
             (await Task.Run(() => original.Assets.RebuildStatus())).Value!.ActiveGeneration?.ToString() == generation);
+    }
+
+    private static async Task CheckSavedSceneRestart(MainWindow window, List<NameUiCheck> checks, Action<string> work, string phase)
+    {
+        const string scene = "build_reuse_0123";
+        EditorVisuals.Install(Avalonia.Application.Current!);
+        string evidence = Environment.GetEnvironmentVariable("ATLANTIS_0123_EVIDENCE")!;
+        string managed = Environment.GetEnvironmentVariable("ATLANTIS_0090_MANAGED")!;
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        void Verify(string message, bool ok, string detail = "")
+        {
+            checks.Add(new(message, ok, detail));
+            if (!ok) throw new InvalidOperationException(message + " " + detail);
+        }
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "reference launcher is connected", 60);
+        var original = Field<RuntimeProcess>("_runtime");
+        work(original.Launch.WorkDirectory);
+        using var originalSession = RemoteSession.Connect(SessionFile.Read(original.SessionPath));
+        var document = originalSession.Authoring.Document();
+        Verify("launcher hosted a separate authoring document", document is not null);
+        var model = Field<SavedSceneAttempts>("_savedAttempts");
+        var list = Field<ListBox>("_savedList");
+        var open = Field<Button>("_savedOpen");
+        var build = Field<Button>("_savedBuild");
+        var resultText = Field<TextBox>("_savedBuildResult");
+        var status = Field<TextBlock>("_savedOpenResult");
+        Field<TabControl>("_assetTabs").SelectedIndex = 2;
+        Field<TextBox>("_savedManaged").Text = managed;
+        list.SelectedItem = scene;
+        Verify("same saved unit explicitly selected", build.IsEnabled && !open.IsEnabled);
+        string artifactPath = Path.Combine(evidence, "artifact.json");
+        if (phase is "build" or "rebuild")
+        {
+            Click(build);
+            await NameUiWait(() => !model.Busy, "recorded CMake build", 960);
+            Verify("explicit build produced a reusable receipt", model.Result is { Recorded: true } && open.IsEnabled,
+                resultText.Text ?? "");
+            var artifact = model.Result!;
+            File.WriteAllText(artifactPath, System.Text.Json.JsonSerializer.Serialize(artifact));
+            string[] lines = File.ReadAllLines(Path.Combine(artifact.Directory, "build.log"));
+            Verify("the explicit attempt ran one configure and one build", lines.Count(line => line.StartsWith("# [", StringComparison.Ordinal)) == 2 &&
+                lines.Count(line => line == "# exit 0") == 2);
+            if (phase == "build") return;
+        }
+        else
+        {
+            await NameUiWait(() => status.Text?.StartsWith("Checking", StringComparison.Ordinal) == false,
+                "stored build eligibility", 180);
+            if (phase == "stale")
+            {
+                Verify("changed scene source requires explicit Build", !open.IsEnabled && build.IsEnabled &&
+                    status.Text!.Contains("source or catalog fragment changed", StringComparison.Ordinal), status.Text!);
+                await WaitForSavedSceneCapture(evidence, phase);
+                return;
+            }
+        }
+
+        var expected = System.Text.Json.JsonSerializer.Deserialize<SavedSceneBuild>(File.ReadAllText(artifactPath))!;
+        Verify("verified the exact previous attempt", model.Result == expected && open.IsEnabled, status.Text ?? "");
+        if (phase == "reuse") await WaitForSavedSceneCapture(evidence, phase);
+        string log = Path.Combine(expected.Directory, "build.log");
+        byte[] buildLog = File.ReadAllBytes(log);
+        string attempts = Path.GetDirectoryName(expected.Directory)!;
+        var beforeAttempts = Directory.GetDirectories(attempts).Order().ToArray();
+        var known = Process.GetProcessesByName("Atlantis.Editor").Select(proc => { using (proc) return proc.Id; }).ToHashSet();
+        Click(open);
+        await NameUiWait(() => !model.Starting, "validated child launch", 180);
+        using var child = Process.GetProcessesByName("Atlantis.Editor").Single(proc => !known.Contains(proc.Id));
+        try
+        {
+            string? childSession = null;
+            await NameUiWait(() =>
+            {
+                foreach (string dir in Directory.EnumerateDirectories(Path.Combine(Path.GetTempPath(), "atlantis_editor")))
+                {
+                    string runtimeLog = Path.Combine(dir, "runtime.log");
+                    string sessionPath = Path.Combine(dir, "runtime.session.json");
+                    if (!File.Exists(runtimeLog) || !File.Exists(sessionPath)) continue;
+                    using var reader = new StreamReader(new FileStream(runtimeLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
+                    if (reader.ReadLine()?.StartsWith("# " + expected.Executable + " ", StringComparison.OrdinalIgnoreCase) == true)
+                    { childSession = sessionPath; return true; }
+                }
+                return false;
+            }, "the previous Runtime executable starts in an independent child", 120);
+            using var session = RemoteSession.Connect(SessionFile.Read(childSession!));
+            await NameUiWait(async () => await Task.Run(() => session.Authoring.Document() is not null), "child opened the saved document", 60);
+            var reopened = session.Authoring.Document()!;
+            var mesh = session.Assets.ListAssets().Value.Single(asset => asset.Source == "content:managed_sample/source.gltf#mesh/0/0").Guid;
+            var renderable = session.Authoring.ListNodes().Value.First(node => node.Name == "Build reuse managed mesh");
+            var property = SceneSchema.AddressOf(session.Authoring.Schema, renderable.Node, "Renderable", "meshAsset")!.Value;
+            Verify("independent Editor opened the expected scene and retained the managed mesh reference",
+                reopened.SourcePath.Contains("save_" + scene, StringComparison.Ordinal) &&
+                session.Authoring.GetProperty(property).Value.AsAsset() == mesh && childSession != original.SessionPath);
+            Verify("Open invoked no further configure or build", File.ReadAllBytes(log).SequenceEqual(buildLog) &&
+                Directory.GetDirectories(attempts).Order().SequenceEqual(beforeAttempts));
+            Verify("the launcher document and Runtime remain unchanged", originalSession.Authoring.Document()?.Scene == document!.Scene && !original.HasExited);
+            string childLog = Path.Combine(Path.GetDirectoryName(childSession!)!, "runtime.log");
+            using var stream = new FileStream(childLog, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var logReader = new StreamReader(stream);
+            File.WriteAllText(Path.Combine(evidence, phase + "-child-runtime.log"), await logReader.ReadToEndAsync());
+        }
+        finally
+        {
+            if (!child.HasExited) child.CloseMainWindow();
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        }
+    }
+
+    private static async Task WaitForSavedSceneCapture(string evidence, string phase)
+    {
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0123_CAPTURE") != "1") return;
+        File.WriteAllText(Path.Combine(evidence, phase + ".ready"), Environment.ProcessId.ToString());
+        await NameUiWait(() => File.Exists(Path.Combine(evidence, phase + ".captured")), "native screenshot", 90);
     }
 
 }
