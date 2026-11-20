@@ -3305,7 +3305,13 @@ public sealed class EditorWorker : IDisposable
                 if (receipt.Document.Scene != reviewed.Scene || receipt.Document.Source != reviewed.Source ||
                     receipt.Document.Provenance != reviewed.Provenance)
                     return new(Diagnostic: "ProtocolError: recovery outcome unknown. Check the original Runtime.", Unknown: true);
-                // Publish local settlement independently of subsequent refresh or connection failure.
+                // Publish verified persistence before refreshing the hierarchy or projection.
+                var observed = new DocumentObservation(DocumentAvailability.Known, receipt.Document);
+                if (_persistence != observed)
+                {
+                    _persistence = observed;
+                    _post(() => PersistenceChanged?.Invoke(observed));
+                }
                 Enqueue(current =>
                 {
                     PollDocument(current, pollApply: false);

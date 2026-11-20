@@ -381,8 +381,10 @@ public static partial class Program
             await Capture(dialog, "restore-preview");
             Click(restore);
             await NameUiWait(() => observer.Authoring.DocumentState().Value is { Dirty: true } restored &&
-                restored.Token.DocumentId != before.Token.DocumentId && Field<Button>("_retryApply").IsEnabled,
-                "restore creates a fresh dirty document");
+                restored.Token.DocumentId != before.Token.DocumentId && Field<Button>("_retryApply").IsEnabled &&
+                Field<TextBlock>("_documentLine").Text?.Contains("unsaved changes", StringComparison.Ordinal) == true &&
+                Field<TextBlock>("_applyLine").Text?.Contains("apply current document", StringComparison.Ordinal) == true,
+                "restore displays a fresh dirty document with explicit Apply available");
             Verify("Restored selection identities, copy and value without auto Apply or Save or inherited Undo",
                 document.GetProperty(material)!.Value.AsAsset() == recovered && observer.Authoring.ListNodes().Value.Any(row => row.Node == node) &&
                 beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)) && observer.Authoring.ApplyStatus().Value!.Request is null &&
