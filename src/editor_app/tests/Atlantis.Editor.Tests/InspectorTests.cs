@@ -314,6 +314,9 @@ public static partial class Program
                 NameUiKey(editor, Key.Enter);
                 await NameUiWait(() => observer.Authoring.ApplyStatus().Value?.Request is
                     { State: ApplyState.Failed, Error: ReloadError.ScenePreparationFailed }, "real Apply reload fails");
+                await NameUiWait(() => undo.IsEnabled && Field<TextBlock>("_applyLine").Text?
+                    .Contains(nameof(ReloadError.ScenePreparationFailed), StringComparison.Ordinal) == true,
+                    "Editor receives the failed Apply and committed history");
                 Verify("Failed reload keeps the authored material and old projection",
                     undo.IsEnabled && document.GetProperty(material)!.Value.AsAsset() == candidate.Guid &&
                     observer.Control.Status().SceneGeneration == projection);
