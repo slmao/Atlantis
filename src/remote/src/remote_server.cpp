@@ -639,6 +639,26 @@ struct RemoteServer::State {
       return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
           : codec::err(Value::string(std::string(ca::toString(result.error())))));
     }
+    if (name == "assets.moveTexture") {
+      namespace ca = connection::assets;
+      if (!p.isObject() || p.asObject().size() != 4 || !p.find("asset") ||
+          !p.find("expectedGeneration") || !p.find("expectedLogicalPath") || !p.find("destinationLogicalPath"))
+        return errorResponse(requestId, "BadRequest", "malformed texture move request");
+      const auto asset = codec::decodeAsset(*p.find("asset"));
+      const auto generation = codec::decodeAsset(*p.find("expectedGeneration"));
+      const auto* before = p.find("expectedLogicalPath");
+      const auto* after = p.find("destinationLogicalPath");
+      if (!asset || *asset == asset_system::AssetGuid{} || !generation || *generation == asset_system::AssetGuid{} ||
+          codec::encodeAsset(*asset) != *p.find("asset") || codec::encodeAsset(*generation) != *p.find("expectedGeneration") ||
+          !before->isString() || !after->isString())
+        return errorResponse(requestId, "BadRequest", "texture move requires two non-nil GUIDs and two logical paths");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto result = client.assets
+          ? client.assets->moveTexture({*asset, {*generation}, before->asString(), after->asString()})
+          : ca::MoveTextureResult::Err(ca::MoveTextureError::Unavailable);
+      return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
+          : codec::err(Value::string(std::string(ca::toString(result.error())))));
+    }
     if (name == "assets.rebuild" || name == "assets.rebuildStatus") {
       namespace ca = connection::assets;
       const bool start = name == "assets.rebuild";

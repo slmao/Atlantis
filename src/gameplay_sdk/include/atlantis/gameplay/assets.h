@@ -32,6 +32,10 @@ class Assets {
       const connection::assets::RenameTextureRequest& request) {
     return connection_.renameTexture(request);
   }
+  [[nodiscard]] connection::assets::MoveTextureResult moveTexture(
+      const connection::assets::MoveTextureRequest& request) {
+    return connection_.moveTexture(request);
+  }
   [[nodiscard]] connection::assets::TextureRemovalCheckResult checkTextureRemoval(
       const connection::assets::TextureRemovalTarget& target) {
     return connection_.checkTextureRemoval(target);

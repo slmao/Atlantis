@@ -291,6 +291,13 @@ public sealed class MainWindow : Window
     private string? _renameRequestContext;
     private bool _renameUnknown;
     private string _assetWriteLabel = "Rename";
+    private readonly Button _moveTexture = new() { Content = "Move…", IsVisible = false };
+    private readonly Button _movePublish = new() { Content = "Publish move" };
+    private readonly Button _moveCancel = new() { Content = "Cancel" };
+    private readonly TextBox _moveDestination = new() { PlaceholderText = "textures/folder/name.png", MaxLength = 257 };
+    private readonly SelectableTextBlock _movePaths = EditorVisuals.Details("");
+    private StackPanel? _moveEditor;
+    private GenerationId? _moveDraftGeneration;
     private readonly Button _removeRegistration = new() { Content = "Remove registration…", IsVisible = false };
     private readonly Button _confirmRemoval = new() { Content = "Confirm removal", IsVisible = false };
     private readonly Button _cancelRemoval = new() { Content = "Cancel check", IsVisible = false };
@@ -703,6 +710,7 @@ public sealed class MainWindow : Window
             {
                 _assetBrowser.CancelPendingDependents();
                 _assetBrowser.CancelRename();
+                _assetBrowser.CancelMove();
                 _assetBrowser.CancelRemoval();
                 UpdateRebuildButtons();
             }
@@ -2247,6 +2255,13 @@ public sealed class MainWindow : Window
         _renamePublish.Click += (_, _) => PublishTextureRename();
         _renameCancel.Click += (_, _) => { _assetBrowser.CancelRename(); UpdateRebuildButtons(); _renameTexture.Focus(); };
         _renameLabel.TextChanged += (_, _) => UpdateRebuildButtons();
+        _moveTexture.Click += (_, _) => BeginTextureMove();
+        _movePublish.Click += (_, _) => PublishTextureMove();
+        _moveCancel.Click += (_, _) => { _assetBrowser.CancelMove(); UpdateRebuildButtons(); _moveTexture.Focus(); };
+        _moveDestination.TextChanged += (_, _) => UpdateRebuildButtons();
+        AutomationProperties.SetName(_moveDestination, "Destination texture path");
+        _moveEditor = EditorVisuals.Stack(4, _movePaths, _moveDestination, EditorVisuals.Actions(_movePublish, _moveCancel));
+        _moveEditor.IsVisible = false;
         _removeRegistration.Click += (_, _) => BeginTextureRemoval();
         _confirmRemoval.Click += (_, _) => ConfirmTextureRemoval();
         _cancelRemoval.Click += (_, _) =>
@@ -2277,8 +2292,8 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(_referenceStatus, "Reference check status");
         AutomationProperties.SetLiveSetting(_referenceStatus, AutomationLiveSetting.Polite);
         var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
-            EditorVisuals.Stack(5, _assetTitle, EditorVisuals.Actions(_renameTexture, _removeRegistration),
-                _renameEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
+            EditorVisuals.Stack(5, _assetTitle, EditorVisuals.Actions(_renameTexture, _moveTexture, _removeRegistration),
+                _renameEditor, _moveEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
                 EditorVisuals.Actions(_viewReferences, _cancelReferences), _referenceScope, _referenceStatus,
                 _referenceResults, _locatedSlots,
                 _addMesh, _addMeshState, _previewState,
@@ -2575,7 +2590,8 @@ public sealed class MainWindow : Window
         }
         if (!_assetBrowser.SelectionVisible) return;
         if (_assetsList.SelectedItem is AssetSummary summary)
-            _assetDetails.Children.Add(EditorVisuals.Details(summary.Type + "\n" + summary.Source + "\n" + summary.Guid));
+            _assetDetails.Children.Add(EditorVisuals.Details(summary.Type + "\n" + summary.Source + "\n" + summary.Guid +
+                (AssetBrowseProjection.EffectiveLogicalPath(summary) is string location ? "\nAssets path: " + location : "")));
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
         _assetDetails.Children.Add(EditorVisuals.Details("artifact schema: " + d.ArtifactSchema + "\nsource schema: " + (d.SourceSchema?.ToString() ?? "none") + "\ntool: " + d.Tool));
@@ -3372,13 +3388,20 @@ public sealed class MainWindow : Window
             _removalState.Text = "";
         }
         _removalState.IsVisible = checkingRemoval;
-        _removeRegistration.IsVisible = name is not null && !editing && !checkingRemoval;
+        bool moving = _assetBrowser.MoveIntent is not null;
+        if (_moveEditor is not null) _moveEditor.IsVisible = moving && !_referenceSessionFailed;
+        _moveTexture.IsVisible = name is not null && !editing && !checkingRemoval && !moving;
+        _moveTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && _moveTexture.IsVisible;
+        _movePublish.IsEnabled = moving && _moveDraftGeneration is not null && available && !_rebuildRunning && !_renameUnknown &&
+            _moveDestination.Text is string destination && Codec.ValidTextureLogicalPath(destination);
+        _moveCancel.IsEnabled = moving && !_rebuildPending;
+        _removeRegistration.IsVisible = name is not null && !editing && !checkingRemoval && !moving;
         _removeRegistration.IsEnabled = available && !_rebuildRunning && !_renameUnknown;
         _confirmRemoval.IsVisible = checkingRemoval && _removalReceipt?.State == TextureRemovalState.Ready;
         _confirmRemoval.IsEnabled = _confirmRemoval.IsVisible && available && !_rebuildRunning && !_renameUnknown;
         _cancelRemoval.IsVisible = checkingRemoval;
-        _renameTexture.IsVisible = name is not null && !editing;
-        _renameTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && name is not null && !checkingRemoval;
+        _renameTexture.IsVisible = name is not null && !editing && !moving;
+        _renameTexture.IsEnabled = available && !_rebuildRunning && !_renameUnknown && name is not null && !checkingRemoval && !moving;
         if (_renameEditor is not null) _renameEditor.IsVisible = editing && !_referenceSessionFailed;
         _renamePublish.IsEnabled = editing && available && !_rebuildRunning && !_renameUnknown && Codec.ValidImportName(_renameLabel.Text);
         _renameCancel.IsEnabled = editing;
@@ -3526,6 +3549,73 @@ public sealed class MainWindow : Window
                     RenameTextureError.StaleSnapshot => "Rename refused: StaleSnapshot. Restart into the committed generation and check the asset.",
                     RenameTextureError.Unsupported => "Rename is unsupported by the connected Runtime.",
                     _ => "Rename refused: " + result?.Error,
+                });
+                if (!_renameUnknown) _renameRequestContext = null;
+            }
+            UpdateRebuildButtons();
+        });
+    }
+
+    private void BeginTextureMove()
+    {
+        if (!_moveTexture.IsEnabled || _worker is not { } worker || _assetBrowser.BeginMove() is not { } intent) return;
+        _moveDraftGeneration = null;
+        _rebuildPending = true;
+        // Discovery and status come from the same worker connection.
+        UpdateRebuildButtons();
+        worker.QueryRebuild(null, status =>
+        {
+            if (!ReferenceEquals(worker, _worker) || _referenceSessionFailed) return;
+            _rebuildPending = false;
+            if (!intent.Intent.Current) { UpdateRebuildButtons(); return; }
+            if (!status.IsOk || status.Value!.ActiveGeneration is not GenerationId generation)
+            {
+                _assetBrowser.CancelMove();
+                _rebuildState.Text = status.IsOk ? "Move requires an active named generation." :
+                    "Move requires a compatible managed Runtime: " + status.Error;
+            }
+            else if (status.Value.Job?.State == RebuildState.Running)
+            {
+                _assetBrowser.CancelMove();
+                _rebuildState.Text = "A managed asset job is running. Check its status before renaming.";
+            }
+            else
+            {
+                _activeAssetGeneration = _moveDraftGeneration = generation;
+                _movePaths.Text = "Current Assets path: " + AssetBrowseProjection.EffectiveLogicalPath(intent.Asset) + "\nOriginal input: inbox/" + AssetBrowser.RegisteredColorName(intent.Asset) + "/source.png";
+                _moveDestination.Text = AssetBrowseProjection.EffectiveLogicalPath(intent.Asset);
+            }
+            UpdateRebuildButtons();
+            if (_moveEditor?.IsVisible == true) { _moveDestination.Focus(); _moveDestination.SelectAll(); }
+        });
+    }
+
+    private void PublishTextureMove()
+    {
+        if (!_movePublish.IsEnabled || _worker is not { } worker || _assetBrowser.MoveIntent is not { } intent ||
+            _moveDraftGeneration is not GenerationId generation || _moveDestination.Text is not string destination ||
+            AssetBrowseProjection.EffectiveLogicalPath(intent.Asset) is not string expectedPath) return;
+        _rebuildPending = true; _rebuildJob = null;
+        _assetWriteLabel = "Move";
+        _renameRequestContext = $"{intent.Asset.Guid} in generation {generation} to '{destination}'";
+        _rebuildState.Text = "Requesting move…";
+        UpdateRebuildButtons();
+        worker.MoveTexture(intent, generation, expectedPath, destination, (result, diagnostic) =>
+        {
+            if (!ReferenceEquals(worker, _worker)) return;
+            _rebuildPending = false;
+            _assetBrowser.CancelMove();
+            _moveDraftGeneration = null;
+            if (result is { IsOk: true } accepted) ShowRebuild(accepted.Value!);
+            else
+            {
+                _renameUnknown = diagnostic?.Contains("outcome unknown", StringComparison.Ordinal) == true;
+                _rebuildState.Text = diagnostic ?? (result?.Error switch
+                {
+                    MoveTextureError.PathConflict => "Move refused: PathConflict. Choose a vacant Assets path.",
+                    MoveTextureError.StaleSnapshot => "Move refused: StaleSnapshot. Restart into the committed generation and check the asset.",
+                    MoveTextureError.Unsupported => "Move is unsupported by the connected Runtime.",
+                    _ => "Move refused: " + result?.Error,
                 });
                 if (!_renameUnknown) _renameRequestContext = null;
             }

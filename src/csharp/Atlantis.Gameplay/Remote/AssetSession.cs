@@ -110,6 +110,40 @@ public sealed class AssetSession
         }
     }
 
+    public Outcome<A.RebuildJob, A.MoveTextureError> MoveTexture(AssetGuid asset, A.GenerationId expectedGeneration, string expectedLogicalPath, string destinationLogicalPath)
+    {
+        if (asset.IsNil || expectedGeneration.Value.IsNil) throw new ArgumentException("non-nil asset and generation GUIDs are required");
+        ArgumentNullException.ThrowIfNull(expectedLogicalPath);
+        ArgumentNullException.ThrowIfNull(destinationLogicalPath);
+        _session.ThrowIfFailed(); // Known not sent.
+        const string method = "assets.moveTexture";
+        var request = JsonValue.NewObject().Set("asset", Codec.Encode(asset))
+            .Set("expectedGeneration", Codec.Encode(expectedGeneration.Value)).Set("expectedLogicalPath", JsonValue.String(expectedLogicalPath))
+            .Set("destinationLogicalPath", JsonValue.String(destinationLogicalPath));
+        try
+        {
+            var response = _session.AwaitResponse(_session.Send(method, request));
+            if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1 ||
+                Codec.CountMember(response, "error") + Codec.CountMember(response, "result") != 1)
+                throw _session.Malformed(method);
+            if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+                Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                Codec.IsLegacyAssetRebuildRefusal(response))
+                return Outcome<A.RebuildJob, A.MoveTextureError>.Err(A.MoveTextureError.Unsupported);
+            if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1 ||
+                Codec.CountMember(result, "ok") + Codec.CountMember(result, "err") != 1)
+                throw _session.Malformed(method);
+            return _session.InBand<A.RebuildJob, A.MoveTextureError>(result, method,
+                value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job && job.Asset == asset ? job : null,
+                Codec.DecodeMoveTextureError);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Texture move outcome unknown for {asset} in generation {expectedGeneration.Value} to '{destinationLogicalPath}'. " +
+                "Inspect the workspace and generations, and confirm the previous request settled before retrying.");
+        }
+    }
+
     public Outcome<A.TextureRemovalCheck, A.TextureRemovalError> CheckTextureRemoval(
         AssetGuid asset, A.GenerationId expectedGeneration) =>
         AssetRequest("assets.checkTextureRemoval", RemovalTarget(asset, expectedGeneration),

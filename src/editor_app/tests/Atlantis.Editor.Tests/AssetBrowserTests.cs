@@ -21,6 +21,20 @@ public static partial class Program
               EditorVisuals.AssetName(color with { Source = "content:texture_sign/occlusion.png" }) == "sign",
             "assets: new color label preserves ordinary filenames and managed occlusion labels");
         var renamed = color with { DisplayName = "renamed_blue" };
+        var moved = renamed with { LogicalPath = "textures/outside/sign.png" };
+        var locations = new AssetBrowser();
+        locations.CompleteList(locations.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([moved, alternate]));
+        locations.Search = "textures/outside/sign.png";
+        Check(locations.Visible.Single() == moved && AssetBrowseProjection.EffectiveLogicalPath(alternate) == "textures/panel.png",
+            "move: exact path finds the original asset and unmoved textures have a default path");
+        locations.Select(a);
+        var move = locations.BeginMove()!;
+        locations.Search = "textures/sign.png";
+        Check(locations.Visible.Count == 0 && !move.Intent.Current && locations.MoveIntent is null,
+            "move: old location is absent and hiding cancels a queued move");
+        locations.Search = "texture_sign/source.png";
+        Check(locations.Visible.Single().Guid == a && AssetBrowser.RegisteredColorName(moved) == "sign",
+            "move: original producer source and inbox token still resolve");
         var names = new AssetBrowser();
         var renamedList = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([renamed, alternate]);
         names.CompleteList(names.BeginList(), renamedList);

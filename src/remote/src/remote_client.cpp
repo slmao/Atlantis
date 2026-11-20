@@ -586,6 +586,32 @@ class RemoteAssets final : public connection::AssetConnection {
     state_.fail(RemoteError::ProtocolError);
     return R::Err(E::Unavailable);
   }
+  ca::MoveTextureResult moveTexture(const ca::MoveTextureRequest& request) override {
+    ATLANTIS_CHECK(request.asset != AssetGuid{} && request.expectedGeneration.value != AssetGuid{});
+    Value params = Value::object();
+    params.set("asset", codec::encodeAsset(request.asset));
+    params.set("expectedGeneration", codec::encodeAsset(request.expectedGeneration.value));
+    params.set("expectedLogicalPath", Value::string(request.expectedLogicalPath));
+    params.set("destinationLogicalPath", Value::string(request.destinationLogicalPath));
+    using R = ca::MoveTextureResult;
+    using E = ca::MoveTextureError;
+    const auto envelope = state_.awaitResponse(state_.send("assets.moveTexture", std::move(params)));
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
+      if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+        if (const auto* ok = result->find("ok")) {
+          auto job = codec::decodeRebuildJob(*ok);
+          if (job && job->asset == request.asset && job->state == ca::RebuildState::Running) return R::Ok(std::move(*job));
+        } else if (const auto* err = result->find("err")) {
+          if (auto reason = codec::decodeMoveTextureError(*err, true)) return R::Err(*reason);
+        }
+      } else if (const auto* err = envelope->find("error"); err && err->isObject() && err->asObject().size() == 2 &&
+                 memberCount(*err, "code") == 1 && memberCount(*err, "message") == 1 && legacyAssetRefusal(*err)) {
+        return R::Err(E::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(E::Unavailable);
+  }
   ca::TextureRemovalCheckResult checkTextureRemoval(const ca::TextureRemovalTarget& target) override {
     ATLANTIS_CHECK(target.asset != AssetGuid{} && target.expectedGeneration.value != AssetGuid{});
     Value params = Value::object();

@@ -28,11 +28,12 @@ Value encode(const connection::assets::AssetSummary& v) {
   out.set("guid", encodeAsset(v.guid));
   out.set("type", Value::string(std::string(connection::assets::toString(v.type))));
   out.set("source", Value::string(v.source));
+  if (v.logicalPath) out.set("logicalPath", Value::string(*v.logicalPath));
   if (v.displayName) out.set("displayName", Value::string(*v.displayName));
   return out;
 }
 Value encode(const connection::assets::AssetDetails& v) {
-  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source, v.displayName});
+  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source, v.displayName, v.logicalPath});
   out.set("artifactSchema", Value::number(static_cast<std::uint64_t>(v.artifactSchema)));
   out.set("sourceSchema", v.sourceSchema ? Value::number(static_cast<std::uint64_t>(*v.sourceSchema)) : Value());
   out.set("tool", Value::string(v.tool));
@@ -57,7 +58,19 @@ std::optional<connection::assets::AssetSummary> decodeAssetSummary(const Value& 
         !connection::assets::validImportName(field.asString())) return std::nullopt;
     displayName = field.asString();
   }
-  return connection::assets::AssetSummary{*guid, *type, s->asString(), std::move(displayName)};
+  std::optional<std::string> logicalPath;
+  for (const auto& [key, field] : v.asObject()) {
+    if (key != "logicalPath") continue;
+    const std::string_view source = s->asString();
+    constexpr std::string_view prefix = "content:texture_", suffix = "/source.png";
+    if (logicalPath || *type != connection::assets::AssetType::Texture || !field.isString() ||
+        !source.starts_with(prefix) || !source.ends_with(suffix) ||
+        source.size() <= prefix.size() + suffix.size() ||
+        !connection::assets::validImportName(source.substr(prefix.size(), source.size() - prefix.size() - suffix.size())) ||
+        !connection::assets::validTextureLogicalPath(field.asString())) return std::nullopt;
+    logicalPath = field.asString();
+  }
+  return connection::assets::AssetSummary{*guid, *type, s->asString(), std::move(displayName), std::move(logicalPath)};
 }
 std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& v) {
   auto summary = decodeAssetSummary(v);
@@ -81,7 +94,7 @@ std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& 
     deps.push_back(*guid);
   }
   return connection::assets::AssetDetails{summary->guid, summary->type, summary->source,
-      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps), std::move(summary->displayName)};
+      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps), std::move(summary->displayName), std::move(summary->logicalPath)};
 }
 std::optional<connection::assets::AssetError> decodeAssetError(const Value& v) {
   if (!v.isString()) return std::nullopt;
@@ -173,6 +186,14 @@ std::optional<ca::RebuildStatus> decodeRebuildStatus(const Value& value) {
   }
   if (!job->isNull() && !(out.job = decodeRebuildJob(*job))) return std::nullopt;
   return out;
+}
+std::optional<ca::MoveTextureError> decodeMoveTextureError(const Value& value, bool) {
+  if (!value.isString()) return std::nullopt;
+  for (unsigned i = 0; i <= static_cast<unsigned>(ca::MoveTextureError::Unchanged); ++i) {
+    const auto error = static_cast<ca::MoveTextureError>(i);
+    if (value.asString() == ca::toString(error)) return error;
+  }
+  return std::nullopt;
 }
 std::optional<ca::RenameTextureError> decodeRenameTextureError(const Value& value, bool) {
   if (!value.isString()) return std::nullopt;

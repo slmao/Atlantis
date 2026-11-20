@@ -26,6 +26,18 @@ public static class AssetCodecSuite
         t.Check(Codec.DecodeAssetError(JsonValue.String("wrong")) is null, "closed asset errors");
         var renamed = new A.AssetSummary(guid, A.AssetType.Texture, "content:texture_probe/source.png") { DisplayName = "blue_probe" };
         t.Equal<A.AssetSummary?>(renamed, Codec.DecodeAssetSummary(Codec.Encode(renamed)), "texture label leaves source and GUID alone");
+        var moved = renamed with { LogicalPath = "textures/outside/brick.png" };
+        t.Equal<A.AssetSummary?>(moved, Codec.DecodeAssetSummary(Codec.Encode(moved)), "logical texture path is additive");
+        t.Check(Codec.DecodeAssetSummary(Codec.Encode(moved with { Type = A.AssetType.Material })) is null &&
+            Codec.DecodeAssetSummary(Codec.Encode(moved).Set("logicalPath", JsonValue.Null())) is null &&
+            Codec.DecodeAssetSummary(Json.Parse(Json.Write(Codec.Encode(moved))[..^1] + ",\"logicalPath\":\"textures/x.png\"}")) is null,
+            "only a unique valid string can carry a managed texture path");
+        t.Check(Codec.ValidTextureLogicalPath("textures/a/b/c/d/brick.png") &&
+            !Codec.ValidTextureLogicalPath("textures/a/b/c/d/e/brick.png") &&
+            !Codec.ValidTextureLogicalPath("textures/a/../brick.png") && !Codec.ValidTextureLogicalPath("textures/A/brick.png"),
+            "logical paths use canonical bounded segments");
+        foreach (A.MoveTextureError error in Enum.GetValues<A.MoveTextureError>())
+            t.Equal<A.MoveTextureError?>(error, Codec.DecodeMoveTextureError(JsonValue.String(error.ToString())), "move refusal " + error);
         t.Check(Codec.DecodeAssetSummary(Codec.Encode(renamed with { DisplayName = null }))?.DisplayName is null,
             "legacy asset summaries omit the name");
         t.Check(Codec.DecodeAssetSummary(Codec.Encode(renamed).Set("displayName", JsonValue.Null())) is null &&
@@ -36,6 +48,7 @@ public static class AssetCodecSuite
             t.Equal<A.RenameTextureError?>(error, Codec.DecodeRenameTextureError(JsonValue.String(error.ToString())), "rename refusal " + error);
         TextureWriteReceipts(t, guid, remove: false);
         TextureWriteReceipts(t, guid, remove: true);
+        TextureWriteReceipts(t, guid, remove: false, move: true);
         JsonValue missingSchema = Codec.Encode(new A.AssetSummary(guid, A.AssetType.Mesh, "assets:mesh.txt"))
             .Set("artifactSchema", JsonValue.Number(0UL)).Set("tool", JsonValue.String("test/1")).Set("dependencies", JsonValue.NewArray());
         t.Check(Codec.DecodeAssetDetails(missingSchema) is null, "sourceSchema is required even when absent natively");
@@ -67,11 +80,12 @@ public static class AssetCodecSuite
         PairPreview(t, guid);
     }
 
-    private static void TextureWriteReceipts(TestContext t, AssetGuid asset, bool remove)
+    private static void TextureWriteReceipts(TestContext t, AssetGuid asset, bool remove, bool move = false)
     {
-        string writeMethod = remove ? "assets.removeTexture" : "assets.renameTexture";
-        string field = remove ? "checkId" : "displayName";
-        string argument = remove ? asset.ToString() : "blue_probe";
+        const string previousPath = "textures/probe.png", destination = "textures/outside/brick.png";
+        string writeMethod = move ? "assets.moveTexture" : remove ? "assets.removeTexture" : "assets.renameTexture";
+        string field = move ? "destinationLogicalPath" : remove ? "checkId" : "displayName";
+        string argument = move ? destination : remove ? asset.ToString() : "blue_probe";
         foreach (string scenario in new[] { "lost", "malformed", "legacy" })
         {
             using var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
@@ -96,7 +110,8 @@ public static class AssetCodecSuite
                     {
                         if (method != writeMethod || request.Find("params")?.Find(field)?.AsString != argument ||
                             request.Find("params")?.Find("asset")?.AsString != asset.ToString() ||
-                            request.Find("params")?.Find("expectedGeneration")?.AsString != asset.ToString())
+                            request.Find("params")?.Find("expectedGeneration")?.AsString != asset.ToString() ||
+                            (move && request.Find("params")?.Find("expectedLogicalPath")?.AsString != previousPath))
                             throw new InvalidOperationException("unexpected texture method or identity");
                         if (scenario == "malformed") writer.WriteLine(Json.Write(envelope.Set("result", Codec.Ok(JsonValue.NewObject()))));
                         if (scenario == "legacy") writer.WriteLine(Json.Write(envelope.Set("error", JsonValue.NewObject()
@@ -109,7 +124,8 @@ public static class AssetCodecSuite
             });
             using var client = RemoteSession.Connect(new SessionInfo((ushort)((System.Net.IPEndPoint)listener.LocalEndpoint).Port,
                 "00112233445566778899aabbccddeeff", 1, asset), new RemoteOptions { ResponseTimeoutMilliseconds = 5000 });
-            string Send() => remove ? client.Assets.RemoveTexture(asset, new(asset), new(asset)).Error.ToString()
+            string Send() => move ? client.Assets.MoveTexture(asset, new(asset), previousPath, destination).Error.ToString()
+                : remove ? client.Assets.RemoveTexture(asset, new(asset), new(asset)).Error.ToString()
                 : client.Assets.RenameTexture(asset, new(asset), "blue_probe").Error.ToString();
             if (scenario == "legacy")
                 t.Equal("Unsupported", Send(),

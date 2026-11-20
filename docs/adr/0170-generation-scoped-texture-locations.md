@@ -1,9 +1,9 @@
 # ADR 0170 — Store Texture Locations with Immutable Generations
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-20
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Atlantis maintainer, 2026-11-20, [PR #405](https://github.com/slmao/Atlantis/pull/405) at `491e5b0c`, manually merged as `87e9beb9`.
 - **Related Spec:** [Spec 0120](../specs/0120-registered-texture-move.md)
 
 ## Context

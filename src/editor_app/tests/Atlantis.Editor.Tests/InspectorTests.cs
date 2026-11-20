@@ -73,13 +73,14 @@ public static partial class Program
             exit = 1;
         }
         bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
-        if ((meshPreview || scene == "--texture-references") && work is not null) CheckMeshPreviewValidation(work, checks);
+        if ((meshPreview || scene is "--texture-references" or "--texture-move") && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
+            boundary = scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
+                : scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
                 : scene is "--texture-reimport" or "--texture-rename"
                 ? "Actual 96-DPI Windows MainWindow and hosted Runtime; routed controls, shared preview PNG and optional native window captures."
                 : scene is "--asset-drag" or "--asset-drag-compact"
@@ -122,6 +123,7 @@ public static partial class Program
                 bool rebuild = _scene == "--asset-rebuild";
                 bool reimport = _scene is "--texture-reimport" or "--texture-rename";
                 bool references = _scene == "--texture-references";
+                bool moveTexture = _scene == "--texture-move";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
                 bool meshPreview = _scene == "--mesh-preview";
@@ -133,7 +135,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -144,11 +146,13 @@ public static partial class Program
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_PROFILE") :
+                        moveTexture ? Environment.GetEnvironmentVariable("ATLANTIS_0120_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
                     AssetGeneration = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_GENERATION") :
+                        moveTexture ? Environment.GetEnvironmentVariable("ATLANTIS_0120_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
@@ -168,6 +172,7 @@ public static partial class Program
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else if (reimport) await CheckTextureReimportUi(window, _checks, _work);
                         else if (references) await CheckTextureReferenceUi(window, _checks, _work);
+                        else if (moveTexture) await CheckTextureMoveUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
@@ -205,6 +210,147 @@ public static partial class Program
         ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
             .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
         return row.Children.OfType<TextBox>().Single();
+    }
+
+    private static async Task CheckTextureMoveUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        void Verify(string name, bool ok)
+        {
+            checks.Add(new(name, ok));
+            if (!ok) throw new InvalidOperationException(name);
+        }
+        const string oldPath = "textures/probe_color.png", newPath = "textures/exterior/brick.png";
+        string phase = Environment.GetEnvironmentVariable("ATLANTIS_0120_PHASE") ?? throw new InvalidOperationException();
+        string folder = Environment.GetEnvironmentVariable("ATLANTIS_0120_EVIDENCE") ?? throw new InvalidOperationException();
+        var texture = AssetGuid.Parse("01160116-0001-4116-8116-011601160001");
+        var material = AssetGuid.Parse("01160116-0002-4116-8116-011601160002");
+        var other = AssetGuid.Parse("f25220de-aee8-4e9b-b5ab-edbae1de5a36");
+        var mesh = AssetGuid.Parse("58e57a64-ad60-4925-b6d6-6561540e8476");
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } running && File.Exists(running.SessionPath) &&
+            Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "move Runtime", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        Verify("Windows 100% hosted Runtime", window.IsVisible &&
+            GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && runtime.Launch.ParentWindow is not null);
+        using var peer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        var active = peer.Assets.RebuildStatus().Value.ActiveGeneration!.Value;
+        Verify("explicit named generation", active.ToString() == Environment.GetEnvironmentVariable("ATLANTIS_0120_GENERATION"));
+        var scene = peer.Authoring.DocumentState().Value;
+        var recipe = peer.Assets.MaterialReadWithCombinedMaps(material).Value.Recipe;
+        Verify("shared base and emissive slots retain their GUID", recipe.Values.Texture == texture && recipe.Values.EmissiveTexture == texture);
+        var browser = Field<AssetBrowser>("_assetBrowser");
+        var list = Field<ListBox>("_assetsList");
+        var search = Field<TextBox>("_assetSearch");
+        var state = Field<TextBlock>("_rebuildState");
+        var details = peer.Assets.GetAsset(texture).Value;
+        bool SameDetails() => Json.Write(Codec.Encode(peer.Assets.GetAsset(texture).Value)) == Json.Write(Codec.Encode(details));
+        string activePath = phase == "move" ? oldPath : newPath;
+        Verify("list/get agree on location and preserve source identity", details.LogicalPath == (phase == "move" ? null : newPath) &&
+            details.Source == "content:texture_probe_color/source.png" &&
+            peer.Assets.ListAssets().Value.Single(row => row.Guid == texture).LogicalPath == details.LogicalPath);
+        Field<TabControl>("_assetTabs").SelectedIndex = 1;
+        await NameUiWait(() => browser.State == "Ready", "Assets ready");
+        void Select(string path, AssetGuid guid)
+        {
+            search.Text = path;
+            list.SelectedItem = browser.Visible.Single(row => row.Guid == guid);
+        }
+        Select(activePath, texture);
+        if (phase == "move")
+        {
+            var move = Field<Button>("_moveTexture");
+            Click(move);
+            var submit = Field<Button>("_movePublish");
+            var destination = Field<TextBox>("_moveDestination");
+            await NameUiWait(() => submit.IsEnabled, "move form ready");
+            Verify("move form shows original inbox", destination.Text == oldPath &&
+                Field<SelectableTextBlock>("_movePaths").Text!.Contains("inbox/probe_color/source.png", StringComparison.Ordinal));
+            destination.Text = newPath;
+            await Capture("move-form", destination);
+            Click(submit);
+            var job = await WaitJob();
+            WriteId("moved", job);
+            Verify("old window keeps its location after successful publication", SameDetails() &&
+                browser.Visible.Single().Guid == texture && state.Text!.Contains("Restart Runtime explicitly"));
+            await Capture("move-published", state);
+        }
+        else
+        {
+            search.Text = oldPath;
+            Verify("old logical path is absent after explicit restart", browser.Visible.Count == 0);
+            Select(newPath, texture);
+            await Capture("found-at-new-path", list);
+            if (phase == "reimport")
+            {
+                var conflict = peer.Assets.MoveTexture(other, active, "textures/probe_other.png", newPath);
+                var stale = peer.Assets.MoveTexture(texture, active, oldPath, "textures/elsewhere/brick.png");
+                Verify("target conflict and stale path refuse without changing either asset", !conflict.IsOk &&
+                    conflict.Error == MoveTextureError.PathConflict && !stale.IsOk && stale.Error == MoveTextureError.StaleSnapshot &&
+                    SameDetails() && peer.Assets.GetAsset(other).Value.LogicalPath is null &&
+                    peer.Assets.RebuildStatus().Value.Job is null);
+            }
+            foreach (var slot in new[] { TextureReferenceSlot.BaseColor, TextureReferenceSlot.Emissive })
+            {
+                Select(newPath, texture);
+                var view = Field<Button>("_viewReferences");
+                await NameUiWait(() => view.IsEnabled, "reference action ready");
+                Click(view);
+                await NameUiWait(() => browser.DependentResult is not null, "direct references complete");
+                var results = Field<ListBox>("_referenceResults");
+                var row = browser.DependentResult!.Matches.Single(r => r.Material.Guid == material && r.Slot == slot);
+                results.ScrollIntoView(row);
+                await NameUiWait(() => results.ContainerFromItem(row) is ListBoxItem, "reference result realized");
+                Click(((ListBoxItem)results.ContainerFromItem(row)!).GetVisualDescendants().OfType<Button>().Single());
+                await NameUiWait(() => browser.LocatedReference?.Slot == slot &&
+                    Field<StackPanel>("_locatedSlots").Children.OfType<TextBox>().Any(b => b.IsFocused && Equals(b.Tag, slot)), "slot focused");
+                Verify("View References focuses original " + slot, browser.Selected == material);
+                if (phase == "reimport") await Capture("located-" + slot, Field<StackPanel>("_locatedSlots"));
+            }
+            var preview = peer.Assets.PreviewMeshMaterial(mesh, material);
+            Verify("shared material preview succeeded", preview.IsOk);
+            File.WriteAllBytes(Path.Combine(folder, phase + "-preview.png"), preview.Value.PngBytes);
+            if (phase == "reimport")
+            {
+                Select(newPath, texture);
+                var source = Field<TextBlock>("_reimportInput");
+                Verify("Reimport PNG still shows the original inbox", source.Text!.Contains("inbox/probe_color/source.png"));
+                File.Copy(Path.Combine(folder, "replacement.png"), Path.Combine(
+                    Environment.GetEnvironmentVariable("ATLANTIS_0120_PROJECT")!, "inbox", "probe_color", "source.png"), overwrite: true);
+                Click(Field<Button>("_rebuildStart"));
+                var job = await WaitJob();
+                Verify("reimport retains the old active view until restart", peer.Assets.GetAsset(texture).Value.LogicalPath == newPath);
+                WriteId("reimported", job);
+                await Capture("reimport-published", state);
+            }
+            else
+                Verify("reopened preview changed after original inbox reimport", !preview.Value.PngBytes.SequenceEqual(
+                    File.ReadAllBytes(Path.Combine(folder, "reimport-preview.png"))));
+        }
+        Verify("scene and material authoring stay unchanged", peer.Authoring.DocumentState().Value == scene &&
+            peer.Assets.MaterialReadWithCombinedMaps(material).Value.Recipe == recipe);
+
+        async Task<RebuildJob> WaitJob()
+        {
+            await NameUiWait(() => state.Text?.Contains("Succeeded") == true || state.Text?.Contains("Failed") == true ||
+                state.Text?.Contains("refused", StringComparison.OrdinalIgnoreCase) == true, "publication settled", 180);
+            if (state.Text!.Contains("Failed") || state.Text.Contains("refused", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException(state.Text);
+            var job = peer.Assets.RebuildStatus().Value.Job!;
+            Verify("one successful job for the target GUID", job.State == RebuildState.Succeeded && job.Asset == texture && job.Generation is not null);
+            return job;
+        }
+        void WriteId(string name, RebuildJob job) => File.WriteAllText(Path.Combine(folder, name + ".generation"), job.Generation!.Value.ToString());
+        async Task Capture(string name, Control surface)
+        {
+            if (Environment.GetEnvironmentVariable("ATLANTIS_0120_CAPTURE") != "1") return;
+            window.Activate();
+            surface.BringIntoView();
+            string path = Path.Combine(folder, phase + "-" + name);
+            File.WriteAllText(path + ".ready", runtime.Launch.WorkDirectory);
+            await NameUiWait(() => File.Exists(path + ".done"), "native capture " + name, 180);
+        }
     }
 
     private static async Task CheckTextureReferenceUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)

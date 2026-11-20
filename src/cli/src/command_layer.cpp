@@ -945,6 +945,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return reply;
     }
     const bool rebuild = t.size() > 1 && t[1] == "rebuild";
+    const bool move = t.size() > 1 && t[1] == "move-texture";
     const bool rename = t.size() > 1 && t[1] == "rename-texture";
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
     const bool import = t.size() > 1 && t[1] == "import";
@@ -958,9 +959,10 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool texture = occlusionImport || normalImport || packedImport || (t.size() > 1 && t[1] == "texture-import");
     const bool textureStatus = occlusionStatus || normalStatus || packedStatus || (t.size() > 1 && t[1] == "texture-import-status");
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
-    if (!((rename && t.size() == 5) || (rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
+    if (!((move && t.size() == 6) || (rename && t.size() == 5) || (rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
           ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
-      return failed(command, usageError("assets rename-texture <GUID> <ExpectedGeneration> <DisplayName> | "
+      return failed(command, usageError("assets move-texture <GUID> <ExpectedGeneration> <ExpectedPath> <DestinationPath> | "
+                                         "assets rename-texture <GUID> <ExpectedGeneration> <DisplayName> | "
                                          "assets rebuild <GUID> | assets rebuild-status [<JobId>] | "
                                          "assets import <name> [--resume] | assets import-status [<JobId>] | "
                                          "assets texture-import <name> [--resume] | assets texture-import-status [<JobId>] | "
@@ -1043,6 +1045,21 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         reply.result.set("asset", Value::string(std::string(t[2])));
         reply.result.set("expectedGeneration", Value::string(std::string(t[3])));
         reply.result.set("displayName", Value::string(std::string(t[4])));
+      }
+      return reply;
+    }
+    if (move) {
+      const auto asset = asset_system::parseAssetGuid(t[2]);
+      const auto generation = asset_system::parseAssetGuid(t[3]);
+      if (asset.isErr() || generation.isErr() || asset_system::toString(asset.value()) != t[2] ||
+          asset_system::toString(generation.value()) != t[3])
+        return failed(command, usageError("assets move-texture <GUID> <ExpectedGeneration> <ExpectedPath> <DestinationPath>"));
+      auto reply = renderStart(endpoint->moveTexture({asset.value(), {generation.value()}, std::string(t[4]), std::string(t[5])}));
+      if (reply.error) {
+        reply.result = Value::object();
+        reply.result.set("asset", Value::string(std::string(t[2])));
+        reply.result.set("expectedGeneration", Value::string(std::string(t[3])));
+        reply.result.set("destinationLogicalPath", Value::string(std::string(t[5])));
       }
       return reply;
     }
@@ -1143,6 +1160,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       out.set("type", Value::string(std::string(connection::assets::toString(v.type))));
       out.set("source", Value::string(v.source));
       if (v.displayName) out.set("displayName", Value::string(*v.displayName));
+      if (v.logicalPath) out.set("logicalPath", Value::string(*v.logicalPath));
       return out;
     };
     if (guid) {
@@ -1164,7 +1182,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     for (const auto& item : result.value()) {
       items.push(summaryJson(item));
       human += asset_system::toString(item.guid) + " " + std::string(connection::assets::toString(item.type)) + " " + item.source +
-          (item.displayName ? "  (display: " + *item.displayName + ")" : "") + "\n";
+          (item.displayName ? "  (display: " + *item.displayName + ")" : "") +
+          (item.logicalPath ? "  (location: " + *item.logicalPath + ")" : "") + "\n";
     }
     return done(command, std::move(human), std::move(items));
   }

@@ -50,9 +50,12 @@ class AssetRebuildHost {
       asset_system::AssetGuid asset, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::RebuildStatusResult status(
       std::optional<connection::assets::RebuildId> id) const;
+  [[nodiscard]] std::optional<std::string> logicalPath(asset_system::AssetGuid asset) const;
   [[nodiscard]] std::optional<std::string> displayName(asset_system::AssetGuid asset) const;
   [[nodiscard]] connection::assets::RenameTextureResult renameTexture(
       const connection::assets::RenameTextureRequest& request, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::MoveTextureResult moveTexture(
+      const connection::assets::MoveTextureRequest& request, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::TextureRemovalCheckResult checkTextureRemoval(
       const connection::assets::TextureRemovalTarget& target, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::TextureRemovalCheckResult textureRemovalCheckStatus(

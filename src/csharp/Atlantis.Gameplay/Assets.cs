@@ -8,11 +8,13 @@ public enum AssetError { CatalogUnavailable, UnknownAsset }
 public sealed record AssetSummary(AssetGuid Guid, AssetType Type, string Source)
 {
     public string? DisplayName { get; init; }
+    public string? LogicalPath { get; init; }
 }
 public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source, uint ArtifactSchema,
                                   uint? SourceSchema, string Tool, IReadOnlyList<AssetGuid> Dependencies)
 {
     public string? DisplayName { get; init; }
+    public string? LogicalPath { get; init; }
 }
 
 public enum PreviewError
@@ -45,6 +47,11 @@ public enum RenameTextureError
 {
     Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
     UnsupportedProducer, InvalidName, NameConflict, StaleSnapshot, Unchanged,
+}
+public enum MoveTextureError
+{
+    Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+    UnsupportedProducer, InvalidPath, PathConflict, StaleSnapshot, Unchanged,
 }
 public readonly record struct TextureRemovalCheckId(AssetGuid Value);
 public enum TextureRemovalError

@@ -48,10 +48,11 @@ struct AssetHost::State final : connection::AssetConnection {
         case as::CatalogAssetType::GltfImport: ATLANTIS_CHECK(false); break;
       }
       details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies,
-                          rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt});
+                          rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt,
+                          rebuild_ ? rebuild_->logicalPath(r.guid) : std::nullopt});
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
-    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName});
+    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName, d.logicalPath});
     catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
@@ -134,6 +135,11 @@ struct AssetHost::State final : connection::AssetConnection {
     if (!rebuild_) return ac::RenameTextureResult::Err(ac::RenameTextureError::Unavailable);
     initialize();
     return rebuild_->renameTexture(request, catalog_);
+  }
+  ac::MoveTextureResult moveTexture(const ac::MoveTextureRequest& request) override {
+    if (!rebuild_) return ac::MoveTextureResult::Err(ac::MoveTextureError::Unavailable);
+    initialize();
+    return rebuild_->moveTexture(request, catalog_);
   }
   ac::TextureRemovalCheckResult checkTextureRemoval(const ac::TextureRemovalTarget& target) override {
     if (!rebuild_) return ac::TextureRemovalCheckResult::Err(ac::TextureRemovalError::Unavailable);
@@ -329,6 +335,9 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
   ac::RenameTextureResult renameTexture(const ac::RenameTextureRequest& request) override {
     return host_.renameTexture(request);
+  }
+  ac::MoveTextureResult moveTexture(const ac::MoveTextureRequest& request) override {
+    return host_.moveTexture(request);
   }
   ac::TextureRemovalCheckResult checkTextureRemoval(const ac::TextureRemovalTarget& target) override {
     return host_.checkTextureRemoval(target);
