@@ -50,6 +50,8 @@ constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
 constexpr std::string_view kMaterialSources = "assets/managed-material-sources";
 constexpr std::string_view kMaterialLeaf = "source.material.txt";
 constexpr std::string_view kTextureSources = "assets/managed-texture-sources";
+constexpr std::string_view kTextureLocations = "texture-locations.json";
+constexpr DWORD kLocationBytes = 2 * 1024 * 1024;
 constexpr std::string_view kTextureNames = "texture-display-names.json";
 constexpr DWORD kNameBytes = 512 * 1024;
 constexpr std::size_t kNameLimit = 4096;
@@ -345,10 +347,45 @@ std::optional<TextureNames> parseNames(const json::Value& value, const Textures&
 std::string nameBytes(const TextureNames& names) {
   return names.empty() ? std::string{} : json::write(nameValue(names));
 }
+using TextureLocations = TextureNames;
+
+std::string fallbackPath(std::string_view token) {
+  return "textures/" + std::string(token) + ".png";
+}
+std::string effectiveLogicalPath(const TextureLocations& locations, as::AssetGuid guid, std::string_view token) {
+  const auto found = locations.find(guid);
+  return found == locations.end() ? fallbackPath(token) : found->second;
+}
+bool pathClaimed(const TextureLocations& locations, const Textures& textures, as::AssetGuid except,
+                 std::string_view path) {
+  return std::ranges::any_of(textures, [&](const auto& entry) {
+    const auto& [token, unit] = entry;
+    return unit.kind == TextureKind::Color && unit.guid != except && effectiveLogicalPath(locations, unit.guid, token) == path;
+  });
+}
+std::optional<TextureLocations> parseLocations(const json::Value& value, const Textures& textures) {
+  if (!value.isObject() || value.asObject().empty() || value.asObject().size() > kNameLimit)
+    return std::nullopt;
+  std::map<as::AssetGuid, std::string_view> colors;
+  for (const auto& [token, unit] : textures)
+    if (unit.kind == TextureKind::Color) colors.emplace(unit.guid, token);
+  TextureLocations result;
+  for (const auto& [key, path] : value.asObject()) {
+    const auto guid = as::parseAssetGuid(key);
+    if (guid.isErr() || as::toString(guid.value()) != key || !colors.contains(guid.value()) ||
+        !path.isString() || !ca::validTextureLogicalPath(path.asString()) ||
+        path.asString() == fallbackPath(colors.at(guid.value())) ||
+        !result.emplace(guid.value(), path.asString()).second) return std::nullopt;
+  }
+  std::set<std::string> reserved;
+  for (const auto& [guid, token] : colors)
+    if (!reserved.emplace(effectiveLogicalPath(result, guid, token)).second) return std::nullopt;
+  return value == nameValue(result) ? std::optional{std::move(result)} : std::nullopt;
+}
 bool absentFile(const fs::path& path) {
   return GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
 }
-bool hasPendingRemoval(const fs::path& project) {
+bool hasPendingTextureRecovery(const fs::path& project) {
   const auto pending = project / ".pending";
   if (absentFile(pending)) return false;
   if (!realDirectory(pending)) return true;
@@ -357,7 +394,7 @@ bool hasPendingRemoval(const fs::path& project) {
     const auto name = utf8(at->path().filename());
     const auto id = as::parseAssetGuid(name);
     if (id.isErr() || as::toString(id.value()) != name) continue;
-    if (!realDirectory(at->path()) || !absentFile(at->path() / "removal.json")) return true;
+    if (!realDirectory(at->path()) || (!absentFile(at->path() / "removal.json") || !absentFile(at->path() / "move.json"))) return true;
   }
   return static_cast<bool>(ec);
 }
@@ -406,14 +443,14 @@ bool exactTexturePath(const fs::path& root, const fs::path& relative) {
   return true;
 }
 
-std::optional<std::string> readNameFile(const fs::path& root, const fs::path& relative) {
+std::optional<std::string> readNameFile(const fs::path& root, const fs::path& relative, DWORD limit = kNameBytes) {
   if (!exactTexturePath(root, relative)) return std::nullopt;
   const auto path = root / relative;
   Handle file(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
                           FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
   BY_HANDLE_FILE_INFORMATION info{};
   if (!file || !GetFileInformationByHandle(file.get(), &info) || info.nFileSizeHigh || !info.nFileSizeLow ||
-      info.nFileSizeLow > kNameBytes || info.nNumberOfLinks != 1 ||
+      info.nFileSizeLow > limit || info.nNumberOfLinks != 1 ||
       (info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)))
     return std::nullopt;
   std::string bytes(info.nFileSizeLow, '\0');
@@ -427,6 +464,19 @@ std::optional<std::string> readNameFile(const fs::path& root, const fs::path& re
 std::optional<std::string> readNameBytes(const fs::path& root) {
   if (absentFile(root / kTextureNames)) return std::string{};
   return readNameFile(root, fs::path(kTextureNames));
+}
+
+std::optional<std::string> readLocationBytes(const fs::path& root) {
+  if (absentFile(root / kTextureLocations)) return std::string{};
+  return readNameFile(root, fs::path(kTextureLocations), kLocationBytes);
+}
+std::optional<TextureLocations> readLocations(const fs::path& root, const Textures& textures) {
+  const auto bytes = readLocationBytes(root);
+  if (!bytes) return std::nullopt;
+  if (bytes->empty()) return TextureLocations{};
+  const auto json = connection::json::parse(*bytes);
+  auto parsed = json.isOk() ? parseLocations(json.value(), textures) : std::nullopt;
+  return parsed && nameBytes(*parsed) == *bytes ? parsed : std::nullopt;
 }
 
 std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit,
@@ -701,7 +751,8 @@ json::Value generatedSources(const Producers& producers) {
 }
 json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers,
                      const fs::path& managedInventory = {}, const Materials& materials = {},
-                     const TextureInputs& textures = {}, const TextureNames& names = {}) {
+                     const TextureInputs& textures = {}, const TextureNames& names = {},
+                     const TextureLocations& locations = {}) {
   auto value = json::Value::object();
   value.set("profile", json::Value::string(std::string(owner)));
   value.set("generation", json::Value::string(as::toString(id.value)));
@@ -716,7 +767,7 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
     return entry.second.kind == TextureKind::Occlusion;
   });
   if (!managedInventory.empty()) {
-    const std::uint64_t version = !names.empty() ? 8u : hasOcclusion ? 7u : hasPackedMaps ? 6u :
+    const std::uint64_t version = !locations.empty() ? 9u : !names.empty() ? 8u : hasOcclusion ? 7u : hasPackedMaps ? 6u :
         hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u;
     value.set("version", json::Value::number(version));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
@@ -745,6 +796,7 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
     value.set("textureSources", std::move(sources));
   }
   if (!names.empty()) value.set("textureDisplayNames", nameValue(names));
+  if (!locations.empty()) value.set("textureLocations", nameValue(locations));
   return value;
 }
 
@@ -928,6 +980,7 @@ struct AssetRebuildHost::State {
     std::optional<std::string> colorReplacement;
     std::optional<ca::RenameTextureRequest> rename{};
     std::optional<RemovalProof> removal{};
+    std::optional<ca::MoveTextureRequest> move{};
   };
 
   struct ImportWork {
@@ -962,6 +1015,7 @@ struct AssetRebuildHost::State {
   std::deque<ca::MaterialJob> materialJobs;
   Textures activeTextures, committedTextures;
   TextureNames activeNames, committedNames;
+  TextureLocations activeLocations, committedLocations;
   bool textureRegistryChanged = false;
   std::optional<TextureWork> textureWork;
   std::deque<std::pair<TextureKind, ca::TextureImportJob>> textureJobs;
@@ -1002,13 +1056,23 @@ struct AssetRebuildHost::State {
   std::optional<ca::RebuildError> admissionLocked() const {
     if (auto error = slotError()) return error;
     if (!project.empty() && (registered != activeRegistered || committedMaterials != activeMaterials ||
-        textureRegistryChanged || committedNames != activeNames))
+        textureRegistryChanged || metadataChanged()))
       return ca::RebuildError::Unavailable;
     return std::nullopt;
   }
 
   bool namesMatch(const TextureNames& names) const {
     return project.empty() || readNameBytes(project) == nameBytes(names);
+  }
+  bool locationsMatch(const TextureLocations& locations) const {
+    return project.empty() || readLocationBytes(project) == nameBytes(locations);
+  }
+  bool metadataMatches() const {
+    return namesMatch(activeNames) && locationsMatch(activeLocations);
+  }
+
+  bool metadataChanged() const {
+    return committedNames != activeNames || committedLocations != activeLocations;
   }
 
   struct Prepared {
@@ -1019,9 +1083,12 @@ struct AssetRebuildHost::State {
   template<class Interrupted>
   std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted,
                                       std::optional<Prepared>* ownedStaging = nullptr, const TextureNames* rename = nullptr,
-                                      Files* cloned = nullptr, const TextureNames* removalNames = nullptr) {
-    const auto root = rename ? active.parent_path() : staging;
+                                      Files* cloned = nullptr, const TextureNames* removalNames = nullptr,
+                                      const TextureLocations* movedLocations = nullptr,
+                                      const TextureLocations* removalLocations = nullptr) {
+    const auto root = rename || movedLocations ? active.parent_path() : staging;
     const auto& names = rename ? *rename : removalNames ? *removalNames : activeNames;
+    const auto& locations = movedLocations ? *movedLocations : removalLocations ? *removalLocations : activeLocations;
     auto files = outputFiles(root, catalog, view);
     if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
     Materials materials;
@@ -1039,6 +1106,8 @@ struct AssetRebuildHost::State {
       textures = std::move(*input);
       if (!names.empty() && !parseNames(nameValue(names), textureRegistrations(view, textures)))
         return fail(Stage::Validation, Code::InvalidOutput, "Prepared catalog does not preserve the display-name registry.");
+      if (!locations.empty() && !parseLocations(nameValue(locations), textureRegistrations(view, textures)))
+        return fail(Stage::Validation, Code::InvalidOutput, "Prepared catalog does not preserve the texture locations.");
       for (const auto& [key, texture] : textures) {
         files->push_back(texture.png);
         files->push_back(texture.record);
@@ -1059,21 +1128,22 @@ struct AssetRebuildHost::State {
         return interrupted() ? timedOut(Stage::Publication)
                              : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
     }
-    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials, textures, names);
+    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials, textures, names, locations);
     if (!writeText(temp / kManifest, json::write(data)))
       return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
     if (!textures.empty()) {
       const auto copiedCatalog = readCatalog(temp);
       const auto copiedInput = copiedCatalog ? textureInputs(temp, view, *copiedCatalog) : std::nullopt;
-      if (!copiedInput || manifest(owner, id, view, inventoryRelative, materials, *copiedInput, names) != data)
+      if (!copiedInput || manifest(owner, id, view, inventoryRelative, materials, *copiedInput, names, locations) != data)
         return fail(Stage::Validation, Code::InvalidOutput, "Prepared texture generation differs from staging.", true);
     }
     if (cloned) *cloned = std::move(*files);
     return Prepared{id, temp, data};
   }
 
-  bool publish(const Prepared& generation, const TextureNames* rename = nullptr) const {
-    if (!namesMatch(rename ? *rename : activeNames) || !safeRelative(generation.directory, fs::path(kManifest)) ||
+  bool publish(const Prepared& generation, const TextureNames* renamed = nullptr,
+               const TextureLocations* moved = nullptr) const {
+    if (!namesMatch(renamed ? *renamed : activeNames) || !locationsMatch(moved ? *moved : activeLocations) || !safeRelative(generation.directory, fs::path(kManifest)) ||
         readJson(generation.directory / kManifest) != generation.expectedManifest) return false;
     return MoveFileExW(generation.directory.c_str(),
                       (publication / as::toString(generation.id.value)).c_str(), 0);
@@ -1237,7 +1307,7 @@ struct AssetRebuildHost::State {
 
   bool removalRegistryMatches() const {
     return readRegistrations(project) == activeRegistered && registeredMaterials(project) == activeMaterials &&
-        registeredTextures(project) == activeTextures && namesMatch(activeNames);
+        registeredTextures(project) == activeTextures && metadataMatches();
   }
 
   bool safeRemovalUnit(const fs::path& unit, std::string_view token) const {
@@ -1390,6 +1460,10 @@ struct AssetRebuildHost::State {
     auto remainingNames = activeNames;
     remainingNames.erase(work.job.asset);
     const auto nameAfter = nameBytes(remainingNames);
+    const auto locationBefore = nameBytes(activeLocations);
+    auto remainingLocations = activeLocations;
+    remainingLocations.erase(work.job.asset);
+    const auto locationAfter = nameBytes(remainingLocations);
     auto remainingTextures = activeTextures;
     remainingTextures.erase(token);
     auto remainingView = proof.view;
@@ -1425,16 +1499,19 @@ struct AssetRebuildHost::State {
     const auto move = [&](const fs::path& from, const fs::path& to) {
       return MoveFileExW((project / from).c_str(), (project / to).c_str(), MOVEFILE_WRITE_THROUGH) != FALSE;
     };
-    const auto replaceNames = [&](std::string_view current, std::string_view intended, const fs::path& input) {
-      if (readNameBytes(project) != current) return false;
+    const auto replaceMetadata = [&](bool location, std::string_view current, std::string_view intended,
+                                     const fs::path& input) {
+      const auto read = [&] { return location ? readLocationBytes(project) : readNameBytes(project); };
+      const auto path = location ? project / kTextureLocations : namePath;
+      if (read() != current) return false;
       if (current == intended) return true;
-      if (intended.empty()) DeleteFileW(namePath.c_str());
+      if (intended.empty()) DeleteFileW(path.c_str());
       else {
-        if (readNameFile(project, input) != intended) return false;
+        if (readNameFile(project, input, location ? kLocationBytes : kNameBytes) != intended) return false;
         const DWORD flags = MOVEFILE_WRITE_THROUGH | (current.empty() ? 0 : MOVEFILE_REPLACE_EXISTING);
-        MoveFileExW((project / input).c_str(), namePath.c_str(), flags);
+        MoveFileExW((project / input).c_str(), path.c_str(), flags);
       }
-      return readNameBytes(project) == intended;
+      return read() == intended;
     };
     const auto validateCatalog = [&](const as::AssetCatalog& catalog) {
       if (catalog.find(work.job.asset) || catalog.size() + 1 != work.catalog->size() ||
@@ -1490,7 +1567,7 @@ struct AssetRebuildHost::State {
         if (!sameFile(previous->artifact, record.artifact) || !sameFile(previous->metadata, record.metadata))
           return fail(Stage::Validation, Code::InvalidOutput, "A surviving cooked asset changed while building removal.");
       }
-      auto result = prepare(*catalog, remainingView, interrupted, &prepared, nullptr, nullptr, &remainingNames);
+      auto result = prepare(*catalog, remainingView, interrupted, &prepared, nullptr, nullptr, &remainingNames, nullptr, &remainingLocations);
       if (const auto* error = std::get_if<End>(&result)) return *error;
       prepared = std::get<Prepared>(std::move(result));
       const auto final = publication / as::toString(prepared->id.value);
@@ -1537,24 +1614,34 @@ struct AssetRebuildHost::State {
           {work.job.asset, as::CatalogAssetType::Texture, as::CatalogRoot::Content, key.substr(8)}})));
       record.set("oldNames", json::Value::string(nameBefore));
       record.set("newNames", json::Value::string(nameAfter));
+      record.set("oldLocations", json::Value::string(locationBefore));
+      record.set("newLocations", json::Value::string(locationAfter));
       auto intended = json::Value::object();
       for (const auto& [file, digest] : frozen) intended.set(utf8(file), json::Value::string(digest));
       record.set("frozen", std::move(intended));
       if ((nameBefore != nameAfter &&
            ((!nameBefore.empty() && !createMarker(project / pending / "old-names", nameBefore)) ||
             (!nameAfter.empty() && !createMarker(project / pending / "new-names", nameAfter)))) ||
+          (locationBefore != locationAfter &&
+           ((!locationBefore.empty() && !createMarker(project / pending / "old-locations", locationBefore)) ||
+            (!locationAfter.empty() && !createMarker(project / pending / "new-locations", locationAfter)))) ||
           !createMarker(project / recoveryRecord, json::write(record)))
         return fail(Stage::Publication, Code::PublishFailed, "Cannot flush the removal recovery record.");
       if (interrupted()) return cleanTimeout();
       const auto rollback = [&]() {
         const auto names = readNameBytes(project);
+        const auto locations = readLocationBytes(project);
         if (!absentFile(final) || !registeredAfter() || !safeRemovalUnit(backup, token) ||
             (names != nameBefore && names != nameAfter) ||
-            (names != nameBefore && !nameBefore.empty() && readNameFile(project, pending / "old-names") != nameBefore))
+            (names != nameBefore && !nameBefore.empty() && readNameFile(project, pending / "old-names") != nameBefore) ||
+            (locations != locationBefore && locations != locationAfter) ||
+            (locations != locationBefore && !locationBefore.empty() &&
+             readNameFile(project, pending / "old-locations", kLocationBytes) != locationBefore))
           return unknown("Cannot prove that the previous registration can be restored.");
         move(backup, unit);
         if (!absentFile(project / backup) || !safeRemovalUnit(unit, token) ||
-            !replaceNames(*names, nameBefore, pending / "old-names") || !removalRegistryMatches())
+            !replaceMetadata(false, *names, nameBefore, pending / "old-names") ||
+            !replaceMetadata(true, *locations, locationBefore, pending / "old-locations") || !removalRegistryMatches())
           return unknown("Cannot verify the restored registration and name map.");
         return fail(Stage::Publication, Code::PublishFailed, "The previous registration was restored. Check and retry.");
       };
@@ -1564,15 +1651,16 @@ struct AssetRebuildHost::State {
           return fail(Stage::Publication, Code::PublishFailed, "Could not move the registration. Check and retry.");
         return unknown("Cannot verify the registration backup.");
       }
-      if (!replaceNames(nameBefore, nameAfter, pending / "new-names")) return rollback();
+      if (!replaceMetadata(false, nameBefore, nameAfter, pending / "new-names") ||
+          !replaceMetadata(true, locationBefore, locationAfter, pending / "new-locations")) return rollback();
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.beforeRemovalPublication) config.beforeRemovalPublication(prepared->directory, final);
 #endif
       const auto committedMatches = [&] {
-        return registeredAfter() && safeRemovalUnit(backup, token) && namesMatch(remainingNames) &&
+        return registeredAfter() && safeRemovalUnit(backup, token) && namesMatch(remainingNames) && locationsMatch(remainingLocations) &&
             checkedInputsMatch(true);
       };
-      if (!frozenMatches(prepared->directory) || !committedMatches() || !publish(*prepared, &remainingNames)) {
+      if (!frozenMatches(prepared->directory) || !committedMatches() || !publish(*prepared, &remainingNames, &remainingLocations)) {
         if (absentFile(prepared->directory) && frozenMatches(final) && committedMatches()) return prepared->id;
         return rollback();
       }
@@ -1611,11 +1699,12 @@ struct AssetRebuildHost::State {
         if (!realDirectory(project / pending)) return false;
         for (fs::directory_iterator at(project / pending, ec), end; !ec && at != end; at.increment(ec)) {
           const auto leaf = at->path().filename();
-          if ((leaf != "selection" && leaf != "old-names" && leaf != "new-names" && leaf != recoveryRecord.filename()) ||
+          if ((leaf != "selection" && leaf != "old-names" && leaf != "new-names" && leaf != "old-locations" &&
+               leaf != "new-locations" && leaf != recoveryRecord.filename()) ||
               !exactTexturePath(project, pending / leaf)) return false;
         }
         if (ec) return false;
-        for (const auto* leaf : {"selection", "old-names", "new-names"}) {
+        for (const auto* leaf : {"selection", "old-names", "new-names", "old-locations", "new-locations"}) {
           const auto path = project / pending / leaf;
           if (!absentFile(path) && !DeleteFileW(path.c_str())) return false;
         }
@@ -1642,53 +1731,70 @@ struct AssetRebuildHost::State {
     return result;
   }
 
-  std::variant<ca::GenerationId, End> renameColor(const Work& work, bool& cleanupRepair) {
-    const auto& request = *work.rename;
+  std::variant<ca::GenerationId, End> updateTextureMetadata(const Work& work, bool& cleanupRepair) {
+    const bool moving = work.move.has_value();
+    const auto asset = work.job.asset;
+    const auto expectedGeneration = moving ? work.move->expectedGeneration : work.rename->expectedGeneration;
+    const auto& wanted = moving ? work.move->destinationLogicalPath : work.rename->displayName;
     const auto root = active.parent_path();
     const auto pending = project / ".pending" / as::toString(work.job.id.value);
-    const auto destination = project / kTextureNames;
-    const auto oldBytes = nameBytes(activeNames);
-    auto next = activeNames;
-    const auto identity = as::toString(work.catalog->find(request.asset)->source);
+    const auto destination = project / (moving ? kTextureLocations : kTextureNames);
+    const auto journal = pending / (moving ? "move.json" : "rename.json");
+    const auto readBytes = [&] { return moving ? readLocationBytes(project) : readNameBytes(project); };
+    const auto& oldMetadata = moving ? activeLocations : activeNames;
+    const auto oldBytes = nameBytes(oldMetadata);
+    auto next = oldMetadata;
+    const auto identity = as::toString(work.catalog->find(asset)->source);
     const auto token = textureName(identity);
-    if (request.displayName == *token) next.erase(request.asset);
-    else next[request.asset] = request.displayName;
+    if (wanted == (moving ? fallbackPath(*token) : std::string(*token))) next.erase(asset);
+    else next[asset] = wanted;
     const auto nextBytes = nameBytes(next);
+    const auto nextNames = moving ? nullptr : &next;
+    const auto nextLocations = moving ? &next : nullptr;
     std::optional<Prepared> prepared;
     bool owned = false, marked = false;
     const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
-    const auto unknown = [](std::string text) {
+    const auto unknown = [&](std::string text) {
       return fail(Stage::Publication, Code::PublishFailed, std::move(text) +
-          " Keep the previous generation and inspect the rename recovery record offline.", true);
+          (moving ? " Keep the previous generation and inspect move.json offline." :
+                    " Keep the previous generation and inspect the rename recovery record offline."), true);
     };
     const auto unit = textureDirectory(*token);
     const auto fragment = fs::path("registered") / unit / "catalog-source.txt";
     const auto canonical = as::serializeAssetCatalogSource(
-        {{request.asset, as::CatalogAssetType::Texture, as::CatalogRoot::Content, utf8(unit / "source.png")}});
+        {{asset, as::CatalogAssetType::Texture, as::CatalogRoot::Content, utf8(unit / "source.png")}});
     const auto fragmentMatches = [&] {
       return exactTexturePath(project, fragment) && readMaterialText(project, fragment) == canonical;
     };
+    const auto otherMetadataMatches = [&] {
+      return moving ? namesMatch(activeNames) : locationsMatch(activeLocations);
+    };
     const auto unchangedRegistry = [&] {
       return readRegistrations(project) == activeRegistered && registeredMaterials(project) == activeMaterials &&
-          registeredTextures(project) == activeTextures && fragmentMatches();
+          registeredTextures(project) == activeTextures && fragmentMatches() && otherMetadataMatches();
     };
     const auto oldState = [&]() -> std::optional<End> {
-      const auto bytes = readNameBytes(project);
+      const auto bytes = readBytes();
       const auto textures = registeredTextures(project);
       const auto imports = readRegistrations(project);
       const auto materials = registeredMaterials(project);
       if (!bytes || !textures || !imports || !materials)
         return unknown("Cannot verify the managed registry.");
+      TextureNames observed;
       if (!bytes->empty()) {
         const auto value = json::parse(*bytes);
-        const auto names = value.isOk() ? parseNames(value.value(), *textures) : std::nullopt;
+        const auto names = value.isOk() ? (moving ? parseLocations(value.value(), *textures) :
+                                                 parseNames(value.value(), *textures)) : std::nullopt;
         if (!names || nameBytes(*names) != *bytes)
-          return unknown("Cannot verify the committed display-name map.");
+          return unknown("Cannot verify the committed texture metadata.");
+        observed = std::move(*names);
       }
-      if (*bytes != oldBytes || *textures != activeTextures || *imports != activeRegistered ||
-          *materials != activeMaterials || config.generation != request.expectedGeneration)
+      if (moving && pathClaimed(observed, *textures, asset, wanted))
+        return fail(Stage::Validation, Code::IdentityChanged, "Path conflict in the managed color texture registry.");
+      if (*bytes != oldBytes || !otherMetadataMatches() || *textures != activeTextures || *imports != activeRegistered ||
+          *materials != activeMaterials || config.generation != expectedGeneration)
         return fail(Stage::Validation, Code::IdentityChanged, "The active snapshot is stale; restart into the committed generation.");
-      if (labelClaimed(activeNames, *textures, request.asset, request.displayName))
+      if (!moving && labelClaimed(activeNames, *textures, asset, wanted))
         return fail(Stage::Validation, Code::IdentityChanged, "Name conflict in the managed color texture registry.");
       if (!fragmentMatches())
         return fail(Stage::Validation, Code::IdentityChanged, "The original registration fragment changed.");
@@ -1697,8 +1803,8 @@ struct AssetRebuildHost::State {
     enum class NameExchange { Applied, Refused, TimedOut };
     const auto replace = [&](const fs::path& input, std::string_view prior, std::string_view value,
                              bool firstExchange) {
-      if (readNameBytes(project) != prior ||
-          (!value.empty() && readNameFile(project, input.lexically_relative(project)) != value))
+      if (readBytes() != prior ||
+          (!value.empty() && readNameFile(project, input.lexically_relative(project), moving ? kLocationBytes : kNameBytes) != value))
         return NameExchange::Refused;
       if (firstExchange && interrupted()) return NameExchange::TimedOut;
       if (value.empty()) {
@@ -1707,7 +1813,7 @@ struct AssetRebuildHost::State {
         const DWORD flags = MOVEFILE_WRITE_THROUGH | (prior.empty() ? 0 : MOVEFILE_REPLACE_EXISTING);
         MoveFileExW(input.c_str(), destination.c_str(), flags);
       }
-      return readNameBytes(project) == value ? NameExchange::Applied : NameExchange::Refused;
+      return readBytes() == value ? NameExchange::Applied : NameExchange::Refused;
     };
     const auto execute = [&]() -> std::variant<ca::GenerationId, End> {
       if (interrupted()) return timedOut(Stage::Launch);
@@ -1726,14 +1832,14 @@ struct AssetRebuildHost::State {
       if (!inputs || textureRegistrations(*frozen, *inputs) != activeTextures || !materials ||
           *materials != activeMaterials || !matchesFrozenMaterials(*catalog, *materials) ||
           !safeRelative(root, fs::path(kManifest)) || readJson(root / kManifest) !=
-              manifest(owner, request.expectedGeneration, *frozen, inventoryRelative, *materials, *inputs, activeNames))
+              manifest(owner, expectedGeneration, *frozen, inventoryRelative, *materials, *inputs, activeNames, activeLocations))
         return fail(Stage::Validation, Code::InvalidOutput, "Active generation differs from the frozen snapshot.");
       if (!createMarker(staging / kDirty, {}) ||
           !createMarker(project / kProjectDirty, utf8(staging) + "\n" + utf8(publication) + "\n"))
-        return unknown("Cannot record both rename workspace markers.");
+        return unknown("Cannot record both texture metadata workspace markers.");
       marked = true;
       Files files;
-      auto result = prepare(*catalog, *frozen, interrupted, &prepared, &next, &files);
+      auto result = prepare(*catalog, *frozen, interrupted, &prepared, nextNames, &files, nullptr, nextLocations);
       if (const auto* error = std::get_if<End>(&result)) return *error;
       prepared = std::get<Prepared>(std::move(result));
       const auto final = publication / as::toString(prepared->id.value);
@@ -1750,28 +1856,28 @@ struct AssetRebuildHost::State {
       if (config.afterRenamePreparation) config.afterRenamePreparation(prepared->directory);
 #endif
       std::lock_guard commit(publicationCommit);
-      if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+      if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Texture metadata operation stopped before commit.");
       if (!matches(prepared->directory))
-        return fail(Stage::Validation, Code::InvalidOutput, "Prepared rename was changed before commit.");
+        return fail(Stage::Validation, Code::InvalidOutput, "Prepared generation was changed before commit.");
       if (auto error = oldState()) return *error;
       if (!absentFile(final)) return unknown("Cannot prove that the generation destination is vacant.");
       std::error_code ec;
       if (absentFile(pending.parent_path())) fs::create_directory(pending.parent_path(), ec);
       if (ec || !realDirectory(pending.parent_path()) || !fs::create_directory(pending, ec) || ec)
-        return unknown("Cannot create owned rename staging.");
+        return unknown("Cannot create owned texture metadata staging.");
       owned = true;
       auto proof = json::Value::object();
       proof.set("job", json::Value::string(as::toString(work.job.id.value)));
-      proof.set("asset", json::Value::string(as::toString(request.asset)));
-      proof.set("activeGeneration", json::Value::string(as::toString(request.expectedGeneration.value)));
+      proof.set("asset", json::Value::string(as::toString(asset)));
+      proof.set("activeGeneration", json::Value::string(as::toString(expectedGeneration.value)));
       proof.set("generation", json::Value::string(as::toString(prepared->id.value)));
       proof.set("oldBytes", json::Value::string(oldBytes));
       proof.set("newBytes", json::Value::string(nextBytes));
       if ((!oldBytes.empty() && !createMarker(pending / "previous", oldBytes)) ||
           (!nextBytes.empty() && !createMarker(pending / "next", nextBytes)) ||
-          !createMarker(pending / "rename.json", json::write(proof)))
-        return fail(Stage::Publication, Code::PublishFailed, "Cannot save the rename recovery record.");
-      if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+          !createMarker(journal, json::write(proof)))
+        return fail(Stage::Publication, Code::PublishFailed, "Cannot save the texture metadata recovery record.");
+      if (interrupted()) return fail(Stage::Publication, Code::TimedOut, "Texture metadata operation stopped before commit.");
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.beforeRenameExchange) config.beforeRenameExchange(pending, work.deadline);
 #endif
@@ -1779,27 +1885,27 @@ struct AssetRebuildHost::State {
       const auto rollback = [&]() {
         if (!absentFile(final) || !unchangedRegistry() ||
             replace(pending / "previous", nextBytes, oldBytes, false) != NameExchange::Applied)
-          return unknown("Cannot prove nonpublication and restore the prior name.");
-        return fail(Stage::Publication, Code::PublishFailed, "The previous name was restored; retry explicitly.");
+          return unknown("Cannot prove nonpublication and restore the prior texture metadata.");
+        return fail(Stage::Publication, Code::PublishFailed, "The previous texture metadata was restored; retry explicitly.");
       };
       const auto exchange = replace(pending / "next", oldBytes, nextBytes, true);
       if (exchange == NameExchange::TimedOut)
-        return fail(Stage::Publication, Code::TimedOut, "Rename stopped before changing the name.");
+        return fail(Stage::Publication, Code::TimedOut, "Texture metadata operation stopped before commit.");
       if (exchange != NameExchange::Applied) {
-        if (absentFile(final) && unchangedRegistry() && readNameBytes(project) == oldBytes)
-          return fail(Stage::Publication, Code::PublishFailed, "Cannot change the committed display name.");
-        return unknown("Cannot confirm the committed display name.");
+        if (absentFile(final) && unchangedRegistry() && readBytes() == oldBytes)
+          return fail(Stage::Publication, Code::PublishFailed, "Cannot change the committed texture metadata.");
+        return unknown("Cannot confirm the committed texture metadata.");
       }
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.beforeRenamePublication) config.beforeRenamePublication(prepared->directory, final);
 #endif
-      if (!unchangedRegistry() || !matches(prepared->directory)) {
-        if (absentFile(prepared->directory) && matches(final) && namesMatch(next) && unchangedRegistry())
+      if (!unchangedRegistry() || !matches(prepared->directory) || readBytes() != nextBytes) {
+        if (absentFile(prepared->directory) && matches(final) && readBytes() == nextBytes && unchangedRegistry())
           return prepared->id;
         return rollback();
       }
-      if (!publish(*prepared, &next)) {
-        if (absentFile(prepared->directory) && matches(final) && namesMatch(next) && unchangedRegistry())
+      if (!publish(*prepared, nextNames, nextLocations)) {
+        if (absentFile(prepared->directory) && matches(final) && readBytes() == nextBytes && unchangedRegistry())
           return prepared->id;
         return rollback();
       }
@@ -1807,7 +1913,7 @@ struct AssetRebuildHost::State {
     };
     auto result = [&]() -> std::variant<ca::GenerationId, End> {
       try { return execute(); }
-      catch (const std::exception&) { return unknown("Cannot confirm rename settlement."); }
+      catch (const std::exception&) { return unknown("Cannot confirm texture metadata settlement."); }
     }();
     const auto* error = std::get_if<End>(&result);
     if (!error || !error->repair) {
@@ -1818,13 +1924,35 @@ struct AssetRebuildHost::State {
         fs::remove_all(path, ec);
         return !ec;
       };
-      cleanupRepair = (prepared && !removeOwned(prepared->directory)) || (owned && !removeOwned(pending));
+      cleanupRepair = prepared && !removeOwned(prepared->directory);
+      if (owned && !cleanupRepair && moving) {
+        if (!realDirectory(pending)) cleanupRepair = true;
+        else {
+          for (fs::directory_iterator at(pending, ec), end; !ec && at != end; at.increment(ec)) {
+            const auto leaf = at->path().filename();
+            if ((leaf != "previous" && leaf != "next" && leaf != journal.filename()) ||
+                !exactTexturePath(project, at->path().lexically_relative(project))) {
+              cleanupRepair = true;
+              break;
+            }
+          }
+          cleanupRepair = cleanupRepair || static_cast<bool>(ec);
+          for (const auto* leaf : {"previous", "next"}) {
+            const auto path = pending / leaf;
+            if (!cleanupRepair && !absentFile(path) && !DeleteFileW(path.c_str())) cleanupRepair = true;
+          }
+        }
+      } else if (owned && !cleanupRepair) cleanupRepair = !removeOwned(pending);
       if (marked && !cleanupRepair) {
         fs::remove(staging / kDirty, ec);
         if (!ec) fs::remove(project / kProjectDirty, ec);
         cleanupRepair = static_cast<bool>(ec);
       }
-      if (cleanupRepair && error) return unknown("Cannot confirm cleanup after a failed rename.");
+      if (owned && moving && !cleanupRepair) {
+        cleanupRepair = !absentFile(journal) && !DeleteFileW(journal.c_str());
+        if (!cleanupRepair) RemoveDirectoryW(pending.c_str());
+      }
+      if (cleanupRepair && error) return unknown("Cannot confirm cleanup after a failed texture metadata operation.");
     }
     return result;
   }
@@ -1832,7 +1960,7 @@ struct AssetRebuildHost::State {
   std::variant<ca::GenerationId, End> build(const Work& work) {
     const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
     if (interrupted()) return timedOut(Stage::Launch);
-    if (!namesMatch(activeNames))
+    if (!metadataMatches())
       return fail(Stage::Validation, Code::IdentityChanged, "Managed display names differ from the active snapshot.", true);
     if (!project.empty()) {
       const auto textures = registeredTextures(project);
@@ -1913,7 +2041,7 @@ struct AssetRebuildHost::State {
       const auto before = registeredTextures(project);
       const auto imports = readRegistrations(project);
       const auto materials = registeredMaterials(project);
-      if (!before || !imports || !materials || !namesMatch(activeNames))
+      if (!before || !imports || !materials || !metadataMatches())
         return fail(Stage::Validation, Code::InvalidOutput, "Cannot verify the managed registry; inspect it offline.", true);
       const auto old = before->find(name);
       const auto key = textureKey(name, TextureKind::Color);
@@ -1986,7 +2114,7 @@ struct AssetRebuildHost::State {
       auto result = prepare(*catalog, *view, interrupted, &prepared);
       if (const auto* error = std::get_if<End>(&result)) return *error;
       prepared = std::get<Prepared>(std::move(result));
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory)) return false;
         const auto frozen = readManagedView(directory, inventoryRelative);
@@ -1995,7 +2123,7 @@ struct AssetRebuildHost::State {
             !outputFiles(directory, *frozenCatalog, *frozen) || !safeRelative(directory, fs::path(kManifest))) return false;
         const auto copied = textureInputs(directory, *frozen, *frozenCatalog);
         return copied && readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations) == expectedManifest;
       };
       const auto unitMatches = [&](const fs::path& relative, const TextureUnit& unitInput) {
         return realDirectory(project / relative) && readTextureUnit(project, relative, name) == unitInput &&
@@ -2012,7 +2140,7 @@ struct AssetRebuildHost::State {
       if (interrupted()) return timedOut(Stage::Publication);
       if (!matchesPrepared(prepared->directory) || !unitMatches(replacement, newUnit))
         return fail(Stage::Validation, Code::InvalidOutput, "Prepared generation or sealed replacement changed.");
-      if (!namesMatch(activeNames) || registeredTextures(project) != before || !unitMatches(registeredUnit, old->second) || !unchangedRegistry())
+      if (!metadataMatches() || registeredTextures(project) != before || !unitMatches(registeredUnit, old->second) || !unchangedRegistry())
         return fail(Stage::Validation, Code::IdentityChanged, "The managed registry changed during reimport.", true);
       if (!absent(destination))
         return dirtyEnd("Cannot establish ownership of the prepared generation destination.");
@@ -2052,7 +2180,7 @@ struct AssetRebuildHost::State {
           !unitMatches(registeredUnit, newUnit) || registeredTextures(project) != expected || !unchangedRegistry())
         return rollback("Could not verify the replacement registration.");
 
-      if (!namesMatch(activeNames) || !matchesPrepared(prepared->directory) || !unitMatches(registeredUnit, newUnit) ||
+      if (!metadataMatches() || !matchesPrepared(prepared->directory) || !unitMatches(registeredUnit, newUnit) ||
           registeredTextures(project) != expected || !unchangedRegistry())
         return rollback("The prepared generation or registry changed before publication.");
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
@@ -2062,7 +2190,7 @@ struct AssetRebuildHost::State {
         if (absent(destination) && matchesPrepared(prepared->directory))
           return rollback("Could not publish the new generation.");
         if (!absent(prepared->directory) || !matchesPrepared(destination) ||
-            registeredTextures(project) != expected || !unitMatches(registeredUnit, newUnit) || !unchangedRegistry() || !namesMatch(activeNames))
+            registeredTextures(project) != expected || !unitMatches(registeredUnit, newUnit) || !unchangedRegistry() || !metadataMatches())
           return dirtyEnd("Cannot confirm the new generation publication.");
       }
       return prepared->id;
@@ -2116,7 +2244,7 @@ struct AssetRebuildHost::State {
     if (registeredMaterials(project) != activeMaterials)
       return failed(IS::Validation, IC::IdentityConflict, "Managed material source differs from the active build.");
     const auto initialTextures = registeredTextures(project);
-    if (!initialTextures || *initialTextures != activeTextures || !namesMatch(activeNames))
+    if (!initialTextures || *initialTextures != activeTextures || !metadataMatches())
       return failed(IS::Validation, IC::IdentityConflict, "Managed texture source differs from the active build.", !initialTextures);
     const fs::path name = fromUtf8("managed_" + work.job.name);
     const fs::path pendingParent = fs::path(".pending") / as::toString(work.job.id.value);
@@ -2201,7 +2329,7 @@ struct AssetRebuildHost::State {
     if (interrupted())
       return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
                     "Import stopped before the commit point.", true);
-    if (!namesMatch(activeNames) || registeredTextures(project) != activeTextures)
+    if (!metadataMatches() || registeredTextures(project) != activeTextures)
       return failed(IS::Validation, IC::IdentityConflict, "Managed texture registry changed during import.", true);
     if (!work.registeredRoot) {
       if (!MoveFileExW((project / pending).c_str(), (project / "registered" / name).c_str(), 0)) {
@@ -2293,7 +2421,7 @@ struct AssetRebuildHost::State {
       if (*imports != activeRegistered)
         return failJob(MS::Source, MC::ActivationRequired, "Activate the committed import changes first.");
       const auto registryTextures = registeredTextures(project);
-      if (!registryTextures || *registryTextures != activeTextures || !namesMatch(activeNames)) {
+      if (!registryTextures || *registryTextures != activeTextures || !metadataMatches()) {
         repair = !registryTextures;
         return failJob(MS::Source, MC::ActivationRequired, "Activate or repair the committed texture changes first.");
       }
@@ -2457,7 +2585,7 @@ struct AssetRebuildHost::State {
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.afterMaterialPreparation) config.afterMaterialPreparation(prepared->directory);
 #endif
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView, activeNames);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView, activeNames, activeLocations);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
         const auto frozenInventory = readText(directory / inventoryRelative);
@@ -2470,7 +2598,7 @@ struct AssetRebuildHost::State {
         const auto copied = textureInputs(directory, *frozen, *catalog);
         return copied && safeRelative(directory, fs::path(kManifest)) &&
             readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, expected, *copied, activeNames) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, expected, *copied, activeNames, activeLocations) == expectedManifest;
       };
 
       std::lock_guard commit(publicationCommit);
@@ -2478,7 +2606,7 @@ struct AssetRebuildHost::State {
         return failJob(MS::Validation, MC::InvalidOutput, "The prepared generation differs from the intended material source, catalog or texture evidence.");
       if (interrupted()) return failJob(MS::SourceCommit, MC::TimedOut, "Material job stopped before commit.");
       if (registeredMaterials(project) != before || readRegistrations(project) != imports ||
-          registeredTextures(project) != activeTextures || !namesMatch(activeNames)) {
+          registeredTextures(project) != activeTextures || !metadataMatches()) {
         repair = true;
         return failJob(MS::SourceCommit, MC::CommitFailed, "The project registry changed during the job.");
       }
@@ -2503,7 +2631,7 @@ struct AssetRebuildHost::State {
 #endif
       if (!publish(*prepared)) {
         const auto destination = publication / as::toString(prepared->id.value);
-        if (!realDirectory(prepared->directory) && namesMatch(activeNames) && matchesPrepared(destination)) {
+        if (!realDirectory(prepared->directory) && metadataMatches() && matchesPrepared(destination)) {
           job.generation = prepared->id;
         } else {
           const DWORD attributes = GetFileAttributesW(destination.c_str());
@@ -2581,7 +2709,7 @@ struct AssetRebuildHost::State {
       const auto before = registeredTextures(project);
       const auto imports = readRegistrations(project);
       const auto materials = registeredMaterials(project);
-      if (!before || !imports || !materials || !namesMatch(activeNames)) {
+      if (!before || !imports || !materials || !metadataMatches()) {
         repair = true;
         return failJob(IS::Source, IC::InvalidSource, "Cannot verify the managed registry and texture seals.");
       }
@@ -2596,6 +2724,9 @@ struct AssetRebuildHost::State {
       if (work.kind == TextureKind::Color &&
           labelClaimed(activeNames, *before, resume && guid ? *guid : as::AssetGuid{}, job.name))
         return failJob(IS::Validation, IC::IdentityConflict, "Name conflict in the managed color texture registry.");
+      if (work.kind == TextureKind::Color &&
+          pathClaimed(activeLocations, *before, resume && guid ? *guid : as::AssetGuid{}, fallbackPath(job.name)))
+        return failJob(IS::Validation, IC::IdentityConflict, "Path conflict in the managed color texture registry.");
       if ((resume && !guid) || (!resume && found != before->end()))
         return failJob(IS::Source, IC::InvalidSource, "The requested texture registration is no longer eligible.");
       if (*before != expected || *imports != activeRegistered || *materials != activeMaterials)
@@ -2690,7 +2821,7 @@ struct AssetRebuildHost::State {
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.afterTexturePreparation) config.afterTexturePreparation(prepared->directory, project / fragmentPath);
 #endif
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
         const auto frozenInventory = readText(directory / inventoryRelative);
@@ -2703,14 +2834,14 @@ struct AssetRebuildHost::State {
         const auto copied = textureInputs(directory, *frozen, *catalog);
         return copied && safeRelative(directory, fs::path(kManifest)) &&
             readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations) == expectedManifest;
       };
       std::lock_guard commit(publicationCommit);
       const bool preparedMatches = matchesPrepared(prepared->directory);
       const auto current = registeredTextures(project);
       if (resume && (!current || !current->contains(job.name) || current->at(job.name) != expected.at(job.name)))
         registration = RS::Unknown;
-      if (!namesMatch(activeNames) || current != before || readRegistrations(project) != imports ||
+      if (!metadataMatches() || current != before || readRegistrations(project) != imports ||
           registeredMaterials(project) != materials ||
           (!resume && (readTextureUnit(project, candidate, job.name) != expected.at(job.name) ||
                        readMaterialText(project, fragmentPath) != registrationFragment))) {
@@ -2741,7 +2872,7 @@ struct AssetRebuildHost::State {
         const auto destination = publication / as::toString(prepared->id.value);
         const auto attributes = GetFileAttributesW(destination.c_str());
         const auto missing = attributes == INVALID_FILE_ATTRIBUTES && GetLastError() == ERROR_FILE_NOT_FOUND;
-        if (realDirectory(prepared->directory) || !namesMatch(activeNames) || !matchesPrepared(destination)) {
+        if (realDirectory(prepared->directory) || !metadataMatches() || !matchesPrepared(destination)) {
           repair = !missing || !realDirectory(prepared->directory);
           return failJob(IS::Publication, IC::PublishFailed, "Cannot confirm texture generation publication.");
         }
@@ -2832,7 +2963,7 @@ struct AssetRebuildHost::State {
         continue;
       }
       bool cleanupRepair = false;
-      auto result = work->removal ? removeColor(*work, cleanupRepair) : work->rename ? renameColor(*work, cleanupRepair) :
+      auto result = work->removal ? removeColor(*work, cleanupRepair) : (work->rename || work->move) ? updateTextureMetadata(*work, cleanupRepair) :
           work->colorReplacement ? reimportColor(*work, cleanupRepair) : build(*work);
       const auto disk = work->colorReplacement ? registeredTextures(project) : std::nullopt;
       const auto names = (work->rename || work->removal) ? readNameBytes(project) : std::nullopt;
@@ -2844,11 +2975,14 @@ struct AssetRebuildHost::State {
           if (settledNames && nameBytes(*settledNames) != *names) settledNames.reset();
         }
       }
+      const auto settledLocations = work->move || work->removal
+          ? readLocations(project, disk ? *disk : activeTextures) : std::nullopt;
       auto& job = work->job;
       const auto* failure = std::get_if<End>(&result);
       bool repair = cleanupRepair || (failure && failure->repair) || (work->colorReplacement && !disk) ||
-          ((work->rename || work->removal) && !settledNames);
-      if (!repair && !work->colorReplacement && !work->rename) {
+          ((work->rename || work->removal) && !settledNames) ||
+          ((work->move || work->removal) && !settledLocations);
+      if (!repair && !work->colorReplacement && !work->rename && !work->move) {
         std::error_code ec;
         fs::remove(staging / kDirty, ec);
         repair = static_cast<bool>(ec);
@@ -2867,6 +3001,7 @@ struct AssetRebuildHost::State {
         textureRegistryChanged = committedTextures != activeTextures;
       }
       if (settledNames) committedNames = std::move(*settledNames);
+      if (settledLocations) committedLocations = *settledLocations;
       completed.push_front(std::move(job));
       if (completed.size() > 16) completed.pop_back();
       running.reset();
@@ -3016,13 +3151,18 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
         if (!parsed) return R::Err("Invalid frozen texture display names.");
         state->activeNames = *parsed;
       }
+      if (const auto* locations = selectedManifest->find("textureLocations")) {
+        const auto parsed = parseLocations(*locations, state->activeTextures);
+        if (!parsed) return R::Err("Invalid frozen texture locations.");
+        state->activeLocations = *parsed;
+      }
       selectedTextures = std::move(*textures);
       state->activeMaterials = std::move(*materials);
       state->producers = std::move(*frozen);
     }
     const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
     if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory,
-                                     state->activeMaterials, selectedTextures, state->activeNames))
+                                     state->activeMaterials, selectedTextures, state->activeNames, state->activeLocations))
       return R::Err("Unknown, incomplete or foreign asset generation.");
     if (!outputFiles(selected, *catalog, state->producers))
       return R::Err("Incomplete asset generation files.");
@@ -3058,7 +3198,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       auto textures = registeredTextures(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
           ? readText(*stage / kPendingSelection) : std::nullopt;
-      state->dirty = state->dirty || !registered || !materials || !textures || hasPendingRemoval(state->project) ||
+      state->dirty = state->dirty || !registered || !materials || !textures || hasPendingTextureRecovery(state->project) ||
           !safeRelative(state->project, fs::path(kProjectDirty), true) ||
           fs::exists(state->project / kProjectDirty, ec) || ec || !pending || !pending->empty();
       if (registered) state->registered = std::move(*registered);
@@ -3071,6 +3211,9 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
         if (!names || nameBytes(*names) != *display) state->dirty = true;
         else state->committedNames = *names;
       }
+      const auto locations = textures ? readLocations(state->project, *textures) : std::nullopt;
+      if (!locations) state->dirty = true;
+      else state->committedLocations = *locations;
       if (textures) state->committedTextures = std::move(*textures);
       state->textureRegistryChanged = state->committedTextures != state->activeTextures;
     }
@@ -3153,7 +3296,7 @@ ca::RenameTextureResult AssetRebuildHost::renameTexture(
     if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
     return R::Err(E::Unavailable);
   }
-  if (state_->config.generation != request.expectedGeneration || state_->committedNames != state_->activeNames ||
+  if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
       state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
       state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
   if (!ca::validImportName(request.displayName)) return R::Err(E::InvalidName);
@@ -3182,6 +3325,56 @@ ca::RenameTextureResult AssetRebuildHost::renameTexture(
   ca::RebuildJob job{{*id}, request.asset, ca::RebuildState::Running, {}, {}};
   state_->running.emplace(State::Work{job, &producer->second, std::move(catalog), Clock::now() + state_->config.timeout,
                                       std::nullopt, request});
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+std::optional<std::string> AssetRebuildHost::logicalPath(as::AssetGuid asset) const {
+  const auto found = state_->activeLocations.find(asset);
+  return found == state_->activeLocations.end() ? std::nullopt : std::optional{found->second};
+}
+ca::MoveTextureResult AssetRebuildHost::moveTexture(
+    const ca::MoveTextureRequest& request, std::shared_ptr<const as::AssetCatalog> catalog) {
+  using E = ca::MoveTextureError;
+  using R = ca::MoveTextureResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->project.empty() || !state_->config.generation) return R::Err(E::Unavailable);
+  if (auto error = state_->slotError()) {
+    if (*error == ca::RebuildError::Busy) return R::Err(E::Busy);
+    if (*error == ca::RebuildError::WorkspaceNeedsRepair) return R::Err(E::WorkspaceNeedsRepair);
+    return R::Err(E::Unavailable);
+  }
+  if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
+      state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
+      state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
+  if (!ca::validTextureLogicalPath(request.expectedLogicalPath) ||
+      !ca::validTextureLogicalPath(request.destinationLogicalPath)) return R::Err(E::InvalidPath);
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto* record = catalog->find(request.asset);
+  if (!record) return R::Err(E::UnknownAsset);
+  const auto key = as::toString(record->source);
+  const auto name = textureName(key);
+  const auto producer = state_->producers.find(key);
+  if (!name || !record->source.subKey.empty() || record->type != as::CatalogAssetType::Texture ||
+      textureKind(key) != TextureKind::Color || producer == state_->producers.end() ||
+      producer->second.root != request.asset || producer->second.type != record->type)
+    return R::Err(E::UnsupportedProducer);
+  const auto unit = state_->activeTextures.find(*name);
+  if (unit == state_->activeTextures.end() || unit->second.guid != request.asset || unit->second.kind != TextureKind::Color)
+    return R::Err(E::UnsupportedProducer);
+  const auto current = effectiveLogicalPath(state_->activeLocations, request.asset, *name);
+  if (current != request.expectedLogicalPath) return R::Err(E::StaleSnapshot);
+  if (current == request.destinationLogicalPath) return R::Err(E::Unchanged);
+  const auto folder = [](std::string_view path) { return path.substr(0, path.rfind('/')); };
+  if (folder(current) == folder(request.destinationLogicalPath)) return R::Err(E::InvalidPath);
+  if (pathClaimed(state_->activeLocations, state_->activeTextures, request.asset, request.destinationLogicalPath))
+    return R::Err(E::PathConflict);
+  if (state_->activeLocations.size() >= kNameLimit && !state_->activeLocations.contains(request.asset))
+    return R::Err(E::Unavailable);
+  const auto id = newGuid();
+  if (!id) return R::Err(E::Unavailable);
+  ca::RebuildJob job{{*id}, request.asset, ca::RebuildState::Running, {}, {}};
+  state_->running.emplace(State::Work{job, &producer->second, std::move(catalog), Clock::now() + state_->config.timeout,
+                                      std::nullopt, std::nullopt, std::nullopt, request});
   state_->changed.notify_one();
   return R::Ok(job);
 }
@@ -3274,7 +3467,8 @@ ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::I
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->committedNames != state_->activeNames) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged())
+    return R::Err(E::ActivationRequired);
   const auto committed = state_->registered.find(name);
   std::optional<as::AssetGuid> root;
   if (mode == ca::ImportMode::Register) {
@@ -3350,7 +3544,7 @@ ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& re
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->committedNames != state_->activeNames) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
   const auto id = newGuid();
   if (!id) return R::Err(E::Unavailable);
   ca::MaterialJob job{{*id}, target, ca::RebuildState::Running, {}, {}, {}};
@@ -3384,12 +3578,17 @@ ca::TextureImportStartResult AssetRebuildHost::startTextureImport(
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->committedNames != state_->activeNames) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
   const auto found = state_->committedTextures.find(name);
   if (kind == TextureKind::Color &&
       labelClaimed(state_->committedNames, state_->committedTextures,
                    mode == ca::ImportMode::Resume && found != state_->committedTextures.end()
                        ? found->second.guid : as::AssetGuid{}, name))
+    return R::Err(E::NameConflict);
+  if (kind == TextureKind::Color &&
+      pathClaimed(state_->committedLocations, state_->committedTextures,
+                  mode == ca::ImportMode::Resume && found != state_->committedTextures.end()
+                      ? found->second.guid : as::AssetGuid{}, fallbackPath(name)))
     return R::Err(E::NameConflict);
   if (mode == ca::ImportMode::Register) {
     if (found != state_->committedTextures.end()) return R::Err(E::NameConflict);

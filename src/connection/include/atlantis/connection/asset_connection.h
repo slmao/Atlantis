@@ -24,6 +24,7 @@ struct AssetSummary {
   AssetType type = AssetType::Mesh;
   std::string source;
   std::optional<std::string> displayName{};
+  std::optional<std::string> logicalPath{};
   friend bool operator==(const AssetSummary&, const AssetSummary&) = default;
 };
 struct AssetDetails {
@@ -35,6 +36,7 @@ struct AssetDetails {
   std::string tool;
   std::vector<asset_system::AssetGuid> dependencies;
   std::optional<std::string> displayName{};
+  std::optional<std::string> logicalPath{};
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
 
@@ -147,6 +149,19 @@ struct RenameTextureRequest {
 };
 using RenameTextureResult = Result<RebuildJob, RenameTextureError>;
 
+enum class MoveTextureError : std::uint8_t {
+  Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
+  UnsupportedProducer, InvalidPath, PathConflict, StaleSnapshot, Unchanged,
+};
+[[nodiscard]] std::string_view toString(MoveTextureError value) noexcept;
+struct MoveTextureRequest {
+  asset_system::AssetGuid asset;
+  GenerationId expectedGeneration;
+  std::string expectedLogicalPath;
+  std::string destinationLogicalPath;
+};
+using MoveTextureResult = Result<RebuildJob, MoveTextureError>;
+
 struct TextureRemovalCheckId {
   asset_system::AssetGuid value;
   friend bool operator==(const TextureRemovalCheckId&, const TextureRemovalCheckId&) = default;
@@ -203,6 +218,7 @@ enum class RegistrationState : std::uint8_t { NotCommitted, Committed, Unknown }
 [[nodiscard]] std::string_view toString(ImportStage value) noexcept;
 [[nodiscard]] std::string_view toString(ImportFailureCode value) noexcept;
 [[nodiscard]] std::string_view toString(RegistrationState value) noexcept;
+[[nodiscard]] bool validTextureLogicalPath(std::string_view path) noexcept;
 [[nodiscard]] bool validImportName(std::string_view name) noexcept;
 [[nodiscard]] bool validFailure(ImportStage stage, ImportFailureCode code) noexcept;
 struct ImportFailure {
@@ -419,6 +435,9 @@ class AssetConnection {
   // A success admits one job, settled through rebuildStatus by its returned ID.
   [[nodiscard]] virtual assets::RenameTextureResult renameTexture(const assets::RenameTextureRequest&) {
     return assets::RenameTextureResult::Err(assets::RenameTextureError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::MoveTextureResult moveTexture(const assets::MoveTextureRequest&) {
+    return assets::MoveTextureResult::Err(assets::MoveTextureError::Unsupported);
   }
   [[nodiscard]] virtual assets::TextureRemovalCheckResult checkTextureRemoval(const assets::TextureRemovalTarget&) {
     return assets::TextureRemovalCheckResult::Err(assets::TextureRemovalError::Unsupported);

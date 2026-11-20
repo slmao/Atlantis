@@ -58,6 +58,9 @@ internal static partial class Program
         ("assets.rename_texture", "assets.renameTexture",
             $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","displayName":"blue_probe"}""",
             $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.move_texture", "assets.moveTexture",
+            $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","expectedLogicalPath":"textures/probe.png","destinationLogicalPath":"textures/outside/probe.png"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.check_texture_removal", "assets.checkTextureRemoval",
             $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}"}""",
             $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","state":"Checking","blockers":[],"truncated":false,"incomplete":false,"diagnostic":""}}"""),
@@ -225,6 +228,7 @@ internal static partial class Program
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
             Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.rename_texture" ? description.Contains("display rename") && description.Contains("Runtime restart") :
+                c.Tool == "assets.move_texture" ? description.Contains("logical Assets move") && description.Contains("Runtime restart") :
                 c.Tool == "assets.check_texture_removal" ? description.Contains("reference check") && description.Contains("Runtime restart") :
                 c.Tool == "assets.remove_texture" ? description.Contains("Ready receipt") && description.Contains("Runtime restart") :
                 c.Tool == "assets.import" ? description.Contains("Register a project") && description.Contains("Runtime restart") :
@@ -521,7 +525,7 @@ internal static partial class Program
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
             if (c.Method is "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
-                "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
+                "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.moveTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or

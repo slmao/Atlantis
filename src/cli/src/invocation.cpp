@@ -41,6 +41,7 @@ constexpr std::string_view kUsage =
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
+    "  assets move-texture <GUID> <ExpectedGeneration> <ExpectedPath> <DestinationPath>\n"
     "  assets rename-texture <GUID> <ExpectedGeneration> <DisplayName>\n"
     "  assets check-texture-removal <GUID> <ExpectedGeneration>\n"
     "  assets texture-removal-check-status <CheckId>\n"
@@ -428,6 +429,14 @@ int Invocation::finish(Reply reply) {
     if (checked.command == "assets material-status" && checked.error) {
       failure->subject = checked.result;
       failure->message += "; material job outcome unknown; retain the job ID and query it after reconnecting";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets move-texture" && checked.result.find("asset")) {
+      failure->subject = checked.result;
+      failure->message += "; texture move outcome unknown for " + checked.result.find("asset")->asString() +
+          " in generation " + checked.result.find("expectedGeneration")->asString() + " to '" +
+          checked.result.find("destinationLogicalPath")->asString() +
+          "'. Inspect the workspace and generations and confirm settlement before retrying.";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets rename-texture" && checked.result.find("asset")) {

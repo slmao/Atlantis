@@ -16,6 +16,7 @@ public sealed class AssetDetailIntent
 }
 
 public sealed record TextureRenameIntent(AssetSummary Asset, AssetDetailIntent Intent);
+public sealed record TextureMoveIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record TextureRemovalIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates,
     bool RosterComplete, GenerationId? Generation, AssetDetailIntent Intent);
@@ -125,6 +126,22 @@ public sealed class AssetBrowser
     {
         RenameIntent?.Intent.Cancel();
         RenameIntent = null;
+    }
+
+    public TextureMoveIntent? MoveIntent { get; private set; }
+
+    public TextureMoveIntent? BeginMove()
+    {
+        CancelMove();
+        var asset = _items.FirstOrDefault(item => item.Guid == Selected);
+        return !SelectionVisible || asset is null || RegisteredColorName(asset) is null ? null :
+            MoveIntent = new(asset, new());
+    }
+
+    public void CancelMove()
+    {
+        MoveIntent?.Intent.Cancel();
+        MoveIntent = null;
     }
 
     public TextureRemovalIntent? RemovalIntent { get; private set; }
@@ -251,6 +268,7 @@ public sealed class AssetBrowser
             InvalidateDetail();
             InvalidateDependents();
             CancelRename();
+            CancelMove();
             CancelRemoval();
         }
     }
@@ -258,6 +276,7 @@ public sealed class AssetBrowser
     public long BeginList()
     {
         CancelRename();
+        CancelMove();
         CancelRemoval();
         InvalidateDependents();
         InvalidateDetail();
@@ -294,6 +313,7 @@ public sealed class AssetBrowser
         {
             InvalidateDependents();
             CancelRename();
+            CancelMove();
             CancelRemoval();
         }
         InvalidateDetail();
@@ -310,6 +330,7 @@ public sealed class AssetBrowser
     public void ClearSelection()
     {
         CancelRename();
+        CancelMove();
         CancelRemoval();
         InvalidateDependents();
         InvalidateDetail();
@@ -333,6 +354,7 @@ public sealed class AssetBrowser
         DependentResult = new(rows, false, "Runtime disconnected. Reconnect and refresh references.");
         if (checkingSlot) ReferenceNotice = "Reference could not be verified. Reconnect and refresh references.";
         CancelRename();
+        CancelMove();
         CancelRemoval();
         DetailIntent?.Cancel();
         return true;

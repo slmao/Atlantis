@@ -294,6 +294,22 @@ AssetDetails {"guid":"<GUID>","type":"<same closed type>","source":"<source key>
               "tool":"<catalog tool>","dependencies":["<GUID>"…]}
 ```
 
+Spec 0120 adds optional `logicalPath` to list/get for an overridden
+registered base color texture. It is a canonical full path in the Assets
+`textures/` namespace, separate from the original `source` used by producers
+and reimport. Older clients can ignore this member.
+
+`assets.moveTexture` takes exactly `asset` and `expectedGeneration` as
+non-nil canonical GUIDs, plus `expectedLogicalPath` and
+`destinationLogicalPath` as full logical path strings. An accepted request
+returns the existing running rebuild job. Poll by its ID and verify the
+asset before presenting settlement. The attached catalog changes after
+explicit restart into the returned generation. The distinct move refusals
+are Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable,
+UnknownAsset, UnsupportedProducer, InvalidPath, PathConflict, StaleSnapshot
+and Unchanged. Legacy method absence maps to Unsupported. A potentially sent
+request with a missing or invalid receipt requires inspection before retry.
+
 Spec 0117 adds optional `displayName` to either item for a registered
 base color texture with an override. It is the immutable active-generation
 label, has the same grammar as an import name, and never replaces

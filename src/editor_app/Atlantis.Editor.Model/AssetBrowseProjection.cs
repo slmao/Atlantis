@@ -18,6 +18,7 @@ public sealed class AssetBrowseProjection
     {
         Asset = asset;
         Name = AssetName(asset);
+        LogicalPath = EffectiveLogicalPath(asset);
         Guid = asset.Guid.ToString();
         CompactGuid = Guid.Replace("-", "", StringComparison.Ordinal);
         SourceGroup = asset.Source.StartsWith("assets:", StringComparison.Ordinal) ? "assets:" :
@@ -26,11 +27,14 @@ public sealed class AssetBrowseProjection
 
     public AssetSummary Asset { get; }
     public string Name { get; }
+    public string? LogicalPath { get; }
     public string Guid { get; }
     public string CompactGuid { get; }
     public string SourceGroup { get; }
 
     public bool Matches(string query, string path, string? compact) =>
+        Codec.ValidTextureLogicalPath(query) ? LogicalPath == query :
+        LogicalPath?.Contains(path, StringComparison.OrdinalIgnoreCase) == true ||
         Name.Contains(query, StringComparison.OrdinalIgnoreCase) ||
         Asset.Source.Contains(path, StringComparison.OrdinalIgnoreCase) ||
         Guid.Contains(query, StringComparison.OrdinalIgnoreCase) ||
@@ -67,6 +71,9 @@ public sealed class AssetBrowseProjection
         string name = source[prefix.Length..^suffix.Length];
         return Codec.ValidImportName(name) ? name : null;
     }
+
+    public static string? EffectiveLogicalPath(AssetSummary asset) =>
+        asset.LogicalPath ?? (ManagedTextureName(asset, "/source.png") is string token ? $"textures/{token}.png" : null);
 
     public static string AssetName(AssetSummary asset)
     {

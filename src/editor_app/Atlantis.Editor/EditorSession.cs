@@ -608,6 +608,19 @@ public sealed class EditorWorker : IDisposable
             catch (RemoteException error) { _post(() => done(null, error.Message)); }
         });
 
+    public void MoveTexture(TextureMoveIntent intent, Atlantis.Gameplay.Assets.GenerationId generation, string expectedPath, string destination,
+        Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.MoveTextureError>?, string?> done) =>
+        Enqueue(session =>
+        {
+            if (!intent.Intent.Current) { _post(() => done(null, "Move canceled before sending.")); return; }
+            try
+            {
+                var result = session.Assets.MoveTexture(intent.Asset.Guid, generation, expectedPath, destination);
+                _post(() => done(result, null));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+        });
+
     public void CheckTextureRemoval(TextureRemovalIntent intent, GenerationId generation, TextureRemovalCheckId? id,
         Action<Outcome<TextureRemovalCheck, TextureRemovalError>?, string?> done) =>
         Enqueue(session =>

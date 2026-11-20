@@ -233,6 +233,10 @@ std::string_view toString(RenameTextureError value) noexcept {
   return token(value, std::array{"Unsupported", "Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
       "UnknownAsset", "UnsupportedProducer", "InvalidName", "NameConflict", "StaleSnapshot", "Unchanged"});
 }
+std::string_view toString(MoveTextureError value) noexcept {
+  return token(value, std::array{"Unsupported", "Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
+      "UnknownAsset", "UnsupportedProducer", "InvalidPath", "PathConflict", "StaleSnapshot", "Unchanged"});
+}
 std::string_view toString(RebuildError value) noexcept {
   return token(value, std::array{"Unavailable", "Busy", "WorkspaceNeedsRepair", "CatalogUnavailable",
                                  "UnknownAsset", "UnsupportedProducer", "UnknownJob", "Unsupported"});
@@ -613,6 +617,19 @@ std::string_view toString(ImportFailureCode value) noexcept {
 std::string_view toString(RegistrationState value) noexcept {
   return token(value, std::array{"NotCommitted", "Committed", "Unknown"});
 }
+bool validTextureLogicalPath(std::string_view path) noexcept {
+  if (!path.starts_with("textures/") || !path.ends_with(".png")) return false;
+  path.remove_prefix(9);
+  path.remove_suffix(4);
+  for (int folders = 0;; ++folders) {
+    const auto slash = path.find('/');
+    if (!validImportName(path.substr(0, slash))) return false;
+    if (slash == std::string_view::npos) return true;
+    if (folders == 4) return false;
+    path.remove_prefix(slash + 1);
+  }
+}
+
 bool validImportName(std::string_view name) noexcept {
   const auto letter = [](char c) { return c >= 'a' && c <= 'z'; };
   if (name.empty() || name.size() > 48 || !letter(name.front())) return false;

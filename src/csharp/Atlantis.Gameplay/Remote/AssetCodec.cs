@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using A = Atlantis.Gameplay.Assets;
@@ -21,11 +22,13 @@ public static partial class Codec
     {
         var result = JsonValue.NewObject().Set("guid", Encode(v.Guid))
             .Set("type", JsonValue.String(AssetTypeText(v.Type))).Set("source", JsonValue.String(v.Source));
-        return v.DisplayName is string name ? result.Set("displayName", JsonValue.String(name)) : result;
+        if (v.DisplayName is string name) result.Set("displayName", JsonValue.String(name));
+        if (v.LogicalPath is string path) result.Set("logicalPath", JsonValue.String(path));
+        return result;
     }
     public static JsonValue Encode(A.AssetDetails v)
     {
-        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source) { DisplayName = v.DisplayName });
+        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source) { DisplayName = v.DisplayName, LogicalPath = v.LogicalPath });
         JsonValue deps = JsonValue.NewArray();
         foreach (AssetGuid guid in v.Dependencies) deps.Push(Encode(guid));
         return result.Set("artifactSchema", JsonValue.Number((ulong)v.ArtifactSchema))
@@ -41,7 +44,11 @@ public static partial class Codec
         var optional = v.Find("displayName");
         if (optional is not null && (known != A.AssetType.Texture || !optional.IsString || !ValidImportName(optional.AsString)))
             return null;
-        return new A.AssetSummary(guid, known, s.AsString) { DisplayName = optional?.AsString };
+        if (CountMember(v, "logicalPath") > 1) return null;
+        var path = v.Find("logicalPath");
+        if (path is not null && (known != A.AssetType.Texture || !path.IsString ||
+            !ValidTextureLogicalPath(path.AsString) || RegisteredColorToken(s.AsString) is null)) return null;
+        return new A.AssetSummary(guid, known, s.AsString) { DisplayName = optional?.AsString, LogicalPath = path?.AsString };
     }
     public static A.AssetDetails? DecodeAssetDetails(JsonValue v)
     {
@@ -62,7 +69,7 @@ public static partial class Codec
                 string.CompareOrdinal(deps[^1].ToString(), guid.ToString()) >= 0) return null;
             deps.Add(guid);
         }
-        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps) { DisplayName = s.DisplayName };
+        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps) { DisplayName = s.DisplayName, LogicalPath = s.LogicalPath };
     }
     public static JsonValue Encode(A.AssetError e) => JsonValue.String(e.ToString());
     public static A.AssetError? DecodeAssetError(JsonValue v) => v.IsString ? v.AsString switch
@@ -155,6 +162,23 @@ public static partial class Codec
         error.Find("code") is { IsString: true, AsString: "BadRequest" } &&
         error.Find("message") is { IsString: true, AsString: "unknown or malformed asset query" };
 
+    public static bool ValidTextureLogicalPath(string path)
+    {
+        if (!path.StartsWith("textures/", StringComparison.Ordinal) || !path.EndsWith(".png", StringComparison.Ordinal)) return false;
+        var parts = path[9..^4].Split('/');
+        return parts.Length <= 5 && parts.All(ValidImportName);
+    }
+
+    public static string? RegisteredColorToken(string source)
+    {
+        const string prefix = "content:texture_", suffix = "/source.png";
+        if (!source.StartsWith(prefix, StringComparison.Ordinal) || !source.EndsWith(suffix, StringComparison.Ordinal) ||
+            source.Length <= prefix.Length + suffix.Length) return null;
+        string token = source[prefix.Length..^suffix.Length];
+        return ValidImportName(token) ? token : null;
+    }
+
+    public static A.MoveTextureError? DecodeMoveTextureError(JsonValue value) => RebuildToken<A.MoveTextureError>(value);
     public static A.RenameTextureError? DecodeRenameTextureError(JsonValue value) => RebuildToken<A.RenameTextureError>(value);
     public static A.TextureRemovalError? DecodeTextureRemovalError(JsonValue value) => RebuildToken<A.TextureRemovalError>(value);
 

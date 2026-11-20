@@ -110,6 +110,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.rename_texture", "assets.renameTexture",
             "Publish a display rename for one registered base color texture. Query rebuild_status by the returned ID.", RebuildModel,
             ToolSchemas.Parameters(("asset", ToolSchemas.String), ("expectedGeneration", ToolSchemas.String), ("displayName", ToolSchemas.String))),
+        Declare("assets.move_texture", "assets.moveTexture",
+            "Publish a logical Assets move for one registered base color texture. Query rebuild_status by the returned ID.", RebuildModel,
+            ToolSchemas.Parameters(("asset", ToolSchemas.String), ("expectedGeneration", ToolSchemas.String), ("expectedLogicalPath", ToolSchemas.String), ("destinationLogicalPath", ToolSchemas.String))),
         Declare("assets.check_texture_removal", "assets.checkTextureRemoval",
             "Start a project reference check for one registered base color texture. Poll texture_removal_check_status.", RebuildModel,
             ToolSchemas.TextureRemovalParameters(confirm: false)),
@@ -228,6 +231,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return DocumentOperation(mapping.Method, wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
+            if (mapping.Method == "assets.moveTexture") return MoveTexture(wireParameters);
             if (mapping.Method is "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
                 return TextureRemoval(mapping.Method, wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
@@ -399,6 +403,40 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                         Codec.DecodeRebuildJob(ok) is { State: A.RebuildState.Running } job && job.Asset == asset)
                         return Forward(result, false);
                     if (result.Find("err") is JsonValue err && Codec.DecodeRenameTextureError(err) is not null)
+                        return Forward(result, true);
+                }
+            }
+            return Error("ProtocolError: " + unknown);
+        }
+        catch (RemoteException error) { return Error(mayHaveSent ? error.Message + " " + unknown : error.Message); }
+    }
+
+    private CallToolResult MoveTexture(JsonValue parameters)
+    {
+        if (Codec.DecodeAsset(parameters.Find("asset")!) is not AssetGuid asset || asset.IsNil ||
+            Codec.DecodeAsset(parameters.Find("expectedGeneration")!) is not AssetGuid generation || generation.IsNil ||
+            parameters.Find("asset")?.AsString != asset.ToString() ||
+            parameters.Find("expectedGeneration")?.AsString != generation.ToString())
+            return Error("InvalidArguments: expected non-nil canonical asset and generation GUIDs");
+        string label = parameters.Find("destinationLogicalPath")!.AsString;
+        string unknown = $"Texture move outcome unknown for {asset} in generation {generation} to '{label}'. " +
+            "Inspect the workspace and generations and confirm settlement before retrying.";
+        bool mayHaveSent = false;
+        try
+        {
+            var response = session.Request("assets.moveTexture", parameters, out mayHaveSent);
+            if (response.IsObject && response.Members.Count == 2 && Codec.CountMember(response, "id") == 1)
+            {
+                if (response.Find("error") is { IsObject: true } error && error.Members.Count == 2 &&
+                    Codec.CountMember(error, "code") == 1 && Codec.CountMember(error, "message") == 1 &&
+                    Codec.IsLegacyAssetRebuildRefusal(response))
+                    return Forward(Codec.Err(JsonValue.String("Unsupported")), true);
+                if (response.Find("result") is { IsObject: true } result && result.Members.Count == 1)
+                {
+                    if (result.Find("ok") is JsonValue ok &&
+                        Codec.DecodeRebuildJob(ok) is { State: A.RebuildState.Running } job && job.Asset == asset)
+                        return Forward(result, false);
+                    if (result.Find("err") is JsonValue err && Codec.DecodeMoveTextureError(err) is not null)
                         return Forward(result, true);
                 }
             }

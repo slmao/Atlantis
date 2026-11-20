@@ -748,9 +748,20 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     ActiveHeader, PreparedHeader, FinalHeader, StagedNext, LinkedNext, StagedPrevious, LateTimeout
   };
   Rename rename = Rename::None;
+  enum class Move { None, Success, Rollback, Unknown, Confirmed, LockedCleanup };
+  Move location = Move::None;
+  SECTION("registered color texture logical move") {
+    if (kind != TextureKind::Color) return;
+    succeeds = true;
+    SECTION("verified v9 and original-inbox reimport") { location = Move::Success; }
+    SECTION("a verified unpublished failure restores the old placement") { location = Move::Rollback; }
+    SECTION("a damaged final folder retains the recovery record") { location = Move::Unknown; }
+    SECTION("exact final folder confirms a lost publication result") { location = Move::Confirmed; }
+    SECTION("locked staging retains recovery across restart") { location = Move::LockedCleanup; }
+  }
   enum class Removal {
     None, Success, SourceOnly, Incomplete, Stale, LateStale, Rollback, Unknown, ExtraFile, LinkedInbox,
-    OverlayChanged, OverlayChangedLate, CorruptOldNames, LockedSelection
+    OverlayChanged, OverlayChangedLate, CorruptOldNames, LockedSelection, MovedTexture
   };
   Removal removal = Removal::None;
   SECTION("registered color texture display rename") {
@@ -798,6 +809,7 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-Dpng=${frozen}/${key}" "-Dartifact=
     }
     SECTION("a damaged old name table prevents either rollback write") { removal = Removal::CorruptOldNames; }
     SECTION("a locked temporary file leaves the published job and its recovery record") { removal = Removal::LockedSelection; }
+    SECTION("removal retires a moved texture's placement") { removal = Removal::MovedTexture; }
   }
   const auto checkout = fs::canonical(f.base) / "checkout";
   const auto overlay = checkout / "assets/bistro/bistro_overlay.scene.txt";
@@ -1053,6 +1065,22 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
     if (removal != Removal::None) {
       using State = ca::TextureRemovalState;
       CAPTURE(static_cast<int>(removal));
+      if (removal == Removal::MovedTexture) {
+        const auto moveJob = activated.value()->moveTexture({target, previousGeneration,
+            "textures/sample.png", "textures/outside/sample.png"}, snapshot);
+        REQUIRE(moveJob.isOk());
+        const auto placed = f.complete(*activated.value(), moveJob.value().id);
+        REQUIRE(placed.state == ca::RebuildState::Succeeded);
+        REQUIRE(placed.generation);
+        activated.value().reset();
+        config.generation = placed.generation;
+        activated = AssetRebuildHost::open(config);
+        REQUIRE(activated.isOk());
+        CHECK(activated.value()->logicalPath(target) == "textures/outside/sample.png");
+        auto placedCatalog = as::loadAssetCatalog(activated.value()->catalogPath().generic_string());
+        REQUIRE(placedCatalog.isOk());
+        snapshot = std::make_shared<const as::AssetCatalog>(std::move(placedCatalog.value()));
+      }
       if (removal == Removal::CorruptOldNames) {
         const auto labelJob = activated.value()->renameTexture({target, previousGeneration, "display_alias"}, snapshot);
         REQUIRE(labelJob.isOk());
@@ -1162,7 +1190,7 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
         }
         return;
       }
-      if (removal != Removal::Success) {
+      if (removal != Removal::Success && removal != Removal::MovedTexture) {
         REQUIRE(settled.state == ca::RebuildState::Failed);
         CHECK_FALSE(settled.generation);
         CHECK(fs::exists(unit) == (removal != Removal::Unknown));
@@ -1183,9 +1211,89 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
       config.generation = settled.generation;
       auto reopened = AssetRebuildHost::open(config);
       REQUIRE(reopened.isOk());
+      if (removal == Removal::MovedTexture) {
+        CHECK_FALSE(fs::exists(project / "texture-locations.json"));
+        CHECK_FALSE(reopened.value()->logicalPath(target));
+        CHECK(read(inbox) == kLinearPngBytes);
+      }
       const auto current = as::loadAssetCatalog(reopened.value()->catalogPath().generic_string());
       REQUIRE(current.isOk());
       CHECK(current.value().find(target) == nullptr);
+      return;
+    }
+    if (location != Move::None) {
+      using E = ca::MoveTextureError;
+      constexpr std::string_view original = "textures/sample.png";
+      constexpr std::string_view destinationPath = "textures/outside/brick.png";
+      const auto paths = project / "texture-locations.json";
+      activated.value().reset();
+      fs::path recovery;
+      std::unique_ptr<void, decltype(&CloseHandle)> locked(nullptr, &CloseHandle);
+      config.beforeRenameExchange = [&](const auto& pending, auto) { recovery = pending / "move.json"; };
+      config.beforeRenamePublication = [&](const auto& candidate, const auto& final) {
+        if (location == Move::Rollback) changeHeader(candidate);
+        if (location == Move::Confirmed || location == Move::Unknown) fs::rename(candidate, final);
+        if (location == Move::Unknown) changeHeader(final);
+        if (location == Move::LockedCleanup) {
+          const auto handle = CreateFileW(recovery.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+          if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("Could not lock move recovery record");
+          locked.reset(handle);
+        }
+      };
+      activated = AssetRebuildHost::open(config);
+      REQUIRE(activated.isOk());
+      CHECK(activated.value()->moveTexture({target, {f.unknown}, std::string(original), std::string(destinationPath)}, snapshot).error() == E::StaleSnapshot);
+      CHECK(activated.value()->moveTexture({target, previousGeneration, "textures/old/sample.png", std::string(destinationPath)}, snapshot).error() == E::StaleSnapshot);
+      CHECK(activated.value()->moveTexture({target, previousGeneration, std::string(original), "textures/other.png"}, snapshot).error() == E::InvalidPath);
+      CHECK(activated.value()->moveTexture({target, previousGeneration, std::string(original), std::string(original)}, snapshot).error() == E::Unchanged);
+      const auto admitted = activated.value()->moveTexture({target, previousGeneration, std::string(original), std::string(destinationPath)}, snapshot);
+      REQUIRE(admitted.isOk());
+      const auto settled = f.complete(*activated.value(), admitted.value().id);
+      INFO((settled.failure ? settled.failure->diagnostic : "no move failure"));
+      CHECK_FALSE(activated.value()->logicalPath(target));
+      CHECK(read(unit / "catalog-source.txt") == oldFragment);
+      CHECK(read(inbox) == kLinearPngBytes);
+      CHECK(read(unit / "source.png") == kLinearPngBytes);
+      if (location == Move::Rollback || location == Move::Unknown) {
+        CHECK(settled.state == ca::RebuildState::Failed);
+        CHECK_FALSE(settled.generation);
+        CHECK(fs::exists(paths) == (location == Move::Unknown));
+        CHECK(fs::exists(recovery) == (location == Move::Unknown));
+        CHECK(fs::exists(f.marker) == (location == Move::Unknown));
+        return;
+      }
+      REQUIRE(settled.state == ca::RebuildState::Succeeded);
+      REQUIRE(settled.generation);
+      const auto published = f.published / as::toString(settled.generation->value);
+      CHECK(read(published / "generation.json").find("\"version\":9") != std::string::npos);
+      CHECK(read(published / "asset_catalog.txt") == read(oldRoot / "asset_catalog.txt"));
+      CHECK(read(published / "artifact") == read(oldRoot / "artifact"));
+      CHECK(fs::exists(recovery) == (location == Move::LockedCleanup));
+      activated.value().reset();
+      locked.reset();
+      config.generation = settled.generation;
+      config.beforeRenameExchange = {};
+      config.beforeRenamePublication = {};
+      auto reopened = AssetRebuildHost::open(config);
+      REQUIRE(reopened.isOk());
+      CHECK(reopened.value()->logicalPath(target) == destinationPath);
+      if (location == Move::LockedCleanup) {
+        CHECK(reopened.value()->admissionError() == ca::RebuildError::WorkspaceNeedsRepair);
+      } else if (location == Move::Success) {
+        write(inbox, kReplacementBytes);
+        const auto request = reopened.value()->start(target, snapshot);
+        REQUIRE(request.isOk());
+        const auto replaced = f.complete(*reopened.value(), request.value().id);
+        INFO((replaced.failure ? replaced.failure->diagnostic : "no reimport failure"));
+        REQUIRE(replaced.state == ca::RebuildState::Succeeded);
+        REQUIRE(replaced.generation);
+        reopened.value().reset();
+        config.generation = replaced.generation;
+        reopened = AssetRebuildHost::open(config);
+        REQUIRE(reopened.isOk());
+        CHECK(reopened.value()->logicalPath(target) == destinationPath);
+        CHECK(read(unit / "source.png") == kReplacementBytes);
+      }
       return;
     }
     if (rename != Rename::None) {
