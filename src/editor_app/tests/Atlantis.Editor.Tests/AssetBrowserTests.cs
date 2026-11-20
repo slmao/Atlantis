@@ -220,34 +220,89 @@ public static partial class Program
         var snapshot = Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(new[] { texture, late, early, linear });
         browser.CompleteList(browser.BeginList(), snapshot);
         browser.Select(linear.Guid);
-        Check(browser.BeginDependents() is null && AssetBrowser.RegisteredColorName(texture) == "probe" &&
+        Check(browser.BeginDependents() is not null && AssetBrowser.RegisteredColorName(texture) == "probe" &&
             AssetBrowser.RegisteredColorName(texture with { Source = "content:texture_probe/source.png#subkey" }) is null &&
             AssetBrowser.RegisteredColorName(texture with { Source = "content:texture_../source.png" }) is null,
-            "reimport: only a canonical registered color source is a provisional target");
+            "references: linear textures can be queried while reimport still requires a canonical color source");
         browser.Select(texture.Guid);
         var scan = browser.BeginDependents()!;
         Check(scan.Candidates.SequenceEqual(new[] { early, late }) && browser.BeginDependents() is null,
             "reimport: one scan, material rows only, deterministic source order");
         browser.Group = AssetBrowseGroup.Source;
-        Check(scan.Intent.Current && browser.CompleteDependents(scan, new(new[] { early }, false)) &&
-            browser.DependentResult is { Complete: false } partial && partial.Matches.SequenceEqual(new[] { early }),
+        var baseRow = new AssetReferenceRow(early, TextureReferenceSlot.BaseColor);
+        var emissiveRow = new AssetReferenceRow(early, TextureReferenceSlot.Emissive);
+        var unavailable = new AssetReferenceRow(late, null, "Unsupported");
+        Check(scan.Intent.Current && browser.CompleteDependents(scan, new(new[] { baseRow, emissiveRow, unavailable }, false)) &&
+            browser.DependentResult is { Complete: false } partial && partial.Matches.SequenceEqual(new[] { baseRow, emissiveRow, unavailable }),
             "reimport: grouping preserves the current scan and an incomplete result retains verified matches");
+        Check(browser.BeginReferenceLocate(unavailable, null) is null,
+            "references: unresolved edges cannot be located");
+        var values = new MaterialValues(texture.Guid, 1, 1, 1, 0, 1) { EmissiveTexture = texture.Guid };
+        var material = new MaterialRead(early.Guid, new(values, MaterialFilter.Linear, MaterialAddress.Repeat), false, null);
+        var detail = new AssetDetails(early.Guid, AssetType.Material, early.Source, 9, 10, "test", new[] { texture.Guid });
+        Check(MaterialTextureReferences.MatchesDetail(early, detail) && MaterialTextureReferences.ProvesSlots(detail, material, null) &&
+            MaterialTextureReferences.Slots(values).Where(p => p.Texture == texture.Guid).Select(p => p.Slot)
+                .SequenceEqual(new[] { TextureReferenceSlot.BaseColor, TextureReferenceSlot.Emissive }),
+            "references: one dependency GUID proves two independent slots on a read-only material");
+        var allMaps = values with { NormalMap = linear.Guid, MetallicRoughnessMap = late.Guid, OcclusionMap = early.Guid };
+        Check(MaterialTextureReferences.Slots(allMaps).Select(p => p.Texture).SequenceEqual(
+                new AssetGuid?[] { texture.Guid, linear.Guid, late.Guid, early.Guid, texture.Guid }) &&
+            !MaterialTextureReferences.ProvesSlots(detail, material with { Recipe = material.Recipe with { Values = allMaps } }, null) &&
+            !MaterialTextureReferences.ProvesSlots(detail, material with { ActiveGeneration = new(late.Guid) }, new GenerationId(early.Guid)) &&
+            !MaterialTextureReferences.MatchesDetail(early, detail with { Type = AssetType.Texture }),
+            "references: five ordered slots, mismatched dependencies, generation and detail identity");
+        browser.Search = texture.Guid.ToString();
+        browser.Type = AssetType.Texture;
+        var first = browser.BeginReferenceLocate(baseRow, null)!;
+        var second = browser.BeginReferenceLocate(emissiveRow, null)!;
+        Check(!first.Intent.Current && !browser.CompleteReferenceLocate(first, material, out _),
+            "references: newer locate retires a pending reply");
+        var changed = material with { Recipe = material.Recipe with { Values = values with { EmissiveTexture = null } } };
+        Check(browser.CompleteReferenceLocate(second, changed, out var refusal) && refusal is null &&
+            browser.Selected == texture.Guid && browser.Type == AssetType.Texture && browser.Search == texture.Guid.ToString() &&
+            browser.ReferenceNotice?.Contains("Refresh references") == true,
+            "references: a surviving Base Color edge cannot validate the former Emissive slot");
+        Check(browser.BeginReferenceLocate(emissiveRow, null) is null, "references: a failed locate requires refresh");
+        scan = browser.BeginDependents()!;
+        browser.CompleteDependents(scan, new(new[] { baseRow, emissiveRow }, true));
+        second = browser.BeginReferenceLocate(emissiveRow, null)!;
+        Check(browser.CompleteReferenceLocate(second, material, out var located) && located?.Slot == TextureReferenceSlot.Emissive &&
+            browser.Reveal(early.Guid) && browser.Search == "" && browser.Type is null && browser.Group == AssetBrowseGroup.Source,
+            "references: exact guid reveal clears only excluding filters and preserves grouping");
+        var detailRequest = browser.Select(early.Guid, located);
+        Check(browser.CompleteDetail(detailRequest, early.Guid, Outcome<AssetDetails, AssetError>.Ok(detail)) &&
+            ReferenceEquals(browser.LocatedReference, located), "references: generic detail completion preserves the located slot");
+        browser.Select(texture.Guid);
+        Check(browser.LocatedReference is null && browser.BeginReferenceLocate(emissiveRow, null) is null,
+            "references: row and landing cannot revive after selecting away and back");
         scan = browser.BeginDependents()!;
         browser.Search = "hidden";
         browser.Search = "";
-        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetReferenceRow>(), true)),
             "reimport: hide/show cannot revive an obsolete dependent scan");
         scan = browser.BeginDependents()!;
         browser.CompleteList(browser.BeginList(), snapshot);
         Check(!scan.Intent.Current && browser.DependentResult is null, "reimport: catalog reload cancels dependent feedback");
         scan = browser.BeginDependents()!;
         browser.CancelPendingDependents();
-        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetReferenceRow>(), true)),
             "reimport: leaving the Assets pane suppresses pending dependent feedback");
         scan = browser.BeginDependents()!;
         browser.Disconnect();
-        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetSummary>(), true)),
+        Check(!scan.Intent.Current && !browser.CompleteDependents(scan, new(Array.Empty<AssetReferenceRow>(), true)),
             "reimport: disconnect suppresses late dependent feedback");
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(new[] { texture, early, early, late }));
+        browser.Select(texture.Guid);
+        scan = browser.BeginDependents()!;
+        Check(!scan.RosterComplete && scan.Candidates.SequenceEqual(new[] { late }), "references: duplicate identities make the roster incomplete");
+        browser.CompleteDependents(scan, new(new[] { unavailable }, false));
+        browser.Search = texture.Guid.ToString();
+        Check(browser.InterruptReferences() && browser.Selected == texture.Guid && browser.Search == texture.Guid.ToString() &&
+            browser.DependentResult is { Complete: false, Matches.Count: 1 },
+            "references: transport failure retains the texture and known rows as incomplete");
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Err(AssetError.CatalogUnavailable));
+        Check(browser.State == "CatalogUnavailable" && browser.DependentResult is null && browser.BeginDependents() is null,
+            "references: unavailable catalog does not produce a complete empty result");
     }
 
     private static void AssetBrowseChecks()

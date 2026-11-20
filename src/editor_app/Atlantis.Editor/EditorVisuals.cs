@@ -6,6 +6,8 @@ using Avalonia.Automation;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Templates;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -290,6 +292,51 @@ internal static class EditorVisuals
         }), label, kind);
         ToolTip.SetTip(row, asset.Source + "\n" + asset.Guid);
         AutomationProperties.SetName(row, AssetName(asset) + ", " + asset.Type);
+        return row;
+    }
+
+    internal static void ConfigureReferenceResults(ListBox list, Action<AssetReferenceRow> locate)
+    {
+        list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
+        list.ItemTemplate = new FuncDataTemplate<AssetReferenceRow>((reference, _) =>
+        {
+            if (reference is null) return new TextBlock();
+            string name = ReferenceMaterialName(reference.Material);
+            string location = reference.Material.Source + "\n" + reference.Material.Guid;
+            if (reference.Slot is not TextureReferenceSlot slot)
+                return Stack(2, Ellipsis(name), Details("Slot unavailable · " + reference.Diagnostic), Details(location));
+
+            string label = AssetReferenceRow.Label(slot);
+            var button = new Button { Content = Ellipsis(name + " · " + label), HorizontalAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetName(button, "Locate " + name + " · " + label);
+            AutomationProperties.SetHelpText(button, location);
+            ToolTip.SetTip(button, location);
+            button.Click += (_, _) => locate(reference);
+            return button;
+        });
+        list.AddHandler(InputElement.KeyDownEvent, (_, e) =>
+        {
+            if (e.Key != Key.Enter || e.Source is not ListBoxItem { DataContext: AssetReferenceRow { Slot: not null } row }) return;
+            e.Handled = true;
+            locate(row);
+        }, RoutingStrategies.Tunnel);
+    }
+
+    internal static string ReferenceMaterialName(AssetSummary asset)
+    {
+        const string prefix = "content:material_", suffix = "/source.material.txt";
+        return asset.DisplayName is null && asset.Source.StartsWith(prefix, StringComparison.Ordinal) &&
+            asset.Source.EndsWith(suffix, StringComparison.Ordinal) && asset.Source.Length > prefix.Length + suffix.Length
+            ? asset.Source[prefix.Length..^suffix.Length] : AssetName(asset);
+    }
+
+    internal static TextBox ReadOnlyTextureSlot(TextureReferenceSlot slot, string name, AssetGuid texture)
+    {
+        string label = AssetReferenceRow.Label(slot);
+        var row = new TextBox { Text = label + " · " + name, IsReadOnly = true, Tag = slot };
+        AutomationProperties.SetName(row, label + " texture slot");
+        AutomationProperties.SetHelpText(row, texture.ToString());
+        ToolTip.SetTip(row, texture.ToString());
         return row;
     }
 }

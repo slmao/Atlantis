@@ -1,9 +1,9 @@
 # Plan 0119: View and Locate Direct Texture References
 
 - **Spec:** [Spec 0119](../specs/0119-texture-reference-locator.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** Atlantis maintainer, 2026-11-20, [PR #403](https://github.com/slmao/Atlantis/pull/403) at `d25897ec`: jointly approved Spec/Plan 0119 and J1–J4 with no new ADR or shared API. Authorized S2–S4 after manual merge `b1dd826e`.
 
 ## Objective
 

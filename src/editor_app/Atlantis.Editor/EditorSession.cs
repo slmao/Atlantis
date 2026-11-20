@@ -505,32 +505,95 @@ public sealed class EditorWorker : IDisposable
     }
     public void ReadAffectedMaterials(AssetDependentScan scan, Action<AssetDependentResult> done)
     {
-        var matches = new List<Atlantis.Gameplay.Assets.AssetSummary>();
-        bool complete = true;
+        var matches = new List<AssetReferenceRow>();
+        bool complete = scan.RosterComplete;
         int next = 0;
-        Enqueue(Slice);
+        Continue(ReadDetail);
 
-        void Slice(RemoteSession session)
+        void Continue(Action<AssetSession> slice) => Enqueue(session =>
         {
             if (!scan.Intent.Current) return;
-            if (next < scan.Candidates.Count)
+            try { slice(session.Assets); }
+            catch (RemoteException error)
             {
-                var candidate = scan.Candidates[next++];
-                var result = session.Assets.GetAsset(candidate.Guid);
-                if (!scan.Intent.Current) return;
-                if (!result.IsOk || result.Value is not { } detail || detail.Guid != candidate.Guid ||
-                    detail.Type != Atlantis.Gameplay.Assets.AssetType.Material)
-                    complete = false;
-                else if (detail.Dependencies.Contains(scan.Texture)) matches.Add(candidate);
+                complete = false;
+                Finish(error.Message);
+                throw;
             }
-            if (next < scan.Candidates.Count) Enqueue(Slice);
+        });
+
+        void ReadDetail(AssetSession assets)
+        {
+            if (next == scan.Candidates.Count) { Finish(); return; }
+            var material = scan.Candidates[next++];
+            var result = assets.GetAsset(material.Guid);
+            if (!result.IsOk || result.Value is not { } detail || !MaterialTextureReferences.MatchesDetail(material, detail))
+                complete = false;
+            else if (detail.Dependencies.Contains(scan.Texture))
+            {
+                Continue(assets => ReadSlots(assets, material, detail));
+                return;
+            }
+            Continue(ReadDetail);
+        }
+
+        void ReadSlots(AssetSession assets, AssetSummary material, AssetDetails detail)
+        {
+            Outcome<MaterialRead, MaterialError> result;
+            try { result = assets.MaterialReadWithCombinedMaps(material.Guid); }
+            catch (RemoteException error)
+            {
+                matches.Add(new(material, null, error.Message));
+                throw;
+            }
+            if (result.IsOk && result.Value is { } read && MaterialTextureReferences.ProvesSlots(detail, read, scan.Generation))
+                matches.AddRange(MaterialTextureReferences.Slots(read.Recipe.Values)
+                    .Where(value => value.Texture == scan.Texture).Select(value => new AssetReferenceRow(material, value.Slot)));
             else
             {
-                var result = new AssetDependentResult(matches.ToArray(), complete);
-                _post(() => { if (scan.Intent.Current) done(result); });
+                complete = false;
+                matches.Add(new(material, null, result.IsOk ? "Material and catalog evidence disagree." : result.Error.ToString()));
             }
+            Continue(ReadDetail);
+        }
+
+        void Finish(string? diagnostic = null)
+        {
+            var result = new AssetDependentResult(matches.ToArray(), complete, diagnostic);
+            _post(() => { if (scan.Intent.Current) done(result); });
         }
     }
+
+    public void LocateAssetReference(AssetReferenceLocate locate, Action<MaterialRead?> done) => Enqueue(session =>
+    {
+        if (!locate.Intent.Current) return;
+        var material = locate.Row.Material;
+        try
+        {
+            var result = session.Assets.GetAsset(material.Guid);
+            if (!locate.Intent.Current) return;
+            if (result.IsOk && result.Value is { } detail && MaterialTextureReferences.MatchesDetail(material, detail) &&
+                detail.Dependencies.Contains(locate.Texture))
+            {
+                Enqueue(current =>
+                {
+                    if (!locate.Intent.Current) return;
+                    try
+                    {
+                        var recipe = current.Assets.MaterialReadWithCombinedMaps(material.Guid);
+                        Finish(recipe.IsOk && recipe.Value is { } read && MaterialTextureReferences.ProvesSlots(detail, read, locate.Generation)
+                            ? read : null);
+                    }
+                    catch (RemoteException) { Finish(null); throw; }
+                });
+                return;
+            }
+        }
+        catch (RemoteException) { Finish(null); throw; }
+        Finish(null);
+
+        void Finish(MaterialRead? read) => _post(() => { if (locate.Intent.Current) done(read); });
+    });
 
     public void RenameTexture(TextureRenameIntent intent, Atlantis.Gameplay.Assets.GenerationId generation, string label,
         Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RenameTextureError>?, string?> done) =>

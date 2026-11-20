@@ -73,13 +73,14 @@ public static partial class Program
             exit = 1;
         }
         bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
-        if (meshPreview && work is not null) CheckMeshPreviewValidation(work, checks);
+        if ((meshPreview || scene == "--texture-references") && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene is "--texture-reimport" or "--texture-rename"
+            boundary = scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
+                : scene is "--texture-reimport" or "--texture-rename"
                 ? "Actual 96-DPI Windows MainWindow and hosted Runtime; routed controls, shared preview PNG and optional native window captures."
                 : scene is "--asset-drag" or "--asset-drag-compact"
                 ? "Actual 96-DPI Windows MainWindow and Runtime; native mouse drag plus shared document and projection readback."
@@ -120,6 +121,7 @@ public static partial class Program
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool reimport = _scene is "--texture-reimport" or "--texture-rename";
+                bool references = _scene == "--texture-references";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
                 bool meshPreview = _scene == "--mesh-preview";
@@ -131,7 +133,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
+                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -141,10 +143,12 @@ public static partial class Program
                     AssetBuildProfile = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
+                        references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
                     AssetGeneration = savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION") :
+                        references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_GENERATION") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_GENERATION") : null,
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
@@ -163,6 +167,7 @@ public static partial class Program
                         else if (import) await CheckImportedMeshUi(window, _checks, _work);
                         else if (rebuild) await CheckAssetRebuildUi(window, _checks, _work);
                         else if (reimport) await CheckTextureReimportUi(window, _checks, _work);
+                        else if (references) await CheckTextureReferenceUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
@@ -200,6 +205,185 @@ public static partial class Program
         ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
             .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
         return row.Children.OfType<TextBox>().Single();
+    }
+
+    private static async Task CheckTextureReferenceUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        void Check(string name, bool ok, string detail = "") => checks.Add(new(name, ok, detail));
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        bool changed = Environment.GetEnvironmentVariable("ATLANTIS_0119_PHASE") == "changed";
+        var texture = AssetGuid.Parse("01160116-0001-4116-8116-011601160001");
+        var material = AssetGuid.Parse("01160116-0002-4116-8116-011601160002");
+        var unused = AssetGuid.Parse(Environment.GetEnvironmentVariable("ATLANTIS_0119_UNUSED") ??
+            "01170117-0001-4117-8117-011701170001");
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } running && File.Exists(running.SessionPath) &&
+            Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "reference Runtime", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        Check("actual 100% Windows window with hosted Runtime", window.IsVisible &&
+            GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && runtime.Launch.ParentWindow is not null);
+        using var peer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        var generation = peer.Assets.RebuildStatus().Value.ActiveGeneration;
+        Check("named generation active", generation?.ToString() == Environment.GetEnvironmentVariable("ATLANTIS_0119_GENERATION"),
+            generation?.ToString() ?? "missing");
+        var before = peer.Authoring.DocumentState().Value;
+        var beforeRuntime = peer.Control.Status();
+        var recipe = peer.Assets.MaterialReadWithCombinedMaps(material).Value;
+        var catalog = peer.Assets.ListAssets().Value;
+        var selection = Field<Selection>("_selection").Nodes.ToArray();
+        var browser = Field<AssetBrowser>("_assetBrowser");
+        var list = Field<ListBox>("_assetsList");
+        var search = Field<TextBox>("_assetSearch");
+        var type = Field<ComboBox>("_assetTypes");
+        var group = Field<ComboBox>("_assetGroup");
+        var sort = Field<ComboBox>("_assetSort");
+        var view = Field<Button>("_viewReferences");
+        var results = Field<ListBox>("_referenceResults");
+        var status = Field<SelectableTextBlock>("_referenceStatus");
+        var slotPanel = Field<StackPanel>("_locatedSlots");
+        Field<TabControl>("_assetTabs").SelectedIndex = 1;
+        await NameUiWait(() => browser.State == "Ready", "assets catalog");
+        sort.SelectedIndex = 1;
+        group.SelectedIndex = 1;
+
+        void SelectTexture(AssetGuid guid)
+        {
+            search.Text = guid.ToString();
+            type.SelectedIndex = (int)AssetType.Texture + 1;
+            list.SelectedItem = browser.Visible.Single(row => row.Guid == guid);
+        }
+        async Task Scan(AssetGuid guid)
+        {
+            SelectTexture(guid);
+            await NameUiWait(() => view.IsEnabled && view.IsVisible, "View References");
+            Click(view);
+            await NameUiWait(() => browser.DependentScan is null && browser.DependentResult is not null, "reference scan");
+        }
+        async Task Locate(TextureReferenceSlot slot)
+        {
+            var row = results.Items.OfType<AssetReferenceRow>().Single(r => r.Material.Guid == material && r.Slot == slot);
+            results.ScrollIntoView(row);
+            results.SelectedItem = row;
+            await NameUiWait(() => results.ContainerFromItem(row) is ListBoxItem, "reference row realized");
+            var item = (ListBoxItem)results.ContainerFromItem(row)!;
+            item.Focus();
+            item.RaiseEvent(new KeyEventArgs { RoutedEvent = InputElement.KeyDownEvent, Key = Key.Enter });
+            await NameUiWait(() => browser.LocatedReference?.Slot == slot &&
+                slotPanel.Children.OfType<TextBox>().Any(box => box.IsFocused && Equals(box.Tag, slot)), "exact slot focus");
+            Check("focused " + slot + " on exact material guid, preserving sort/group",
+                browser.Selected == material && search.Text == "" && type.SelectedIndex == 0 && sort.SelectedIndex == 1 &&
+                group.SelectedIndex == 1 && slotPanel.Children.OfType<TextBox>().All(box => box.IsReadOnly));
+            await Capture("locate-" + slot, slotPanel);
+        }
+
+        await Scan(texture);
+        var matching = browser.DependentResult!.Matches.Where(row => row.Material.Guid == material).ToArray();
+        var expected = changed ? new[] { TextureReferenceSlot.BaseColor } :
+            new[] { TextureReferenceSlot.BaseColor, TextureReferenceSlot.Emissive };
+        Check("catalog dependency deduplication still yields one row per current slot", browser.DependentResult.Complete &&
+            peer.Assets.GetAsset(material).Value.Dependencies.SequenceEqual(new[] { texture }) &&
+            matching.Select(row => row.Slot!.Value).SequenceEqual(expected));
+        await Capture(changed ? "current-slots-after-restart" : "both-slots", results);
+
+        if (changed)
+        {
+            // Give the live worker a row from the previous generation. The
+            // current catalog still has the Base Color edge and cannot prove Emissive.
+            var old = new AssetReferenceRow(matching[0].Material, TextureReferenceSlot.Emissive);
+            var staleScan = browser.BeginDependents(generation)!;
+            browser.CompleteDependents(staleScan, new(new[] { old }, true));
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            typeof(MainWindow).GetMethod("UpdateReferences", flags)!.Invoke(window, null);
+            search.Focus();
+            typeof(MainWindow).GetMethod("LocateReference", flags)!.Invoke(window, new object[] { old });
+            await NameUiWait(() => status.Text?.Contains("Refresh references", StringComparison.Ordinal) == true, "stale slot refused");
+            Check("old Emissive row cannot reveal the surviving Base Color binding", browser.Selected == texture &&
+                browser.LocatedReference is null && search.Text == texture.ToString() && type.SelectedIndex != 0 && search.IsFocused);
+            await Capture("stale-slot-refused", status);
+        }
+        else
+        {
+            var worker = Field<EditorWorker>("_worker");
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+            var enqueue = typeof(EditorWorker).GetMethod("Enqueue", privateInstance)!;
+            void Queue(Action<RemoteSession> action) => enqueue.Invoke(worker, new object[] { action });
+            Queue(_ => { entered.SetResult(); release.Task.Wait(TimeSpan.FromSeconds(10)); });
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            try
+            {
+                typeof(MainWindow).GetMethod("LocateReference", privateInstance)!.Invoke(window, new object[] { matching[0] });
+                var retired = browser.ReferenceLocate!;
+                SelectTexture(unused);
+                SelectTexture(texture);
+                Check("selection away and back retires the queued locate", !retired.Intent.Current && browser.ReferenceLocate is null);
+                Queue(_ => settled.SetResult());
+            }
+            finally { release.TrySetResult(); }
+            await settled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Check("the retired locate cannot move focus or select the material", browser.Selected == texture && browser.LocatedReference is null);
+            await Scan(texture);
+            await Locate(TextureReferenceSlot.BaseColor);
+            await Scan(texture);
+            await Locate(TextureReferenceSlot.Emissive);
+            await Scan(unused);
+            Check("complete empty is explicit", browser.DependentResult is { Complete: true, Matches.Count: 0 } &&
+                status.Text == "No direct material references in this catalog.");
+            await Capture("complete-empty", status);
+
+            // Inject a missing material in the accepted list while leaving the
+            // Runtime/SDK read path real. Other verified matches must survive.
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var missing = new AssetSummary(new AssetGuid(Guid.NewGuid()), AssetType.Material, "assets:missing.material.txt");
+            browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok(catalog.Append(missing).ToArray()));
+            typeof(MainWindow).GetMethod("RenderAssets", flags)!.Invoke(window, null);
+            await Scan(unused);
+            Check("incomplete empty cannot claim zero references", browser.DependentResult is { Complete: false, Matches.Count: 0 } &&
+                status.Text!.StartsWith("Check incomplete", StringComparison.Ordinal));
+            await Capture("incomplete-empty", status);
+            await Scan(texture);
+            Check("incomplete scan retains verified rows", browser.DependentResult is { Complete: false, Matches.Count: > 0 } &&
+                status.Text!.StartsWith("Check incomplete", StringComparison.Ordinal));
+            await Capture("incomplete-with-matches", results);
+
+            var materialRow = matching[0].Material;
+            var unresolved = new AssetReferenceRow(materialRow, null, "Unsupported");
+            var largeResult = Enumerable.Range(1, 3000).Select(index => new AssetReferenceRow(
+                materialRow with { Guid = new AssetGuid(new Guid(index, 119, 0, new byte[8])), DisplayName = "Material " + index },
+                TextureReferenceSlot.BaseColor)).Prepend(unresolved).ToArray();
+            var testScan = browser.BeginDependents(generation)!;
+            browser.CompleteDependents(testScan, new(largeResult, false));
+            typeof(MainWindow).GetMethod("UpdateReferences", flags)!.Invoke(window, null);
+            results.BringIntoView();
+            await NameUiWait(() => results.ContainerFromItem(unresolved) is ListBoxItem, "unsupported slot row realized");
+            var unsupportedRow = (ListBoxItem)results.ContainerFromItem(unresolved)!;
+            Check("host without a complete material projection keeps a non-navigable unresolved edge",
+                !unsupportedRow.GetVisualDescendants().OfType<Button>().Any() &&
+                unsupportedRow.GetVisualDescendants().OfType<TextBlock>().Any(text => text.Text?.Contains("Slot unavailable") == true) &&
+                status.Text!.StartsWith("Check incomplete", StringComparison.Ordinal));
+            results.ScrollIntoView(largeResult[^1]);
+            await NameUiWait(() => results.ContainerFromItem(largeResult[^1]) is ListBoxItem, "last reference row realized");
+            Check("reference result list virtualizes thousands of rows", results.ItemCount == largeResult.Length &&
+                results.GetVisualDescendants().OfType<ListBoxItem>().Count() < 50);
+        }
+
+        Check("navigation did not change material or scene, history or Runtime generation", peer.Authoring.DocumentState().Value == before &&
+            peer.Control.Status().SceneGeneration == beforeRuntime.SceneGeneration && peer.Assets.MaterialReadWithCombinedMaps(material).Value == recipe &&
+            Field<Selection>("_selection").Nodes.SequenceEqual(selection) && !Field<Button>("_undo").IsEnabled &&
+            !Field<Button>("_redo").IsEnabled && NameUiField<Window>(window, "_materialWindow") is null);
+
+        async Task Capture(string name, Control control)
+        {
+            if (Environment.GetEnvironmentVariable("ATLANTIS_0119_CAPTURE_DIR") is not string folder) return;
+            Directory.CreateDirectory(folder);
+            window.Activate();
+            control.BringIntoView();
+            File.WriteAllText(Path.Combine(folder, name + ".ready"), runtime.Launch.WorkDirectory);
+            await NameUiWait(() => File.Exists(Path.Combine(folder, name + ".done")), "native capture " + name, 180);
+        }
     }
 
     private static async Task CheckTextureReimportUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)

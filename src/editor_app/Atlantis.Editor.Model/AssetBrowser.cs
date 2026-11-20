@@ -17,8 +17,45 @@ public sealed class AssetDetailIntent
 
 public sealed record TextureRenameIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record TextureRemovalIntent(AssetSummary Asset, AssetDetailIntent Intent);
-public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates, AssetDetailIntent Intent);
-public sealed record AssetDependentResult(IReadOnlyList<AssetSummary> Matches, bool Complete);
+public sealed record AssetDependentScan(AssetGuid Texture, IReadOnlyList<AssetSummary> Candidates,
+    bool RosterComplete, GenerationId? Generation, AssetDetailIntent Intent);
+public sealed record AssetReferenceRow(AssetSummary Material, TextureReferenceSlot? Slot, string? Diagnostic = null)
+{
+    public static string Label(TextureReferenceSlot slot) => slot switch
+    {
+        TextureReferenceSlot.BaseColor => "Base Color",
+        TextureReferenceSlot.Normal => "Normal",
+        TextureReferenceSlot.MetallicRoughness => "Metallic/Roughness",
+        TextureReferenceSlot.Occlusion => "Occlusion",
+        TextureReferenceSlot.Emissive => "Emissive",
+        _ => throw new ArgumentOutOfRangeException(nameof(slot)),
+    };
+}
+public sealed record AssetDependentResult(IReadOnlyList<AssetReferenceRow> Matches, bool Complete, string? Diagnostic = null);
+public sealed record AssetReferenceLocate(AssetGuid Texture, AssetReferenceRow Row, GenerationId? Generation, AssetDetailIntent Intent);
+public sealed record LocatedAssetReference(AssetGuid Material, TextureReferenceSlot Slot, MaterialValues Values);
+
+public static class MaterialTextureReferences
+{
+    public static IEnumerable<(TextureReferenceSlot Slot, AssetGuid? Texture)> Slots(MaterialValues values)
+    {
+        yield return (TextureReferenceSlot.BaseColor, values.Texture);
+        yield return (TextureReferenceSlot.Normal, values.NormalMap);
+        yield return (TextureReferenceSlot.MetallicRoughness, values.MetallicRoughnessMap);
+        yield return (TextureReferenceSlot.Occlusion, values.OcclusionMap);
+        yield return (TextureReferenceSlot.Emissive, values.EmissiveTexture);
+    }
+
+    public static bool MatchesDetail(AssetSummary material, AssetDetails detail) =>
+        detail.Guid == material.Guid && detail.Type == AssetType.Material && detail.Source == material.Source &&
+        detail.Dependencies.All(guid => !guid.IsNil);
+
+    public static bool ProvesSlots(AssetDetails detail, MaterialRead read, GenerationId? generation) =>
+        read.Material == detail.Guid &&
+        (generation is null || read.ActiveGeneration is null || generation == read.ActiveGeneration) &&
+        Slots(read.Recipe.Values).Where(slot => slot.Texture is { IsNil: false })
+            .Select(slot => slot.Texture!.Value).ToHashSet().SetEquals(detail.Dependencies);
+}
 
 /// <summary>UI-free local view of a fixed server snapshot. Caller-thread only;
 /// request counters are local callback guards, not catalog revisions.</summary>
@@ -108,6 +145,11 @@ public sealed class AssetBrowser
 
     public AssetDependentScan? DependentScan { get; private set; }
     public AssetDependentResult? DependentResult { get; private set; }
+    public AssetReferenceLocate? ReferenceLocate { get; private set; }
+    public LocatedAssetReference? LocatedReference { get; private set; }
+    public string? ReferenceNotice { get; private set; }
+    public bool CanScanReferences => SelectionVisible && Selected is AssetGuid guid &&
+        _items.Any(item => item.Guid == guid && item.Type == AssetType.Texture);
 
     public static string? RegisteredColorName(AssetSummary? asset)
     {
@@ -119,15 +161,17 @@ public sealed class AssetBrowser
         return Codec.ValidImportName(name) ? name : null;
     }
 
-    public AssetDependentScan? BeginDependents()
+    public AssetDependentScan? BeginDependents(GenerationId? generation = null)
     {
-        if (!SelectionVisible || DependentScan is not null || Selected is not AssetGuid guid ||
-            RegisteredColorName(_items.FirstOrDefault(item => item.Guid == guid)) is null) return null;
-        DependentResult = null;
-        var materials = _items.Where(item => item.Type == AssetType.Material)
-            .DistinctBy(item => item.Guid).OrderBy(item => item.Source, StringComparer.Ordinal)
+        if (!CanScanReferences || DependentScan is not null || Selected is not AssetGuid guid) return null;
+        InvalidateDependents();
+        var groups = _items.ToLookup(item => item.Guid);
+        var materials = groups.Where(group => !group.Key.IsNil && group.Count() == 1)
+            .Select(group => group.Single()).Where(item => item.Type == AssetType.Material)
+            .OrderBy(item => item.Source, StringComparer.Ordinal)
             .ThenBy(item => item.Guid.ToString(), StringComparer.Ordinal).ToArray();
-        return DependentScan = new(guid, materials, new());
+        bool complete = groups.All(group => !group.Key.IsNil && group.Count() == 1);
+        return DependentScan = new(guid, materials, complete, generation, new());
     }
 
     public bool CompleteDependents(AssetDependentScan scan, AssetDependentResult result)
@@ -142,7 +186,34 @@ public sealed class AssetBrowser
 
     public void CancelPendingDependents()
     {
-        if (DependentScan is not null) InvalidateDependents();
+        if (DependentScan is null && ReferenceLocate is null) return;
+        InvalidateDependents();
+        ReferenceNotice = "Reference check canceled.";
+    }
+
+    public AssetReferenceLocate? BeginReferenceLocate(AssetReferenceRow row, GenerationId? generation)
+    {
+        if (!CanScanReferences || Selected is not AssetGuid texture || row.Slot is null || ReferenceNotice is not null ||
+            DependentResult?.Matches.Any(current => ReferenceEquals(current, row)) != true) return null;
+        ReferenceLocate?.Intent.Cancel();
+        ReferenceNotice = null;
+        return ReferenceLocate = new(texture, row, generation, new());
+    }
+
+    public bool CompleteReferenceLocate(AssetReferenceLocate request, MaterialRead? read, out LocatedAssetReference? located)
+    {
+        located = null;
+        if (!ReferenceEquals(request, ReferenceLocate) || !request.Intent.Current || !SelectionVisible ||
+            request.Texture != Selected) return false;
+        request.Intent.Cancel();
+        ReferenceLocate = null;
+        if (read is not null && request.Row.Slot is { } slot && read.Material == request.Row.Material.Guid &&
+            (request.Generation is null || read.ActiveGeneration is null || request.Generation == read.ActiveGeneration) &&
+            MaterialTextureReferences.Slots(read.Recipe.Values).Any(value => value.Slot == slot && value.Texture == request.Texture))
+            located = new(read.Material, slot, read.Recipe.Values);
+        else
+            ReferenceNotice = "Reference changed or could not be verified. Refresh references.";
+        return true;
     }
 
     private void InvalidateDependents()
@@ -150,6 +221,10 @@ public sealed class AssetBrowser
         DependentScan?.Intent.Cancel();
         DependentScan = null;
         DependentResult = null;
+        ReferenceLocate?.Intent.Cancel();
+        ReferenceLocate = null;
+        ReferenceNotice = null;
+        LocatedReference = null;
     }
 
     private void InvalidateDetail()
@@ -202,7 +277,18 @@ public sealed class AssetBrowser
         return true;
     }
 
-    public long Select(AssetGuid guid)
+    public bool Reveal(AssetGuid guid)
+    {
+        var key = State == "Ready" ? _keys.FirstOrDefault(candidate => candidate.Asset.Guid == guid) : null;
+        if (key is null) return false;
+        if (_visibleIds.Contains(guid)) return true;
+        if (_type != key.Asset.Type) _type = null;
+        if (!key.Matches(_search, _search.Replace((char)92, '/'), AssetBrowseProjection.CompactQuery(_search))) _search = "";
+        Project();
+        return _visibleIds.Contains(guid);
+    }
+
+    public long Select(AssetGuid guid, LocatedAssetReference? located = null)
     {
         if (Selected != guid)
         {
@@ -212,6 +298,7 @@ public sealed class AssetBrowser
         }
         InvalidateDetail();
         Selected = guid;
+        if (located?.Material == guid) LocatedReference = located;
         if (SelectionVisible)
         {
             DetailState = "Loading";
@@ -234,6 +321,20 @@ public sealed class AssetBrowser
         if (request != _detailRequest || Selected != guid || !SelectionVisible || DetailIntent?.Current != true) return false;
         Details = result.IsOk ? result.Value : null;
         DetailState = result.IsOk ? "Ready" : result.Error.ToString();
+        return true;
+    }
+
+    public bool InterruptReferences()
+    {
+        if (DependentScan is null && ReferenceLocate is null && DependentResult is null) return false;
+        var rows = DependentResult?.Matches ?? Array.Empty<AssetReferenceRow>();
+        bool checkingSlot = ReferenceLocate is not null;
+        InvalidateDependents();
+        DependentResult = new(rows, false, "Runtime disconnected. Reconnect and refresh references.");
+        if (checkingSlot) ReferenceNotice = "Reference could not be verified. Reconnect and refresh references.";
+        CancelRename();
+        CancelRemoval();
+        DetailIntent?.Cancel();
         return true;
     }
 
