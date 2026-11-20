@@ -69,6 +69,8 @@ constexpr std::string_view kUsage =
     "  scene save-as <name>   create an independent hand-authored scene copy (Spec 0088);\n"
     "  scene document-state | scene save-if-current <document-id> <revision>\n"
     "  scene reopen-if-current <document-id> <revision> | scene reopen-if-current --if-absent\n"
+    "  scene recovery-status [copy-id]\n"
+    "  scene restore-recovery|discard-recovery <copy-id> <document-id> <revision>\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"
     "  repl              one command per line until exit, quit or end of input\n"
     "\n"
@@ -380,7 +382,8 @@ int Invocation::finish(Reply reply) {
       failure->message += "; " + checked.error->message;
       failure->text = "error: " + failure->message;
     }
-    if (checked.error && (checked.command == "scene save-if-current" || checked.command == "scene reopen-if-current")) {
+    if (checked.error && (checked.command == "scene save-if-current" || checked.command == "scene reopen-if-current" ||
+                          checked.command == "scene restore-recovery" || checked.command == "scene discard-recovery")) {
       const auto* unknown = checked.error->subject.find("outcomeUnknown");
       if (unknown && unknown->isBool() && unknown->asBool()) {
         failure->subject = checked.error->subject;

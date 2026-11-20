@@ -44,9 +44,39 @@ public static class CodecSuite
         AuthoringEdges(t, wires);
         NodeNameEdges(t);
         ApplyOutcomeEdges(t, wires);
+        RecoveryEdges(t);
         AssetCodecSuite.Run(t);
         OverlayEdges(t, wires);
         Refusals(t);
+    }
+
+    private static void RecoveryEdges(TestContext t)
+    {
+        var id = EntityGuid.Parse("52052052-0001-4052-8052-000000000001");
+        var token = new A.DocumentToken(EntityGuid.Parse("52052052-0002-4052-8052-000000000002"), 7);
+        var view = Json.Parse("""
+            {"capture":"Idle","protectedRevision":null,
+             "copy":{"id":"52052052-0001-4052-8052-000000000001","revision":3,"capturedUnixSeconds":200,"pending":true},
+             "preview":{"source":"Changed","copyNodes":4,"sourceNodes":3,"sourceLines":["saved"],"copyLines":["checkpoint"],"truncated":true}}
+            """);
+        t.Check(Codec.DecodeRecoveryStatus(view, id)?.Preview is { Source: A.RecoverySource.Changed, Truncated: true },
+            "recovery preview keeps the source conflict and exact copy identity");
+        t.Check(Codec.DecodeRecoveryStatus(view, null) is null && Codec.DecodeRecoveryStatus(view, token.DocumentId) is null,
+            "recovery rejects unsolicited previews or mixed copy IDs");
+        view.Find("preview")!.Set("copyLines", JsonValue.NewArray().Push(JsonValue.String(new string('x', 257))));
+        t.Check(Codec.DecodeRecoveryStatus(view, id) is null, "recovery rejects an oversized excerpt");
+        var receipt = Json.Parse("""
+            {"copyId":"52052052-0001-4052-8052-000000000001","document":{"documentId":"52052052-0003-4052-8052-000000000003",
+             "documentRevision":8,"lastPersistedRevision":7,"scene":"52052052-0004-4052-8052-000000000004",
+             "source":"fixture.scene.txt","provenance":"HandAuthored","dirty":true}}
+            """);
+        t.Check(Codec.DecodeRecoveryReceipt(receipt, token, id, restoring: true) is not null &&
+                Codec.DecodeRecoveryReceipt(receipt, token, id, restoring: false) is null,
+            "restore receipts require a fresh dirty document and discard receipts require the original token");
+        t.Check(Codec.RecoveryRpcRefusal(Json.Parse("""
+            {"error":{"code":"BadRequest","message":"unknown method authoring.recoveryStatus"}}
+            """), "authoring.recoveryStatus") == A.RecoveryError.Unsupported,
+            "old host refusal stays distinct from an unknown recovery result");
     }
 
     // Plan 0066 P2: the overlay vectors decode to exact C# values; a step request without withOverlay (an older

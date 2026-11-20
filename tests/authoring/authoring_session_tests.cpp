@@ -1141,3 +1141,104 @@ TEST_CASE("authoring outcomes: legacy acceptance shares records and RuntimeStopp
   CHECK(c.applyStatus(receipt.id).value().request->error == ac::ReloadError::RuntimeStopped);
   CHECK_FALSE(c.applyStatus().value().projection);
 }
+
+namespace {
+class RecoveryFixture final : public atlantis::authoring::RecoveryStore {
+ public:
+  explicit RecoveryFixture(fs::path path) : path_(std::move(path)) {}
+  void opened() override {
+    if (entry) entry->copy.pending = true;
+    protectedRevision.reset();
+  }
+  std::optional<std::string> fingerprint(std::string_view bytes) const override { return std::string(bytes); }
+  std::optional<std::string> readSource() const override { return readText(path_); }
+  ac::RecoveryStatus status() const override {
+    return {ac::RecoveryCapture::Idle, protectedRevision, entry ? std::optional(entry->copy) : std::nullopt, {}};
+  }
+  void capture(std::uint64_t revision, std::string base, std::string payload) override {
+    entry = atlantis::authoring::RecoverySnapshot{{entity(static_cast<std::uint32_t>(revision + 50)), revision, 1, false},
+                                                  std::move(base), std::move(payload)};
+    protectedRevision = revision;
+  }
+  void retire() override {
+    if (entry && !entry->copy.pending) entry.reset();
+    protectedRevision.reset();
+  }
+  atlantis::Result<atlantis::authoring::RecoverySnapshot, ac::RecoveryError>
+  pending(const as::EntityGuid& id) const override {
+    using R = atlantis::Result<atlantis::authoring::RecoverySnapshot, ac::RecoveryError>;
+    if (!entry || !entry->copy.pending || entry->copy.id != id) return R::Err(ac::RecoveryError::StaleCopy);
+    return R::Ok(*entry);
+  }
+  void adopted(std::uint64_t revision) override { entry->copy.pending = false; protectedRevision = revision; }
+  std::optional<ac::RecoveryError> discard(const as::EntityGuid& id) override {
+    if (pending(id).isErr()) return ac::RecoveryError::StaleCopy;
+    entry.reset();
+    return std::nullopt;
+  }
+  std::optional<atlantis::authoring::RecoverySnapshot> entry;
+ private:
+  fs::path path_;
+  std::optional<std::uint64_t> protectedRevision;
+};
+}
+
+TEST_CASE("authoring: recovery keeps the formal anchor and reload settlement separate", "[authoring][recovery]") {
+  Fixture fixture(baseScene(), false);
+  RecoveryFixture copy(fixture.source);
+  fixture.session.setRecoveryStore(copy);
+  auto& a = *fixture.connection;
+  auto b = fixture.session.connect();
+  const auto saved = readText(fixture.source);
+  REQUIRE(a.open().isOk());
+  const auto baseline = a.documentState().value().value();
+  CHECK_FALSE(refusalOf(*b, {ac::SetNodeName{entity(2), "recover this"}}));
+  const auto dirty = a.documentState().value().value();
+  REQUIRE(dirty.dirty);
+  REQUIRE(a.recoveryStatus().value().protectedRevision == dirty.token.documentRevision);
+  CHECK(a.applyTracked().error() == ac::ApplyError::NoSceneSink);
+  CHECK(readText(fixture.source) == saved);
+  const auto id = a.recoveryStatus().value().copy->id;
+  REQUIRE(a.reopenIfCurrent(dirty.token).isOk());
+  const auto reopened = a.documentState().value().value();
+  CHECK(reopened.token.documentId != baseline.token.documentId);
+  CHECK(a.restoreRecovery(dirty.token, id).error().error == ac::RecoveryError::StaleDocument);
+  REQUIRE(a.recoveryStatus(id).value().preview->source == ac::RecoverySource::Matches);
+  REQUIRE(a.restoreRecovery(reopened.token, id).isOk());
+  const auto restored = a.documentState().value().value();
+  CHECK(restored.token.documentId != reopened.token.documentId);
+  CHECK(restored.token.documentRevision == reopened.token.documentRevision + 1);
+  CHECK(restored.lastPersistedRevision == reopened.lastPersistedRevision);
+  CHECK(restored.dirty);
+  CHECK(a.listNodes().value()[1].name == "recover this");
+  CHECK(readText(fixture.source) == saved);
+  CHECK_FALSE(a.applyStatus().value().request);
+  CHECK(a.recoveryStatus().value().protectedRevision == restored.token.documentRevision);
+  REQUIRE(a.saveIfCurrent(restored.token).isOk());
+  CHECK_FALSE(a.recoveryStatus().value().copy);
+  CHECK(readText(fixture.source) != saved);
+}
+
+TEST_CASE("authoring: a source edit during a recovery decision can only be discarded", "[authoring][recovery]") {
+  Fixture fixture(baseScene(), false);
+  RecoveryFixture copy(fixture.source);
+  fixture.session.setRecoveryStore(copy);
+  auto& a = *fixture.connection;
+  REQUIRE(a.open().isOk());
+  CHECK_FALSE(refusalOf(a, {ac::SetNodeName{entity(1), "unsaved"}}));
+  const auto entry = a.recoveryStatus().value().copy.value();
+  REQUIRE(a.open().isOk());
+  const auto reviewed = a.documentState().value().value();
+  REQUIRE(a.recoveryStatus(entry.id).value().preview->source == ac::RecoverySource::Matches);
+  auto source = baseScene();
+  source.nodes[0].name = "external save";
+  const auto external = textOf(source);
+  writeText(fixture.source, external);
+  CHECK(a.recoveryStatus(entry.id).value().preview->source == ac::RecoverySource::Changed);
+  CHECK(a.restoreRecovery(reviewed.token, entry.id).error().error == ac::RecoveryError::SourceChanged);
+  CHECK(a.documentState().value().value() == reviewed);
+  REQUIRE(a.discardRecovery(reviewed.token, entry.id).isOk());
+  CHECK(a.documentState().value().value() == reviewed);
+  CHECK(readText(fixture.source) == external);
+  CHECK_FALSE(a.recoveryStatus().value().copy);
+}

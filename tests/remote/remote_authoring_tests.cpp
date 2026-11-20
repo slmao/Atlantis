@@ -385,3 +385,23 @@ TEST_CASE("remote authoring: a Runtime that serves no authoring session answers 
   (void)session->authoring().document();
   CHECK(session->failure() == atlantis::remote::RemoteError::ProtocolError);
 }
+
+TEST_CASE("recovery wire values are bounded and typed", "[remote][authoring][recovery]") {
+  const auto id = node(1);
+  const ac::RecoveryStatus status{ac::RecoveryCapture::Idle, {}, ac::RecoveryCopy{id, 3, 200, true},
+      ac::RecoveryPreview{ac::RecoverySource::Changed, 4, 3, {"saved"}, {"checkpoint"}, true}};
+  roundTrips(status, &codec::decodeRecoveryStatus);
+  auto malformed = codec::encode(status);
+  auto longPreview = *malformed.find("preview");
+  auto longLines = atlantis::connection::json::Value::array();
+  longLines.push(atlantis::connection::json::Value::string(std::string(257, 'x')));
+  longPreview.set("copyLines", std::move(longLines));
+  malformed.set("preview", std::move(longPreview));
+  CHECK_FALSE(codec::decodeRecoveryStatus(malformed));
+  const ac::RecoveryReceipt receipt{id, {{node(2), 5}, fixtureSceneGuid(), "fixture.scene.txt",
+      ac::Provenance::HandAuthored, 4, true}};
+  roundTrips(receipt, &codec::decodeRecoveryReceipt);
+  CHECK(codec::decodeRecoveryError(atlantis::connection::json::Value::string("SourceChanged")) ==
+        ac::RecoveryError::SourceChanged);
+  CHECK_FALSE(codec::decodeRecoveryError(atlantis::connection::json::Value::string("TransportFailure")));
+}

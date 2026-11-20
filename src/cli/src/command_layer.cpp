@@ -2325,7 +2325,9 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
   const bool createsSource = t.size() == 3 && t[1] == "create" && !t[2].starts_with("--") &&
                              text::parseEntity(t[2]).isErr();
   const bool documentCall = t.size() >= 2 && (t[1] == "document-state" || t[1] == "save-if-current" || t[1] == "reopen-if-current");
-  connection::AuthoringConnection* a = authoring(!createsSource && !documentCall);
+  const bool recoveryCall = t.size() >= 2 &&
+      (t[1] == "recovery-status" || t[1] == "restore-recovery" || t[1] == "discard-recovery");
+  connection::AuthoringConnection* a = authoring(!createsSource && !documentCall && !recoveryCall);
   if (a == nullptr) {
     return failed(command, plainError("NoAuthoring", ErrorCategory::Runtime, "this Runtime serves no authoring session"));
   }
@@ -2412,6 +2414,95 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     }
     const auto result = saving ? a->saveIfCurrent(*expected) : a->reopenIfCurrent(expected);
     return result.isErr() ? refusal(result.error()) : success(result.value());
+  }
+  if (recoveryCall) {
+    using atlantis::asset_system::toString;
+    using E = ac::RecoveryError;
+    const bool reading = verb == "recovery-status";
+    const bool restoring = verb == "restore-recovery";
+    const std::string usage = command + (reading ? " [copy-id]" : " <copy-id> <document-id> <revision>");
+    if ((reading && t.size() > 3) || (!reading && t.size() != 5)) return failed(command, usageError(usage));
+    std::optional<ac::EntityGuid> copyId;
+    if (t.size() >= 3) {
+      const auto id = atlantis::asset_system::parseEntityGuid(t[2]);
+      if (id.isErr()) return failed(command, usageError(usage));
+      copyId = id.value();
+    }
+    auto refusal = [&](const ac::RecoveryFailure& error) {
+      const std::string code(ac::toString(error.error));
+      auto category = ErrorCategory::Refused;
+      if (error.error == E::TransportFailure || error.error == E::ProtocolFailure) category = ErrorCategory::Connection;
+      if (error.error == E::NoAuthoring) category = ErrorCategory::Runtime;
+      std::string message = code;
+      Value facts = Value::object();
+      if (error.outcomeUnknown && copyId) {
+        facts.set("outcomeUnknown", Value::boolean(true));
+        facts.set("copyId", Value::string(toString(*copyId)));
+        message += ". Outcome unknown for recovery copy " + toString(*copyId) +
+                   ". Check the copy and document state on the original Runtime before retrying.";
+      }
+      return failed(command, plainError(code, category, message, std::move(facts)));
+    };
+    if (reading) {
+      const auto response = a->recoveryStatus(copyId);
+      if (response.isErr()) return refusal(response.error());
+      const auto& status = response.value();
+      Value result = Value::object();
+      result.set("capture", Value::string(std::string(ac::toString(status.capture))));
+      result.set("protectedRevision", status.protectedRevision ? Value::number(*status.protectedRevision) : Value());
+      Value copy, preview;
+      std::string output = "Recovery capture: " + std::string(ac::toString(status.capture)) + "\n";
+      if (status.protectedRevision) output += "Protected revision: " + std::to_string(*status.protectedRevision) + "\n";
+      if (status.copy) {
+        const auto& entry = *status.copy;
+        copy = Value::object();
+        copy.set("id", Value::string(toString(entry.id)));
+        copy.set("revision", Value::number(entry.revision));
+        copy.set("capturedUnixSeconds", Value::number(entry.capturedUnixSeconds));
+        copy.set("pending", Value::boolean(entry.pending));
+        output += (entry.pending ? "Pending copy " : "Live copy ") + toString(entry.id) +
+                  " · revision " + std::to_string(entry.revision) + "\n";
+      }
+      if (status.preview) {
+        const auto& view = *status.preview;
+        preview = Value::object();
+        preview.set("source", Value::string(std::string(ac::toString(view.source))));
+        preview.set("sourceNodes", view.sourceNodes ? Value::number(*view.sourceNodes) : Value());
+        preview.set("copyNodes", Value::number(view.copyNodes));
+        preview.set("truncated", Value::boolean(view.truncated));
+        Value before = Value::array(), after = Value::array();
+        output += "Source comparison: " + std::string(ac::toString(view.source)) + "\nCurrent source\n";
+        for (const auto& excerpt : view.sourceLines) { before.push(Value::string(excerpt)); output += excerpt + "\n"; }
+        output += "Recovery copy\n";
+        for (const auto& excerpt : view.copyLines) { after.push(Value::string(excerpt)); output += excerpt + "\n"; }
+        if (view.truncated) output += "Preview truncated\n";
+        preview.set("sourceLines", std::move(before));
+        preview.set("copyLines", std::move(after));
+      }
+      result.set("copy", std::move(copy));
+      result.set("preview", std::move(preview));
+      return done(command, std::move(output), std::move(result));
+    }
+    const auto documentId = atlantis::asset_system::parseEntityGuid(t[3]);
+    std::uint64_t rev = 0;
+    const auto parsed = std::from_chars(t[4].data(), t[4].data() + t[4].size(), rev);
+    if (documentId.isErr() || parsed.ec != std::errc{} || parsed.ptr != t[4].data() + t[4].size() || rev == 0)
+      return failed(command, usageError(usage));
+    const ac::DocumentToken expected{documentId.value(), rev};
+    const auto response = restoring ? a->restoreRecovery(expected, *copyId) : a->discardRecovery(expected, *copyId);
+    if (response.isErr()) return refusal(response.error());
+    const auto& receipt = response.value();
+    if (restoring) (void)drainSceneEvents();
+    Value result = Value::object();
+    result.set("copyId", Value::string(toString(receipt.copyId)));
+    result.set("documentId", Value::string(toString(receipt.document.token.documentId)));
+    result.set("documentRevision", Value::number(receipt.document.token.documentRevision));
+    result.set("source", Value::string(receipt.document.source));
+    result.set("scene", Value::string(toString(receipt.document.scene)));
+    result.set("lastPersistedRevision", Value::number(receipt.document.lastPersistedRevision));
+    result.set("dirty", Value::boolean(receipt.document.dirty));
+    return done(command, restoring ? "Restored unsaved document. Use explicit Apply or Save.\n" :
+                                    "Discarded the reviewed recovery copy.\n", std::move(result));
   }
   const std::span<const TypeDescriptor> schema = a->schema();
 

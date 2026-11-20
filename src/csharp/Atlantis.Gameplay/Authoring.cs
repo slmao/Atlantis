@@ -296,6 +296,19 @@ public enum DocumentError
     SourceUnreadable, SourceParseFailed, SourceInvalid, Unsupported, NoAuthoring, InvalidRequest
 }
 
+public enum RecoveryCapture { Idle, Writing, Failed, Unavailable }
+public enum RecoverySource { Matches, Changed, Unreadable, AlreadySaved, DirtyDocument }
+public enum RecoveryError
+{
+    Unsupported, NoDocument, NoAuthoring, Busy, Unavailable, StaleDocument, StaleCopy, DirtyDocument,
+    SourceChanged, SourceUnreadable, InvalidCopy, IoFailed, InvalidRequest,
+}
+public sealed record RecoveryCopy(EntityGuid Id, ulong Revision, ulong CapturedUnixSeconds, bool Pending);
+public sealed record RecoveryPreview(RecoverySource Source, ulong CopyNodes, ulong? SourceNodes,
+    IReadOnlyList<string> SourceLines, IReadOnlyList<string> CopyLines, bool Truncated);
+public sealed record RecoveryStatus(RecoveryCapture Capture, ulong? ProtectedRevision, RecoveryCopy? Copy, RecoveryPreview? Preview);
+public sealed record RecoveryReceipt(EntityGuid CopyId, DocumentState Document);
+
 public enum CreateSceneError
 {
     Unavailable, InvalidName, UnsafeTarget, Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, NoAuthoring,

@@ -135,6 +135,13 @@ public sealed class MainWindow : Window
     private readonly Button _reopen = new() { Content = "Reopen from Source", IsEnabled = false };
     private readonly TextBlock _documentLine = EditorVisuals.Secondary("Document is opening");
     private DocumentObservation _documentState = new(DocumentAvailability.Starting);
+    private readonly Button _reviewRecovery = new() { Content = "Review Recovery Copy", IsVisible = false };
+    private readonly TextBlock _recoveryLine = EditorVisuals.Secondary("");
+    private RecoveryObservation? _recoveryView;
+    private SceneRecoveryWindow? _recoveryWindow;
+    private (EntityGuid Document, EntityGuid Copy)? _offeredRecovery;
+    private bool _recoveryDecision, _recoveryUnknown;
+
     private sealed record SceneInput(TextBox Box, DocumentDraft Draft, int Caret, int Start, int End);
     private readonly DocumentDraftProtection _draftProtection = new();
     private SceneInput? _sceneInput;
@@ -509,6 +516,19 @@ public sealed class MainWindow : Window
         _reopen.AddHandler(PointerReleasedEvent, (_, _) => Dispatcher.UIThread.Post(() => _leaveArmed = false),
             RoutingStrategies.Tunnel);
         _reopen.Click += async (_, _) => await AskToLeave(reopen: true);
+        _reviewRecovery.Click += async (_, _) =>
+        {
+            if (_recoveryUnknown && _worker is { } worker)
+            {
+                var checkedState = await worker.CheckOriginalRecovery();
+                if (!ReferenceEquals(worker, _worker) || _shuttingDown) return;
+                _recoveryLine.Text = checkedState.Diagnostic ?? (checkedState.Status?.Copy?.Pending == true
+                    ? "The original Runtime still has a pending copy. Review it again from a live Editor connection."
+                    : "No pending recovery copy was observed on the original Runtime. Inspect the current document.");
+                return;
+            }
+            await ReviewRecovery();
+        };
         _saveAsName.TextChanged += (_, _) => UpdateSaveAsButton();
         _saveAs.Click += (_, _) => SaveSceneCopy();
         _newSceneName.TextChanged += (_, _) => UpdateNewSceneButton();
@@ -540,7 +560,7 @@ public sealed class MainWindow : Window
         }, RoutingStrategies.Tunnel);
         KeyDown += (_, e) =>
         {
-            if (_leaveInProgress) return;
+            if (_leaveInProgress || _recoveryDecision) return;
             // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): not while a text box is being edited, which has its own.
             if ((e.KeyModifiers & KeyModifiers.Control) == 0 || FocusManager?.GetFocusedElement() is TextBox) return;
             if (e.Key == Key.Z && (e.KeyModifiers & KeyModifiers.Shift) == 0) { _worker?.Undo(); e.Handled = true; }
@@ -618,7 +638,7 @@ public sealed class MainWindow : Window
             EditorVisuals.Actions(_save, _undo, _redo), transport));
 
         var sceneFiles = EditorVisuals.Scroll(EditorVisuals.Stack(4,
-            EditorVisuals.Actions(_reopen),
+            EditorVisuals.Actions(_reopen, _reviewRecovery), _recoveryLine,
             EditorVisuals.Actions(_newSceneName, _newScene), _newSceneState,
             EditorVisuals.Actions(_saveAsName, _saveAs), _saveAsState));
         sceneFiles.MaxHeight = 164;
@@ -859,6 +879,12 @@ public sealed class MainWindow : Window
     private void OnSession(RuntimeProcess? runtime, SessionInfo session, double startMs, string? sessionPath)
     {
         if (_shuttingDown) return;
+        _recoveryWindow?.Close();
+        _recoveryView = null;
+        _offeredRecovery = null;
+        _recoveryUnknown = false;
+        _reviewRecovery.IsVisible = false;
+        _recoveryLine.Text = "";
         _taskIssues.Reset();
         _importTask = _rebuildTask = _materialTask = 0;
         foreach (var texture in _textureImports) texture.Task = 0;
@@ -934,6 +960,10 @@ public sealed class MainWindow : Window
         worker.PersistenceChanged += state =>
         {
             if (ReferenceEquals(_worker, worker) && !_shuttingDown) ShowDocumentState(state);
+        };
+        worker.RecoveryChanged += view =>
+        {
+            if (ReferenceEquals(_worker, worker) && !_shuttingDown) ShowRecovery(view);
         };
         worker.LeaveDocumentEvents += events =>
         {
@@ -1554,7 +1584,7 @@ public sealed class MainWindow : Window
 
     private void OnPointer(ViewportPointerEvent e)
     {
-        if (_leaveInProgress) return;
+        if (_leaveInProgress || _recoveryDecision) return;
         if (_recorder is not null && MeasureDrag(e)) return;
         if (GroupGizmoPointer(e)) return;
         if (GizmoPointer(e)) return;
@@ -1614,7 +1644,7 @@ public sealed class MainWindow : Window
 
     private void OnWheel(int delta, long arrivalTicks)
     {
-        if (_leaveInProgress) return;
+        if (_leaveInProgress || _recoveryDecision) return;
         if (_groupGrab is not null || _gizmoGrab is not null || !(_navigationReady || _navigationPending)) return;
         MoveViewport(ViewportMotion.Dolly(delta / 120.0f * NavigationSpeed), arrivalTicks);
         _inputLine = "forwarded wheel " + delta;
@@ -4760,6 +4790,94 @@ public sealed class MainWindow : Window
         UpdateStatus();
     }
 
+    private void ShowRecovery(RecoveryObservation view)
+    {
+        _recoveryView = view;
+        if (_recoveryUnknown) return;
+        var status = view.Status;
+        var pending = status?.Copy is { Pending: true };
+        _reviewRecovery.Content = "Review Recovery Copy";
+        _reviewRecovery.IsVisible = pending;
+        _recoveryLine.Text = pending ? "An earlier recovery copy awaits a decision. New edits cannot replace it."
+            : status?.Capture switch
+            {
+                Doc.RecoveryCapture.Writing => status.ProtectedRevision is ulong saved
+                    ? $"Writing recovery copy · revision {saved} protected" : "Writing recovery copy",
+                Doc.RecoveryCapture.Failed => status.ProtectedRevision is ulong durable
+                    ? $"Recovery write failed · revision {durable} protected" : "Recovery copy unavailable: storage or file error.",
+                Doc.RecoveryCapture.Unavailable => "Recovery storage unavailable on this Runtime.",
+                _ => status?.ProtectedRevision is ulong revision ? $"Recovery copy protects revision {revision}"
+                    : view.Refusal == Doc.RecoveryError.Unsupported ? "Recovery copies are unsupported on this Runtime." : "",
+            };
+        if (pending) Dispatcher.UIThread.Post(async () => await ReviewRecovery(automatic: true));
+    }
+
+    private async Task ReviewRecovery(bool automatic = false)
+    {
+        if (_leaveInProgress || _recoveryDecision || _shuttingDown || _savedAttempts.Busy || _referenceBusy ||
+            _materialWindow is not null || _worker is not { LeaveEditingAvailable: true } worker ||
+            _recoveryView is not { Document: { } document, Status.Copy: { Pending: true } copy } ||
+            document.Token != _documentState.State?.Token) return;
+        if (CurrentSceneInput() is not null || _batchDraft is not null || _gizmoGrab is not null || _groupGrab is not null)
+        {
+            if (!automatic) _recoveryLine.Text = "Finish or cancel the active scene edit before reviewing recovery.";
+            return;
+        }
+        if (automatic && _offeredRecovery == (document.Token.DocumentId, copy.Id)) return;
+        _offeredRecovery = (document.Token.DocumentId, copy.Id);
+        _recoveryDecision = true;
+        _pendingInspectorBlur = null;
+        _assetDrag?.Cancel();
+        var origin = FocusManager?.GetFocusedElement() as Control;
+        var content = Content as Control;
+        var lifetime = worker.MeshDocumentLifetime;
+        bool Current() => ReferenceEquals(worker, _worker) && !_shuttingDown;
+        bool SameDocument() => Current() && lifetime == worker.MeshDocumentLifetime &&
+            _documentState.State?.Token == document.Token;
+        try
+        {
+            var dialog = new SceneRecoveryWindow(document, copy, () => SameDocument()
+                ? worker.PreviewRecovery(document.Token, copy.Id)
+                : Task.FromResult(new RecoveryObservation(Refusal: Doc.RecoveryError.StaleDocument)));
+            _recoveryWindow = dialog;
+            var choice = await dialog.ShowDialog<RecoveryChoice>(this);
+            if (choice == RecoveryChoice.Later || !Current()) return;
+            if (!SameDocument())
+            {
+                _recoveryLine.Text = "The document changed. Review the current recovery copy before choosing again.";
+                return;
+            }
+            _recoveryLine.Text = "Settling the recovery decision…";
+            _reviewRecovery.IsEnabled = false;
+            if (content is not null) content.IsEnabled = false;
+            var result = await worker.ResolveRecovery(document, copy.Id, choice == RecoveryChoice.Restore);
+            if (!Current()) return;
+            if (result.Receipt is not null)
+            {
+                _recoveryLine.Text = choice == RecoveryChoice.Restore
+                    ? "Recovery restored. Use Apply or Save explicitly."
+                    : "Recovery copy discarded. Reopen from Source if the official file changed after this document opened.";
+                _reviewRecovery.IsVisible = false;
+                _editLine.Text = _recoveryLine.Text;
+            }
+            else
+            {
+                _recoveryUnknown = result.Unknown;
+                _reviewRecovery.IsVisible = true;
+                _reviewRecovery.Content = result.Unknown ? "Check Original Recovery" : "Review Recovery Copy";
+                _recoveryLine.Text = result.Diagnostic ?? $"Recovery refused ({result.Refusal}). Review the current document and copy.";
+            }
+        }
+        finally
+        {
+            _recoveryWindow = null;
+            _recoveryDecision = false;
+            _reviewRecovery.IsEnabled = true;
+            if (content is not null) content.IsEnabled = true;
+            if (Current() && origin is { IsEffectivelyEnabled: true } && TopLevel.GetTopLevel(origin) == this) origin.Focus();
+        }
+    }
+
     private void ShowDocumentState(DocumentObservation state)
     {
         _documentState = state;
@@ -4804,11 +4922,11 @@ public sealed class MainWindow : Window
 
     private void DeferInspectorBlur(TextBox box, Action settle)
     {
-        if (_leaveArmed || _leaveInProgress || _shuttingDown) return;
+        if (_leaveArmed || _leaveInProgress || _recoveryDecision || _shuttingDown) return;
         void SettleIfCurrent()
         {
-            if (_leaveArmed || _leaveInProgress || _shuttingDown || !IsActive ||
-                _reopen.IsFocused && _sceneInput?.Box == box) return;
+            if (_leaveArmed || _leaveInProgress || _recoveryDecision || _shuttingDown || !IsActive ||
+                (_reopen.IsFocused || _reviewRecovery.IsFocused) && _sceneInput?.Box == box) return;
             if (TopLevel.GetTopLevel(box) != this) return;
             if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
             settle();
@@ -4855,7 +4973,7 @@ public sealed class MainWindow : Window
 
     private async Task AskToLeave(bool reopen)
     {
-        if (_leaveInProgress || _shuttingDown || _savedAttempts.Busy) return;
+        if (_leaveInProgress || _recoveryDecision || _shuttingDown || _savedAttempts.Busy) return;
         _leaveArmed = false;
         _assetDrag?.Cancel();
         _leaveInProgress = true;
@@ -5037,7 +5155,11 @@ public sealed class MainWindow : Window
             if (!closed && !reopened && (_leaveInputStale || captured is null) && batchDeferred is not null)
                 OnBatchInspectorChanged(batchDeferred);
             _leaveInProgress = false;
-            if (!closed) ShowDocumentState(_documentState);
+            if (!closed)
+            {
+                ShowDocumentState(_documentState);
+                if (reopened) Dispatcher.UIThread.Post(async () => await ReviewRecovery(automatic: true));
+            }
         }
         if (!closed || !Current()) return;
         _leaveCloseApproved = true;

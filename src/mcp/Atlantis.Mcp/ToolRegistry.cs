@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text.Json;
+using JsonArray = System.Text.Json.Nodes.JsonArray;
+using JsonObject = System.Text.Json.Nodes.JsonObject;
 using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
@@ -144,6 +146,12 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             DocumentParameters(allowAbsent: false)),
         Declare("authoring.reopen_if_current", "authoring.reopenIfCurrent", "Reopen only the reviewed revision. Explicit null opens only while absent.", AuthoringModel,
             DocumentParameters(allowAbsent: true)),
+        Declare("authoring.recovery_status", "authoring.recoveryStatus", "Read recovery coverage or preview an exact pending copy.", AuthoringModel,
+            RecoveryParameters(reading: true)),
+        Declare("authoring.restore_recovery", "authoring.restoreRecovery", "Restore the exact copy to the reviewed authoring document. Apply and Save remain explicit.", AuthoringModel,
+            RecoveryParameters(reading: false)),
+        Declare("authoring.discard_recovery", "authoring.discardRecovery", "Discard only the exact pending copy without changing the document, source or projection.", AuthoringModel,
+            RecoveryParameters(reading: false)),
         Declare("authoring.save_as", "authoring.saveAs", "Create a named hand-authored copy without retargeting the document. Inspect the destination and confirm settlement before retrying a lost reply.", AuthoringModel,
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
         Declare("authoring.create_scene", "authoring.createScene", "Create a camera-only scene source without opening it. Inspect both destination files and confirm settlement before retrying a lost reply.", AuthoringModel,
@@ -229,6 +237,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             if (mapping.Method is "authoring.documentState" or "authoring.saveIfCurrent" or "authoring.reopenIfCurrent")
                 return DocumentOperation(mapping.Method, wireParameters);
+            if (mapping.Method is "authoring.recoveryStatus" or "authoring.restoreRecovery" or "authoring.discardRecovery")
+                return RecoveryOperation(mapping.Method, wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
             if (mapping.Method == "assets.moveTexture") return MoveTexture(wireParameters);
@@ -635,6 +645,47 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return Forward(result, true);
         }
         return Error("ProtocolError: malformed document reply." + (reading ? "" : unknown));
+    }
+
+    private static JsonElement RecoveryParameters(bool reading)
+    {
+        if (!reading) return ToolSchemas.Parameters(("copyId", ToolSchemas.String),
+            ("expected", ToolSchemas.ParametersNode(("documentId", ToolSchemas.String),
+                ("documentRevision", ToolSchemas.Integer))));
+        var shape = (JsonObject)ToolSchemas.ParametersNode(("copyId", ToolSchemas.String));
+        shape["required"] = new JsonArray();
+        return JsonSerializer.SerializeToElement(shape);
+    }
+
+    private CallToolResult RecoveryOperation(string method, JsonValue parameters)
+    {
+        bool reading = method == "authoring.recoveryStatus";
+        var copyField = parameters.Find("copyId");
+        var copy = copyField is { IsString: true } && EntityGuid.TryParse(copyField.AsString, out var id) &&
+            !id.IsNil && id.ToString() == copyField.AsString ? id : (EntityGuid?)null;
+        var expected = parameters.Find("expected");
+        var token = expected is { IsObject: true } ? Codec.DecodeDocumentToken(expected) : null;
+        if ((copyField is not null && copy is null) || (!reading && (copy is null || token is null)))
+            return Error("InvalidArguments: expected a canonical copy ID and, for a decision, a current document token.");
+        string unknown = $" {method} outcome unknown for copy {copy}. Check recovery and document state on the original Runtime before retrying.";
+        JsonValue reply;
+        bool mayHaveSent = true;
+        try { reply = session.Request(method, parameters, out mayHaveSent); }
+        catch (RemoteException error)
+        {
+            return Error(reading ? error.Message : error.Message + (mayHaveSent ? unknown : $" {method} was not sent."));
+        }
+        if (Codec.RecoveryRpcRefusal(reply, method) is { } refusal) return Error(refusal.ToString());
+        if (Codec.DocumentResult(reply) is { } result)
+        {
+            if (result.Find("ok") is { } ok &&
+                (reading ? Codec.DecodeRecoveryStatus(ok, copy) is not null
+                    : Codec.DecodeRecoveryReceipt(ok, token!.Value, copy!.Value, method == "authoring.restoreRecovery") is not null))
+                return Forward(result, false);
+            if (result.Find("err") is { } err && Codec.DecodeRecoveryError(err) is not null)
+                return Forward(result, true);
+        }
+        return Error("ProtocolError: malformed recovery reply." + (reading ? "" : unknown));
     }
 
     private CallToolResult SaveAs(JsonValue parameters)

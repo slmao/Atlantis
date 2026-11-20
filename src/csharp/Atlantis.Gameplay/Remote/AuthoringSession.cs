@@ -126,6 +126,59 @@ public sealed class AuthoringSession
         }
     }
 
+    /// <summary>Reads capture status, or the reviewed copy's bounded source comparison.</summary>
+    public Outcome<A.RecoveryStatus, A.RecoveryError> RecoveryStatus(EntityGuid? copyId = null)
+    {
+        const string method = "authoring.recoveryStatus";
+        if (copyId is { IsNil: true }) return Outcome<A.RecoveryStatus, A.RecoveryError>.Err(A.RecoveryError.InvalidRequest);
+        var parameters = JsonValue.NewObject();
+        if (copyId is { } id) parameters.Set("copyId", Codec.Encode(id));
+        var reply = _session.AwaitResponse(_session.Send(method, parameters));
+        if (Codec.RecoveryRpcRefusal(reply, method) is { } refusal)
+            return Outcome<A.RecoveryStatus, A.RecoveryError>.Err(refusal);
+        var result = Codec.DocumentResult(reply);
+        if (result?.Find("err") is { } err && Codec.DecodeRecoveryError(err) is { } failure)
+            return Outcome<A.RecoveryStatus, A.RecoveryError>.Err(failure);
+        if (result?.Find("ok") is { } ok && Codec.DecodeRecoveryStatus(ok, copyId) is { } value)
+            return Outcome<A.RecoveryStatus, A.RecoveryError>.Ok(value);
+        throw _session.Malformed(method);
+    }
+
+    /// <summary>Restores only the reviewed copy into a fresh, dirty authoring document.</summary>
+    public Outcome<A.RecoveryReceipt, A.RecoveryError> RestoreRecovery(A.DocumentToken expected, EntityGuid copyId) =>
+        ChangeRecovery(expected, copyId, restoring: true);
+
+    /// <summary>Removes only the reviewed pending recovery copy.</summary>
+    public Outcome<A.RecoveryReceipt, A.RecoveryError> DiscardRecovery(A.DocumentToken expected, EntityGuid copyId) =>
+        ChangeRecovery(expected, copyId, restoring: false);
+
+    private Outcome<A.RecoveryReceipt, A.RecoveryError> ChangeRecovery(A.DocumentToken expected, EntityGuid copyId, bool restoring)
+    {
+        if (expected.DocumentId.IsNil || expected.DocumentRevision == 0 || copyId.IsNil)
+            return Outcome<A.RecoveryReceipt, A.RecoveryError>.Err(A.RecoveryError.InvalidRequest);
+        string method = restoring ? "authoring.restoreRecovery" : "authoring.discardRecovery";
+        var parameters = JsonValue.NewObject().Set("expected", Codec.Encode(expected)).Set("copyId", Codec.Encode(copyId));
+        _session.ThrowIfFailed();
+        try
+        {
+            var reply = _session.AwaitResponse(_session.Send(method, parameters));
+            if (Codec.RecoveryRpcRefusal(reply, method) is { } refusal)
+                return Outcome<A.RecoveryReceipt, A.RecoveryError>.Err(refusal);
+            var result = Codec.DocumentResult(reply);
+            if (result?.Find("err") is { } err && Codec.DecodeRecoveryError(err) is { } failure)
+                return Outcome<A.RecoveryReceipt, A.RecoveryError>.Err(failure);
+            if (result?.Find("ok") is { } ok && Codec.DecodeRecoveryReceipt(ok, expected, copyId, restoring) is { } receipt)
+                return Outcome<A.RecoveryReceipt, A.RecoveryError>.Ok(receipt);
+            throw _session.Malformed(method);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"{method} outcome unknown for copy {copyId}, " +
+                $"document {expected.DocumentId}, revision {expected.DocumentRevision}. Check recovery and document state " +
+                "on the original Runtime before retrying.");
+        }
+    }
+
     /// <summary>Creates a source copy without changing the bound document. A lost reply throws and must not be replayed.</summary>
     public Outcome<A.SavedScene, A.SaveAsError> SaveAs(string name)
     {

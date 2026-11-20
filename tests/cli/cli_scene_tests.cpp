@@ -694,3 +694,18 @@ TEST_CASE("cli scene: timing out preserves the receipt without retrying or faili
   CHECK(scene.authoring->applyStatus(id).value().request->state ==
         atlantis::connection::authoring::ApplyState::Pending);
 }
+
+TEST_CASE("scene recovery uses explicit guards and does not auto-open an old host", "[cli][scene][recovery]") {
+  SceneCli scene(true);
+  CHECK(scene.run("scene recovery-status") == 1);
+  CHECK_FALSE(scene.authoring->document());
+  CHECK(scene.run("scene restore-recovery " + std::string(kNode1) + " " + std::string(kNode3) +
+                  " 18446744073709551616") == 2);
+  CHECK_FALSE(scene.authoring->document());
+  REQUIRE(scene.run("scene open") == 0);
+  const auto original = scene.authoring->documentState().value();
+  REQUIRE(original.has_value());
+  CHECK(scene.run("scene discard-recovery " + std::string(kNode1) + " " +
+                  atlantis::asset_system::toString(original->token.documentId) + " 1") == 1);
+  CHECK(scene.authoring->documentState().value() == original);
+}

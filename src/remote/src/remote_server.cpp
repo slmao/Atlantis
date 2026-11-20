@@ -246,6 +246,34 @@ namespace ac = atlantis::connection::authoring;
     return Outcome::Ok(inBand(result, [](const auto& state) { return codec::encode(state); },
         [](auto failure) { return Value::string(std::string(ac::toString(failure.error))); }));
   }
+  if (method == "authoring.recoveryStatus" || method == "authoring.restoreRecovery" ||
+      method == "authoring.discardRecovery") {
+    if (!p.isObject()) return bad("expected recovery parameters");
+    auto reply = [&](const auto& result) {
+      if (result.isErr() && result.error().error == ac::RecoveryError::Unsupported)
+        return Outcome::Err("unknown method " + std::string(method));
+      return Outcome::Ok(inBand(result, [](const auto& value) { return codec::encode(value); },
+          [](auto failure) { return Value::string(std::string(ac::toString(failure.error))); }));
+    };
+    std::optional<ac::EntityGuid> id;
+    if (const auto* value = p.find("copyId")) {
+      if (!value->isString()) return bad("expected recovery copy ID");
+      const auto parsed = atlantis::asset_system::parseEntityGuid(value->asString());
+      if (parsed.isErr()) return bad("expected recovery copy ID");
+      id = parsed.value();
+    }
+    if (method == "authoring.recoveryStatus") {
+      if (p.asObject().size() != (id ? 1u : 0u)) return bad("expected optional copyId");
+      return reply(authoring.recoveryStatus(id));
+    }
+    const auto* expected = p.find("expected");
+    if (!id || !expected || !expected->isObject() || expected->asObject().size() != 2 ||
+        p.asObject().size() != 2) return bad("expected copyId and document token");
+    const auto token = codec::decodeDocumentToken(*expected);
+    if (!token) return bad("expected document token");
+    return reply(method == "authoring.restoreRecovery" ? authoring.restoreRecovery(*token, *id) :
+                                                        authoring.discardRecovery(*token, *id));
+  }
   if (method == "authoring.applyTracked") {
     return Outcome::Ok(inBand(authoring.applyTracked(),
         [](const auto& receipt) { return codec::encode(receipt); }, &codec::encodeApplyError));

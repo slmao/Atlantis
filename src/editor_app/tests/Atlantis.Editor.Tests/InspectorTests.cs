@@ -73,13 +73,14 @@ public static partial class Program
             exit = 1;
         }
         bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
-        if ((meshPreview || scene is "--texture-references" or "--texture-move" or "--tasks-ui") && work is not null) CheckMeshPreviewValidation(work, checks);
+        if ((meshPreview || scene is "--texture-references" or "--texture-move" or "--tasks-ui" or "--scene-recovery-ui") && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
+            boundary = scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
+                : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
                 : scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
                 : scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
                 : scene is "--texture-reimport" or "--texture-rename"
@@ -125,6 +126,7 @@ public static partial class Program
                 bool reimport = _scene is "--texture-reimport" or "--texture-rename";
                 bool references = _scene == "--texture-references";
                 bool tasks = _scene == "--tasks-ui";
+                bool recovery = _scene == "--scene-recovery-ui";
                 bool moveTexture = _scene == "--texture-move";
                 bool browse = _scene == "--assets-browse";
                 bool assetDrag = _scene is "--asset-drag" or "--asset-drag-compact";
@@ -137,7 +139,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
-                    addToNew ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
+                    addToNew || recovery ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
                     AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
@@ -159,7 +161,7 @@ public static partial class Program
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
-                if (tasks)
+                if (tasks || recovery)
                 {
                     EditorVisuals.Install(this);
                     if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
@@ -185,6 +187,7 @@ public static partial class Program
                         else if (references) await CheckTextureReferenceUi(window, _checks, _work);
                         else if (moveTexture) await CheckTextureMoveUi(window, _checks, _work);
                         else if (tasks) await CheckTaskIssuesUi(window, _checks, _work);
+                        else if (recovery) await CheckSceneRecoveryUi(window, _checks, _work);
                         else if (browse) await CheckAssetBrowseUi(window, _checks, _work);
                         else if (assetDrag) await CheckAssetDragUi(window, _checks, _work, _scene == "--asset-drag-compact");
                         else if (meshPreview) await CheckMeshPreviewUi(window, _checks, _work);
@@ -222,6 +225,193 @@ public static partial class Program
         ((StackPanel)row.Parent!).Children.OfType<ToggleButton>()
             .Single(button => button.Content?.ToString() == "Reference details").IsChecked = true;
         return row.Children.OfType<TextBox>().Single();
+    }
+
+    private static async Task CheckSceneRecoveryUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        void Verify(string name, bool ok)
+        {
+            checks.Add(new(name, ok));
+            if (!ok) throw new InvalidOperationException(name);
+        }
+        string phase = Environment.GetEnvironmentVariable("ATLANTIS_0122_PHASE") ?? throw new InvalidOperationException("Missing phase.");
+        string evidence = Environment.GetEnvironmentVariable("ATLANTIS_0122_EVIDENCE") ?? throw new InvalidOperationException("Missing evidence path.");
+        string expectedSource = Environment.GetEnvironmentVariable("ATLANTIS_0122_DISPOSABLE_SOURCE") ??
+            throw new InvalidOperationException("Missing disposable source path.");
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } child && File.Exists(child.SessionPath) &&
+            Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "native saved scene and authoring ready", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        Verify("Windows Editor at 100% hosts the normal saved-scene Runtime",
+            window.IsVisible && GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && runtime.Launch.ParentWindow is not null);
+        using var observer = await Task.Run(() => RemoteSession.Connect(SessionFile.Read(runtime.SessionPath)));
+        var opening = observer.Authoring.DocumentState().Value!;
+        if (!StringComparer.OrdinalIgnoreCase.Equals(Path.GetFullPath(opening.Source), expectedSource))
+            throw new InvalidOperationException("Wrong disposable scene source.");
+        var beforeBytes = File.ReadAllBytes(expectedSource);
+        var document = new RemoteAuthoringDocument(observer.Authoring, observer);
+        TypeId renderable = SceneSchema.TypeOf(document.Schema, "Renderable")!.Value;
+        var node = observer.Authoring.ListNodes().Value.First(n => observer.Authoring.ListComponents(n.Node).Value.Contains(renderable)).Node;
+        SceneAddress material = SceneSchema.AddressOf(document.Schema, node, "Renderable", "materialAsset")!.Value;
+        Field<ListBox>("_entities").SelectedItem = Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Single(row => row.Node == node);
+        await NameUiWait(() => Field<InspectorSnapshot>("_inspectorShown")?.Subject == node, "selected scene object");
+        var file = Path.Combine(evidence, "recovered-material.guid");
+        ulong projection = observer.Control.Status().SceneGeneration;
+        var undo = Field<Button>("_undo");
+
+        async Task Capture(Window target, string name)
+        {
+            target.Activate();
+            Verify("Native capture target is at 100% · " + name, GetDpiForWindow(target.TryGetPlatformHandle()!.Handle) == 96);
+            string path = Path.Combine(evidence, name);
+            File.Delete(path + ".done");
+            File.WriteAllText(path + ".ready", runtime.Launch.WorkDirectory);
+            await NameUiWait(() => File.Exists(path + ".done"), "native screenshot " + name, 60);
+        }
+        async Task<RecoveryCopy> Durable()
+        {
+            RecoveryCopy? copy = null;
+            await NameUiWait(() =>
+            {
+                var current = observer.Authoring.DocumentState().Value;
+                var status = observer.Authoring.RecoveryStatus().Value;
+                if (current is not { Dirty: true } || status.ProtectedRevision != current.Token.DocumentRevision ||
+                    status.Copy is not { Pending: false } ready) return false;
+                copy = ready;
+                return true;
+            }, "exact committed revision is durably protected");
+            return copy!;
+        }
+        async Task Crash(RecoveryCopy copy)
+        {
+            var marker = new { runtime = runtime.Pid, copy, checks, workDirectory = runtime.Launch.WorkDirectory };
+            File.WriteAllText(Path.Combine(evidence, phase + ".kill.json"), System.Text.Json.JsonSerializer.Serialize(marker));
+            await NameUiWait(() => false, "test supervisor abruptly terminates these two owned processes", 45);
+        }
+        if (phase == "crash")
+        {
+            var oldMaterial = document.GetProperty(material)!.Value.AsAsset();
+            var deps = observer.Assets.GetAsset(opening.Scene).Value.Dependencies;
+            var candidate = observer.Assets.ListAssets().Value.First(asset => asset.Type == AssetType.Material &&
+                asset.Source.StartsWith("assets:", StringComparison.Ordinal) && asset.Guid != oldMaterial && !deps.Contains(asset.Guid));
+            string catalog = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(runtime.Launch.RuntimePath)!, "..", "..", "..", "asset_catalog.txt"));
+            if (catalog != Environment.GetEnvironmentVariable("ATLANTIS_0122_DISPOSABLE_CATALOG"))
+                throw new InvalidOperationException("Missing explicit disposable asset catalog.");
+            string relative = File.ReadLines(catalog).Single(line => line.StartsWith("record: guid=" + candidate.Guid + " ", StringComparison.Ordinal))
+                .Split(' ').Single(part => part.StartsWith("artifact=", StringComparison.Ordinal))[9..];
+            string root = Path.GetDirectoryName(catalog)! + Path.DirectorySeparatorChar;
+            string artifact = Path.GetFullPath(Path.Combine(root, relative));
+            if (!artifact.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Artifact outside fixture.");
+            var bytes = File.ReadAllBytes(artifact);
+            try
+            {
+                File.WriteAllBytes(artifact, Array.Empty<byte>());
+                var editor = RevealGuidBox(InspectorRow(window, "Renderable.materialAsset"));
+                editor.Focus();
+                editor.Text = candidate.Guid.ToString();
+                NameUiKey(editor, Key.Enter);
+                await NameUiWait(() => observer.Authoring.ApplyStatus().Value?.Request is
+                    { State: ApplyState.Failed, Error: ReloadError.ScenePreparationFailed }, "real Apply reload fails");
+                Verify("Failed reload keeps the authored material and old projection",
+                    undo.IsEnabled && document.GetProperty(material)!.Value.AsAsset() == candidate.Guid &&
+                    observer.Control.Status().SceneGeneration == projection);
+                File.WriteAllText(file, candidate.Guid.ToString());
+            }
+            finally { File.WriteAllBytes(artifact, bytes); }
+            var durable = await Durable();
+            Verify("Apply failure still leaves the exact dirty revision protected and formal file unchanged",
+                beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)));
+            await Crash(durable);
+            return;
+        }
+        if (phase == "conflict-seed")
+        {
+            var name = Field<StackPanel>("_inspectorPanel").GetVisualDescendants().OfType<TextBox>()
+                .Single(box => box.PlaceholderText == "Unnamed" || box.PlaceholderText == "Node name");
+            name.Focus();
+            name.Text = "Local unsaved recovery";
+            NameUiKey(name, Key.Enter);
+            var durable = await Durable();
+            using var second = RuntimeProcess.Start(runtime.Launch with { ParentWindow = null, WorkDirectory = RuntimeProcess.NewWorkDirectory() });
+            using var outside = await Task.Run(() => RemoteSession.Connect(second.WaitForSession(TimeSpan.FromSeconds(60))));
+            var external = outside.Authoring.ReopenIfCurrent(null).Value;
+            outside.Authoring.SubmitTransaction(new Command[] { new Atlantis.Gameplay.Authoring.SetNodeName(node, "External saved version") });
+            Verify("The second Runtime edits and explicitly saves while the first owns recovery",
+                outside.Authoring.DrainFailures().Count == 0 && outside.Authoring.Save() is null);
+            second.CloseMainWindow();
+            second.WaitForExit(TimeSpan.FromSeconds(10));
+            File.Copy(expectedSource, Path.Combine(evidence, "externally-saved.scene.txt"), overwrite: true);
+            Verify("External Save changed formal bytes and preserved the first Runtime's checkpoint",
+                !beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)) &&
+                observer.Authoring.RecoveryStatus().Value.Copy?.Id == durable.Id && external.Scene == opening.Scene);
+            await Crash(durable);
+            return;
+        }
+        if (phase == "reopen")
+        {
+            Verify("The external edit remains after reopening and no old recovery copy returns",
+                observer.Authoring.ListNodes().Value.Any(row => row.Node == node && row.Name == "External saved version") &&
+                observer.Authoring.RecoveryStatus().Value.Copy is null && Field<SceneRecoveryWindow>("_recoveryWindow") is null);
+            return;
+        }
+
+        // Decisions are offered by the ordinary Editor after guarded open.
+        await NameUiWait(() => Field<SceneRecoveryWindow>("_recoveryWindow") is { IsVisible: true }, "recovery dialog offered");
+        var dialog = Field<SceneRecoveryWindow>("_recoveryWindow");
+        T Dialog<T>(string name) where T : class =>
+            (T)typeof(SceneRecoveryWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+        Verify("Decide Later is the focused safe default",
+            Dialog<Button>("_later").IsDefault && !Dialog<Button>("_restore").IsEnabled);
+        Click(Dialog<Button>("_load"));
+        await NameUiWait(() => Dialog<StackPanel>("_comparison").IsVisible, "read-only source comparison ready");
+        var notice = Dialog<TextBlock>("_notice");
+        var restore = Dialog<Button>("_restore");
+        var discard = Dialog<Button>("_discard");
+        var copyText = Dialog<TextBox>("_after").Text!;
+        var before = observer.Authoring.DocumentState().Value!;
+        if (phase == "restore")
+        {
+            var recovered = AssetGuid.Parse(File.ReadAllText(file));
+            Verify("Preview shows the real committed material edit while formal bytes and projection stay unchanged",
+                copyText.Contains(recovered.ToString(), StringComparison.Ordinal) && restore.IsEnabled &&
+                beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)) &&
+                observer.Control.Status().SceneGeneration == projection);
+            await Capture(dialog, "restore-preview");
+            Click(restore);
+            await NameUiWait(() => observer.Authoring.DocumentState().Value is { Dirty: true } restored &&
+                restored.Token.DocumentId != before.Token.DocumentId && Field<Button>("_retryApply").IsEnabled,
+                "restore creates a fresh dirty document");
+            Verify("Restored selection identities, copy and value without auto Apply or Save or inherited Undo",
+                document.GetProperty(material)!.Value.AsAsset() == recovered && observer.Authoring.ListNodes().Value.Any(row => row.Node == node) &&
+                beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)) && observer.Authoring.ApplyStatus().Value!.Request is null &&
+                observer.Control.Status().SceneGeneration == projection && !undo.IsEnabled &&
+                observer.Authoring.RecoveryStatus().Value.Copy is { Pending: false });
+            await Capture(window, "restore-needs-apply");
+            Click(Field<Button>("_retryApply"));
+            await NameUiWait(() => observer.Authoring.ApplyStatus().Value!.Request?.State == ApplyState.Applied, "explicit Apply succeeds");
+            Click(Field<Button>("_save"));
+            await NameUiWait(() => observer.Authoring.DocumentState().Value is { Dirty: false } &&
+                observer.Authoring.RecoveryStatus().Value.Copy is null, "explicit Save writes the edit and retires its copy");
+            Verify("Only explicit Save wrote the recovered material into the formal scene",
+                File.ReadAllText(expectedSource).Contains(recovered.ToString(), StringComparison.Ordinal));
+            return;
+        }
+
+        Verify("The external Save is visible, and conflict blocks Restore while keeping a useful preview",
+            !restore.IsEnabled && discard.IsEnabled && notice.Text!.Contains("official source changed", StringComparison.OrdinalIgnoreCase) &&
+            copyText.Contains("Local unsaved recovery", StringComparison.Ordinal) &&
+            Dialog<TextBox>("_before").Text!.Contains("External saved version", StringComparison.Ordinal));
+        await Capture(dialog, "source-conflict");
+        Click(discard);
+        Verify("Discard requires explicit confirmation while the source remains intact",
+            Equals(discard.Content, "Confirm Discard") && beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)));
+        Click(discard);
+        await NameUiWait(() => observer.Authoring.RecoveryStatus().Value.Copy is null, "only the reviewed copy was removed");
+        Verify("Discard preserves external source, open document and projection exactly",
+            beforeBytes.SequenceEqual(File.ReadAllBytes(expectedSource)) && observer.Authoring.DocumentState().Value == before &&
+            observer.Control.Status().SceneGeneration == projection && observer.Authoring.ApplyStatus().Value!.Request is null);
     }
 
     private static async Task CheckTaskIssuesUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
