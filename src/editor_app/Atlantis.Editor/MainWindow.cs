@@ -301,8 +301,14 @@ public sealed class MainWindow : Window
 
     private readonly Button _rebuildStart = new() { Content = "Rebuild selected", IsEnabled = false };
     private readonly TextBlock _reimportInput = EditorVisuals.Secondary("");
-    private readonly Button _affectedMaterials = new() { Content = "View affected materials", IsVisible = false };
-    private readonly TextBlock _affectedMaterialsState = EditorVisuals.Details("");
+    private readonly Button _viewReferences = new() { Content = "View References", IsVisible = false };
+    private readonly Button _cancelReferences = new() { Content = "Cancel", IsVisible = false };
+    private readonly ListBox _referenceResults = new() { MaxHeight = 170, IsVisible = false };
+    private readonly SelectableTextBlock _referenceStatus = EditorVisuals.Details("");
+    private readonly TextBlock _referenceScope = EditorVisuals.Secondary("Current Runtime catalog · direct material references");
+    private readonly StackPanel _locatedSlots = EditorVisuals.Stack(4);
+    private LocatedAssetReference? _shownReference;
+    private bool _revealAssetFilters;
     private readonly Button _rebuildRefresh = new() { Content = "Refresh rebuild status", IsEnabled = false };
     private readonly TextBox _importName = new() { PlaceholderText = "Inbox name (without .gltf)" };
     private readonly Button _importRegister = new() { Content = "Register and publish", IsEnabled = false };
@@ -876,7 +882,8 @@ public sealed class MainWindow : Window
         _importPoll.Stop(); _importJob = null; _importPending = _importRunning = false;
         _importState.Text = "";
         UpdateImportButtons();
-        _rebuildPoll.Stop(); _rebuildJob = null; _activeAssetGeneration = null;
+        _rebuildPoll.Stop(); _rebuildJob = null;
+        _activeAssetGeneration = runtime?.Launch.AssetGeneration is { } named ? new GenerationId(AssetGuid.Parse(named)) : null;
         _renameDraftGeneration = null; _renameRequestContext = null; _renameUnknown = false;
         _rebuildPending = _rebuildRunning = false; _rebuildState.Text = "";
         _assetBrowser.Disconnect();
@@ -1007,7 +1014,8 @@ public sealed class MainWindow : Window
             SyncHierarchySelection(scroll: false);
             ClearBatchInspector();
             _inspectorPanel.Children.Clear();
-            _assetBrowser.Disconnect(); RenderAssets();
+            if (!_assetBrowser.InterruptReferences()) _assetBrowser.Disconnect();
+            RenderAssets();
             _runtimeLine = "session failed: " + message;
             UpdateStatus();
         };
@@ -2173,14 +2181,19 @@ public sealed class MainWindow : Window
         var reload = new Button { Content = "Reload view" };
         reload.Click += (_, _) => LoadAssets();
         var types = _assetTypes;
-        types.SelectionChanged += (_, _) => { _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (AssetType)(types.SelectedIndex - 1); RenderAssets(); };
+        types.SelectionChanged += (_, _) =>
+        {
+            if (_revealAssetFilters) return;
+            _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (AssetType)(types.SelectedIndex - 1);
+            RenderAssets();
+        };
         AutomationProperties.SetName(types, "Asset type");
         var search = _assetSearch;
         search.Classes.Add("editor-search");
         AutomationProperties.SetName(search, "Search name, path or GUID");
         search.PropertyChanged += (_, change) =>
         {
-            if (change.Property != TextBox.TextProperty) return;
+            if (change.Property != TextBox.TextProperty || _revealAssetFilters) return;
             _assetBrowser.Search = search.Text ?? "";
             RenderAssets();
         };
@@ -2252,15 +2265,27 @@ public sealed class MainWindow : Window
         _renameEditor = EditorVisuals.Stack(4, _renameLabel, _renamePath,
             EditorVisuals.Actions(_renamePublish, _renameCancel));
         _renameEditor.IsVisible = false;
+        _viewReferences.Click += (_, _) => ViewReferences();
+        _cancelReferences.Click += (_, _) =>
+        {
+            _assetBrowser.CancelPendingDependents();
+            UpdateReferences();
+            _viewReferences.Focus();
+        };
+        EditorVisuals.ConfigureReferenceResults(_referenceResults, LocateReference);
+        AutomationProperties.SetName(_referenceResults, "Direct material references");
+        AutomationProperties.SetName(_referenceStatus, "Reference check status");
+        AutomationProperties.SetLiveSetting(_referenceStatus, AutomationLiveSetting.Polite);
         var selected = EditorVisuals.Group(EditorVisuals.Heading("Selected asset"),
             EditorVisuals.Stack(5, _assetTitle, EditorVisuals.Actions(_renameTexture, _removeRegistration),
                 _renameEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
+                EditorVisuals.Actions(_viewReferences, _cancelReferences), _referenceScope, _referenceStatus,
+                _referenceResults, _locatedSlots,
                 _addMesh, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
         _rebuildStart.Click += (_, _) => StartAssetRebuild();
-        _affectedMaterials.Click += (_, _) => ViewAffectedMaterials();
         _rebuildRefresh.Click += (_, _) => ReadRebuildStatus();
         _rebuildPoll.Tick += (_, _) => ReadRebuildStatus();
         _importName.TextChanged += (_, _) => UpdateImportButtons();
@@ -2293,8 +2318,7 @@ public sealed class MainWindow : Window
             EditorVisuals.Actions(_materialRefresh, _materialResume), _materialState), expanded: true);
         var body = EditorVisuals.Stack(7, _assetsList, selected, material,
             EditorVisuals.Disclosure("Rebuild / Reimport", EditorVisuals.Stack(5,
-                EditorVisuals.Actions(_rebuildStart, _rebuildRefresh), _reimportInput, _affectedMaterials,
-                new ScrollViewer { Content = _affectedMaterialsState, MaxHeight = 190 })),
+                EditorVisuals.Actions(_rebuildStart, _rebuildRefresh), _reimportInput)),
             _rebuildState,
             EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
                 EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
@@ -2478,7 +2502,7 @@ public sealed class MainWindow : Window
 
     private void LoadAssets()
     {
-        var worker = _worker; if (worker is null) return;
+        var worker = _worker; if (worker is null || _referenceSessionFailed) return;
         long request = _assetBrowser.BeginList(); RenderAssets();
         worker.LoadAssets(result =>
         {
@@ -2486,12 +2510,12 @@ public sealed class MainWindow : Window
             RenderAssets();
         });
     }
-    private void ReadAsset(AssetGuid guid)
+    private void ReadAsset(AssetGuid guid, LocatedAssetReference? located = null)
     {
         var worker = _worker; if (worker is null) return;
         if (_assetBrowser.State != "Ready" || _referenceSessionFailed ||
             !_assetBrowser.Visible.Any(asset => asset.Guid == guid)) return;
-        long request = _assetBrowser.Select(guid);
+        long request = _assetBrowser.Select(guid, located);
         AssetDetailIntent? intent = _assetBrowser.DetailIntent;
         RenderAssets();
         worker.ReadAsset(guid, result =>
@@ -2534,7 +2558,8 @@ public sealed class MainWindow : Window
         if (_assetCopyGuid is not null) _assetCopyGuid.IsEnabled = _assetBrowser.SelectionVisible;
         _assetClearFilters.IsEnabled = !string.IsNullOrEmpty(_assetSearch.Text) || _assetBrowser.Type is not null;
         _assetTitle.Text = _assetsList.SelectedItem is AssetSummary asset
-            ? EditorVisuals.AssetName(asset) : hidden ? "Selected asset is hidden" : "Select an asset";
+            ? asset.Type == AssetType.Material ? EditorVisuals.ReferenceMaterialName(asset) : EditorVisuals.AssetName(asset)
+            : hidden ? "Selected asset is hidden" : "Select an asset";
         ToolTip.SetTip(_assetTitle, _assetTitle.Text);
         foreach (Action refresh in _refreshReferenceLabels) refresh();
         SyncPreviewSelection();
@@ -2559,15 +2584,29 @@ public sealed class MainWindow : Window
             if (!_assetBrowser.Items.Any(asset => asset.Guid == guid))
             { _assetDetails.Children.Add(EditorVisuals.Details(guid.ToString())); continue; }
             var button = new Button { Content = guid.ToString() };
-            button.Click += (_, _) =>
-            {
-                _assetSearch.Text = "";
-                _assetTypes.SelectedIndex = 0;
-                ReadAsset(guid);
-                _assetsList.ScrollIntoView(_assetsList.SelectedItem!);
-            };
+            button.Click += (_, _) => RevealAsset(guid);
             _assetDetails.Children.Add(button);
         }
+    }
+
+    private void RevealAsset(AssetGuid guid, LocatedAssetReference? located = null)
+    {
+        if (_referenceSessionFailed) return;
+        if (located is null)
+        {
+            _assetBrowser.Search = "";
+            _assetBrowser.Type = null;
+        }
+        if (!_assetBrowser.Reveal(guid)) return;
+        _revealAssetFilters = true;
+        try
+        {
+            _assetSearch.Text = _assetBrowser.Search;
+            _assetTypes.SelectedIndex = _assetBrowser.Type is AssetType type ? (int)type + 1 : 0;
+        }
+        finally { _revealAssetFilters = false; }
+        ReadAsset(guid, located);
+        if (_assetsList.SelectedItem is AssetSummary asset) _assetsList.ScrollIntoView(asset);
     }
 
     private void ReadSelectedMaterial()
@@ -3322,7 +3361,7 @@ public sealed class MainWindow : Window
         _reimportInput.IsVisible = name is not null;
         _reimportInput.Text = name is null ? "" : "Update inbox/" + name +
             "/source.png in the configured project. Use the active named generation.";
-        UpdateAffectedMaterials();
+        UpdateReferences();
         bool editing = _assetBrowser.RenameIntent is not null && _renameDraftGeneration is not null;
         bool checkingRemoval = _assetBrowser.RemovalIntent is not null && !_referenceSessionFailed;
         if (!checkingRemoval)
@@ -3494,28 +3533,84 @@ public sealed class MainWindow : Window
         });
     }
 
-    private void UpdateAffectedMaterials()
+    private void UpdateReferences()
     {
-        bool eligible = _assetBrowser.SelectionVisible &&
-            AssetBrowser.RegisteredColorName(_assetsList.SelectedItem as AssetSummary) is not null;
-        _affectedMaterials.IsVisible = eligible;
-        _affectedMaterials.IsEnabled = eligible && _worker is not null && !_referenceSessionFailed &&
-            _assetBrowser.DependentScan is null;
-        _affectedMaterialsState.Text = _assetBrowser.DependentScan is not null ? "Checking current catalog material dependencies…" :
-            _assetBrowser.DependentResult is not { } result ? "" :
-            (result.Complete ? (result.Matches.Count == 0 ? "Complete: no direct material references." : "Complete: direct material references") :
-                "Incomplete: some material details could not be checked.") +
-            string.Concat(result.Matches.Select(asset => "\n" + EditorVisuals.AssetName(asset) + " · " + asset.Source + " · " + asset.Guid));
+        bool eligible = _assetBrowser.CanScanReferences;
+        bool scanning = _assetBrowser.DependentScan is not null;
+        bool locating = _assetBrowser.ReferenceLocate is not null;
+        bool available = _worker is not null && !_referenceSessionFailed;
+        var result = _assetBrowser.DependentResult;
+        _viewReferences.IsVisible = eligible;
+        _viewReferences.Content = result is null ? "View References" : "Refresh References";
+        _viewReferences.IsEnabled = eligible && available && !scanning;
+        _cancelReferences.IsVisible = eligible && (scanning || locating);
+        _referenceScope.IsVisible = eligible || result is not null;
+        _referenceStatus.Text = _assetBrowser.ReferenceNotice ?? (scanning ? "Checking direct material references…" :
+            locating ? "Verifying the material slot…" : result switch
+            {
+                { Complete: true, Matches.Count: 0 } => "No direct material references in this catalog.",
+                { Complete: true } => "Check complete.",
+                { Complete: false } => "Check incomplete. " + (result.Diagnostic ?? "Some material references could not be verified."),
+                _ => "",
+            });
+        _referenceStatus.IsVisible = !string.IsNullOrEmpty(_referenceStatus.Text);
+        _referenceResults.IsEnabled = eligible && available && !scanning;
+        _referenceResults.IsVisible = result?.Matches.Count > 0;
+        if (!ReferenceEquals(_referenceResults.ItemsSource, result?.Matches)) _referenceResults.ItemsSource = result?.Matches;
+
+        var located = _assetBrowser.LocatedReference;
+        if (!ReferenceEquals(_shownReference, located))
+        {
+            _shownReference = located;
+            _locatedSlots.Children.Clear();
+            if (located is not null) ShowLocatedSlots(located);
+        }
     }
 
-    private void ViewAffectedMaterials()
+    private void ShowLocatedSlots(LocatedAssetReference located)
     {
-        if (!_affectedMaterials.IsEnabled || _worker is not { } worker || _assetBrowser.BeginDependents() is not { } scan) return;
-        UpdateAffectedMaterials();
+        _locatedSlots.Children.Add(EditorVisuals.Heading("Material texture slots"));
+        TextBox? target = null;
+        foreach (var (slot, texture) in MaterialTextureReferences.Slots(located.Values))
+        {
+            if (texture is not AssetGuid guid || guid.IsNil) continue;
+            var asset = _assetBrowser.Items.FirstOrDefault(item => item.Guid == guid);
+            var row = EditorVisuals.ReadOnlyTextureSlot(slot, asset is null ? guid.ToString() : EditorVisuals.AssetName(asset), guid);
+            _locatedSlots.Children.Add(row);
+            if (slot == located.Slot) target = row;
+        }
+        if (target is null) return;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (_shuttingDown || _assetTabs.SelectedIndex != 1 || !ReferenceEquals(_assetBrowser.LocatedReference, located)) return;
+            target.BringIntoView();
+            target.Focus();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void ViewReferences()
+    {
+        if (!_viewReferences.IsEnabled || _worker is not { } worker ||
+            _assetBrowser.BeginDependents(_activeAssetGeneration) is not { } scan) return;
+        UpdateReferences();
         worker.ReadAffectedMaterials(scan, result =>
         {
-            if (ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDependents(scan, result))
-                UpdateAffectedMaterials();
+            if (!_shuttingDown && ReferenceEquals(worker, _worker) && _assetBrowser.CompleteDependents(scan, result))
+                UpdateReferences();
+        });
+    }
+
+    private void LocateReference(AssetReferenceRow row)
+    {
+        if (_referenceSessionFailed || _worker is not { } worker ||
+            _assetBrowser.BeginReferenceLocate(row, _activeAssetGeneration) is not { } locate) return;
+        UpdateReferences();
+        worker.LocateAssetReference(locate, read =>
+        {
+            if (_shuttingDown || !ReferenceEquals(worker, _worker) || _referenceSessionFailed ||
+                !_assetBrowser.CompleteReferenceLocate(locate, read, out var located)) return;
+            if (located is not null) RevealAsset(located.Material, located);
+            else UpdateReferences();
         });
     }
 
@@ -4741,6 +4836,7 @@ public sealed class MainWindow : Window
 
     private void Shutdown()
     {
+        _assetBrowser.CancelPendingDependents();
         EndPreviewSession();
         _uiTicker.Stop();
         _texturePoll.Stop();
