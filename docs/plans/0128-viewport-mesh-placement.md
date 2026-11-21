@@ -1,10 +1,10 @@
 # Plan 0128 — Place One Static Mesh on a Viewport Surface
 
 - **Spec:** [Spec 0128](../specs/0128-viewport-mesh-placement.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0177](../adr/0177-editor-viewport-placement-boundary.md) (Proposed)
+- **Joint Human Review:** 2026-11-21, [Spec/Plan 0128, J1–J4 and S2–S4 approved](https://github.com/slmao/Atlantis/pull/420#issuecomment-7060032916) at `cfa48c79`. Maintainer merge `a7d0004b`. Windows native routing is the S2 prerequisite.
+- **ADR:** [ADR-0177](../adr/0177-editor-viewport-placement-boundary.md) (Accepted)
 
 ## Objective and baseline
 
