@@ -39,6 +39,21 @@ public sealed class AssetSession
             Codec.DecodeAssetDetails(v) is A.AssetDetails d && d.Guid == guid ? d : null, Codec.DecodeAssetError);
     }
 
+    public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid)
+    {
+        if (guid.IsNil) throw new ArgumentException("a non-nil Scene GUID is required", nameof(guid));
+        const string method = "assets.staticGroup";
+        JsonValue response = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("guid", Codec.Encode(guid))));
+        if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
+            throw _session.Malformed(method);
+        if (Codec.IsUnsupportedStaticGroup(response))
+            return Outcome<A.StaticGroup, A.StaticGroupError>.Err(A.StaticGroupError.Unsupported);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            throw _session.Malformed(method);
+        return _session.InBand<A.StaticGroup, A.StaticGroupError>(result, method,
+            value => Codec.DecodeStaticGroup(value, guid), Codec.DecodeStaticGroupError);
+    }
+
     /// <summary>Requests one still of a cooked mesh. No scene state changes and no automatic retry.</summary>
     public Outcome<A.MeshPreview, A.PreviewError> PreviewMesh(AssetGuid guid)
     {

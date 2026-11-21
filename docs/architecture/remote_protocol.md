@@ -297,8 +297,9 @@ the same Runtime launch before taking another explicit action.
 |---|---|---|
 | `assets.list` | `{}` | `{"ok":[<AssetSummary>…]}` in strictly increasing GUID order |
 | `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
+| `assets.staticGroup` | `{"guid":"<non-nil canonical Scene GUID>"}` | `{"ok":<StaticGroup>}` |
 
-Both queries may return `{"err":"CatalogUnavailable"}`; get may also return
+List and get may return `{"err":"CatalogUnavailable"}`; get may also return
 `{"err":"UnknownAsset"}`. Exactly one result arm is present. Invalid parameters
 are outer `BadRequest`; provider absence is outer `NoAssets`. Neither initializes
 the catalog. Creating/connecting a session or accessing its lazy asset endpoint
@@ -317,6 +318,20 @@ AssetDetails {"guid":"<GUID>","type":"<same closed type>","source":"<source key>
               "artifactSchema":<uint32>,"sourceSchema":<uint32>|null,
               "tool":"<catalog tool>","dependencies":["<GUID>"…]}
 ```
+
+Spec 0130 adds a read of a single managed glTF group in the same active
+catalog. The result is `{"scene":GUID,"name":string,"nodes":[...]}`. Each
+node carries exactly `parent`, `position`, `eulerRadians`, `scale` and
+`renderable`. The parent is a nullable zero-based index in that array.
+Each local vector is three finite Float32 values. A renderable is null or
+`{"mesh":GUID,"material":GUID|null}`. A null material preserves the
+scene fallback. The host returns the whole ordered group, including every
+empty transform, within 63 nodes and 64 KiB.
+
+The closed refusals are `CatalogUnavailable`, `UnknownAsset`,
+`UnsupportedGroup`, `InvalidGroup` and `Unsupported`. Legacy unknown-method
+replies map to `Unsupported`; successful reads leave the connection and
+scene unchanged. Publishing does not change the running catalog.
 
 Spec 0120 adds optional `logicalPath` to list/get for an overridden
 registered base color texture. It is a canonical full path in the Assets

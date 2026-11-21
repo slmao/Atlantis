@@ -1,10 +1,10 @@
 # Plan 0130 — Import and Add a Static glTF Group
 
 - **Spec:** [Spec 0130](../specs/0130-static-gltf-group-instantiation.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0179](../adr/0179-static-gltf-group-projection-and-instantiation.md) (Proposed)
+- **Joint Human Review:** J1–J4 approved for [873f1271](https://github.com/slmao/Atlantis/pull/423#issuecomment-7062867632) after joint review. The maintainer merged the design in #423. Implementation, verification and a review-ready PR authorized.
+- **ADR:** [ADR-0179](../adr/0179-static-gltf-group-projection-and-instantiation.md) (Accepted)
 
 ## Objective
 
@@ -44,6 +44,7 @@ Both must settle before the Windows end-to-end run.
 | `src/connection/include/atlantis/connection/asset_connection.h`, `src/connection/src/asset_connection.cpp`, `src/remote/src/{codec.h,codec.cpp,remote_client.cpp,remote_server.cpp}`, `docs/architecture/remote_protocol.md` | One typed read and refusal contract. No authoring codec, frame-loop or wire envelope changes. |
 | `src/gameplay_sdk/include/atlantis/gameplay/assets.h`, `src/cli/{include/atlantis/cli/command_layer.h,src/command_layer.cpp,src/invocation.cpp}`, `src/csharp/Atlantis.Gameplay/{Assets.cs,Remote/AssetCodec.cs,Remote/AssetSession.cs}`, `src/mcp/Atlantis.Mcp/{ToolRegistry,ToolSchemas}.cs` | Shared query through each normal client. Reuse existing guarded transaction and failure drain. |
 | `tests/{cli/cli_asset_tests.cpp,remote/remote_asset_tests.cpp,csharp/conformance/conformance_tests.cpp,csharp/conformance/codec_vectors.jsonl,csharp/Atlantis.Gameplay.Tests/AssetCodecSuite.cs}`, `src/mcp/tests/Atlantis.Mcp.Tests/{M3Tests,SessionChecks}.cs` | Protocol parity, client outcomes, tool coverage and existing import/list/get compatibility. |
+| `src/mcp/tests/Atlantis.Mcp.Tests/Program.cs` | Exact-tool fixtures for the approved `assets.staticGroup` contract only. File-list addition approved in [PR #424](https://github.com/slmao/Atlantis/pull/424#issuecomment-7063470047). |
 | `src/editor_app/Atlantis.Editor/{MainWindow,EditorSession}.cs`, `src/editor_app/Atlantis.Editor.Model/{AssetBrowser,HierarchyCommands,StructuralEdits,EditHistory}.cs` | Group action, stale-context fences, guarded append and reuse of one suffix history entry. |
 | `src/editor_app/tests/Atlantis.Editor.Tests/{AssetBrowserTests,HierarchyTests,HistoryTests,Program,InspectorTests,StaticGroupUiTests}.cs` (UI test new) | Model coverage and focused hosted Windows fixture. Use the existing native suite entry. |
 | Spec/Plan 0130, ADR-0179 and `docs/specs/README.md` | Review record and navigation. |

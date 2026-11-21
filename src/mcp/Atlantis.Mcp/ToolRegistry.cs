@@ -46,6 +46,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.static_group", "assets.staticGroup",
+            "Read-only ordered local values and renderable bindings of a managed static glTF group in the active catalog. " +
+            "New publications are visible after Runtime restart.",
+            AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh", "assets.previewMesh", "Render one cooked mesh as a fixed geometry PNG, without scene materials or lighting.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh_material", "assets.previewMeshMaterial",
@@ -221,6 +225,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            if (mapping.Method == "assets.staticGroup") return StaticGroup(wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
             if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
@@ -573,6 +578,22 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps);
         return image is null ? Malformed() : ForwardPreview(JsonValue.NewObject().Set("mesh", Codec.Encode(image.Mesh))
             .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness, withOcclusion)), image.Width, image.Height, image.PngBytes);
+    }
+
+    private CallToolResult StaticGroup(JsonValue parameters)
+    {
+        static CallToolResult Malformed() => Error("MalformedResponse: invalid static group result");
+        if (!AssetGuid.TryParse(parameters.Find("guid")?.AsString, out AssetGuid guid) || guid.IsNil)
+            return Error("InvalidArguments: expected a non-nil canonical Scene GUID");
+        var response = session.Request("assets.staticGroup", parameters);
+        if (Codec.IsUnsupportedStaticGroup(response))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            return Malformed();
+        if (result.Find("err") is JsonValue refusal)
+            return Codec.DecodeStaticGroupError(refusal) is not null ? Forward(result, true) : Malformed();
+        return result.Find("ok") is JsonValue value && Codec.DecodeStaticGroup(value, guid) is not null
+            ? Forward(result, false) : Malformed();
     }
 
     private CallToolResult PreviewMesh(JsonValue parameters)

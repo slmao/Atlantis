@@ -775,6 +775,22 @@ struct RemoteServer::State {
       return reply(client.assets ? client.assets->importStatus(guid ? std::optional{ca::ImportId{*guid}} : std::nullopt)
           : ca::ImportStatusResult::Err(ca::ImportError::Unavailable));
     }
+    if (name == "assets.staticGroup") {
+      namespace ca = connection::assets;
+      const auto* member = p.find("guid");
+      const auto guid = member ? codec::decodeAsset(*member) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != 1 || !guid || *guid == asset_system::AssetGuid{})
+        return errorResponse(requestId, "BadRequest", "static group requires one non-nil canonical Scene GUID");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      auto result = client.assets ? client.assets->staticGroup(*guid)
+                                  : ca::StaticGroupResult::Err(ca::StaticGroupError::CatalogUnavailable);
+      if (result.isOk()) {
+        if (auto group = ca::encodeStaticGroup(result.value(), *guid))
+          return response(requestId, codec::ok(std::move(*group)));
+      }
+      const auto error = result.isErr() ? result.error() : ca::StaticGroupError::InvalidGroup;
+      return response(requestId, codec::err(Value::string(std::string(ca::toString(error)))));
+    }
     if (name == "assets.previewMesh") {
       namespace ca = connection::assets;
       const auto* member = p.find("guid");

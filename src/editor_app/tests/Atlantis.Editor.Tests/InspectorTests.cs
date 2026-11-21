@@ -74,14 +74,16 @@ public static partial class Program
         }
         bool meshPreview = scene is "--mesh-preview" or "--mesh-material-preview" or "--texture-reimport" or "--texture-rename";
         if ((meshPreview || scene is "--texture-references" or "--texture-move" or "--tasks-ui" or "--scene-recovery-ui") && work is not null) CheckMeshPreviewValidation(work, checks);
+        if (scene == "--static-group-ui" && work is not null) CheckMeshPreviewValidation(work, checks);
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--viewport-placement" ? "viewport-placement-windows" : scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--static-group-ui" ? "static-group-windows" : scene == "--viewport-placement" ? "viewport-placement-windows" : scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
             boundary = scene == "--viewport-placement" && Environment.GetEnvironmentVariable("ATLANTIS_0129_TEST_SOURCE") == "1"
                 ? "Hosted Editor and Runtime, actual native target lifetime and a controlled source result."
                 : scene == "--viewport-placement" ? "Native 96-DPI Editor and hosted Runtime, physical OLE gestures and shared authoring readback."
+                : scene == "--static-group-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, Assets controls, the product Move Gizmo worker, shared readback and native captures."
                 : scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
                 : scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
                 : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
@@ -126,6 +128,7 @@ public static partial class Program
                 bool savedOwnership = _scene == "--saved-scene-ownership";
                 bool workspaceLayout = _scene == "--workspace-layout-ui";
                 bool viewportPlacement = _scene == "--viewport-placement";
+                bool staticGroup = _scene == "--static-group-ui";
                 bool savedPanel = savedWorkflow || savedOwnership || workspaceLayout;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
@@ -145,6 +148,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
+                    staticGroup ? Environment.GetEnvironmentVariable("ATLANTIS_0130_SCENE") ?? "integrated_showcase_demo" :
                     viewportPlacement ? Environment.GetEnvironmentVariable("ATLANTIS_0128_SCENE") ?? "integrated_showcase_demo" :
                     addToNew || recovery ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
@@ -155,13 +159,15 @@ public static partial class Program
                     SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,
                     DisableWorkspaceSettings = !workspaceLayout,
                     WorkspaceSettings = workspaceLayout ? new WorkspaceLayoutStore(WorkspaceFixtureDirectory()) : null,
-                    AssetBuildProfile = tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_PROFILE") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
+                    AssetBuildProfile = staticGroup ? Environment.GetEnvironmentVariable("ATLANTIS_0130_PROFILE") :
+                        tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_PROFILE") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_PROFILE") :
                         moveTexture ? Environment.GetEnvironmentVariable("ATLANTIS_0120_PROFILE") :
                         rebuild ? Environment.GetEnvironmentVariable("ATLANTIS_0085_UI_PROFILE") : null,
-                    AssetGeneration = tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_GENERATION") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
+                    AssetGeneration = staticGroup ? Environment.GetEnvironmentVariable("ATLANTIS_0130_GENERATION") :
+                        tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_GENERATION") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_GENERATION") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_GENERATION") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_GENERATION") :
                         references ? Environment.GetEnvironmentVariable("ATLANTIS_0119_GENERATION") :
@@ -170,9 +176,15 @@ public static partial class Program
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
-                if (tasks || recovery || workspaceLayout || viewportPlacement)
+                if (tasks || recovery || workspaceLayout || viewportPlacement || staticGroup)
                 {
                     EditorVisuals.Install(this);
+                    if (staticGroup)
+                    {
+                        window.Width = 1250;
+                        window.Height = 780;
+                        window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                    }
                     if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
                     {
                         window.Width = 1050;
@@ -185,6 +197,7 @@ public static partial class Program
                     try
                     {
                         if (viewportPlacement) await CheckViewportPlacementUi(window, _checks, _work);
+                        else if (staticGroup) await CheckStaticGroupUi(window, _checks, _work);
                         else if (workspaceLayout) await CheckWorkspaceLayoutUi(window, _checks, _work);
                         else if (savedWorkflow) await CheckSavedSceneWorkflow(window, _checks, _work);
                         else if (savedOwnership) await CheckSavedSceneOwnership(window, _checks);

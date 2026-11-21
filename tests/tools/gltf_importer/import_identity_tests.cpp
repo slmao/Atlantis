@@ -292,6 +292,12 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
   bool accepted = false;
   auto expectedError = GltfImportError::MalformedGltf;
   SECTION("embedded indexed mesh") { accepted = true; }
+  SECTION("legacy single mesh retains recognized spec-gloss conversion") {
+    auto geometry = gltf_test::unitQuad();
+    geometry.materialsJson = R"([{"extensions":{"KHR_materials_pbrSpecularGlossiness":{"glossinessFactor":0.5}}}])";
+    text = gltf_test::buildGltf(geometry);
+    accepted = true;
+  }
   SECTION("external buffer is refused before loading") {
     const auto uri = text.find("data:application/octet-stream;base64,");
     REQUIRE(uri != std::string::npos);
@@ -328,5 +334,75 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
     REQUIRE(result.isErr());
     CHECK(result.error() == expectedError);
     CHECK_FALSE(fs::exists(out));
+  }
+}
+
+TEST_CASE("managed static group counts emitted instances and retains local hierarchy", "[gltf_importer][guid][static-group]") {
+  const auto dir = gltf_test::freshDirectory("managed_static_group");
+  auto geometry = gltf_test::unitQuad();
+  geometry.nodesJson = R"json([{"mesh":0,"children":[1],"translation":[1,2,3]},{"mesh":0,"scale":[2,3,4]},{"mesh":0}])json";
+  geometry.sceneRootsJson = "[0,2]";
+  bool accepted = false;
+  bool alternateShape = false;
+  bool addPrimitive = false;
+  SECTION("multiple roots, nested transform and shared mesh") { accepted = true; }
+  SECTION("unreferenced declared node") { geometry.sceneRootsJson = "[0]"; }
+  SECTION("zero scale") {
+    geometry.nodesJson = R"json([{"mesh":0},{"mesh":0,"scale":[0,1,1]}])json";
+    geometry.sceneRootsJson = "[0,1]";
+  }
+  SECTION("double-sided material") { geometry.materialsJson = R"([{"doubleSided":true}])"; }
+  SECTION("recognized material extension without extensionsUsed") {
+    geometry.materialsJson = R"([{"extensions":{"KHR_materials_pbrSpecularGlossiness":{"glossinessFactor":0.5}}}])";
+  }
+  SECTION("explicit opaque PBR material") {
+    geometry.materialsJson = R"([{"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.4,0.7,1],"metallicFactor":0.6,"roughnessFactor":0.8}}])";
+    accepted = true;
+  }
+  SECTION("63 emitted nodes including two synthetic children") {
+    alternateShape = true; addPrimitive = true; accepted = true;
+  }
+  SECTION("64 emitted nodes including two synthetic children") {
+    alternateShape = true; addPrimitive = true;
+  }
+  if (alternateShape) {
+    geometry.nodesJson = R"([{"mesh":0})";
+    geometry.sceneRootsJson = "[0";
+    for (int i = 1; i < (accepted ? 61 : 62); ++i) {
+      geometry.nodesJson += ",{}";
+      geometry.sceneRootsJson += "," + std::to_string(i);
+    }
+    geometry.nodesJson += "]";
+    geometry.sceneRootsJson += "]";
+  }
+  auto source = gltf_test::buildGltf(geometry);
+  if (addPrimitive) {
+    const auto first = source.find("{\"attributes\"");
+    const auto last = source.find("}]}]", first);
+    REQUIRE(first != std::string::npos);
+    REQUIRE(last != std::string::npos);
+    auto second = source.substr(first, last - first + 1);
+    source.insert(last + 1, "," + second);
+  }
+  const auto input = dir / "source.gltf";
+  const auto out = dir / "output";
+  std::ofstream(input, std::ios::binary) << source;
+  const auto result = importGltf(input, dir, out, "storefront", root(), std::nullopt, true);
+  if (!accepted) {
+    REQUIRE(result.isErr());
+    CHECK_FALSE(fs::exists(out));
+    return;
+  }
+  REQUIRE(result.isOk());
+  CHECK(result.value().meshCount == (addPrimitive ? 2u : 1u));
+  const auto parsed = as::parseSceneSource(readText(out / "storefront/storefront.scene.txt"));
+  REQUIRE(parsed.isOk());
+  REQUIRE(parsed.value().nodes.size() == (alternateShape ? 63u : 3u));
+  if (!alternateShape) {
+    const auto& nodes = parsed.value().nodes;
+    CHECK(nodes[1].parentNodeId == nodes[0].nodeId);
+    CHECK(nodes[1].transform.scaleY == 3.f);
+    CHECK(nodes[2].meshAsset == nodes[0].meshAsset);
+    CHECK(nodes[1].materialAsset.has_value() == !geometry.materialsJson.empty());
   }
 }

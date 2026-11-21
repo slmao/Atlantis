@@ -363,6 +363,9 @@ public sealed class MainWindow : Window
     private readonly Button _importRefresh = new() { Content = "Refresh import status", IsEnabled = false };
     private readonly TextBlock _importState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _addMesh = new() { Content = "Add to Scene", IsEnabled = false };
+    private readonly Button _addGroup = new() { Content = "Add Group to Scene", IsVisible = false, Focusable = false };
+    private StaticGroupIntent? _pendingGroupRead, _pendingGroupAdd;
+    private bool _staticGroupAvailable;
     private readonly TextBlock _addMeshState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private bool _canAddMeshToDocument, _addingMesh;
     private long _meshRequest, _meshDocumentLifetime;
@@ -771,11 +774,13 @@ public sealed class MainWindow : Window
             if (_assetTabs.SelectedIndex == 1)
             {
                 if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+                RefreshGroupAsset();
                 QueryMaterial();
                 foreach (var state in _textureImports) QueryTexture(state);
             }
             else
             {
+                RetireGroupAsset();
                 _assetBrowser.CancelPendingDependents();
                 _assetBrowser.CancelRename();
                 _assetBrowser.CancelMove();
@@ -2489,6 +2494,8 @@ public sealed class MainWindow : Window
         _previewPair.Click += (_, _) => RequestPreview(withMaterial: true);
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
+        _addGroup.Click += (_, _) => AddGroupToScene();
+        ToolTip.SetShowOnDisabled(_addGroup, true);
         copy.IsEnabled = false;
         _assetCopyGuid = copy;
         _renameTexture.Click += (_, _) => BeginTextureRename();
@@ -2536,7 +2543,7 @@ public sealed class MainWindow : Window
                 _renameEditor, _moveEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
                 EditorVisuals.Actions(_viewReferences, _cancelReferences), _referenceScope, _referenceStatus,
                 _referenceResults, _locatedSlots,
-                _addMesh, _addMeshState, _previewState,
+                _addMesh, _addGroup, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
@@ -2675,6 +2682,8 @@ public sealed class MainWindow : Window
 
     private void RetireAssetDrop()
     {
+        RetireGroupAsset();
+        _pendingGroupAdd = null;
         RetireViewportOleTarget(expireRelease: true);
         _viewportPlacementRead = null;
         _viewportPlacement = null;
@@ -4160,6 +4169,79 @@ public sealed class MainWindow : Window
             !_referenceSessionFailed && !_addingMesh && _gizmoGrab is null;
         ToolTip.SetTip(_addMesh, meshSelected && !_canAddMeshToDocument
             ? "Open a hand-authored scene to add a mesh." : null);
+        RefreshGroupAsset();
+    }
+
+    private void RetireGroupAsset()
+    {
+        _pendingGroupRead?.Cancel();
+        _pendingGroupRead = null;
+        _pendingGroupAdd?.Cancel();
+        _staticGroupAvailable = false;
+        _addGroup.IsVisible = false;
+    }
+
+    private string? GroupEditRefusal() =>
+        _pendingInspectorBlur is not null || _pendingSceneFieldEdits != 0 || CurrentSceneInput() is not null ||
+        _draftProtection.Stale is not null ? "Finish or cancel the field edit first." :
+        _assetDropPending || _assetDrag is not null || _leaveInProgress || _referenceBusy || _materialWindow is not null ||
+        _gizmoGrab is not null || _groupGrab is not null || _hierarchyDrag is not null || _addingMesh
+            ? "Finish the current action first." : null;
+
+    private void RefreshGroupAsset()
+    {
+        if (_worker is not { } worker || _referenceSessionFailed || _assetTabs.SelectedIndex != 1 ||
+            !_assetBrowser.SelectionVisible || _assetsList.SelectedItem is not AssetSummary { Type: AssetType.Scene } asset ||
+            !_canAddMeshToDocument || !worker.DuplicateBatchAvailable)
+        {
+            RetireGroupAsset();
+            return;
+        }
+        long lifetime = _meshDocumentLifetime;
+        if (_pendingGroupAdd is { } pending && pending.Lifetime != lifetime) _pendingGroupAdd = null;
+        if (_pendingGroupRead is not { } read || read.Scene != asset.Guid || read.Lifetime != lifetime)
+        {
+            RetireGroupAsset();
+            var request = new StaticGroupIntent(asset.Guid, lifetime);
+            _pendingGroupRead = request;
+            worker.ReadStaticGroup(request, result =>
+            {
+                if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingGroupRead, request)) return;
+                _staticGroupAvailable = result.IsOk;
+                if (!result.IsOk && result.Error is StaticGroupError.InvalidGroup or StaticGroupError.CatalogUnavailable)
+                    _addMeshState.Text = "Group unavailable: " + result.Error + ".";
+                RefreshGroupAsset();
+            });
+        }
+        string? refusal = GroupEditRefusal();
+        if (refusal is not null) _pendingGroupAdd?.Cancel();
+        _addGroup.IsVisible = _staticGroupAvailable;
+        _addGroup.IsEnabled = _staticGroupAvailable && _pendingGroupAdd is null && refusal is null;
+        ToolTip.SetTip(_addGroup, refusal);
+    }
+
+    private void AddGroupToScene()
+    {
+        RefreshGroupAsset();
+        if (!_addGroup.IsEnabled || _worker is not { } worker || _pendingGroupRead is not { } read) return;
+        var intent = new StaticGroupIntent(read.Scene, read.Lifetime);
+        ulong selection = _selection.Generation;
+        _pendingGroupAdd = intent;
+        _addMeshState.Text = "Adding group…";
+        if (!worker.AddStaticGroup(intent, selection, (root, notice) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingGroupAdd, intent)) return;
+            _pendingGroupAdd = null;
+            _addMeshState.Text = notice;
+            if (intent.Current && selection == _selection.Generation && root is EntityGuid created &&
+                _hierarchyRows.Any(row => row.Node == created)) SetSelection(created, true);
+            RefreshGroupAsset();
+        }))
+        {
+            _pendingGroupAdd = null;
+            _addMeshState.Text = "Add refused: the document or selection changed. Refresh and retry.";
+        }
+        RefreshGroupAsset();
     }
 
     private void AddMeshToScene()
@@ -5577,6 +5659,7 @@ public sealed class MainWindow : Window
     private void ShowDocumentState(DocumentObservation state)
     {
         UpdateWorkspaceReset();
+        RefreshGroupAsset();
         _documentState = state;
         bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
         _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +

@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <set>
 #include <system_error>
 #include <variant>
 
@@ -415,23 +416,9 @@ atlantis::Result<atlantis::asset_system::AssetGuid, GltfImportError> resolveImpo
 
 namespace {
 
-bool validManagedStaticMesh(const cgltf_data& data) {
-  if (data.file_type != cgltf_file_type_gltf || !data.asset.version ||
-      std::string_view(data.asset.version) != "2.0" ||
-      data.scenes_count != 1 || data.scenes[0].nodes_count != 1 ||
-      data.nodes_count != 1 || !data.nodes[0].mesh || data.meshes_count != 1 ||
-      data.meshes[0].primitives_count != 1 || data.meshes[0].primitives[0].targets_count ||
-      data.materials_count > 1 || data.buffers_count != 1 || data.images_count ||
-      data.textures_count || data.extensions_used_count || data.extensions_required_count ||
-      data.data_extensions_count || data.skins_count || data.animations_count || data.cameras_count)
-    return false;
-
+bool validManagedResources(const cgltf_data& data) {
   const auto& buffer = data.buffers[0];
-  const auto& primitive = data.meshes[0].primitives[0];
-  if (data.asset.extensions_count || data.nodes[0].extensions_count || data.scenes[0].extensions_count ||
-      data.meshes[0].extensions_count || primitive.extensions_count || primitive.has_draco_mesh_compression ||
-      buffer.extensions_count || (data.materials_count && data.materials[0].extensions_count) ||
-      !buffer.uri) return false;
+  if (buffer.extensions_count || !buffer.uri) return false;
   std::string_view encoded(buffer.uri);
   constexpr std::string_view octets = "data:application/octet-stream;base64,";
   constexpr std::string_view gltfBuffer = "data:application/gltf-buffer;base64,";
@@ -455,6 +442,86 @@ bool validManagedStaticMesh(const cgltf_data& data) {
   for (const char c : encoded.substr(0, encoded.size() - padding)) {
     if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
           (c >= '0' && c <= '9') || c == '+' || c == '/')) return false;
+  }
+  return true;
+}
+
+bool validManagedStaticMesh(const cgltf_data& data) {
+  if (data.file_type != cgltf_file_type_gltf || !data.asset.version ||
+      std::string_view(data.asset.version) != "2.0" ||
+      data.scenes_count != 1 || data.scenes[0].nodes_count != 1 ||
+      data.nodes_count != 1 || !data.nodes[0].mesh || data.meshes_count != 1 ||
+      data.meshes[0].primitives_count != 1 || data.meshes[0].primitives[0].targets_count ||
+      data.materials_count > 1 || data.buffers_count != 1 || data.images_count ||
+      data.textures_count || data.extensions_used_count || data.extensions_required_count ||
+      data.data_extensions_count || data.skins_count || data.animations_count || data.cameras_count)
+    return false;
+  const auto& primitive = data.meshes[0].primitives[0];
+  return !data.asset.extensions_count && !data.nodes[0].extensions_count && !data.scenes[0].extensions_count &&
+         !data.meshes[0].extensions_count && !primitive.extensions_count && !primitive.has_draco_mesh_compression &&
+         (!data.materials_count || !data.materials[0].extensions_count) && validManagedResources(data);
+}
+
+bool validManagedStaticGroup(const cgltf_data& data) {
+  if (data.file_type != cgltf_file_type_gltf || !data.asset.version ||
+      std::string_view(data.asset.version) != "2.0" || data.scenes_count != 1 ||
+      !data.scenes[0].nodes_count || !data.nodes_count || data.nodes_count > 63 ||
+      data.meshes_count > 63 || data.materials_count > 63 || data.buffers_count != 1 ||
+      data.images_count || data.textures_count || data.samplers_count || data.skins_count ||
+      data.animations_count || data.cameras_count || data.lights_count || data.variants_count ||
+      data.extensions_used_count || data.extensions_required_count || data.data_extensions_count ||
+      data.asset.extensions_count || data.scenes[0].extensions_count) return false;
+
+  if (!validManagedResources(data)) return false;
+
+  const auto& source = data.scenes[0];
+  std::vector<const cgltf_node*> stack(source.nodes, source.nodes + source.nodes_count);
+  std::set<const cgltf_node*> nodes;
+  std::set<const cgltf_mesh*> meshes;
+  std::set<const cgltf_material*> materials;
+  std::size_t emitted = data.nodes_count;
+  std::size_t renderables = 0;
+  std::size_t vertices = 0;
+  std::size_t indices = 0;
+  while (!stack.empty()) {
+    const auto* current = stack.back();
+    stack.pop_back();
+    if (!nodes.insert(current).second || current->camera || current->light || current->skin ||
+        current->extensions_count || current->has_mesh_gpu_instancing || current->weights_count ||
+        (current->has_matrix && (current->has_translation || current->has_rotation || current->has_scale)) ||
+        (current->has_scale && std::ranges::any_of(current->scale, [](float axis) { return axis == 0; })))
+      return false;
+    for (std::size_t i = 0; i < current->children_count; ++i) stack.push_back(current->children[i]);
+    const auto* sourceMesh = current->mesh;
+    if (!sourceMesh) continue;
+    const auto count = sourceMesh->primitives_count;
+    if (!count || (count > 1 && count > 63 - emitted)) return false;
+    if (count > 1) emitted += count;
+    renderables += count;
+    if (!meshes.insert(sourceMesh).second) continue;
+    if (sourceMesh->extensions_count || sourceMesh->weights_count || sourceMesh->target_names_count) return false;
+    for (std::size_t i = 0; i < count; ++i) {
+      const auto& p = sourceMesh->primitives[i];
+      const auto positions = attributesOf(p).position;
+      if (p.targets_count || p.extensions_count || p.has_draco_mesh_compression || p.mappings_count ||
+          !positions || !p.indices || positions->count > 262144 - vertices ||
+          p.indices->count > 786432 - indices) return false;
+      vertices += positions->count;
+      indices += p.indices->count;
+      if (p.material) materials.insert(p.material);
+    }
+  }
+  if (nodes.size() != data.nodes_count || meshes.size() != data.meshes_count ||
+      materials.size() != data.materials_count || renderables < 2) return false;
+  for (const auto* mat : materials) {
+    // cgltf stores recognized extensions separately from extensions_count.
+    // Reject them even when the source omitted the top-level declaration.
+    if (mat->extensions_count || mat->unlit || mat->has_pbr_specular_glossiness || mat->has_clearcoat ||
+        mat->has_transmission || mat->has_volume || mat->has_ior || mat->has_specular || mat->has_sheen ||
+        mat->has_emissive_strength || mat->has_iridescence || mat->has_diffuse_transmission ||
+        mat->has_anisotropy || mat->has_dispersion || mat->double_sided ||
+        mat->alpha_mode != cgltf_alpha_mode_opaque || mat->pbr_metallic_roughness.base_color_factor[3] != 1 ||
+        std::ranges::any_of(mat->emissive_factor, [](float channel) { return channel != 0; })) return false;
   }
   return true;
 }
@@ -524,7 +591,7 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   if (parseResult != cgltf_result_success || guard.data == nullptr) {
     return ResultT::Err(GltfImportError::MalformedGltf);
   }
-  if (managedStaticMesh && !validManagedStaticMesh(*guard.data))
+  if (managedStaticMesh && !validManagedStaticMesh(*guard.data) && !validManagedStaticGroup(*guard.data))
     return ResultT::Err(GltfImportError::MalformedGltf);
   // cgltf concatenates relative buffer URIs onto this path verbatim --
   // it must end with a directory separator or the first path segment

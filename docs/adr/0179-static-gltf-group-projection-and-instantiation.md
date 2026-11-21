@@ -1,9 +1,9 @@
 # ADR 0179 — Managed Static Group Projection and Instantiation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** J1–J4 approved for [873f1271](https://github.com/slmao/Atlantis/pull/423#issuecomment-7062867632) after joint review. The maintainer merged the design in #423.
 - **Related Spec:** [Spec 0130](../specs/0130-static-gltf-group-instantiation.md)
 
 ## Context

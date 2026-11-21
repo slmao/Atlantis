@@ -40,6 +40,38 @@ struct AssetDetails {
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
 
+inline constexpr std::size_t kStaticGroupNodeLimit = 63;
+inline constexpr std::size_t kStaticGroupByteLimit = 64 * 1024;
+enum class StaticGroupError : std::uint8_t {
+  Unsupported, CatalogUnavailable, UnknownAsset, UnsupportedGroup, InvalidGroup,
+};
+struct StaticGroupRenderable {
+  asset_system::AssetGuid mesh;
+  std::optional<asset_system::AssetGuid> material;
+  friend bool operator==(const StaticGroupRenderable&, const StaticGroupRenderable&) = default;
+};
+struct StaticGroupNode {
+  std::optional<std::size_t> parent;
+  std::array<float, 3> position;
+  std::array<float, 3> eulerRadians;
+  std::array<float, 3> scale;
+  std::optional<StaticGroupRenderable> renderable;
+  friend bool operator==(const StaticGroupNode&, const StaticGroupNode&) = default;
+};
+struct StaticGroup {
+  asset_system::AssetGuid scene;
+  std::string name;
+  std::vector<StaticGroupNode> nodes;
+  friend bool operator==(const StaticGroup&, const StaticGroup&) = default;
+};
+using StaticGroupResult = Result<StaticGroup, StaticGroupError>;
+[[nodiscard]] std::string_view toString(StaticGroupError error) noexcept;
+[[nodiscard]] std::optional<StaticGroupError> staticGroupError(std::string_view name) noexcept;
+[[nodiscard]] std::optional<json::Value> encodeStaticGroup(const StaticGroup& group,
+                                                          const asset_system::AssetGuid& requested);
+[[nodiscard]] std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload,
+                                                           const asset_system::AssetGuid& requested);
+
 inline constexpr std::uint32_t kPreviewDimension = 256;
 inline constexpr std::size_t kPreviewPngMaxBytes = 512 * 1024;
 inline constexpr std::string_view kPreviewMimeType = "image/png";
@@ -414,6 +446,11 @@ class AssetConnection {
   // Precondition: guid is non-nil.
   [[nodiscard]] virtual Result<assets::AssetDetails, assets::AssetError> getAsset(
       const asset_system::AssetGuid& guid) const = 0;
+  // Spec 0130. Read from the same catalog as getAsset. Check RemoteSession
+  // failure before using a transport failure's CatalogUnavailable sentinel.
+  [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
+    return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
+  }
   // Spec 0091 / ADR-0151: a synchronous geometry still from this Runtime's
   // catalog snapshot. Precondition: guid is non-nil. No World or file changes.
   // Remote failures use Unavailable as a sentinel; check the session first.

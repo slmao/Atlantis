@@ -2295,15 +2295,81 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
+    public void ReadStaticGroup(StaticGroupIntent intent,
+        Action<Outcome<Atlantis.Gameplay.Assets.StaticGroup, Atlantis.Gameplay.Assets.StaticGroupError>> read) =>
+        Enqueue(session =>
+        {
+            if (!intent.Current || intent.Lifetime != MeshDocumentLifetime) return;
+            var group = session.Assets.StaticGroup(intent.Scene);
+            _post(() => { if (intent.Current && intent.Lifetime == MeshDocumentLifetime) read(group); });
+        });
+
+    public bool AddStaticGroup(StaticGroupIntent intent, ulong selection, Action<EntityGuid?, string> settled)
+    {
+        lock (_lock)
+        {
+            if (_stopping || !_duplicateBatchWritable || !intent.Current || intent.Lifetime != MeshDocumentLifetime ||
+                selection != _requestedSelectionGeneration || _duplicateBatchQueued || _batchSettling ||
+                _groupSettling || _requestedGroup is not null || _gizmoActive || _reparentQueued || _siblingMoveQueued)
+                return false;
+            _duplicateBatchQueued = true;
+            Enqueue(session =>
+            {
+                try
+                {
+                    long lifetime = intent.Lifetime;
+                    void Report(EntityGuid? root, string message) =>
+                        _post(() => { if (lifetime == MeshDocumentLifetime) settled(root, message); });
+                    if (!intent.Current || lifetime != MeshDocumentLifetime)
+                    {
+                        Report(null, "Add refused: the selected asset or open scene changed.");
+                        return;
+                    }
+                    var group = session.Assets.StaticGroup(intent.Scene);
+                    if (group.IsOk == false)
+                    {
+                        Report(null, "Add refused: " + group.Error + ".");
+                        return;
+                    }
+                    var (result, edit) = SettleDuplicateBatch(session, null, forward: true, lifetime,
+                        selection: selection, group: group.Value, assetIntent: intent);
+                    EntityGuid? created = null;
+                    if (result.State == BatchReplayState.Committed && edit is not null && lifetime == MeshDocumentLifetime &&
+                        _history is { } history && _historyTarget is { } target)
+                    {
+                        history.Record(new EditTransaction(HierarchyCommands.AddGroupLabel, [], [edit]),
+                            target.Committed(Array.Empty<CommandFailure>()));
+                        history.Update();
+                        created = edit.Roots[0];
+                    }
+                    PostHistory(lifetime);
+                    string notice = created is not null
+                        ? ApplyVerifiedEdit(lifetime, result.Notice, publishStatus: false) : result.Notice;
+                    try
+                    {
+                        PostApplyState(lifetime, refreshOverlay: session.Failure is null);
+                        PollDocument(session, pollApply: false);
+                        PostInspector();
+                    }
+                    finally { Report(created, notice); }
+                }
+                finally { lock (_lock) _duplicateBatchQueued = false; }
+            });
+            return true;
+        }
+    }
+
     private (BatchReplayResult Result, GuardedDuplicateEdit? Edit) SettleDuplicateBatch(RemoteSession session,
         GuardedDuplicateEdit? edit, bool forward, long lifetime, IReadOnlyDictionary<EntityGuid, object>? targets = null,
-        ulong? selection = null, HierarchyFilter? filter = null)
+        ulong? selection = null, HierarchyFilter? filter = null,
+        Atlantis.Gameplay.Assets.StaticGroup? group = null, StaticGroupIntent? assetIntent = null)
     {
         bool initial = edit is null;
         if (_document is not RemoteAuthoringDocument document || !_duplicateBatchWritable)
             return (new(BatchReplayState.Retry, "Guarded duplicate is unavailable."), edit);
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime && !_gizmoActive &&
-            _gizmo?.Dragging != true && _requestedGroup is null && StructureAllowed(filter) &&
+            _gizmo?.Dragging != true && _requestedGroup is null &&
+            (assetIntent is null ? StructureAllowed(filter) : assetIntent.Current) &&
             (selection is null || selection == _requestedSelectionGeneration);
         bool TargetsMatch() => targets is null || targets.All(target =>
             ReferenceEquals(target.Value, _tree.IncarnationOf(target.Key)));
@@ -2323,7 +2389,9 @@ public sealed class EditorWorker : IDisposable
                 new NodeSummary(node, _tree.ParentOf(node), _tree.NameOf(node)))) || _tree.ReconcileOrder(nodes);
         }
 
-        string operation = initial ? "Duplicate" : forward ? "Redo duplicate" : "Undo duplicate";
+        bool isGroup = group is not null || edit?.IsStaticGroup == true;
+        string operation = isGroup ? initial ? "Add group" : forward ? "Redo add group" : "Undo add group"
+            : initial ? "Duplicate" : forward ? "Redo duplicate" : "Undo duplicate";
         (BatchReplayResult, GuardedDuplicateEdit?) Retry(string reason) =>
             (new(BatchReplayState.Retry, $"{operation} refused: {reason}"), edit);
         (BatchReplayResult, GuardedDuplicateEdit?) Conflict(string reason) =>
@@ -2333,7 +2401,8 @@ public sealed class EditorWorker : IDisposable
         {
             if (lifetime == MeshDocumentLifetime)
             {
-                _apply?.RequireExplicitApply("duplicate transaction could not be verified");
+                _apply?.RequireExplicitApply(isGroup ? "group transaction could not be verified"
+                    : "duplicate transaction could not be verified");
                 if (initial) _history?.DiscardRedo();
             }
             string subject = string.Join(", ", edit!.Roots);
@@ -2350,7 +2419,8 @@ public sealed class EditorWorker : IDisposable
             if (!TargetsMatch()) return Conflict("a selected Hierarchy row was replaced");
             if (initial)
             {
-                var planned = HierarchyCommands.DuplicateSubtrees(document, _tree, targets!.Keys.ToArray());
+                var planned = group is not null ? HierarchyCommands.AddStaticGroup(document.Schema, _tree, group)
+                    : HierarchyCommands.DuplicateSubtrees(document, _tree, targets!.Keys.ToArray());
                 edit = planned.Edit;
                 if (edit is null) return Retry(planned.Refusal ?? "the subtree snapshot is incomplete");
             }
@@ -2365,20 +2435,25 @@ public sealed class EditorWorker : IDisposable
                 return Conflict("the copy, its parent, the active camera or the recorded append boundary changed");
 
             if (document.Info() is not { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true })
-                return Retry("the open document does not support guarded duplicate transactions");
+                return Retry("the open document does not support guarded structural transactions");
             var commands = edit!.Commands(forward, revision, document.Schema);
             var encoded = JsonValue.NewArray();
             foreach (Command command in commands) encoded.Push(Codec.Encode(command));
             var parameters = JsonValue.NewObject().Set("commands", encoded);
-            ulong request;
+            ulong? request;
             lock (_lock)
             {
                 if (!IsCurrent() || !TargetsMatch()) return Retry("the displayed edit context changed");
-                sent = true;
-                request = session.Send("authoring.submitTransaction", parameters);
+                ulong Send()
+                {
+                    sent = true;
+                    return session.Send("authoring.submitTransaction", parameters);
+                }
+                request = assetIntent is null ? Send() : assetIntent.Send(Send);
             }
+            if (request is null) return Retry("the selected asset changed before sending");
 
-            if (Codec.DecodeTransactionTicket(session.AwaitResult(request)) is not TransactionTicket ticket ||
+            if (Codec.DecodeTransactionTicket(session.AwaitResult(request.Value)) is not TransactionTicket ticket ||
                 ticket.First.Value == 0 || ticket.Count != (ulong)commands.Count ||
                 ticket.First.Value > ulong.MaxValue - (ticket.Count - 1))
                 return Uncertain();
@@ -2396,7 +2471,8 @@ public sealed class EditorWorker : IDisposable
                     .SequenceEqual(GuardedDuplicateEdit.ExpectedEvents(commands)))
                 return Uncertain();
             if (forward) edit.CaptureCopyIdentities(_tree);
-            string notice = initial ? $"Duplicated {edit.Copies.Count} nodes." : $"{operation}: {edit.Copies.Count} nodes.";
+            string notice = initial ? isGroup ? $"Added group with {edit.Copies.Count} nodes."
+                : $"Duplicated {edit.Copies.Count} nodes." : $"{operation}: {edit.Copies.Count} nodes.";
             return (new(BatchReplayState.Committed, notice), edit);
         }
         catch (Exception error) when (error is GameplayException or IOException)

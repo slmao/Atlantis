@@ -7,6 +7,8 @@
 #include <bcrypt.h>
 #include <objbase.h>
 
+#include "static_group_projection.h"
+
 #include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/log.h>
@@ -216,11 +218,12 @@ std::optional<as::AssetGuid> newGuid() {
   auto result = as::parseAssetGuid(text);
   return result.isOk() ? std::optional{result.value()} : std::nullopt;
 }
-std::optional<as::AssetCatalog> readCatalog(const fs::path& root) {
+std::optional<as::AssetCatalog> readCatalog(const fs::path& root, std::string* bytes = nullptr) {
   if (!safeRelative(root, fs::path(kCatalog))) return std::nullopt;
   auto text = readText(root / kCatalog);
   if (!text) return std::nullopt;
   auto parsed = as::parseAssetCatalog(*text, utf8(root));
+  if (parsed.isOk() && bytes) *bytes = *text;
   return parsed.isOk() ? std::optional{std::move(parsed.value())} : std::nullopt;
 }
 bool retainsIdentity(const as::AssetCatalog& a, const as::AssetCatalog& b) {
@@ -2301,7 +2304,8 @@ struct AssetRebuildHost::State {
                         pipelineError->failure.code == Code::LaunchFailed ? IC::LaunchFailed : IC::BuildFailed;
       return failed(IS::Pipeline, code, pipelineError->failure.diagnostic, pipelineError->repair, pipelineError->failure.exitCode);
     }
-    const auto catalog = readCatalog(staging);
+    std::string catalogBytes;
+    const auto catalog = readCatalog(staging, &catalogBytes);
     const auto view = readManagedView(staging, inventoryRelative);
     const auto inventoryAfter = readText(inventoryPath);
     if (!catalog || !view || !inventoryAfter || inventoryHeader(*inventoryAfter) != inventoryHeader(inventory) ||
@@ -2317,6 +2321,47 @@ struct AssetRebuildHost::State {
         producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
         !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
       return failed(IS::Validation, IC::IdentityConflict, "Staged identity delta differs from this import.");
+    const auto sceneGuid = as::deriveAssetGuid(root, "scene");
+    const auto* scene = catalog->find(sceneGuid);
+    if (!scene || static_groups::managedName(*scene) != work.job.name)
+      return failed(IS::Validation, IC::InvalidOutput, "The staged managed scene record is invalid.");
+
+    // Seal the producer's outputs before preparing the publication copy.
+    // Include every product from this producer (for example the fallback
+    // texture used by its materials) and the generated authoring source.
+    std::map<fs::path, std::string> frozen;
+    const auto seal = [&](const fs::path& file) {
+      if (interrupted()) return false;
+      auto digest = fileDigest(staging, file, MAXDWORD);
+      if (!digest) return false;
+      frozen.emplace(file, std::move(*digest));
+      return true;
+    };
+    if (!seal(producer->second.generated) || !seal(fs::path(kManagedSource)))
+      return failed(IS::Validation, IC::InvalidOutput, "Cannot freeze the managed source outputs.");
+    const auto fromProducer = [&](const as::AssetCatalogRecord& record) {
+      return record.source.root == scene->source.root && record.source.path == scene->source.path;
+    };
+    for (const auto& record : catalog->records()) {
+      if (!fromProducer(record)) continue;
+      if (!seal(fromUtf8(record.artifact).lexically_relative(staging)) ||
+          !seal(fromUtf8(record.metadata).lexically_relative(staging)))
+        return failed(IS::Validation, IC::InvalidOutput, "Cannot freeze the managed asset outputs.");
+    }
+    const auto group = static_groups::project(staging, *catalog, sceneGuid);
+    if (group.isErr() && group.error() != ca::StaticGroupError::UnsupportedGroup)
+      return failed(IS::Validation, IC::InvalidOutput, "The staged managed scene group is invalid.");
+    if (group.isOk()) {
+      for (const auto& record : catalog->records()) {
+        if (!fromProducer(record) || record.type == as::CatalogAssetType::Scene) continue;
+        for (const auto& id : record.dependencies) {
+          const auto* dependency = catalog->find(id);
+          if (record.type != as::CatalogAssetType::Material || !dependency ||
+              dependency->type != as::CatalogAssetType::Texture || !fromProducer(*dependency))
+            return failed(IS::Validation, IC::InvalidOutput, "The managed group dependency closure is invalid.");
+        }
+      }
+    }
     auto prepared = prepare(*catalog, *view, interrupted);
     if (const auto* error = std::get_if<End>(&prepared)) {
       const auto stage = error->failure.stage == Stage::Validation ? IS::Validation : IS::Publication;
@@ -2325,12 +2370,33 @@ struct AssetRebuildHost::State {
       return failed(stage, code, error->failure.diagnostic, error->repair);
     }
     const auto& generation = std::get<Prepared>(prepared);
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+    if (static_groups::afterImportPreparation) static_groups::afterImportPreparation(generation.directory);
+#endif
     std::lock_guard commit(publicationCommit);
     if (interrupted())
       return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
                     "Import stopped before the commit point.", true);
     if (!metadataMatches() || registeredTextures(project) != activeTextures)
       return failed(IS::Validation, IC::IdentityConflict, "Managed texture registry changed during import.", true);
+    const auto& directory = generation.directory;
+    std::string copiedCatalogBytes;
+    const auto copiedCatalog = readCatalog(directory, &copiedCatalogBytes);
+    if (!copiedCatalog || copiedCatalogBytes != catalogBytes || !safeRelative(directory, inventoryRelative) ||
+        readText(directory / inventoryRelative) != inventoryAfter ||
+        !safeRelative(directory, fs::path(kManifest)) ||
+        readJson(directory / kManifest) != generation.expectedManifest ||
+        !std::ranges::all_of(frozen, [&](const auto& file) {
+          return !interrupted() && fileDigest(directory, file.first, MAXDWORD) == file.second;
+        }))
+      return failed(IS::Validation, IC::InvalidOutput, "The prepared import no longer matches the frozen output.");
+    const auto copiedGroup = static_groups::project(directory, *copiedCatalog, sceneGuid);
+    if (copiedGroup.isOk() != group.isOk() ||
+        (group.isOk() ? copiedGroup.value() != group.value() : copiedGroup.error() != group.error()))
+      return failed(IS::Validation, IC::InvalidOutput, "The prepared import dependency closure differs from staging.");
+    if (interrupted())
+      return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
+                    "Import stopped before the commit point.", true);
     if (!work.registeredRoot) {
       if (!MoveFileExW((project / pending).c_str(), (project / "registered" / name).c_str(), 0)) {
         const auto disk = readRegistrations(project);

@@ -52,6 +52,14 @@ class Assets final : public atlantis::connection::AssetConnection {
     return ca::MeshPreviewResult::Ok({guid, 256, 256,
         {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}});
   }
+  ca::StaticGroupResult staticGroup(const atlantis::asset_system::AssetGuid& id) const override {
+    using R = ca::StaticGroupResult;
+    if (id != guid) return R::Err(ca::StaticGroupError::UnknownAsset);
+    return R::Ok({id, "storefront", {
+        {{}, {0, 0, 0}, {0, 0, 0}, {1, 1, 1}, ca::StaticGroupRenderable{material, {}}},
+        {0, {1, 2, 3}, {0, 0.5f, 0}, {2, 2, 2}, ca::StaticGroupRenderable{material, guid}}
+    }});
+  }
   ca::MeshMaterialPreviewResult previewMeshMaterial(const atlantis::asset_system::AssetGuid& mesh,
                                                      const atlantis::asset_system::AssetGuid& chosen) override {
     using R = ca::MeshMaterialPreviewResult;
@@ -64,6 +72,26 @@ class Assets final : public atlantis::connection::AssetConnection {
         {137,80,78,71,13,10,26,10,0,0,0,13,'I','H','D','R',0,0,1,0,0,0,1,0,8,6,0,0,0,0,0,0,0}});
   }
 };
+}
+
+TEST_CASE("asset static-group CLI preserves values and error classification", "[cli][assets][static-group]") {
+  using namespace atlantis::cli::test;
+  namespace json = atlantis::connection::json;
+  constexpr const char* command = "asset static-group 00810081-0081-4081-8081-008100810081";
+  Cli cli(true);
+  CHECK(cli.run(command) == 1);
+  CHECK(cli.out.str().find("Unsupported") != std::string::npos);
+  Assets assets;
+  cli.invocation->setAssets([&] { return &assets; });
+  CHECK(cli.run("asset static-group 00000000-0000-0000-0000-000000000000") == 2);
+  REQUIRE(cli.run(command) == 0);
+  const auto parsed = json::parse(cli.out.str());
+  REQUIRE(parsed.isOk());
+  const auto* result = parsed.value().find("result");
+  REQUIRE(result);
+  CHECK(ca::decodeStaticGroup(*result, assets.guid) == assets.staticGroup(assets.guid).value());
+  CHECK(cli.run("asset static-group 00810081-0081-4081-8081-008100810082") == 1);
+  CHECK(cli.out.str().find("UnknownAsset") != std::string::npos);
 }
 
 TEST_CASE("asset preview CLI: structured PNG and human/exec metadata share one operation", "[cli][assets][asset-preview]") {

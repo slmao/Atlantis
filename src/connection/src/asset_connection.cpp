@@ -29,6 +29,119 @@ std::string_view toString(AssetError error) noexcept {
   ATLANTIS_CHECK(false);
   return {};
 }
+
+std::string_view toString(StaticGroupError error) noexcept {
+  switch (error) {
+    case StaticGroupError::Unsupported: return "Unsupported";
+    case StaticGroupError::CatalogUnavailable: return "CatalogUnavailable";
+    case StaticGroupError::UnknownAsset: return "UnknownAsset";
+    case StaticGroupError::UnsupportedGroup: return "UnsupportedGroup";
+    case StaticGroupError::InvalidGroup: return "InvalidGroup";
+  }
+  ATLANTIS_CHECK(false);
+  return {};
+}
+
+std::optional<StaticGroupError> staticGroupError(std::string_view name) noexcept {
+  using E = StaticGroupError;
+  for (const auto error : {E::Unsupported, E::CatalogUnavailable, E::UnknownAsset, E::UnsupportedGroup, E::InvalidGroup})
+    if (toString(error) == name) return error;
+  return std::nullopt;
+}
+
+namespace {
+using GroupGuid = asset_system::AssetGuid;
+bool validGroup(const StaticGroup& group, const GroupGuid& requested) {
+  if (group.scene == GroupGuid{} || group.scene != requested || !validImportName(group.name) ||
+      group.nodes.size() < 2 || group.nodes.size() > kStaticGroupNodeLimit) return false;
+  std::size_t renderables = 0;
+  for (const auto& node : group.nodes) {
+    for (const auto& vector : {node.position, node.eulerRadians, node.scale})
+      if (!std::ranges::all_of(vector, [](float n) { return std::isfinite(n); })) return false;
+    if (std::ranges::find(node.scale, 0.0f) != node.scale.end()) return false;
+    std::size_t depth = 0;
+    for (auto parent = node.parent; parent; parent = group.nodes[*parent].parent)
+      if (*parent >= group.nodes.size() || ++depth >= group.nodes.size()) return false;
+    if (!node.renderable) continue;
+    if (node.renderable->mesh == GroupGuid{} || node.renderable->material == GroupGuid{}) return false;
+    ++renderables;
+  }
+  return renderables >= 2;
+}
+
+std::optional<GroupGuid> groupGuid(const json::Value* value) {
+  if (!value || !value->isString()) return std::nullopt;
+  const auto guid = asset_system::parseAssetGuid(value->asString());
+  if (guid.isErr() || guid.value() == GroupGuid{} || asset_system::toString(guid.value()) != value->asString())
+    return std::nullopt;
+  return guid.value();
+}
+}  // namespace
+
+std::optional<json::Value> encodeStaticGroup(const StaticGroup& group, const GroupGuid& requested) {
+  if (!validGroup(group, requested)) return std::nullopt;
+  using J = json::Value;
+  const auto vec = [](const std::array<float, 3>& v) {
+    return J::array({J::number(v[0]), J::number(v[1]), J::number(v[2])});
+  };
+  auto nodes = J::array();
+  for (const auto& node : group.nodes) {
+    auto renderable = J();
+    if (node.renderable) {
+      const auto& mesh = *node.renderable;
+      renderable = J::object({{"mesh", J::string(asset_system::toString(mesh.mesh))},
+                              {"material", mesh.material ? J::string(asset_system::toString(*mesh.material)) : J()}});
+    }
+    nodes.push(J::object({{"parent", node.parent ? J::number(static_cast<std::uint64_t>(*node.parent)) : J()},
+                          {"position", vec(node.position)}, {"eulerRadians", vec(node.eulerRadians)},
+                          {"scale", vec(node.scale)}, {"renderable", std::move(renderable)}}));
+  }
+  auto payload = J::object({{"scene", J::string(asset_system::toString(group.scene))},
+                            {"name", J::string(group.name)}, {"nodes", std::move(nodes)}});
+  if (json::write(payload).size() > kStaticGroupByteLimit) return std::nullopt;
+  return payload;
+}
+
+std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const GroupGuid& requested) {
+  const auto* name = payload.find("name");
+  const auto* nodes = payload.find("nodes");
+  if (!payload.isObject() || payload.asObject().size() != 3 ||
+      !name || !name->isString() || !nodes || !nodes->isArray() || nodes->asArray().size() > kStaticGroupNodeLimit ||
+      groupGuid(payload.find("scene")) != requested || json::write(payload).size() > kStaticGroupByteLimit)
+    return std::nullopt;
+  StaticGroup group{requested, name->asString(), {}};
+  const auto vec = [](const json::Value* value, std::array<float, 3>& out) {
+    return value && value->isArray() && value->asArray().size() == 3 &&
+           value->asArray()[0].toFloat(out[0]) && value->asArray()[1].toFloat(out[1]) &&
+           value->asArray()[2].toFloat(out[2]);
+  };
+  for (const auto& value : nodes->asArray()) {
+    const auto* parent = value.find("parent");
+    const auto* renderable = value.find("renderable");
+    StaticGroupNode node{};
+    if (!value.isObject() || value.asObject().size() != 5 || !parent || !renderable ||
+        !vec(value.find("position"), node.position) || !vec(value.find("eulerRadians"), node.eulerRadians) ||
+        !vec(value.find("scale"), node.scale)) return std::nullopt;
+    if (!parent->isNull()) {
+      std::uint64_t index;
+      if (!parent->toUInt64(index) || index >= nodes->asArray().size()) return std::nullopt;
+      node.parent = static_cast<std::size_t>(index);
+    }
+    if (!renderable->isNull()) {
+      const auto mesh = groupGuid(renderable->find("mesh"));
+      const auto* material = renderable->find("material");
+      if (!renderable->isObject() || renderable->asObject().size() != 2 || !mesh || !material)
+        return std::nullopt;
+      const auto materialGuid = groupGuid(material);
+      if (!material->isNull() && !materialGuid) return std::nullopt;
+      node.renderable = StaticGroupRenderable{*mesh, materialGuid};
+    }
+    group.nodes.push_back(node);
+  }
+  if (!validGroup(group, requested)) return std::nullopt;
+  return group;
+}
+
 namespace {
 constexpr std::string_view kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 constexpr std::size_t kEncodedPreviewLimit = 4 * ((kPreviewPngMaxBytes + 2) / 3);
