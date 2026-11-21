@@ -5048,9 +5048,22 @@ public sealed partial class MainWindow : Window
         _inspectorPanel.Children.Add(EditorVisuals.Disclosure("Node details", EditorVisuals.Details(subject.ToString())));
         if (_hierarchyRows.FirstOrDefault(row => row.Node == subject)?.PrefabOrigin is AssetGuid origin)
         {
-            bool available = _assetBrowser.Items.Any(asset => asset.Guid == origin && asset.IsPrefab);
-            _inspectorPanel.Children.Add(EditorVisuals.Secondary($"Source Prefab {origin}" +
-                (available ? "" : " (unavailable in this Runtime)")));
+            var source = EditorVisuals.Secondary("");
+            void RefreshSource()
+            {
+                var status = _referenceSessionFailed ? PrefabSourceStatus.CatalogUnavailable : _assetBrowser.PrefabSource(origin);
+                source.Text = $"Source Prefab {origin}" + (status switch
+                {
+                    PrefabSourceStatus.Pending => " (checking…)",
+                    PrefabSourceStatus.Missing => " (missing from this Runtime)",
+                    PrefabSourceStatus.CatalogUnavailable => " (catalog unavailable)",
+                    _ => "",
+                });
+            }
+            _inspectorPanel.Children.Add(source);
+            _refreshReferenceLabels.Add(RefreshSource);
+            RefreshSource();
+            if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
         }
         var nameRow = new Grid { ColumnDefinitions = new ColumnDefinitions("90,*"), Margin = new Thickness(0, 2) };
         nameRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });

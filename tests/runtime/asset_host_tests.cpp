@@ -148,6 +148,68 @@ TEST_CASE("static groups project cooked ordered values and exact typed catalog d
   std::filesystem::remove(f.dir / scene.artifact);
   std::filesystem::remove(f.dir / scene.metadata);
 }
+TEST_CASE("assets: Prefab projections freeze with the catalog across connections", "[runtime][assets][prefab]") {
+  CatalogFixture f;
+  auto prefab = record(as::CatalogAssetType::Scene, "prefab");
+  const auto mesh = record(as::CatalogAssetType::Mesh, "mesh");
+  prefab.source = {as::CatalogRoot::Assets, "prefabs/prefab_chair/source.scene.txt", {}};
+  prefab.artifact = "chair.ascene";
+  prefab.metadata = "chair.ascene.meta.txt";
+  prefab.artifactSchema = as::kSceneArtifactSchemaVersion;
+  prefab.dependencies = {mesh.guid};
+  const auto source = f.dir / "assets" / prefab.source.path;
+  std::filesystem::create_directories(source.parent_path());
+
+  as::ParsedSceneSource parsed{};
+  auto& node = parsed.nodes.emplace_back();
+  node.nodeId = 1;
+  node.entityGuid = as::deriveEntityGuid(prefab.guid, "node/1");
+  node.meshAsset = mesh.guid;
+  node.name = "Original chair";
+  auto writeSource = [&] { std::ofstream(source, std::ios::binary) << as::serializeSceneSource(parsed); };
+  writeSource();
+  const auto cooked = as::cookSceneSource(as::serializeSceneSource(parsed), prefab.guid);
+  REQUIRE(cooked.isOk());
+  std::ofstream(f.dir / prefab.artifact, std::ios::binary).write(
+      reinterpret_cast<const char*>(cooked.value().artifactBytes.data()),
+      static_cast<std::streamsize>(cooked.value().artifactBytes.size()));
+  std::ofstream(f.dir / prefab.metadata, std::ios::binary) << cooked.value().metadataText;
+  f.write({prefab, mesh});
+
+  AssetHost host(f.path.string());
+  SECTION("a label-only edit after the first catalog read cannot change Prefab queries") {
+    REQUIRE(host.connect()->listAssets().isOk());
+    node.name = "Changed chair";
+    writeSource();
+    const auto result = host.connect()->prefab(prefab.guid);
+    REQUIRE(result.isOk());
+    CHECK(result.value().nodes.front().name == "Original chair");
+
+    std::filesystem::remove(source);
+    // A new connection, as used by authoring admission, still sees the verified result.
+    const auto admission = host.connect()->prefab(prefab.guid);
+    REQUIRE(admission.isOk());
+    CHECK(admission.value() == result.value());
+
+    writeSource();
+    const auto fresh = AssetHost(f.path.string()).connect()->prefab(prefab.guid);
+    REQUIRE(fresh.isOk());
+    CHECK(fresh.value().nodes.front().name == "Changed chair");
+  }
+  SECTION("a missing source at catalog settlement stays invalid until a fresh host") {
+    std::filesystem::remove(source);
+    REQUIRE(host.catalog());
+    writeSource();
+    const auto result = host.connect()->prefab(prefab.guid);
+    REQUIRE(result.isErr());
+    CHECK(result.error() == ac::StaticGroupError::InvalidGroup);
+    CHECK(AssetHost(f.path.string()).connect()->prefab(prefab.guid).isOk());
+  }
+  for (const auto& path : {source, source.parent_path(), source.parent_path().parent_path(), f.dir / "assets",
+                           f.dir / prefab.artifact, f.dir / prefab.metadata})
+    std::filesystem::remove(path);
+}
+
 TEST_CASE("assets: the assembled build catalog is projected completely without loading artifacts", "[runtime][assets]") {
   auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);
   REQUIRE(catalog.isOk());

@@ -55,6 +55,7 @@ public sealed record AssetReferenceRow(AssetSummary Material, TextureReferenceSl
 public sealed record AssetDependentResult(IReadOnlyList<AssetReferenceRow> Matches, bool Complete, string? Diagnostic = null);
 public sealed record AssetReferenceLocate(AssetGuid Texture, AssetReferenceRow Row, GenerationId? Generation, AssetDetailIntent Intent);
 public sealed record LocatedAssetReference(AssetGuid Material, TextureReferenceSlot Slot, MaterialValues Values);
+public enum PrefabSourceStatus { Pending, Found, Missing, CatalogUnavailable }
 
 public static class MaterialTextureReferences
 {
@@ -124,6 +125,13 @@ public sealed class AssetBrowser
     public string DetailState { get; private set; } = "";
     public AssetDetailIntent? DetailIntent { get; private set; }
     public IReadOnlyList<AssetSummary> Items => _items;
+    public PrefabSourceStatus PrefabSource(AssetGuid guid) => State switch
+    {
+        "Ready" => _items.Any(asset => asset.Guid == guid && asset.IsPrefab)
+            ? PrefabSourceStatus.Found : PrefabSourceStatus.Missing,
+        "Not loaded" or "Disconnected" or "Loading" => PrefabSourceStatus.Pending,
+        _ => PrefabSourceStatus.CatalogUnavailable,
+    };
     public IReadOnlyList<AssetSummary> Visible => _visible;
     public IReadOnlyList<object> Rows => _rows;
     public bool SelectionVisible => State == "Ready" && Selected is AssetGuid guid && _visibleIds.Contains(guid);

@@ -13,6 +13,20 @@ public static partial class Program
         AssetBrowseChecks();
         AssetDependentChecks();
         AssetGuid a = AssetGuid.Parse("00810081-0081-4081-8081-008100810081"), b = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
+        var provenance = new AssetBrowser();
+        var prefab = new AssetSummary(a, AssetType.Scene, "assets:prefabs/prefab_chairs/source.scene.txt") { IsPrefab = true };
+        Check(provenance.PrefabSource(a) == PrefabSourceStatus.Pending, "prefab source: an unqueried catalog does not imply absence");
+        long firstCatalog = provenance.BeginList(), prefabCatalog = provenance.BeginList();
+        Check(provenance.PrefabSource(a) == PrefabSourceStatus.Pending &&
+              !provenance.CompleteList(firstCatalog, Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([])),
+            "prefab source: a late empty response cannot settle a newer lookup");
+        provenance.CompleteList(prefabCatalog, Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([prefab]));
+        provenance.Search = "hidden";
+        Check(provenance.PrefabSource(a) == PrefabSourceStatus.Found && provenance.PrefabSource(b) == PrefabSourceStatus.Missing,
+            "prefab source: a complete catalog distinguishes present and missing independently of search");
+        provenance.CompleteList(provenance.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Err(AssetError.CatalogUnavailable));
+        Check(provenance.PrefabSource(a) == PrefabSourceStatus.CatalogUnavailable,
+            "prefab source: a query failure does not imply absence");
         var color = new AssetSummary(a, AssetType.Texture, "content:texture_sign/source.png");
         var alternate = new AssetSummary(b, AssetType.Texture, "content:texture_panel/source.png");
         Check(EditorVisuals.AssetName(color) == "sign" && EditorVisuals.AssetName(alternate) == "panel",

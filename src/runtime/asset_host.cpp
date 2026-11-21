@@ -12,6 +12,7 @@
 #include <atlantis/log.h>
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <utility>
 
@@ -29,6 +30,7 @@ struct AssetHost::State final : connection::AssetConnection {
   mutable bool initialized_ = false;
   mutable std::vector<ac::AssetDetails> details_;
   mutable std::vector<ac::AssetSummary> summaries_;
+  mutable std::map<as::AssetGuid, ac::StaticGroup> prefabs_;
   mutable bool ready_ = false;
 
   void initialize() const {
@@ -39,6 +41,8 @@ struct AssetHost::State final : connection::AssetConnection {
       ATLANTIS_LOG_ERROR("assets: catalog unavailable ({})", as::toString(loaded.error()));
       return;
     }
+    std::error_code pathError;
+    const auto catalogPath = std::filesystem::absolute(static_groups::pathFromUtf8(path_), pathError);
     for (const auto& r : loaded.value().records()) {
       ac::AssetType type = ac::AssetType::Mesh;
       switch (r.type) {
@@ -49,10 +53,17 @@ struct AssetHost::State final : connection::AssetConnection {
         case as::CatalogAssetType::Environment: type = ac::AssetType::Environment; break;
         case as::CatalogAssetType::GltfImport: ATLANTIS_CHECK(false); break;
       }
+      const bool isPrefab = prefabs::nameOf(r).has_value();
+      if (isPrefab && !pathError) {
+        // Names live only in the source. Freeze the verified projection when
+        // the catalog settles so queries and authoring admission share it.
+        auto projection = prefabs::project(catalogPath.lexically_normal().parent_path(), loaded.value(), r.guid);
+        if (projection.isOk()) prefabs_.emplace(r.guid, std::move(projection.value()));
+      }
       details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies,
                           rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt,
                           rebuild_ ? rebuild_->logicalPath(r.guid) : std::nullopt,
-                          prefabs::nameOf(r).has_value()});
+                          isPrefab});
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
     for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName, d.logicalPath, d.isPrefab});
@@ -82,12 +93,14 @@ struct AssetHost::State final : connection::AssetConnection {
     return static_groups::project(path.lexically_normal().parent_path(), *catalog_, guid);
   }
   ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override {
+    using R = ac::StaticGroupResult;
+    using E = ac::StaticGroupError;
     initialize();
-    if (!catalog_) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
-    std::error_code ec;
-    const auto path = std::filesystem::absolute(static_groups::pathFromUtf8(path_), ec);
-    if (ec) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
-    return prefabs::project(path.lexically_normal().parent_path(), *catalog_, guid);
+    if (!catalog_) return R::Err(E::CatalogUnavailable);
+    if (const auto found = prefabs_.find(guid); found != prefabs_.end()) return R::Ok(found->second);
+    const auto* record = catalog_->find(guid);
+    if (!record) return R::Err(E::UnknownAsset);
+    return R::Err(prefabs::nameOf(*record) ? E::InvalidGroup : E::UnsupportedGroup);
   }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override {
     using E = ac::PreviewError;
