@@ -1,3 +1,4 @@
+#include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/scene_source.h>
 #include <atlantis/asset_system/scene_semantic_schema.h>
 #include <atlantis/asset_system/scene_types.h>
@@ -198,7 +199,7 @@ TEST_CASE("source8 names preserve exact text and source7 remains a strict unname
                        "atlantis_scene_source_version: 7");
   CHECK(parseSceneSource(wrongVersion).isErr());
   wrongVersion.replace(0, std::string_view("atlantis_scene_source_version: 7").size(),
-                       "atlantis_scene_source_version: 10");
+                       "atlantis_scene_source_version: 11");
   CHECK(parseSceneSource(wrongVersion).isErr());
 }
 
@@ -235,6 +236,37 @@ TEST_CASE("serializeSceneSource then parseSceneSource round-trips exactly-repres
   }
 }
 
+TEST_CASE("scene source v10 preserves the Prefab baseline outside cooked projection",
+          "[asset_system][scene][prefab]") {
+  auto source = parseSceneSource(kValidTwoNodeSource).value();
+  const auto scene = testAssetGuid("scene");
+  const auto expanded = cookSceneSource(serializeSceneSource(source), scene);
+  REQUIRE(expanded.isOk());
+  source.nodes.front().prefabOrigin = testAssetGuid("prefab");
+  const auto legacy = serializeSceneSource(source);
+  REQUIRE(legacy.starts_with("atlantis_scene_source_version: 9\n"));
+  CHECK_FALSE(parseSceneSource(legacy).value().nodes.front().prefabBaseline);
+  source.nodes.front().prefabBaseline = std::string(64, 'a');
+  const auto tracked = serializeSceneSource(source);
+  REQUIRE(tracked.starts_with("atlantis_scene_source_version: 10\n"));
+  const auto parsed = parseSceneSource(tracked);
+  REQUIRE(parsed.isOk());
+  CHECK(parsed.value().nodes.front().prefabBaseline == source.nodes.front().prefabBaseline);
+  CHECK(serializeSceneSource(parsed.value()) == tracked);
+  const auto cooked = cookSceneSource(tracked, scene);
+  REQUIRE(cooked.isOk());
+  CHECK(cooked.value().artifactBytes == expanded.value().artifactBytes);
+  CHECK(cooked.value().metadataText == expanded.value().metadataText);
+
+  auto malformed = tracked;
+  malformed[malformed.find("prefabBaseline=") + std::string_view("prefabBaseline=").size()] = 'A';
+  CHECK(parseSceneSource(malformed).isErr());
+  auto wrongVersion = tracked;
+  wrongVersion.replace(0, std::string_view("atlantis_scene_source_version: 10").size(),
+                       "atlantis_scene_source_version: 9");
+  CHECK(parseSceneSource(wrongVersion).isErr());
+}
+
 TEST_CASE("parseSceneSource rejects the superseded version 1 outright, with no dual-version reader",
           "[asset_system][scene]") {
   // Plan 0018 Section P6 / Spec 0018 D5: version 1 sources are rejected
@@ -256,8 +288,8 @@ TEST_CASE("parseSceneSource rejects the superseded version 2 outright, with no d
 }
 
 TEST_CASE("parseSceneSource rejects an unrecognized future version line", "[asset_system][scene]") {
-  // Spec 0132 admits source 9. The next unrecognized version still fails closed.
-  const auto result = parseSceneSource("atlantis_scene_source_version: 10\n");
+  // Spec 0133 admits source 10. The next unrecognized version still fails closed.
+  const auto result = parseSceneSource("atlantis_scene_source_version: 11\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }
