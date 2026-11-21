@@ -519,6 +519,8 @@ namespace {
            formatFloat(light.intensity) + " range " + formatFloat(light.range) + "\n";
   }
   out += "draw items " + std::to_string(report.data.drawItemCount) + "\n";
+  if (report.data.exposureCompensationEv)
+    out += "exposure EV " + formatFloat(*report.data.exposureCompensationEv) + "\n";
   if (report.image) {
     out += "image " + report.image->path + " " + std::to_string(report.image->width) + "x" +
            std::to_string(report.image->height) + "\n";
@@ -560,6 +562,8 @@ namespace {
   frameData.set("view", floats(report.data.view));
   frameData.set("projection", floats(report.data.projection));
   frameData.set("drawItemCount", Value::number(report.data.drawItemCount));
+  if (report.data.exposureCompensationEv)
+    frameData.set("exposureCompensationEv", floatValue(*report.data.exposureCompensationEv));
   Value captureValue = Value::object();
   captureValue.set("frameData", std::move(frameData));
   if (report.image) {

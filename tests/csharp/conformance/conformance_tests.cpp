@@ -438,7 +438,10 @@ void authoringVectors(std::vector<Vector>& out) {
   report.data.drawItemCount = 7;
   out.push_back({"report.no_image", "FrameReport", codec::encode(report)});
   report.image = connection::CapturedImage{"D:/shots/a b.png", 2374, 1320};
+  report.data.exposureCompensationEv = -1.25f;
   out.push_back({"report.image", "FrameReport", codec::encode(report)});
+  report.data.exposureCompensationEv = 0.0f;
+  out.push_back({"report.zero_exposure", "FrameReport", codec::encode(report)});
   connection::DiagnosticBatch batch;
   batch.entries.push_back({1, connection::DiagnosticSeverity::Warning, "plain"});
   batch.entries.push_back({2, connection::DiagnosticSeverity::Error, "tab\there, quote \" and \x01 control"});

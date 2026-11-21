@@ -18,9 +18,10 @@ namespace atlantis::runtime::detail {
 
 // The frame data a client sees: the lighting block exactly as written to the
 // camera uniform (its counted lights only), the camera matrices, and the
-// draw-item count.
+// draw-item count and effective exposure.
 [[nodiscard]] atlantis::connection::FrameData toFrameData(const FrameLightingData& lighting,
-                                                          const CameraMatrices& camera, std::size_t drawItemCount);
+                                                          const CameraMatrices& camera, std::size_t drawItemCount,
+                                                          float exposureCompensationEv);
 
 // Writes `width` x `height` 8-bit pixels as an RGBA PNG at `path`. `pixels`
 // is tightly packed, four bytes per pixel, in BGRA order when `bgra` (the

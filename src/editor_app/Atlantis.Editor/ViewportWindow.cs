@@ -89,6 +89,10 @@ public sealed class ViewportWindow : IDisposable
         RuntimeChild != IntPtr.Zero && IsWindow(RuntimeChild) && GetParent(RuntimeChild) == Handle &&
         (GetWindowLongPtrW(RuntimeChild, GWL_STYLE).ToInt64() & WS_CHILD) != 0;
 
+    internal bool RuntimeChildHasExtent(int width, int height) =>
+        RuntimeChildIsHosted() && GetClientRect(RuntimeChild, out RECT client) &&
+        client.Right - client.Left == width && client.Bottom - client.Top == height;
+
     public void Dispose()
     {
         if (Handle == IntPtr.Zero) return;

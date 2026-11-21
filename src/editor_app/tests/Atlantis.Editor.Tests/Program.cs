@@ -42,6 +42,7 @@ public static partial class Program
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
         bool hierarchyFilterRace = false;
         bool staticGroupReceipt = false;
+        string? bistroReferenceReport = null;
         string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null,
             staticGroupReport = null;
         for (int i = 0; i < args.Length; ++i)
@@ -60,6 +61,7 @@ public static partial class Program
             else if (args[i] == "--viewport-placement" && i + 1 < args.Length) placementReport = args[++i];
             else if (args[i] == "--static-group-ui" && i + 1 < args.Length) staticGroupReport = args[++i];
             else if (args[i] == "--static-group-receipt") staticGroupReceipt = true;
+            else if (args[i] == "--bistro-reference-ui" && i + 1 < args.Length) bistroReferenceReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
@@ -76,6 +78,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunNameUiSmoke(runtime, staticGroupReport, "--static-group-ui");
         if (staticGroupReceipt)
             return runtime is null ? Usage() : RunStaticGroupReceipt(runtime, scene);
+        if (bistroReferenceReport is not null)
+            return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, bistroReferenceReport);
         if (assetDropReceipt is not null)
             return runtime is null ? Usage() : RunAssetDragReceipts(runtime, scene, assetDropReceipt);
         if (sceneObjectUi)
@@ -102,6 +106,7 @@ public static partial class Program
         {
             Run(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             ViewportNavigationChecks();
+            BistroReferenceChecks();
             DragReportChecks();
             GizmoChecks(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             // Plan 0068 M1 (ADR-0137 D1): every ported model against its vectors.

@@ -1162,6 +1162,8 @@ Value encode(const connection::FrameData& data) {
   out.set("view", encodeFloats(data.view));
   out.set("projection", encodeFloats(data.projection));
   out.set("drawItemCount", Value::number(data.drawItemCount));
+  if (data.exposureCompensationEv && std::isfinite(*data.exposureCompensationEv))
+    out.set("exposureCompensationEv", encodeFloat(*data.exposureCompensationEv));
   return out;
 }
 
@@ -1196,6 +1198,11 @@ std::optional<connection::FrameData> decodeFrameData(const Value& value) {
   data.view = *view;
   data.projection = *projection;
   data.drawItemCount = *count;
+  if (const Value* exposure = member(value, "exposureCompensationEv")) {
+    data.exposureCompensationEv = decodeFloat(*exposure);
+    if (!exposure->isNumber() || !data.exposureCompensationEv || !std::isfinite(*data.exposureCompensationEv))
+      return std::nullopt;
+  }
   return data;
 }
 

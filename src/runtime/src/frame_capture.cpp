@@ -34,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <cstring>
 #include <span>
@@ -47,7 +48,7 @@ using atlantis::renderer::DrawItem;
 namespace detail {
 
 connection::FrameData toFrameData(const FrameLightingData& lighting, const CameraMatrices& camera,
-                                  std::size_t drawItemCount) {
+                                  std::size_t drawItemCount, float exposureCompensationEv) {
   connection::FrameData data;
   for (std::uint32_t i = 0; i < lighting.directionalLightCount && i < 1; ++i) {
     const auto& gpu = lighting.directionalLights[i];
@@ -64,6 +65,7 @@ connection::FrameData toFrameData(const FrameLightingData& lighting, const Camer
   data.view = camera.view;
   data.projection = camera.projection;
   data.drawItemCount = drawItemCount;
+  if (std::isfinite(exposureCompensationEv)) data.exposureCompensationEv = exposureCompensationEv;
   return data;
 }
 
@@ -165,7 +167,8 @@ atlantis::Result<connection::FrameData, connection::ControlError> RuntimeApplica
   const auto lighting = extractFrameLightingData(collectLights(*scene_));
   if (camera.isErr() || lighting.isErr()) return ResultT::Err(connection::ControlError::NotRendering);
   const std::vector<DrawItem> drawItems = assembleCaptureDrawItems(collectRenderables(*scene_));
-  return ResultT::Ok(detail::toFrameData(lighting.value(), camera.value(), drawItems.size()));
+  return ResultT::Ok(detail::toFrameData(lighting.value(), camera.value(), drawItems.size(),
+                                        activeCamera->camera.exposureCompensationEv));
 }
 
 // Plan 0055 P8 (ADR-0106 D5, ruling Q2 C2): the world as the last frame drew

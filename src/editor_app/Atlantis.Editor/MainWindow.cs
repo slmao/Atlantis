@@ -76,7 +76,7 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public (int Width, int Height)? ViewportSize { get; init; }
 }
 
-public sealed class MainWindow : Window
+public sealed partial class MainWindow : Window
 {
     private const float DragThresholdPixels = 3.0f;
 
@@ -520,7 +520,8 @@ public sealed class MainWindow : Window
             ShowGuideFeedback(null);
             _worker?.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         };
-        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides })
+        InitializeBistroViews();
+        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides, _bistroViews })
             control.AddHandler(PointerPressedEvent, (_, _) =>
             {
                 _navigationToolbarPointer = true;
@@ -727,14 +728,15 @@ public sealed class MainWindow : Window
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
-            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides);
+            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
         AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
         AddDocked(view, new Grid { Height = 18, Children = { _viewportNavFeedback, _viewportPlacementFeedback } },
             Avalonia.Controls.Dock.Top);
-        view.Children.Add(_viewport);
+        _bistroViewportArea.Children.Add(_viewport);
+        view.Children.Add(_bistroViewportArea);
         AutomationProperties.SetName(_gizmoMode, "Transform mode");
         AutomationProperties.SetName(_gizmoSpace, "Coordinate space");
         AutomationProperties.SetName(_resetCamera, "Reset to scene camera");
@@ -1005,6 +1007,7 @@ public sealed class MainWindow : Window
         {
             RetireViewportOleTarget(expireRelease: true);
             _worker?.SetViewportExtent(w, h);
+            OnBistroDrawableChanged();
             ++_pickRequest;
             CancelGroupGesture();
             _log.Write("viewport resized " + w + "x" + h);
@@ -1175,12 +1178,14 @@ public sealed class MainWindow : Window
             else if (_sceneProjection is CameraPose scenePose) _camera.SeedNavigation(scenePose);
             ++_pickRequest;
             ShowNavigationMessage(state.Message);
+            ObserveBistroNavigation(state);
             UpdateViewportNavigationActions();
         };
         worker.Connected += snapshot =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
             _previewSession = session;
+            _bistroBuiltIn = session.Scene.ToString() == BistroReferenceView.BistroScene;
             OnConnected(snapshot);
             SyncPreviewSelection();
             _newSceneSessionReady = true;
@@ -1191,6 +1196,7 @@ public sealed class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            LeaveBistroView();
             ShowDocumentState(new(DocumentAvailability.Unavailable, Diagnostic: message));
             _cameraInitialized = _navigationReady = _navigationPending = false;
             ShowNavigationMessage(message);
@@ -1319,6 +1325,8 @@ public sealed class MainWindow : Window
         worker.ApplyStateChanged += (status, text) =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _bistroApplyBlocked = status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown;
+            UpdateViewportNavigationActions();
             _applyLine.Text = "apply: " + text;
             _applyLine.Foreground = status switch
             {
@@ -1346,6 +1354,7 @@ public sealed class MainWindow : Window
             _play.IsEnabled = !playing;
             _pause.IsEnabled = playing;
             _step.IsEnabled = !playing;
+            UpdateViewportNavigationActions();
         };
         worker.EditNotice += text => _editLine.Text = text;
         worker.DocumentOpened += info =>
@@ -1363,6 +1372,8 @@ public sealed class MainWindow : Window
         worker.MeshDocumentReopened += lifetime =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _bistroOptIn = null;
+            if (_bistroView is not null) LeaveBistroView("Document changed. Select a reference view again.");
             if (_creatingObject) _editLine.Text = "Scene reopened. Inspect the document before retrying creation.";
             ++_createRequest;
             _creatingObject = false;
@@ -1553,6 +1564,7 @@ public sealed class MainWindow : Window
     private void NavigateViewport(IReadOnlyList<EntityGuid>? focus = null, ViewDirection? direction = null)
     {
         if (_worker is not { } worker || !_cameraInitialized || _gizmoGrab is not null || _groupGrab is not null) return;
+        LeaveBistroView();
         RetireViewportOleTarget(expireRelease: true);
         _navigationPending = true;
         ++_pickRequest;
@@ -1575,6 +1587,7 @@ public sealed class MainWindow : Window
             _selection.Nodes.Count is > 0 and <= ViewportNavigation.MaxTargets;
         _viewDirection.IsEnabled = camera && _navigationSupported;
         _viewportGuides.IsEnabled = _worker is not null && _reparentDocumentOpen && !_referenceSessionFailed;
+        UpdateBistroActions(camera);
         string? tip = camera && !_navigationSupported ? "Focus and direction views require an updated Runtime." : null;
         ToolTip.SetTip(_focusSelection, tip ?? (_selection.Nodes.Count > ViewportNavigation.MaxTargets
             ? "Focus supports up to 64 selected nodes." : null));
@@ -1603,7 +1616,8 @@ public sealed class MainWindow : Window
         if (_navigationToolbarPointer) return true;
         var focused = FocusManager?.GetFocusedElement();
         return IsNavigationTarget(_resetCamera) || IsNavigationTarget(_focusSelection) ||
-            IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed) || IsNavigationTarget(_viewportGuides);
+            IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed) || IsNavigationTarget(_viewportGuides) ||
+            IsNavigationTarget(_bistroViews);
 
         bool IsNavigationTarget(Control control) =>
             control.IsPointerOver || control.IsKeyboardFocusWithin || ReferenceEquals(focused, control) ||
@@ -1611,7 +1625,7 @@ public sealed class MainWindow : Window
     }
 
     private CameraMatrices? ViewportProjection(ViewportWindow window) =>
-        !_navigationReady || _navigationPending ? null :
+        !_navigationReady || _navigationPending || !BistroProjectionReady(window) ? null :
             NavigationFraming.Projection(_sceneProjection ?? _camera.Pose(), window.Width, window.Height);
 
     private float NavigationSpeed => _navigationSpeed.SelectedIndex switch { 0 => 0.5f, 2 => 2f, _ => 1f };
@@ -1619,6 +1633,7 @@ public sealed class MainWindow : Window
     private void MoveViewport(ViewportMotion motion, long arrivalTicks)
     {
         if (_worker is not { } worker || _viewport.Window is not { } window) return;
+        LeaveBistroView();
         RetireViewportOleTarget(expireRelease: true);
         if (_navigationPending)
         {
@@ -5661,6 +5676,7 @@ public sealed class MainWindow : Window
         UpdateWorkspaceReset();
         RefreshGroupAsset();
         _documentState = state;
+        UpdateViewportNavigationActions();
         bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
         _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +
             (_draftProtection.Stale is not null ? " · Stale input" : "");
@@ -5957,6 +5973,8 @@ public sealed class MainWindow : Window
 
     private void Shutdown()
     {
+        _bistroLayoutTimer.Stop();
+        _bistroCompare?.Close();
         _assetBrowser.CancelPendingDependents();
         EndPreviewSession();
         _uiTicker.Stop();
@@ -5981,6 +5999,7 @@ public sealed class MainWindow : Window
             _runtime.Dispose();
             _runtime = null;
         }
+        if (_bistroUnknownPath is string capture) DeleteBistroOutput(capture);
         _log.Dispose();
     }
 }

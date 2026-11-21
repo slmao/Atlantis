@@ -55,6 +55,8 @@ struct FrameData {
   std::array<float, 16> view{};
   std::array<float, 16> projection{};
   std::uint64_t drawItemCount = 0;
+  // Effective camera compensation used for this frame. Absent on legacy reports.
+  std::optional<float> exposureCompensationEv{};
   friend bool operator==(const FrameData&, const FrameData&) = default;
 };
 

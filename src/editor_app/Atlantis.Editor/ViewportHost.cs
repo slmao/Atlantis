@@ -3,6 +3,7 @@
 // ViewportWindow, the Runtime's --parent-window.
 using System;
 using Avalonia.Controls;
+using Avalonia.Layout;
 using Avalonia.Platform;
 
 namespace Atlantis.Editor;
@@ -16,6 +17,14 @@ public sealed class ViewportHost : NativeControlHost
 
     /// <summary>Raised when Avalonia destroys the host window (the Runtime's child goes with it).</summary>
     public event Action? WindowDestroyed;
+
+    internal void SetPhysicalSize((int Width, int Height)? extent, double scaling)
+    {
+        Width = extent?.Width / scaling ?? double.NaN;
+        Height = extent?.Height / scaling ?? double.NaN;
+        HorizontalAlignment = extent is null ? HorizontalAlignment.Stretch : HorizontalAlignment.Center;
+        VerticalAlignment = extent is null ? VerticalAlignment.Stretch : VerticalAlignment.Center;
+    }
 
     protected override IPlatformHandle CreateNativeControlCore(IPlatformHandle parent)
     {
