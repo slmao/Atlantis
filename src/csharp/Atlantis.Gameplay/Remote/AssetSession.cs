@@ -42,6 +42,19 @@ public sealed class AssetSession
     public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid) => ReadGroup(guid, false);
     public Outcome<A.StaticGroup, A.StaticGroupError> Prefab(AssetGuid guid) => ReadGroup(guid, true);
 
+    /// <summary>Starts one explicit read within the Runtime's authorized roots.</summary>
+    public Outcome<A.ProjectScan, A.ProjectScanError> ScanProject() =>
+        AssetRequest("assets.scanProject", JsonValue.NewObject(), A.ProjectScanError.Unsupported,
+            Codec.DecodeProjectScanError, value => Codec.DecodeProjectScan(value) is { Pending: true } scan ? scan : null);
+
+    public Outcome<A.ProjectScan, A.ProjectScanError> ProjectScanStatus(AssetGuid id)
+    {
+        if (id.IsNil) throw new ArgumentException("a non-nil scan ID is required", nameof(id));
+        return AssetRequest("assets.projectScanStatus", JsonValue.NewObject().Set("id", Codec.Encode(id)),
+            A.ProjectScanError.Unsupported, Codec.DecodeProjectScanError,
+            value => Codec.DecodeProjectScan(value) is A.ProjectScan scan && scan.Id == id ? scan : null);
+    }
+
     public Outcome<A.PrefabRevision, A.StaticGroupError> PrefabRevision(AssetGuid guid)
     {
         if (guid.IsNil) throw new ArgumentException("a non-nil Prefab GUID is required", nameof(guid));

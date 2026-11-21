@@ -55,6 +55,7 @@ public static class Program
         int measureFrames = 0;
         bool allowSceneSaveAs = false;
         bool allowPrefabRegistration = false;
+        bool projectAssets = false;
         bool smoke = false;
         bool measureEdit = false;
         bool measureDrag = false;
@@ -78,6 +79,7 @@ public static class Program
                 case "--runtime": runtime = Next(); break;
                 case "--scene": scene = Next(); break;
                 case "--allow-scene-save-as": allowSceneSaveAs = true; break;
+                case "--project-assets": projectAssets = true; break;
                 case "--allow-prefab-registration": allowPrefabRegistration = true; break;
                 case "--saved-scene-checkout": savedCheckout = Next(); break;
                 case "--saved-scene-cmake": savedCMake = Next(); break;
@@ -123,6 +125,11 @@ public static class Program
             return Usage("--asset-build-profile is for the ordinary editor launch");
         if (allowSceneSaveAs && (smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
             return Usage("--allow-scene-save-as is for the ordinary editor launch");
+        if (projectAssets && (attach is not null || smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
+        {
+            Console.Error.WriteLine("--project-assets requires an ordinary Editor-owned Runtime.");
+            return 2;
+        }
         if (allowPrefabRegistration && (attach is not null || smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
             return Usage("--allow-prefab-registration requires an ordinary owned Runtime launch");
         if (savedCheckout is not null || savedCMake is not null)
@@ -163,6 +170,7 @@ public static class Program
             AssetGeneration = assetGeneration,
             AllowSceneSaveAs = allowSceneSaveAs,
             AllowPrefabRegistration = allowPrefabRegistration,
+            ProjectAssets = projectAssets,
             SavedSceneCheckout = savedCheckout,
             SavedSceneCMake = savedCMake,
             SavedSceneAppHost = savedCheckout is null ? null : Environment.ProcessPath,

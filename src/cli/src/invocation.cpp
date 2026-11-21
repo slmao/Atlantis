@@ -40,6 +40,8 @@ constexpr std::string_view kUsage =
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
     "  asset static-group <scene-guid>      ordered cooked nodes of a managed glTF group\n"
+    "  asset scan-project          begin a checked Project source scan\n"
+    "  asset project-scan-status <scan-id>  read its result\n"
     "  asset prefab-revision <prefab-guid>  frozen Prefab SHA-256\n"
     "  asset prefab <prefab-guid>           ordered nodes of a built static Prefab\n"
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"

@@ -507,6 +507,31 @@ class RemoteAssets final : public connection::AssetConnection {
   ca::StaticGroupResult prefab(const AssetGuid& guid) const override {
     return readGroup(guid, true);
   }
+  ca::ProjectScanResult scanProject() override { return readProjectScan(std::nullopt); }
+  ca::ProjectScanResult projectScanStatus(const AssetGuid& id) const override { return readProjectScan(id); }
+  ca::ProjectScanResult readProjectScan(std::optional<AssetGuid> id) const {
+    using R = ca::ProjectScanResult;
+    using E = ca::ProjectScanError;
+    auto params = Value::object();
+    if (id) params.set("id", codec::encodeAsset(*id));
+    const auto envelope = state_.awaitResponse(state_.send(id ? "assets.projectScanStatus" : "assets.scanProject",
+        std::move(params)));
+    if (!envelope || !envelope->isObject() || envelope->asObject().size() != 2 || memberCount(*envelope, "id") != 1)
+      return R::Err(E::Unavailable);
+    if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* value = result->find("ok")) {
+        auto scan = ca::decodeProjectScan(*value);
+        if (scan && (id ? scan->id == *id : scan->pending)) return R::Ok(std::move(*scan));
+      } else if (const auto* refusal = result->find("err"); refusal && refusal->isString()) {
+        if (const auto error = ca::projectScanError(refusal->asString())) return R::Err(*error);
+      }
+    } else if (const auto* error = envelope->find("error"); error && error->isObject()) {
+      const auto* code = error->find("code");
+      if (legacyAssetRefusal(*error) || (code && code->isString() && code->asString() == "UnknownMethod"))
+        return R::Err(E::Unsupported);
+    }
+    return R::Err(E::Unavailable);
+  }
   ca::PrefabRevisionResult prefabRevision(const AssetGuid& guid) const override {
     using R = ca::PrefabRevisionResult;
     using E = ca::StaticGroupError;

@@ -145,6 +145,10 @@ internal static partial class Program
         ("authoring.reopen_if_current", "authoring.reopenIfCurrent", """{"expected":null}""",
             $$$"""{"ok":{"documentId":"{{{Entity}}}","documentRevision":1,"lastPersistedRevision":1,"dirty":false,"source":"scene.txt","scene":"{{{Entity}}}","provenance":"HandAuthored"}}"""),
         ("authoring.create_scene", "authoring.createScene", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt"}}"""),
+        ("assets.scan_project", "assets.scanProject", "{}",
+            $$$"""{"ok":{"id":"{{{Entity}}}","pending":true,"catalogReady":false,"roots":[]}}"""),
+        ("assets.project_scan_status", "assets.projectScanStatus", $$$"""{"id":"{{{Entity}}}"}""",
+            $$$"""{"ok":{"id":"{{{Entity}}}","pending":false,"catalogReady":true,"roots":[{"kind":"Inbox","coverage":"Complete","diagnostic":"","sources":[]},{"kind":"Prefabs","coverage":"Unavailable","diagnostic":"unavailable","sources":[]}]}}"""),
         ("assets.prefab_revision", "assets.prefabRevision", $$$"""{"guid":"{{{Entity}}}"}""",
             $$$"""{"ok":{"prefab":"{{{Entity}}}","revision":"{{{PrefabRevision}}}"}}"""),
         ("authoring.update_prefab", "authoring.updatePrefab",
@@ -554,7 +558,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.staticGroup" or "assets.prefab" or "assets.prefabRevision" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
+            if (c.Method is "assets.scanProject" or "assets.projectScanStatus" or "assets.staticGroup" or "assets.prefab" or "assets.prefabRevision" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
                 "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.moveTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or

@@ -132,6 +132,14 @@ public sealed class AssetBrowser
         "Not loaded" or "Disconnected" or "Loading" => PrefabSourceStatus.Pending,
         _ => PrefabSourceStatus.CatalogUnavailable,
     };
+    private string? _directory;
+    public string? Directory
+    {
+        get => _directory;
+        set { if (_directory != value) { _directory = value; Project(); } }
+    }
+    public IEnumerable<string> Directories => _keys.Select(key => key.Directory).Distinct(StringComparer.Ordinal);
+
     public IReadOnlyList<AssetSummary> Visible => _visible;
     public IReadOnlyList<object> Rows => _rows;
     public bool SelectionVisible => State == "Ready" && Selected is AssetGuid guid && _visibleIds.Contains(guid);
@@ -286,7 +294,7 @@ public sealed class AssetBrowser
         string path = _search.Replace((char)92, '/');
         string? compact = AssetBrowseProjection.CompactQuery(_search);
         var matching = _keys.Where(key => (_type is null || key.Asset.Type == _type) &&
-            key.Matches(_search, path, compact));
+            ProjectNavigation.InDirectory(key.Directory, _directory) && key.Matches(_search, path, compact));
         var ordered = AssetBrowseProjection.Order(matching, _sort);
         _visible = ordered.Select(key => key.Asset).ToArray();
         _visibleIds = _visible.Select(asset => asset.Guid).ToHashSet();
@@ -330,6 +338,7 @@ public sealed class AssetBrowser
         if (key is null) return false;
         if (_visibleIds.Contains(guid)) return true;
         if (_type != key.Asset.Type) _type = null;
+        if (!ProjectNavigation.InDirectory(key.Directory, _directory)) _directory = key.Directory;
         if (!key.Matches(_search, _search.Replace((char)92, '/'), AssetBrowseProjection.CompactQuery(_search))) _search = "";
         Project();
         return _visibleIds.Contains(guid);

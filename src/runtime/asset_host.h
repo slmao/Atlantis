@@ -5,6 +5,7 @@
 #include <atlantis/asset_system/static_mesh_asset_data.h>
 #include <atlantis/asset_system/texture_types.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -45,6 +46,7 @@ class AssetHost {
   [[nodiscard]] const FrozenPrefab* frozenPrefab(const asset_system::AssetGuid& guid) const;
   // Call once for the combined Remote poll and --exec dispatch, if enabled.
   void beginServiceInterval() noexcept;
+  void enableProjectReads(std::filesystem::path checkoutAssetRoot);
  private:
   struct State;
   std::unique_ptr<State> state_;

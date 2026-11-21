@@ -20,6 +20,18 @@ public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source,
     public string? LogicalPath { get; init; }
 }
 
+public enum ProjectRootKind { Inbox, Prefabs }
+public enum ProjectCoverage { Complete, Incomplete, Unavailable }
+public enum ProjectSourceKind { Directory, Gltf, Png, Prefab, Other }
+public enum ProjectRegistration { Unknown, SourceOnly, Registered }
+public enum ProjectScanError { Unsupported, Unavailable, Busy, UnknownScan }
+/// <summary>A relative source entry. Evidence is opaque and scoped to the serving Runtime.</summary>
+public sealed record ProjectSource(string Path, ProjectSourceKind Kind, string? ImportName, string Evidence,
+    ProjectRegistration Registration, AssetGuid? Producer, IReadOnlyList<AssetGuid> Outputs, bool NewerPrefabSource);
+public sealed record ProjectRoot(ProjectRootKind Kind, ProjectCoverage Coverage, string Diagnostic,
+    IReadOnlyList<ProjectSource> Sources);
+public sealed record ProjectScan(AssetGuid Id, bool Pending, bool CatalogReady, IReadOnlyList<ProjectRoot> Roots);
+
 public sealed record PrefabRevision(AssetGuid Prefab, string Revision);
 public enum StaticGroupError { Unsupported, CatalogUnavailable, UnknownAsset, UnsupportedGroup, InvalidGroup }
 public sealed record StaticGroupRenderable(AssetGuid Mesh, AssetGuid? Material);

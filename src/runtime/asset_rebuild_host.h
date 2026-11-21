@@ -3,12 +3,11 @@
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/connection/asset_connection.h>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
-#ifdef ATLANTIS_REBUILD_TEST_CMAKE
 #include <functional>
-#endif
 
 namespace atlantis::runtime {
 
@@ -79,6 +78,12 @@ class AssetRebuildHost {
       connection::assets::MaterialRecipeVersion version = connection::assets::MaterialRecipeVersion::Basic);
   [[nodiscard]] connection::assets::MaterialStatusResult materialStatus(
       std::optional<connection::assets::MaterialJobId> id) const;
+  using ProjectReader = std::function<connection::assets::ProjectRoot(std::size_t, const std::atomic<bool>&)>;
+  [[nodiscard]] bool hasProjectSources() const noexcept;
+  [[nodiscard]] connection::assets::ProjectScanResult scanProject(
+      connection::assets::ProjectScan scan, std::shared_ptr<const asset_system::AssetCatalog> catalog,
+      ProjectReader checkout);
+  [[nodiscard]] connection::assets::ProjectScanResult projectScanStatus(const asset_system::AssetGuid& id) const;
   void stop();
 
  private:

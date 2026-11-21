@@ -29,6 +29,18 @@ ca::StaticGroup staticGroupFixture() {
 struct Assets final : atlantis::connection::AssetConnection {
   ca::AssetDetails detail{guid(), ca::AssetType::Mesh, "content:test/file.gltf#mesh/0", UINT32_MAX, std::nullopt, "unit/1", {}};
   bool unavailable = false;
+  bool projectReads = false;
+  ca::ProjectScanResult scanProject() override {
+    return projectReads ? ca::ProjectScanResult::Ok({guid(), true, false, {}})
+                        : ca::ProjectScanResult::Err(ca::ProjectScanError::Unsupported);
+  }
+  ca::ProjectScanResult projectScanStatus(const as::AssetGuid& id) const override {
+    if (!projectReads || id != guid()) return ca::ProjectScanResult::Err(ca::ProjectScanError::UnknownScan);
+    return ca::ProjectScanResult::Ok({id, false, true, {
+        {ca::ProjectRootKind::Inbox, ca::ProjectCoverage::Complete, "", {}},
+        {ca::ProjectRootKind::Prefabs, ca::ProjectCoverage::Unavailable, "Unavailable.", {}},
+    }});
+  }
   bool unordered = false;
   std::optional<ca::PreviewError> previewError;
   ca::MeshPreview image = preview();
@@ -100,6 +112,8 @@ struct Assets final : atlantis::connection::AssetConnection {
 };
 struct Borrow final : atlantis::connection::AssetConnection {
   explicit Borrow(Assets& a) : a_(a) {}
+  ca::ProjectScanResult scanProject() override { return a_.scanProject(); }
+  ca::ProjectScanResult projectScanStatus(const as::AssetGuid& id) const override { return a_.projectScanStatus(id); }
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override { return a_.listAssets(); }
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
   ca::MeshPreviewResult previewMesh(const as::AssetGuid& id) override { return a_.previewMesh(id); }
@@ -344,6 +358,26 @@ TEST_CASE("assets: typed codecs reject malformed details but tolerate extra memb
   REQUIRE(codec::decodeAssetDetails(missing)); CHECK(codec::decodeAssetDetails(missing)->artifactSchema == 0);
   missing.set("sourceSchema", Value::number(std::int64_t{-1})); CHECK_FALSE(codec::decodeAssetDetails(missing));
 }
+TEST_CASE("project scan wire preserves pending, coverage and unsupported discovery", "[remote][assets][project]") {
+  using namespace atlantis::remote::test;
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto session = served.connect();
+  atlantis::gameplay::Assets sdk(session->assets());
+  CHECK(sdk.scanProject().error() == ca::ProjectScanError::Unsupported);
+  CHECK(sdk.listAssets().isOk());
+  assets.projectReads = true;
+  const auto request = sdk.scanProject();
+  REQUIRE(request.isOk());
+  CHECK(request.value().pending);
+  const auto settled = sdk.projectScanStatus(request.value().id);
+  REQUIRE(settled.isOk());
+  CHECK(settled.value() == assets.projectScanStatus(request.value().id).value());
+  CHECK(sdk.projectScanStatus(materialGuid()).error() == ca::ProjectScanError::UnknownScan);
+  CHECK(sdk.getAsset(guid()).isOk());
+}
+
 TEST_CASE("assets: native clients share queries and in-band refusals preserve their session", "[remote][assets]") {
   using namespace atlantis::remote::test;
   ServedWorld served(cookAndDecodeScene(kSceneSource)); Assets assets;

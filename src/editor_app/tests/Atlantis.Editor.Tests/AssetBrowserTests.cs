@@ -8,9 +8,39 @@ using Atlantis.Gameplay.Assets;
 namespace Atlantis.Editor.Tests;
 public static partial class Program
 {
+    private static void ProjectNavigationChecks()
+    {
+        var mesh = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        var material = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
+        var key = new ProjectSourceKey(ProjectRootKind.Inbox, "storefront.gltf");
+        var source = new ProjectSource(key.Path, ProjectSourceKind.Gltf, "storefront", "observed",
+            ProjectRegistration.Registered, material, [mesh, material], false);
+        ProjectScan Scan(ProjectSource row, ProjectCoverage coverage = ProjectCoverage.Complete, bool ready = true) =>
+            new(mesh, false, ready, [new(key.Root, coverage, "", [row])]);
+        Check(ProjectNavigation.SourceOf(Scan(source), mesh) == key &&
+              ProjectNavigation.SourceOf(Scan(source), material) == key &&
+              ProjectNavigation.Matches(Scan(source), key, source, material),
+            "project: two exact output identities reveal the same source slot");
+        Check(!ProjectNavigation.Matches(Scan(source with { Evidence = "replacement" }), key, source, mesh) &&
+              !ProjectNavigation.Matches(Scan(source with { Outputs = [mesh] }), key, source, mesh) &&
+              !ProjectNavigation.Matches(Scan(source, ProjectCoverage.Incomplete), key, source, mesh) &&
+              ProjectNavigation.SourceOf(Scan(source, ready: false), mesh) is null,
+            "project: changed source, changed outputs and uncertain coverage never reveal");
+        var browser = new AssetBrowser();
+        var a = new AssetSummary(mesh, AssetType.Mesh, "content:store/storefront.gltf#mesh/0/0");
+        var b = new AssetSummary(material, AssetType.Material, "content:store_extra/storefront.gltf#material/0");
+        browser.CompleteList(browser.BeginList(), Outcome<IReadOnlyList<AssetSummary>, AssetError>.Ok([a, b]));
+        browser.Directory = "content:/store";
+        browser.Search = "mesh/0/0";
+        Check(browser.Visible.Single() == a && browser.Reveal(b.Guid) && browser.Search == "" &&
+              browser.Directory == "content:/store_extra" && browser.Visible.Single() == b,
+            "catalog: directory boundaries ignore glTF subkeys and reveal clears only blocking filters");
+    }
+
     private static void AssetBrowserChecks()
     {
         AssetBrowseChecks();
+        ProjectNavigationChecks();
         AssetDependentChecks();
         AssetGuid a = AssetGuid.Parse("00810081-0081-4081-8081-008100810081"), b = AssetGuid.Parse("00810081-0081-4081-8081-008100810082");
         var provenance = new AssetBrowser();

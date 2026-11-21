@@ -74,6 +74,17 @@ class Assets final : public atlantis::connection::AssetConnection {
 };
 }
 
+TEST_CASE("project scanner CLI keeps explicit errors and canonical IDs", "[cli][assets][project]") {
+  using namespace atlantis::cli::test;
+  Cli cli(true);
+  CHECK(cli.run("asset scan-project inbox") == 2);
+  CHECK(cli.run("asset project-scan-status 00000000-0000-0000-0000-000000000000") == 2);
+  CHECK(cli.run("asset scan-project") == 1);
+  CHECK(cli.out.str().find("Unsupported") != std::string::npos);
+  CHECK(cli.run("asset project-scan-status 00810081-0081-4081-8081-008100810081") == 1);
+  CHECK(cli.out.str().find("Unsupported") != std::string::npos);
+}
+
 TEST_CASE("asset static-group CLI preserves values and error classification", "[cli][assets][static-group]") {
   using namespace atlantis::cli::test;
   namespace json = atlantis::connection::json;

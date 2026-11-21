@@ -55,6 +55,7 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public string? AssetGeneration { get; init; }
     public bool AllowSceneSaveAs { get; init; }
     public bool AllowPrefabRegistration { get; init; }
+    public bool ProjectAssets { get; init; }
     public string? SavedSceneCheckout { get; init; }
     public string? SavedSceneCMake { get; init; }
     public string? SavedSceneAppHost { get; init; }
@@ -799,6 +800,8 @@ public sealed partial class MainWindow : Window
                 _assetBrowser.CancelRemoval();
                 UpdateRebuildButtons();
             }
+            if (_assetTabs.SelectedIndex != 1) ++_projectIntent;
+            else if (_projectVisible && _projectScan is null) RefreshProject();
             if (_assetTabs.SelectedIndex == 2) RefreshSavedScenes();
         };
 
@@ -1049,6 +1052,7 @@ public sealed partial class MainWindow : Window
             AssetBuildProfile = _options.AssetBuildProfile, AssetGeneration = _options.AssetGeneration,
             AllowSceneSaveAs = _options.AllowSceneSaveAs,
             AllowPrefabRegistration = _options.AllowPrefabRegistration,
+            ProjectAssets = _options.ProjectAssets,
         };
         Task.Run(() =>
         {
@@ -1137,6 +1141,7 @@ public sealed partial class MainWindow : Window
         _renameDraftGeneration = null; _renameRequestContext = null; _renameUnknown = false;
         _rebuildPending = _rebuildRunning = false; _rebuildState.Text = "";
         _assetBrowser.Disconnect();
+        ResetProjectScan();
         RenderAssets();
         ViewportWindow? window = _viewport.Window;
         if (runtime is not null && window is not null && session.Window is ulong child)
@@ -1203,7 +1208,13 @@ public sealed partial class MainWindow : Window
             _newSceneSessionReady = true;
             UpdateNewSceneButton();
             UpdateRebuildButtons();
-            if (_assetTabs.SelectedIndex == 1) { QueryMaterial(); QueryTexture(); LoadAssets(); }
+            if (_assetTabs.SelectedIndex == 1)
+            {
+                QueryMaterial();
+                QueryTexture();
+                LoadAssets();
+                if (_projectVisible) RefreshProject();
+            }
         };
         worker.Failed += message =>
         {
@@ -1274,6 +1285,7 @@ public sealed partial class MainWindow : Window
             ClearBatchInspector();
             _inspectorPanel.Children.Clear();
             if (!_assetBrowser.InterruptReferences()) _assetBrowser.Disconnect();
+            ResetProjectScan();
             RenderAssets();
             _runtimeLine = "session failed: " + message;
             UpdateStatus();
@@ -2505,6 +2517,7 @@ public sealed partial class MainWindow : Window
         types.SelectionChanged += (_, _) =>
         {
             if (_revealAssetFilters) return;
+            ++_projectIntent;
             _assetBrowser.Type = types.SelectedIndex <= 0 ? null : (AssetType)(types.SelectedIndex - 1);
             RenderAssets();
         };
@@ -2515,6 +2528,7 @@ public sealed partial class MainWindow : Window
         search.PropertyChanged += (_, change) =>
         {
             if (change.Property != TextBox.TextProperty || _revealAssetFilters) return;
+            ++_projectIntent;
             _assetBrowser.Search = search.Text ?? "";
             RenderAssets();
         };
@@ -2526,11 +2540,14 @@ public sealed partial class MainWindow : Window
         {
             _assetSearch.Text = "";
             _assetTypes.SelectedIndex = 0;
+            _assetBrowser.Directory = null;
+            RenderAssets();
             _assetSearch.Focus();
         };
         _assetsState.TextWrapping = TextWrapping.Wrap;
         var heading = EditorVisuals.Bar(EditorVisuals.Stack(5,
             EditorVisuals.Columns("*,Auto", EditorVisuals.Heading("Asset catalog"), reload),
+            EditorVisuals.Disclosure("Catalog directories", _runtimeDirectoryTree),
             search, EditorVisuals.Actions(types, _assetSort, _assetGroup, _assetClearFilters),
             _assetsState));
 
@@ -2546,7 +2563,7 @@ public sealed partial class MainWindow : Window
         {
             if (_assetsSync || _assetsList.SelectedItem is AssetGroupHeader) return;
             if (_assetsList.SelectedItem is AssetSummary asset) ReadAsset(asset.Guid);
-            else { _assetBrowser.ClearSelection(); RenderAssets(); }
+            else { ++_projectIntent; _assetBrowser.ClearSelection(); RenderAssets(); }
         };
         var copy = new Button { Content = "Copy GUID" };
         copy.Click += async (_, _) =>
@@ -2647,18 +2664,20 @@ public sealed partial class MainWindow : Window
         var material = EditorVisuals.Disclosure("Materials", EditorVisuals.Stack(5,
             EditorVisuals.Actions(_newMaterial, _copyMaterial, _editMaterial),
             EditorVisuals.Actions(_materialRefresh, _materialResume), _materialState), expanded: true);
-        var body = EditorVisuals.Stack(7, _assetsList, selected, material,
+        _projectGltfImport = EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
+            EditorVisuals.Actions(_importRegister, _importResume, _importRefresh)));
+        _projectPngImport = EditorVisuals.Disclosure("Import Texture", EditorVisuals.Stack(4,
+            EditorVisuals.Secondary("Place one PNG in inbox/<name>/source.png."),
+            _textureKind, _textureFormat, _textureName,
+            EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
+            _textureState));
+        var body = EditorVisuals.Stack(7, _assetsList, _showProjectSource, _projectRuntimeNotice, selected, material,
             EditorVisuals.Disclosure("Rebuild / Reimport", EditorVisuals.Stack(5,
                 EditorVisuals.Actions(_rebuildStart, _rebuildRefresh), _reimportInput)),
             _rebuildState,
-            EditorVisuals.Disclosure("Import", EditorVisuals.Stack(4, _importName,
-                EditorVisuals.Actions(_importRegister, _importResume, _importRefresh))),
+            _projectGltfImport,
             _importState,
-            EditorVisuals.Disclosure("Import Texture", EditorVisuals.Stack(4,
-                EditorVisuals.Secondary("Place one PNG in inbox/<name>/source.png."),
-                _textureKind, _textureFormat, _textureName,
-                EditorVisuals.Actions(_textureRegister, _textureResume, _textureRefresh),
-                _textureState)),
+            _projectPngImport,
             EditorVisuals.Secondary("Catalog fixed at first query. Changed build or initial load failure: restart Runtime. Reload view does not reread disk."));
         body.Margin = new Thickness(8);
         var panel = new DockPanel();
@@ -2670,13 +2689,13 @@ public sealed partial class MainWindow : Window
             _assetsList.Height = compact ? 180 : 256;
             _previewImage.Height = compact ? 156 : 192;
         };
-        return panel;
+        return WrapProjectAssets(panel);
     }
 
     private void OnAssetPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _assetPress = null;
-        if (_assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
+        if (_projectVisible || _assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
             !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
             e.ClickCount != 1 || HierarchyItem(e.Source) is not { DataContext: AssetSummary row }) return;
         _assetPress = (row.Guid, e, e.GetPosition(_assetsList));
@@ -2986,11 +3005,13 @@ public sealed partial class MainWindow : Window
     private void LoadAssets()
     {
         var worker = _worker; if (worker is null || _referenceSessionFailed) return;
+        ++_projectIntent;
         long request = _assetBrowser.BeginList(); RenderAssets();
         worker.LoadAssets(result =>
         {
             if (!ReferenceEquals(worker, _worker) || !_assetBrowser.CompleteList(request, result)) return;
             RenderAssets();
+            UpdateProjectActions();
         });
     }
     private void ReadAsset(AssetGuid guid, LocatedAssetReference? located = null)
@@ -2998,6 +3019,7 @@ public sealed partial class MainWindow : Window
         var worker = _worker; if (worker is null) return;
         if (_assetBrowser.State != "Ready" || _referenceSessionFailed ||
             !_assetBrowser.Visible.Any(asset => asset.Guid == guid)) return;
+        if (_assetBrowser.Selected != guid) ++_projectIntent;
         long request = _assetBrowser.Select(guid, located);
         AssetDetailIntent? intent = _assetBrowser.DetailIntent;
         RenderAssets();
@@ -3008,7 +3030,7 @@ public sealed partial class MainWindow : Window
     }
     private void RenderAssets()
     {
-        if (_assetDrag is { } drag && (!_assetBrowser.SelectionVisible || _assetBrowser.Selected != drag.Asset.Guid ||
+        if (_assetDrag is { } drag && (_projectVisible || !_assetBrowser.SelectionVisible || _assetBrowser.Selected != drag.Asset.Guid ||
             !ReferenceEquals(drag.Catalog, _assetBrowser.Items)))
         {
             drag.Cancel();
@@ -3040,7 +3062,10 @@ public sealed partial class MainWindow : Window
         bool hidden = _assetBrowser.State == "Ready" && _assetBrowser.Selected is not null && !_assetBrowser.SelectionVisible;
         if (hidden) _assetsState.Text += " · Selected asset is hidden";
         if (_assetCopyGuid is not null) _assetCopyGuid.IsEnabled = _assetBrowser.SelectionVisible;
-        _assetClearFilters.IsEnabled = !string.IsNullOrEmpty(_assetSearch.Text) || _assetBrowser.Type is not null;
+        _assetClearFilters.IsEnabled = !string.IsNullOrEmpty(_assetSearch.Text) || _assetBrowser.Type is not null ||
+            _assetBrowser.Directory is not null;
+        RenderRuntimeDirectories();
+        UpdateProjectSourceAction();
         _assetTitle.Text = _assetsList.SelectedItem is AssetSummary asset
             ? asset.Type == AssetType.Material ? EditorVisuals.ReferenceMaterialName(asset) : EditorVisuals.AssetName(asset)
             : hidden ? "Selected asset is hidden" : "Select an asset";
@@ -3097,6 +3122,7 @@ public sealed partial class MainWindow : Window
             return row.Published is not null && (!_taskIssues.ActivationKnown || row.Published != _taskIssues.ActiveGeneration)
                 ? "This asset is absent from the active catalog. Check the generation and explicitly restart to activate it."
                 : "The asset is no longer in the active catalog.";
+        ShowProjectView(false);
         RevealAsset(guid);
         _assetTabs.SelectedIndex = 1;
         _assetsList.Focus();
@@ -3491,7 +3517,7 @@ public sealed partial class MainWindow : Window
 
     private void SyncPreviewSelection(bool invalidate = false)
     {
-        var visibleMesh = _assetBrowser.State == "Ready" &&
+        var visibleMesh = !_projectVisible && _assetBrowser.State == "Ready" &&
             _assetsList.SelectedItem is AssetSummary { Type: AssetType.Mesh };
         _previewMaterial.IsVisible = _previewPair.IsVisible = visibleMesh;
         _previewMaterial.IsEnabled = visibleMesh && _referenceWindow is null && _previewSession is not null;
@@ -4135,7 +4161,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var opened = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!, recent,
-                allowPrefabRegistration: _options.AllowPrefabRegistration));
+                allowPrefabRegistration: _options.AllowPrefabRegistration, projectAssets: _options.ProjectAssets));
             child = opened.Child;
             if (opened.Refusal is { } refusal)
             {

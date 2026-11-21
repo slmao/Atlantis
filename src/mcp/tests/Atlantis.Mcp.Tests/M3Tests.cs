@@ -41,8 +41,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 87 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 87,
-            "87 unique approved tools including Prefab revision, update, sync and replay");
+        Check(ToolRegistry.AllMappings.Length == 89 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 89,
+            "89 unique approved tools including Prefab revision, update, sync and replay");
         FakeSession oldGroupHost = new() { Response =
             """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
         var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));

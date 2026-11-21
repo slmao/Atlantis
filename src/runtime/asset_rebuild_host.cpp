@@ -8,6 +8,7 @@
 #include <objbase.h>
 
 #include "static_group_projection.h"
+#include "project_assets_scan.h"
 
 #include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/connection/json.h>
@@ -545,7 +546,7 @@ std::optional<TextureUnit> readTextureUnit(const fs::path& root, const fs::path&
   return TextureUnit{entry.guid, *digest, kind};
 }
 
-std::optional<Textures> registeredTextures(const fs::path& root) {
+std::optional<Textures> registeredTextures(const fs::path& root, const std::atomic<bool>* stop = nullptr) {
   const auto registry = root / "registered";
   if (!realDirectory(registry)) return {};
   Textures out;
@@ -553,6 +554,7 @@ std::optional<Textures> registeredTextures(const fs::path& root) {
   std::error_code ec;
   for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
     const auto leaf = utf8(at->path().filename());
+    if (stop && (*stop || out.size() >= ca::kProjectEntries)) return {};
     if (!leaf.starts_with("texture_")) continue;
     const auto name = std::string_view(leaf).substr(8);
     const auto entry = readTextureUnit(registry, fromUtf8(leaf), name);
@@ -631,12 +633,14 @@ std::string_view inventoryHeader(std::string_view data) {
   return data.substr(0, data.find('\n'));
 }
 
-std::optional<Registrations> readRegistrations(const fs::path& root) {
+std::optional<Registrations> readRegistrations(const fs::path& root, const std::atomic<bool>* stop = nullptr) {
   const auto registry = root / "registered";
   if (!realDirectory(registry)) return std::nullopt;
   Registrations result;
+  std::size_t visited = 0;
   std::error_code ec;
   for (fs::directory_iterator at(registry, ec), end; !ec && at != end; at.increment(ec)) {
+    if (stop && (*stop || visited++ >= ca::kProjectEntries)) return {};
     const auto dir = at->path();
     const auto leaf = utf8(dir.filename());
     if (leaf.starts_with("material_") || leaf.starts_with("texture_")) continue;
@@ -970,6 +974,11 @@ struct AssetRebuildHost::State {
     std::shared_ptr<const as::AssetCatalog> catalog;
     Clock::time_point deadline;
   };
+  struct ProjectRead {
+    ca::ProjectScan scan;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    ProjectReader checkout;
+  };
   struct RemovalProof {
     RemovalInputs inputs;
     Producers view;
@@ -1033,6 +1042,8 @@ struct AssetRebuildHost::State {
   std::optional<Work> running;
   std::optional<RemovalRead> removalCheck;
   std::optional<RemovalProof> removalProof;
+  std::optional<ProjectRead> projectRead;
+  std::optional<ca::ProjectScan> lastProjectScan;
   std::deque<ca::RebuildJob> completed;
   std::thread worker;
 
@@ -1049,7 +1060,7 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
-    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork ||
+    if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork || projectRead ||
         (removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking))
       return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
@@ -2994,6 +3005,129 @@ struct AssetRebuildHost::State {
     textureWork.reset();
   }
 
+  ca::ProjectRoot scanInbox(const as::AssetCatalog* catalog) const {
+    namespace pa = project_assets;
+    const auto readRegistry = [&] {
+      return !dirty && readRegistrations(project, &stopping) == registered &&
+          registeredTextures(project, &stopping) == committedTextures;
+    };
+    const auto registryPins = pa::pin(project / "registered");
+    const bool registryChecked = !registryPins.empty() && readRegistry();
+
+    std::map<std::string, std::vector<as::AssetGuid>, std::less<>> outputs;
+    bool linkBudgetExceeded = false;
+    if (registryChecked && catalog) {
+      std::size_t count = 0;
+      for (const auto& record : catalog->records()) {
+        if (stopping) break;
+        if (record.source.root != as::CatalogRoot::Content || record.source.subKey.empty()) continue;
+        const auto key = "content:" + record.source.path;
+        const auto name = managedName(key);
+        if (!name) continue;
+        const auto live = registered.find(*name);
+        const auto activeRegistration = activeRegistered.find(*name);
+        const auto producer = producers.find(key);
+        const auto& subKey = record.source.subKey;
+        const bool typed = (subKey == "scene" && record.type == as::CatalogAssetType::Scene) ||
+            (subKey.starts_with("mesh/") && record.type == as::CatalogAssetType::Mesh) ||
+            (subKey.starts_with("material/") && record.type == as::CatalogAssetType::Material) ||
+            ((subKey.starts_with("texture/") || subKey == "fallback/white") && record.type == as::CatalogAssetType::Texture);
+        if (live == registered.end() || activeRegistration == activeRegistered.end() || live->second != activeRegistration->second ||
+            producer == producers.end() || producer->second.root != live->second || !typed ||
+            record.guid != as::deriveAssetGuid(live->second, subKey)) continue;
+        if (count++ >= ca::kProjectLinks) { linkBudgetExceeded = true; break; }
+        outputs[std::string(*name)].push_back(record.guid);
+      }
+    }
+    const auto observe = [&](ca::ProjectSource& row, const fs::path& path, const pa::FileProof& proof) {
+      const auto ext = pa::text(path.extension());
+      const auto slash = row.path.find('/');
+      std::string name;
+      if (ext == ".gltf") {
+        row.kind = ca::ProjectSourceKind::Gltf;
+        if (slash == std::string::npos) name = row.path.substr(0, row.path.size() - 5);
+      } else if (ext == ".png") {
+        row.kind = ca::ProjectSourceKind::Png;
+        if (slash != std::string::npos && row.path.substr(slash + 1) == "source.png")
+          name = row.path.substr(0, slash);
+      }
+      if (!ca::validImportName(name)) return true;
+      row.importName = name;
+      if (!registryChecked) return true;
+
+      const bool gltf = row.kind == ca::ProjectSourceKind::Gltf;
+      const auto liveGltf = registered.find(name);
+      const auto livePng = committedTextures.find(name);
+      if ((gltf && liveGltf == registered.end()) || (!gltf && livePng == committedTextures.end())) {
+        row.registration = ca::ProjectRegistration::SourceOnly;
+        return true;
+      }
+      if (!gltf && livePng->second.kind != TextureKind::Color) return true;
+
+      const auto unit = project / "registered" / ((gltf ? "managed_" : "texture_") + name);
+      const auto unitPins = pa::pin(unit);
+      const auto fragment = pa::checked(unit / "catalog-source.txt", false, true);
+      if (unitPins.empty() || !fragment) return false;
+      const auto bytes = pa::read(*fragment, 1024);
+      if (!bytes) return false;
+      const auto guid = gltf ? liveGltf->second : livePng->second.guid;
+      const as::CatalogSourceEntry expected{guid,
+          gltf ? as::CatalogAssetType::GltfImport : as::CatalogAssetType::Texture,
+          as::CatalogRoot::Content, (gltf ? managedSourceKey(name) : textureKey(name, TextureKind::Color)).substr(8)};
+      if (as::serializeAssetCatalogSource({expected}) != *bytes) return false;
+      const auto source = pa::checked(unit / (gltf ? "source.gltf" : "source.png"), false);
+      if (!source) return false;
+      const auto digest = digestSceneBytes(proof.key() + unitPins.back().key() + fragment->key() +
+          source->key() + *bytes + (gltf ? std::string{} : livePng->second.digest));
+      if (!digest) return false;
+      row.evidence = *digest;
+      row.registration = ca::ProjectRegistration::Registered;
+      row.producer = guid;
+      if (gltf) {
+        if (const auto found = outputs.find(name); found != outputs.end()) row.outputs = found->second;
+      } else if (catalog) {
+        const auto activeTexture = activeTextures.find(name);
+        const auto key = textureKey(name, TextureKind::Color);
+        const auto producer = producers.find(key);
+        const auto* record = catalog->find(guid);
+        if (activeTexture != activeTextures.end() && activeTexture->second.guid == guid &&
+            activeTexture->second.kind == TextureKind::Color &&
+            producer != producers.end() && producer->second.root == guid &&
+            record && record->type == as::CatalogAssetType::Texture && as::toString(record->source) == key)
+          row.outputs.push_back(guid);
+      }
+      return true;
+    };
+    const auto inbox = project / "inbox";
+    auto root = pa::treeRead(inbox, ca::ProjectRootKind::Inbox, ca::kProjectEntries, stopping, observe);
+    if (root.coverage == ca::ProjectCoverage::Complete) {
+      const auto finalRegistry = pa::checked(project / "registered", true);
+      if (!registryChecked || !finalRegistry || finalRegistry->key() != registryPins.back().key() ||
+          !readRegistry() || linkBudgetExceeded)
+        pa::incomplete(root, "Registration evidence is incomplete or changed during the scan.");
+    }
+    return root;
+  }
+
+  void settleProjectRead(ProjectRead work) {
+    try {
+      auto inbox = scanInbox(work.catalog.get());
+      auto checkout = work.checkout(ca::kProjectEntries - inbox.sources.size(), stopping);
+      work.scan.roots = {std::move(inbox), std::move(checkout)};
+    } catch (const std::exception&) {
+      work.scan.roots = {
+        {ca::ProjectRootKind::Inbox, ca::ProjectCoverage::Unavailable, "The source scan failed.", {}},
+        {ca::ProjectRootKind::Prefabs, ca::ProjectCoverage::Unavailable, "The source scan failed.", {}},
+      };
+    }
+    work.scan.pending = false;
+    work.scan.catalogReady = static_cast<bool>(work.catalog);
+    project_assets::verifyLimits(work.scan);
+    std::lock_guard lock(mutex);
+    lastProjectScan = std::move(work.scan);
+    projectRead.reset();
+  }
+
   void run() {
     for (;;) {
       std::optional<Work> work;
@@ -3001,16 +3135,22 @@ struct AssetRebuildHost::State {
       std::optional<MaterialWork> material;
       std::optional<TextureWork> texture;
       std::optional<RemovalRead> removal;
+      std::optional<ProjectRead> scan;
       {
         std::unique_lock lock(mutex);
         const auto checking = [&] { return removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking; };
-        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork || checking(); });
-        if (stopping && !running && !importing && !materialWork && !textureWork && !checking()) return;
+        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork || projectRead || checking(); });
+        if (stopping && !running && !importing && !materialWork && !textureWork && !projectRead && !checking()) return;
         work = running;
         import = importing;
         material = materialWork;
         texture = textureWork;
         if (checking()) removal = removalCheck;
+        scan = projectRead;
+      }
+      if (scan) {
+        settleProjectRead(std::move(*scan));
+        continue;
       }
       if (removal) {
         settleRemovalCheck(std::move(*removal));
@@ -3078,6 +3218,32 @@ struct AssetRebuildHost::State {
 AssetRebuildHost::AssetRebuildHost(std::unique_ptr<State> state) : state_(std::move(state)) {}
 AssetRebuildHost::~AssetRebuildHost() = default;
 void AssetRebuildHost::stop() { state_->stop(); }
+
+bool AssetRebuildHost::hasProjectSources() const noexcept {
+  return !state_->project.empty();
+}
+
+ca::ProjectScanResult AssetRebuildHost::scanProject(ca::ProjectScan scan,
+    std::shared_ptr<const as::AssetCatalog> catalog, ProjectReader checkout) {
+  using E = ca::ProjectScanError;
+  using R = ca::ProjectScanResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->stopping || !state_->projectWriter || !state_->writer) return R::Err(E::Unavailable);
+  if (state_->running || state_->importing || state_->materialWork || state_->textureWork || state_->projectRead ||
+      (state_->removalCheck && state_->removalCheck->check.state == ca::TextureRemovalState::Checking))
+    return R::Err(E::Busy);
+  state_->projectRead.emplace(State::ProjectRead{scan, std::move(catalog), std::move(checkout)});
+  state_->changed.notify_one();
+  return R::Ok(std::move(scan));
+}
+
+ca::ProjectScanResult AssetRebuildHost::projectScanStatus(const as::AssetGuid& id) const {
+  using R = ca::ProjectScanResult;
+  std::lock_guard lock(state_->mutex);
+  if (state_->projectRead && state_->projectRead->scan.id == id) return R::Ok(state_->projectRead->scan);
+  if (state_->lastProjectScan && state_->lastProjectScan->id == id) return R::Ok(*state_->lastProjectScan);
+  return R::Err(ca::ProjectScanError::UnknownScan);
+}
 
 Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Config config) {
   using R = Result<std::unique_ptr<AssetRebuildHost>, std::string>;

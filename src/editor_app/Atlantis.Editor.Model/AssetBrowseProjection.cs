@@ -31,6 +31,21 @@ public sealed class AssetBrowseProjection
     public string Guid { get; }
     public string CompactGuid { get; }
     public string SourceGroup { get; }
+    public string Directory
+    {
+        get
+        {
+            if (LogicalPath is string logical)
+            {
+                int slash = logical.LastIndexOf('/');
+                return slash < 0 ? "Logical" : "Logical/" + logical[..slash];
+            }
+            if (SourceGroup == "Other") return SourceGroup;
+            string path = Asset.Source[SourceGroup.Length..].Split('#', 2)[0];
+            int last = path.LastIndexOf('/');
+            return last < 0 ? SourceGroup : SourceGroup + "/" + path[..last];
+        }
+    }
 
     public bool Matches(string query, string path, string? compact) =>
         Codec.ValidTextureLogicalPath(query) ? LogicalPath == query :

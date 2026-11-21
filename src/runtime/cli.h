@@ -182,6 +182,7 @@ struct CommandLineResult {
   std::optional<atlantis::asset_system::AssetGuid> assetGeneration;
   bool allowSceneSaveAs = false;
   bool allowPrefabRegistration = false;
+  bool projectAssets = false;
   // Spec 0059 / ADR-0117 D1: populated only when outcome == RunScene and
   // --benchmark was given; then selectedScene is empty and execScript, listenPort,
   // sessionFile and editor are unset.

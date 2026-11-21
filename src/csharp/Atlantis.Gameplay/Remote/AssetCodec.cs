@@ -10,6 +10,97 @@ namespace Atlantis.Gameplay.Remote;
 
 public static partial class Codec
 {
+    public static A.ProjectScanError? DecodeProjectScanError(JsonValue value) => RebuildToken<A.ProjectScanError>(value);
+
+    public static A.ProjectScan? DecodeProjectScan(JsonValue value)
+    {
+        if (!Exact(value, 4) || value.Find("id") is not JsonValue idValue ||
+            DecodeProjectGuid(idValue) is not AssetGuid id ||
+            value.Find("pending") is not { IsBool: true } pending ||
+            value.Find("catalogReady") is not { IsBool: true } catalog ||
+            value.Find("roots") is not { IsArray: true } roots ||
+            (pending.AsBool ? catalog.AsBool || roots.Items.Count != 0 : roots.Items.Count != 2) ||
+            Encoding.UTF8.GetByteCount(Json.Write(value)) > 2 * 1024 * 1024) return null;
+
+        var parsed = new List<A.ProjectRoot>(2);
+        var usedRoots = new HashSet<A.ProjectRootKind>();
+        var links = new HashSet<AssetGuid>();
+        int entries = 0;
+        foreach (var root in roots.Items)
+        {
+            if (!Exact(root, 4) || ProjectToken<A.ProjectRootKind>(root.Find("kind")) is not A.ProjectRootKind kind ||
+                !usedRoots.Add(kind) ||
+                ProjectToken<A.ProjectCoverage>(root.Find("coverage")) is not A.ProjectCoverage coverage ||
+                root.Find("diagnostic") is not { IsString: true } diagnostic ||
+                Encoding.UTF8.GetByteCount(diagnostic.AsString) > 256 ||
+                root.Find("sources") is not { IsArray: true } rows ||
+                coverage == A.ProjectCoverage.Unavailable && rows.Items.Count != 0) return null;
+            var paths = new HashSet<string>(StringComparer.Ordinal);
+            var sources = new List<A.ProjectSource>();
+            foreach (var row in rows.Items)
+            {
+                if (++entries > 2048 || !Exact(row, 8) ||
+                    row.Find("path") is not { IsString: true } path || !ValidProjectPath(path.AsString) ||
+                    !paths.Add(path.AsString) ||
+                    ProjectToken<A.ProjectSourceKind>(row.Find("kind")) is not A.ProjectSourceKind rowKind ||
+                    ProjectToken<A.ProjectRegistration>(row.Find("registration")) is not A.ProjectRegistration registration ||
+                    row.Find("importName") is not JsonValue name ||
+                    row.Find("evidence") is not { IsString: true } proof || !ValidPrefabDigest(proof.AsString) ||
+                    row.Find("producer") is not JsonValue producer ||
+                    row.Find("outputs") is not { IsArray: true } outputs ||
+                    row.Find("newerPrefabSource") is not { IsBool: true } newer)
+                    return null;
+
+                AssetGuid? producerId = DecodeProjectGuid(producer);
+                if (!producer.IsNull && !producerId.HasValue ||
+                    (registration == A.ProjectRegistration.Registered) != producerId.HasValue ||
+                    coverage != A.ProjectCoverage.Complete && registration != A.ProjectRegistration.Unknown ||
+                    (!producerId.HasValue || !catalog.AsBool) && outputs.Items.Count != 0 ||
+                    newer.AsBool && (rowKind != A.ProjectSourceKind.Prefab || outputs.Items.Count == 0)) return null;
+                string? importName = null;
+                if (!name.IsNull)
+                {
+                    if (!name.IsString || !ValidImportName(name.AsString) || kind != A.ProjectRootKind.Inbox ||
+                        !((rowKind == A.ProjectSourceKind.Gltf && path.AsString == name.AsString + ".gltf") ||
+                          (rowKind == A.ProjectSourceKind.Png && path.AsString == name.AsString + "/source.png"))) return null;
+                    importName = name.AsString;
+                }
+                var linked = new List<AssetGuid>();
+                foreach (var output in outputs.Items)
+                {
+                    if (DecodeProjectGuid(output) is not AssetGuid guid || !links.Add(guid) || links.Count > 4096)
+                        return null;
+                    linked.Add(guid);
+                }
+                if (kind == A.ProjectRootKind.Prefabs && rowKind is not (A.ProjectSourceKind.Directory or A.ProjectSourceKind.Prefab) ||
+                    kind == A.ProjectRootKind.Inbox && rowKind == A.ProjectSourceKind.Prefab ||
+                    rowKind == A.ProjectSourceKind.Directory && path.AsString.Count(c => c == '/') >= 4 ||
+                    registration != A.ProjectRegistration.Unknown && importName is null && rowKind != A.ProjectSourceKind.Prefab ||
+                    (rowKind is A.ProjectSourceKind.Png or A.ProjectSourceKind.Prefab) &&
+                    (linked.Count > 1 || linked.Count == 1 && linked[0] != producerId))
+                    return null;
+                sources.Add(new(path.AsString, rowKind, importName, proof.AsString, registration, producerId,
+                    linked.AsReadOnly(), newer.AsBool));
+            }
+            parsed.Add(new(kind, coverage, diagnostic.AsString, sources.AsReadOnly()));
+        }
+        return new(id, pending.AsBool, catalog.AsBool, parsed.AsReadOnly());
+    }
+
+    private static AssetGuid? DecodeProjectGuid(JsonValue value) =>
+        DecodeAsset(value) is AssetGuid guid && !guid.IsNil && guid.ToString() == value.AsString ? guid : null;
+
+    private static T? ProjectToken<T>(JsonValue? value) where T : struct, Enum =>
+        value is { IsString: true } ? RebuildToken<T>(value) : null;
+
+    private static bool ValidProjectPath(string path)
+    {
+        if (path.Length == 0 || Encoding.UTF8.GetByteCount(path) > 512) return false;
+        string[] parts = path.Split('/');
+        return parts.Length <= 5 && parts.All(part => part.Length != 0 && part[0] != '.' &&
+            part[^1] is not ('.' or ' ') && !part.Any(c => c < 32 || c == 127 || "\\:*?\"<>|".Contains(c)));
+    }
+
     public static A.StaticGroupError? DecodeStaticGroupError(JsonValue value) => RebuildToken<A.StaticGroupError>(value);
 
     public static bool IsUnsupportedStaticGroup(JsonValue envelope) =>

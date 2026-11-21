@@ -7,10 +7,28 @@ namespace Atlantis.Gameplay.Tests;
 
 public static class AssetCodecSuite
 {
+    private static void ProjectScan(TestContext t, AssetGuid id)
+    {
+        const string pending = """{"id":"00810081-0081-4081-8081-008100810081","pending":true,"catalogReady":false,"roots":[]}""";
+        t.Check(Codec.DecodeProjectScan(Json.Parse(pending)) is { Pending: true } scan && scan.Id == id,
+            "project scan starts with a correlated ID and no result");
+        t.Check(Codec.DecodeProjectScan(Json.Parse(pending.Replace("false", "true"))) is null,
+            "pending scan cannot claim active catalog evidence");
+        string row = $$$"""{"path":"storefront.gltf","kind":"Gltf","importName":"storefront","evidence":"{{{new string('b', 64)}}}","registration":"Registered","producer":"{{{id}}}","outputs":["{{{id}}}"],"newerPrefabSource":false}""";
+        string settled = $$$"""{"id":"{{{id}}}","pending":false,"catalogReady":true,"roots":[{"kind":"Inbox","coverage":"Complete","diagnostic":"","sources":[{{{row}}}]},{"kind":"Prefabs","coverage":"Unavailable","diagnostic":"unavailable","sources":[]}]}""";
+        var result = Codec.DecodeProjectScan(Json.Parse(settled));
+        t.Check(result?.Roots[0].Sources[0].Outputs.Single() == id, "settled project scan preserves checked links");
+        foreach (string invalid in new[] { settled.Replace("Complete", "Incomplete"), settled.Replace("storefront.gltf", "../storefront.gltf"),
+            settled.Replace("Prefab", "Inbox"), settled.Replace("catalogReady\":true", "catalogReady\":false"),
+            settled.Replace($"\"outputs\":[\"{id}\"]", $"\"outputs\":[\"{id}\",\"{id}\"]") })
+            t.Check(Codec.DecodeProjectScan(Json.Parse(invalid)) is null, "invalid project evidence is refused");
+    }
+
     public static void Run(TestContext t)
     {
         var guid = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
         StaticGroup(t, guid);
+        ProjectScan(t, guid);
         foreach (A.AssetType type in System.Enum.GetValues<A.AssetType>())
         {
             var summary = new A.AssetSummary(guid, type, "content:scene.gltf#mesh/0");

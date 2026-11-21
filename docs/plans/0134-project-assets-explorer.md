@@ -1,10 +1,10 @@
 # Plan 0134 — Project Assets Explorer V1
 
 - **Spec:** [Spec 0134](../specs/0134-project-assets-explorer.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0183](../adr/0183-project-source-inventory-and-catalog-links.md) (Proposed)
+- **Joint Human Review:** Spec/Plan 0134 and J1–J4 approved on `a7268957`. S2–S4 authorized after the maintainer merge of [#431](https://github.com/slmao/Atlantis/pull/431) as `fd719938`. [Joint approval](https://github.com/slmao/Atlantis/pull/431#issuecomment-7067495383)
+- **ADR:** [ADR-0183](../adr/0183-project-source-inventory-and-catalog-links.md) (Accepted)
 - **Design baseline:** `d814059f`, maintainer merge of [#430](https://github.com/slmao/Atlantis/pull/430)
 
 ## Objective
@@ -41,7 +41,16 @@ asset usable and place it.
 | `src/editor_app/Atlantis.Editor`, `src/editor_app/Atlantis.Editor.Model`, matching Editor tests | Launch opt-in, Assets trees and filters, stale intent guards, status and existing import handoff. |
 | Spec/Plan 0134, ADR-0183 and the Spec registry | Approval and navigation. |
 
-List concrete implementation files inside these areas when work starts.
+The implementation uses the Runtime's `project_assets_scan.h` with
+`asset_host`, `asset_rebuild_host`, and the Runtime launch parser. The
+shared value and transport changes use `asset_connection.{h,cpp}`,
+`remote_{server,client}.cpp`, CLI `command_layer.cpp` and `invocation.cpp`,
+the native `assets.h` facade, C# `Assets.cs`, `AssetSession.cs`,
+`AssetCodec.cs`, and MCP `ToolRegistry.cs`. The Editor uses
+`MainWindow.ProjectAssets.cs`, `MainWindow.cs`, `EditorSession.cs`,
+`RuntimeProcess.cs`, `Program.cs`, `SavedSceneWorkspace.cs`, model
+`ProjectNavigation.cs`, and the existing Assets projection. Checks extend
+the existing Runtime, Remote, CLI, SDK, MCP discovery and Editor asset suites.
 Record a necessary non-semantic file-list change in the implementation PR
 under the existing approval rule.
 

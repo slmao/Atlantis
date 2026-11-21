@@ -1101,6 +1101,29 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
+    if (t.size() > 1 && (t[1] == "scan-project" || t[1] == "project-scan-status")) {
+      namespace ca = connection::assets;
+      const bool start = t[1] == "scan-project";
+      const auto usage = start ? "asset scan-project" : "asset project-scan-status <scan-id>";
+      if (t.size() != (start ? 2u : 3u)) return failed(command, usageError(usage));
+      asset_system::AssetGuid id{};
+      if (!start) {
+        const auto parsed = asset_system::parseAssetGuid(t[2]);
+        if (parsed.isErr() || parsed.value() == id || asset_system::toString(parsed.value()) != t[2])
+          return failed(command, usageError(usage));
+        id = parsed.value();
+      }
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      const auto result = endpoint ? (start ? endpoint->scanProject() : endpoint->projectScanStatus(id))
+          : ca::ProjectScanResult::Err(ca::ProjectScanError::Unsupported);
+      if (result.isErr()) {
+        const std::string name(ca::toString(result.error()));
+        return failed(command, plainError(name, ErrorCategory::Refused, name));
+      }
+      auto value = ca::encodeProjectScan(result.value());
+      auto output = connection::json::write(value) + "\n";
+      return done(command, std::move(output), std::move(value));
+    }
     if (t.size() > 1 && (t[1] == "static-group" || t[1] == "prefab" || t[1] == "prefab-revision")) {
       namespace ca = connection::assets;
       const bool prefab = t[1] == "prefab";
