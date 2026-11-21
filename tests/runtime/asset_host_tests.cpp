@@ -37,7 +37,7 @@ as::AssetCatalogRecord record(as::CatalogAssetType type, std::string key) {
 }
 TEST_CASE("project scan checks launch permission, independent roots and exact IDs", "[runtime][assets][project]") {
   CatalogFixture fixture;
-  const auto root = fixture.dir / "asset_root";
+  const auto root = std::filesystem::canonical(fixture.dir) / "asset_root";
   const auto prefab = root / "prefabs";
   std::filesystem::create_directories(prefab);
   struct Clean {
