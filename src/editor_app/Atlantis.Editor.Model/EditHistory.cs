@@ -97,6 +97,8 @@ public enum HistoryResult
 
 public enum BatchReplayState { Committed, Retry, Drop }
 
+public sealed record PrefabHistory(EntityGuid Root, PrefabSubtree Before, PrefabSubtree After) : EditEntry;
+
 public sealed record BatchReplayResult(BatchReplayState State, string Notice);
 
 /// <summary>E2's history (ADR-0124), over any edit target. Not thread-safe.</summary>
@@ -176,14 +178,16 @@ public sealed class EditHistory
     public HistoryResult Undo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
-        Func<NodeLife, bool, BatchReplayResult>? preset = null) =>
-        Take(_undo, Step.Undo, swap, batch, duplicate, preset);
+        Func<NodeLife, bool, BatchReplayResult>? preset = null,
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null) =>
+        Take(_undo, Step.Undo, swap, batch, duplicate, preset, prefab);
 
     public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
-        Func<NodeLife, bool, BatchReplayResult>? preset = null) =>
-        Take(_redo, Step.Redo, swap, batch, duplicate, preset);
+        Func<NodeLife, bool, BatchReplayResult>? preset = null,
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null) =>
+        Take(_redo, Step.Redo, swap, batch, duplicate, preset, prefab);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -237,7 +241,8 @@ public sealed class EditHistory
         Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap,
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate,
-        Func<NodeLife, bool, BatchReplayResult>? preset)
+        Func<NodeLife, bool, BatchReplayResult>? preset,
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab)
     {
         if (Waiting)
         {
@@ -258,6 +263,8 @@ public sealed class EditHistory
             return HistoryResult.Submitted;
         }
         BatchReplayResult? guarded = null;
+        if (edit.Structure is [PrefabHistory instance])
+            guarded = (prefab ?? throw new InvalidOperationException("Prefab replay requires guarded settlement."))(instance, forward);
         if (edit.Structure is [BatchPropertyEdit properties])
             guarded = (batch ?? throw new InvalidOperationException("Batch replay requires guarded settlement."))(properties, forward);
         if (edit.Structure is [NodeLife { Preset: not null } creation])

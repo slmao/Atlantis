@@ -159,10 +159,31 @@ std::string_view toString(SaveAsError error) noexcept {
     case SaveAsError::NameConflict: return "NameConflict";
     case SaveAsError::IdentityConflict: return "IdentityConflict";
     case SaveAsError::WriteFailed: return "WriteFailed";
+    case SaveAsError::StaleSource: return "StaleSource";
     case SaveAsError::Unsupported: return "Unsupported";
     case SaveAsError::UnknownOutcome: return "UnknownOutcome";
     case SaveAsError::StaleDocument: return "StaleDocument";
     case SaveAsError::UnsupportedSubtree: return "UnsupportedSubtree";
+  }
+  return "Unknown";
+}
+
+bool validPrefabDigest(std::string_view value) noexcept {
+  return value.size() == 64 && value.find_first_not_of("0123456789abcdef") == std::string_view::npos;
+}
+
+std::string_view toString(PrefabEditError error) noexcept {
+  using E = PrefabEditError;
+  switch (error) {
+    case E::Unsupported: return "Unsupported";
+    case E::NoDocument: return "NoDocument";
+    case E::StaleDocument: return "StaleDocument";
+    case E::StaleSource: return "StaleSource";
+    case E::InvalidInstance: return "InvalidInstance";
+    case E::LocalConflict: return "LocalConflict";
+    case E::BaselineUnavailable: return "BaselineUnavailable";
+    case E::ReplayConflict: return "ReplayConflict";
+    case E::UnknownOutcome: return "UnknownOutcome";
   }
   return "Unknown";
 }

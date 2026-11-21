@@ -196,6 +196,8 @@ struct Prepared {
 
 }  // namespace
 
+std::optional<std::string> digestSceneBytes(std::string_view bytes) { return sha(bytes); }
+
 struct SceneRecoveryStore::State {
   State(fs::path path, as::AssetGuid guid) : source(std::move(path)), scene(guid) {}
   ~State() {

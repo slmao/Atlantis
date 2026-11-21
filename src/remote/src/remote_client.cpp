@@ -507,6 +507,32 @@ class RemoteAssets final : public connection::AssetConnection {
   ca::StaticGroupResult prefab(const AssetGuid& guid) const override {
     return readGroup(guid, true);
   }
+  ca::PrefabRevisionResult prefabRevision(const AssetGuid& guid) const override {
+    using R = ca::PrefabRevisionResult;
+    using E = ca::StaticGroupError;
+    const auto method = "assets.prefabRevision";
+    Value params = Value::object();
+    params.set("guid", codec::encodeAsset(guid));
+    const auto envelope = state_.awaitResponse(state_.send(method, std::move(params)));
+    if (!envelope) return R::Err(E::CatalogUnavailable);
+    if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* ok = result->find("ok"); ok && ok->isObject() && ok->asObject().size() == 2) {
+        const auto* prefab = ok->find("prefab");
+        const auto* revision = ok->find("revision");
+        if (prefab && codec::decodeAsset(*prefab) == guid && revision && revision->isString() &&
+            connection::authoring::validPrefabDigest(revision->asString())) return R::Ok({guid, revision->asString()});
+      }
+      if (const auto* err = result->find("err"); err && err->isString())
+        if (const auto decoded = ca::staticGroupError(err->asString())) return R::Err(*decoded);
+    } else if (const auto* error = envelope->find("error"); error && error->isObject()) {
+      const auto* message = error->find("message");
+      if (message && message->isString() &&
+          (message->asString() == "unknown method assets.prefabRevision" ||
+           message->asString() == "unknown or malformed asset query"))
+        return R::Err(E::Unsupported);
+    }
+    return R::Err(E::InvalidGroup);
+  }
   ca::StaticGroupResult readGroup(const AssetGuid& guid, bool prefab) const {
     using R = ca::StaticGroupResult;
     using E = ca::StaticGroupError;
@@ -1262,6 +1288,54 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     return failed(R::Err(E::UnknownOutcome));
   }
 
+  ac::PrefabUpdateResult updatePrefab(const AssetGuid& prefab, std::string_view revision,
+      const EntityGuid& node, const ac::DocumentToken& token) override {
+    using R = ac::PrefabUpdateResult;
+    using E = ac::SaveAsError;
+    if (prefab == AssetGuid{} || node == EntityGuid{} || !ac::validPrefabDigest(revision)) return R::Err(E::StaleSource);
+    Value params = prefabParams(node, token);
+    params.set("prefab", codec::encodeAsset(prefab));
+    params.set("revision", Value::string(std::string(revision)));
+    const auto id = state_->send("authoring.updatePrefab", std::move(params));
+    const auto envelope = state_->awaitResponse(id);
+    if (envelope) {
+      if (const auto* result = envelope->find("result"); result && !envelope->find("error") &&
+          result->isObject() && result->asObject().size() == 1) {
+        auto decoded = decodeInBand<ac::PrefabUpdate, E>(*result, &codec::decodePrefabUpdate, &codec::decodeSaveAsError);
+        if (decoded && (decoded->isErr() || (decoded->value().registration.prefab == prefab &&
+            decoded->value().registration.documentRevision == token.documentRevision &&
+            validPrefabPath(decoded->value().registration.source) && decoded->value().previousRevision == revision)))
+          return *decoded;
+      }
+      if (prefabCallError(*envelope, "authoring.updatePrefab") == ac::PrefabEditError::Unsupported)
+        return R::Err(E::Unsupported);
+      if (prefabCallError(*envelope, "authoring.updatePrefab") == ac::PrefabEditError::NoDocument)
+        return R::Err(E::NoDocument);
+    }
+    return failed(R::Err(id == 0 ? E::Unavailable : E::UnknownOutcome));
+  }
+
+  ac::PrefabEditResult syncPrefab(const EntityGuid& root, std::string_view revision, const ac::DocumentToken& token,
+                                  std::optional<AssetGuid> instantiate) override {
+    using E = ac::PrefabEditError;
+    if (root == EntityGuid{} || !ac::validPrefabDigest(revision)) return ac::PrefabEditResult::Err(E::InvalidInstance);
+    Value params = prefabParams(root, token);
+    params.set("revision", Value::string(std::string(revision)));
+    if (instantiate) params.set("prefab", codec::encodeAsset(*instantiate));
+    return prefabEdit("authoring.syncPrefab", std::move(params), token);
+  }
+
+  ac::PrefabEditResult replayPrefab(const EntityGuid& root, const ac::PrefabSubtree& before,
+      const ac::PrefabSubtree& after, const ac::DocumentToken& token) override {
+    Value params = prefabParams(root, token);
+    params.set("before", codec::encode(before));
+    params.set("after", codec::encode(after));
+    auto result = prefabEdit("authoring.replayPrefab", std::move(params), token);
+    if (result.isOk() && (result.value().before != before || result.value().after != after))
+      return failed(ac::PrefabEditResult::Err(ac::PrefabEditError::UnknownOutcome));
+    return result;
+  }
+
   Result<ac::PrefabRegistration, ac::SaveAsError> createPrefab(
       std::string_view name, const ac::EntityGuid& node, const ac::DocumentToken& token) override {
     using E = ac::SaveAsError;
@@ -1409,6 +1483,56 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     state_->fail(RemoteError::ProtocolError);  // no-op if a failure is already recorded
     return empty;
   }
+  static Value prefabParams(const EntityGuid& node, const ac::DocumentToken& token) {
+    Value params = Value::object();
+    params.set("node", codec::encodeEntity(node));
+    params.set("expected", codec::encode(token));
+    return params;
+  }
+
+  static bool validPrefabPath(std::string_view path) {
+    constexpr std::string_view prefix = "prefabs/prefab_", suffix = "/source.scene.txt";
+    return path.size() > prefix.size() + suffix.size() && path.starts_with(prefix) && path.ends_with(suffix) &&
+           ac::validSaveAsName(path.substr(prefix.size(), path.size() - prefix.size() - suffix.size()));
+  }
+
+  static std::optional<ac::PrefabEditError> prefabCallError(const Value& envelope, std::string_view method) {
+    using E = ac::PrefabEditError;
+    const auto* error = envelope.find("error");
+    if (!error || envelope.find("result")) return std::nullopt;
+    const auto* code = error->find("code");
+    const auto* message = error->find("message");
+    if (code && code->isString()) {
+      if (code->asString() == "NoAuthoring") return E::NoDocument;
+      if (code->asString() == "BadRequest" && message && message->isString() &&
+          message->asString() == "unknown method " + std::string(method)) return E::Unsupported;
+    }
+    return std::nullopt;
+  }
+
+  ac::PrefabEditResult prefabEdit(std::string_view method, Value params, const ac::DocumentToken& token) {
+    using R = ac::PrefabEditResult;
+    using E = ac::PrefabEditError;
+    const auto id = state_->send(method, std::move(params));
+    const auto envelope = state_->awaitResponse(id);
+    if (envelope) {
+      if (const auto error = prefabCallError(*envelope, method)) return R::Err(*error);
+      if (const auto* result = envelope->find("result"); result && !envelope->find("error") &&
+          result->isObject() && result->asObject().size() == 1) {
+        auto decoded = decodeInBand<ac::PrefabEdit, E>(*result, &codec::decodePrefabEdit, &codec::decodePrefabEditError);
+        if (decoded) {
+          if (decoded->isErr()) return *decoded;
+          const auto& reply = decoded->value();
+          if (reply.document.documentId == token.documentId &&
+              reply.document.documentRevision >= token.documentRevision &&
+              reply.document.documentRevision - token.documentRevision == static_cast<std::uint64_t>(reply.changed))
+            return *decoded;
+        }
+      }
+    }
+    return failed(R::Err(id == 0 ? E::Unsupported : E::UnknownOutcome));
+  }
+
   template <typename T, typename DecodeOk>
   atlantis::Result<T, ac::Error> inBand(const std::optional<Value>& result, DecodeOk decodeOk,
                                         atlantis::Result<T, ac::Error> onFailure) const {

@@ -1,6 +1,7 @@
 #include <atlantis/authoring/authoring_session.h>
 
 #include "document_access.h"
+#include "prefab_edit.h"
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/authoring_scene_mapping.h>
@@ -141,6 +142,10 @@ struct AuthoringSession::State {
   SaveAsSink copySink;
   CreateSceneSink createSink;
   PrefabSink prefabSink;
+  PrefabUpdateSink prefabUpdateSink;
+  PrefabRead prefabRead;
+  PrefabDigest prefabDigest;
+  PrefabAssets prefabAssets;
   PrefabLookup prefabLookup;
   RecoveryStore* recovery = nullptr;
   std::optional<std::string> recoveryBase;
@@ -557,6 +562,49 @@ struct AuthoringSession::State {
     return std::nullopt;
   }
 
+  ac::PrefabEditResult commitPrefab(const ac::DocumentToken& expected, const EntityGuid& root,
+      scene::AuthoringScene candidate, ac::PrefabSubtree before, ac::PrefabSubtree after) {
+    using R = ac::PrefabEditResult;
+    using E = ac::PrefabEditError;
+    if (!document || documentState()->token != expected) return R::Err(E::StaleDocument);
+    const auto oldCompiled = asset_system::cookSceneToMemory(*document, source.scene);
+    const auto newCompiled = asset_system::cookSceneToMemory(candidate, source.scene);
+    if (oldCompiled.isErr() || newCompiled.isErr() || validateDocument(candidate, source.scene))
+      return R::Err(E::InvalidInstance);
+    const bool affectsProjection = oldCompiled.value().artifactBytes != newCompiled.value().artifactBytes;
+    std::vector<ac::Event> events;
+    if (const auto existing = findNode(*document, root); existing) {
+      if (const auto replacement = findNode(candidate, root); replacement) {
+        const auto& oldMesh = document->nodes[*existing].renderable;
+        const auto& newMesh = candidate.nodes[*replacement].renderable;
+        if (oldMesh != newMesh) {
+          const auto component = schema::typeId("asset_system::scene::Renderable");
+          if (oldMesh) events.emplace_back(ac::ComponentRemoved{root, component});
+          if (newMesh) events.emplace_back(ac::ComponentAdded{root, component});
+        }
+      }
+    }
+    for (const auto slot : before.slots) {
+      const auto& old = document->nodes[static_cast<std::size_t>(slot)];
+      if (!findNode(candidate, old.guid)) events.emplace_back(ac::NodeDestroyed{old.guid});
+    }
+    for (const auto slot : after.slots) {
+      const auto& node = candidate.nodes[static_cast<std::size_t>(slot)];
+      if (findNode(*document, node.guid)) continue;
+      events.emplace_back(ac::NodeCreated{node.guid, slot, node.prefabOrigin});
+      if (node.renderable)
+        events.emplace_back(ac::ComponentAdded{node.guid, schema::typeId("asset_system::scene::Renderable")});
+      if (node.parent) events.emplace_back(ac::ParentChanged{node.guid, node.parent});
+      if (!node.name.empty()) events.emplace_back(ac::NodeNameChanged{node.guid, node.name});
+    }
+    document = std::move(candidate);
+    ++documentRevision;
+    dirty.reset();
+    captureRecovery();
+    publish(events);
+    return R::Ok({documentState()->token, std::move(before), std::move(after), true, affectsProjection});
+  }
+
   [[nodiscard]] atlantis::Result<std::monostate, ac::OpenError> open() {
     using ResultT = atlantis::Result<std::monostate, ac::OpenError>;
     std::ifstream file(sourcePathOf(source.provenance), std::ios::binary);
@@ -772,7 +820,8 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
                             sourcePathOf(state_.source.provenance).generic_string(),
                             static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported,
                             !imported && static_cast<bool>(state_.prefabLookup),
-                            !imported && static_cast<bool>(state_.prefabSink)};
+                            !imported && static_cast<bool>(state_.prefabSink),
+                            !imported && static_cast<bool>(state_.prefabRead)};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {
@@ -780,7 +829,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     if (!state_.document.has_value()) return ResultT::Err(ac::Error::NoDocument);
     std::vector<ac::NodeSummary> out;
     out.reserve(state_.document->nodes.size());
-    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent, node.name, node.prefabOrigin});
+    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent, node.name, node.prefabOrigin, node.prefabBaseline});
     return ResultT::Ok(std::move(out));
   }
 
@@ -942,6 +991,149 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     using R = Result<ac::PrefabRegistration, E>;
     if (!state_.prefabSink) return R::Err(E::Unavailable);
     if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    const auto prefab = asset_system::mintAssetGuids(1).front();
+    auto captured = capturePrefab(prefab, root, expected);
+    if (captured.isErr()) return R::Err(captured.error());
+    return state_.prefabSink(name, prefab, std::move(captured.value()), expected.documentRevision);
+  }
+
+  ac::PrefabEditResult syncPrefab(const EntityGuid& root, std::string_view revision,
+      const ac::DocumentToken& expected, std::optional<AssetGuid> instantiate) override {
+    using R = ac::PrefabEditResult;
+    using E = ac::PrefabEditError;
+    if (!state_.prefabRead) return R::Err(E::Unsupported);
+    const auto current = state_.documentState();
+    if (!current) return R::Err(E::NoDocument);
+    if (current->token != expected) return R::Err(E::StaleDocument);
+    if (current->provenance != ac::Provenance::HandAuthored || root == EntityGuid{})
+      return R::Err(E::InvalidInstance);
+    const auto& document = *state_.document;
+    const auto index = findNode(document, root);
+    if (instantiate.has_value() == index.has_value()) return R::Err(E::InvalidInstance);
+    const auto origin = instantiate ? instantiate : document.nodes[*index].prefabOrigin;
+    if (!origin || *origin == AssetGuid{}) return R::Err(E::InvalidInstance);
+    const auto frozen = state_.prefabRead(*origin);
+    if (!frozen || frozen->revision != revision) return R::Err(E::StaleSource);
+    auto definition = prefab_edit::decode(frozen->source);
+    if (!definition || definition->activeCamera) return R::Err(E::InvalidInstance);
+    const auto templateRoot = std::ranges::find_if(definition->nodes, [](const auto& node) { return !node.parent; });
+    if (templateRoot == definition->nodes.end()) return R::Err(E::InvalidInstance);
+
+    auto before = prefab_edit::capture(document, root, state_.prefabDigest);
+    if (!before) return R::Err(E::InvalidInstance);
+    scene::AuthoringScene candidate = document;
+    bool replace = true;
+    if (index) {
+      const auto old = prefab_edit::decode(before->source);
+      if (!old) return R::Err(E::InvalidInstance);
+      const auto& instance = document.nodes[*index];
+      const auto managed = prefab_edit::digest(*old, root, *origin, state_.prefabDigest);
+      const auto instanceShape = prefab_edit::normalized(*old, root, *origin, true);
+      const auto templateShape = prefab_edit::normalized(*definition, templateRoot->guid, *origin, true);
+      if (!managed || !instanceShape || !templateShape) return R::Err(E::InvalidInstance);
+      const bool matches = *instanceShape == *templateShape;
+      if (instance.prefabBaseline) {
+        if (instance.prefabBaseline != managed) return R::Err(E::LocalConflict);
+        if (matches) return R::Ok({expected, *before, *before, false, false});
+      } else {
+        if (!matches) return R::Err(E::BaselineUnavailable);
+        candidate.nodes[*index].prefabBaseline = managed;
+        replace = false;
+      }
+    }
+
+    if (replace) {
+      const auto oldRoot = index ? std::optional(document.nodes[*index]) : std::nullopt;
+      const auto definitionRootGuid = templateRoot->guid;
+      std::map<EntityGuid, EntityGuid> remap{{definitionRootGuid, root}};
+      for (const auto& node : definition->nodes)
+        if (node.guid != definitionRootGuid) remap.emplace(node.guid, asset_system::mintEntityGuid());
+
+      for (auto& node : definition->nodes) {
+        node.guid = remap.at(node.guid);
+        if (node.parent) node.parent = remap.at(*node.parent);
+      }
+      if (oldRoot) {
+        templateRoot->transform = oldRoot->transform;
+        templateRoot->name = oldRoot->name;
+      } else {
+        templateRoot->name = frozen->name;
+        const std::string base = templateRoot->name;
+        std::set<std::string_view> rootNames;
+        for (const auto& node : document.nodes)
+          if (!node.parent) rootNames.emplace(node.name);
+        for (std::size_t suffix = 2; rootNames.contains(templateRoot->name); ++suffix) {
+          const auto tail = " " + std::to_string(suffix);
+          auto length = std::min(base.size(), static_cast<std::size_t>(scene::kMaxNodeNameBytes) - tail.size());
+          while (length < base.size() && (static_cast<unsigned char>(base[length]) & 0xc0) == 0x80) --length;
+          templateRoot->name = base.substr(0, length) + tail;
+        }
+      }
+      templateRoot->prefabOrigin = origin;
+      if (oldRoot) std::rotate(definition->nodes.begin(), templateRoot, templateRoot + 1);
+      auto& replacementRoot = oldRoot ? definition->nodes.front() : *templateRoot;
+      const auto baseline = prefab_edit::digest(*definition, root, *origin, state_.prefabDigest);
+      if (!baseline) return R::Err(E::InvalidInstance);
+      replacementRoot.prefabBaseline = baseline;
+      if (!oldRoot) {
+        candidate.nodes.insert(candidate.nodes.end(), definition->nodes.begin(), definition->nodes.end());
+      } else {
+        replacementRoot.parent = oldRoot->parent;
+        std::set<EntityGuid> removed;
+        for (const auto slot : before->slots) {
+          const auto& node = document.nodes[static_cast<std::size_t>(slot)];
+          if (node.guid != root) removed.insert(node.guid);
+        }
+        std::erase_if(candidate.nodes, [&](const auto& node) { return removed.contains(node.guid); });
+        auto insertion = candidate.nodes.begin() + *findNode(candidate, root);
+        *insertion++ = replacementRoot;
+        candidate.nodes.insert(insertion, definition->nodes.begin() + 1, definition->nodes.end());
+      }
+    }
+
+    auto after = prefab_edit::capture(candidate, root, state_.prefabDigest);
+    if (!after || !prefab_edit::assetsAvailable(after->source, state_.prefabAssets))
+      return R::Err(E::InvalidInstance);
+    return state_.commitPrefab(expected, root, std::move(candidate), std::move(*before), std::move(*after));
+  }
+
+  ac::PrefabEditResult replayPrefab(const EntityGuid& root, const ac::PrefabSubtree& required,
+      const ac::PrefabSubtree& replacement, const ac::DocumentToken& expected) override {
+    using R = ac::PrefabEditResult;
+    using E = ac::PrefabEditError;
+    if (!state_.prefabRead) return R::Err(E::Unsupported);
+    const auto current = state_.documentState();
+    if (!current) return R::Err(E::NoDocument);
+    if (current->token != expected) return R::Err(E::StaleDocument);
+    if (current->provenance != ac::Provenance::HandAuthored || root == EntityGuid{})
+      return R::Err(E::InvalidInstance);
+    const auto& document = *state_.document;
+    const auto actual = prefab_edit::capture(document, root, state_.prefabDigest);
+    if (!actual || *actual != required || required == replacement) return R::Err(E::ReplayConflict);
+    auto candidate = prefab_edit::reinsert(document, root, required, replacement, state_.prefabDigest);
+    if (!candidate || validateDocument(*candidate, state_.source.scene) ||
+        !prefab_edit::assetsAvailable(replacement.source, state_.prefabAssets))
+      return R::Err(E::ReplayConflict);
+    const auto verified = prefab_edit::capture(*candidate, root, state_.prefabDigest);
+    if (!verified || *verified != replacement) return R::Err(E::ReplayConflict);
+    return state_.commitPrefab(expected, root, std::move(*candidate), required, replacement);
+  }
+
+  ac::PrefabUpdateResult updatePrefab(const AssetGuid& prefab, std::string_view revision,
+      const EntityGuid& root, const ac::DocumentToken& expected) override {
+    using R = ac::PrefabUpdateResult;
+    if (!state_.prefabUpdateSink) return R::Err(ac::SaveAsError::Unavailable);
+    if (prefab == AssetGuid{}) return R::Err(ac::SaveAsError::IdentityConflict);
+    auto captured = capturePrefab(prefab, root, expected);
+    if (captured.isErr()) return R::Err(captured.error());
+    return state_.prefabUpdateSink(prefab, revision, std::move(captured.value()), expected.documentRevision);
+  }
+
+ private:
+  Result<std::string, ac::SaveAsError> capturePrefab(const AssetGuid& prefab, const EntityGuid& root,
+                                                    const ac::DocumentToken& expected) const {
+    using E = ac::SaveAsError;
+    using R = Result<std::string, E>;
     const auto current = state_.documentState();
     if (!current) return R::Err(E::NoDocument);
     if (current->token != expected) return R::Err(E::StaleDocument);
@@ -973,18 +1165,15 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     }
     if (!std::ranges::any_of(frozen.nodes, [](const auto& node) { return node.renderable.has_value(); }))
       return R::Err(E::UnsupportedSubtree);
-    const auto prefab = asset_system::mintAssetGuids(1).front();
     auto parsed = scene::toParsedSceneSource(frozen);
     if (parsed.isErr()) return R::Err(E::UnsupportedSubtree);
     for (auto& node : parsed.value().nodes)
       node.entityGuid = asset_system::deriveEntityGuid(prefab, "node/" + std::to_string(node.nodeId));
-    const auto text = asset_system::serializeSceneSource(parsed.value());
+    auto text = asset_system::serializeSceneSource(parsed.value());
     if (text.size() > 64 * 1024 || asset_system::cookSceneToMemory(frozen, prefab).isErr())
       return R::Err(E::UnsupportedSubtree);
-    return state_.prefabSink(name, prefab, text, expected.documentRevision);
+    return R::Ok(std::move(text));
   }
-
- private:
   AuthoringSession::State& state_;
   ConnectionState own_;
 };
@@ -1016,6 +1205,12 @@ void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(s
 void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }
 void AuthoringSession::setCreateSceneSink(CreateSceneSink sink) { state_->createSink = std::move(sink); }
 void AuthoringSession::setPrefabSink(PrefabSink sink) { state_->prefabSink = std::move(sink); }
+void AuthoringSession::setPrefabSync(PrefabRead read, PrefabDigest digest, PrefabAssets assets) {
+  state_->prefabRead = std::move(read);
+  state_->prefabDigest = std::move(digest);
+  state_->prefabAssets = std::move(assets);
+}
+void AuthoringSession::setPrefabUpdateSink(PrefabUpdateSink sink) { state_->prefabUpdateSink = std::move(sink); }
 void AuthoringSession::setPrefabLookup(PrefabLookup lookup) { state_->prefabLookup = std::move(lookup); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }

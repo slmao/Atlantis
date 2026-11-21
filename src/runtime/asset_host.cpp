@@ -2,6 +2,7 @@
 #include "asset_rebuild_host.h"
 #include "material_authoring.h"
 #include "prefab_projection.h"
+#include "scene_recovery_store.h"
 #include "static_group_projection.h"
 
 #include <atlantis/assert.h>
@@ -30,7 +31,7 @@ struct AssetHost::State final : connection::AssetConnection {
   mutable bool initialized_ = false;
   mutable std::vector<ac::AssetDetails> details_;
   mutable std::vector<ac::AssetSummary> summaries_;
-  mutable std::map<as::AssetGuid, ac::StaticGroup> prefabs_;
+  mutable std::map<as::AssetGuid, FrozenPrefab> prefabs_;
   mutable bool ready_ = false;
 
   void initialize() const {
@@ -57,8 +58,12 @@ struct AssetHost::State final : connection::AssetConnection {
       if (isPrefab && !pathError) {
         // Names live only in the source. Freeze the verified projection when
         // the catalog settles so queries and authoring admission share it.
-        auto projection = prefabs::project(catalogPath.lexically_normal().parent_path(), loaded.value(), r.guid);
-        if (projection.isOk()) prefabs_.emplace(r.guid, std::move(projection.value()));
+        std::string bytes;
+        auto projection = prefabs::project(catalogPath.lexically_normal().parent_path(), loaded.value(), r.guid, &bytes);
+        if (projection.isOk()) {
+          const auto digest = digestSceneBytes(bytes);
+          if (digest) prefabs_.emplace(r.guid, FrozenPrefab{std::move(projection.value()), std::move(bytes), *digest});
+        }
       }
       details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies,
                           rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt,
@@ -97,10 +102,16 @@ struct AssetHost::State final : connection::AssetConnection {
     using E = ac::StaticGroupError;
     initialize();
     if (!catalog_) return R::Err(E::CatalogUnavailable);
-    if (const auto found = prefabs_.find(guid); found != prefabs_.end()) return R::Ok(found->second);
+    if (const auto found = prefabs_.find(guid); found != prefabs_.end()) return R::Ok(found->second.group);
     const auto* record = catalog_->find(guid);
     if (!record) return R::Err(E::UnknownAsset);
     return R::Err(prefabs::nameOf(*record) ? E::InvalidGroup : E::UnsupportedGroup);
+  }
+  ac::PrefabRevisionResult prefabRevision(const as::AssetGuid& guid) const override {
+    initialize();
+    if (const auto found = prefabs_.find(guid); found != prefabs_.end())
+      return ac::PrefabRevisionResult::Ok({guid, found->second.revision});
+    return ac::PrefabRevisionResult::Err(prefab(guid).error());
   }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override {
     using E = ac::PreviewError;
@@ -361,6 +372,7 @@ class BorrowedAssets final : public connection::AssetConnection {
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
   ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override { return host_.staticGroup(guid); }
   ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override { return host_.prefab(guid); }
+  ac::PrefabRevisionResult prefabRevision(const as::AssetGuid& guid) const override { return host_.prefabRevision(guid); }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
   ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
                                                     const as::AssetGuid& materialGuid) override {
@@ -470,6 +482,12 @@ AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild, PreviewProvide
     : state_(std::make_unique<State>(std::move(path), rebuild, std::move(preview))) {}
 AssetHost::~AssetHost() = default;
 std::unique_ptr<connection::AssetConnection> AssetHost::connect() { return std::make_unique<BorrowedAssets>(*state_); }
+const AssetHost::FrozenPrefab* AssetHost::frozenPrefab(const as::AssetGuid& guid) const {
+  state_->initialize();
+  const auto it = state_->prefabs_.find(guid);
+  return it == state_->prefabs_.end() ? nullptr : &it->second;
+}
+
 std::shared_ptr<const as::AssetCatalog> AssetHost::catalog() const {
   state_->initialize();
   return state_->catalog_;

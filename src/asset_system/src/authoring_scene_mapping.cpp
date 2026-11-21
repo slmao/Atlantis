@@ -117,6 +117,7 @@ atlantis::Result<AuthoringScene, SceneMappingError> toAuthoringScene(const Parse
     node.guid = parsed.entityGuid;
     node.name = parsed.name;
     node.prefabOrigin = parsed.prefabOrigin;
+    node.prefabBaseline = parsed.prefabBaseline;
     if (parsed.parentNodeId.has_value()) {
       const auto parent = indexOfNodeId.find(*parsed.parentNodeId);
       if (parent == indexOfNodeId.end()) return ResultT::Err(SceneMappingError::UndeclaredParentReference);
@@ -159,6 +160,7 @@ atlantis::Result<ParsedSceneSource, SceneMappingError> toParsedSceneSource(const
     parsed.entityGuid = node.guid;
     parsed.name = node.name;
     parsed.prefabOrigin = node.prefabOrigin;
+    parsed.prefabBaseline = node.prefabBaseline;
     if (node.parent.has_value()) {
       const auto parent = nodeIdOfGuid.find(*node.parent);
       if (parent == nodeIdOfGuid.end()) return ResultT::Err(SceneMappingError::DanglingParentReference);

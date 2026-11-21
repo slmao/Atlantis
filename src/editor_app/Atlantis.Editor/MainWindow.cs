@@ -367,6 +367,10 @@ public sealed partial class MainWindow : Window
     private readonly Button _importRefresh = new() { Content = "Refresh import status", IsEnabled = false };
     private readonly TextBlock _importState = new() { TextWrapping = Avalonia.Media.TextWrapping.Wrap };
     private readonly Button _addMesh = new() { Content = "Add to Scene", IsEnabled = false };
+    private readonly Button _updatePrefab = new() { Content = "Update from Selected Subtree…", IsVisible = false, Focusable = false };
+    private StaticGroupIntent? _pendingPrefabUpdate;
+    private StaticGroupIntent? _pendingPrefabSync;
+    private bool _prefabSyncSupported;
     private readonly Button _addGroup = new() { Content = "Add Group to Scene", IsVisible = false, Focusable = false };
     private StaticGroupIntent? _pendingGroupRead, _pendingGroupAdd;
     private bool _staticGroupAvailable;
@@ -1370,6 +1374,7 @@ public sealed partial class MainWindow : Window
             if (!ReferenceEquals(_worker, worker)) return;
             _reparentDocumentOpen = info is not null;
             _viewportGuides.IsEnabled = _reparentDocumentOpen;
+            _prefabSyncSupported = info?.SupportsPrefabSync == true;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
             UpdateAddMeshButton();
             UpdateHierarchyActions();
@@ -2069,6 +2074,11 @@ public sealed partial class MainWindow : Window
     private void UpdateHierarchyActions()
     {
         UpdateSavePrefab();
+        if (GroupEditRefusal() is not null || _selection.Nodes.Count != 1 || _hierarchyFilter.Active)
+        {
+            _pendingPrefabSync?.Cancel();
+            _pendingPrefabUpdate?.Cancel();
+        }
         UpdateWorkspaceReset();
         UpdateViewportNavigationActions();
         UpdateHierarchyFilterStatus();
@@ -2553,6 +2563,7 @@ public sealed partial class MainWindow : Window
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
         _addGroup.Click += (_, _) => AddGroupToScene();
+        _updatePrefab.Click += async (_, _) => await UpdateSelectedPrefab();
         ToolTip.SetShowOnDisabled(_addGroup, true);
         copy.IsEnabled = false;
         _assetCopyGuid = copy;
@@ -2601,7 +2612,7 @@ public sealed partial class MainWindow : Window
                 _renameEditor, _moveEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
                 EditorVisuals.Actions(_viewReferences, _cancelReferences), _referenceScope, _referenceStatus,
                 _referenceResults, _locatedSlots,
-                _addMesh, _addGroup, _addMeshState, _previewState,
+                _addMesh, _addGroup, _updatePrefab, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
@@ -4238,10 +4249,12 @@ public sealed partial class MainWindow : Window
         _pendingGroupAdd?.Cancel();
         _staticGroupAvailable = false;
         _addGroup.IsVisible = false;
+        _pendingPrefabUpdate?.Cancel();
+        _updatePrefab.IsVisible = false;
     }
 
     private string? GroupEditRefusal() =>
-        _pendingInspectorBlur is not null || _pendingSceneFieldEdits != 0 || CurrentSceneInput() is not null ||
+        _pendingInspectorBlur is not null || _pendingSceneFieldEdits != 0 || CurrentSceneInput() is not null || _batchDraft is not null ||
         _draftProtection.Stale is not null ? "Finish or cancel the field edit first." :
         _assetDropPending || _assetDrag is not null || _leaveInProgress || _referenceBusy || _materialWindow is not null ||
         _gizmoGrab is not null || _groupGrab is not null || _hierarchyDrag is not null || _addingMesh
@@ -4257,6 +4270,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         long lifetime = _meshDocumentLifetime;
+        if (!_prefabSyncSupported || PrefabRegistrationRefusal() is not null) _pendingPrefabUpdate?.Cancel();
         if (_pendingGroupAdd is { } pending && pending.Lifetime != lifetime) _pendingGroupAdd = null;
         if (_pendingGroupRead is not { } read || read.Scene != asset.Guid || read.Lifetime != lifetime)
         {
@@ -4278,6 +4292,79 @@ public sealed partial class MainWindow : Window
         _addGroup.Content = asset.IsPrefab ? "Instantiate Prefab" : "Add Group to Scene";
         _addGroup.IsEnabled = _staticGroupAvailable && _pendingGroupAdd is null && refusal is null;
         ToolTip.SetTip(_addGroup, refusal);
+        _updatePrefab.IsVisible = asset.IsPrefab && _staticGroupAvailable;
+        string? updateRefusal = _prefabSyncSupported ? PrefabRegistrationRefusal() : "This Runtime does not support Prefab source updates.";
+        _updatePrefab.IsEnabled = _updatePrefab.IsVisible && updateRefusal is null && _pendingPrefabUpdate is null;
+        ToolTip.SetTip(_updatePrefab, updateRefusal);
+    }
+
+    private async Task<bool> ConfirmPrefabAction(string title, string message, string action)
+    {
+        var dialog = new Window
+        {
+            Title = title, Width = 460, SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
+        };
+        var confirm = new Button { Content = action };
+        var cancel = new Button { Content = "Cancel", IsCancel = true };
+        confirm.Click += (_, _) => dialog.Close(true);
+        cancel.Click += (_, _) => dialog.Close(false);
+        dialog.Opened += (_, _) => cancel.Focus();
+        dialog.Content = new Border { Padding = new Thickness(16), Child = EditorVisuals.Stack(12,
+            EditorVisuals.Heading(title), EditorVisuals.Details(message), EditorVisuals.Actions(cancel, confirm)) };
+        return await dialog.ShowDialog<bool>(this);
+    }
+
+    private async Task UpdateSelectedPrefab()
+    {
+        if (!_updatePrefab.IsEnabled || _worker is not { } worker || _pendingGroupRead is not { IsPrefab: true } read ||
+            _assetsList.SelectedItem is not AssetSummary asset || SelectedReparentRow() is not { } donor ||
+            _documentState.State is not { } document) return;
+        const string prefix = "prefabs/prefab_", suffix = "/source.scene.txt";
+        int start = asset.Source.IndexOf(prefix, StringComparison.Ordinal);
+        if (start < 0 || !asset.Source.EndsWith(suffix, StringComparison.Ordinal)) return;
+        string name = asset.Source[(start + prefix.Length)..^suffix.Length];
+        if (!Codec.ValidSaveAsName(name)) return;
+        ulong selection = _selection.Generation;
+        if (!await ConfirmPrefabAction("Update Prefab",
+                $"Replace the source of {name} with {donor.Label}? Explicitly Build and Open to activate the update.",
+                "Update Prefab") || !ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingGroupRead, read) ||
+            _documentState.State?.Token != document.Token || _selection.Generation != selection ||
+            PrefabRegistrationRefusal() is not null) return;
+        var intent = new StaticGroupIntent(read.Scene, read.Lifetime, true);
+        _pendingPrefabUpdate = intent;
+        _addMeshState.Text = "Updating Prefab…";
+        worker.UpdatePrefab(intent, name, donor, document.Token, selection, notice =>
+        {
+            if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingPrefabUpdate, intent)) return;
+            _pendingPrefabUpdate = null;
+            _addMeshState.Text = notice;
+            RefreshGroupAsset();
+        });
+        RefreshGroupAsset();
+    }
+
+    private async Task SynchronizeSelectedPrefab(EntityGuid root, AssetGuid source)
+    {
+        if (!_prefabSyncSupported || GroupEditRefusal() is not null || _hierarchyFilter.Active ||
+            _pendingPrefabSync is not null || _selection.Nodes.Count != 1 || _worker is not { } worker ||
+            SelectedReparentRow() is not { } row || row.Node != root || _documentState.State is not { } document) return;
+        ulong selection = _selection.Generation;
+        long lifetime = _meshDocumentLifetime;
+        if (!await ConfirmPrefabAction("Synchronize Prefab Instance",
+                $"Synchronize {row.Label} with the definition in this Runtime? Local edits to managed content block synchronization. An older instance can record a baseline only in a matching build.",
+                "Synchronize") || !ReferenceEquals(_worker, worker) || _selection.Generation != selection ||
+            _documentState.State?.Token != document.Token || lifetime != _meshDocumentLifetime ||
+            GroupEditRefusal() is not null) return;
+        var intent = new StaticGroupIntent(source, lifetime, true);
+        _pendingPrefabSync = intent;
+        ShowDuplicateState("Synchronizing Prefab instance…");
+        worker.SynchronizePrefab(row, intent, document.Token, selection, notice =>
+        {
+            if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingPrefabSync, intent)) return;
+            _pendingPrefabSync = null;
+            ShowDuplicateState(notice);
+        });
     }
 
     private void AddGroupToScene()
@@ -5061,7 +5148,15 @@ public sealed partial class MainWindow : Window
                 });
             }
             _inspectorPanel.Children.Add(source);
-            _refreshReferenceLabels.Add(RefreshSource);
+            var sync = new Button { Content = "Synchronize Instance…", IsVisible = _prefabSyncSupported };
+            sync.Click += async (_, _) => await SynchronizeSelectedPrefab(subject, origin);
+            _inspectorPanel.Children.Add(sync);
+            _refreshReferenceLabels.Add(() =>
+            {
+                RefreshSource();
+                sync.IsEnabled = _assetBrowser.PrefabSource(origin) == PrefabSourceStatus.Found &&
+                    !_referenceSessionFailed && _selection.Nodes.Count == 1;
+            });
             RefreshSource();
             if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
         }

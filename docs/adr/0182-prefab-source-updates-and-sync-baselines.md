@@ -1,9 +1,9 @@
 # ADR 0182 — Checked Prefab Source Updates and Instance Sync Baselines
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Maintainers
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer accepted on 2026-11-22 at `e9235765`. [Joint approval](https://github.com/slmao/Atlantis/pull/429#issuecomment-7066200488)
 - **Related Spec:** [0133](../specs/0133-prefab-source-sync.md)
 
 ## Context

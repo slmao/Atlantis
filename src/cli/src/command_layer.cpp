@@ -1101,10 +1101,11 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
-    if (t.size() > 1 && (t[1] == "static-group" || t[1] == "prefab")) {
+    if (t.size() > 1 && (t[1] == "static-group" || t[1] == "prefab" || t[1] == "prefab-revision")) {
       namespace ca = connection::assets;
       const bool prefab = t[1] == "prefab";
-      const std::string_view usage = prefab ? "asset prefab <non-nil canonical prefab-guid>" :
+      const std::string_view usage = t[1] == "prefab-revision" ? "asset prefab-revision <prefab-guid>" :
+          prefab ? "asset prefab <non-nil canonical prefab-guid>" :
                                               "asset static-group <non-nil canonical scene-guid>";
       if (t.size() != 3) return failed(command, usageError(std::string(usage)));
       const auto guid = asset_system::parseAssetGuid(t[2]);
@@ -1116,6 +1117,14 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       };
       auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
       if (!endpoint) return refuse(ca::StaticGroupError::Unsupported);
+      if (t[1] == "prefab-revision") {
+        const auto revision = endpoint->prefabRevision(guid.value());
+        if (revision.isErr()) return refuse(revision.error());
+        auto result = Value::object();
+        result.set("prefab", Value::string(std::string(t[2])));
+        result.set("revision", Value::string(revision.value().revision));
+        return done(command, revision.value().revision + "\n", std::move(result));
+      }
       const auto group = prefab ? endpoint->prefab(guid.value()) : endpoint->staticGroup(guid.value());
       if (group.isErr()) return refuse(group.error());
       auto result = ca::encodeStaticGroup(group.value(), guid.value(), prefab);
@@ -2588,6 +2597,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
       item.set("parent", optionalEntityJson(node.parent));
       item.set("name", Value::string(node.name));
       if (node.prefabOrigin) item.set("prefabOrigin", Value::string(asset_system::toString(*node.prefabOrigin)));
+      if (node.prefabBaseline) item.set("prefabBaseline", Value::string(*node.prefabBaseline));
       list.push(std::move(item));
     }
     Value result = Value::object();
@@ -2676,6 +2686,118 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
       reply.result = std::move(result); return reply;
     }
     return done(command, human + "\n", std::move(result));
+  }
+  if (verb == "prefab-update" || verb == "prefab-sync" || verb == "prefab-replay") {
+    const auto usage = [&] {
+      return failed(command, usageError(
+          "scene prefab-update <donor> <document> <revision> <source-sha256> <prefab>; "
+          "scene prefab-sync <root> <document> <revision> <source-sha256> [prefab-to-instantiate]; "
+          "scene prefab-replay <root> <document> <revision> <before-json> <after-json>"));
+    };
+    const bool update = verb == "prefab-update", replay = verb == "prefab-replay";
+    if (t.size() < 6 || t.size() > 7 || ((update || replay) && t.size() != 7)) return usage();
+    const auto root = asset_system::parseEntityGuid(t[2]), document = asset_system::parseEntityGuid(t[3]);
+    std::uint64_t revision = 0;
+    const auto [end, ec] = std::from_chars(t[4].data(), t[4].data() + t[4].size(), revision);
+    if (root.isErr() || root.value() == ac::EntityGuid{} || document.isErr() ||
+        document.value() == ac::EntityGuid{} || ec != std::errc{} || end != t[4].data() + t[4].size())
+      return usage();
+    const ac::DocumentToken expected{document.value(), revision};
+    std::optional<ac::AssetGuid> prefab;
+    if (!replay) {
+      if (!ac::validPrefabDigest(t[5])) return usage();
+      if (t.size() == 7) {
+        const auto guid = asset_system::parseAssetGuid(t[6]);
+        if (guid.isErr() || guid.value() == ac::AssetGuid{}) return usage();
+        prefab = guid.value();
+      }
+    }
+
+    if (update) {
+      const auto reply = a->updatePrefab(*prefab, t[5], root.value(), expected);
+      if (reply.isErr()) {
+        const std::string error(ac::toString(reply.error()));
+        if (reply.error() == ac::SaveAsError::UnknownOutcome)
+          return failed(command, plainError(error, ErrorCategory::Runtime, "Prefab " + asset_system::toString(*prefab) +
+              " update outcome unknown. Check its registered source path and confirm settlement before retrying."));
+        return failed(command, plainError(error, ErrorCategory::Refused, "Prefab update refused: " + error));
+      }
+      const auto& value = reply.value();
+      auto registration = Value::object();
+      registration.set("prefab", Value::string(asset_system::toString(value.registration.prefab)));
+      registration.set("source", Value::string(value.registration.source));
+      registration.set("documentRevision", Value::number(value.registration.documentRevision));
+      auto result = Value::object();
+      result.set("registration", std::move(registration));
+      result.set("previousRevision", Value::string(value.previousRevision));
+      result.set("revision", Value::string(value.revision));
+      result.set("changed", Value::boolean(value.changed));
+      return done(command, value.changed ? "Updated Prefab source. Explicitly Build and Open to activate it.\n" :
+                                          "Prefab source is unchanged.\n", std::move(result));
+    }
+    const auto decode = [](std::string_view input) -> std::optional<ac::PrefabSubtree> {
+      const auto parsed = json::parse(input);
+      if (parsed.isErr()) return std::nullopt;
+      const auto& value = parsed.value();
+      const auto* source = value.find("source");
+      const auto* parent = value.find("parent");
+      const auto* slots = value.find("slots");
+      const auto* order = value.find("order");
+      if (!value.isObject() || value.asObject().size() != 4 || !source || !source->isString() ||
+          source->asString().size() > 64 * 1024 || !parent || !slots || !slots->isArray() ||
+          slots->asArray().size() > ac::kMaxGuardedDuplicateNodes || !order || !order->isString() ||
+          !ac::validPrefabDigest(order->asString())) return std::nullopt;
+      ac::PrefabSubtree result{source->asString(), {}, {}, order->asString()};
+      if (!parent->isNull()) {
+        if (!parent->isString()) return std::nullopt;
+        const auto guid = asset_system::parseEntityGuid(parent->asString());
+        if (guid.isErr()) return std::nullopt;
+        result.parent = guid.value();
+      }
+      for (const auto& slot : slots->asArray()) {
+        std::uint64_t index = 0;
+        if (!slot.toUInt64(index) || (!result.slots.empty() && index <= result.slots.back())) return std::nullopt;
+        result.slots.push_back(index);
+      }
+      return result;
+    };
+    auto reply = ac::PrefabEditResult::Err(ac::PrefabEditError::InvalidInstance);
+    if (replay) {
+      const auto before = decode(t[5]), after = decode(t[6]);
+      if (!before || !after) return usage();
+      reply = a->replayPrefab(root.value(), *before, *after, expected);
+    } else {
+      reply = a->syncPrefab(root.value(), t[5], expected, prefab);
+    }
+    if (reply.isErr()) {
+      const std::string error(ac::toString(reply.error()));
+      if (reply.error() == ac::PrefabEditError::UnknownOutcome)
+        return failed(command, plainError(error, ErrorCategory::Runtime, "Prefab edit outcome unknown at root " +
+            std::string(t[2]) + ". Inspect the document and confirm settlement before retrying."));
+      return failed(command, plainError(error, ErrorCategory::Refused, "Prefab edit refused: " + error));
+    }
+    const auto encode = [](const ac::PrefabSubtree& subtree) {
+      auto result = Value::object();
+      result.set("source", Value::string(subtree.source));
+      result.set("parent", subtree.parent ? Value::string(asset_system::toString(*subtree.parent)) : Value());
+      auto slots = Value::array();
+      for (auto slot : subtree.slots) slots.push(Value::number(slot));
+      result.set("slots", std::move(slots));
+      result.set("order", Value::string(subtree.order));
+      return result;
+    };
+    const auto& edit = reply.value();
+    auto result = Value::object();
+    auto token = Value::object();
+    token.set("documentId", Value::string(asset_system::toString(edit.document.documentId)));
+    token.set("documentRevision", Value::number(edit.document.documentRevision));
+    result.set("document", std::move(token));
+    result.set("before", encode(edit.before));
+    result.set("after", encode(edit.after));
+    result.set("changed", Value::boolean(edit.changed));
+    result.set("affectsProjection", Value::boolean(edit.affectsProjection));
+    return done(command, edit.changed ? "Prefab edit committed. Runtime Apply is separate.\n" :
+                                       "Prefab instance is already current.\n", std::move(result));
   }
   if (verb == "create-prefab") {
     const auto usage = [&] {

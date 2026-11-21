@@ -50,6 +50,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             "Read-only ordered local values and renderable bindings of a managed static glTF group in the active catalog. " +
             "New publications are visible after Runtime restart.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.prefab_revision", "assets.prefabRevision", "Read the active frozen Prefab source revision.",
+            AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.prefab", "assets.prefab", "Read the frozen ordered static Prefab from the saved-scene Runtime.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh", "assets.previewMesh", "Render one cooked mesh as a fixed geometry PNG, without scene materials or lighting.",
@@ -162,6 +164,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
         Declare("authoring.create_scene", "authoring.createScene", "Create a camera-only scene source without opening it. Inspect both destination files and confirm settlement before retrying a lost reply.", AuthoringModel,
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
+        Declare("authoring.update_prefab", "authoring.updatePrefab", "Replace a Prefab source from a committed donor. Explicit Build/Open activates it.",
+            AuthoringModel, ToolSchemas.Parameters(("node", ToolSchemas.String), ("prefab", ToolSchemas.String),
+                ("expected", ToolSchemas.PrefabDocument), ("revision", ToolSchemas.String))),
+        Declare("authoring.sync_prefab", "authoring.syncPrefab", "Synchronize one root or instantiate when prefab is supplied. Runtime Apply is separate.",
+            AuthoringModel, ToolSchemas.PrefabSyncParameters()),
+        Declare("authoring.replay_prefab", "authoring.replayPrefab", "Replay the exact before and after snapshots of one Prefab transaction.",
+            AuthoringModel, ToolSchemas.Parameters(("node", ToolSchemas.String), ("expected", ToolSchemas.PrefabDocument),
+                ("before", ToolSchemas.PrefabSubtree), ("after", ToolSchemas.PrefabSubtree))),
         Declare("authoring.create_prefab", "authoring.createPrefab", "Register a committed static subtree at the expected document revision. Inspect both files and confirm settlement before retrying a lost reply.",
             AuthoringModel, ToolSchemas.Parameters(("name", ToolSchemas.String), ("node", ToolSchemas.String),
                 ("expected", ToolSchemas.ParametersNode(("documentId", ToolSchemas.String), ("documentRevision", ToolSchemas.Integer))))),
@@ -230,6 +240,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
+            if (mapping.Method is "assets.prefabRevision" or "authoring.updatePrefab" or
+                "authoring.syncPrefab" or "authoring.replayPrefab") return PrefabOperation(mapping.Method, wireParameters);
             if (mapping.Method is "assets.staticGroup" or "assets.prefab") return StaticGroup(mapping.Method, wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
@@ -743,6 +755,60 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return Forward(result, false);
         }
         return Error("ProtocolError: malformed Save As outcome. Inspect the destination and confirm settlement before retrying.");
+    }
+
+    private CallToolResult PrefabOperation(string method, JsonValue parameters)
+    {
+        bool read = method == "assets.prefabRevision", update = method == "authoring.updatePrefab";
+        string? revision = parameters.Find("revision")?.AsString;
+        var token = parameters.Find("expected") is { } expected ? Codec.DecodeDocumentToken(expected) : null;
+        var id = parameters.Find("prefab") ?? parameters.Find("guid");
+        AssetGuid? guid = id is null ? null : Codec.DecodeAsset(id);
+        var node = parameters.Find("node") is { } target ? Codec.DecodeEntity(target) : null;
+        var before = parameters.Find("before") is { } a ? Codec.DecodePrefabSubtree(a) : null;
+        var after = parameters.Find("after") is { } b ? Codec.DecodePrefabSubtree(b) : null;
+        if ((id is not null && guid is null) || (read ? guid is null : token is null || node is null) ||
+            (update && guid is null) || ((update || method == "authoring.syncPrefab") &&
+                (revision is null || !Codec.ValidPrefabDigest(revision))) ||
+            (method == "authoring.replayPrefab" && (before is null || after is null)))
+            return Error("InvalidArguments: invalid Prefab identity, revision or replay snapshot.");
+        string unknown = $"Prefab operation outcome unknown for {guid?.ToString() ?? node?.ToString()} at revision {revision}. " +
+            (update ? "Inspect source.scene.txt and catalog-source.txt." : "Inspect the current document.") +
+            " Confirm the previous request settled before retrying.";
+        JsonValue reply;
+        try { reply = session.Request(method, parameters); }
+        catch (RemoteException error) { return Error(read ? error.Message : error.Message + " " + unknown); }
+        var result = reply.Find("result");
+        var failure = reply.Find("error");
+        if (read && Codec.IsUnsupportedStaticGroup(reply))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (result is null && failure?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+            return Forward(failure, true);
+        if (result is null && failure?.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+            failure.Find("message") is { IsString: true } message && message.AsString == $"unknown method {method}")
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (failure is null && result is { IsObject: true } && result.Members.Count == 1)
+        {
+            if (result.Find("err") is { } err &&
+                (read ? Codec.DecodeStaticGroupError(err) is not null : update ? Codec.DecodeSaveAsError(err) is not null :
+                    Codec.DecodePrefabEditError(err) is not null))
+            {
+                if (update && err.AsString == "UnknownOutcome") return Error(unknown);
+                return Forward(result, true);
+            }
+            if (result.Find("ok") is { } value)
+            {
+                bool valid = read ? Codec.DecodePrefabRevision(value, guid!.Value) is not null : update
+                    ? Codec.DecodePrefabUpdate(value) is { } updated && updated.Registration.Prefab == guid &&
+                        updated.Registration.DocumentRevision == token!.Value.DocumentRevision && updated.PreviousRevision == revision
+                    : Codec.DecodePrefabEdit(value) is { } edit && edit.Document.DocumentId == token!.Value.DocumentId &&
+                        edit.Document.DocumentRevision >= token.Value.DocumentRevision &&
+                        edit.Document.DocumentRevision - token.Value.DocumentRevision == (edit.Changed ? 1UL : 0UL) &&
+                        (before is null || before.Matches(edit.Before)) && (after is null || after.Matches(edit.After));
+                if (valid) return Forward(result, false);
+            }
+        }
+        return Error(read ? "ProtocolError: invalid Prefab revision reply." : "ProtocolError: " + unknown);
     }
 
     private CallToolResult CreatePrefab(JsonValue parameters)

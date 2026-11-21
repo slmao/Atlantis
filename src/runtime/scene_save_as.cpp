@@ -1,5 +1,6 @@
 #include "scene_save_as.h"
 #include "prefab_projection.h"
+#include "scene_recovery_store.h"
 
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/guid_mint.h>
@@ -122,12 +123,12 @@ Handle workspaceMutex(const Handle& root) {
   return Handle(CreateMutexW(nullptr, FALSE, name.c_str()));
 }
 
-bool renameNew(const Handle& directory, const fs::path& target) {
+bool renameByHandle(const Handle& directory, const fs::path& target, bool replace = false) {
   const auto bytes = target.native().size() * sizeof(wchar_t);
   const auto size = offsetof(FILE_RENAME_INFO, FileName) + bytes + sizeof(wchar_t);
   auto storage = std::make_unique<std::byte[]>(size);
   auto* info = reinterpret_cast<FILE_RENAME_INFO*>(storage.get());
-  info->ReplaceIfExists = FALSE;
+  info->ReplaceIfExists = replace ? TRUE : FALSE;
   info->RootDirectory = nullptr;
   info->FileNameLength = static_cast<DWORD>(bytes);
   std::memcpy(info->FileName, target.c_str(), bytes);
@@ -142,8 +143,7 @@ std::optional<std::string> readCatalog(const fs::path& path) {
   return text;
 }
 
-std::optional<std::string> readFragment(const fs::path& path, DWORD limit = 4095) {
-  auto file = open(path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+std::optional<std::string> readFragment(const Handle& file, DWORD limit) {
   if (!isOrdinary(file, false)) return std::nullopt;
   std::string bytes(static_cast<std::size_t>(limit) + 1, '\0');
   DWORD size = 0;
@@ -152,8 +152,13 @@ std::optional<std::string> readFragment(const fs::path& path, DWORD limit = 4095
   return bytes;
 }
 
+std::optional<std::string> readFragment(const fs::path& path, DWORD limit = 4095) {
+  return readFragment(open(path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL), limit);
+}
+
 std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalogSource,
-                                   const fs::path& cookedCatalog, const ca::CreatedScene& copy, bool prefab = false) {
+                                   const fs::path& cookedCatalog, const ca::CreatedScene& copy, bool prefab = false,
+                                   bool replacing = false) {
   const auto sourceText = readCatalog(catalogSource);
   const auto cookedText = readCatalog(cookedCatalog);
   if (!sourceText || !cookedText) return Error::WriteFailed;
@@ -161,11 +166,19 @@ std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalog
   const auto cooked = as::parseAssetCatalogRecords(*cookedText);
   if (source.isErr() || cooked.isErr()) return Error::WriteFailed;
   const auto key = as::assetKey(copy.scene);
-  if (key == 0 || source.value().find(as::CatalogRoot::Assets, copy.source)) return Error::IdentityConflict;
+  if (key == 0) return Error::IdentityConflict;
+  const auto matches = [&](auto guid, auto type, auto root, const auto& path) {
+    return replacing && guid == copy.scene && type == as::CatalogAssetType::Scene &&
+           root == as::CatalogRoot::Assets && path == copy.source;
+  };
   for (const auto& entry : source.value().entries())
-    if (entry.guid == copy.scene || as::assetKey(entry.guid) == key) return Error::IdentityConflict;
+    if ((entry.guid == copy.scene || as::assetKey(entry.guid) == key ||
+         (entry.root == as::CatalogRoot::Assets && entry.path == copy.source)) &&
+        !matches(entry.guid, entry.type, entry.root, entry.path)) return Error::IdentityConflict;
   for (const auto& entry : cooked.value())
-    if (entry.guid == copy.scene || entry.assetId == key) return Error::IdentityConflict;
+    if ((entry.guid == copy.scene || entry.assetId == key ||
+         (entry.source.root == as::CatalogRoot::Assets && entry.source.path == copy.source)) &&
+        !matches(entry.guid, entry.type, entry.source.root, entry.source.path)) return Error::IdentityConflict;
 
   const std::wstring_view prefix = prefab ? L"prefab_" : L"save_";
   for (const auto& item : fs::directory_iterator(root)) {
@@ -201,8 +214,9 @@ std::optional<Error> checkIdentity(const fs::path& root, const fs::path& catalog
     if (fragment.isErr() || fragment.value().entries().size() != 1) return Error::IdentityConflict;
     const auto& entry = fragment.value().entries().front();
     if (entry.type != as::CatalogAssetType::Scene || entry.root != as::CatalogRoot::Assets ||
-        entry.path != (prefab ? ca::prefabSource(siblingName) : ca::saveAsSource(siblingName)) || entry.guid == copy.scene ||
-        as::assetKey(entry.guid) == key) return Error::IdentityConflict;
+        entry.path != (prefab ? ca::prefabSource(siblingName) : ca::saveAsSource(siblingName)) ||
+        ((entry.guid == copy.scene || as::assetKey(entry.guid) == key || entry.path == copy.source) &&
+         !matches(entry.guid, entry.type, entry.root, entry.path))) return Error::IdentityConflict;
     if (prefab) {
       const auto bytes = readFragment(item.path() / L"source.scene.txt", 64 * 1024);
       if (!bytes || as::serializeAssetCatalogSource({entry}) != *text ||
@@ -285,7 +299,7 @@ static UnitResult publishSceneUnit(const fs::path& assetsRoot, const fs::path& c
       if (parsed.isErr() || !prefabs::dependencies(parsed.value(), *prefabSnapshot))
         return UnitResult::Err(Error::UnsupportedSubtree);
     }
-    if (!renameNew(temporary.directory, target)) {
+    if (!renameByHandle(temporary.directory, target)) {
       const auto error = GetLastError();
       return UnitResult::Err(error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS ||
                             GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES
@@ -295,6 +309,105 @@ static UnitResult publishSceneUnit(const fs::path& assetsRoot, const fs::path& c
     return UnitResult::Ok(std::move(copy));
   } catch (const std::exception&) {
     return UnitResult::Err(Error::WriteFailed);
+  }
+}
+
+ca::PrefabUpdateResult replacePrefabSource(
+    const fs::path& assetsRoot, const fs::path& catalogSource, const fs::path& cookedCatalog,
+    std::string_view name, as::AssetGuid prefab, std::string_view previousSource,
+    std::string_view previousRevision, std::string candidate, std::uint64_t documentRevision,
+    const as::AssetCatalog& snapshot) {
+  using R = ca::PrefabUpdateResult;
+  constexpr DWORD maxSource = 64 * 1024;
+  const auto parsed = as::parseSceneSource(candidate);
+  if (candidate.size() > maxSource || parsed.isErr() || !prefabs::dependencies(parsed.value(), snapshot) ||
+      as::cookSceneSource(candidate, prefab).isErr()) return R::Err(Error::UnsupportedSubtree);
+  const auto revision = digestSceneBytes(candidate);
+  if (!revision) return R::Err(Error::WriteFailed);
+  try {
+    const auto savedPins = pinParents((assetsRoot / L"scenes" / L"saved").make_preferred());
+    if (savedPins.empty()) return R::Err(Error::UnsafeTarget);
+    CommitLock lock{workspaceMutex(savedPins.back())};
+    if (!lock.mutex) return R::Err(Error::WriteFailed);
+    const auto acquired = WaitForSingleObject(lock.mutex.get(), 0);
+    if (acquired == WAIT_TIMEOUT) return R::Err(Error::Busy);
+    if (acquired != WAIT_OBJECT_0 && acquired != WAIT_ABANDONED) return R::Err(Error::WriteFailed);
+    lock.acquired = true;
+
+    if (!ca::validSaveAsName(name)) return R::Err(Error::IdentityConflict);
+    const auto prefabsRoot = (assetsRoot / L"prefabs").make_preferred();
+    const auto target = prefabsRoot / ("prefab_" + std::string(name));
+    const auto targetPins = pinParents(target);
+    if (targetPins.empty()) return R::Err(Error::UnsafeTarget);
+    const ca::CreatedScene identity{prefab, ca::prefabSource(name)};
+    const auto expectedFragment = as::serializeAssetCatalogSource(
+        {{prefab, as::CatalogAssetType::Scene, as::CatalogRoot::Assets, identity.source}});
+    const auto source = target / L"source.scene.txt";
+    const auto fragmentPath = target / L"catalog-source.txt";
+    if (const auto error = checkIdentity(prefabsRoot, catalogSource, cookedCatalog, identity, true, true))
+      return R::Err(*error);
+    if (readFragment(fragmentPath) != expectedFragment) return R::Err(Error::IdentityConflict);
+    FILE_ID_INFO originalSource{};
+    {
+      const auto existing = open(source, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+      if (readFragment(existing, maxSource) != previousSource ||
+          !GetFileInformationByHandleEx(existing.get(), FileIdInfo, &originalSource, sizeof(originalSource)))
+        return R::Err(Error::StaleSource);
+    }
+
+    ca::PrefabUpdate receipt{{prefab, identity.source, documentRevision}, std::string(previousRevision),
+                             *revision, candidate != previousSource};
+    if (!receipt.changed) return R::Ok(std::move(receipt));
+
+    const auto checkout = assetsRoot.parent_path();
+    const auto tmpRoot = checkout / L"tmp";
+    if (!CreateDirectoryW(tmpRoot.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS)
+      return R::Err(Error::WriteFailed);
+    const auto tmpPins = pinParents(tmpRoot);
+    FILE_ID_INFO sourceVolume{}, stageVolume{};
+    if (tmpPins.empty() ||
+        !GetFileInformationByHandleEx(targetPins.back().get(), FileIdInfo, &sourceVolume, sizeof(sourceVolume)) ||
+        !GetFileInformationByHandleEx(tmpPins.back().get(), FileIdInfo, &stageVolume, sizeof(stageVolume)) ||
+        sourceVolume.VolumeSerialNumber != stageVolume.VolumeSerialNumber) return R::Err(Error::UnsafeTarget);
+
+    auto path = tmpRoot / ("prefab-update-" + as::toString(as::mintEntityGuid()));
+    if (!CreateDirectoryW(path.c_str(), nullptr)) return R::Err(Error::WriteFailed);
+    TemporaryUnit staging{std::move(path), {}};
+    staging.directory = open(staging.path, DELETE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS);
+    if (!isOrdinary(staging.directory, true) || !isCaseInsensitive(staging.directory))
+      return R::Err(Error::UnsafeTarget);
+    const auto staged = staging.path / staging.sourceLeaf;
+    if (!writeNew(staged, candidate, staging.sceneCreated)) return R::Err(Error::WriteFailed);
+    const auto stagedFile = open(staged, DELETE | GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (readFragment(stagedFile, maxSource) != candidate) return R::Err(Error::UnsafeTarget);
+
+    if (const auto error = checkIdentity(prefabsRoot, catalogSource, cookedCatalog, identity, true, true))
+      return R::Err(*error);
+    const auto fragment = open(fragmentPath, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+    if (readFragment(fragment, 4095) != expectedFragment) return R::Err(Error::IdentityConflict);
+    {
+      FILE_ID_INFO observedSource{};
+      const auto existing = open(source, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL);
+      if (readFragment(existing, maxSource) != previousSource ||
+          !GetFileInformationByHandleEx(existing.get(), FileIdInfo, &observedSource, sizeof(observedSource)) ||
+          originalSource.VolumeSerialNumber != observedSource.VolumeSerialNumber ||
+          std::memcmp(&originalSource.FileId, &observedSource.FileId, sizeof(originalSource.FileId)) != 0)
+        return R::Err(Error::StaleSource);
+    }
+    if (renameByHandle(stagedFile, source, true)) {
+      staging.sceneCreated = false;
+      return R::Ok(std::move(receipt));
+    }
+
+    const auto observed = readFragment(source, maxSource);
+    if (observed == candidate) {
+      staging.sceneCreated = false;
+      return R::Ok(std::move(receipt));
+    }
+    return R::Err(observed == previousSource ? Error::WriteFailed : Error::UnknownOutcome);
+  } catch (const std::filesystem::filesystem_error&) {
+    return R::Err(Error::WriteFailed);
   }
 }
 

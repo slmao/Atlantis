@@ -395,6 +395,7 @@ public static partial class Codec
         if (document.SupportsGuardedDuplicateTransactions)
             result.Set("supportsGuardedDuplicateTransactions", JsonValue.Bool(true));
         if (document.SupportsPrefabOrigin) result.Set("supportsPrefabOrigin", JsonValue.Bool(true));
+        if (document.SupportsPrefabSync) result.Set("supportsPrefabSync", JsonValue.Bool(true));
         if (document.SupportsPrefabRegistration) result.Set("supportsPrefabRegistration", JsonValue.Bool(true));
         return result;
     }
@@ -422,6 +423,7 @@ public static partial class Codec
             SupportsGuardedDuplicateTransactions =
                 value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabOrigin = value.Find("supportsPrefabOrigin") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsPrefabSync = value.Find("supportsPrefabSync") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabRegistration = value.Find("supportsPrefabRegistration") is { Kind: JsonKind.Bool, AsBool: true }
         } : null;
     }
@@ -432,6 +434,7 @@ public static partial class Codec
         JsonValue result = JsonValue.NewObject().Set("node", Encode(node.Node)).Set("parent", EncodeOptional(node.Parent))
             .Set("name", JsonValue.String(node.Name));
         if (node.PrefabOrigin is AssetGuid origin) result.Set("prefabOrigin", Encode(origin));
+        if (node.PrefabBaseline is string baseline) result.Set("prefabBaseline", JsonValue.String(baseline));
         return result;
     }
 
@@ -440,8 +443,11 @@ public static partial class Codec
         (bool ok, EntityGuid? parent) = OptionalEntityMember(value, "parent");
         JsonValue? member = value.Find("name");
         if (member is not null && (!member.IsString || !A.NodeNames.IsValid(member.AsString))) return null;
-        return NodeOf(value) is EntityGuid node && ok && TryPrefabOrigin(value, out AssetGuid? origin)
-            ? new A.NodeSummary(node, parent, member?.AsString ?? "", origin) : null;
+        if (NodeOf(value) is not EntityGuid node || !ok || !TryPrefabOrigin(value, out AssetGuid? origin)) return null;
+        JsonValue? baseline = value.Find("prefabBaseline");
+        if (baseline is not null && (origin is null || !baseline.IsString ||
+            CountMember(value, "prefabBaseline") != 1 || !ValidPrefabDigest(baseline.AsString))) return null;
+        return new A.NodeSummary(node, parent, member?.AsString ?? "", origin, baseline?.AsString);
     }
 
     private static bool TryPrefabOrigin(JsonValue value, out AssetGuid? origin)
@@ -611,6 +617,56 @@ public static partial class Codec
         DecodeAsset(prefab) is AssetGuid guid && !guid.IsNil && value.Find("source") is { IsString: true } source &&
         value.Find("documentRevision") is { } revision && DecodeUInt64(revision) is ulong captured
             ? new A.PrefabRegistration(guid, source.AsString, captured) : null;
+    public static bool ValidPrefabDigest(string value) =>
+        value.Length == 64 && System.Linq.Enumerable.All(value, c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
+
+    public static Atlantis.Gameplay.Assets.PrefabRevision? DecodePrefabRevision(JsonValue value, AssetGuid expected) =>
+        Exact(value, 2) && value.Find("prefab") is { } prefab && DecodeAsset(prefab) == expected &&
+        value.Find("revision") is { IsString: true } revision && ValidPrefabDigest(revision.AsString)
+            ? new(expected, revision.AsString) : null;
+
+    public static A.PrefabUpdate? DecodePrefabUpdate(JsonValue value) =>
+        Exact(value, 4) && value.Find("registration") is { } reg && DecodePrefabRegistration(reg) is { } registration &&
+        value.Find("previousRevision") is { IsString: true } old && ValidPrefabDigest(old.AsString) &&
+        value.Find("revision") is { IsString: true } revision && ValidPrefabDigest(revision.AsString) &&
+        value.Find("changed") is { Kind: JsonKind.Bool } changed && changed.AsBool == (old.AsString != revision.AsString)
+            ? new(registration, old.AsString, revision.AsString, changed.AsBool) : null;
+
+    public static JsonValue Encode(A.PrefabSubtree subtree)
+    {
+        var slots = JsonValue.NewArray();
+        foreach (ulong slot in subtree.Slots) slots.Push(JsonValue.Number(slot));
+        return JsonValue.NewObject().Set("source", JsonValue.String(subtree.Source))
+            .Set("parent", EncodeOptional(subtree.Parent)).Set("slots", slots).Set("order", JsonValue.String(subtree.Order));
+    }
+
+    public static A.PrefabSubtree? DecodePrefabSubtree(JsonValue value)
+    {
+        (bool validParent, EntityGuid? parent) = OptionalEntityMember(value, "parent");
+        if (!Exact(value, 4) || !validParent || value.Find("source") is not { IsString: true } source ||
+            System.Text.Encoding.UTF8.GetByteCount(source.AsString) > 65536 ||
+            value.Find("slots") is not { IsArray: true } slots || slots.Items.Count > 64 ||
+            value.Find("order") is not { IsString: true } order || !ValidPrefabDigest(order.AsString) ||
+            (source.AsString.Length == 0) != (slots.Items.Count == 0)) return null;
+        var parsed = new List<ulong>(slots.Items.Count);
+        foreach (JsonValue slot in slots.Items)
+        {
+            if (DecodeUInt64(slot) is not ulong index || (parsed.Count > 0 && parsed[^1] >= index)) return null;
+            parsed.Add(index);
+        }
+        return new(source.AsString, parent, parsed.AsReadOnly(), order.AsString);
+    }
+
+    public static A.PrefabEdit? DecodePrefabEdit(JsonValue value) =>
+        Exact(value, 5) && value.Find("document") is { } document && DecodeDocumentToken(document) is { } token &&
+        value.Find("before") is { } before && DecodePrefabSubtree(before) is { } a &&
+        value.Find("after") is { } after && DecodePrefabSubtree(after) is { } b &&
+        value.Find("changed") is { Kind: JsonKind.Bool } changed && changed.AsBool != a.Matches(b) &&
+        value.Find("affectsProjection") is { Kind: JsonKind.Bool } projection && (changed.AsBool || !projection.AsBool)
+            ? new(token, a, b, changed.AsBool, projection.AsBool) : null;
+
+    public static A.PrefabEditError? DecodePrefabEditError(JsonValue value) => DecodeName<A.PrefabEditError>(value);
+
     public static bool IsLegacySaveAsRefusal(JsonValue reply) =>
         reply.Find("result") is null && reply.Find("error") is { } error &&
         error.Find("code") is { IsString: true, AsString: "BadRequest" } &&

@@ -19,6 +19,21 @@ class AuthoringApply {
   [[nodiscard]] Result<connection::authoring::SavedScene, connection::authoring::SaveAsError> saveAs(std::string_view name) {
     return connection_.saveAs(name);
   }
+  [[nodiscard]] connection::authoring::PrefabUpdateResult updatePrefab(const asset_system::AssetGuid& prefab,
+      std::string_view revision, const asset_system::EntityGuid& donor,
+      const connection::authoring::DocumentToken& document) {
+    return connection_.updatePrefab(prefab, revision, donor, document);
+  }
+  [[nodiscard]] connection::authoring::PrefabEditResult syncPrefab(const asset_system::EntityGuid& root,
+      std::string_view revision, const connection::authoring::DocumentToken& document,
+      std::optional<asset_system::AssetGuid> instantiate = std::nullopt) {
+    return connection_.syncPrefab(root, revision, document, instantiate);
+  }
+  [[nodiscard]] connection::authoring::PrefabEditResult replayPrefab(const asset_system::EntityGuid& root,
+      const connection::authoring::PrefabSubtree& before, const connection::authoring::PrefabSubtree& after,
+      const connection::authoring::DocumentToken& document) {
+    return connection_.replayPrefab(root, before, after, document);
+  }
   [[nodiscard]] Result<connection::authoring::PrefabRegistration, connection::authoring::SaveAsError> createPrefab(
       std::string_view name, const connection::authoring::EntityGuid& node,
       const connection::authoring::DocumentToken& token) {

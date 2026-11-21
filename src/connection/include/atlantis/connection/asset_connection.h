@@ -67,6 +67,11 @@ struct StaticGroup {
   std::vector<StaticGroupNode> nodes;
   friend bool operator==(const StaticGroup&, const StaticGroup&) = default;
 };
+struct PrefabRevision {
+  asset_system::AssetGuid prefab;
+  std::string revision;
+};
+using PrefabRevisionResult = Result<PrefabRevision, StaticGroupError>;
 using StaticGroupResult = Result<StaticGroup, StaticGroupError>;
 [[nodiscard]] std::string_view toString(StaticGroupError error) noexcept;
 [[nodiscard]] std::optional<StaticGroupError> staticGroupError(std::string_view name) noexcept;
@@ -453,6 +458,9 @@ class AssetConnection {
   // failure before using a transport failure's CatalogUnavailable sentinel.
   [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::PrefabRevisionResult prefabRevision(const asset_system::AssetGuid&) const {
+    return assets::PrefabRevisionResult::Err(assets::StaticGroupError::Unsupported);
   }
   [[nodiscard]] virtual assets::StaticGroupResult prefab(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);

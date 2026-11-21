@@ -20,6 +20,7 @@ public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source,
     public string? LogicalPath { get; init; }
 }
 
+public sealed record PrefabRevision(AssetGuid Prefab, string Revision);
 public enum StaticGroupError { Unsupported, CatalogUnavailable, UnknownAsset, UnsupportedGroup, InvalidGroup }
 public sealed record StaticGroupRenderable(AssetGuid Mesh, AssetGuid? Material);
 public sealed record StaticGroupNode(int? Parent, Vector3 Position, Vector3 EulerRadians, Vector3 Scale,

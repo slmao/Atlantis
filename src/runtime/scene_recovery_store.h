@@ -4,6 +4,8 @@
 
 namespace atlantis::runtime {
 
+[[nodiscard]] std::optional<std::string> digestSceneBytes(std::string_view bytes);
+
 class SceneRecoveryStore final : public authoring::RecoveryStore {
  public:
   SceneRecoveryStore(std::filesystem::path source, asset_system::AssetGuid scene);

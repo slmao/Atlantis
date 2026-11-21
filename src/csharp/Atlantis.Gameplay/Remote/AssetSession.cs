@@ -42,6 +42,13 @@ public sealed class AssetSession
     public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid) => ReadGroup(guid, false);
     public Outcome<A.StaticGroup, A.StaticGroupError> Prefab(AssetGuid guid) => ReadGroup(guid, true);
 
+    public Outcome<A.PrefabRevision, A.StaticGroupError> PrefabRevision(AssetGuid guid)
+    {
+        if (guid.IsNil) throw new ArgumentException("a non-nil Prefab GUID is required", nameof(guid));
+        return AssetRequest("assets.prefabRevision", JsonValue.NewObject().Set("guid", Codec.Encode(guid)),
+            A.StaticGroupError.Unsupported, Codec.DecodeStaticGroupError, value => Codec.DecodePrefabRevision(value, guid));
+    }
+
     private Outcome<A.StaticGroup, A.StaticGroupError> ReadGroup(AssetGuid guid, bool prefab)
     {
         if (guid.IsNil) throw new ArgumentException("a non-nil Scene GUID is required", nameof(guid));
