@@ -34,6 +34,8 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     private readonly SavedSceneBuildEvidence _evidence = new(checkout, cmake);
     private readonly SavedSceneRecentStore _recent = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)));
 
+    private sealed class ChangedSceneRegistration() : IOException("The saved scene registration changed after verification.");
+
     internal static string CheckoutPath(string path)
     {
         string full = Absolute(path);
@@ -157,7 +159,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         var bytes = new byte[(int)file.Length];
         file.ReadExactly(bytes);
         if (checkedCatalog is not null && Convert.ToHexString(SHA256.HashData(bytes)) != checkedCatalog)
-            throw new IOException("The saved scene registration changed after verification.");
+            throw new ChangedSceneRegistration();
 
         using var lines = new StringReader(new UTF8Encoding(false, true).GetString(bytes));
         const string prefix = "asset: guid=";
@@ -279,6 +281,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
         string? warning = null;
         try { identity = ReadSceneIdentity(result.Input.Name, result.Files.Catalog); }
+        catch (ChangedSceneRegistration e) { return new(null, e.Message + " Build again."); }
         catch (Exception e) when (IsLocalFailure(e))
         {
             if (recent is not null) return new(null, "Cannot confirm the selected recent scene. " + e.Message);
