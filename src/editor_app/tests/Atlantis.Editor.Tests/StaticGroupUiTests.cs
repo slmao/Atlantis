@@ -15,6 +15,7 @@ using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.VisualTree;
 
 namespace Atlantis.Editor.Tests;
 
@@ -42,6 +43,17 @@ public static partial class Program
         work(runtime.Launch.WorkDirectory);
         var viewport = Field<ViewportHost>("_viewport").Window!;
         nint hwnd = window.TryGetPlatformHandle()!.Handle;
+        async Task DeferFixtureRecovery()
+        {
+            // Previous disposable attempts may leave a genuine recovery copy.
+            // Keep that copy and restore the test window's ordinary interaction.
+            if (Field<Window>("_recoveryWindow") is { } recovery)
+            {
+                Click(recovery.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, "Decide Later")));
+                await NameUiWait(() => Field<Window>("_recoveryWindow") is null, "fixture recovery dialog closed");
+            }
+        }
+        await DeferFixtureRecovery();
         window.Activate();
         await NameUiWait(() => GetForegroundWindow() == hwnd, "foreground storefront Editor");
         Verify("Windows 100% and embedded Runtime", GetDpiForWindow(hwnd) == 96 && viewport.RuntimeChildIsHosted());
@@ -49,6 +61,7 @@ public static partial class Program
 
         async Task Capture(string name)
         {
+            await DeferFixtureRecovery();
             window.Activate();
             await NameUiWait(() => GetForegroundWindow() == hwnd, "foreground for " + name);
             await Task.Delay(250);
