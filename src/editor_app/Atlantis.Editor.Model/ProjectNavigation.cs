@@ -39,4 +39,3 @@ public static class ProjectNavigation
         return output is not AssetGuid guid || SourceOf(after, guid) == key;
     }
 }
-

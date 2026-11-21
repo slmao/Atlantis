@@ -363,8 +363,8 @@ TEST_CASE("project scan wire preserves pending, coverage and unsupported discove
   ServedWorld served(cookAndDecodeScene(kSceneSource));
   Assets assets;
   served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
-  auto session = served.connect();
-  atlantis::gameplay::Assets sdk(session->assets());
+  auto session = served.attach();
+  auto& sdk = session->assets();
   CHECK(sdk.scanProject().error() == ca::ProjectScanError::Unsupported);
   CHECK(sdk.listAssets().isOk());
   assets.projectReads = true;
