@@ -1,10 +1,10 @@
 # Plan 0124 — Recent Saved Scenes
 
 - **Spec:** [Spec 0124](../specs/0124-saved-scenes-recent.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0173](../adr/0173-local-saved-scenes-recent-history.md) (Proposed)
+- **Joint Human Review:** Spec/Plan 0124 and J1–J4 jointly approved for [PR #413](https://github.com/slmao/Atlantis/pull/413) at `6767ef6f`. ADR-0173 accepted and S2–S4 authorized after maintainer merge `0212913b`.
+- **ADR:** [ADR-0173](../adr/0173-local-saved-scenes-recent-history.md) (Accepted)
 
 ## Objective and milestones
 

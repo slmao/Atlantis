@@ -1,9 +1,9 @@
 # ADR 0173 — Keep Saved Scenes History in the Local Launcher
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
-- **Deciders:** Maintainer (pending)
-- **Acceptance:** Pending joint review
+- **Deciders:** Maintainer
+- **Acceptance:** Accepted at `6767ef6f` in [PR #413](https://github.com/slmao/Atlantis/pull/413), merged by the maintainer at `0212913b`.
 - **Related Spec:** [Spec 0124](../specs/0124-saved-scenes-recent.md)
 
 ## Context
