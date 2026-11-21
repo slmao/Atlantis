@@ -283,6 +283,8 @@ public sealed class ReparentSource
     internal HierarchyFilter Filter { get; }
 }
 
+internal sealed record BistroCapture(BistroReferenceView View, RuntimeStatus Status, FrameReport Report, bool PreviousProjection);
+
 public sealed class EditorWorker : IDisposable
 {
     private DocumentObservation _persistence = new(DocumentAvailability.Starting);
@@ -788,7 +790,7 @@ public sealed class EditorWorker : IDisposable
     }
 
     public long Navigate(IReadOnlyList<EntityGuid>? focus, IReadOnlyList<HierarchyRow> rows,
-                         ulong selection, ViewDirection? direction)
+                         ulong selection, ViewDirection? direction, BistroReferenceView? reference = null)
     {
         var identities = new Dictionary<EntityGuid, object>();
         if (focus is not null)
@@ -804,7 +806,7 @@ public sealed class EditorWorker : IDisposable
             _pendingCamera = null;
             _pendingCameraMotion.Clear();
             EntityGuid[]? targets = focus?.ToArray();
-            Enqueue(session => Navigate(session, intent, lifetime, selection, targets, identities, direction));
+            Enqueue(session => Navigate(session, intent, lifetime, selection, targets, identities, direction, reference));
             return intent;
         }
     }
@@ -846,15 +848,16 @@ public sealed class EditorWorker : IDisposable
     }
 
     private void Navigate(RemoteSession session, long intent, long lifetime, ulong selection, EntityGuid[]? targets,
-                          Dictionary<EntityGuid, object> identities, ViewDirection? direction)
+                          Dictionary<EntityGuid, object> identities, ViewDirection? direction, BistroReferenceView? reference)
     {
         const string set = "control.setViewportCamera";
         bool focus = targets is not null;
-        bool returning = !focus && direction is null;
+        bool returning = !focus && direction is null && reference is null;
         bool Current()
         {
             lock (_lock)
                 return !_stopping && _cameraIntent == intent && !_dragActive && !_gizmoActive && _requestedGroup is null &&
+                    (reference is null || lifetime == MeshDocumentLifetime) &&
                     (!focus || (lifetime == MeshDocumentLifetime && selection == _requestedSelectionGeneration &&
                         identities.All(pair => ReferenceEquals(pair.Value, _tree.IncarnationOf(pair.Key)))));
         }
@@ -863,7 +866,7 @@ public sealed class EditorWorker : IDisposable
             PublishNavigation(intent, "Viewport navigation canceled because its context changed.");
             return;
         }
-        if (!returning && !_navigationSupported)
+        if (!returning && reference is null && !_navigationSupported)
         {
             PublishNavigation(intent, "Focus and direction views require an updated Runtime.");
             return;
@@ -872,7 +875,26 @@ public sealed class EditorWorker : IDisposable
         EditorCamera? candidate = null;
         ulong generation = _navigationGeneration;
         ulong extentRevision = 0;
-        if (!returning)
+        if (reference is not null)
+        {
+            generation = session.Control.Status().SceneGeneration;
+            _navigationGeneration = generation;
+            lock (_lock)
+            {
+                extentRevision = _viewportExtentRevision;
+                if (_viewportExtent == (BistroReferenceView.Width, BistroReferenceView.Height))
+                {
+                    candidate = new EditorCamera();
+                    candidate.SeedNavigation(reference.Pose());
+                }
+            }
+            if (candidate is null)
+            {
+                PublishNavigation(intent, "The fixed reference viewport is unavailable.");
+                return;
+            }
+        }
+        else if (!returning)
         {
             EditorCamera? source = _confirmedEditorCamera;
             (int Width, int Height) extent;
@@ -962,7 +984,86 @@ public sealed class EditorWorker : IDisposable
         SettleEditorProjection(session, generation);
         PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again."
             : !Current() ? "The navigation context changed during the camera write."
-            : focus ? "Selection framed" : direction + " view");
+            : reference?.Name ?? (focus ? "Selection framed" : direction + " view"));
+    }
+
+    internal void CaptureBistroView(BistroReferenceView view, long intent, string path,
+        Action<BistroCapture?, string?> completion)
+    {
+        long lifetime = MeshDocumentLifetime;
+        ulong extent;
+        lock (_lock) extent = _viewportExtentRevision;
+        Enqueue(session =>
+        {
+            void Result(BistroCapture? capture, string? error) => _post(() => completion(capture, error));
+            bool Current() => !_stopping && !_navigationUncertain && _cameraIntent == intent &&
+                lifetime == MeshDocumentLifetime && extent == _viewportExtentRevision &&
+                _viewportExtent == (BistroReferenceView.Width, BistroReferenceView.Height) &&
+                !_dragActive && !_gizmoActive && _requestedGroup is null && _pendingCameraMotion.Count == 0;
+            lock (_lock)
+                if (!Current()) { Result(null, "The reference view changed."); return; }
+            var before = session.Control.Status();
+            if (before.Paused || before.SceneGeneration != _navigationGeneration)
+            {
+                Result(null, before.Paused ? "Resume the Runtime before capturing." : "The Runtime scene changed. Return to the reference view.");
+                return;
+            }
+            DocumentToken? ReadDocumentToken()
+            {
+                if (_document is null) return null;
+                var state = session.Authoring.DocumentState();
+                return state.IsOk ? state.Value?.Token : null;
+            }
+            var document = ReadDocumentToken();
+            var apply = _document?.ApplyStatus();
+            if (apply?.Value?.Request?.State == ApplyState.Pending ||
+                _apply?.Status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown)
+            {
+                Result(null, "Wait for Apply to settle before capturing.");
+                return;
+            }
+            var snapshot = apply?.Value;
+            bool previous = _apply?.Status is ApplyStatus.NeedsApply or ApplyStatus.Failed ||
+                snapshot?.Request?.State == ApplyState.Failed ||
+                (snapshot?.Projection is { } projection && projection.Receipt.DocumentRevision != snapshot.CurrentDocumentRevision);
+            bool acknowledged = false;
+            try
+            {
+                ulong id;
+                lock (_lock)
+                {
+                    if (!Current()) { Result(null, "The reference view changed."); return; }
+                    id = session.Control.SendStep(new StepRequest(1, path, WithOverlay: false));
+                }
+                StepResult step = session.Control.AwaitStep(id);
+                acknowledged = true;
+                if (step.Report is not { Image: CapturedImage image } report)
+                {
+                    Result(null, "Capture refused: " + step.Error);
+                    return;
+                }
+                var after = session.Control.Status();
+                var currentDocument = ReadDocumentToken();
+                lock (_lock)
+                {
+                    if (!Current() || document != currentDocument || after.SceneGeneration != before.SceneGeneration || after.Paused ||
+                        report.Frame <= before.Frame || image.Width != BistroReferenceView.Width ||
+                        image.Height != BistroReferenceView.Height || !view.Matches(report.Data.View, report.Data.Projection))
+                    {
+                        Result(null, "The frame does not match the settled reference view. Return to the view and capture again.");
+                        return;
+                    }
+                }
+                Result(new(view, before, report, previous), null);
+            }
+            catch (RemoteException error)
+            {
+                string message = acknowledged ? "The capture returned, but the current view could not be verified."
+                    : "Capture outcome unknown. Return to the reference view and capture again.";
+                Result(null, message);
+                throw new RemoteException(error.Error, message + " " + error.Message);
+            }
+        });
     }
 
     private static string? CameraWriteRefusal(RemoteSession session, ulong id)

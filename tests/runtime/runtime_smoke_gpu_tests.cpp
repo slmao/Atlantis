@@ -711,6 +711,7 @@ TEST_CASE("Runtime: captureFrameData() equals the frame just drawn", "[runtime][
   equalsFrame(before.value());
   REQUIRE(before.value().directionalLights.size() == 1);
   CHECK(before.value().directionalLights[0].intensity == 3.0f);
+  CHECK(before.value().exposureCompensationEv == 0.0f);
 
   {
     const auto connection = app.openConnection();
@@ -719,12 +720,23 @@ TEST_CASE("Runtime: captureFrameData() equals the frame just drawn", "[runtime][
         {light, atlantis::world::ecs::componentTypeId<atlantis::world::Light>(),
          atlantis::schema::fieldId("world::Light", "intensity")},
         6.0f});
+    const auto camera = atlantis::asset_system::parseEntityGuid("49cb0605-ee2a-4a3b-a0e7-2e1139d11828").value();
+    connection->submit(atlantis::world::access::SetProperty{
+        {camera, atlantis::world::ecs::componentTypeId<atlantis::world::Camera>(),
+         atlantis::schema::fieldId("world::Camera", "exposureCompensationEv")},
+        -1.25f});
+    auto viewport = app.viewportNavigation({});
+    REQUIRE(viewport.isOk());
+    viewport.value().sceneCamera.fovYRadians = 0.8f;
+    app.setControlViewportCamera(viewport.value().sceneCamera);
     app.runFrame();
     REQUIRE(app.shouldContinue());
     const auto after = app.captureFrameData();
     REQUIRE(after.isOk());
     equalsFrame(after.value());
     CHECK(after.value().directionalLights[0].intensity == 6.0f);
+    CHECK(after.value().exposureCompensationEv == -1.25f);
+    CHECK(after.value().projection != before.value().projection);
   }
 
   const RuntimeExitReason reason = app.shutdown();

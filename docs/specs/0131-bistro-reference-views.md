@@ -1,11 +1,11 @@
 # Spec 0131 — Bistro Reference Views and Image Comparison
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0131](../plans/0131-bistro-reference-views.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0180](../adr/0180-shared-frame-report-exposure.md) (Proposed)
+- **Approval:** Maintainer approved revision `637eaefd` in [PR #425](https://github.com/slmao/Atlantis/pull/425#issuecomment-7063983586), 2026-11-21.
+- **Related ADR:** [ADR-0180](../adr/0180-shared-frame-report-exposure.md) (Accepted)
 
 ## Summary
 

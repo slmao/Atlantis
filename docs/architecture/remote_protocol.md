@@ -762,12 +762,18 @@ Filter   {"kinds":["EntityCreated",…],"entity":<E>|null,"component":<T>|null}
 FrameReport  {"frame":<n>,"applied":bool,"data":<FrameData>,"image":null|{"path":"…","width":<n>,"height":<n>}}
 FrameData    {"directionalLights":[{"direction":[3],"color":[3],"intensity":<float>}…],
               "pointLights":[{"position":[3],"color":[3],"intensity":<float>,"range":<float>}…],
-              "view":[16],"projection":[16],"drawItemCount":<n>}
+              "view":[16],"projection":[16],"drawItemCount":<n>,"exposureCompensationEv"?:<float>}
 Diagnostics  entries [{"sequence":<n>,"severity":"warning"|"error"|"fatal","message":"…"}]
 ViewportCamera {"worldMatrix":[16],"fovYRadians":<float>,"nearZ":<float>,"farZ":<float>}   (column-major)
 Ray          {"origin":[3],"direction":[3]}                                        (world space, unit direction)
 RayHit       {"entity":"<E>","distance":<float>}
 ```
+
+When available, `exposureCompensationEv` is the finite numeric compensation
+used by the active camera's output transform, including when the viewport
+override supplies pose and lens. Omission means unavailable, commonly on
+older Runtime builds. A reported zero is an exposure value. See
+[ADR-0180](../adr/0180-shared-frame-report-exposure.md).
 
 **The Viewport overlay** (Spec 0066, ADR-0132 D1). Its floats are JSON
 numbers only (no `"nan"`/`"inf"` text: an overlay's floats are finite).

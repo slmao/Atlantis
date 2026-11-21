@@ -572,9 +572,12 @@ public static partial class Codec
                 .Set("color", EncodeFloats(light.Color)).Set("intensity", EncodeFloat(light.Intensity))
                 .Set("range", EncodeFloat(light.Range)));
         }
-        return JsonValue.NewObject().Set("directionalLights", directional).Set("pointLights", points)
+        JsonValue output = JsonValue.NewObject().Set("directionalLights", directional).Set("pointLights", points)
             .Set("view", EncodeFloats(data.View)).Set("projection", EncodeFloats(data.Projection))
             .Set("drawItemCount", JsonValue.Number(data.DrawItemCount));
+        if (data.ExposureCompensationEv is float exposure && float.IsFinite(exposure))
+            output.Set("exposureCompensationEv", EncodeFloat(exposure));
+        return output;
     }
 
     public static FrameData? DecodeFrameData(JsonValue value)
@@ -610,7 +613,13 @@ public static partial class Codec
         {
             return null;
         }
-        return new FrameData(directionalLights, pointLights, view, projection, count);
+        float? exposure = null;
+        if (value.Find("exposureCompensationEv") is JsonValue rawExposure)
+        {
+            exposure = DecodeFloat(rawExposure);
+            if (exposure is not float finite || !float.IsFinite(finite)) return null;
+        }
+        return new FrameData(directionalLights, pointLights, view, projection, count) { ExposureCompensationEv = exposure };
     }
 
     public static JsonValue Encode(FrameReport report)

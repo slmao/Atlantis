@@ -1,4 +1,5 @@
 #include "remote_fixture.h"
+#include "codec.h"
 
 #include <atlantis/connection/runtime_control.h>
 
@@ -95,6 +96,7 @@ class FakeControl final : public connection::RuntimeControl {
     report.data.pointLights.push_back({{-39.615f, 3.255f, -5.032f}, {1.0f, 0.8f, 0.55f}, 24.0f, 6.0f});
     report.data.view[0] = 1.0f;
     report.data.drawItemCount = 42;
+    report.data.exposureCompensationEv = -1.25f;
     if (current.request.imagePath) report.image = connection::CapturedImage{*current.request.imagePath, 640, 480};
     auto done = std::move(current.done);
     steps_.pop_front();
@@ -189,12 +191,31 @@ TEST_CASE("remote control: a step is parked until its frames complete, and its r
         connection::FramePointLight{{-39.615f, 3.255f, -5.032f}, {1.0f, 0.8f, 0.55f}, 24.0f, 6.0f});
   CHECK(report.data.view[0] == 1.0f);
   CHECK(report.data.drawItemCount == 42);
+  CHECK(report.data.exposureCompensationEv == -1.25f);
   CHECK(report.image == connection::CapturedImage{"out.png", 640, 480});
 
   std::optional<StepResult> refused;
   session->control().step(connection::StepRequest{0, std::nullopt}, [&](StepResult r) { refused = std::move(r); });
   REQUIRE(refused.has_value());
   CHECK(refused->error() == connection::ControlError::InvalidRequest);
+}
+
+TEST_CASE("remote frame data distinguishes omitted exposure, zero and malformed exposure", "[remote][control]") {
+  namespace codec = atlantis::remote::codec;
+  namespace json = atlantis::connection::json;
+  connection::FrameData frame;
+  auto legacy = codec::encode(frame);
+  REQUIRE(codec::decodeFrameData(legacy));
+  CHECK_FALSE(codec::decodeFrameData(legacy)->exposureCompensationEv);
+  frame.exposureCompensationEv = 0.0f;
+  auto known = codec::decodeFrameData(codec::encode(frame));
+  REQUIRE(known);
+  CHECK(known->exposureCompensationEv == 0.0f);
+  for (const auto value : {"null", "\"nan\"", "\"inf\"", "\"0\"", "1e40"}) {
+    auto invalid = codec::encode(frame);
+    invalid.set("exposureCompensationEv", json::parse(value).value());
+    CHECK_FALSE(codec::decodeFrameData(invalid));
+  }
 }
 
 TEST_CASE("remote control: without a control, control.* is refused", "[remote][control]") {

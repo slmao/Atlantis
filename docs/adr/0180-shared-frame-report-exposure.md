@@ -1,9 +1,9 @@
 # ADR 0180 — Report Effective Exposure in Shared Frame Data
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer approved revision `637eaefd` in [PR #425](https://github.com/slmao/Atlantis/pull/425#issuecomment-7063983586), 2026-11-21.
 - **Related Spec:** [Spec 0131](../specs/0131-bistro-reference-views.md)
 
 ## Context

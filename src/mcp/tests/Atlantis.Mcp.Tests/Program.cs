@@ -254,6 +254,10 @@ internal static partial class Program
         CheckCall("control.set_viewport_camera", """{"camera":null}""", "null");
         CheckCall("control.set_viewport_overlay", """{"overlay":null}""", """{"ok":null}""");
         CheckCall("control.step", """{"request":{"frames":0,"image":null}}""", """{"ok":null}""");
+        var step = Cases.Single(c => c.Tool == "control.step");
+        string exposure = step.Result.Replace("\"drawItemCount\":3", "\"drawItemCount\":3,\"exposureCompensationEv\":0",
+            StringComparison.Ordinal);
+        CheckCall("control.step", step.Args, exposure);
         string failedJob = """{"ok":{"activeGeneration":null,"job":{"id":"GUID","asset":"GUID","state":"Failed","failure":{"stage":"Pipeline","code":"BuildFailed","diagnostic":"test","exitCode":4}}}}"""
             .Replace("GUID", Entity, StringComparison.Ordinal);
         FakeSession failed = new() { Response = "{\"result\":" + failedJob + "}" };

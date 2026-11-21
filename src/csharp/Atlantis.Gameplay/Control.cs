@@ -24,7 +24,11 @@ public sealed record FrameData(
     IReadOnlyList<FramePointLight> PointLights,
     IReadOnlyList<float> View,
     IReadOnlyList<float> Projection,
-    ulong DrawItemCount);
+    ulong DrawItemCount)
+{
+    /// <summary>Effective camera compensation used for this frame. Null on legacy reports.</summary>
+    public float? ExposureCompensationEv { get; init; }
+}
 
 public sealed record CapturedImage(string Path, uint Width, uint Height);
 
