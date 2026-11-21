@@ -23,6 +23,7 @@ internal static partial class Program
     internal static readonly string PreviewMetadata = $$$"""{"ok":{"guid":"{{{Entity}}}","width":256,"height":256,"mimeType":"image/png"}}""";
     internal static readonly string PairPreviewArgs = $$$"""{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}"}""";
     internal static readonly string PairPreviewMetadata = $$$"""{"ok":{"meshGuid":"{{{Entity}}}","materialGuid":"{{{Material}}}","width":256,"height":256,"mimeType":"image/png"}}""";
+    private const string PrefabRevision = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     private static readonly string DraftValues = $$$"""{"texture":"{{{Material}}}","color":[1,0.5,1],"metallic":0,"roughness":0.5}""";
     private static readonly string DraftRecipe = $$$"""{"values":{{{DraftValues}}},"filter":"Linear","address":"Repeat"}""";
     private static readonly string DraftArgs = $$$"""{"mesh":"{{{Entity}}}","recipe":{{{DraftRecipe}}}}""";
@@ -144,6 +145,17 @@ internal static partial class Program
         ("authoring.reopen_if_current", "authoring.reopenIfCurrent", """{"expected":null}""",
             $$$"""{"ok":{"documentId":"{{{Entity}}}","documentRevision":1,"lastPersistedRevision":1,"dirty":false,"source":"scene.txt","scene":"{{{Entity}}}","provenance":"HandAuthored"}}"""),
         ("authoring.create_scene", "authoring.createScene", """{"name":"sample"}""", $$$"""{"ok":{"scene":"{{{Entity}}}","source":"scenes/saved/save_sample/scene.scene.txt"}}"""),
+        ("assets.prefab_revision", "assets.prefabRevision", $$$"""{"guid":"{{{Entity}}}"}""",
+            $$$"""{"ok":{"prefab":"{{{Entity}}}","revision":"{{{PrefabRevision}}}"}}"""),
+        ("authoring.update_prefab", "authoring.updatePrefab",
+            $$$"""{"node":"{{{Entity}}}","prefab":"{{{Material}}}","revision":"{{{PrefabRevision}}}","expected":{"documentId":"{{{Entity}}}","documentRevision":3}}""",
+            $$$"""{"ok":{"registration":{"prefab":"{{{Material}}}","source":"prefabs/prefab_sample/source.scene.txt","documentRevision":3},"previousRevision":"{{{PrefabRevision}}}","revision":"{{{PrefabRevision}}}","changed":false}}"""),
+        ("authoring.sync_prefab", "authoring.syncPrefab",
+            $$$"""{"node":"{{{Entity}}}","revision":"{{{PrefabRevision}}}","expected":{"documentId":"{{{Entity}}}","documentRevision":3}}""",
+            $$$"""{"ok":{"document":{"documentId":"{{{Entity}}}","documentRevision":3},"before":{"source":"scene","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"},"after":{"source":"scene","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"},"changed":false,"affectsProjection":false}}"""),
+        ("authoring.replay_prefab", "authoring.replayPrefab",
+            $$$"""{"node":"{{{Entity}}}","expected":{"documentId":"{{{Entity}}}","documentRevision":3},"before":{"source":"scene","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"},"after":{"source":"scene too","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"}}""",
+            $$$"""{"ok":{"document":{"documentId":"{{{Entity}}}","documentRevision":4},"before":{"source":"scene","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"},"after":{"source":"scene too","parent":null,"slots":[1],"order":"{{{PrefabRevision}}}"},"changed":true,"affectsProjection":true}}"""),
         ("authoring.create_prefab", "authoring.createPrefab",
             $$$"""{"name":"sample","node":"{{{Entity}}}","expected":{"documentId":"{{{Entity}}}","documentRevision":3}}""",
             $$$"""{"ok":{"prefab":"{{{Material}}}","source":"prefabs/prefab_sample/source.scene.txt","documentRevision":3}}"""),
@@ -542,13 +554,14 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.staticGroup" or "assets.prefab" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
+            if (c.Method is "assets.staticGroup" or "assets.prefab" or "assets.prefabRevision" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
                 "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.moveTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or
                 "assets.materialReadWithOcclusion" or "assets.materialSaveWithOcclusion" or "assets.previewMaterialDraftWithOcclusion" or
                 "assets.materialReadWithCombinedMaps" or "assets.materialSaveWithCombinedMaps" or "assets.previewMaterialDraftWithCombinedMaps" or
-                "authoring.saveAs" or "authoring.createScene" or "authoring.createPrefab" or "authoring.documentState" or "authoring.saveIfCurrent" or
+                "authoring.saveAs" or "authoring.createScene" or "authoring.createPrefab" or "authoring.updatePrefab" or
+                "authoring.syncPrefab" or "authoring.replayPrefab" or "authoring.documentState" or "authoring.saveIfCurrent" or
                 "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
                 "authoring.discardRecovery" or "control.viewportNavigation" or
                 "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")

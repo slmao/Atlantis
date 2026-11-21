@@ -260,6 +260,83 @@ public sealed class AuthoringSession
         }
     }
 
+    public Outcome<A.PrefabUpdate, A.SaveAsError> UpdatePrefab(AssetGuid prefab, string revision,
+        EntityGuid donor, A.DocumentToken token)
+    {
+        if (!Codec.ValidPrefabDigest(revision))
+            return Outcome<A.PrefabUpdate, A.SaveAsError>.Err(A.SaveAsError.StaleSource);
+        const string method = "authoring.updatePrefab";
+        var parameters = PrefabParameters(donor, token).Set("prefab", Codec.Encode(prefab))
+            .Set("revision", JsonValue.String(revision));
+        string context = $"source update for Prefab {prefab} at revision {revision}. Check the registration's " +
+            "source.scene.txt and catalog-source.txt after the request ends before retrying.";
+        return SendPrefab(method, parameters, context, A.SaveAsError.Unsupported, A.SaveAsError.NoDocument,
+            Codec.DecodeSaveAsError, value =>
+            {
+                var receipt = Codec.DecodePrefabUpdate(value);
+                return receipt is not null && receipt.Registration.Prefab == prefab &&
+                    receipt.Registration.DocumentRevision == token.DocumentRevision &&
+                    receipt.PreviousRevision == revision ? receipt : null;
+            });
+    }
+
+    public Outcome<A.PrefabEdit, A.PrefabEditError> SyncPrefab(EntityGuid root, string revision,
+        A.DocumentToken token, AssetGuid? instantiate = null)
+    {
+        if (!Codec.ValidPrefabDigest(revision))
+            return Outcome<A.PrefabEdit, A.PrefabEditError>.Err(A.PrefabEditError.StaleSource);
+        var parameters = PrefabParameters(root, token).Set("revision", JsonValue.String(revision));
+        if (instantiate is AssetGuid source) parameters.Set("prefab", Codec.Encode(source));
+        return SendPrefabEdit("authoring.syncPrefab", parameters, root, token, $"at source revision {revision}");
+    }
+
+    public Outcome<A.PrefabEdit, A.PrefabEditError> ReplayPrefab(EntityGuid root, A.PrefabSubtree before,
+        A.PrefabSubtree after, A.DocumentToken token)
+    {
+        var parameters = PrefabParameters(root, token).Set("before", Codec.Encode(before)).Set("after", Codec.Encode(after));
+        return SendPrefabEdit("authoring.replayPrefab", parameters, root, token, "during history replay",
+            receipt => receipt.Before.Matches(before) && receipt.After.Matches(after));
+    }
+
+    private static JsonValue PrefabParameters(EntityGuid node, A.DocumentToken token) => JsonValue.NewObject()
+        .Set("node", Codec.Encode(node)).Set("expected", Codec.Encode(token));
+
+    private Outcome<A.PrefabEdit, A.PrefabEditError> SendPrefabEdit(string method, JsonValue parameters, EntityGuid root,
+        A.DocumentToken token, string operation, Func<A.PrefabEdit, bool>? verify = null) =>
+        SendPrefab(method, parameters, $"Prefab instance {root} {operation}. Inspect the document before retrying.",
+            A.PrefabEditError.Unsupported, A.PrefabEditError.NoDocument, Codec.DecodePrefabEditError, value =>
+            {
+                var edit = Codec.DecodePrefabEdit(value);
+                return edit is not null && edit.Document.DocumentId == token.DocumentId &&
+                    edit.Document.DocumentRevision >= token.DocumentRevision &&
+                    edit.Document.DocumentRevision - token.DocumentRevision == (edit.Changed ? 1UL : 0UL) &&
+                    (verify is null || verify(edit)) ? edit : null;
+            });
+
+    private Outcome<T, E> SendPrefab<T, E>(string method, JsonValue parameters, string context, E unsupported, E noDocument,
+        Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode) where T : class where E : struct, Enum
+    {
+        _session.ThrowIfFailed();
+        try
+        {
+            var reply = _session.AwaitResponse(_session.Send(method, parameters));
+            var error = reply.Find("error");
+            var result = reply.Find("result");
+            if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+                return Outcome<T, E>.Err(noDocument);
+            if (result is null && error?.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+                error.Find("message") is { IsString: true } message && message.AsString == $"unknown method {method}")
+                return Outcome<T, E>.Err(unsupported);
+            if (error is not null || result is not { IsObject: true } || result.Members.Count != 1)
+                throw _session.Malformed(method);
+            return _session.InBand<T, E>(result, method, decode, decodeError);
+        }
+        catch (RemoteException e)
+        {
+            throw new RemoteException(e, "Result unknown for " + context);
+        }
+    }
+
     // --- Queries.
 
     /// <summary>Every node, in the document's order.</summary>

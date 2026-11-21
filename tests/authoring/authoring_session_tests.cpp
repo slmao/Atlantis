@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <span>
 
 // Plan 0065 M2 (P2, P3; Spec 0065 R1-R6, R9; ADR-0129 D1-D4, ADR-0130 D1-D2):
 // the authoring session through its InProcess AuthoringConnection -- queries,
@@ -1325,4 +1326,87 @@ TEST_CASE("authoring: a source edit during a recovery decision can only be disca
   CHECK(a.documentState().value().value() == reviewed);
   CHECK(readText(fixture.source) == external);
   CHECK_FALSE(a.recoveryStatus().value().copy);
+}
+
+TEST_CASE("authoring: Prefab sync preserves the root and settles whole-subtree replay", "[authoring][session][prefab]") {
+  Fixture f;
+  auto& c = *f.connection;
+  using E = ac::PrefabEditError;
+  const auto origin = asset(80);
+  const auto root = entity(70);
+  const auto other = entity(71);
+  const auto digest = [](std::string_view contents) -> std::optional<std::string> {
+    const auto bytes = std::as_bytes(std::span(contents.data(), contents.size()));
+    return as::toString(as::AssetGuid{as::fnv1a128(bytes)});
+  };
+  const auto baselineDigest = [digest](std::string_view contents) -> std::optional<std::string> {
+    auto value = *digest(contents);
+    std::erase(value, '-');
+    return value + value;
+  };
+  scene::AuthoringScene definition;
+  definition.nodes = {
+      scene::AuthoringNode{entity(10), {}, {}, {}, {}, {}, "Template"},
+      scene::AuthoringNode{entity(11), entity(10), {}, {}, scene::Renderable{asset(1), asset(2)}, {}, "Original chair"}};
+  const auto source = [&] { return as::serializeSceneSource(scene::toParsedSceneSource(definition).value()); };
+  auto frozen = source();
+  auto revision = *baselineDigest(frozen);
+  f.session.setPrefabSync([&](const as::AssetGuid& guid) -> std::optional<atlantis::authoring::PrefabDefinition> {
+    if (guid != origin) return std::nullopt;
+    return atlantis::authoring::PrefabDefinition{"seating", frozen, revision};
+  }, baselineDigest, [](const auto& renderable) { return renderable.meshAsset == asset(1); });
+  const auto token = [&] { return c.documentState().value()->token; };
+  REQUIRE(c.document()->supportsPrefabSync);
+  const auto first = c.syncPrefab(root, revision, token(), origin);
+  REQUIRE(first.isOk());
+  CHECK(first.value().affectsProjection);
+  REQUIRE(c.syncPrefab(other, revision, token(), origin).isOk());
+  REQUIRE_FALSE(refusalOf(c, {ac::SetNodeName{root, "Placed instance"}, ac::SetParent{root, entity(2)}}));
+  REQUIRE_FALSE(refusalOf(c, {ac::SetProperty{address(69, kTransform, field("Transform", "localPosition")),
+      std::array<float, 3>{2, 1, -3}}}));
+  const auto original = c.listNodes().value();
+  REQUIRE(std::ranges::find(original, root, &ac::NodeSummary::node)->prefabBaseline.has_value());
+  const auto savedBase = token();
+  CHECK_FALSE(c.syncPrefab(root, revision, savedBase, {}).value().changed);
+  definition.nodes.back().name = "Replacement chair";
+  definition.nodes.emplace_back(scene::AuthoringNode{
+      entity(12), entity(11), {}, {}, scene::Renderable{asset(1), {}}, {}, "Nested chair leg"});
+  const auto staleRevision = revision;
+  frozen = source();
+  revision = *baselineDigest(frozen);
+  CHECK(c.syncPrefab(root, staleRevision, token(), {}).error() == E::StaleSource);
+  CHECK(token() == savedBase);
+  const auto changed = c.syncPrefab(root, revision, token(), {});
+  REQUIRE(changed.isOk());
+  REQUIRE(changed.value().affectsProjection);
+  const auto settled = c.listNodes().value();
+  const auto anchor = std::ranges::find(settled, root, &ac::NodeSummary::node);
+  REQUIRE(anchor != settled.end());
+  CHECK(anchor->name == "Placed instance");
+  CHECK(anchor->parent == entity(2));
+  CHECK(anchor->prefabOrigin == origin);
+  CHECK(anchor->prefabBaseline != std::ranges::find(original, root, &ac::NodeSummary::node)->prefabBaseline);
+  CHECK(c.getProperty(address(69, kTransform, field("Transform", "localPosition"))).value() ==
+        ac::PropertyValue{std::array<float, 3>{2, 1, -3}});
+  const auto otherChild = std::ranges::find(original, std::optional(other), &ac::NodeSummary::parent);
+  REQUIRE(otherChild != original.end());
+  CHECK(std::ranges::find(settled, otherChild->node, &ac::NodeSummary::node)->name == "Original chair");
+
+  const auto undo = c.replayPrefab(root, changed.value().after, changed.value().before, token());
+  REQUIRE(undo.isOk());
+  CHECK(c.listNodes().value() == original);
+  REQUIRE(c.replayPrefab(root, changed.value().before, changed.value().after, token()).isOk());
+  CHECK(c.listNodes().value() == settled);
+  REQUIRE(c.save().isOk());
+  REQUIRE(readText(f.source).starts_with("atlantis_scene_source_version: 10\n"));
+  REQUIRE(c.open().isOk());
+  CHECK(c.listNodes().value() == settled);
+
+  const auto child = std::ranges::find(settled, std::optional(root), &ac::NodeSummary::parent);
+  REQUIRE(child != settled.end());
+  REQUIRE_FALSE(refusalOf(c, {ac::SetNodeName{child->node, "Locally edited chair"}}));
+  const auto beforeConflict = token();
+  CHECK(c.syncPrefab(root, revision, beforeConflict, {}).error() == E::LocalConflict);
+  CHECK(c.replayPrefab(root, changed.value().after, changed.value().before, beforeConflict).error() == E::ReplayConflict);
+  CHECK(token() == beforeConflict);
 }

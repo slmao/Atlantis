@@ -3,6 +3,7 @@
 #include "scene_save_as.h"
 #include "scene_recovery_store.h"
 
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/asset_catalog_source.h>
 #include <atlantis/log.h>
 
@@ -89,7 +90,30 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
       session_->setPrefabLookup([this](const as::AssetGuid& guid) {
         return sources_.assets->connect()->prefab(guid).isOk();
       });
+      session_->setPrefabSync([this](const as::AssetGuid& guid) -> std::optional<authoring::PrefabDefinition> {
+        const auto* frozen = sources_.assets->frozenPrefab(guid);
+        if (!frozen) return std::nullopt;
+        return authoring::PrefabDefinition{frozen->group.name, frozen->source, frozen->revision};
+      }, &digestSceneBytes, [this](const as::scene::Renderable& value) {
+        const auto catalog = sources_.assets->catalog();
+        if (!catalog) return false;
+        const auto* mesh = catalog->find(value.meshAsset);
+        if (!mesh || mesh->type != as::CatalogAssetType::Mesh) return false;
+        if (!value.materialAsset) return true;
+        const auto* material = catalog->find(*value.materialAsset);
+        return material && material->type == as::CatalogAssetType::Material;
+      });
       if (sources_.allowPrefabRegistration) {
+        session_->setPrefabUpdateSink([this](as::AssetGuid guid, std::string_view expected, std::string source,
+                                             std::uint64_t revision) {
+          using namespace connection::authoring;
+          const auto* frozen = sources_.assets->frozenPrefab(guid);
+          const auto snapshot = sources_.assets->catalog();
+          if (!frozen || !snapshot || frozen->revision != expected)
+            return PrefabUpdateResult::Err(SaveAsError::StaleSource);
+          return replacePrefabSource(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
+              frozen->group.name, guid, frozen->source, frozen->revision, std::move(source), revision, *snapshot);
+        });
         session_->setPrefabSink([this](std::string_view name, as::AssetGuid guid, std::string source,
                                        std::uint64_t revision) {
           const auto snapshot = sources_.assets->catalog();

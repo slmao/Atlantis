@@ -36,6 +36,13 @@ class AssetHost {
   AssetHost& operator=(const AssetHost&) = delete;
   [[nodiscard]] std::unique_ptr<connection::AssetConnection> connect();
   [[nodiscard]] std::shared_ptr<const asset_system::AssetCatalog> catalog() const;
+  struct FrozenPrefab {
+    connection::assets::StaticGroup group;
+    std::string source;
+    std::string revision;
+  };
+  // Borrows the immutable verified definition until the host is destroyed.
+  [[nodiscard]] const FrozenPrefab* frozenPrefab(const asset_system::AssetGuid& guid) const;
   // Call once for the combined Remote poll and --exec dispatch, if enabled.
   void beginServiceInterval() noexcept;
  private:

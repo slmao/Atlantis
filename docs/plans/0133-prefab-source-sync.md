@@ -1,10 +1,10 @@
 # Plan 0133 — Update a Prefab Source and Synchronize One Instance
 
 - **Spec:** [Spec 0133](../specs/0133-prefab-source-sync.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0182](../adr/0182-prefab-source-updates-and-sync-baselines.md) (Proposed)
+- **Joint Human Review:** Spec and Plan 0133 and J1–J4 approved on `e9235765`, with S2–S4 authorized after the maintainer merged [#429](https://github.com/slmao/Atlantis/pull/429) as `39e404ce`. [Joint approval](https://github.com/slmao/Atlantis/pull/429#issuecomment-7066200488)
+- **ADR:** [ADR-0182](../adr/0182-prefab-source-updates-and-sync-baselines.md) (Accepted)
 - **Design baseline:** `457c43bf`, maintainer merge of [#428](https://github.com/slmao/Atlantis/pull/428)
 
 ## Objective

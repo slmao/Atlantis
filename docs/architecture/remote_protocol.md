@@ -221,6 +221,9 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 | `authoring.save` | — | `{"ok":null}` or `{"err":"<SaveError>"}` |
 | `authoring.createScene` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>}}` or `{"err":"<CreateSceneError>"}` |
 | `authoring.createPrefab` | `name: <logical name>, node: <EntityGuid>, expected: <DocumentToken>` | `{"ok":{"prefab":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
+| `authoring.updatePrefab` | `prefab`, donor `node`, frozen source `revision`, `expected` document token | In-band `{registration, previousRevision, revision, changed}` or SaveAsError |
+| `authoring.syncPrefab` | instance `node`, frozen source `revision`, `expected` document token, optional `prefab` for tracked instantiation | In-band `{document, before, after, changed, affectsProjection}` or PrefabEditError |
+| `authoring.replayPrefab` | instance `node`, expected `before`, replacement `after`, `expected` document token | Same transaction receipt as sync, or PrefabEditError |
 | `authoring.saveAs` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
 
 **Semantics** are `AuthoringConnection`'s (Spec 0065 R1–R9):
@@ -300,6 +303,7 @@ the same Runtime launch before taking another explicit action.
 | `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
 | `assets.staticGroup` | `{"guid":"<non-nil canonical Scene GUID>"}` | `{"ok":<StaticGroup>}` |
 | `assets.prefab` | `{"guid":"<non-nil canonical Prefab GUID>"}` | `{"ok":<StaticGroup>}` with a `name` on each node and one root, up to 64 nodes |
+| `assets.prefabRevision` | `{"guid":"<non-nil canonical Prefab GUID>"}` | In-band `{prefab,revision}` or StaticGroupError from the same frozen definition |
 
 List and get may return `{"err":"CatalogUnavailable"}`; get may also return
 `{"err":"UnknownAsset"}`. Exactly one result arm is present. Invalid parameters
@@ -981,6 +985,29 @@ snapshot. List/get rows optionally include `isPrefab: true` and retain
 `type: "scene"` for existing clients.
 Only literal true enables the new guard. Discovery is independent of
 the earlier guards and is scoped to the current open document.
+
+Spec 0133 retains the three-field Prefab tree reply. Revision reads return
+the SHA-256 of the verified frozen source and only succeed for a valid tree.
+Source update requires checkout write permission and compares the requested
+revision with both the active definition and the current canonical source.
+The write and the next explicit 0090 Build/Open have separate outcomes.
+
+A Prefab structural receipt settles one guarded transaction. Its before
+and after values contain canonical bounded subtree source, outside
+`parent` (GUID or null), sorted document `slots` and a SHA-256 `order`
+guard. Each subtree is at most 64 nodes and 64 KiB. The empty state has
+empty source and slots with a null parent. The receipt moves the document
+revision by one on a change and preserves it for an already current
+instance. Apply is separate. Replay checks both the current document token
+and the expected subtree and order. Clients should use the received
+before/after values to replay history.
+
+Updated clients discover transaction support with optional
+`supportsPrefabSync` in document information. An individual node summary
+can carry a lowercase 64-hex `prefabBaseline` alongside `prefabOrigin`.
+Legacy listeners continue to receive the existing structural and component
+event kinds. After a lost mutation result, clients inspect the target and
+wait for settlement before retrying.
 
 Put `RequireDuplicateBatchRevision` with unsigned `expectedRevision`
 first in `authoring.submitTransaction`. The payload either appends

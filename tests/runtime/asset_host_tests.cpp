@@ -179,6 +179,10 @@ TEST_CASE("assets: Prefab projections freeze with the catalog across connections
   AssetHost host(f.path.string());
   SECTION("a label-only edit after the first catalog read cannot change Prefab queries") {
     REQUIRE(host.connect()->listAssets().isOk());
+    const auto originalRevision = host.connect()->prefabRevision(prefab.guid);
+    REQUIRE(originalRevision.isOk());
+    CHECK(originalRevision.value().prefab == prefab.guid);
+    CHECK(originalRevision.value().revision.size() == 64);
     node.name = "Changed chair";
     writeSource();
     const auto result = host.connect()->prefab(prefab.guid);
@@ -192,9 +196,12 @@ TEST_CASE("assets: Prefab projections freeze with the catalog across connections
     CHECK(admission.value() == result.value());
 
     writeSource();
-    const auto fresh = AssetHost(f.path.string()).connect()->prefab(prefab.guid);
+    CHECK(host.connect()->prefabRevision(prefab.guid).value().revision == originalRevision.value().revision);
+    AssetHost freshHost(f.path.string());
+    const auto fresh = freshHost.connect()->prefab(prefab.guid);
     REQUIRE(fresh.isOk());
     CHECK(fresh.value().nodes.front().name == "Changed chair");
+    CHECK(freshHost.connect()->prefabRevision(prefab.guid).value().revision != originalRevision.value().revision);
   }
   SECTION("a missing source at catalog settlement stays invalid until a fresh host") {
     std::filesystem::remove(source);

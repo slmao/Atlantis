@@ -88,6 +88,16 @@ using CreateSceneSink = std::function<Result<connection::authoring::CreatedScene
     std::string_view name, asset_system::AssetGuid scene, std::string source)>;
 using PrefabSink = std::function<Result<connection::authoring::PrefabRegistration, connection::authoring::SaveAsError>(
     std::string_view name, asset_system::AssetGuid prefab, std::string source, std::uint64_t revision)>;
+using PrefabUpdateSink = std::function<connection::authoring::PrefabUpdateResult(
+    asset_system::AssetGuid prefab, std::string_view expectedRevision, std::string source, std::uint64_t revision)>;
+struct PrefabDefinition {
+  std::string name;
+  std::string source;
+  std::string revision;
+};
+using PrefabRead = std::function<std::optional<PrefabDefinition>(const asset_system::AssetGuid&)>;
+using PrefabDigest = std::function<std::optional<std::string>(std::string_view)>;
+using PrefabAssets = std::function<bool(const asset_system::scene::Renderable&)>;
 using PrefabLookup = std::function<bool(const asset_system::AssetGuid&)>;
 
 
@@ -149,6 +159,8 @@ class AuthoringSession {
   void setSaveAsSink(SaveAsSink sink);
   void setCreateSceneSink(CreateSceneSink sink);
   void setPrefabSink(PrefabSink sink);
+  void setPrefabSync(PrefabRead read, PrefabDigest digest, PrefabAssets assets);
+  void setPrefabUpdateSink(PrefabUpdateSink sink);
   void setPrefabLookup(PrefabLookup lookup);
   void setRecoveryStore(RecoveryStore& store);
 

@@ -56,7 +56,8 @@ inline std::optional<std::string> read(const fs::path& root, const std::string& 
   return bytes;
 }
 
-inline ac::StaticGroupResult project(const fs::path& root, const as::AssetCatalog& catalog, const as::AssetGuid& guid) {
+inline ac::StaticGroupResult project(const fs::path& root, const as::AssetCatalog& catalog, const as::AssetGuid& guid,
+                                     std::string* verifiedBytes = nullptr) {
   using R = ac::StaticGroupResult;
   using E = ac::StaticGroupError;
   const auto* record = catalog.find(guid);
@@ -68,7 +69,8 @@ inline ac::StaticGroupResult project(const fs::path& root, const as::AssetCatalo
   const auto text = read(root, {sourceUtf8.begin(), sourceUtf8.end()});
   if (!text) return R::Err(E::InvalidGroup);
   const auto parsed = as::parseSceneSource(*text);
-  if (parsed.isErr() || as::serializeSceneSource(parsed.value()) != *text) return R::Err(E::InvalidGroup);
+  if (!text->starts_with("atlantis_scene_source_version: 8\n") ||
+      parsed.isErr() || as::serializeSceneSource(parsed.value()) != *text) return R::Err(E::InvalidGroup);
   const auto ids = dependencies(parsed.value(), catalog);
   if (!ids || !std::ranges::equal(*ids, record->dependencies)) return R::Err(E::InvalidGroup);
   const auto cooked = as::cookSceneSource(*text, guid);
@@ -91,6 +93,7 @@ inline ac::StaticGroupResult project(const fs::path& root, const as::AssetCatalo
     if (node.meshAsset) item.renderable = ac::StaticGroupRenderable{*node.meshAsset, node.materialAsset};
     result.nodes.push_back(std::move(item));
   }
+  if (verifiedBytes) *verifiedBytes = std::move(*text);
   return R::Ok(std::move(result));
 }
 }  // namespace atlantis::runtime::prefabs

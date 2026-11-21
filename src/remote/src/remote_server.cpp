@@ -295,6 +295,36 @@ namespace ac = atlantis::connection::authoring;
   if (method == "authoring.save") {
     return Outcome::Ok(inBand(authoring.save(), &encodeNull, &codec::encodeSaveError));
   }
+  if (method == "authoring.updatePrefab" || method == "authoring.syncPrefab" || method == "authoring.replayPrefab") {
+    const auto* node = p.find("node");
+    const auto* expected = p.find("expected");
+    const auto root = node ? codec::decodeEntity(*node) : std::nullopt;
+    const auto token = expected ? codec::decodeDocumentToken(*expected) : std::nullopt;
+    if (!p.isObject() || !root || *root == ac::EntityGuid{} || !token)
+      return Outcome::Err("Prefab edits require node and expected document");
+    const auto encodeEdit = [](const ac::PrefabEdit& edit) { return codec::encode(edit); };
+    const auto encodeError = [](ac::PrefabEditError error) { return Value::string(std::string(ac::toString(error))); };
+    if (method == "authoring.replayPrefab") {
+      const auto* before = p.find("before");
+      const auto* after = p.find("after");
+      auto a = before ? codec::decodePrefabSubtree(*before) : std::nullopt;
+      auto b = after ? codec::decodePrefabSubtree(*after) : std::nullopt;
+      if (p.asObject().size() != 4 || !a || !b) return Outcome::Err("invalid Prefab replay");
+      return Outcome::Ok(inBand(authoring.replayPrefab(*root, *a, *b, *token), encodeEdit, encodeError));
+    }
+    const auto* revision = p.find("revision");
+    const auto* prefab = p.find("prefab");
+    const auto guid = prefab ? codec::decodeAsset(*prefab) : std::nullopt;
+    if (!revision || !revision->isString() || !ac::validPrefabDigest(revision->asString()) ||
+        (prefab && (!guid || *guid == ac::AssetGuid{})) || p.asObject().size() != (prefab ? 4 : 3))
+      return Outcome::Err("invalid Prefab revision or identity");
+    if (method == "authoring.updatePrefab") {
+      if (!guid) return Outcome::Err("Prefab source update requires the asset GUID");
+      return Outcome::Ok(inBand(authoring.updatePrefab(*guid, revision->asString(), *root, *token),
+          [](const ac::PrefabUpdate& update) { return codec::encode(update); }, &codec::encodeSaveAsError));
+    }
+    return Outcome::Ok(inBand(authoring.syncPrefab(*root, revision->asString(), *token, guid), encodeEdit, encodeError));
+  }
   if (method == "authoring.createPrefab") {
     const auto* name = p.find("name");
     const auto* node = p.find("node");
@@ -786,6 +816,21 @@ struct RemoteServer::State {
       if (!client.assets && openAssets) client.assets = openAssets();
       return reply(client.assets ? client.assets->importStatus(guid ? std::optional{ca::ImportId{*guid}} : std::nullopt)
           : ca::ImportStatusResult::Err(ca::ImportError::Unavailable));
+    }
+    if (name == "assets.prefabRevision") {
+      namespace ca = connection::assets;
+      const auto* member = p.find("guid");
+      const auto guid = member ? codec::decodeAsset(*member) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != 1 || !guid || *guid == asset_system::AssetGuid{})
+        return errorResponse(requestId, "BadRequest", "Prefab revision requires one non-nil canonical GUID");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      auto result = client.assets ? client.assets->prefabRevision(*guid)
+                                  : ca::PrefabRevisionResult::Err(ca::StaticGroupError::CatalogUnavailable);
+      if (result.isErr()) return response(requestId, codec::err(Value::string(std::string(ca::toString(result.error())))));
+      Value payload = Value::object();
+      payload.set("prefab", codec::encodeAsset(result.value().prefab));
+      payload.set("revision", Value::string(result.value().revision));
+      return response(requestId, codec::ok(std::move(payload)));
     }
     if (name == "assets.staticGroup" || name == "assets.prefab") {
       namespace ca = connection::assets;

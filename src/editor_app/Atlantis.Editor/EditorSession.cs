@@ -2426,6 +2426,13 @@ public sealed class EditorWorker : IDisposable
                         Report(null, "Add refused: the selected asset or open scene changed.");
                         return;
                     }
+                    if (intent.IsPrefab && session.Authoring.Document()?.SupportsPrefabSync == true)
+                    {
+                        var root = EntityGuid.Parse(Guid.NewGuid().ToString());
+                        SettlePrefabAction(session, root, intent.Scene, lifetime, selection,
+                            () => intent.Current, instantiate: true, Report);
+                        return;
+                    }
                     var group = intent.IsPrefab ? session.Assets.Prefab(intent.Scene) : session.Assets.StaticGroup(intent.Scene);
                     if (group.IsOk == false)
                     {
@@ -2487,7 +2494,7 @@ public sealed class EditorWorker : IDisposable
             var nodes = document.ObserveNodes();
             events = Observe();
             if (nodes is null || events is null) return false;
-            return _tree.OrderSynchronized && nodes.SequenceEqual(_tree.Order.Select(node =>
+            return _tree.OrderSynchronized && nodes.Select(node => node with { PrefabBaseline = null }).SequenceEqual(_tree.Order.Select(node =>
                 new NodeSummary(node, _tree.ParentOf(node), _tree.NameOf(node), _tree.PrefabOriginOf(node)))) ||
                 _tree.ReconcileOrder(nodes);
         }
@@ -3375,8 +3382,29 @@ public sealed class EditorWorker : IDisposable
             presetApplyRevision = applyRevision;
             return settlement;
         }
-        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset) :
-            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset);
+        BatchReplayResult ReplayPrefab(PrefabHistory edit, bool forward)
+        {
+            batchReplay = true;
+            try
+            {
+                var current = session.Authoring.DocumentState();
+                if (!current.IsOk || current.Value is not { } document || lifetime != MeshDocumentLifetime)
+                    return new(BatchReplayState.Retry, "Prefab replay refused. Check the open document.");
+                var reply = session.Authoring.ReplayPrefab(edit.Root, forward ? edit.Before : edit.After,
+                    forward ? edit.After : edit.Before, document.Token);
+                if (!reply.IsOk || reply.Value is not { } receipt)
+                    return new(BatchReplayState.Retry, "Prefab replay refused: " + reply.Error + ".");
+                if (receipt.AffectsProjection) presetApplyRevision = receipt.Document.DocumentRevision;
+                return new(BatchReplayState.Committed, forward ? "Redid Prefab edit." : "Undid Prefab edit.");
+            }
+            catch (GameplayException error)
+            {
+                _apply?.RequireExplicitApply("Prefab replay outcome is unknown");
+                return new(BatchReplayState.Retry, error.Message);
+            }
+        }
+        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab) :
+            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab);
         siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
@@ -3655,6 +3683,162 @@ public sealed class EditorWorker : IDisposable
         }
         catch (RemoteException error) { return new DocumentObservation(DocumentAvailability.Unavailable, Diagnostic: error.Message); }
     });
+
+    public void UpdatePrefab(StaticGroupIntent asset, string assetName, HierarchyRow donor, DocumentToken token,
+        ulong selection, Action<string> settled)
+    {
+        var filter = _hierarchyFilter;
+        Enqueue(session =>
+        {
+            void Report(string text) => _post(() => settled(text));
+            bool Current() => !_stopping && asset.Current && asset.Lifetime == MeshDocumentLifetime &&
+                selection == _requestedSelectionGeneration && RowCurrent(donor, selection) && StructureAllowed(filter) &&
+                !_gizmoActive && _requestedGroup is null;
+            try
+            {
+                if (!Current() || _document is not RemoteAuthoringDocument document ||
+                    document.ObserveEvents() is not { } events)
+                { Report("Prefab update refused: the selected asset, donor or document changed."); return; }
+                PollDocument(session, events, pollApply: false);
+                var revision = session.Assets.PrefabRevision(asset.Scene);
+                if (!revision.IsOk || revision.Value is not { } snapshot)
+                { Report("Prefab update unavailable: " + revision.Error + "."); return; }
+                string path = Codec.PrefabSource(assetName);
+                Outcome<PrefabUpdate, SaveAsError> reply;
+                lock (_lock)
+                {
+                    if (!Current())
+                    { Report("Prefab update refused: the selected asset, donor or document changed."); return; }
+                    reply = session.Authoring.UpdatePrefab(asset.Scene, snapshot.Revision, donor.Node, token);
+                }
+                Report(reply.Value is { } result
+                    ? result.Changed ? $"Updated Prefab {result.Registration.Prefab}. Build and Open the saved scene to activate it."
+                                     : "Prefab source is unchanged."
+                    : reply.Error == SaveAsError.UnknownOutcome
+                        ? $"Prefab update outcome unknown for {asset.Scene} at {path}. Confirm settlement and check the source before retrying."
+                        : "Prefab update refused: " + reply.Error + ".");
+            }
+            catch (GameplayException error)
+            {
+                Report(error.Message);
+                throw;
+            }
+        });
+    }
+
+    public void SynchronizePrefab(HierarchyRow row, StaticGroupIntent intent, DocumentToken token, ulong selection,
+        Action<string> settled)
+    {
+        var filter = _hierarchyFilter;
+        Enqueue(session => SettlePrefabAction(session, row.Node, intent.Scene, intent.Lifetime, selection,
+            () => intent.Current && RowCurrent(row, selection) && StructureAllowed(filter), false,
+            (_, text) => settled(text), token));
+    }
+
+    private void SettlePrefabAction(RemoteSession session, EntityGuid root, AssetGuid source, long lifetime, ulong selection,
+        Func<bool> currentIntent, bool instantiate, Action<EntityGuid?, string> settled, DocumentToken? expected = null)
+    {
+        void Report(EntityGuid? node, string text) => _post(() =>
+        {
+            if (lifetime == MeshDocumentLifetime) settled(node, text);
+        });
+        bool Current() => !_stopping && lifetime == MeshDocumentLifetime && selection == _requestedSelectionGeneration &&
+            currentIntent() && !_gizmoActive && _requestedGroup is null && !_reparentQueued && !_siblingMoveQueued;
+        try
+        {
+            if (!Current() || _document is not RemoteAuthoringDocument document ||
+                document.ObserveEvents() is not { } events)
+            { Report(null, "Prefab edit refused: the selection or document changed."); return; }
+            PollDocument(session, events, pollApply: false);
+            var state = session.Authoring.DocumentState();
+            var revision = session.Assets.PrefabRevision(source);
+            if (!revision.IsOk || revision.Value is not { } snapshot)
+            { Report(null, "Prefab revision unavailable: " + revision.Error + "."); return; }
+            if (!state.IsOk || state.Value is not { } active || (expected is { } token && token != active.Token))
+            { Report(null, "Prefab edit refused: the document revision changed."); return; }
+
+            Outcome<PrefabEdit, PrefabEditError> reply;
+            lock (_lock)
+            {
+                if (!Current())
+                { Report(null, "Prefab edit refused: the selection or document changed."); return; }
+                reply = session.Authoring.SyncPrefab(root, snapshot.Revision, active.Token, instantiate ? source : null);
+            }
+            if (!reply.IsOk || reply.Value is not { } edit)
+            {
+                string detail = reply.Error switch
+                {
+                    PrefabEditError.LocalConflict => "This instance has local edits to managed content.",
+                    PrefabEditError.BaselineUnavailable => "This instance has no verified baseline. Open a matching build first.",
+                    _ => reply.Error + "."
+                };
+                Report(null, "Prefab edit refused. " + detail);
+                return;
+            }
+            if (!edit.Changed) { Report(null, "Prefab instance is already current."); return; }
+
+            string notice = instantiate ? "Instantiated Prefab." :
+                edit.AffectsProjection ? "Synchronized Prefab instance." : "Recorded the Prefab synchronization baseline.";
+            bool verified = false;
+            try
+            {
+                var observed = session.Authoring.DocumentState();
+                var nodes = session.Authoring.ListNodes();
+                verified = observed.IsOk && observed.Value?.Token == edit.Document && nodes.IsOk &&
+                    VerifyPrefabSlots(edit.After, root, nodes.Value!);
+            }
+            catch (GameplayException)
+            {
+                notice += " Document committed. Read-back failed and Undo is unavailable.";
+            }
+            if (verified && _history is { } history && _historyTarget is { } historyTarget)
+            {
+                history.Record(new EditTransaction(instantiate ? "instantiate Prefab" : "synchronize Prefab", [],
+                    [new PrefabHistory(root, edit.Before, edit.After)]), historyTarget.Committed([]));
+                history.Update();
+            }
+            else if (!notice.Contains("Undo is unavailable", StringComparison.Ordinal))
+            {
+                notice += " Document committed. Read-back did not verify the edit, so Undo is unavailable.";
+            }
+
+            PostHistory(lifetime);
+            notice = edit.AffectsProjection ? ApplyVerifiedSceneObject(session, lifetime, edit.Document.DocumentRevision, notice) : notice;
+            try
+            {
+                PostApplyState(lifetime, refreshOverlay: session.Failure is null);
+                PollDocument(session, pollApply: false);
+                PostInspector();
+            }
+            finally { Report(instantiate ? root : null, notice); }
+        }
+        catch (GameplayException error)
+        {
+            _apply?.RequireExplicitApply("Prefab edit needs verification");
+            Report(null, error.Message);
+            throw;
+        }
+    }
+
+    private static bool VerifyPrefabSlots(PrefabSubtree expected, EntityGuid root, IReadOnlyList<NodeSummary> nodes)
+    {
+        using var lines = new StringReader(expected.Source);
+        for (int header = 0; header < 3; ++header) lines.ReadLine();
+        bool seenRoot = false;
+        foreach (ulong slot in expected.Slots)
+        {
+            var parts = lines.ReadLine()?.Split(' ', 4);
+            if (parts is not { Length: 4 } || !parts[2].StartsWith("guid=", StringComparison.Ordinal) ||
+                !EntityGuid.TryParse(parts[2][5..], out var node) || slot >= (ulong)nodes.Count ||
+                nodes[(int)slot].Node != node) return false;
+            if (node == root)
+            {
+                seenRoot = true;
+                if (nodes[(int)slot].Parent != expected.Parent) return false;
+            }
+        }
+        return seenRoot && lines.ReadLine() is null;
+    }
 
     public void SavePrefab(string name, HierarchyRow row, DocumentToken token, long lifetime, ulong selection,
         Action<string> settled)

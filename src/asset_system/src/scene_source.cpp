@@ -27,7 +27,9 @@ namespace {
 constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 8";
 constexpr std::string_view kLegacyVersionLine = "atlantis_scene_source_version: 7";
 constexpr std::string_view kPrefabVersionLine = "atlantis_scene_source_version: 9";
+constexpr std::string_view kPrefabBaselineVersionLine = "atlantis_scene_source_version: 10";
 constexpr std::string_view kPrefabPrefix = "prefab=";
+constexpr std::string_view kBaselinePrefix = "prefabBaseline=";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
 constexpr std::string_view kActiveCameraPrefix = "active_camera: ";
 constexpr std::string_view kNodePrefix = "node: ";
@@ -182,11 +184,12 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
   std::size_t lineIndex = 0;
 
   if (lineIndex >= lines.size() || (lines[lineIndex] != kVersionLine && lines[lineIndex] != kLegacyVersionLine &&
-                                  lines[lineIndex] != kPrefabVersionLine)) {
+                                  lines[lineIndex] != kPrefabVersionLine && lines[lineIndex] != kPrefabBaselineVersionLine)) {
     return ResultT::Err(SceneSourceParseError::UnknownSourceVersion);
   }
   const bool legacy = lines[lineIndex] == kLegacyVersionLine;
-  const bool supportsOrigin = lines[lineIndex] == kPrefabVersionLine;
+  const bool supportsBaseline = lines[lineIndex] == kPrefabBaselineVersionLine;
+  const bool supportsOrigin = supportsBaseline || lines[lineIndex] == kPrefabVersionLine;
   ++lineIndex;
 
   if (lineIndex >= lines.size()) return ResultT::Err(SceneSourceParseError::MissingField);
@@ -278,6 +281,16 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
       tokens.erase(tokens.begin() + 2);
     }
 
+    std::optional<std::string> prefabBaseline;
+    if (tokens.size() > 2 && tokens[2].starts_with(kBaselinePrefix)) {
+      const auto baseline = tokens[2].substr(kBaselinePrefix.size());
+      if (!supportsBaseline || !prefabOrigin || baseline.size() != 64 ||
+          baseline.find_first_not_of("0123456789abcdef") != std::string_view::npos)
+        return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
+      prefabBaseline = std::string(baseline);
+      tokens.erase(tokens.begin() + 2);
+    }
+
     // Plan 0047 P9: guid= is the second token. It is taken out here so the
     // v6 token positions below are unchanged. A nil value is syntactically
     // fine; cookScene() reports NilEntityGuid.
@@ -339,6 +352,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
     node.entityGuid = entityGuid;
     node.name = std::move(name);
     node.prefabOrigin = prefabOrigin;
+    node.prefabBaseline = std::move(prefabBaseline);
 
     if (tokens[0].substr(0, kNodeIdPrefix.size()) != kNodeIdPrefix) {
       return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
@@ -562,8 +576,12 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
 
 std::string serializeSceneSource(const ParsedSceneSource& source) {
   std::string out;
-  out += std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabOrigin.has_value(); })
-      ? kPrefabVersionLine : kVersionLine;
+  if (std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabBaseline.has_value(); }))
+    out += kPrefabBaselineVersionLine;
+  else if (std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabOrigin.has_value(); }))
+    out += kPrefabVersionLine;
+  else
+    out += kVersionLine;
   out += '\n';
   out += kNodeCountPrefix;
   out += std::to_string(source.nodes.size());
@@ -590,6 +608,11 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
       out += ' ';
       out += kPrefabPrefix;
       out += toString(*node.prefabOrigin);
+      if (node.prefabBaseline) {
+        out += ' ';
+        out += kBaselinePrefix;
+        out += *node.prefabBaseline;
+      }
     }
     out += ' ';
     out += std::string(kParentPrefix) +

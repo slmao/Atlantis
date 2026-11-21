@@ -24,6 +24,7 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
 {
     public bool SupportsPrefabOrigin { get; init; }
     public bool SupportsPrefabRegistration { get; init; }
+    public bool SupportsPrefabSync { get; init; }
     public bool SupportsGuardedPropertyTransactions { get; init; }
     public bool SupportsGuardedTransformTransactions { get; init; }
     /// <summary>The current document supports revision-guarded duplicate transactions.</summary>
@@ -31,7 +32,8 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
-public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "", AssetGuid? PrefabOrigin = null);
+public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "", AssetGuid? PrefabOrigin = null,
+    string? PrefabBaseline = null);
 
 /// <summary>Spec 0069's authoring label domain; names never identify a node.</summary>
 public static class NodeNames
@@ -286,11 +288,23 @@ public enum OpenError
 public enum SaveAsError
 {
     Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
-    Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, StaleDocument, UnsupportedSubtree,
+    Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, StaleDocument, UnsupportedSubtree, StaleSource, UnknownOutcome,
 }
 
 public sealed record SavedScene(AssetGuid Scene, string Source, ulong DocumentRevision);
 public sealed record PrefabRegistration(AssetGuid Prefab, string Source, ulong DocumentRevision);
+public sealed record PrefabUpdate(PrefabRegistration Registration, string PreviousRevision, string Revision, bool Changed);
+public sealed record PrefabSubtree(string Source, EntityGuid? Parent, IReadOnlyList<ulong> Slots, string Order)
+{
+    public bool Matches(PrefabSubtree other) =>
+        Source == other.Source && Parent == other.Parent && Order == other.Order && Slots.SequenceEqual(other.Slots);
+}
+public sealed record PrefabEdit(DocumentToken Document, PrefabSubtree Before, PrefabSubtree After, bool Changed,
+    bool AffectsProjection);
+public enum PrefabEditError
+{
+    Unsupported, NoDocument, StaleDocument, StaleSource, InvalidInstance, LocalConflict, BaselineUnavailable, ReplayConflict,
+}
 public readonly record struct DocumentToken(EntityGuid DocumentId, ulong DocumentRevision);
 public sealed record DocumentState(DocumentToken Token, AssetGuid Scene, string Source, Provenance Provenance,
     ulong LastPersistedRevision, bool Dirty);

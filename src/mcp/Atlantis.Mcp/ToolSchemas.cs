@@ -74,6 +74,17 @@ internal static class ToolSchemas
 
     internal static JsonNode ParametersNode(params (string Name, JsonNode Shape)[] fields) => Object(fields);
 
+    internal static readonly JsonNode PrefabDocument = Object(("documentId", String), ("documentRevision", Integer));
+    internal static readonly JsonNode PrefabSubtree = Object(("source", String), ("parent", Nullable(String)),
+        ("slots", Array(Integer)), ("order", String));
+
+    internal static JsonElement PrefabSyncParameters()
+    {
+        JsonObject shape = Object(("node", String), ("expected", PrefabDocument), ("revision", String), ("prefab", String));
+        shape["required"] = new JsonArray("node", "expected", "revision");
+        return JsonSerializer.SerializeToElement(shape);
+    }
+
     internal static JsonElement ApplyStatusParameters()
     {
         JsonObject shape = Object(("id", Nullable(String))); shape["required"] = new JsonArray();

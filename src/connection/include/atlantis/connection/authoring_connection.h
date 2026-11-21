@@ -51,6 +51,7 @@ struct DocumentInfo {
   bool supportsGuardedDuplicateTransactions = false;
   bool supportsPrefabOrigin = false;
   bool supportsPrefabRegistration = false;
+  bool supportsPrefabSync = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -60,6 +61,7 @@ struct NodeSummary {
   std::optional<EntityGuid> parent;
   std::string name;  // Spec 0069: empty means unnamed; identity remains the GUID
   std::optional<AssetGuid> prefabOrigin{};
+  std::optional<std::string> prefabBaseline{};
   friend bool operator==(const NodeSummary&, const NodeSummary&) = default;
 };
 
@@ -416,7 +418,7 @@ struct RecoveryReceipt {
 [[nodiscard]] std::string_view toString(RecoverySource state) noexcept;
 enum class SaveAsError : std::uint8_t {
   Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
-  Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome, StaleDocument, UnsupportedSubtree,
+  Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome, StaleDocument, UnsupportedSubtree, StaleSource,
 };
 struct SavedScene {
   asset_system::AssetGuid scene;
@@ -432,6 +434,37 @@ struct PrefabRegistration {
   std::string source;
   std::uint64_t documentRevision = 0;
 };
+struct PrefabUpdate {
+  PrefabRegistration registration;
+  std::string previousRevision;
+  std::string revision;
+  bool changed = false;
+};
+using PrefabUpdateResult = Result<PrefabUpdate, SaveAsError>;
+enum class PrefabEditError : std::uint8_t {
+  Unsupported, NoDocument, StaleDocument, StaleSource, InvalidInstance, LocalConflict,
+  BaselineUnavailable, ReplayConflict, UnknownOutcome,
+};
+[[nodiscard]] std::string_view toString(PrefabEditError error) noexcept;
+[[nodiscard]] bool validPrefabDigest(std::string_view value) noexcept;
+
+struct PrefabSubtree {
+  // Canonical bounded authoring subtree bytes. Its root's outside parent
+  // is stored separately so the existing scene codec can validate the tree.
+  std::string source;
+  std::optional<EntityGuid> parent;
+  std::vector<std::uint64_t> slots;
+  std::string order;
+  friend bool operator==(const PrefabSubtree&, const PrefabSubtree&) = default;
+};
+struct PrefabEdit {
+  DocumentToken document;
+  PrefabSubtree before;
+  PrefabSubtree after;
+  bool changed = false;
+  bool affectsProjection = false;
+};
+using PrefabEditResult = Result<PrefabEdit, PrefabEditError>;
 [[nodiscard]] std::string prefabSource(std::string_view name);
 
 enum class CreateSceneError : std::uint8_t {
@@ -580,6 +613,18 @@ class AuthoringConnection {
   virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
   virtual Result<authoring::CreatedScene, authoring::CreateSceneError> createScene(std::string_view) {
     return Result<authoring::CreatedScene, authoring::CreateSceneError>::Err(authoring::CreateSceneError::Unavailable);
+  }
+  virtual authoring::PrefabEditResult syncPrefab(const authoring::EntityGuid&, std::string_view,
+      const authoring::DocumentToken&, std::optional<authoring::AssetGuid> = std::nullopt) {
+    return authoring::PrefabEditResult::Err(authoring::PrefabEditError::Unsupported);
+  }
+  virtual authoring::PrefabEditResult replayPrefab(const authoring::EntityGuid&,
+      const authoring::PrefabSubtree&, const authoring::PrefabSubtree&, const authoring::DocumentToken&) {
+    return authoring::PrefabEditResult::Err(authoring::PrefabEditError::Unsupported);
+  }
+  virtual authoring::PrefabUpdateResult updatePrefab(const authoring::AssetGuid&, std::string_view,
+      const authoring::EntityGuid&, const authoring::DocumentToken&) {
+    return authoring::PrefabUpdateResult::Err(authoring::SaveAsError::Unsupported);
   }
   virtual Result<authoring::PrefabRegistration, authoring::SaveAsError> createPrefab(
       std::string_view, const authoring::EntityGuid&, const authoring::DocumentToken&) {

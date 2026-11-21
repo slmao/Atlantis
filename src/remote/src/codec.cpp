@@ -1961,6 +1961,7 @@ Value encode(const authoring::DocumentInfo& document) {
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
   if (document.supportsPrefabOrigin) out.set("supportsPrefabOrigin", Value::boolean(true));
+  if (document.supportsPrefabSync) out.set("supportsPrefabSync", Value::boolean(true));
   if (document.supportsPrefabRegistration) out.set("supportsPrefabRegistration", Value::boolean(true));
   return out;
 }
@@ -1987,6 +1988,9 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   const auto* prefab = value.find("supportsPrefabOrigin");
   const auto* registration = value.find("supportsPrefabRegistration");
   if ((prefab && !prefab->isBool()) || (registration && !registration->isBool())) return std::nullopt;
+  const auto* sync = value.find("supportsPrefabSync");
+  if (sync && !sync->isBool()) return std::nullopt;
+  out.supportsPrefabSync = sync && sync->asBool();
   out.supportsPrefabOrigin = prefab && prefab->asBool();
   out.supportsPrefabRegistration = registration && registration->asBool();
   if (provenance->asString() == "Imported") {
@@ -2198,6 +2202,7 @@ Value encode(const authoring::NodeSummary& node) {
   out.set("parent", encodeOptionalEntity(node.parent));
   out.set("name", Value::string(node.name));
   if (node.prefabOrigin) out.set("prefabOrigin", encodeAsset(*node.prefabOrigin));
+  if (node.prefabBaseline) out.set("prefabBaseline", Value::string(*node.prefabBaseline));
   return out;
 }
 
@@ -2210,7 +2215,11 @@ std::optional<authoring::NodeSummary> decodeNodeSummary(const Value& value) {
   const auto* field = value.find("prefabOrigin");
   const auto prefab = field ? decodeAsset(*field) : std::nullopt;
   if (field && (!prefab || *prefab == asset_system::AssetGuid{})) return std::nullopt;
-  return authoring::NodeSummary{*node, *parent, name == nullptr ? std::string() : name->asString(), prefab};
+  const auto* baseline = value.find("prefabBaseline");
+  if (baseline && (!prefab || !baseline->isString() || !authoring::validPrefabDigest(baseline->asString())))
+    return std::nullopt;
+  return authoring::NodeSummary{*node, *parent, name == nullptr ? std::string() : name->asString(), prefab,
+      baseline ? std::optional<std::string>{baseline->asString()} : std::nullopt};
 }
 
 Value encodeAuthoringError(authoring::Error error) { return Value::string(std::string(authoring::toString(error))); }
@@ -2286,11 +2295,91 @@ std::optional<authoring::PrefabRegistration> decodePrefabRegistration(const Valu
   if (!guid || *guid == asset_system::AssetGuid{} || !number) return std::nullopt;
   return authoring::PrefabRegistration{*guid, source->asString(), *number};
 }
+Value encode(const authoring::PrefabUpdate& update) {
+  Value out = Value::object();
+  out.set("registration", encode(update.registration));
+  out.set("previousRevision", Value::string(update.previousRevision));
+  out.set("revision", Value::string(update.revision));
+  out.set("changed", Value::boolean(update.changed));
+  return out;
+}
+std::optional<authoring::PrefabUpdate> decodePrefabUpdate(const Value& value) {
+  const auto* registration = value.find("registration");
+  const auto* previous = value.find("previousRevision");
+  const auto* revision = value.find("revision");
+  const auto* changed = value.find("changed");
+  if (!value.isObject() || value.asObject().size() != 4 || !registration ||
+      !previous || !previous->isString() || !authoring::validPrefabDigest(previous->asString()) ||
+      !revision || !revision->isString() || !authoring::validPrefabDigest(revision->asString()) ||
+      !changed || !changed->isBool() || changed->asBool() != (previous->asString() != revision->asString()))
+    return std::nullopt;
+  const auto parsed = decodePrefabRegistration(*registration);
+  if (!parsed) return std::nullopt;
+  return authoring::PrefabUpdate{*parsed, previous->asString(), revision->asString(), changed->asBool()};
+}
+Value encode(const authoring::PrefabSubtree& subtree) {
+  Value slots = Value::array();
+  for (auto slot : subtree.slots) slots.push(Value::number(slot));
+  Value out = Value::object();
+  out.set("source", Value::string(subtree.source));
+  out.set("parent", subtree.parent ? encodeEntity(*subtree.parent) : Value());
+  out.set("slots", std::move(slots));
+  out.set("order", Value::string(subtree.order));
+  return out;
+}
+std::optional<authoring::PrefabSubtree> decodePrefabSubtree(const Value& value) {
+  const auto* source = value.find("source");
+  const auto parent = optionalEntityMember(value, "parent");
+  const auto* slots = value.find("slots");
+  const auto* order = value.find("order");
+  if (!value.isObject() || value.asObject().size() != 4 || !source || !source->isString() ||
+      source->asString().size() > 64 * 1024 || !parent || !slots || !slots->isArray() ||
+      slots->asArray().size() > authoring::kMaxGuardedDuplicateNodes || !order || !order->isString() ||
+      !authoring::validPrefabDigest(order->asString()) ||
+      source->asString().empty() != slots->asArray().empty()) return std::nullopt;
+  authoring::PrefabSubtree result{source->asString(), *parent, {}, order->asString()};
+  for (const auto& slot : slots->asArray()) {
+    const auto n = decodeUInt64(slot);
+    if (!n || (!result.slots.empty() && result.slots.back() >= *n)) return std::nullopt;
+    result.slots.push_back(*n);
+  }
+  return result;
+}
+Value encode(const authoring::PrefabEdit& edit) {
+  Value out = Value::object();
+  out.set("document", encode(edit.document));
+  out.set("before", encode(edit.before));
+  out.set("after", encode(edit.after));
+  out.set("changed", Value::boolean(edit.changed));
+  out.set("affectsProjection", Value::boolean(edit.affectsProjection));
+  return out;
+}
+std::optional<authoring::PrefabEdit> decodePrefabEdit(const Value& value) {
+  const auto* document = value.find("document");
+  const auto* before = value.find("before");
+  const auto* after = value.find("after");
+  const auto* changed = value.find("changed");
+  const auto* projection = value.find("affectsProjection");
+  if (!value.isObject() || value.asObject().size() != 5 || !document || !before || !after ||
+      !changed || !changed->isBool() || !projection || !projection->isBool()) return std::nullopt;
+  auto token = decodeDocumentToken(*document);
+  auto a = decodePrefabSubtree(*before);
+  auto b = decodePrefabSubtree(*after);
+  if (!token || !a || !b || changed->asBool() != (*a != *b) ||
+      (!changed->asBool() && projection->asBool())) return std::nullopt;
+  return authoring::PrefabEdit{*token, std::move(*a), std::move(*b), changed->asBool(), projection->asBool()};
+}
+std::optional<authoring::PrefabEditError> decodePrefabEditError(const Value& value) {
+  using E = authoring::PrefabEditError;
+  constexpr std::array values{E::Unsupported, E::NoDocument, E::StaleDocument, E::StaleSource, E::InvalidInstance,
+                              E::LocalConflict, E::BaselineUnavailable, E::ReplayConflict};
+  return enumeratorNamed(value, values);
+}
 std::optional<authoring::SaveAsError> decodeSaveAsError(const Value& value) {
   using E = authoring::SaveAsError;
   constexpr std::array errors{E::Unavailable, E::InvalidName, E::NoDocument, E::ImportedSceneNotSavable, E::UnsafeTarget,
                               E::Busy, E::NameConflict, E::IdentityConflict, E::WriteFailed, E::StaleDocument,
-                              E::UnsupportedSubtree};
+                              E::UnsupportedSubtree, E::StaleSource, E::UnknownOutcome};
   return enumeratorNamed(value, errors);
 }
 Value encodeApplyError(authoring::ApplyError error) { return Value::string(std::string(authoring::toString(error))); }
