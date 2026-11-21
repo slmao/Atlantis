@@ -20,6 +20,7 @@ public sealed class SavedSceneAttempts
     public bool Building { get; private set; }
     public bool Starting { get; private set; }
     public bool Busy => Building || Starting;
+    public long CheckVersion => _check;
 
     public bool CanBuild(SavedSceneInput? input) => input is not null && !Busy && !RecentSelectionPending && !_children.Contains(input.Name);
     public bool CanOpen(SavedSceneInput? input) => CanBuild(input) && Result?.Input == input && Result is not null;

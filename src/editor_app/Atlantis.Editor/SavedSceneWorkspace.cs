@@ -35,6 +35,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     private readonly SavedSceneRecentStore _recent = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)));
 
     private sealed class ChangedSceneRegistration() : IOException("The saved scene registration changed after verification.");
+    private sealed class UnidentifiedSceneRegistration(string message) : IOException(message);
 
     internal static string CheckoutPath(string path)
     {
@@ -155,7 +156,12 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         }
         string unit = Unit(name);
         using var file = File.OpenRead(Path.Combine(unit, CatalogLeaf));
-        if (file.Length > 4096) throw new IOException("The saved scene registration is too large.");
+        if (file.Length > 4096)
+        {
+            if (checkedCatalog is not null && Convert.ToHexString(SHA256.HashData(file)) != checkedCatalog)
+                throw new ChangedSceneRegistration();
+            throw new UnidentifiedSceneRegistration("The saved scene registration is too large.");
+        }
         var bytes = new byte[(int)file.Length];
         file.ReadExactly(bytes);
         if (checkedCatalog is not null && Convert.ToHexString(SHA256.HashData(bytes)) != checkedCatalog)
@@ -169,7 +175,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
             !entry.StartsWith(prefix, StringComparison.Ordinal) || !entry.EndsWith(suffix, StringComparison.Ordinal) ||
             entry.Length != prefix.Length + 36 + suffix.Length ||
             !AssetGuid.TryParse(entry.Substring(prefix.Length, 36), out var guid) || guid.IsNil)
-            throw new IOException("The saved scene registration does not identify this unit.");
+            throw new UnidentifiedSceneRegistration("The saved scene registration does not identify this unit.");
         return new(name, guid.Value);
     }
 
@@ -252,9 +258,10 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
     private static SavedSceneEligibility Unavailable(string reason) => new(null, reason + " Build again.");
 
-    internal SavedSceneOpenResult Open(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent = null)
+    internal SavedSceneOpenResult Open(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent = null,
+        Action? onBuildVerified = null)
     {
-        var started = StartChecked(result, apphost, recent, out var identity);
+        var started = StartChecked(result, apphost, recent, onBuildVerified, out var identity);
         if (started.Child is null || identity is null) return started;
         try { _recent.Record(identity); }
         catch (Exception e) when (IsLocalFailure(e))
@@ -262,7 +269,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         return started;
     }
 
-    private SavedSceneOpenResult StartChecked(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent,
+    private SavedSceneOpenResult StartChecked(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent, Action? onBuildVerified,
         out SavedSceneIdentity? identity)
     {
         identity = null;
@@ -279,14 +286,17 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         }
         else if (CheckFresh(result) is { Build: null } ineligible) return new(null, ineligible.Detail);
 
+        onBuildVerified?.Invoke();
         string? warning = null;
         try { identity = ReadSceneIdentity(result.Input.Name, result.Files.Catalog); }
         catch (ChangedSceneRegistration e) { return new(null, e.Message + " Build again."); }
-        catch (Exception e) when (IsLocalFailure(e))
+        catch (Exception e) when (e is UnidentifiedSceneRegistration or DecoderFallbackException)
         {
             if (recent is not null) return new(null, "Cannot confirm the selected recent scene. " + e.Message);
             warning = "The scene identity could not be verified for Recent. " + e.Message;
         }
+        catch (Exception e) when (IsLocalFailure(e))
+        { return new(null, "Cannot verify the saved scene files before opening. " + e.Message + " Build again."); }
         if (recent is not null && identity != recent) return new(null, "This location now contains a different scene.");
         return new(Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."),
             null, warning);

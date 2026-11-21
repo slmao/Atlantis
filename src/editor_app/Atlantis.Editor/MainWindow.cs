@@ -3373,6 +3373,8 @@ public sealed class MainWindow : Window
     {
         if (_savedWorkspace is not { } workspace || _shuttingDown) return;
         long read = ++_savedRecentRead;
+        var activeBeforeRead = _savedAttempts.RecentTarget;
+        long checkBeforeRead = _savedAttempts.CheckVersion;
         SavedRecentRow[] rows;
         string? failure = null;
         try
@@ -3397,6 +3399,21 @@ public sealed class MainWindow : Window
         });
         _savedRecent.IsVisible = rows.Length != 0;
         _savedRecentStatus.Text = failure ?? (rows.Length == 0 ? "No scenes opened yet." : "");
+        if (!_savedAttempts.Busy && _savedAttempts.RecentTarget is { } active &&
+            rows.FirstOrDefault(row => row.Entry.Identity == active)?.Issue is { } issue)
+        {
+            if (active == activeBeforeRead && _savedAttempts.CheckVersion == checkBeforeRead)
+            {
+                _savedCheck?.Cancel();
+                _savedRecentVerified = false;
+                InvalidateSavedResult(issue);
+                _savedBuildSummary.Text = "Recent scene unavailable";
+                _savedBuildSummary.Foreground = EditorVisuals.Warning;
+                _savedBuildResult.Text = issue;
+            }
+            else
+                _ = CheckSavedSelection();
+        }
         UpdateSavedSceneButtons();
     }
 

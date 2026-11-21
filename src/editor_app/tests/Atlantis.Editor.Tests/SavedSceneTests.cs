@@ -289,6 +289,33 @@ public static partial class Program
         Check(workspace.RemoveRecent(entries[0]) && workspace.ReadRecent().All(entry => entry.Identity.Scene != scene.Scene) &&
             File.ReadAllBytes(slot).SequenceEqual(receiptBytes) && File.Exists(source) && File.Exists(exe),
             "Remove from Recent changes history only, leaving source, executable and receipt intact");
+
+        string apphost = Path.Combine(Environment.SystemDirectory, "where.exe");
+        void CheckLateMissingSource(SavedSceneIdentity? expected, string path)
+        {
+            byte[] historyBefore = File.ReadAllBytes(file);
+            string held = source + ".held";
+            try
+            {
+                var refusedOpen = workspace.Open(current, apphost, expected, () => File.Move(source, held));
+                using var child = refusedOpen.Child;
+                if (child is not null && !child.WaitForExit(5000)) child.Kill();
+                Check(File.Exists(held) && child is null && refusedOpen.Refusal is not null &&
+                    File.ReadAllBytes(file).SequenceEqual(historyBefore) && File.ReadAllBytes(slot).SequenceEqual(receiptBytes),
+                    path + " refuses a source moved after build verification without starting a child or changing history");
+            }
+            finally { if (File.Exists(held)) File.Move(held, source); }
+        }
+        CheckLateMissingSource(null, "ordinary Open");
+        history.Record(replacement);
+        CheckLateMissingSource(replacement, "Recent Open");
+        var entryBeforeOpen = history.Read()[0];
+        var normalOpen = workspace.Open(current, apphost, replacement);
+        using var normalChild = normalOpen.Child;
+        if (normalChild is not null && !normalChild.WaitForExit(5000)) normalChild.Kill();
+        Check(normalChild is not null && normalOpen.Refusal is null && history.Read()[0].Identity == replacement &&
+            history.Read()[0].Version != entryBeforeOpen.Version,
+            "restoring the source allows explicit Open and promotes the verified scene");
     }
     private static void SavedSceneCMakeChecks()
     {
@@ -823,6 +850,39 @@ public static partial class Program
             await NameUiWait(() => recent.ItemCount == 0, "invalid shortcut removed");
             Verify("Remove changes history only", workspace.ReadRecent().Length == 0 && !File.Exists(source) &&
                 File.ReadAllBytes(catalog).SequenceEqual(savedCatalog) && File.ReadAllBytes(slot).SequenceEqual(savedReceipt) && Children().SequenceEqual(pids));
+            return;
+        }
+
+        if (phase == "refresh-active")
+        {
+            var entries = workspace.ReadRecent();
+            Verify("active refresh fixture has the saved scene and a different unavailable shortcut", recent.ItemCount == 2 &&
+                entries[0].Identity.Name == name && recent.Items[1]?.ToString()?.Contains("Unavailable", StringComparison.Ordinal) == true);
+            var beforeChildren = Children();
+            byte[] beforeReceipt = File.ReadAllBytes(slot);
+            recent.SelectedIndex = 0;
+            await NameUiWait(() => model.RecentTarget == entries[0].Identity && build.IsEnabled && open.IsEnabled,
+                "active Recent target has verified ready actions", 180);
+            var ready = model.Result;
+            string held = source + ".held";
+            try
+            {
+                File.Move(source, held);
+                recent.SelectedIndex = 1;
+                await NameUiWait(() => !model.RecentSelectionPending &&
+                    recent.Items[0]?.ToString()?.Contains("Unavailable", StringComparison.Ordinal) == true,
+                    "the other unavailable shortcut refreshes the active row");
+                Verify("a refresh which finds the active scene unavailable clears Ready and disables both actions",
+                    model.RecentTarget == entries[0].Identity && model.Result is null && !build.IsEnabled && !open.IsEnabled &&
+                    status.Text?.Contains("may have moved", StringComparison.Ordinal) == true,
+                    $"Build enabled={build.IsEnabled}, Open enabled={open.IsEnabled}. {status.Text}");
+            }
+            finally { if (File.Exists(held)) File.Move(held, source); }
+            Click(Field<Button>("_savedRefresh"));
+            await NameUiWait(() => model.Result == ready && build.IsEnabled && open.IsEnabled, "restored Recent target can be used", 180);
+            Verify("restoring the source rechecks the same target without changing history or starting a child",
+                model.RecentTarget == entries[0].Identity && workspace.ReadRecent().SequenceEqual(entries) &&
+                File.ReadAllBytes(slot).SequenceEqual(beforeReceipt) && Children().SequenceEqual(beforeChildren));
             return;
         }
 
