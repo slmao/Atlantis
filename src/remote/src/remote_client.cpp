@@ -501,6 +501,31 @@ class RemoteAssets final : public connection::AssetConnection {
       return d && d->guid == guid ? d : std::nullopt;
     });
   }
+  ca::StaticGroupResult staticGroup(const AssetGuid& guid) const override {
+    using R = ca::StaticGroupResult;
+    using E = ca::StaticGroupError;
+    ATLANTIS_CHECK(guid != AssetGuid{});
+    auto params = Value::object();
+    params.set("guid", codec::encodeAsset(guid));
+    const auto envelope = state_.awaitResponse(state_.send("assets.staticGroup", std::move(params)));
+    if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
+      if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+        if (const auto* ok = result->find("ok")) {
+          if (auto group = ca::decodeStaticGroup(*ok, guid)) return R::Ok(std::move(*group));
+        } else if (const auto* err = result->find("err"); err && err->isString()) {
+          if (auto error = ca::staticGroupError(err->asString())) return R::Err(*error);
+        }
+      } else if (const auto* error = envelope->find("error"); error && error->isObject() &&
+                 error->asObject().size() == 2 && memberCount(*error, "code") == 1 && memberCount(*error, "message") == 1) {
+        const auto* code = error->find("code");
+        if (legacyAssetRefusal(*error) || (code->isString() && code->asString() == "UnknownMethod"))
+          return R::Err(E::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(E::CatalogUnavailable);
+  }
+
   ca::MeshPreviewResult previewMesh(const AssetGuid& guid) override {
     ATLANTIS_CHECK(guid != AssetGuid{});
     Value params = Value::object();

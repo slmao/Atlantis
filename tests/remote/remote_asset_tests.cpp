@@ -7,6 +7,7 @@ namespace {
 namespace as = atlantis::asset_system;
 namespace ca = atlantis::connection::assets;
 namespace codec = atlantis::remote::codec;
+using atlantis::remote::test::fixtureSceneGuid;
 using Value = atlantis::connection::json::Value;
 as::AssetGuid guid() { return as::parseAssetGuid("00810081-0081-4081-8081-008100810081").value(); }
 as::AssetGuid materialGuid() { return as::deriveAssetGuid(guid(), "material"); }
@@ -18,6 +19,12 @@ ca::MeshPreview preview() {
 }
 ca::MeshMaterialPreview pairPreview() {
   return {guid(), materialGuid(), ca::kPreviewDimension, ca::kPreviewDimension, preview().png};
+}
+ca::StaticGroup staticGroupFixture() {
+  return {fixtureSceneGuid(), "storefront", {
+      {{}, {1.25f, 0.f, -2.f}, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, ca::StaticGroupRenderable{guid(), materialGuid()}},
+      {0, {0.f, 2.f, 0.f}, {0.f, 0.5f, 0.f}, {1.f, 2.f, 1.f}, ca::StaticGroupRenderable{guid(), {}}}
+  }};
 }
 struct Assets final : atlantis::connection::AssetConnection {
   ca::AssetDetails detail{guid(), ca::AssetType::Mesh, "content:test/file.gltf#mesh/0", UINT32_MAX, std::nullopt, "unit/1", {}};
@@ -47,6 +54,10 @@ struct Assets final : atlantis::connection::AssetConnection {
     if (id != detail.guid) return ca::MeshPreviewResult::Err(ca::PreviewError::UnknownAsset);
     if (previewError) return ca::MeshPreviewResult::Err(*previewError);
     return ca::MeshPreviewResult::Ok(image);
+  }
+  ca::StaticGroupResult staticGroup(const as::AssetGuid& id) const override {
+    return id == fixtureSceneGuid() ? ca::StaticGroupResult::Ok(staticGroupFixture())
+                                   : ca::StaticGroupResult::Err(ca::StaticGroupError::UnknownAsset);
   }
   ca::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& mesh,
                                                      const as::AssetGuid& material) override {
@@ -92,6 +103,7 @@ struct Borrow final : atlantis::connection::AssetConnection {
   auto listAssets() const -> atlantis::Result<std::vector<ca::AssetSummary>, ca::AssetError> override { return a_.listAssets(); }
   auto getAsset(const as::AssetGuid& id) const -> atlantis::Result<ca::AssetDetails, ca::AssetError> override { return a_.getAsset(id); }
   ca::MeshPreviewResult previewMesh(const as::AssetGuid& id) override { return a_.previewMesh(id); }
+  ca::StaticGroupResult staticGroup(const as::AssetGuid& id) const override { return a_.staticGroup(id); }
   ca::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& mesh,
                                                      const as::AssetGuid& material) override {
     return a_.previewMeshMaterial(mesh, material);
@@ -137,6 +149,35 @@ struct Borrow final : atlantis::connection::AssetConnection {
   }
   Assets& a_;
 };
+}
+
+TEST_CASE("static group wire carries the whole bounded value or a typed refusal", "[remote][assets][static-group]") {
+  using namespace atlantis::remote::test;
+  const auto group = staticGroupFixture();
+  const auto encoded = ca::encodeStaticGroup(group, group.scene);
+  REQUIRE(encoded);
+  CHECK(ca::decodeStaticGroup(*encoded, group.scene) == group);
+  CHECK_FALSE(ca::decodeStaticGroup(*encoded, guid()));
+  auto invalid = group;
+  invalid.nodes[0].parent = 1;
+  CHECK_FALSE(ca::encodeStaticGroup(invalid, group.scene));
+  auto malformed = *encoded;
+  auto nodes = *malformed.find("nodes");
+  nodes.asArray()[1].set("parent", Value::number(std::uint64_t{2}));
+  malformed.set("nodes", std::move(nodes));
+  CHECK_FALSE(ca::decodeStaticGroup(malformed, group.scene));
+
+  ServedWorld served(cookAndDecodeScene(kSceneSource));
+  auto absent = served.attach();
+  CHECK(absent->assets().staticGroup(group.scene).error() == ca::StaticGroupError::CatalogUnavailable);
+  Assets assets;
+  served.server->serveAssets([&] { return std::make_unique<Borrow>(assets); });
+  auto session = served.attach();
+  REQUIRE(session->assets().staticGroup(group.scene).isOk());
+  CHECK(session->assets().staticGroup(group.scene).value() == group);
+  CHECK(session->assets().staticGroup(guid()).error() == ca::StaticGroupError::UnknownAsset);
+  CHECK(session->assets().getAsset(guid()).value() == assets.detail);
+  CHECK_FALSE(session->failure());
 }
 
 TEST_CASE("asset preview codec: fixed metadata, canonical PNG and inclusive decoded size", "[remote][assets][asset-preview]") {

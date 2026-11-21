@@ -51,14 +51,17 @@ public sealed record NodeLife(NodeState State, bool Created) : EditEntry
 public sealed record GuardedDuplicateEdit(IReadOnlyList<EntityGuid> Roots, IReadOnlyList<NodeLife> Copies,
     int PrefixCount, EntityGuid? Predecessor, Dictionary<EntityGuid, object> Dependencies) : EditEntry
 {
+    public bool IsStaticGroup { get; init; }
     public Dictionary<EntityGuid, object> CopyIdentities { get; private set; } = new();
     private IEnumerable<EntityGuid> CopyIds => Copies.Select(copy => copy.State.Node);
 
     public IReadOnlyList<Command> Commands(bool forward, ulong revision, IReadOnlyList<SchemaType> schema)
     {
         var edit = new EditTransaction("duplicate subtrees", Array.Empty<PropertyWrite>(), Copies);
-        return new Command[] { new RequireDuplicateBatchRevision(revision) }
-            .Concat(StructuralSteps.Commands(edit, forward, schema)).ToArray();
+        var commands = StructuralSteps.Commands(edit, forward, schema);
+        if (forward && IsStaticGroup)
+            commands = commands.Where(command => command is not SetParent).Concat(commands.OfType<SetParent>()).ToArray();
+        return new Command[] { new RequireDuplicateBatchRevision(revision) }.Concat(commands).ToArray();
     }
 
     public static IReadOnlyList<Event> ExpectedEvents(IEnumerable<Command> commands)

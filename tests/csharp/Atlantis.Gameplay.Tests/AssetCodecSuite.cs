@@ -10,6 +10,7 @@ public static class AssetCodecSuite
     public static void Run(TestContext t)
     {
         var guid = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        StaticGroup(t, guid);
         foreach (A.AssetType type in System.Enum.GetValues<A.AssetType>())
         {
             var summary = new A.AssetSummary(guid, type, "content:scene.gltf#mesh/0");
@@ -78,6 +79,31 @@ public static class AssetCodecSuite
                 Codec.DecodeRebuildError(JsonValue.String("Busy"), false) is null, "closed operation refusal sets");
         Preview(t, guid);
         PairPreview(t, guid);
+    }
+
+    private static void StaticGroup(TestContext t, AssetGuid guid)
+    {
+        string mesh = guid.ToString();
+        string material = "00810081-0081-4081-8081-008100810082";
+        string source = $$$"""
+            {"scene":"{{{guid}}}","name":"storefront","nodes":[
+                {"parent":null,"position":[1.25,0,-2],"eulerRadians":[0,0,0],"scale":[1,1,1],"renderable":{"mesh":"{{{mesh}}}","material":"{{{material}}}"}},
+                {"parent":0,"position":[0,2,0],"eulerRadians":[0,0.5,0],"scale":[1,2,1],"renderable":{"mesh":"{{{mesh}}}","material":null}}
+            ]}
+            """;
+        var value = Codec.DecodeStaticGroup(Json.Parse(source), guid);
+        t.Check(value?.Nodes is { Count: 2 } nodes && nodes[0].Position.X == 1.25f &&
+            nodes[0].Renderable?.Material == AssetGuid.Parse(material) && nodes[1].Parent == 0 &&
+            nodes[1].Renderable is { Material: null }, "static group retains local TRS, hierarchy and an explicit absent material");
+        foreach (string malformed in new[] {
+            source.Replace("\"parent\":null", "\"parent\":1", StringComparison.Ordinal),
+            source.Replace("\"parent\":0", "\"parent\":2", StringComparison.Ordinal),
+            source.Replace("1.25", "1E99", StringComparison.Ordinal),
+            source.Replace("\"scale\":[1,2,1]", "\"scale\":[1,0,1]", StringComparison.Ordinal),
+            source.Replace(",\"material\":null", "", StringComparison.Ordinal)
+        })
+            t.Check(Codec.DecodeStaticGroup(Json.Parse(malformed), guid) is null, "malformed group fails as a whole");
+        t.Check(Codec.DecodeStaticGroup(Json.Parse(source), AssetGuid.Parse(material)) is null, "group reply must match requested GUID");
     }
 
     private static void TextureWriteReceipts(TestContext t, AssetGuid asset, bool remove, bool move = false)

@@ -1,6 +1,10 @@
 #include "../../src/runtime/asset_host.h"
 
 #include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/cook.h>
+#include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/scene_source.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
@@ -68,6 +72,81 @@ TEST_CASE("assets: unknown first get freezes ready; failed first load stays unav
   std::ofstream(f.path) << "bad catalog";
   atlantis::runtime::AssetHost malformed(f.path.string());
   CHECK(malformed.connect()->listAssets().error() == ac::AssetError::CatalogUnavailable);
+}
+
+TEST_CASE("static groups project cooked ordered values and exact typed catalog dependencies", "[runtime][assets][static-group]") {
+  CatalogFixture f;
+  auto scene = record(as::CatalogAssetType::Scene, "scene");
+  auto mesh = record(as::CatalogAssetType::Mesh, "mesh/0/0");
+  auto material = record(as::CatalogAssetType::Material, "material/0");
+  scene.source.path = mesh.source.path = material.source.path = "managed_storefront/source.gltf";
+  scene.artifactSchema = as::kSceneArtifactSchemaVersion;
+  scene.artifact = "storefront.ascene";
+  scene.metadata = "storefront.ascene.meta.txt";
+  scene.tool = std::string(as::kImporterVersion);
+  scene.dependencies = {mesh.guid, material.guid};
+  as::ParsedSceneSource parsed{};
+  parsed.nodes.resize(3);
+  for (std::size_t i = 0; i < parsed.nodes.size(); ++i) {
+    auto& node = parsed.nodes[i];
+    node.nodeId = static_cast<std::uint32_t>(i + 1);
+    node.entityGuid = as::deriveEntityGuid(scene.guid, "node/" + std::to_string(i));
+  }
+  parsed.nodes[1].parentNodeId = parsed.nodes[0].nodeId;
+  parsed.nodes[1].meshAsset = mesh.guid;
+  parsed.nodes[1].materialAsset = material.guid;
+  parsed.nodes[1].transform.positionX = 2.25f;
+  parsed.nodes[2].meshAsset = mesh.guid;
+  const auto cooked = as::cookSceneSource(as::serializeSceneSource(parsed), scene.guid);
+  REQUIRE(cooked.isOk());
+  auto writePair = [&] {
+    std::ofstream(f.dir / scene.artifact, std::ios::binary).write(
+        reinterpret_cast<const char*>(cooked.value().artifactBytes.data()),
+        static_cast<std::streamsize>(cooked.value().artifactBytes.size()));
+    std::ofstream(f.dir / scene.metadata, std::ios::binary) << cooked.value().metadataText;
+  };
+  writePair();
+  using E = ac::StaticGroupError;
+  std::optional<E> expectedError;
+  SECTION("a node's mesh and optional material remain associated") {}
+  SECTION("missing direct dependency") {
+    scene.dependencies = {mesh.guid};
+    expectedError = E::InvalidGroup;
+  }
+  SECTION("a material from a different producer") {
+    material.source.path = "managed_other/source.gltf";
+    expectedError = E::InvalidGroup;
+  }
+  SECTION("unsupported scene provenance") {
+    scene.source.path = "other/source.gltf";
+    expectedError = E::UnsupportedGroup;
+  }
+  SECTION("oversize cooked pair") {
+    std::ofstream(f.dir / scene.artifact, std::ios::binary | std::ios::app) <<
+        std::string(ac::kStaticGroupByteLimit + 1, ' ');
+    expectedError = E::InvalidGroup;
+  }
+  f.write({scene, mesh, material});
+  AssetHost host(f.path.string());
+  auto endpoint = host.connect();
+  const auto result = endpoint->staticGroup(scene.guid);
+  if (expectedError) {
+    REQUIRE(result.isErr());
+    CHECK(result.error() == *expectedError);
+  } else {
+    REQUIRE(result.isOk());
+    CHECK(result.value().name == "storefront");
+    REQUIRE(result.value().nodes.size() == 3);
+    CHECK(result.value().nodes[1].parent == 0);
+    CHECK(result.value().nodes[1].position[0] == 2.25f);
+    CHECK(result.value().nodes[1].renderable == ac::StaticGroupRenderable{mesh.guid, material.guid});
+    CHECK(result.value().nodes[2].renderable == ac::StaticGroupRenderable{mesh.guid, {}});
+    f.write({});
+    CHECK(endpoint->staticGroup(scene.guid).value() == result.value());
+    CHECK(AssetHost(f.path.string()).connect()->staticGroup(scene.guid).error() == E::UnknownAsset);
+  }
+  std::filesystem::remove(f.dir / scene.artifact);
+  std::filesystem::remove(f.dir / scene.metadata);
 }
 TEST_CASE("assets: the assembled build catalog is projected completely without loading artifacts", "[runtime][assets]") {
   auto catalog = as::loadAssetCatalog(ATLANTIS_ASSET_CATALOG_PATH);

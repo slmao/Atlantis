@@ -41,8 +41,14 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 80 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 80,
-            "80 unique approved tools including recovery, guarded document and texture operations");
+        Check(ToolRegistry.AllMappings.Length == 81 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 81,
+            "81 unique approved tools including the static group query");
+        FakeSession oldGroupHost = new() { Response =
+            """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
+        var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));
+        Check(groupResult.IsError == true && oldGroupHost.Calls.Single().Method == "assets.staticGroup" &&
+            groupResult.StructuredContent.ToString()!.Contains("Unsupported", StringComparison.Ordinal),
+            "static group requests exactly one shared read and preserves legacy refusal");
         FakeSession recoveryStatus = new() { Response =
             """{"result":{"ok":{"capture":"Idle","protectedRevision":null,"copy":null,"preview":null}}}""" };
         var read = new ToolRegistry(recoveryStatus).Invoke(Request("authoring.recovery_status", "{}"));

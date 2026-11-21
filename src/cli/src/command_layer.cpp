@@ -1097,6 +1097,26 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
+    if (t.size() > 1 && t[1] == "static-group") {
+      namespace ca = connection::assets;
+      constexpr std::string_view usage = "asset static-group <non-nil canonical scene-guid>";
+      if (t.size() != 3) return failed(command, usageError(std::string(usage)));
+      const auto guid = asset_system::parseAssetGuid(t[2]);
+      if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != t[2])
+        return failed(command, usageError(std::string(usage)));
+      const auto refuse = [&](ca::StaticGroupError error) {
+        const std::string name(ca::toString(error));
+        return failed(command, plainError(name, ErrorCategory::Refused, name));
+      };
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      if (!endpoint) return refuse(ca::StaticGroupError::Unsupported);
+      const auto group = endpoint->staticGroup(guid.value());
+      if (group.isErr()) return refuse(group.error());
+      auto result = ca::encodeStaticGroup(group.value(), guid.value());
+      if (!result) return refuse(ca::StaticGroupError::InvalidGroup);
+      auto human = json::write(*result) + "\n";
+      return done(command, std::move(human), std::move(*result));
+    }
     if (t.size() > 1 && t[1] == "preview-material") {
       namespace ca = connection::assets;
       using Error = ca::MeshMaterialPreviewError;
@@ -1145,7 +1165,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     }
     if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))
       return failed(command, usageError("asset list | asset get <asset-guid> | asset preview <mesh-guid> | "
-                                        "asset preview-material <mesh-guid> <material-guid>"));
+                                        "asset preview-material <mesh-guid> <material-guid> | asset static-group <scene-guid>"));
     std::optional<asset_system::AssetGuid> guid;
     if (t[1] == "get") {
       auto parsed = asset_system::parseAssetGuid(t[2]);

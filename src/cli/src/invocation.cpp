@@ -39,6 +39,7 @@ constexpr std::string_view kUsage =
     "  scene set <guid> <Type>.<field> <value...> | scene create [<guid>] [--at <n>] [--component <Type>]...\n"
     "  scene destroy <guid> | scene add|remove <guid> <Type> | scene parent <guid> <parent-guid>|none\n"
     "  asset list | asset get <asset-guid>   cooked catalog discovery\n"
+    "  asset static-group <scene-guid>      ordered cooked nodes of a managed glTF group\n"
     "  asset preview <mesh-guid>            read-only mesh PNG preview (--json for bytes)\n"
     "  asset preview-material <mesh-guid> <material-guid>   read-only pair PNG preview (--json for bytes)\n"
     "  assets move-texture <GUID> <ExpectedGeneration> <ExpectedPath> <DestinationPath>\n"

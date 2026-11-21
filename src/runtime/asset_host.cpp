@@ -1,6 +1,7 @@
 #include "asset_host.h"
 #include "asset_rebuild_host.h"
 #include "material_authoring.h"
+#include "static_group_projection.h"
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
@@ -69,6 +70,14 @@ struct AssetHost::State final : connection::AssetConnection {
     const auto it = std::lower_bound(details_.begin(), details_.end(), guid,
                                     [](const auto& d, const auto& key) { return d.guid < key; });
     return it != details_.end() && it->guid == guid ? R::Ok(*it) : R::Err(ac::AssetError::UnknownAsset);
+  }
+  ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override {
+    initialize();
+    if (!catalog_) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
+    std::error_code ec;
+    const auto path = std::filesystem::absolute(static_groups::pathFromUtf8(path_), ec);
+    if (ec) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
+    return static_groups::project(path.lexically_normal().parent_path(), *catalog_, guid);
   }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override {
     using E = ac::PreviewError;
@@ -327,6 +336,7 @@ class BorrowedAssets final : public connection::AssetConnection {
   explicit BorrowedAssets(connection::AssetConnection& host) : host_(host) {}
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
+  ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override { return host_.staticGroup(guid); }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
   ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
                                                     const as::AssetGuid& materialGuid) override {

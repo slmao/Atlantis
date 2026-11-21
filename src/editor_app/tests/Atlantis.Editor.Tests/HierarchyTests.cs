@@ -706,6 +706,48 @@ public static partial class Program
               limit.Submissions == 0, "duplicate: 65 nodes are refused before field reads or submission");
     }
 
+    private static void StaticGroupChecks()
+    {
+        var document = new FakeDocument();
+        var existing = document.Add(1, null, new LocalTransform(Vector3.Zero, Vector3.Zero, Vector3.One));
+        document.SubmitTransaction([new SetNodeName(existing, "storefront")]);
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        var guid = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        var schema = document.Schema.Concat([new SchemaType(new TypeId(199), "asset_system::scene::Renderable", TypeKind.Struct, 1,
+            new[] {
+                new SchemaField(new FieldId(21), "meshAsset", TypeKind.Primitive, PrimitiveKind.AssetGuid, default, FieldFlags.Serializable),
+                new SchemaField(new FieldId(22), "materialAsset", TypeKind.Primitive, PrimitiveKind.AssetGuid, default, FieldFlags.Serializable | FieldFlags.Optional)
+            }, Array.Empty<SchemaConstant>())]).ToArray();
+        var first = new Atlantis.Gameplay.Assets.StaticGroupNode(null, new Vector3(1, 2, 3), Vector3.Zero, Vector3.One, new(guid, guid));
+        var second = new Atlantis.Gameplay.Assets.StaticGroupNode(0, Vector3.One, new Vector3(0, 0.5f, 0), new Vector3(2), new(guid, null));
+        var group = new Atlantis.Gameplay.Assets.StaticGroup(guid, "storefront", [first, second]);
+        var planned = HierarchyCommands.AddStaticGroup(schema, tree, group);
+        Check(planned.Edit is { Copies.Count: 3 } && planned.Edit.Copies[0].State.Name == "storefront 2",
+            "group adds one root with an ordinal name and the complete ordered group");
+        if (planned.Edit is not { } edit) return;
+        var ids = edit.Copies.Select(copy => copy.State.Node).ToArray();
+        var commands = edit.Commands(true, 7, schema).ToArray();
+        Check(commands[0] is RequireDuplicateBatchRevision &&
+            commands.OfType<CreateNode>().Select(node => node.Node).SequenceEqual(ids.Select(id => (EntityGuid?)id)),
+            "group append is revision-guarded and uses explicit ordered identities");
+        Check(commands.TakeLast(2).SequenceEqual(new Command[] { new SetParent(ids[1], ids[0]), new SetParent(ids[2], ids[1]) }),
+            "group preserves internal links after every node has been created");
+        Check(commands.OfType<SetProperty>().Any(value => value.Address.Node == ids[2] &&
+            value.Address.Field == new FieldId(22) && value.Value.Equals(PropertyValue.Absent)),
+            "the absent material override is preserved");
+        var undo = edit.Commands(false, 8, schema);
+        Check(undo.Count == 4 && undo[0] is RequireDuplicateBatchRevision &&
+            undo.OfType<DestroyNode>().Select(node => node.Node).SequenceEqual(ids.Reverse()),
+            "one Undo removes the complete append");
+        Check(edit.Commands(true, 9, schema).Skip(1).Select(c => Atlantis.Gameplay.Remote.Json.Write(Atlantis.Gameplay.Remote.Codec.Encode(c)))
+            .SequenceEqual(commands.Skip(1).Select(c => Atlantis.Gameplay.Remote.Json.Write(Atlantis.Gameplay.Remote.Codec.Encode(c)))),
+            "Redo reuses all GUIDs and values");
+        var intent = new StaticGroupIntent(guid, 20);
+        intent.Cancel();
+        Check(!intent.Current, "a retired Assets intent cannot be reused for a queued add");
+    }
+
     private static void GuardedDuplicateChecks()
     {
         var document = new FakeDocument();

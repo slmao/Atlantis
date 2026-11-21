@@ -15,6 +15,25 @@ public sealed class AssetDetailIntent
     internal void Cancel() => _current = false;
 }
 
+/// <summary>May be retired by the UI while a group read or guarded Add is queued.</summary>
+public sealed class StaticGroupIntent(AssetGuid scene, long lifetime)
+{
+    private readonly object _gate = new();
+    public AssetGuid Scene { get; } = scene;
+    public long Lifetime { get; } = lifetime;
+    private volatile bool _current = true;
+    public bool Current => _current;
+    public void Cancel()
+    {
+        lock (_gate) _current = false;
+    }
+
+    public ulong? Send(Func<ulong> send)
+    {
+        lock (_gate) return _current ? send() : null;
+    }
+}
+
 public sealed record TextureRenameIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record TextureMoveIntent(AssetSummary Asset, AssetDetailIntent Intent);
 public sealed record TextureRemovalIntent(AssetSummary Asset, AssetDetailIntent Intent);

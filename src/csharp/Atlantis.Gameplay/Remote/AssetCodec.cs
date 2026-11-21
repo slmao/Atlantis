@@ -2,12 +2,73 @@ using System;
 using System.Linq;
 using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.Numerics;
+using System.Text;
 using A = Atlantis.Gameplay.Assets;
 
 namespace Atlantis.Gameplay.Remote;
 
 public static partial class Codec
 {
+    public static A.StaticGroupError? DecodeStaticGroupError(JsonValue value) => RebuildToken<A.StaticGroupError>(value);
+
+    public static bool IsUnsupportedStaticGroup(JsonValue envelope) =>
+        IsLegacyAssetRebuildRefusal(envelope) || envelope.Find("result") is null &&
+        envelope.Find("error")?.Find("code") is { IsString: true, AsString: "UnknownMethod" };
+
+    public static A.StaticGroup? DecodeStaticGroup(JsonValue value, AssetGuid requested)
+    {
+        if (requested.IsNil || !Exact(value, 3) || value.Find("scene") is not JsonValue identity ||
+            DecodeAsset(identity) != requested || value.Find("name") is not { IsString: true } name ||
+            !ValidImportName(name.AsString) || value.Find("nodes") is not { IsArray: true } nodes ||
+            nodes.Items.Count is < 2 or > 63 || Encoding.UTF8.GetByteCount(Json.Write(value)) > 64 * 1024)
+            return null;
+        var parsed = new List<A.StaticGroupNode>(nodes.Items.Count);
+        int renderables = 0;
+        foreach (var node in nodes.Items)
+        {
+            if (!Exact(node, 5) || node.Find("parent") is not JsonValue parent ||
+                node.Find("renderable") is not JsonValue renderable ||
+                GroupVector(node.Find("position")) is not Vector3 position ||
+                GroupVector(node.Find("eulerRadians")) is not Vector3 euler ||
+                GroupVector(node.Find("scale")) is not Vector3 scale || scale.X == 0 || scale.Y == 0 || scale.Z == 0)
+                return null;
+            int? parentIndex = null;
+            if (!parent.IsNull)
+            {
+                if (!parent.TryGetUInt64(out ulong index) || index >= (ulong)nodes.Items.Count) return null;
+                parentIndex = (int)index;
+            }
+            A.StaticGroupRenderable? binding = null;
+            if (!renderable.IsNull)
+            {
+                if (!Exact(renderable, 2) || renderable.Find("mesh") is not JsonValue mesh ||
+                    DecodeAsset(mesh) is not AssetGuid meshId || meshId.IsNil ||
+                    renderable.Find("material") is not JsonValue material)
+                    return null;
+                AssetGuid? materialId = material.IsNull ? null : DecodeAsset(material);
+                if (!material.IsNull && (materialId is null || materialId.Value.IsNil)) return null;
+                binding = new(meshId, materialId);
+                ++renderables;
+            }
+            parsed.Add(new(parentIndex, position, euler, scale, binding));
+        }
+        if (renderables < 2) return null;
+        foreach (var node in parsed)
+        {
+            int depth = 0;
+            for (int? parent = node.Parent; parent is int index; parent = parsed[index].Parent)
+                if (++depth >= parsed.Count) return null;
+        }
+        return new A.StaticGroup(requested, name.AsString, parsed.AsReadOnly());
+    }
+
+    private static Vector3? GroupVector(JsonValue? value) =>
+        value is { IsArray: true } && value.Items.Count == 3 &&
+        value.Items[0].TryGetFloat(out float x) && value.Items[1].TryGetFloat(out float y) &&
+        value.Items[2].TryGetFloat(out float z) && float.IsFinite(x) && float.IsFinite(y) && float.IsFinite(z)
+            ? new Vector3(x, y, z) : null;
+
     private static string AssetTypeText(A.AssetType type) => type switch
     {
         A.AssetType.Mesh => "mesh", A.AssetType.Texture => "texture", A.AssetType.Material => "material",

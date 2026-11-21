@@ -7,6 +7,8 @@
 #include <bcrypt.h>
 #include <objbase.h>
 
+#include "static_group_projection.h"
+
 #include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/connection/json.h>
 #include <atlantis/log.h>
@@ -2317,6 +2319,13 @@ struct AssetRebuildHost::State {
         producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
         !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
       return failed(IS::Validation, IC::IdentityConflict, "Staged identity delta differs from this import.");
+    const auto sceneGuid = as::deriveAssetGuid(root, "scene");
+    const auto* scene = catalog->find(sceneGuid);
+    if (!scene || static_groups::managedName(*scene) != work.job.name)
+      return failed(IS::Validation, IC::InvalidOutput, "The staged managed scene record is invalid.");
+    const auto group = static_groups::project(staging, *catalog, sceneGuid);
+    if (group.isErr() && group.error() != ca::StaticGroupError::UnsupportedGroup)
+      return failed(IS::Validation, IC::InvalidOutput, "The staged managed scene group is invalid.");
     auto prepared = prepare(*catalog, *view, interrupted);
     if (const auto* error = std::get_if<End>(&prepared)) {
       const auto stage = error->failure.stage == Stage::Validation ? IS::Validation : IS::Publication;

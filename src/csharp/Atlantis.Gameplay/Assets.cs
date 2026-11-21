@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Numerics;
 
 namespace Atlantis.Gameplay.Assets;
 
@@ -16,6 +17,13 @@ public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source,
     public string? DisplayName { get; init; }
     public string? LogicalPath { get; init; }
 }
+
+public enum StaticGroupError { Unsupported, CatalogUnavailable, UnknownAsset, UnsupportedGroup, InvalidGroup }
+public sealed record StaticGroupRenderable(AssetGuid Mesh, AssetGuid? Material);
+public sealed record StaticGroupNode(int? Parent, Vector3 Position, Vector3 EulerRadians, Vector3 Scale,
+                                     StaticGroupRenderable? Renderable);
+/// <summary>Ordered local values from the Runtime's cooked catalog snapshot.</summary>
+public sealed record StaticGroup(AssetGuid Scene, string Name, IReadOnlyList<StaticGroupNode> Nodes);
 
 public enum PreviewError
 {
