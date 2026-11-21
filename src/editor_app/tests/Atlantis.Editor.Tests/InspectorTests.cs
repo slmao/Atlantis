@@ -79,7 +79,9 @@ public static partial class Program
         {
             kind = scene == "--viewport-placement" ? "viewport-placement-windows" : scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--viewport-placement" ? "Native 96-DPI Editor and hosted Runtime, physical OLE gestures and shared authoring readback."
+            boundary = scene == "--viewport-placement" && Environment.GetEnvironmentVariable("ATLANTIS_0129_TEST_SOURCE") == "1"
+                ? "Hosted Editor and Runtime, actual native target lifetime and a controlled source result."
+                : scene == "--viewport-placement" ? "Native 96-DPI Editor and hosted Runtime, physical OLE gestures and shared authoring readback."
                 : scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
                 : scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
                 : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."

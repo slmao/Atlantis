@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
@@ -21,6 +22,9 @@ namespace Atlantis.Editor.Tests;
 
 public static partial class Program
 {
+    [DllImport("user32")]
+    private static extern bool IsWindow(nint hwnd);
+
     private static async Task CheckViewportPlacementUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
         const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
@@ -67,6 +71,45 @@ public static partial class Program
         var list = Field<ListBox>("_assetsList");
         var projection = typeof(MainWindow).GetMethod("ViewportProjection", privateInstance)!;
         await NameUiWait(() => projection.Invoke(window, [view]) is CameraMatrices, "placement projection");
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0129_TEST_SOURCE") == "1")
+        {
+            var browser = Field<AssetBrowser>("_assetBrowser");
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(item => item.Guid == mesh.Guid), "source row");
+            list.SelectedItem = list.Items.OfType<AssetSummary>().Single(item => item.Guid == mesh.Guid);
+            await NameUiWait(() => browser.SelectionVisible && browser.Selected == mesh.Guid, "selected source row");
+
+            AssetDragIntent Intent() => new(mesh, browser.Items, Field<EditorWorker>("_worker").MeshDocumentLifetime);
+            nint TargetWindow() => Field<ViewportOleDropTarget>("_viewportOleDrop") is { } target
+                ? (nint)typeof(ViewportOleDropTarget).GetField("_window", privateInstance)!.GetValue(target)!
+                : 0;
+            var first = Intent();
+            var native = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task running = window.RunAssetDragSource(first, () => native.Task);
+            nint firstTarget = TargetWindow();
+            Verify("active Assets source owns a registered native target", IsWindow(firstTarget) && !running.IsCompleted);
+            typeof(MainWindow).GetMethod("RetireAssetDrop", privateInstance)!.Invoke(window, null);
+            Verify("retiring the token and target leaves the native source unsettled", !first.Matches(first.Token) &&
+                !IsWindow(firstTarget) && !running.IsCompleted);
+            int secondStarts = 0;
+            await window.RunAssetDragSource(Intent(), () => { ++secondStarts; return Task.CompletedTask; });
+            Verify("a retired token cannot admit another OLE source before native return", secondStarts == 0);
+            native.SetResult();
+            await running;
+
+            nint rejectedTarget = 0;
+            await window.RunAssetDragSource(Intent(), () =>
+            {
+                rejectedTarget = TargetWindow();
+                throw new COMException("Controlled native drag rejection", unchecked((int)0x80004005));
+            });
+            Verify("native source rejection is reported and removes its target", rejectedTarget != 0 && !IsWindow(rejectedTarget) &&
+                Field<TextBlock>("_editLine").Text?.Contains("Windows could not complete") == true);
+            nint nextTarget = 0;
+            await window.RunAssetDragSource(Intent(), () => { nextTarget = TargetWindow(); return Task.CompletedTask; });
+            Verify("a fresh drag can start after rejection and leaves no window, edit, history or Apply", nextTarget != 0 &&
+                !IsWindow(nextTarget) && Unchanged());
+            return;
+        }
         (PickRay ray, RayHit? hit) RayAt(int x, int y)
         {
             var camera = (CameraMatrices)projection.Invoke(window, [view])!;

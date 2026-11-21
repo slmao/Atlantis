@@ -22,6 +22,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
@@ -276,6 +277,7 @@ public sealed class MainWindow : Window
     private static string? AssetDragToken(DragEventArgs e) =>
         e.DataTransfer.TryGetValue(AssetDragFormat) is { Length: 16 } token ? Convert.ToHexStringLower(token) : null;
     private (AssetGuid Guid, PointerPressedEventArgs Event, Point Position)? _assetPress;
+    private bool _assetDragSourceRunning;
     private AssetDragIntent? _assetDrag;
     private bool _assetDropPending;
     private int _pendingSceneFieldEdits;
@@ -2598,7 +2600,8 @@ public sealed class MainWindow : Window
     private void OnAssetPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _assetPress = null;
-        if (_assetDropPending || _assetDrag is not null || !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
+        if (_assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
+            !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
             e.ClickCount != 1 || HierarchyItem(e.Source) is not { DataContext: AssetSummary row }) return;
         _assetPress = (row.Guid, e, e.GetPosition(_assetsList));
     }
@@ -2614,16 +2617,27 @@ public sealed class MainWindow : Window
         var move = e.GetPosition(_assetsList) - press.Position;
         if (Math.Max(Math.Abs(move.X), Math.Abs(move.Y)) < 5) return;
         _assetPress = null;
-        if (_assetDropPending || _assetDrag is not null || _referenceSessionFailed || _worker is null ||
+        if (_assetDragSourceRunning || _assetDropPending || _assetDrag is not null || _referenceSessionFailed || _worker is null ||
             !_assetBrowser.SelectionVisible || _assetsList.SelectedItem is not AssetSummary asset || asset.Guid != press.Guid) return;
 
-        SettleInspectorBlur();
         var drag = new AssetDragIntent(asset, _assetBrowser.Items, _meshDocumentLifetime);
-        _assetDrag = drag;
-        var data = new DataTransfer();
-        data.Add(DataTransferItem.Create(AssetDragFormat, Convert.FromHexString(drag.Token)));
+        await RunAssetDragSource(drag, () =>
+        {
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(AssetDragFormat, Convert.FromHexString(drag.Token)));
+            return DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Copy);
+        });
+    }
+
+    internal async Task RunAssetDragSource(AssetDragIntent drag, Func<Task> start)
+    {
+        // OLE pumps messages while dragging. The token can retire before the native source returns.
+        if (_assetDragSourceRunning) return;
+        _assetDragSourceRunning = true;
         try
         {
+            SettleInspectorBlur();
+            _assetDrag = drag;
             if (AssetDropRefusal(drag, null) is null && _viewport.Window is { } view &&
                 ViewportProjection(view) is not null && _groupGrab is null)
             {
@@ -2633,15 +2647,20 @@ public sealed class MainWindow : Window
                     _viewportOleDrop = ViewportOleDropTarget.Create(view, drag,
                         _options.ViewportOleProbe ?? HandleViewportOleDrop, _log.Write);
                 }
-                catch (Exception error) when (error is System.ComponentModel.Win32Exception or
-                    System.Runtime.InteropServices.COMException or InvalidOperationException)
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or COMException or InvalidOperationException)
                 {
                     _log.Write("viewport OLE setup: " + error);
                     _options.ViewportOleProbe?.Invoke("setup-failed", 0, 0, 0);
                     ShowPlacementStatus("Viewport drop unavailable. Use Add to Scene.");
                 }
             }
-            await DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Copy);
+            try { await start(); }
+            catch (COMException error)
+            {
+                _log.Write("asset OLE drag: " + error);
+                _editLine.Text = "Windows could not complete the asset drag. Check the result before retrying.";
+                if (drag.Asset.Type == AssetType.Mesh && !_assetDropPending) _addMeshState.Text = _editLine.Text;
+            }
         }
         finally
         {
@@ -2650,6 +2669,7 @@ public sealed class MainWindow : Window
             ClearAssetDropFeedback();
             _assetDropFields.Clear();
             if (!_assetDropPending && ReferenceEquals(_assetDrag, drag)) _assetDrag = null;
+            _assetDragSourceRunning = false;
         }
     }
 
