@@ -16,6 +16,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 
 namespace Atlantis.Editor.Tests;
 
@@ -109,6 +110,13 @@ public static partial class Program
         var list = Field<ListBox>("_entities");
         list.SelectedItem = list.Items.OfType<HierarchyRow>().Single(row => row.Node == active);
         await NameUiWait(() => Field<TextBox>("_nameBox") is not null, "camera's Inspector draft field", 40);
+        await Task.Delay(500);
+        if (Field<Window>("_recoveryWindow") is { } recovery)
+        {
+            var later = recovery.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Decide Later"));
+            later.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => Field<Window>("_recoveryWindow") is null, "defer the disposable fixture's previous recovery copy");
+        }
         var draft = Field<TextBox>("_nameBox");
         draft.Focus();
         draft.Text = "0131 unsubmitted camera name";
