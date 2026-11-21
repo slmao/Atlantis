@@ -180,7 +180,8 @@ public static class HierarchyCommands
     public const int MaxDuplicateNodes = 64;
     public const string AddMeshLabel = "add mesh to scene";
 
-    public static EditPlan AddMesh(IReadOnlyList<SchemaType> schema, ulong position, EntityGuid node, AssetGuid mesh)
+    public static EditPlan AddMesh(IReadOnlyList<SchemaType> schema, ulong position, EntityGuid node, AssetGuid mesh,
+        Vector3? placement = null)
     {
         var renderable = schema.FirstOrDefault(type => type.Kind == TypeKind.Struct && type.ShortName == "Renderable");
         var field = renderable?.Fields.FirstOrDefault(field => field.Name == "meshAsset");
@@ -188,18 +189,24 @@ public static class HierarchyCommands
             (field.Flags & FieldFlags.Serializable) == 0)
             return EditPlan.Refused(AddMeshLabel, "the mesh field is unavailable");
         var address = new SceneAddress(node, renderable.Id, field.Id);
-        return new EditPlan(AddMeshLabel, new Command[] {
+        Command[] commands = {
             new CreateNode(node, position, new[] { address.Component }),
             new SetProperty(address, PropertyValue.FromAsset(mesh))
-        });
+        };
+        if (placement is not Vector3 point) return new EditPlan(AddMeshLabel, commands);
+        if (!ViewportMeshPlacement.IsFinite(point) ||
+            SceneSchema.AddressOf(schema, node, "Transform", "localPosition") is not SceneAddress translation)
+            return EditPlan.Refused(AddMeshLabel, "the placement translation is invalid or unavailable");
+        return new EditPlan(AddMeshLabel, [.. commands, new SetProperty(translation, PropertyValue.FromVec3(point))]);
     }
 
-    public static EditTransaction? AddedMeshHistory(IReadOnlyList<SchemaType> schema, NodeState? state, AssetGuid mesh)
+    public static EditTransaction? AddedMeshHistory(IReadOnlyList<SchemaType> schema, NodeState? state, AssetGuid mesh,
+        Vector3? placement = null)
     {
         if (state is null || state.Name.Length != 0 || state.Parent is not null || state.Children.Count != 0 ||
             state.Components.Count != 2) return null;
         var expected = new[] {
-            ("Transform", "localPosition", PropertyValue.FromVec3(Vector3.Zero)),
+            ("Transform", "localPosition", PropertyValue.FromVec3(placement ?? Vector3.Zero)),
             ("Transform", "localEulerAnglesRadians", PropertyValue.FromVec3(Vector3.Zero)),
             ("Transform", "localScale", PropertyValue.FromVec3(Vector3.One)),
             ("Renderable", "meshAsset", PropertyValue.FromAsset(mesh)),

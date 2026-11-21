@@ -306,6 +306,7 @@ public sealed class EditorWorker : IDisposable
     private ulong _guideRevision;
     private sealed record GuideIntent(ulong Revision, ulong Selection, ulong Extent, long Lifetime);
     private (GuideIntent Intent, ViewportGuides.Result Value)? _guides;
+    private (MeshPlacementHit Hit, Action<MeshPlacementHit?, string?> Completion)? _placementOverlay;
     private IReadOnlyList<EntityGuid> _guideChain = Array.Empty<EntityGuid>();
     private bool _navigationSupported;
     private bool _navigationUncertain;
@@ -1718,13 +1719,86 @@ public sealed class EditorWorker : IDisposable
     public void AddComponent(TypeId component, HierarchyRow? row = null) =>
         Edit(document => (_inspector!.AddComponent(component), null), protectStructure: true, row: row);
 
+    private bool PlacementViewCurrent(PlacementRay sample) =>
+        !_stopping && !_navigationUncertain && _cameraIntent == sample.CameraIntent &&
+        _viewportExtent == (sample.Width, sample.Height) && !_gizmoActive && _groupGrab is null;
+
+    private bool ProjectionAvailable(ApplySnapshot? snapshot) =>
+        snapshot is { CurrentDocumentRevision: not null } && snapshot.Request?.State != ApplyState.Pending &&
+        _apply?.Status is not (ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown);
+
+    private bool PlacementRevisionCurrent(RemoteAuthoringDocument document, ulong revision)
+    {
+        var result = document.ApplyStatus();
+        return result.IsOk && ProjectionAvailable(result.Value) && result.Value?.CurrentDocumentRevision == revision;
+    }
+
+    public void PreviewMeshPlacement(MeshPlacementGesture gesture, PlacementRay sample,
+        Action<MeshPlacementHit?, string?> completion) => Enqueue(session =>
+    {
+        void Reject(string? reason)
+        {
+            _post(() => completion(null, reason));
+            if (_placementOverlay is { } old && ReferenceEquals(old.Hit.Gesture, gesture))
+            {
+                _placementOverlay = null;
+                SendOverlay(session);
+            }
+        }
+        bool Current()
+        {
+            lock (_lock) return gesture.Drag.Lifetime == MeshDocumentLifetime &&
+                PlacementViewCurrent(sample) && gesture.IsHover(sample);
+        }
+        if (!Current()) { Reject(null); return; }
+        if (_document is not RemoteAuthoringDocument document || _taskDocument?.Provenance != Provenance.HandAuthored)
+        { Reject("Open a hand-authored scene."); return; }
+        var status = document.ApplyStatus();
+        if (!status.IsOk || !ProjectionAvailable(status.Value) || status.Value?.CurrentDocumentRevision is not ulong revision)
+        { Reject("Wait for the Runtime projection to settle."); return; }
+        if (document.ObserveEvents() is not { } events)
+        { Reject("The document could not be verified."); return; }
+        PollDocument(session, events, pollApply: false, refreshInspector: false, refreshOverlay: false, refreshHierarchy: false);
+        if (!Current()) { Reject(null); return; }
+        ulong generation = session.Control.Status().SceneGeneration;
+        var hit = session.Control.Raycast(new Ray(sample.Ray.Origin, sample.Ray.Direction));
+        if (session.Control.Status().SceneGeneration != generation || !PlacementRevisionCurrent(document, revision))
+        { Reject("The surface changed. Move to preview again."); return; }
+        if (hit.Error is { } error) { Reject("Placement ray: " + error); return; }
+        if (hit.Hit is not { } surface || ViewportMeshPlacement.HitPosition(sample, surface) is not Vector3 point)
+        { Reject("No mesh surface here."); return; }
+        if (_tree.IncarnationOf(surface.Entity) is not { } identity || !Current())
+        { Reject("The surface is no longer current."); return; }
+
+        var candidate = new MeshPlacementHit(gesture, sample, surface.Entity, identity, surface.Distance, point, revision, generation);
+        _placementOverlay = (candidate, completion);
+        if (!ReferenceEquals(SendOverlay(session), candidate))
+        {
+            if (_placementOverlay?.Hit == candidate) _placementOverlay = null;
+            Reject(Current() ? "Placement marker unavailable." : null);
+            return;
+        }
+        _post(() => completion(Current() ? candidate : null, null));
+    });
+
+    public void ClearMeshPlacement(MeshPlacementGesture gesture) => Enqueue(session =>
+    {
+        if (_placementOverlay is not { } active || !ReferenceEquals(active.Hit.Gesture, gesture) ||
+            gesture.IsHover(active.Hit.Sample)) return;
+        _placementOverlay = null;
+        SendOverlay(session);
+    });
+
     public void DropAsset(AssetDragIntent drag, AssetDropField? target,
-        Action<EntityGuid?, bool, string, bool> settled) => Enqueue(session =>
+        Action<EntityGuid?, bool, string, bool> settled, MeshPlacementHit? placement = null) => Enqueue(session =>
     {
         long lifetime = drag.Lifetime;
         bool SameDocument() => lifetime == MeshDocumentLifetime;
         bool Ready() => !_stopping && SameDocument() && !_gizmoActive && _gizmo?.Dragging != true &&
-            (target is null || target.IsCurrent(_tree, _requestedSelectionGeneration, lifetime));
+            (target is null || target.IsCurrent(_tree, _requestedSelectionGeneration, lifetime)) &&
+            (placement is null || PlacementViewCurrent(placement.Sample) &&
+                placement.Gesture.IsReleased(placement.Sample) &&
+                ReferenceEquals(placement.SurfaceIdentity, _tree.IncarnationOf(placement.Surface)));
         void Report(EntityGuid? created, bool edited, string text, bool finished = true) =>
             _post(() => { if (SameDocument()) settled(created, edited, text, finished); });
         if (_document is not RemoteAuthoringDocument document || _apply is not { } apply)
@@ -1750,7 +1824,8 @@ public sealed class EditorWorker : IDisposable
         }
 
         EntityGuid? node = target is null ? new EntityGuid(Guid.NewGuid()) : null;
-        object subject = (object?)target?.Field.Address ?? node!.Value;
+        object subject = placement is not null ? $"{node!.Value} (mesh {drag.Asset.Guid})" :
+            (object?)target?.Field.Address ?? node!.Value;
         bool sent = false, committed = false, recorded = false;
         void Unverified(bool disconnected = false)
         {
@@ -1797,11 +1872,23 @@ public sealed class EditorWorker : IDisposable
                 plan = inspector.Commit(field.Path, drag.Asset.Guid.ToString());
             }
             else if (node is EntityGuid add && document.Info()?.Provenance == Provenance.HandAuthored)
-                plan = HierarchyCommands.AddMesh(document.Schema, (ulong)_tree.Count, add, drag.Asset.Guid);
+                plan = HierarchyCommands.AddMesh(document.Schema, (ulong)_tree.Count, add, drag.Asset.Guid, placement?.Position);
             else
             {
                 Report(null, false, "Drop refused: open a compatible authoring document.");
                 return;
+            }
+
+            if (placement is { } release)
+            {
+                bool SameProjection() => session.Control.Status().SceneGeneration == release.SceneGeneration;
+                if (!PlacementRevisionCurrent(document, release.DocumentRevision) || !SameProjection())
+                { RefuseTarget("the placement projection changed."); return; }
+                var ray = release.Sample.Ray;
+                var fresh = session.Control.Raycast(new Ray(ray.Origin, ray.Direction)).Hit;
+                if (fresh is null || fresh.Entity != release.Surface || fresh.Distance != release.Distance ||
+                    !SameProjection() || !Observe() || !PlacementRevisionCurrent(document, release.DocumentRevision))
+                { RefuseTarget("the placement surface changed."); return; }
             }
 
             if (plan.Refusal is "unchanged")
@@ -1856,7 +1943,7 @@ public sealed class EditorWorker : IDisposable
             {
                 var state = new DocumentView(document, _tree).ReadNode(created);
                 if (Observe() && ReferenceEquals(identity, _tree.IncarnationOf(created)))
-                    historyEdit = HierarchyCommands.AddedMeshHistory(document.Schema, state, drag.Asset.Guid);
+                    historyEdit = HierarchyCommands.AddedMeshHistory(document.Schema, state, drag.Asset.Guid, placement?.Position);
             }
 
             if (historyEdit is null || _history is not { } history || _historyTarget is not { } historyTarget)
@@ -3567,6 +3654,13 @@ public sealed class EditorWorker : IDisposable
             if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
             if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
         }
+        if (events.Count > 0 && _placementOverlay is { } expiredPlacement)
+        {
+            _placementOverlay = null;
+            expiredPlacement.Hit.Gesture.Leave();
+            _post(() => expiredPlacement.Completion(null, "The scene changed. Move to preview again."));
+            SendOverlay(session);
+        }
         if (events.Any(e => e is DocumentReopened))
         {
             long lifetime = Interlocked.Increment(ref _meshDocumentLifetime);
@@ -3842,13 +3936,16 @@ public sealed class EditorWorker : IDisposable
 
     // Admit the send under the intent lock, then allow UI input while the shared reply is pending.
     private bool SendGuideOverlay(RemoteSession session, ViewportOverlay? overlay, GuideIntent intent, out ControlError? refusal)
+        => SendGuardedOverlay(session, overlay, () => GuideCurrentLocked(intent), out refusal);
+
+    private bool SendGuardedOverlay(RemoteSession session, ViewportOverlay? overlay, Func<bool> current, out ControlError? refusal)
     {
         var parameters = JsonValue.NewObject().Set("overlay", overlay is null ? JsonValue.Null() : Codec.Encode(overlay));
         ulong request;
         refusal = null;
         lock (_lock)
         {
-            if (!GuideCurrentLocked(intent)) return false;
+            if (!current()) return false;
             request = session.Send("control.setViewportOverlay", parameters);
         }
         var result = session.AwaitResult(request);
@@ -3858,10 +3955,10 @@ public sealed class EditorWorker : IDisposable
             refusal = typed;
             return true;
         }
-        throw new RemoteException(RemoteError.ProtocolError, "Malformed guide overlay reply.");
+        throw new RemoteException(RemoteError.ProtocolError, "Malformed viewport overlay reply.");
     }
 
-    private void SendOverlay(RemoteSession session, GroupGrab? retiring = null)
+    private MeshPlacementHit? SendOverlay(RemoteSession session, GroupGrab? retiring = null)
     {
         OverlayGroup? gizmo = null;
         GizmoSnapshot snapshot = new(null, null, null);
@@ -3899,21 +3996,33 @@ public sealed class EditorWorker : IDisposable
         {
             if (guides is { } proposed && !GuideCurrentLocked(proposed.Intent)) guides = null;
         }
-        if (guides is { } guide && guide.Value.Groups.Count > 0)
+        MeshPlacementHit? shownPlacement = null;
+        if (_placementOverlay is { } placing)
+        {
+            bool Current() => placing.Hit.Gesture.Drag.Lifetime == MeshDocumentLifetime &&
+                PlacementViewCurrent(placing.Hit.Sample) && placing.Hit.Gesture.IsHover(placing.Hit.Sample) &&
+                (guides is null || GuideCurrentLocked(guides.Value.Intent));
+            var ordinary = guides is { } available ? ViewportGuides.Compose(overlay, available.Value) : overlay;
+            var withPlacement = ordinary with { Groups = [.. ordinary.Groups, ViewportMeshPlacement.Marker(placing.Hit.Position)] };
+            if (SendGuardedOverlay(session, withPlacement, Current, out var error) && error is null)
+                shownPlacement = placing.Hit;
+            else _placementOverlay = null;
+        }
+        if (shownPlacement is null && guides is { } guide && guide.Value.Groups.Count > 0)
         {
             if (!SendGuideOverlay(session, ViewportGuides.Compose(overlay, guide.Value), guide.Intent, out ControlError? refusal))
-                return;
+                return null;
             if (refusal is ControlError error)
             {
                 string notice = "Guide overlay refused: " + error;
                 _log.Write(notice);
-                if (!SendGuideOverlay(session, overlay, guide.Intent, out ControlError? fallback)) return;
-                if (fallback is not null && !SendGuideOverlay(session, null, guide.Intent, out _)) return;
+                if (!SendGuideOverlay(session, overlay, guide.Intent, out ControlError? fallback)) return null;
+                if (fallback is not null && !SendGuideOverlay(session, null, guide.Intent, out _)) return null;
                 PostGuideFeedback(guide.Intent, notice);
             }
             else PostGuideFeedback(guide.Intent, guide.Value.Unavailable);
         }
-        else if (session.Control.SetViewportOverlay(overlay) is ControlError refused)
+        else if (shownPlacement is null && session.Control.SetViewportOverlay(overlay) is ControlError refused)
         {
             _log.Write("overlay refused: " + refused);
             // A failed placement read can leave no Group snapshot while retiring guides.
@@ -3927,13 +4036,14 @@ public sealed class EditorWorker : IDisposable
                     session.Control.SetViewportOverlay(null);
             }
         }
-        else if (guides is { } empty) PostGuideFeedback(empty.Intent, empty.Value.Unavailable);
+        else if (guides is { } displayed) PostGuideFeedback(displayed.Intent, displayed.Value.Unavailable);
         _post(() =>
         {
             bool current;
             lock (_lock) current = lifetime == MeshDocumentLifetime && selection == _requestedSelectionGeneration;
             if (current) GizmoChanged?.Invoke(snapshot);
         });
+        return shownPlacement;
     }
 
     private void PostGuideFeedback(GuideIntent intent, string? message) => _post(() =>

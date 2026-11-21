@@ -1,10 +1,10 @@
 # Plan 0129 — Native OLE Target for Viewport Mesh Placement
 
 - **Spec:** [Spec 0129](../specs/0129-viewport-native-ole-drop.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0178](../adr/0178-editor-owned-ole-viewport-drop.md) (Proposed)
+- **Joint Human Review:** 2026-11-21, [Spec/Plan 0129, J1–J4 and gated implementation approved](https://github.com/slmao/Atlantis/pull/421#issuecomment-7060287245) at `e08987ea`. Maintainer merge `a36518d4`.
+- **ADR:** [ADR-0178](../adr/0178-editor-owned-ole-viewport-drop.md) (Accepted)
 
 ## Objective and sequencing
 

@@ -77,9 +77,10 @@ public static partial class Program
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--viewport-placement" ? "viewport-placement-windows" : scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
+            boundary = scene == "--viewport-placement" ? "Native 96-DPI Editor and hosted Runtime, physical OLE gestures and shared authoring readback."
+                : scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
                 : scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
                 : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
                 : scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
@@ -122,6 +123,7 @@ public static partial class Program
                 bool savedWorkflow = _scene == "--saved-scene-workflow";
                 bool savedOwnership = _scene == "--saved-scene-ownership";
                 bool workspaceLayout = _scene == "--workspace-layout-ui";
+                bool viewportPlacement = _scene == "--viewport-placement";
                 bool savedPanel = savedWorkflow || savedOwnership || workspaceLayout;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
@@ -141,6 +143,7 @@ public static partial class Program
                 bool saveAs = _scene == "--save-as";
                 bool import = _scene == "--asset-import" || addMesh;
                 var window = new MainWindow(new EditorOptions(_runtime,
+                    viewportPlacement ? Environment.GetEnvironmentVariable("ATLANTIS_0128_SCENE") ?? "integrated_showcase_demo" :
                     addToNew || recovery ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
@@ -165,7 +168,7 @@ public static partial class Program
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
-                if (tasks || recovery || workspaceLayout)
+                if (tasks || recovery || workspaceLayout || viewportPlacement)
                 {
                     EditorVisuals.Install(this);
                     if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
@@ -179,7 +182,8 @@ public static partial class Program
                 {
                     try
                     {
-                        if (workspaceLayout) await CheckWorkspaceLayoutUi(window, _checks, _work);
+                        if (viewportPlacement) await CheckViewportPlacementUi(window, _checks, _work);
+                        else if (workspaceLayout) await CheckWorkspaceLayoutUi(window, _checks, _work);
                         else if (savedWorkflow) await CheckSavedSceneWorkflow(window, _checks, _work);
                         else if (savedOwnership) await CheckSavedSceneOwnership(window, _checks);
                         else if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);

@@ -1,9 +1,9 @@
 # ADR 0178 — Editor-Owned OLE Target Above the Runtime Drawable
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** 2026-11-21, [joint approval of `e08987ea`](https://github.com/slmao/Atlantis/pull/421#issuecomment-7060287245). Maintainer merge `a36518d4`.
 - **Related Spec:** [Spec 0129](../specs/0129-viewport-native-ole-drop.md)
 - **Supersedes in part:** [ADR-0177](0177-editor-viewport-placement-boundary.md), only its initial top-level drag route and proof
 
