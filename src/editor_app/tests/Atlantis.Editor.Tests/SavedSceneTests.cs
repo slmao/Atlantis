@@ -839,6 +839,14 @@ public static partial class Program
             artifact = model.Result!;
             File.WriteAllText(artifactFile, System.Text.Json.JsonSerializer.Serialize(artifact));
         }
+        else if (phase == "reseed")
+        {
+            artifact = System.Text.Json.JsonSerializer.Deserialize<SavedSceneBuild>(File.ReadAllText(artifactFile))!;
+            all.SelectedItem = name;
+            await NameUiWait(() => open.IsEnabled, "previous build verified from ordinary selection", 180);
+            Verify("ordinary selection restores eligibility without writing empty history", model.Result == artifact && prior is null &&
+                workspace.ReadRecent().Length == 0);
+        }
         else
         {
             artifact = System.Text.Json.JsonSerializer.Deserialize<SavedSceneBuild>(File.ReadAllText(artifactFile))!;

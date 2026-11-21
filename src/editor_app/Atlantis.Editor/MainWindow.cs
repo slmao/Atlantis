@@ -3270,10 +3270,15 @@ public sealed class MainWindow : Window
             EditorVisuals.Stack(6, _savedActiveTarget, EditorVisuals.Secondary("Committed managed import root (optional)"),
                 _savedManaged, _savedBuildSummary, _savedOpenResult, EditorVisuals.Actions(_savedBuild, _savedOpen),
                 EditorVisuals.Disclosure("Build details", _savedBuildResult)));
-        _savedRecent.ItemTemplate = new FuncDataTemplate<SavedRecentRow>((row, _) => row.Issue is { } issue
-            ? EditorVisuals.Stack(2, new TextBlock { Text = row.Entry.Identity.Name },
-                new TextBlock { Text = issue, TextWrapping = TextWrapping.Wrap, Foreground = EditorVisuals.Warning })
-            : new TextBlock { Text = row.Entry.Identity.Name });
+        _savedRecent.ItemTemplate = new FuncDataTemplate<SavedRecentRow>((row, _) =>
+        {
+            // Recycling the last row clears its content before removing the container.
+            if (row is null) return new TextBlock();
+            return row.Issue is { } issue
+                ? EditorVisuals.Stack(2, new TextBlock { Text = row.Entry.Identity.Name },
+                    new TextBlock { Text = issue, TextWrapping = TextWrapping.Wrap, Foreground = EditorVisuals.Warning })
+                : new TextBlock { Text = row.Entry.Identity.Name };
+        });
         var recent = EditorVisuals.Group(EditorVisuals.Heading("Recent"),
             EditorVisuals.Stack(4, _savedRecent, _savedRecentStatus, _savedRecentFeedback, _savedRecentRemove));
         _savedRecentStatus.Foreground = EditorVisuals.Muted;
