@@ -794,7 +794,20 @@ public static partial class Program
         string slot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AtlB",
             SavedSceneReceiptStore.Scope(checkout), "last-build.json");
         string artifactFile = Path.Combine(evidence, "artifact.json");
-        Field<TextBox>("_savedManaged").Text = Environment.GetEnvironmentVariable("ATLANTIS_0090_MANAGED");
+        var managed = Field<TextBox>("_savedManaged");
+        string? managedInput = Environment.GetEnvironmentVariable("ATLANTIS_0090_MANAGED");
+        if (managed.Text != managedInput)
+        {
+            var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveChange(object? sender, TextChangedEventArgs args) => changed.TrySetResult();
+            managed.TextChanged += ObserveChange;
+            try
+            {
+                managed.Text = managedInput;
+                await changed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            finally { managed.TextChanged -= ObserveChange; }
+        }
         if (phase == "unavailable")
         {
             Verify("missing source leaves an unavailable recent entry visible", recent.ItemCount == 1 &&
