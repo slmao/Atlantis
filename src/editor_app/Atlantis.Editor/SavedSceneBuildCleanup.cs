@@ -97,7 +97,7 @@ internal sealed class SavedSceneBuildCleanup(string checkout, string scope, stri
                     if (string.Equals(attempt, current, StringComparison.OrdinalIgnoreCase)) continue;
                     Ownership record = Read(RecordPath(attempt), leaf);
                     if (!Eligible(record, owner)) continue;
-                    VerifyProcessUse(attempt);
+                    VerifyProcessUse(attempt, record.DirectoryIdentity);
                     using var tree = new BuildTree(attempt, deleting: true);
                     if (tree.Inventory[0].Identity != record.DirectoryIdentity) continue;
                     candidates.Add(new(record, attempt, tree.Inventory, tree.Inventory.Sum(item => item.Length), current));
@@ -127,11 +127,11 @@ internal sealed class SavedSceneBuildCleanup(string checkout, string scope, stri
             if (current != candidate.CurrentAttempt || string.Equals(current, candidate.Path, StringComparison.OrdinalIgnoreCase) ||
                 record != candidate.Record || !Eligible(record, owner))
                 throw new IOException("Build ownership, protection, or the current build changed. Refresh the list.");
-            VerifyProcessUse(candidate.Path);
+            VerifyProcessUse(candidate.Path, record.DirectoryIdentity);
             using var tree = new BuildTree(candidate.Path, deleting: true);
             if (tree.Inventory[0].Identity != record.DirectoryIdentity || !tree.Inventory.SequenceEqual(candidate.Inventory))
                 throw new IOException("The confirmed directory or its contents changed. Refresh the list.");
-            VerifyProcessUse(candidate.Path);
+            VerifyProcessUse(candidate.Path, record.DirectoryIdentity);
             tree.VerifyMembership();
             tree.Delete(() => started = true);
             try

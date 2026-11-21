@@ -88,6 +88,47 @@ public static partial class Program
                 probe.WaitForExit(6000);
             }
 
+            string aliased = Attempt();
+            File.WriteAllText(Path.Combine(aliased, "atlantis_runtime.exe"), "pending Runtime fixture");
+            var beforeAliasUse = Candidate(aliased);
+            string alias = Path.Combine(root, "runtime-alias");
+            using (var linkProcess = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /J \"{alias}\" \"{aliased}\"")
+                   { CreateNoWindow = true, UseShellExecute = false })!)
+            {
+                linkProcess.WaitForExit();
+                if (linkProcess.ExitCode != 0) throw new InvalidOperationException("Could not create the Runtime junction fixture.");
+            }
+            try
+            {
+                Process StartPendingEditor(string runtime) => Process.Start(new ProcessStartInfo(editorProbe,
+                    $"/d /c ping.exe -n 6 127.0.0.1 >nul & rem --runtime \"{runtime}\"")
+                    { CreateNoWindow = true, UseShellExecute = false })!;
+                using (var probe = StartPendingEditor(Path.Combine(alias, "atlantis_runtime.exe")))
+                {
+                    var result = cleanup.Remove(beforeAliasUse, store);
+                    Check(!probe.HasExited && !result.Removed && File.Exists(Log(aliased)) &&
+                        result.Detail.Contains("through its Runtime path", StringComparison.Ordinal) &&
+                        !List().Candidates.Any(row => row.Path == aliased), "a pending Editor using an absolute junction alias cannot lose its build folder");
+                    probe.WaitForExit(8000);
+                }
+                using (var probe = StartPendingEditor(Path.Combine(alias, "unavailable.exe")))
+                {
+                    var result = cleanup.Remove(beforeAliasUse, store);
+                    Check(!probe.HasExited && !result.Removed && File.Exists(Log(aliased)) &&
+                        result.Detail.Contains("Cannot resolve the Runtime", StringComparison.Ordinal),
+                        "an unresolvable pending Editor Runtime path refuses cleanup");
+                    probe.WaitForExit(8000);
+                }
+                Check(List().Candidates.Any(row => row.Path == aliased), "a settled build becomes eligible again after the aliased Editor exits");
+                using (var probe = StartPendingEditor(Path.Combine(Environment.SystemDirectory, "where.exe")))
+                {
+                    Check(!probe.HasExited && List().Candidates.Any(row => row.Path == aliased),
+                        "a pending Editor with a verified unrelated Runtime keeps the old build eligible");
+                    probe.WaitForExit(8000);
+                }
+            }
+            finally { Directory.Delete(alias); }
+
             string protectedDir = Attempt();
             var beforeOpen = Candidate(protectedDir);
             using (store.Lease()) cleanup.Protect(protectedDir);

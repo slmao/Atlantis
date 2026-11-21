@@ -142,10 +142,11 @@ internal static class SavedSceneCleanupWindows
         if (attributes.HasFlag(FileAttributes.ReparsePoint) || attributes.HasFlag(FileAttributes.Directory) != directory ||
             (!directory && (info.Links != 1 || GetFileType(handle) != 1)))
             throw new IOException("Build folder contains an unsupported entry: " + relative);
-        return new(relative, directory, new(info.Volume, Join(info.IndexHigh, info.IndexLow)),
+        return new(relative, directory, Identity(info),
             directory ? 0 : checked((long)Join(info.SizeHigh, info.SizeLow)), (long)Join(info.WrittenHigh, info.WrittenLow));
     }
 
+    private static FileIdentity Identity(FileInformation info) => new(info.Volume, Join(info.IndexHigh, info.IndexLow));
     private static ulong Join(uint high, uint low) => ((ulong)high << 32) | low;
 
     private static readonly HashSet<string> RelevantProcesses = new(StringComparer.OrdinalIgnoreCase)
@@ -154,7 +155,7 @@ internal static class SavedSceneCleanupWindows
         "cl", "link", "mspdbsrv", "csc", "rc", "mt", "dxc", "dotnet", "devenv", "ctest",
     };
 
-    internal static void VerifyProcessUse(string root)
+    internal static void VerifyProcessUse(string root, FileIdentity attempt)
     {
         string leaf = Path.GetFileName(root);
         var shortPath = new StringBuilder(32768);
@@ -183,8 +184,9 @@ internal static class SavedSceneCleanupWindows
                 string command = ReadCommandLine(handle);
                 if (References(image.ToString()) || References(command))
                     throw new IOException("A process is using this build folder.");
-                if (processName.Equals("Atlantis.Editor", StringComparison.OrdinalIgnoreCase))
-                    VerifyExplicitEditorPath(command);
+                if (processName.Equals("Atlantis.Editor", StringComparison.OrdinalIgnoreCase) ||
+                    processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+                    VerifyEditorRuntime(command, processName, attempt);
             }
         }
         finally
@@ -193,20 +195,68 @@ internal static class SavedSceneCleanupWindows
         }
     }
 
-    private static void VerifyExplicitEditorPath(string command)
+    private static void VerifyEditorRuntime(string command, string processName, FileIdentity attempt)
     {
         IntPtr arguments = CommandLineToArgv(command, out int count);
         if (arguments == IntPtr.Zero) throw Win32("Cannot read the startup arguments of a running Editor");
         try
         {
+            string Arg(int index) => Marshal.PtrToStringUni(Marshal.ReadIntPtr(arguments, index * IntPtr.Size))!;
+            bool nativeAppHost = processName.Equals("Atlantis.Editor", StringComparison.OrdinalIgnoreCase);
+            int editorStart = 1;
+            if (!nativeAppHost)
+            {
+                if (editorStart < count && Arg(editorStart) == "exec")
+                {
+                    ++editorStart;
+                    while (editorStart + 1 < count && Arg(editorStart) is "--depsfile" or "--runtimeconfig" or
+                               "--additionalprobingpath" or "--additional-deps" or "--fx-version" or "--roll-forward")
+                        editorStart += 2;
+                }
+                if (editorStart >= count || !Path.GetFileName(Arg(editorStart)).Equals("Atlantis.Editor.dll", StringComparison.OrdinalIgnoreCase))
+                    return;
+                ++editorStart;
+            }
             string? runtime = null;
-            for (int index = 1; index + 1 < count; ++index)
-                if (Marshal.PtrToStringUni(Marshal.ReadIntPtr(arguments, index * IntPtr.Size)) == "--runtime")
-                    runtime = Marshal.PtrToStringUni(Marshal.ReadIntPtr(arguments, ++index * IntPtr.Size));
+            for (int index = editorStart; index + 1 < count; ++index)
+                if (Arg(index) == "--runtime") runtime = Arg(++index);
             if (runtime is null || !Path.IsPathFullyQualified(runtime))
                 throw new IOException("Cannot verify which build a running Editor is using.");
+            VerifyRuntimeTarget(runtime, attempt);
         }
         finally { _ = LocalFree(arguments); }
+    }
+
+    private static void VerifyRuntimeTarget(string runtime, FileIdentity attempt)
+    {
+        // Follow aliases only for this read-only observation. Deletion still
+        // opens each managed directory and file without following reparse points.
+        const uint readAttributes = 0x80, shareAll = 7, openExisting = 3, backupSemantics = 0x02000000;
+        using var target = CreateFile(runtime, readAttributes, shareAll, IntPtr.Zero, openExisting, backupSemantics, IntPtr.Zero);
+        if (target.IsInvalid) throw Win32("Cannot resolve the Runtime of a running Editor");
+        if (!GetFileInformationByHandle(target, out var targetInfo)) throw Win32("Cannot identify the Runtime of a running Editor");
+        if (((FileAttributes)targetInfo.Attributes).HasFlag(FileAttributes.Directory) || GetFileType(target) != 1)
+            throw new IOException("Cannot verify the Runtime file of a running Editor.");
+
+        string FinalTarget()
+        {
+            var resolved = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandle(target, resolved, (uint)resolved.Capacity, 0);
+            if (length == 0) throw Win32("Cannot resolve the Runtime path of a running Editor");
+            if (length >= resolved.Capacity) throw new IOException("The resolved Runtime path is too long.");
+            return resolved.ToString();
+        }
+
+        string path = FinalTarget();
+        for (string? parent = Path.GetDirectoryName(path); parent is not null; parent = Path.GetDirectoryName(parent))
+        {
+            using var ancestor = CreateFile(parent, readAttributes, shareAll, IntPtr.Zero, openExisting, backupSemantics, IntPtr.Zero);
+            if (ancestor.IsInvalid || !GetFileInformationByHandle(ancestor, out var info))
+                throw Win32("Cannot identify a directory in the resolved Runtime path");
+            if (Identity(info) == attempt)
+                throw new IOException("An Editor is using this build folder through its Runtime path.");
+        }
+        if (FinalTarget() != path) throw new IOException("The Runtime path changed during inspection.");
     }
 
     private static string ReadCommandLine(SafeFileHandle process)
@@ -440,6 +490,8 @@ internal static class SavedSceneCleanupWindows
     private static extern SafeFileHandle OpenProcess(uint access, bool inherit, int processId);
     [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern uint GetShortPathName(string path, StringBuilder shortPath, uint length);
+    [DllImport("kernel32.dll", EntryPoint = "GetFinalPathNameByHandleW", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle file, StringBuilder path, uint length, uint flags);
     [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool QueryFullProcessImageName(SafeFileHandle process, uint flags, StringBuilder image, ref uint length);
     [DllImport("shell32.dll", EntryPoint = "CommandLineToArgvW", SetLastError = true, CharSet = CharSet.Unicode)]

@@ -378,8 +378,10 @@ public static partial class Program
                 "CMake attempts never reuse a build directory");
             var cleanup = workspace.CleanupCandidates();
             var candidates = cleanup.Candidates.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            Check(cleanup.Issue is null && candidates.SetEquals([configured.Directory, broken.Directory, stale.Directory]),
-                "actual CMake attempts settle for cleanup after failure or supersession, leaving the current attempt protected");
+            var expected = new[] { configured.Directory, broken.Directory, stale.Directory };
+            bool cleanupsSettled = cleanup.Issue is null && candidates.SetEquals(expected);
+            Check(cleanupsSettled, "actual CMake attempts settle for cleanup after failure or supersession, leaving the current attempt protected" +
+                (cleanupsSettled ? "" : $". {cleanup.Issue} Expected {string.Join(", ", expected)}. Found {string.Join(", ", candidates)}."));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
