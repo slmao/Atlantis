@@ -41,7 +41,7 @@ public static partial class Program
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
         bool hierarchyFilterRace = false;
-        string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null;
+        string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
@@ -55,6 +55,7 @@ public static partial class Program
             else if (args[i] == "--scene-recovery-ui" && i + 1 < args.Length) recoveryReport = args[++i];
             else if (args[i] == "--tasks-ui" && i + 1 < args.Length) tasksReport = args[++i];
             else if (args[i] == "--workspace-layout-ui" && i + 1 < args.Length) layoutReport = args[++i];
+            else if (args[i] == "--viewport-placement" && i + 1 < args.Length) placementReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
@@ -65,6 +66,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunNameUiSmoke(runtime, tasksReport, "--tasks-ui");
         if (layoutReport is not null)
             return runtime is null ? Usage() : RunNameUiSmoke(runtime, layoutReport, "--workspace-layout-ui");
+        if (placementReport is not null)
+            return runtime is null ? Usage() : RunNameUiSmoke(runtime, placementReport, "--viewport-placement");
         if (assetDropReceipt is not null)
             return runtime is null ? Usage() : RunAssetDragReceipts(runtime, scene, assetDropReceipt);
         if (sceneObjectUi)
@@ -118,6 +121,7 @@ public static partial class Program
             SavedSceneChecks();
             SavedSceneCMakeChecks();
             WorkspaceLayoutChecks();
+            ViewportPlacementChecks();
             // Plan 0068 M4: the Gizmo drag controller (previews, J3's cap, the release, J4's refusal).
             GizmoDragChecks();
             GroupGizmoChecks();

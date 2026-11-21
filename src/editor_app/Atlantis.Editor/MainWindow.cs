@@ -22,6 +22,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
@@ -58,6 +59,7 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public string? SavedSceneAppHost { get; init; }
     internal WorkspaceLayoutStore? WorkspaceSettings { get; init; }
     internal bool DisableWorkspaceSettings { get; init; }
+    internal Func<string, nint, int, int, bool>? ViewportOleProbe { get; init; }
     // Plan 0066 M1: the input investigation's options (measurement-only).
     public bool MeasureDrag { get; init; }
     public string? AttachSession { get; init; }
@@ -265,8 +267,17 @@ public sealed class MainWindow : Window
     private TextureImportView SelectedTextureImport => _textureImports[Math.Max(0, _textureKind.SelectedIndex)];
     private bool _textureRepair;
     private readonly ListBox _assetsList = new() { Height = 224 };
-    private static readonly DataFormat<string> AssetDragFormat = DataFormat.CreateStringApplicationFormat("atlantis-asset-drag");
+    private static readonly DataFormat<byte[]> AssetDragFormat = DataFormat.CreateBytesPlatformFormat(ViewportOleDropTarget.TokenFormat);
+    private ViewportOleDropTarget? _viewportOleDrop;
+    private MeshPlacementGesture? _viewportPlacement;
+    private MeshPlacementHit? _viewportPlacementHit;
+    private PlacementRay? _viewportPlacementRead;
+    private readonly DispatcherTimer _viewportPlacementTimer = new() { Interval = TimeSpan.FromMilliseconds(67) };
+    private readonly TextBlock _viewportPlacementFeedback = new() { TextTrimming = TextTrimming.CharacterEllipsis, IsVisible = false };
+    private static string? AssetDragToken(DragEventArgs e) =>
+        e.DataTransfer.TryGetValue(AssetDragFormat) is { Length: 16 } token ? Convert.ToHexStringLower(token) : null;
     private (AssetGuid Guid, PointerPressedEventArgs Event, Point Position)? _assetPress;
+    private bool _assetDragSourceRunning;
     private AssetDragIntent? _assetDrag;
     private bool _assetDropPending;
     private int _pendingSceneFieldEdits;
@@ -488,6 +499,7 @@ public sealed class MainWindow : Window
         _viewport.WindowCreated += OnViewportWindow;
         _viewport.WindowDestroyed += () =>
         {
+            RetireViewportOleTarget(expireRelease: true);
             _worker?.SetViewportExtent(0, 0);
             ++_pickRequest;
             _log.Write("viewport host window destroyed");
@@ -563,6 +575,10 @@ public sealed class MainWindow : Window
         _pause.Click += (_, _) => _worker?.Pause();
         _step.Click += (_, _) => _worker?.StepFrame();
         Deactivated += (_, _) => CancelGroupGesture();
+        Deactivated += (_, _) => RetireViewportOleTarget(expireRelease: true);
+        ScalingChanged += (_, _) => RetireViewportOleTarget(expireRelease: true);
+        PositionChanged += (_, _) => RetireViewportOleTarget(expireRelease: true);
+        _viewportPlacementTimer.Tick += (_, _) => PreviewViewportPlacement();
         AddHandler(GotFocusEvent, (_, e) =>
         {
             if (e.Source is Control next && !ReferenceEquals(next, _reopen) && !ReferenceEquals(next, _resetWorkspaceLayout) &&
@@ -713,7 +729,8 @@ public sealed class MainWindow : Window
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
         AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
-        AddDocked(view, _viewportNavFeedback, Avalonia.Controls.Dock.Top);
+        AddDocked(view, new Grid { Height = 18, Children = { _viewportNavFeedback, _viewportPlacementFeedback } },
+            Avalonia.Controls.Dock.Top);
         view.Children.Add(_viewport);
         AutomationProperties.SetName(_gizmoMode, "Transform mode");
         AutomationProperties.SetName(_gizmoSpace, "Coordinate space");
@@ -736,7 +753,7 @@ public sealed class MainWindow : Window
         DragDrop.SetAllowDrop(tabs[0], true);
         DragDrop.AddDragOverHandler(tabs[0], (_, e) =>
         {
-            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            if (_assetDrag is not { } drag || !drag.Matches(AssetDragToken(e))) return;
             _assetTabs.SelectedIndex = 0;
             e.DragEffects = DragDropEffects.None;
             e.Handled = true;
@@ -981,6 +998,7 @@ public sealed class MainWindow : Window
         _log.Write("viewport host window 0x" + window.Handle.ToString("x") + " " + window.Width + "x" + window.Height);
         window.Resized += (w, h) =>
         {
+            RetireViewportOleTarget(expireRelease: true);
             _worker?.SetViewportExtent(w, h);
             ++_pickRequest;
             CancelGroupGesture();
@@ -1143,6 +1161,7 @@ public sealed class MainWindow : Window
         worker.NavigationChanged += state =>
         {
             if (!ReferenceEquals(_worker, worker) || state.Intent != _viewportCameraIntent) return;
+            RetireViewportOleTarget(expireRelease: true);
             _navigationPending = false;
             _navigationSupported = state.Supported;
             _navigationReady = state.ProjectionReady;
@@ -1529,6 +1548,7 @@ public sealed class MainWindow : Window
     private void NavigateViewport(IReadOnlyList<EntityGuid>? focus = null, ViewDirection? direction = null)
     {
         if (_worker is not { } worker || !_cameraInitialized || _gizmoGrab is not null || _groupGrab is not null) return;
+        RetireViewportOleTarget(expireRelease: true);
         _navigationPending = true;
         ++_pickRequest;
         ShowNavigationMessage("Updating viewport camera…");
@@ -1594,6 +1614,7 @@ public sealed class MainWindow : Window
     private void MoveViewport(ViewportMotion motion, long arrivalTicks)
     {
         if (_worker is not { } worker || _viewport.Window is not { } window) return;
+        RetireViewportOleTarget(expireRelease: true);
         if (_navigationPending)
         {
             ++_pickRequest;
@@ -2579,7 +2600,8 @@ public sealed class MainWindow : Window
     private void OnAssetPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _assetPress = null;
-        if (_assetDropPending || _assetDrag is not null || !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
+        if (_assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
+            !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
             e.ClickCount != 1 || HierarchyItem(e.Source) is not { DataContext: AssetSummary row }) return;
         _assetPress = (row.Guid, e, e.GetPosition(_assetsList));
     }
@@ -2595,29 +2617,67 @@ public sealed class MainWindow : Window
         var move = e.GetPosition(_assetsList) - press.Position;
         if (Math.Max(Math.Abs(move.X), Math.Abs(move.Y)) < 5) return;
         _assetPress = null;
-        if (_assetDropPending || _assetDrag is not null || _referenceSessionFailed || _worker is null ||
+        if (_assetDragSourceRunning || _assetDropPending || _assetDrag is not null || _referenceSessionFailed || _worker is null ||
             !_assetBrowser.SelectionVisible || _assetsList.SelectedItem is not AssetSummary asset || asset.Guid != press.Guid) return;
 
-        SettleInspectorBlur();
         var drag = new AssetDragIntent(asset, _assetBrowser.Items, _meshDocumentLifetime);
-        _assetDrag = drag;
-        var data = new DataTransfer();
-        data.Add(DataTransferItem.Create(AssetDragFormat, drag.Token));
+        await RunAssetDragSource(drag, () =>
+        {
+            var data = new DataTransfer();
+            data.Add(DataTransferItem.Create(AssetDragFormat, Convert.FromHexString(drag.Token)));
+            return DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Copy);
+        });
+    }
+
+    internal async Task RunAssetDragSource(AssetDragIntent drag, Func<Task> start)
+    {
+        // OLE pumps messages while dragging. The token can retire before the native source returns.
+        if (_assetDragSourceRunning) return;
+        _assetDragSourceRunning = true;
         try
         {
-            await DragDrop.DoDragDropAsync(press.Event, data, DragDropEffects.Copy);
+            SettleInspectorBlur();
+            _assetDrag = drag;
+            if (AssetDropRefusal(drag, null) is null && _viewport.Window is { } view &&
+                ViewportProjection(view) is not null && _groupGrab is null)
+            {
+                _viewportPlacement = new MeshPlacementGesture(drag);
+                try
+                {
+                    _viewportOleDrop = ViewportOleDropTarget.Create(view, drag,
+                        _options.ViewportOleProbe ?? HandleViewportOleDrop, _log.Write);
+                }
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or COMException or InvalidOperationException)
+                {
+                    _log.Write("viewport OLE setup: " + error);
+                    _options.ViewportOleProbe?.Invoke("setup-failed", 0, 0, 0);
+                    ShowPlacementStatus("Viewport drop unavailable. Use Add to Scene.");
+                }
+            }
+            try { await start(); }
+            catch (COMException error)
+            {
+                _log.Write("asset OLE drag: " + error);
+                _editLine.Text = "Windows could not complete the asset drag. Check the result before retrying.";
+                if (drag.Asset.Type == AssetType.Mesh && !_assetDropPending) _addMeshState.Text = _editLine.Text;
+            }
         }
         finally
         {
+            RetireViewportOleTarget();
             drag.Cancel(onlyUndropped: true);
             ClearAssetDropFeedback();
             _assetDropFields.Clear();
             if (!_assetDropPending && ReferenceEquals(_assetDrag, drag)) _assetDrag = null;
+            _assetDragSourceRunning = false;
         }
     }
 
     private void RetireAssetDrop()
     {
+        RetireViewportOleTarget(expireRelease: true);
+        _viewportPlacementRead = null;
+        _viewportPlacement = null;
         _assetPress = null;
         _assetDrag?.Cancel();
         _assetDrag = null;
@@ -2625,6 +2685,113 @@ public sealed class MainWindow : Window
         _pendingSceneFieldEdits = 0;
         ++_assetDropRequest;
         ClearAssetDropFeedback();
+    }
+
+    private void RetireViewportOleTarget(bool expireRelease = false)
+    {
+        if (expireRelease) _viewportPlacement?.InvalidateRelease();
+        var target = _viewportOleDrop;
+        _viewportOleDrop = null;
+        target?.Dispose();
+        ClearViewportPlacementHover();
+        if (!_assetDropPending) _viewportPlacement = null;
+    }
+
+    private void ClearViewportPlacementHover(string? message = null)
+    {
+        _viewportPlacementTimer.Stop();
+        _viewportPlacementHit = null;
+        if (_viewportPlacement is { } gesture)
+        {
+            bool wasHovering = gesture.Hover is not null;
+            gesture.Leave();
+            if (wasHovering) _worker?.ClearMeshPlacement(gesture);
+        }
+        ShowPlacementStatus(message);
+    }
+
+    private void ShowPlacementStatus(string? message)
+    {
+        _viewportPlacementFeedback.Text = message;
+        _viewportPlacementFeedback.IsVisible = message is not null;
+        _viewportNavFeedback.IsVisible = message is null;
+        ToolTip.SetTip(_viewportPlacementFeedback, message);
+    }
+
+    private bool HandleViewportOleDrop(string operation, nint target, int x, int y)
+    {
+        if (operation is "leave" or "disarm")
+        {
+            ClearViewportPlacementHover();
+            return false;
+        }
+        if (operation is not ("enter" or "over" or "drop") || _viewportPlacement is not { } gesture ||
+            _worker is not { } worker || _viewport.Window is not { } view) return false;
+        string? refusal = AssetDropRefusal(gesture.Drag, null);
+        if (refusal is not null || _groupGrab is not null || ViewportProjection(view) is not { } camera)
+        {
+            ClearViewportPlacementHover(refusal ?? "Wait for the Viewport to settle.");
+            return false;
+        }
+        var active = gesture.Hover;
+        bool same = active is not null && active.X == x && active.Y == y && active.Width == view.Width &&
+            active.Height == view.Height && active.CameraIntent == _viewportCameraIntent;
+        var hit = _viewportPlacementHit;
+        bool ready = same && hit is not null && ReferenceEquals(hit.Sample, active);
+        if (operation == "drop")
+        {
+            if (!ready || !gesture.Queue(hit!.Sample))
+            {
+                _addMeshState.Text = "Drop refused: wait for a current surface marker.";
+                ClearViewportPlacementHover();
+                return false;
+            }
+            worker.ClearMeshPlacement(gesture);
+            SettleAssetDrop(worker, gesture.Drag, null, hit);
+            return true;
+        }
+        if (!same)
+        {
+            if (_viewportPlacementHit is not null)
+            {
+                gesture.Leave();
+                worker.ClearMeshPlacement(gesture);
+            }
+            _viewportPlacementHit = null;
+            var ray = CameraConvention.RayThroughNdc(camera, ((float)x / view.Width) * 2 - 1,
+                ((float)y / view.Height) * 2 - 1);
+            gesture.Move(new PlacementRay(x, y, view.Width, view.Height, _viewportCameraIntent,
+                _sceneProjection ?? _camera.Pose(), ray));
+            ShowPlacementStatus(EditorVisuals.AssetName(gesture.Drag.Asset) + " · Finding surface…");
+            if (!_viewportPlacementTimer.IsEnabled) _viewportPlacementTimer.Start();
+        }
+        return ready;
+    }
+
+    private void PreviewViewportPlacement()
+    {
+        _viewportPlacementTimer.Stop();
+        if (_viewportPlacement is not { } gesture || gesture.Hover is not { } sample ||
+            _worker is not { } worker || _viewportPlacementRead is not null) return;
+        _viewportPlacementRead = sample;
+        worker.PreviewMeshPlacement(gesture, sample, (hit, reason) =>
+        {
+            if (ReferenceEquals(_viewportPlacementRead, sample)) _viewportPlacementRead = null;
+            if (!ReferenceEquals(_viewportPlacement, gesture) || !ReferenceEquals(_worker, worker)) return;
+            if (gesture.IsHover(sample))
+            {
+                _viewportPlacementHit = hit;
+                if (hit is not null) ShowPlacementStatus(EditorVisuals.AssetName(gesture.Drag.Asset) + " · Release to place pivot");
+                else if (reason is not null) ShowPlacementStatus(reason);
+            }
+            else
+            {
+                _viewportPlacementHit = null;
+                worker.ClearMeshPlacement(gesture);
+                if (gesture.Hover is not null) _viewportPlacementTimer.Start();
+                else if (reason is not null && !_assetDropPending) ShowPlacementStatus(reason);
+            }
+        });
     }
 
     private void ClearAssetDropFeedback()
@@ -2663,7 +2830,7 @@ public sealed class MainWindow : Window
         DragDrop.SetAllowDrop(surface, true);
         DragDrop.AddDragOverHandler(surface, (_, e) =>
         {
-            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            if (_assetDrag is not { } drag || !drag.Matches(AssetDragToken(e))) return;
             ClearAssetDropFeedback();
             string? refusal = AssetDropRefusal(drag, field);
             if (field is not null && !_assetDropFields.TryAdd(field.Field.Address, field) &&
@@ -2685,7 +2852,7 @@ public sealed class MainWindow : Window
         DragDrop.AddDragLeaveHandler(surface, (_, _) => { if (_assetDropHighlight == border) ClearAssetDropFeedback(); });
         DragDrop.AddDropHandler(surface, (_, e) =>
         {
-            if (_assetDrag is not { } drag || !drag.Matches(e.DataTransfer.TryGetValue(AssetDragFormat))) return;
+            if (_assetDrag is not { } drag || !drag.Matches(AssetDragToken(e))) return;
             e.Handled = true;
             e.DragEffects = DragDropEffects.None;
             bool advertised = _advertisedAssetDrop is { } target && target.Surface == surface && target.Field == field;
@@ -2696,7 +2863,10 @@ public sealed class MainWindow : Window
         });
     }
 
-    private void StartAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field)
+    private void StartAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field) =>
+        SettleAssetDrop(worker, drag, field, null);
+
+    private void SettleAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field, MeshPlacementHit? placement)
     {
         _assetDropPending = true;
         ulong request = ++_assetDropRequest, interaction = _assetDropInteraction, selection = _selection.Generation;
@@ -2718,6 +2888,7 @@ public sealed class MainWindow : Window
             if (!finished) return;
             _assetDropPending = false;
             if (ReferenceEquals(drag, _assetDrag)) _assetDrag = null;
+            if (placement is not null) _viewportPlacement = null;
             if (root)
             {
                 _addingMesh = false;
@@ -2731,7 +2902,7 @@ public sealed class MainWindow : Window
                     ReferenceEquals(current.Identity.NodeIdentity, field.Identity.NodeIdentity) &&
                     ReferenceEquals(current.Identity.ComponentIdentity, field.Identity.ComponentIdentity)) == true)
                 FocusReferenceLauncher(field.Field.Address);
-        });
+        }, placement);
     }
 
     private void LoadAssets()
@@ -2763,6 +2934,7 @@ public sealed class MainWindow : Window
             !ReferenceEquals(drag.Catalog, _assetBrowser.Items)))
         {
             drag.Cancel();
+            RetireViewportOleTarget(expireRelease: true);
             ClearAssetDropFeedback();
         }
         bool catalogFailed = _assetBrowser.State == nameof(AssetError.CatalogUnavailable);
