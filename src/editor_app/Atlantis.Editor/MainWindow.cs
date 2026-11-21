@@ -2727,7 +2727,7 @@ public sealed class MainWindow : Window
                 return false;
             }
             worker.ClearMeshPlacement(gesture);
-            StartAssetDrop(worker, gesture.Drag, null, hit);
+            SettleAssetDrop(worker, gesture.Drag, null, hit);
             return true;
         }
         if (!same)
@@ -2843,7 +2843,10 @@ public sealed class MainWindow : Window
         });
     }
 
-    private void StartAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field, MeshPlacementHit? placement = null)
+    private void StartAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field) =>
+        SettleAssetDrop(worker, drag, field, null);
+
+    private void SettleAssetDrop(EditorWorker worker, AssetDragIntent drag, AssetDropField? field, MeshPlacementHit? placement)
     {
         _assetDropPending = true;
         ulong request = ++_assetDropRequest, interaction = _assetDropInteraction, selection = _selection.Generation;
