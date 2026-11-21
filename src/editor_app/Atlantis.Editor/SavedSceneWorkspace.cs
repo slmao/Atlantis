@@ -6,10 +6,12 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Runtime.CompilerServices;
 using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
+using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 
 [assembly: InternalsVisibleTo("Atlantis.Editor.Tests")]
@@ -18,6 +20,7 @@ namespace Atlantis.Editor;
 
 internal sealed record SavedSceneBuildReport(string Phase, string Detail, string Directory, string Log,
                                              SavedSceneBuild? Result = null);
+internal sealed record SavedSceneOpenResult(Process? Child, string? Refusal, string? HistoryWarning = null);
 
 [SupportedOSPlatform("windows")]
 internal sealed class SavedSceneWorkspace(string checkout, string cmake, string workDirectory, string? receiptRoot = null)
@@ -29,6 +32,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     private readonly SavedSceneReceiptStore _store = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)),
         Path.Combine(receiptRoot ?? BuildArea, "a"), checkout);
     private readonly SavedSceneBuildEvidence _evidence = new(checkout, cmake);
+    private readonly SavedSceneRecentStore _recent = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)));
 
     internal static string CheckoutPath(string path)
     {
@@ -103,12 +107,12 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         string leaf = "save_" + name;
         string unit = Path.Combine(_root, leaf);
         Ordinary(unit, directory: true);
+        Ordinary(Path.Combine(unit, SourceLeaf), directory: false);
+        Ordinary(Path.Combine(unit, CatalogLeaf), directory: false);
         // Check exact spellings, reject case aliases and require ordinary NTFS case-insensitive lookups.
         CanonicalEntry(_root, leaf, "SAVE_" + name);
         CanonicalEntry(unit, SourceLeaf, "SCENE.scene.txt");
         CanonicalEntry(unit, CatalogLeaf, "CATALOG-source.txt");
-        Ordinary(Path.Combine(unit, SourceLeaf), directory: false);
-        Ordinary(Path.Combine(unit, CatalogLeaf), directory: false);
         return unit;
     }
 
@@ -133,6 +137,52 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     {
         string unit = Unit(name);
         return new(Fingerprint(Path.Combine(unit, SourceLeaf)), Fingerprint(Path.Combine(unit, CatalogLeaf)));
+    }
+
+    internal SavedSceneRecentEntry[] ReadRecent() => _recent.Read();
+    internal bool RemoveRecent(SavedSceneRecentEntry observed) => _recent.Remove(observed);
+
+    private SavedSceneIdentity ReadSceneIdentity(string name, string? checkedCatalog = null)
+    {
+        // Check each ancestor before deciding that the expected location is absent.
+        string parent = checkout;
+        foreach (string segment in new[] { "assets", "scenes", "saved" })
+        {
+            parent = Path.Combine(parent, segment);
+            Ordinary(parent, directory: true);
+        }
+        string unit = Unit(name);
+        using var file = File.OpenRead(Path.Combine(unit, CatalogLeaf));
+        if (file.Length > 4096) throw new IOException("The saved scene registration is too large.");
+        var bytes = new byte[(int)file.Length];
+        file.ReadExactly(bytes);
+        if (checkedCatalog is not null && Convert.ToHexString(SHA256.HashData(bytes)) != checkedCatalog)
+            throw new IOException("The saved scene registration changed after verification.");
+
+        using var lines = new StringReader(new UTF8Encoding(false, true).GetString(bytes));
+        const string prefix = "asset: guid=";
+        string suffix = $" type=scene root=assets path=scenes/saved/save_{name}/{SourceLeaf}";
+        if (lines.ReadLine() != "atlantis_asset_catalog_source_version: 1" || lines.ReadLine() != "entry_count: 1" ||
+            lines.ReadLine() is not { } entry || lines.ReadLine() is not null ||
+            !entry.StartsWith(prefix, StringComparison.Ordinal) || !entry.EndsWith(suffix, StringComparison.Ordinal) ||
+            entry.Length != prefix.Length + 36 + suffix.Length ||
+            !AssetGuid.TryParse(entry.Substring(prefix.Length, 36), out var guid) || guid.IsNil)
+            throw new IOException("The saved scene registration does not identify this unit.");
+        return new(name, guid.Value);
+    }
+
+    internal string? CheckRecent(SavedSceneIdentity expected, string? checkedCatalog = null)
+    {
+        try { _ = CheckoutPath(checkout); }
+        catch (Exception e) when (IsLocalFailure(e)) { return "Cannot verify the checkout. " + e.Message; }
+        try
+        {
+            return ReadSceneIdentity(expected.Name, checkedCatalog) == expected ? null :
+                "This location now contains a different scene.";
+        }
+        catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
+        { return "The scene is missing, incomplete, or may have moved."; }
+        catch (Exception e) when (IsLocalFailure(e)) { return "Cannot verify this scene location. " + e.Message; }
     }
 
     internal bool IsCurrent(SavedSceneBuild result)
@@ -200,24 +250,47 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
     private static SavedSceneEligibility Unavailable(string reason) => new(null, reason + " Build again.");
 
-    internal (Process? Child, string? Refusal) Open(SavedSceneBuild result, string apphost)
+    internal SavedSceneOpenResult Open(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent = null)
     {
+        var started = StartChecked(result, apphost, recent, out var identity);
+        if (started.Child is null || identity is null) return started;
+        try { _recent.Record(identity); }
+        catch (Exception e) when (IsLocalFailure(e))
+        { return started with { HistoryWarning = "Recent history could not be updated. " + e.Message }; }
+        return started;
+    }
+
+    private SavedSceneOpenResult StartChecked(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent,
+        out SavedSceneIdentity? identity)
+    {
+        identity = null;
         FileStream lease;
         try { lease = _store.Lease(); }
         catch (Exception e) when (IsLocalFailure(e))
-        { return (null, "Cannot verify the current build. Another launcher may be using the build slot. " + e.Message); }
+        { return new(null, "Cannot verify the current build. Another launcher may be using the build slot. " + e.Message); }
         using var held = lease;
         if (result.Recorded)
         {
             var eligibility = VerifyStored(result.Input);
             if (eligibility.Build != result)
-                return (null, eligibility.Build is null ? eligibility.Detail : "The build was superseded. Build again.");
+                return new(null, eligibility.Build is null ? eligibility.Detail : "The build was superseded. Build again.");
         }
-        else if (CheckFresh(result) is { Build: null } ineligible) return (null, ineligible.Detail);
-        return (Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."), null);
+        else if (CheckFresh(result) is { Build: null } ineligible) return new(null, ineligible.Detail);
+
+        string? warning = null;
+        try { identity = ReadSceneIdentity(result.Input.Name, result.Files.Catalog); }
+        catch (Exception e) when (IsLocalFailure(e))
+        {
+            if (recent is not null) return new(null, "Cannot confirm the selected recent scene. " + e.Message);
+            warning = "The scene identity could not be verified for Recent. " + e.Message;
+        }
+        if (recent is not null && identity != recent) return new(null, "This location now contains a different scene.");
+        return new(Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."),
+            null, warning);
     }
 
-    internal async Task<SavedSceneBuildReport> BuildAsync(SavedSceneInput input, Action<SavedSceneBuildReport> progress)
+    internal async Task<SavedSceneBuildReport> BuildAsync(SavedSceneInput input, Action<SavedSceneBuildReport> progress,
+        SavedSceneIdentity? recent = null)
     {
         string phase = "Admitting Build";
         string? retainedLog = null;
@@ -225,6 +298,14 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         try
         {
             using var lease = _store.Lease();
+            SavedSceneFiles? recentFiles = null;
+            if (recent is not null)
+            {
+                if (recent.Name != input.Name) return new("Stale", "The recent selection changed.", workDirectory, "");
+                recentFiles = Files(input.Name);
+                if (CheckRecent(recent, recentFiles.Catalog) is { } refusal)
+                    return new("Stale", refusal, workDirectory, "");
+            }
             attempt = _store.ReserveAttempt();
             _store.Write(attempt, null);
             phase = "Preparing";
@@ -237,7 +318,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
             try
             {
                 input = Normalize(input);
-                SavedSceneFiles files = Files(input.Name);
+                SavedSceneFiles files = recentFiles ?? Files(input.Name);
                 string? configuration = Capture(() => _evidence.Configuration(), out string? reason);
                 string? assets = Capture(() => _evidence.Assets(input), out string? assetReason);
                 reason ??= assetReason;

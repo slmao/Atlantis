@@ -46,6 +46,19 @@ public static partial class Program
         long beforeBuild = attempts.BeginCheck();
         Check(attempts.BeginBuild(second) && !attempts.FinishCheck(beforeBuild, built),
             "Build invalidates an older selection check and its receipt");
+        attempts.FinishBuild(built);
+        var recentIdentity = new SavedSceneIdentity(first.Name, Guid.NewGuid());
+        long pendingRecent = attempts.BeginRecentSelection();
+        Check(!attempts.CanBuild(first) && !attempts.CanOpen(first), "recent selection checks cannot start Build or Open");
+        Check(attempts.FinishRecentSelection(pendingRecent, null) && attempts.CanOpen(first) && attempts.RecentTarget is null,
+            "a refused recent selection preserves the previous target");
+        long oldRecent = attempts.BeginRecentSelection(), currentRecent = attempts.BeginRecentSelection();
+        Check(!attempts.FinishRecentSelection(oldRecent, recentIdentity) && attempts.FinishRecentSelection(currentRecent, recentIdentity) &&
+            attempts.RecentTarget == recentIdentity && !attempts.CanOpen(first), "only the current recent selection sets the identity guard");
+        long beforeOrdinary = attempts.BeginRecentSelection();
+        attempts.SelectOrdinary();
+        Check(!attempts.FinishRecentSelection(beforeOrdinary, recentIdentity) && attempts.RecentTarget is null,
+            "explicit ordinary selection cancels a late recent result and its old target guard");
 
         if (!OperatingSystem.IsWindows()) return;
         string root = Path.Combine(Path.GetTempPath(), "atlantis_saved_scene_" + Guid.NewGuid().ToString("N"));
@@ -162,8 +175,120 @@ public static partial class Program
                 catch (IOException) { unsupported = true; }
                 Check(unsupported, "an unknown receipt version cannot become eligible");
             }
+            SavedSceneRecentChecks(root, checkout, work);
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static void SavedSceneRecentChecks(string root, string checkout, string work)
+    {
+        string state = Path.Combine(root, "recent-state");
+        var workspace = new SavedSceneWorkspace(checkout, "cmake-must-not-start", work, state);
+        var history = new SavedSceneRecentStore(state);
+        var otherLauncher = new SavedSceneRecentStore(state);
+        var isolated = new SavedSceneRecentStore(Path.Combine(root, "another-checkout"));
+        Check(history.Read().Length == 0 && !Directory.Exists(state), "reading an empty history does not create state");
+
+        var scene = new SavedSceneIdentity("alpha", Guid.NewGuid());
+        var moved = scene with { Name = "moved" };
+        var replacement = scene with { Scene = Guid.NewGuid() };
+        string saved = Path.Combine(checkout, "assets", "scenes", "saved");
+        string Register(SavedSceneIdentity identity)
+        {
+            string unit = Directory.CreateDirectory(Path.Combine(saved, "save_" + identity.Name)).FullName;
+            File.WriteAllText(Path.Combine(unit, "scene.scene.txt"), "source fixture");
+            string catalog = Path.Combine(unit, "catalog-source.txt");
+            File.WriteAllText(catalog, $"atlantis_asset_catalog_source_version: 1\nentry_count: 1\n" +
+                $"asset: guid={identity.Scene:D} type=scene root=assets path=scenes/saved/save_{identity.Name}/scene.scene.txt\n");
+            return catalog;
+        }
+        string catalog = Register(scene);
+        Check(workspace.CheckRecent(scene) is null, "recent navigation resolves the registered name and GUID together");
+        history.Record(scene);
+        var observed = history.Read().Single();
+        for (int i = 0; i < SavedSceneRecent.Limit; ++i) otherLauncher.Record(new("scene_" + i, Guid.NewGuid()));
+        Check(history.Read().Length == SavedSceneRecent.Limit && history.Read().All(entry => entry.Identity != scene) &&
+            history.Read()[0].Identity.Name == "scene_7" && isolated.Read().Length == 0,
+            "settled records use newest-first order, evict only the oldest, and stay checkout-scoped");
+        history.Record(scene);
+        var initialVersion = history.Read()[0];
+        otherLauncher.Record(moved);
+        var entries = history.Read();
+        Check(entries[0].Identity == moved && entries.Count(entry => entry.Identity.Scene == scene.Scene) == 1 &&
+            !history.Remove(initialVersion) && !history.Remove(observed), "explicit open at a new location promotes the GUID and fences stale removal");
+        Check(workspace.CheckRecent(moved)?.Contains("may have moved", StringComparison.Ordinal) == true,
+            "an absent recent location remains unselectable, even when the GUID exists elsewhere");
+
+        string source = Path.Combine(Path.GetDirectoryName(catalog)!, "scene.scene.txt");
+        File.Move(source, source + ".tmp");
+        Check(workspace.CheckRecent(scene)?.Contains("incomplete", StringComparison.Ordinal) == true,
+            "an incomplete unit reports the location as missing or moved");
+        File.Move(source + ".tmp", source);
+        using (File.Open(catalog, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            Check(workspace.CheckRecent(scene)?.StartsWith("Cannot verify this scene location", StringComparison.Ordinal) == true,
+                "an unreadable registration is distinct from a missing scene");
+
+        var receipts = new SavedSceneReceiptStore(state, Path.Combine(state, "a"), checkout);
+        string attempt;
+        using (receipts.Lease())
+        {
+            attempt = receipts.ReserveAttempt();
+            receipts.Write(attempt, null);
+        }
+        string slot = Path.Combine(state, "last-build.json");
+        byte[] receiptBytes = File.ReadAllBytes(slot);
+        Register(replacement);
+        Check(workspace.CheckRecent(scene)?.Contains("different scene", StringComparison.Ordinal) == true,
+            "the old recent row refuses a same-name replacement");
+        var noBuild = workspace.BuildAsync(new(scene.Name, null), _ => throw new InvalidOperationException("Build started"), scene)
+            .GetAwaiter().GetResult();
+        Check(noBuild.Phase == "Stale" && File.ReadAllBytes(slot).SequenceEqual(receiptBytes),
+            "recent Build rechecks identity before superseding the current build slot");
+        string exe = Path.Combine(attempt, "atlantis_runtime.exe");
+        File.WriteAllText(exe, "fixture executable");
+        var current = new SavedSceneBuild(new(scene.Name, null), attempt, exe,
+            new(SavedSceneWorkspace.Fingerprint(source), SavedSceneWorkspace.Fingerprint(catalog)), SavedSceneWorkspace.Fingerprint(exe));
+        string missingAppHost = Path.Combine(root, "must-not-start.exe");
+        var noOpen = workspace.Open(current, missingAppHost, scene);
+        Check(noOpen.Child is null && noOpen.Refusal?.Contains("different scene", StringComparison.Ordinal) == true &&
+            history.Read().SequenceEqual(entries), "recent Open refuses a replaced target even when its build matches the replacement");
+        bool startFailed = false;
+        try { _ = workspace.Open(current, missingAppHost); }
+        catch (System.ComponentModel.Win32Exception) { startFailed = true; }
+        Check(startFailed && history.Read().SequenceEqual(entries), "a failed child start never promotes the scene");
+
+        string file = Path.Combine(state, "recent-scenes.json");
+        byte[] complete = File.ReadAllBytes(file);
+        using (File.OpenRead(file))
+        {
+            bool blocked = false;
+            try { otherLauncher.Record(replacement); }
+            catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { blocked = true; }
+            Check(blocked && File.ReadAllBytes(file).SequenceEqual(complete), "failed atomic history publication retains the settled list");
+        }
+        File.WriteAllText(file, "{\"Version\":99,\"Entries\":[]}");
+        byte[] unsupported = File.ReadAllBytes(file);
+        bool refused = false;
+        try { otherLauncher.Record(replacement); }
+        catch (IOException) { refused = true; }
+        Check(refused && File.ReadAllBytes(file).SequenceEqual(unsupported) && workspace.IsCurrent(current),
+            "an unsupported history is preserved while the ordinary build remains usable");
+        File.WriteAllText(file, "{");
+        bool truncated = false;
+        try { _ = otherLauncher.Read(); }
+        catch (System.Text.Json.JsonException) { truncated = true; }
+        Check(truncated && File.ReadAllText(file) == "{", "truncated history is reported without repair or eviction");
+        File.WriteAllBytes(file, complete);
+        using (File.Open(Path.Combine(state, "recent-scenes.lease"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            bool competing = false;
+            try { otherLauncher.Record(replacement); }
+            catch (IOException) { competing = true; }
+            Check(competing && File.ReadAllBytes(file).SequenceEqual(complete), "a competing history writer cannot overwrite the settled list");
+        }
+        Check(workspace.RemoveRecent(entries[0]) && workspace.ReadRecent().All(entry => entry.Identity.Scene != scene.Scene) &&
+            File.ReadAllBytes(slot).SequenceEqual(receiptBytes) && File.Exists(source) && File.Exists(exe),
+            "Remove from Recent changes history only, leaving source, executable and receipt intact");
     }
     private static void SavedSceneCMakeChecks()
     {
@@ -298,6 +423,11 @@ public static partial class Program
 
     private static async Task CheckSavedSceneWorkflow(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0124_TEST_PHASE") is { } recentPhase)
+        {
+            await CheckSavedSceneRecentUi(window, checks, work, recentPhase);
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ATLANTIS_0123_TEST_PHASE") is { } phase)
         {
             await CheckSavedSceneRestart(window, checks, work, phase);
@@ -614,6 +744,160 @@ public static partial class Program
         if (Environment.GetEnvironmentVariable("ATLANTIS_0123_CAPTURE") != "1") return;
         File.WriteAllText(Path.Combine(evidence, phase + ".ready"), Environment.ProcessId.ToString());
         await NameUiWait(() => File.Exists(Path.Combine(evidence, phase + ".captured")), "native screenshot", 90);
+    }
+
+    private static async Task CheckSavedSceneRecentUi(MainWindow window, List<NameUiCheck> checks, Action<string> work, string phase)
+    {
+        const string name = "recent_scene_0124";
+        string evidence = Environment.GetEnvironmentVariable("ATLANTIS_0124_EVIDENCE")!;
+        EditorVisuals.Install(Avalonia.Application.Current!);
+        T Field<T>(string field) where T : class => NameUiField<T>(window, field)!;
+        void Verify(string message, bool ok, string detail = "")
+        {
+            checks.Add(new(message, ok, detail));
+            if (!ok) throw new InvalidOperationException(message + " " + detail);
+        }
+        static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        static int[] Children() => Process.GetProcessesByName("Atlantis.Editor").Select(p => { using (p) return p.Id; }).Order().ToArray();
+        await NameUiWait(() => Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Count > 0, "ordinary launcher ready", 90);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        work(runtime.Launch.WorkDirectory);
+        var tabs = Field<TabControl>("_assetTabs");
+        var workspace = NameUiField<SavedSceneWorkspace>(window, "_savedWorkspace");
+        if (phase == "disabled")
+        {
+            Verify("no launch authority means no Saved Scenes panel or history", workspace is null && tabs.Items.Count == 2);
+            return;
+        }
+        ArgumentNullException.ThrowIfNull(workspace);
+        tabs.SelectedIndex = 2;
+        var all = Field<ListBox>("_savedList");
+        var recent = Field<ListBox>("_savedRecent");
+        var build = Field<Button>("_savedBuild");
+        var open = Field<Button>("_savedOpen");
+        var status = Field<TextBlock>("_savedOpenResult");
+        var model = Field<SavedSceneAttempts>("_savedAttempts");
+        var historyStatus = Field<TextBlock>("_savedRecentStatus");
+        await NameUiWait(() => recent.ItemCount != 0 || !string.IsNullOrEmpty(historyStatus.Text), "history read settled");
+
+        if (phase == "isolation")
+        {
+            Verify("a different trusted checkout with the same unit name has its own empty history",
+                all.Items.Contains(name) && recent.ItemCount == 0 && historyStatus.Text == "No scenes opened yet.");
+            return;
+        }
+
+        string checkout = Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT")!;
+        string unit = Path.Combine(checkout, "assets", "scenes", "saved", "save_" + name);
+        string source = Path.Combine(unit, "scene.scene.txt");
+        string catalog = Path.Combine(unit, "catalog-source.txt");
+        string slot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AtlB",
+            SavedSceneReceiptStore.Scope(checkout), "last-build.json");
+        string artifactFile = Path.Combine(evidence, "artifact.json");
+        Field<TextBox>("_savedManaged").Text = Environment.GetEnvironmentVariable("ATLANTIS_0090_MANAGED");
+        if (phase == "unavailable")
+        {
+            Verify("missing source leaves an unavailable recent entry visible", recent.ItemCount == 1 &&
+                recent.Items[0]?.ToString()?.Contains("Unavailable", StringComparison.Ordinal) == true);
+            byte[] savedReceipt = File.ReadAllBytes(slot), savedCatalog = File.ReadAllBytes(catalog);
+            var pids = Children();
+            recent.SelectedIndex = 0;
+            await NameUiWait(() => !model.RecentSelectionPending, "missing recent selection refused");
+            Verify("selecting the missing recent entry cannot enable actions", model.RecentTarget is null && !build.IsEnabled && !open.IsEnabled &&
+                Field<TextBlock>("_savedRecentFeedback").Text?.Contains("may have moved", StringComparison.Ordinal) == true);
+            await WaitForSavedSceneCapture(evidence, "unavailable");
+            Click(Field<Button>("_savedRecentRemove"));
+            await NameUiWait(() => recent.ItemCount == 0, "invalid shortcut removed");
+            Verify("Remove changes history only", workspace.ReadRecent().Length == 0 && !File.Exists(source) &&
+                File.ReadAllBytes(catalog).SequenceEqual(savedCatalog) && File.ReadAllBytes(slot).SequenceEqual(savedReceipt) && Children().SequenceEqual(pids));
+            return;
+        }
+
+        SavedSceneBuild artifact;
+        var prior = workspace.ReadRecent().SingleOrDefault();
+        if (phase == "seed")
+        {
+            all.SelectedItem = name;
+            Verify("ordinary selection leaves Recent empty", prior is null && build.IsEnabled && !open.IsEnabled);
+            Click(build);
+            await NameUiWait(() => !model.Busy, "saved scene build settled", 960);
+            Verify("explicit Build produced a 0123 receipt and no recent entry", model.Result is { Recorded: true } && open.IsEnabled &&
+                workspace.ReadRecent().Length == 0, Field<TextBox>("_savedBuildResult").Text ?? "");
+            artifact = model.Result!;
+            File.WriteAllText(artifactFile, System.Text.Json.JsonSerializer.Serialize(artifact));
+        }
+        else
+        {
+            artifact = System.Text.Json.JsonSerializer.Deserialize<SavedSceneBuild>(File.ReadAllText(artifactFile))!;
+            var before = Children();
+            string log = Path.Combine(artifact.Directory, "build.log");
+            byte[] buildLog = File.ReadAllBytes(log), oldReceipt = File.ReadAllBytes(slot);
+            Verify("history survives launcher restart without activating a scene", recent.ItemCount == 1 && prior?.Identity.Name == name &&
+                model.RecentTarget is null && !build.IsEnabled && !open.IsEnabled);
+            recent.SelectedIndex = 0;
+            await NameUiWait(() => open.IsEnabled, "recent scene and previous build verified", 180);
+            Verify("Recent selects the original GUID and verifies the same 0123 result", model.RecentTarget == prior!.Identity && model.Result == artifact);
+            Verify("selection starts neither a child nor a build", Children().SequenceEqual(before) && !model.Busy &&
+                File.ReadAllBytes(log).SequenceEqual(buildLog) && File.ReadAllBytes(slot).SequenceEqual(oldReceipt) && workspace.ReadRecent().Single() == prior);
+            if (phase == "stale")
+            {
+                byte[] bytes = File.ReadAllBytes(source);
+                DateTime time = File.GetLastWriteTimeUtc(source);
+                try
+                {
+                    File.AppendAllText(source, Environment.NewLine);
+                    Click(open);
+                    await NameUiWait(() => !model.Starting, "launch-time stale input refused", 180);
+                    Verify("explicit Open rechecks 0123 after selection and refuses stale content", !open.IsEnabled && build.IsEnabled &&
+                        status.Text!.Contains("source or catalog fragment changed", StringComparison.Ordinal) && Children().SequenceEqual(before) &&
+                        workspace.ReadRecent().Single() == prior && File.ReadAllBytes(slot).SequenceEqual(oldReceipt), status.Text!);
+                }
+                finally { File.WriteAllBytes(source, bytes); File.SetLastWriteTimeUtc(source, time); }
+                return;
+            }
+            await WaitForSavedSceneCapture(evidence, "reuse");
+        }
+
+        var known = Children();
+        string runtimeWork = Path.Combine(Path.GetTempPath(), "atlantis_editor");
+        var oldSessions = Directory.GetDirectories(runtimeWork).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        Click(open);
+        await NameUiWait(() => !model.Starting, "checked child process start", 180);
+        int childId = Children().Except(known).Single();
+        using var child = Process.GetProcessById(childId);
+        try
+        {
+            var recorded = workspace.ReadRecent().Single();
+            Verify("successful explicit child start promotes exactly one history entry",
+                recorded.Identity.Name == name && (prior is null || recorded.Identity == prior.Identity && recorded.Version != prior.Version));
+            string? childLog = null;
+            await NameUiWait(() =>
+            {
+                foreach (string dir in Directory.GetDirectories(runtimeWork).Where(dir => !oldSessions.Contains(dir)))
+                {
+                    string log = Path.Combine(dir, "runtime.log");
+                    if (!File.Exists(log) || !File.Exists(Path.Combine(dir, "runtime.session.json"))) continue;
+                    using var stream = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var reader = new StreamReader(stream);
+                    if (reader.ReadLine()?.StartsWith("# " + artifact.Executable + " ", StringComparison.OrdinalIgnoreCase) == true)
+                    { childLog = log; return true; }
+                }
+                return false;
+            }, "the expected independent Runtime is listening", 120);
+            using var remote = RemoteSession.Connect(SessionFile.Read(Path.Combine(Path.GetDirectoryName(childLog!)!, "runtime.session.json")));
+            await NameUiWait(async () => await Task.Run(() => remote.Authoring.Document() is not null), "child document opened", 60);
+            var document = remote.Authoring.Document()!;
+            Verify("independent Editor opened the exact saved source and GUID with the build receipt Runtime",
+                string.Equals(document.SourcePath, source, StringComparison.OrdinalIgnoreCase) && document.Scene.Value == recorded.Identity.Scene);
+            using var logStream = new FileStream(childLog!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var logReader = new StreamReader(logStream);
+            File.WriteAllText(Path.Combine(evidence, phase + "-child-runtime.log"), await logReader.ReadToEndAsync());
+        }
+        finally
+        {
+            if (!child.HasExited) child.CloseMainWindow();
+            await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+        }
     }
 
 }
