@@ -1059,9 +1059,10 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
       } else {
         templateRoot->name = frozen->name;
         const std::string base = templateRoot->name;
-        for (std::size_t suffix = 2; std::ranges::any_of(document.nodes, [&](const auto& node) {
-               return !node.parent && node.name == templateRoot->name;
-             }); ++suffix) {
+        std::set<std::string_view> rootNames;
+        for (const auto& node : document.nodes)
+          if (!node.parent) rootNames.emplace(node.name);
+        for (std::size_t suffix = 2; rootNames.contains(templateRoot->name); ++suffix) {
           const auto tail = " " + std::to_string(suffix);
           auto length = std::min(base.size(), static_cast<std::size_t>(scene::kMaxNodeNameBytes) - tail.size());
           while (length < base.size() && (static_cast<unsigned char>(base[length]) & 0xc0) == 0x80) --length;
@@ -1069,29 +1070,25 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
         }
       }
       templateRoot->prefabOrigin = origin;
-      std::rotate(definition->nodes.begin(), templateRoot, templateRoot + 1);
-      auto& replacementRoot = definition->nodes.front();
+      if (oldRoot) std::rotate(definition->nodes.begin(), templateRoot, templateRoot + 1);
+      auto& replacementRoot = oldRoot ? definition->nodes.front() : *templateRoot;
       const auto baseline = prefab_edit::digest(*definition, root, *origin, state_.prefabDigest);
       if (!baseline) return R::Err(E::InvalidInstance);
       replacementRoot.prefabBaseline = baseline;
-      if (oldRoot) replacementRoot.parent = oldRoot->parent;
-
-      std::erase_if(candidate.nodes, [&](const auto& node) {
-        if (node.guid == root) return false;
-        const auto slot = findNode(document, node.guid);
-        return slot && std::ranges::find(before->slots, *slot) != before->slots.end();
-      });
-      auto insertion = candidate.nodes.end();
-      if (oldRoot) {
-        insertion = candidate.nodes.begin() + *findNode(candidate, root);
-        *insertion++ = replacementRoot;
+      if (!oldRoot) {
+        candidate.nodes.insert(candidate.nodes.end(), definition->nodes.begin(), definition->nodes.end());
       } else {
-        insertion = candidate.nodes.insert(insertion, replacementRoot) + 1;
+        replacementRoot.parent = oldRoot->parent;
+        std::set<EntityGuid> removed;
+        for (const auto slot : before->slots) {
+          const auto& node = document.nodes[static_cast<std::size_t>(slot)];
+          if (node.guid != root) removed.insert(node.guid);
+        }
+        std::erase_if(candidate.nodes, [&](const auto& node) { return removed.contains(node.guid); });
+        auto insertion = candidate.nodes.begin() + *findNode(candidate, root);
+        *insertion++ = replacementRoot;
+        candidate.nodes.insert(insertion, definition->nodes.begin() + 1, definition->nodes.end());
       }
-      std::vector<scene::AuthoringNode> descendants;
-      for (const auto& node : definition->nodes)
-        if (node.guid != root) descendants.push_back(node);
-      candidate.nodes.insert(insertion, descendants.begin(), descendants.end());
     }
 
     auto after = prefab_edit::capture(candidate, root, state_.prefabDigest);

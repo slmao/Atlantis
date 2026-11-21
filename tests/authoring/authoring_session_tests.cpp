@@ -1346,8 +1346,8 @@ TEST_CASE("authoring: Prefab sync preserves the root and settles whole-subtree r
   };
   scene::AuthoringScene definition;
   definition.nodes = {
-      scene::AuthoringNode{entity(10), {}, {}, {}, {}, {}, "Template"},
-      scene::AuthoringNode{entity(11), entity(10), {}, {}, scene::Renderable{asset(1), asset(2)}, {}, "Original chair"}};
+      scene::AuthoringNode{entity(11), entity(10), {}, {}, scene::Renderable{asset(1), asset(2)}, {}, "Original chair"},
+      scene::AuthoringNode{entity(10), {}, {}, {}, {}, {}, "Template"}};
   const auto source = [&] { return as::serializeSceneSource(scene::toParsedSceneSource(definition).value()); };
   auto frozen = source();
   auto revision = *baselineDigest(frozen);
@@ -1360,6 +1360,11 @@ TEST_CASE("authoring: Prefab sync preserves the root and settles whole-subtree r
   const auto first = c.syncPrefab(root, revision, token(), origin);
   REQUIRE(first.isOk());
   CHECK(first.value().affectsProjection);
+  const auto initialBlock = as::parseSceneSource(first.value().after.source);
+  REQUIRE(initialBlock.isOk());
+  REQUIRE(initialBlock.value().nodes.size() == 2);
+  CHECK(initialBlock.value().nodes.front().name == "Original chair");
+  CHECK(initialBlock.value().nodes.back().entityGuid == root);
   REQUIRE(c.syncPrefab(other, revision, token(), origin).isOk());
   REQUIRE_FALSE(refusalOf(c, {ac::SetNodeName{root, "Placed instance"}, ac::SetParent{root, entity(2)}}));
   REQUIRE_FALSE(refusalOf(c, {ac::SetProperty{address(69, kTransform, field("Transform", "localPosition")),
@@ -1368,7 +1373,7 @@ TEST_CASE("authoring: Prefab sync preserves the root and settles whole-subtree r
   REQUIRE(std::ranges::find(original, root, &ac::NodeSummary::node)->prefabBaseline.has_value());
   const auto savedBase = token();
   CHECK_FALSE(c.syncPrefab(root, revision, savedBase, {}).value().changed);
-  definition.nodes.back().name = "Replacement chair";
+  definition.nodes.front().name = "Replacement chair";
   definition.nodes.emplace_back(scene::AuthoringNode{
       entity(12), entity(11), {}, {}, scene::Renderable{asset(1), {}}, {}, "Nested chair leg"});
   const auto staleRevision = revision;
