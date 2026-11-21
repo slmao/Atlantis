@@ -514,7 +514,12 @@ bool validManagedStaticGroup(const cgltf_data& data) {
   if (nodes.size() != data.nodes_count || meshes.size() != data.meshes_count ||
       materials.size() != data.materials_count || renderables < 2) return false;
   for (const auto* mat : materials) {
-    if (mat->extensions_count || mat->unlit || mat->double_sided ||
+    // cgltf stores recognized extensions separately from extensions_count.
+    // Reject them even when the source omitted the top-level declaration.
+    if (mat->extensions_count || mat->unlit || mat->has_pbr_specular_glossiness || mat->has_clearcoat ||
+        mat->has_transmission || mat->has_volume || mat->has_ior || mat->has_specular || mat->has_sheen ||
+        mat->has_emissive_strength || mat->has_iridescence || mat->has_diffuse_transmission ||
+        mat->has_anisotropy || mat->has_dispersion || mat->double_sided ||
         mat->alpha_mode != cgltf_alpha_mode_opaque || mat->pbr_metallic_roughness.base_color_factor[3] != 1 ||
         std::ranges::any_of(mat->emissive_factor, [](float channel) { return channel != 0; })) return false;
   }

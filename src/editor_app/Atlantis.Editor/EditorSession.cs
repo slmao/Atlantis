@@ -2345,9 +2345,9 @@ public sealed class EditorWorker : IDisposable
                     PostHistory(lifetime);
                     string notice = created is not null
                         ? ApplyVerifiedEdit(lifetime, result.Notice, publishStatus: false) : result.Notice;
-                    PostApplyState(lifetime);
                     try
                     {
+                        PostApplyState(lifetime, refreshOverlay: session.Failure is null);
                         PollDocument(session, pollApply: false);
                         PostInspector();
                     }

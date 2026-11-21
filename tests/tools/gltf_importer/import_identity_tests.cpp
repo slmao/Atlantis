@@ -292,6 +292,12 @@ TEST_CASE("managed glTF imports only a bounded self-contained static mesh", "[gl
   bool accepted = false;
   auto expectedError = GltfImportError::MalformedGltf;
   SECTION("embedded indexed mesh") { accepted = true; }
+  SECTION("legacy single mesh retains recognized spec-gloss conversion") {
+    auto geometry = gltf_test::unitQuad();
+    geometry.materialsJson = R"([{"extensions":{"KHR_materials_pbrSpecularGlossiness":{"glossinessFactor":0.5}}}])";
+    text = gltf_test::buildGltf(geometry);
+    accepted = true;
+  }
   SECTION("external buffer is refused before loading") {
     const auto uri = text.find("data:application/octet-stream;base64,");
     REQUIRE(uri != std::string::npos);
@@ -346,6 +352,9 @@ TEST_CASE("managed static group counts emitted instances and retains local hiera
     geometry.sceneRootsJson = "[0,1]";
   }
   SECTION("double-sided material") { geometry.materialsJson = R"([{"doubleSided":true}])"; }
+  SECTION("recognized material extension without extensionsUsed") {
+    geometry.materialsJson = R"([{"extensions":{"KHR_materials_pbrSpecularGlossiness":{"glossinessFactor":0.5}}}])";
+  }
   SECTION("explicit opaque PBR material") {
     geometry.materialsJson = R"([{"pbrMetallicRoughness":{"baseColorFactor":[0.2,0.4,0.7,1],"metallicFactor":0.6,"roughnessFactor":0.8}}])";
     accepted = true;

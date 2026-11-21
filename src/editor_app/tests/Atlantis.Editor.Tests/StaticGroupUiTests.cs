@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Numerics;
 using System.Reflection;
 using System.Threading;
@@ -13,6 +15,7 @@ using Atlantis.Gameplay;
 using Atlantis.Gameplay.Assets;
 using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -21,6 +24,100 @@ namespace Atlantis.Editor.Tests;
 
 public static partial class Program
 {
+    private static int RunStaticGroupReceipt(string executable, string scene)
+    {
+        string work = RuntimeProcess.NewWorkDirectory();
+        using var runtime = RuntimeProcess.Start(new RuntimeLaunch(Path.GetFullPath(executable), scene, null, work));
+        SessionInfo host = runtime.WaitForSession(TimeSpan.FromSeconds(25));
+        using var observer = RemoteSession.Connect(host);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        string attach = Path.Combine(work, "static-group-relay.json");
+        File.WriteAllText(attach, System.Text.Json.JsonSerializer.Serialize(new {
+            protocol = SessionFile.Protocol, port = ((IPEndPoint)listener.LocalEndpoint).Port,
+            token = host.Token, pid = host.Pid, scene = host.Scene.ToString()
+        }));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(55));
+        var acceptedRoot = new TaskCompletionSource<EntityGuid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int applies = 0;
+        Task relay = Relay();
+        try
+        {
+            return AppBuilder.Configure(() => new SceneObjectUiApp(executable, scene, attach, CheckReceipt))
+                .UsePlatformDetect().StartWithClassicDesktopLifetime([]);
+        }
+        finally
+        {
+            deadline.Cancel();
+            try { relay.GetAwaiter().GetResult(); }
+            catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+            finally
+            {
+                runtime.CloseMainWindow();
+                runtime.WaitForExit(TimeSpan.FromSeconds(8));
+            }
+        }
+
+        async Task Relay()
+        {
+            var token = deadline.Token;
+            using var editor = await listener.AcceptTcpClientAsync(token);
+            using var backend = new TcpClient();
+            await backend.ConnectAsync(IPAddress.Loopback, host.Port, token);
+            using var input = new StreamReader(editor.GetStream());
+            using var output = new StreamWriter(editor.GetStream()) { AutoFlush = true, NewLine = "\n" };
+            using var forward = new StreamWriter(backend.GetStream()) { AutoFlush = true, NewLine = "\n" };
+            using var read = new StreamReader(backend.GetStream());
+            while (await input.ReadLineAsync(token) is string text)
+            {
+                JsonValue request = Json.Parse(text);
+                string method = request.Find("method")!.AsString;
+                if (method is "authoring.apply" or "authoring.applyTracked") Interlocked.Increment(ref applies);
+                await forward.WriteLineAsync(text.AsMemory(), token);
+                string reply = await read.ReadLineAsync(token) ?? throw new IOException("Runtime closed the relay");
+                if (method == "authoring.submitTransaction")
+                {
+                    string root = request.Find("params")!.Find("commands")!.Items
+                        .First(c => c.Find("kind")?.AsString == "CreateNode").Find("node")!.AsString;
+                    var ticket = Codec.DecodeTransactionTicket(Json.Parse(reply).Find("result")!);
+                    if (ticket is null) throw new InvalidOperationException("Expected a real transaction receipt.");
+                    acceptedRoot.SetResult(EntityGuid.Parse(root));
+                    return; // Close the Editor connection without forwarding the receipt.
+                }
+                await output.WriteLineAsync(reply.AsMemory(), token);
+            }
+        }
+
+        async Task CheckReceipt(MainWindow window)
+        {
+            T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+            Field<TabControl>("_assetTabs").SelectedIndex = 1;
+            var list = Field<ListBox>("_assetsList");
+            const string storefront = "content:managed_storefront/source.gltf#scene";
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(a => a.Source == storefront), "storefront row ready");
+            list.SelectedItem = list.Items.OfType<AssetSummary>().Single(a => a.Source == storefront);
+            var add = Field<Button>("_addGroup");
+            await NameUiWait(() => add.IsVisible && add.IsEnabled, "group add ready");
+            var before = observer.Authoring.ApplyStatus().Value!;
+            add.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            var root = await acceptedRoot.Task.WaitAsync(TimeSpan.FromSeconds(15));
+            await NameUiWait(() => !Field<AssetBrowser>("_assetBrowser").SelectionVisible, "Editor observes the disconnect");
+            string notice = Field<TextBlock>("_addMeshState").Text ?? "";
+            if (!notice.Contains("outcome unknown", StringComparison.Ordinal) ||
+                !notice.Contains(root.ToString(), StringComparison.Ordinal) ||
+                !notice.Contains("Inspect the document and confirm the prior request ended before retrying", StringComparison.Ordinal))
+                throw new InvalidOperationException("Lost Add receipt hid the settlement: " + notice);
+            await NameUiWait(() => observer.Authoring.ListNodes().Value!.Any(node => node.Node == root),
+                "Runtime finishes processing the accepted ticket");
+            var after = observer.Authoring.ApplyStatus().Value!;
+            if (Field<Button>("_undo").IsEnabled || Volatile.Read(ref applies) != 0 ||
+                !Equals(after.Request, before.Request) ||
+                before.CurrentDocumentRevision is not { } revision || after.CurrentDocumentRevision != revision + 1)
+                throw new InvalidOperationException("Expected one committed revision, zero Apply requests, and no undo entry.");
+            Console.WriteLine(notice);
+        }
+    }
+
     private static async Task CheckStaticGroupUi(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
         const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;

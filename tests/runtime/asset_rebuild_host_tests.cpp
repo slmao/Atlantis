@@ -1,7 +1,10 @@
 #include "../../src/runtime/asset_rebuild_host.h"
 #include "../../src/runtime/material_authoring.h"
+#include "../../src/runtime/static_group_projection.h"
 
 #include <atlantis/asset_system/cook_material.h>
+#include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/scene_source.h>
 #include <atlantis/asset_system/cook_texture.h>
 #include <atlantis/asset_system/material_artifact.h>
 #include <atlantis/asset_system/texture_artifact.h>
@@ -429,6 +432,107 @@ TEST_CASE("asset import: resume rejects an invalid catalog delta before publicat
   const bool repair = expectedCode == ca::ImportFailureCode::InvalidOutput;
   CHECK(fs::exists(project / ".atlantis-import-dirty") == repair);
   CHECK(fs::exists(f.marker) == repair);
+}
+
+TEST_CASE("managed group import rechecks the prepared bytes and dependency closure", "[runtime][asset-import][static-group]") {
+  Fixture f;
+  const auto project = f.base / "project";
+  const auto registered = project / "registered/managed_sample";
+  REQUIRE(fs::create_directories(registered));
+  const auto root = as::parseAssetGuid("01300130-0130-4130-8130-013001300141").value();
+  const as::CatalogSourceEntry baseEntry{f.guid, as::CatalogAssetType::Material, as::CatalogRoot::Assets, "a.material.txt"};
+  const as::CatalogSourceEntry importEntry{root, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content,
+                                          "managed_sample/source.gltf"};
+  write(registered / "source.gltf", "fixture");
+  write(registered / "catalog-source.txt", as::serializeAssetCatalogSource({importEntry}));
+  write(f.profile, "{\"stagingBuild\":\"" + f.staging.generic_string() + "\",\"publicationRoot\":\"" +
+      f.published.generic_string() + "\",\"importProject\":\"" + fs::canonical(project).generic_string() + "\"}");
+  for (const auto& build : {f.seed, f.staging})
+    write(build / "assets/managed-project.txt", fs::canonical(project).generic_string());
+  write(f.staging / "assets/managed-pending.txt", {});
+  write(f.seed / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry}));
+  write(f.staging / "assets/managed-catalog-source.txt", as::serializeAssetCatalogSource({baseEntry, importEntry}));
+  write(f.staging / "assets/producers-Debug.txt", read(f.seed / "assets/producers-Debug.txt") +
+      "gltf_import\tcontent\tmanaged_sample/source.gltf\t" + as::toString(root) +
+      "\tmanaged_sample/managed_sample.stamp\tmanaged_sample/import/managed_sample/group.scene.txt\n");
+  const auto imported = fs::path("managed_sample/import");
+  REQUIRE(fs::create_directories(f.staging / imported / "managed_sample"));
+  const auto derived = [&](as::CatalogAssetType type, std::string_view subKey, std::string_view artifact,
+                           std::uint32_t schema, std::vector<as::AssetGuid> dependencies) {
+    const auto guid = as::deriveAssetGuid(root, subKey);
+    return as::AssetCatalogRecord{guid, as::assetKey(guid), type,
+        {as::CatalogRoot::Content, importEntry.path, std::string(subKey)},
+        std::string(artifact), std::string(artifact) + ".meta", schema, {},
+        std::string(as::kImporterVersion), std::move(dependencies)};
+  };
+  const auto mesh = derived(as::CatalogAssetType::Mesh, "mesh/0/0", "group.amesh", 1, {});
+  const auto scene = derived(as::CatalogAssetType::Scene, "scene", "group.ascene",
+                             as::kSceneArtifactSchemaVersion, {mesh.guid});
+  write(f.staging / mesh.artifact, "mesh artifact fixture");
+  write(f.staging / mesh.metadata, "mesh metadata fixture");
+  as::ParsedSceneSource source{};
+  source.nodes.resize(2);
+  for (std::size_t i = 0; i < source.nodes.size(); ++i) {
+    auto& node = source.nodes[i];
+    node.nodeId = static_cast<std::uint32_t>(i + 1);
+    node.entityGuid = as::deriveEntityGuid(scene.guid, "node/" + std::to_string(i));
+    node.meshAsset = mesh.guid;
+  }
+  const auto text = as::serializeSceneSource(source);
+  const auto cooked = as::cookSceneSource(text, scene.guid);
+  REQUIRE(cooked.isOk());
+  const auto& bytes = cooked.value().artifactBytes;
+  write(f.staging / scene.artifact, {reinterpret_cast<const char*>(bytes.data()), bytes.size()});
+  write(f.staging / scene.metadata, cooked.value().metadataText);
+  write(f.staging / imported / "managed_sample/group.scene.txt", text);
+  write(f.staging / imported / "import.catalog.txt", as::serializeAssetCatalog({mesh, scene}));
+  const auto old = as::parseAssetCatalogRecords(read(f.seed / "asset_catalog.txt"));
+  REQUIRE(old.isOk());
+  write(f.staging / "asset_catalog.txt", as::serializeAssetCatalog({old.value().front(), mesh, scene}));
+  write(f.base / "producer.cmake", "# The fixture supplies already assembled records.\n");
+
+  using namespace atlantis::runtime::static_groups;
+  struct ResetHook { ~ResetHook() { afterImportPreparation = nullptr; } } reset;
+  SECTION("unchanged prepared output publishes") {}
+  SECTION("a changed cooked Scene in the final copy is refused") {
+    afterImportPreparation = [](const fs::path& dir) {
+      auto bytes = read(dir / "group.ascene");
+      if (!bytes.empty()) bytes[0] ^= 1;
+      std::ofstream(dir / "group.ascene", std::ios::binary) << bytes;
+    };
+  }
+  SECTION("changed dependency edges in the copied catalog are refused") {
+    afterImportPreparation = [](const fs::path& dir) {
+      auto records = as::parseAssetCatalogRecords(read(dir / "asset_catalog.txt"));
+      for (auto& record : records.value())
+        if (record.type == as::CatalogAssetType::Scene) record.dependencies.clear();
+      std::ofstream(dir / "asset_catalog.txt", std::ios::binary) << as::serializeAssetCatalog(std::move(records.value()));
+    };
+  }
+  auto host = f.host();
+  const auto admitted = host->startImport("sample", ca::ImportMode::Resume, f.snapshot);
+  REQUIRE(admitted.isOk());
+  const auto limit = std::chrono::steady_clock::now() + 20s;
+  std::optional<ca::ImportJob> job;
+  do {
+    auto status = host->importStatus(admitted.value().id);
+    REQUIRE(status.isOk());
+    job = status.value().job;
+    REQUIRE(job);
+    if (job->state != ca::RebuildState::Running) break;
+    std::this_thread::sleep_for(20ms);
+  } while (std::chrono::steady_clock::now() < limit);
+  if (afterImportPreparation) {
+    REQUIRE(job->failure);
+    CHECK(job->failure->code == ca::ImportFailureCode::InvalidOutput);
+    CHECK_FALSE(job->generation);
+    for (const auto& entry : fs::directory_iterator(f.published))
+      CHECK_FALSE((entry.is_directory() && !entry.path().filename().string().starts_with(".pending-")));
+    CHECK(read(registered / "source.gltf") == "fixture");
+  } else {
+    CHECK(job->state == ca::RebuildState::Succeeded);
+    CHECK(job->generation.has_value());
+  }
 }
 
 TEST_CASE("material edit and Resume verify the prepared and published generation", "[runtime][asset-material]") {

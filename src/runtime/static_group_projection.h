@@ -28,6 +28,10 @@ namespace as = asset_system;
 namespace ac = connection::assets;
 namespace fs = std::filesystem;
 
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+inline void (*afterImportPreparation)(const fs::path&) = nullptr;
+#endif
+
 inline fs::path pathFromUtf8(std::string_view value) {
   return fs::path(std::u8string_view(reinterpret_cast<const char8_t*>(value.data()), value.size()));
 }
