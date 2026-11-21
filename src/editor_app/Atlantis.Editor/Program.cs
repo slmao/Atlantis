@@ -54,6 +54,7 @@ public static class Program
         string? savedCheckout = null, savedCMake = null;
         int measureFrames = 0;
         bool allowSceneSaveAs = false;
+        bool allowPrefabRegistration = false;
         bool smoke = false;
         bool measureEdit = false;
         bool measureDrag = false;
@@ -77,6 +78,7 @@ public static class Program
                 case "--runtime": runtime = Next(); break;
                 case "--scene": scene = Next(); break;
                 case "--allow-scene-save-as": allowSceneSaveAs = true; break;
+                case "--allow-prefab-registration": allowPrefabRegistration = true; break;
                 case "--saved-scene-checkout": savedCheckout = Next(); break;
                 case "--saved-scene-cmake": savedCMake = Next(); break;
                 case "--asset-build-profile": assetBuildProfile = Next(); break;
@@ -121,6 +123,8 @@ public static class Program
             return Usage("--asset-build-profile is for the ordinary editor launch");
         if (allowSceneSaveAs && (smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
             return Usage("--allow-scene-save-as is for the ordinary editor launch");
+        if (allowPrefabRegistration && (attach is not null || smoke || measureEdit || measureDrag || measureOverlay || measureFrames > 0))
+            return Usage("--allow-prefab-registration requires an ordinary owned Runtime launch");
         if (savedCheckout is not null || savedCMake is not null)
         {
             if (savedCheckout is null || savedCMake is null)
@@ -158,6 +162,7 @@ public static class Program
             AssetBuildProfile = assetBuildProfile is null ? null : Path.GetFullPath(assetBuildProfile),
             AssetGeneration = assetGeneration,
             AllowSceneSaveAs = allowSceneSaveAs,
+            AllowPrefabRegistration = allowPrefabRegistration,
             SavedSceneCheckout = savedCheckout,
             SavedSceneCMake = savedCMake,
             SavedSceneAppHost = savedCheckout is null ? null : Environment.ProcessPath,

@@ -46,7 +46,8 @@ internal static class ToolSchemas
         Command("RequireTransformBatchRevision", ("expectedRevision", Integer)),
         Command("RequireDuplicateBatchRevision", ("expectedRevision", Integer)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
-        Command("SetNodeName", ("node", String), ("name", String)));
+        Command("SetNodeName", ("node", String), ("name", String)),
+        Command("SetPrefabOrigin", ("node", String), ("prefab", String)));
 
     internal static readonly JsonNode StepRequest = ObjectWithOptionalOverlay();
     internal static readonly JsonNode Ray = Object(("origin", Vec3), ("direction", Vec3));

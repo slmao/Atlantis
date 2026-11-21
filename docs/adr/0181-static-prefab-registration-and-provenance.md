@@ -1,9 +1,9 @@
 # ADR 0181 — Register Static Prefabs and Persist Instance Provenance
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** Accepted with J1–J4 on `7cf1472e`. [Joint approval](https://github.com/slmao/Atlantis/pull/427#issuecomment-7064986853)
 - **Related Spec:** [Spec 0132](../specs/0132-scene-prefabs.md)
 
 ## Context

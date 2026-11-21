@@ -42,6 +42,7 @@ struct ParsedSceneNode {
                                         // same node, a structural grammar
                                         // guarantee (P2)
   std::string name;  // source8 label; legacy source7 maps to empty (Spec 0069)
+  std::optional<AssetGuid> prefabOrigin{};  // source9, authoring only
 };
 
 struct ParsedSceneSource {

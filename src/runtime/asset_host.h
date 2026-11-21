@@ -9,6 +9,8 @@
 #include <memory>
 #include <string>
 
+namespace atlantis::asset_system { class AssetCatalog; }
+
 namespace atlantis::runtime {
 class AssetRebuildHost;
 // Spec 0081 R3: executable-private, frame-thread-only host. Construction and
@@ -33,6 +35,7 @@ class AssetHost {
   AssetHost(const AssetHost&) = delete;
   AssetHost& operator=(const AssetHost&) = delete;
   [[nodiscard]] std::unique_ptr<connection::AssetConnection> connect();
+  [[nodiscard]] std::shared_ptr<const asset_system::AssetCatalog> catalog() const;
   // Call once for the combined Remote poll and --exec dispatch, if enabled.
   void beginServiceInterval() noexcept;
  private:

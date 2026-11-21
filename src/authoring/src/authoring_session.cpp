@@ -14,8 +14,10 @@
 #include <algorithm>
 #include <span>
 #include <fstream>
+#include <map>
 #include <numbers>
 #include <random>
+#include <set>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -30,6 +32,7 @@ namespace fs = std::filesystem;
 namespace scene = atlantis::asset_system::scene;
 namespace ac = atlantis::connection::authoring;
 using atlantis::asset_system::EntityGuid;
+using atlantis::asset_system::AssetGuid;
 using atlantis::connection::ConnectionError;
 using atlantis::connection::SubscriptionId;
 using atlantis::world::access::CommandTicket;
@@ -137,6 +140,8 @@ struct AuthoringSession::State {
   SceneSink sink;
   SaveAsSink copySink;
   CreateSceneSink createSink;
+  PrefabSink prefabSink;
+  PrefabLookup prefabLookup;
   RecoveryStore* recovery = nullptr;
   std::optional<std::string> recoveryBase;
   std::uint64_t documentRevision = 0;
@@ -352,6 +357,7 @@ struct AuthoringSession::State {
     std::uint64_t position = 0;
     bool named = false;
     bool parented = false;
+    bool linked = false;
     std::vector<ac::PropertyAddress> addresses{};
   };
 
@@ -400,6 +406,10 @@ struct AuthoringSession::State {
       } else if (const auto* name = std::get_if<ac::SetNodeName>(&command)) {
         const auto node = find(name->node);
         if (node == nodes.end() || std::exchange(node->named, true)) return std::nullopt;
+      } else if (const auto* origin = std::get_if<ac::SetPrefabOrigin>(&command)) {
+        const auto node = find(origin->node);
+        if (node == nodes.end() || origin->prefab == AssetGuid{} || std::exchange(node->linked, true))
+          return std::nullopt;
       } else if (const auto* parent = std::get_if<ac::SetParent>(&command)) {
         const auto node = find(parent->node);
         if (node == nodes.end() || std::exchange(node->parented, true)) return std::nullopt;
@@ -409,6 +419,21 @@ struct AuthoringSession::State {
     }
     if (nodes.empty()) return std::nullopt;
     return nodes;
+  }
+
+  std::optional<ac::Error> apply(scene::AuthoringScene& candidate, const ac::SetPrefabOrigin& origin,
+                                 std::vector<ac::Event>& events) const {
+    const auto index = findNode(candidate, origin.node);
+    if (!index || !prefabLookup || !prefabLookup(origin.prefab))
+      return ac::Error::InvalidGuardedDuplicateBatch;
+    for (auto& event : events) {
+      auto* created = std::get_if<ac::NodeCreated>(&event);
+      if (!created || created->node != origin.node) continue;
+      candidate.nodes[*index].prefabOrigin = origin.prefab;
+      created->prefabOrigin = origin.prefab;
+      return std::nullopt;
+    }
+    return ac::Error::InvalidGuardedDuplicateBatch;
   }
 
   bool matchesDuplicateBoundary(const std::vector<DuplicateNode>& nodes, bool removing) const {
@@ -480,6 +505,9 @@ struct AuthoringSession::State {
              std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
     });
     const auto* duplicate = guard == commands.end() ? nullptr : std::get_if<ac::RequireDuplicateBatchRevision>(&*guard);
+    if (!duplicate && std::ranges::any_of(commands, [](const auto& command) {
+          return std::holds_alternative<ac::SetPrefabOrigin>(command);
+        })) return ac::CommandFailure{first, ac::Error::InvalidGuardedDuplicateBatch};
     if (duplicate) {
       const auto nodes = duplicateShape(commands);
       const auto ticket = CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())};
@@ -511,6 +539,13 @@ struct AuthoringSession::State {
     for (std::size_t i = guard != commands.end() ? 1 : 0; i < commands.size(); ++i) {
       if (const auto refusal = applyCommand(candidate, commands[i], events)) {
         return ac::CommandFailure{CommandTicket{first.value + i}, *refusal};
+      }
+    }
+    if (duplicate) {
+      for (std::size_t i = 1; i < commands.size(); ++i) {
+        const auto* origin = std::get_if<ac::SetPrefabOrigin>(&commands[i]);
+        if (origin && candidate.nodes[*findNode(candidate, origin->node)].parent)
+          return ac::CommandFailure{CommandTicket{first.value + i}, ac::Error::InvalidGuardedDuplicateBatch};
       }
     }
     if (const auto refusal = validateDocument(candidate, source.scene)) return ac::CommandFailure{first, *refusal};
@@ -735,7 +770,9 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return ac::DocumentInfo{state_.source.scene,
                             imported ? ac::Provenance::Imported : ac::Provenance::HandAuthored,
                             sourcePathOf(state_.source.provenance).generic_string(),
-                            static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported};
+                            static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported,
+                            !imported && static_cast<bool>(state_.prefabLookup),
+                            !imported && static_cast<bool>(state_.prefabSink)};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {
@@ -743,7 +780,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     if (!state_.document.has_value()) return ResultT::Err(ac::Error::NoDocument);
     std::vector<ac::NodeSummary> out;
     out.reserve(state_.document->nodes.size());
-    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent, node.name});
+    for (const auto& node : state_.document->nodes) out.push_back({node.guid, node.parent, node.name, node.prefabOrigin});
     return ResultT::Ok(std::move(out));
   }
 
@@ -899,6 +936,54 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
     return state_.createSink(name, sceneGuid, std::move(source));
   }
 
+  Result<ac::PrefabRegistration, ac::SaveAsError> createPrefab(
+      std::string_view name, const EntityGuid& root, const ac::DocumentToken& expected) override {
+    using E = ac::SaveAsError;
+    using R = Result<ac::PrefabRegistration, E>;
+    if (!state_.prefabSink) return R::Err(E::Unavailable);
+    if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    const auto current = state_.documentState();
+    if (!current) return R::Err(E::NoDocument);
+    if (current->token != expected) return R::Err(E::StaleDocument);
+    if (current->provenance != ac::Provenance::HandAuthored) return R::Err(E::ImportedSceneNotSavable);
+    const auto& doc = *state_.document;
+    std::map<EntityGuid, const scene::AuthoringNode*> byGuid;
+    std::map<EntityGuid, std::vector<EntityGuid>> children;
+    for (const auto& node : doc.nodes) {
+      byGuid.emplace(node.guid, &node);
+      if (node.parent) children[*node.parent].push_back(node.guid);
+    }
+    const auto selected = byGuid.find(root);
+    if (selected == byGuid.end()) return R::Err(E::UnsupportedSubtree);
+    for (const auto* node = selected->second; node; node = node->parent ? byGuid.at(*node->parent) : nullptr)
+      if (node->prefabOrigin) return R::Err(E::UnsupportedSubtree);
+    std::vector<EntityGuid> subtree{root};
+    for (std::size_t i = 0; i < subtree.size(); ++i) {
+      const auto& childNodes = children[subtree[i]];
+      if (childNodes.size() > ac::kMaxGuardedDuplicateNodes - subtree.size()) return R::Err(E::UnsupportedSubtree);
+      subtree.insert(subtree.end(), childNodes.begin(), childNodes.end());
+    }
+    scene::AuthoringScene frozen;
+    const std::set<EntityGuid> included(subtree.begin(), subtree.end());
+    for (const auto& node : doc.nodes) {
+      if (!included.contains(node.guid)) continue;
+      if (node.camera || node.light || node.prefabOrigin) return R::Err(E::UnsupportedSubtree);
+      frozen.nodes.push_back(node);
+      if (node.guid == root) frozen.nodes.back().parent.reset();
+    }
+    if (!std::ranges::any_of(frozen.nodes, [](const auto& node) { return node.renderable.has_value(); }))
+      return R::Err(E::UnsupportedSubtree);
+    const auto prefab = asset_system::mintAssetGuids(1).front();
+    auto parsed = scene::toParsedSceneSource(frozen);
+    if (parsed.isErr()) return R::Err(E::UnsupportedSubtree);
+    for (auto& node : parsed.value().nodes)
+      node.entityGuid = asset_system::deriveEntityGuid(prefab, "node/" + std::to_string(node.nodeId));
+    const auto text = asset_system::serializeSceneSource(parsed.value());
+    if (text.size() > 64 * 1024 || asset_system::cookSceneToMemory(frozen, prefab).isErr())
+      return R::Err(E::UnsupportedSubtree);
+    return state_.prefabSink(name, prefab, text, expected.documentRevision);
+  }
+
  private:
   AuthoringSession::State& state_;
   ConnectionState own_;
@@ -930,6 +1015,8 @@ void AuthoringSession::setRecoveryStore(RecoveryStore& store) { state_->recovery
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }
 void AuthoringSession::setCreateSceneSink(CreateSceneSink sink) { state_->createSink = std::move(sink); }
+void AuthoringSession::setPrefabSink(PrefabSink sink) { state_->prefabSink = std::move(sink); }
+void AuthoringSession::setPrefabLookup(PrefabLookup lookup) { state_->prefabLookup = std::move(lookup); }
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
 void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {

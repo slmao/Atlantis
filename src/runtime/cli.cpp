@@ -16,6 +16,7 @@ constexpr std::string_view kUsageText =
     "[--editor]\n"
     "                        [--parent-window <handle>] [--no-pick-geometry]\n"
     "                        [--asset-build-profile <file> [--asset-generation <guid>]] [--allow-scene-save-as]\n"
+    "                        [--allow-prefab-registration]\n"
     "       atlantis_runtime --list-scenes\n"
     "       atlantis_runtime --help\n"
     "       atlantis_runtime --benchmark <scene> [--warmup <n>] [--frames <n>] [--resolution <W>x<H>]\n"
@@ -122,6 +123,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   std::optional<std::string> assetBuildProfile;
   std::optional<atlantis::asset_system::AssetGuid> assetGeneration;
   bool allowSceneSaveAs = false;
+  bool allowPrefabRegistration = false;
   // Spec 0059 / ADR-0117 D1: --benchmark and its options.
   int benchmarkCount = 0, warmupCount = 0, framesCount = 0, resolutionCount = 0, variantCount = 0;
   int jsonCount = 0, outputCount = 0, baselineCount = 0, seriesCount = 0, gpuTimingCount = 0;
@@ -142,6 +144,9 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
       if (++sceneCount > 1) return makeError("--scene supplied more than once");
       if (i + 1 >= argc) return makeError("--scene requires a value");
       requestedSceneName = argv[++i];
+    } else if (arg == "--allow-prefab-registration") {
+      if (allowPrefabRegistration) return makeError("--allow-prefab-registration supplied more than once");
+      allowPrefabRegistration = true;
     } else if (arg == "--allow-scene-save-as") {
       if (allowSceneSaveAs) return makeError("--allow-scene-save-as supplied more than once");
       allowSceneSaveAs = true;
@@ -318,6 +323,8 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
     return makeError("--asset-build-profile is only available when running a scene");
   if (allowSceneSaveAs && (benchmarkCount || gateCount || canaryCount || helpCount || listScenesCount))
     return makeError("--allow-scene-save-as is only available when running a scene");
+  if (allowPrefabRegistration && (benchmarkCount || gateCount || canaryCount || helpCount || listScenesCount))
+    return makeError("--allow-prefab-registration is only available when running a scene");
   if (parentWindowCount > 0 && editorCount > 0) return makeError("--parent-window and --editor may not be combined");
   if ((parentWindowCount > 0 || noPickGeometryCount > 0) &&
       (benchmarkCount > 0 || gateCount > 0 || canaryCount > 0 || helpCount > 0 || listScenesCount > 0)) {
@@ -613,6 +620,7 @@ CommandLineResult parseCommandLine(int argc, char** argv, std::span<const SceneW
   result.assetBuildProfile = std::move(assetBuildProfile);
   result.assetGeneration = assetGeneration;
   result.allowSceneSaveAs = allowSceneSaveAs;
+  result.allowPrefabRegistration = allowPrefabRegistration;
   return result;
 }
 

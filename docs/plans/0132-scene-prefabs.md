@@ -1,10 +1,10 @@
 # Plan 0132 — Create and Instantiate Static Scene Prefabs
 
 - **Spec:** [Spec 0132](../specs/0132-scene-prefabs.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Proposed)
+- **Joint Human Review:** J1–J4 approved on `7cf1472e`. The maintainer merged [#427](https://github.com/slmao/Atlantis/pull/427) as `377379e4`. [Joint approval](https://github.com/slmao/Atlantis/pull/427#issuecomment-7064986853)
+- **ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Accepted)
 - **Design baseline:** `e132b2f5`, maintainer merge of [#426](https://github.com/slmao/Atlantis/pull/426)
 
 ## Objective
@@ -40,6 +40,7 @@ complete Windows workflow.
 | `src/authoring/{include,src}` session and transaction, `src/connection/include/atlantis/connection/{authoring_connection,asset_connection}.h` and their implementations, `tests/authoring` | Authoritative snapshot capture, optional node summary, checked origin on new roots and replay conflict coverage. |
 | `src/runtime/{authoring_host,scene_save_as,asset_host}.{h,cpp}`, `src/runtime/main.cpp` and development launch arguments, prefab registration/snapshot helpers, `assets/CMakeLists.txt` and Saved Scenes selection in `cmake/AtlantisManagedImports.cmake`, related Runtime and build tests | Reuse the checked writer and single-slot build. Validate and pair built source/carrier. Keep capture and cooking outside the frame path. |
 | `src/remote/src` codecs and client/server dispatch, `src/cli/src` invocation/command layer, native Gameplay SDK asset wrapper, `src/csharp/Atlantis.Gameplay` authoring/assets and codecs, `src/mcp/Atlantis.Mcp` exact tools, protocol documentation and matching client/conformance tests | Expose the same shared registration, query and limited append. Exercise unknown replies and bidirectional compatibility. |
+| `src/gameplay_sdk/include/atlantis/gameplay/authoring_apply.h` | Forward the approved Prefab registration call only. [Maintainer scope approval for `c721d6bd1e15`](https://github.com/slmao/Atlantis/pull/428#issuecomment-7065700772) |
 | `src/editor_app/Atlantis.Editor` main window, session, launch and Saved Scenes workspace, `src/editor_app/Atlantis.Editor.Model` asset browser, document and structural history, and affected Editor tests | Hierarchy Save as Prefab, explicit permission forwarding, Assets instantiate, root Inspector association and existing history/Apply. |
 | Spec/Plan 0132, ADR-0181 and `docs/specs/README.md` | Approval record and navigation. |
 

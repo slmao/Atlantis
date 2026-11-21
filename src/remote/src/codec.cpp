@@ -30,10 +30,11 @@ Value encode(const connection::assets::AssetSummary& v) {
   out.set("source", Value::string(v.source));
   if (v.logicalPath) out.set("logicalPath", Value::string(*v.logicalPath));
   if (v.displayName) out.set("displayName", Value::string(*v.displayName));
+  if (v.isPrefab) out.set("isPrefab", Value::boolean(true));
   return out;
 }
 Value encode(const connection::assets::AssetDetails& v) {
-  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source, v.displayName, v.logicalPath});
+  Value out = encode(connection::assets::AssetSummary{v.guid, v.type, v.source, v.displayName, v.logicalPath, v.isPrefab});
   out.set("artifactSchema", Value::number(static_cast<std::uint64_t>(v.artifactSchema)));
   out.set("sourceSchema", v.sourceSchema ? Value::number(static_cast<std::uint64_t>(*v.sourceSchema)) : Value());
   out.set("tool", Value::string(v.tool));
@@ -70,7 +71,10 @@ std::optional<connection::assets::AssetSummary> decodeAssetSummary(const Value& 
         !connection::assets::validTextureLogicalPath(field.asString())) return std::nullopt;
     logicalPath = field.asString();
   }
-  return connection::assets::AssetSummary{*guid, *type, s->asString(), std::move(displayName), std::move(logicalPath)};
+  const auto* prefab = v.find("isPrefab");
+  if (prefab && (!prefab->isBool() || *type != connection::assets::AssetType::Scene)) return std::nullopt;
+  return connection::assets::AssetSummary{*guid, *type, s->asString(), std::move(displayName), std::move(logicalPath),
+                                          prefab && prefab->asBool()};
 }
 std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& v) {
   auto summary = decodeAssetSummary(v);
@@ -94,7 +98,8 @@ std::optional<connection::assets::AssetDetails> decodeAssetDetails(const Value& 
     deps.push_back(*guid);
   }
   return connection::assets::AssetDetails{summary->guid, summary->type, summary->source,
-      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps), std::move(summary->displayName), std::move(summary->logicalPath)};
+      static_cast<std::uint32_t>(*artifact), source, t->asString(), std::move(deps), std::move(summary->displayName),
+      std::move(summary->logicalPath), summary->isPrefab};
 }
 std::optional<connection::assets::AssetError> decodeAssetError(const Value& v) {
   if (!v.isString()) return std::nullopt;
@@ -1587,6 +1592,10 @@ Value encode(const authoring::Command& command) {
           out.set("kind", Value::string("SetParent"));
           out.set("node", encodeEntity(c.node));
           out.set("parent", encodeOptionalEntity(c.parent));
+        } else if constexpr (std::is_same_v<C, authoring::SetPrefabOrigin>) {
+          out.set("kind", Value::string("SetPrefabOrigin"));
+          out.set("node", encodeEntity(c.node));
+          out.set("prefab", encodeAsset(c.prefab));
         } else if constexpr (std::is_same_v<C, authoring::SetNodeName>) {
           out.set("kind", Value::string("SetNodeName"));
           out.set("node", encodeEntity(c.node));
@@ -1665,6 +1674,13 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     if (!node || !parent) return std::nullopt;
     return authoring::Command(authoring::SetParent{*node, *parent});
   }
+  if (*kind == "SetPrefabOrigin") {
+    const auto node = nodeMember(value);
+    const auto* field = value.find("prefab");
+    const auto prefab = field ? decodeAsset(*field) : std::nullopt;
+    if (!node || !prefab || *prefab == asset_system::AssetGuid{}) return std::nullopt;
+    return authoring::Command(authoring::SetPrefabOrigin{*node, *prefab});
+  }
   if (*kind == "SetNodeName") {
     const auto node = nodeMember(value);
     const Value* name = value.find("name");
@@ -1739,6 +1755,7 @@ Value encode(const authoring::Event& event) {
           out.set("kind", Value::string("NodeCreated"));
           out.set("node", encodeEntity(e.node));
           out.set("position", Value::number(e.position));
+          if (e.prefabOrigin) out.set("prefabOrigin", encodeAsset(*e.prefabOrigin));
         } else if constexpr (std::is_same_v<E, authoring::NodeDestroyed>) {
           out.set("kind", Value::string("NodeDestroyed"));
           out.set("node", encodeEntity(e.node));
@@ -1800,7 +1817,10 @@ std::optional<authoring::Event> decodeAuthoringEvent(const Value& value) {
     if (!node || position == nullptr) return std::nullopt;
     const auto p = decodeUInt64(*position);
     if (!p) return std::nullopt;
-    return authoring::Event(authoring::NodeCreated{*node, *p});
+    const auto* field = value.find("prefabOrigin");
+    const auto prefab = field ? decodeAsset(*field) : std::nullopt;
+    if (field && (!prefab || *prefab == asset_system::AssetGuid{})) return std::nullopt;
+    return authoring::Event(authoring::NodeCreated{*node, *p, prefab});
   }
   if (*kind == "NodeDestroyed") {
     const auto node = nodeMember(value);
@@ -1940,6 +1960,8 @@ Value encode(const authoring::DocumentInfo& document) {
   if (document.supportsGuardedPropertyTransactions) out.set("supportsGuardedPropertyTransactions", Value::boolean(true));
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
+  if (document.supportsPrefabOrigin) out.set("supportsPrefabOrigin", Value::boolean(true));
+  if (document.supportsPrefabRegistration) out.set("supportsPrefabRegistration", Value::boolean(true));
   return out;
 }
 
@@ -1962,6 +1984,11 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   out.supportsGuardedTransformTransactions = transform && transform->isBool() && transform->asBool();
   const auto* duplicate = value.find("supportsGuardedDuplicateTransactions");
   out.supportsGuardedDuplicateTransactions = duplicate && duplicate->isBool() && duplicate->asBool();
+  const auto* prefab = value.find("supportsPrefabOrigin");
+  const auto* registration = value.find("supportsPrefabRegistration");
+  if ((prefab && !prefab->isBool()) || (registration && !registration->isBool())) return std::nullopt;
+  out.supportsPrefabOrigin = prefab && prefab->asBool();
+  out.supportsPrefabRegistration = registration && registration->asBool();
   if (provenance->asString() == "Imported") {
     out.provenance = authoring::Provenance::Imported;
   } else if (provenance->asString() != "HandAuthored") {
@@ -2170,6 +2197,7 @@ Value encode(const authoring::NodeSummary& node) {
   out.set("node", encodeEntity(node.node));
   out.set("parent", encodeOptionalEntity(node.parent));
   out.set("name", Value::string(node.name));
+  if (node.prefabOrigin) out.set("prefabOrigin", encodeAsset(*node.prefabOrigin));
   return out;
 }
 
@@ -2179,7 +2207,10 @@ std::optional<authoring::NodeSummary> decodeNodeSummary(const Value& value) {
   if (!node || !parent) return std::nullopt;
   const Value* name = value.find("name");
   if (name != nullptr && (!name->isString() || !validNodeName(name->asString()))) return std::nullopt;
-  return authoring::NodeSummary{*node, *parent, name == nullptr ? std::string() : name->asString()};
+  const auto* field = value.find("prefabOrigin");
+  const auto prefab = field ? decodeAsset(*field) : std::nullopt;
+  if (field && (!prefab || *prefab == asset_system::AssetGuid{})) return std::nullopt;
+  return authoring::NodeSummary{*node, *parent, name == nullptr ? std::string() : name->asString(), prefab};
 }
 
 Value encodeAuthoringError(authoring::Error error) { return Value::string(std::string(authoring::toString(error))); }
@@ -2237,10 +2268,29 @@ std::optional<authoring::SavedScene> decodeSavedScene(const Value& value) {
   return authoring::SavedScene{guid.value(), std::string(path), *number};
 }
 Value encodeSaveAsError(authoring::SaveAsError error) { return Value::string(std::string(authoring::toString(error))); }
+Value encode(const authoring::PrefabRegistration& registration) {
+  Value out = Value::object();
+  out.set("prefab", encodeAsset(registration.prefab));
+  out.set("source", Value::string(registration.source));
+  out.set("documentRevision", Value::number(registration.documentRevision));
+  return out;
+}
+std::optional<authoring::PrefabRegistration> decodePrefabRegistration(const Value& value) {
+  const auto* prefab = value.find("prefab");
+  const auto* source = value.find("source");
+  const auto* revision = value.find("documentRevision");
+  if (!value.isObject() || value.asObject().size() != 3 || !prefab || !source || !source->isString() || !revision)
+    return std::nullopt;
+  const auto guid = decodeAsset(*prefab);
+  const auto number = decodeUInt64(*revision);
+  if (!guid || *guid == asset_system::AssetGuid{} || !number) return std::nullopt;
+  return authoring::PrefabRegistration{*guid, source->asString(), *number};
+}
 std::optional<authoring::SaveAsError> decodeSaveAsError(const Value& value) {
   using E = authoring::SaveAsError;
   constexpr std::array errors{E::Unavailable, E::InvalidName, E::NoDocument, E::ImportedSceneNotSavable, E::UnsafeTarget,
-                              E::Busy, E::NameConflict, E::IdentityConflict, E::WriteFailed};
+                              E::Busy, E::NameConflict, E::IdentityConflict, E::WriteFailed, E::StaleDocument,
+                              E::UnsupportedSubtree};
   return enumeratorNamed(value, errors);
 }
 Value encodeApplyError(authoring::ApplyError error) { return Value::string(std::string(authoring::toString(error))); }

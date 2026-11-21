@@ -19,6 +19,11 @@ class AuthoringApply {
   [[nodiscard]] Result<connection::authoring::SavedScene, connection::authoring::SaveAsError> saveAs(std::string_view name) {
     return connection_.saveAs(name);
   }
+  [[nodiscard]] Result<connection::authoring::PrefabRegistration, connection::authoring::SaveAsError> createPrefab(
+      std::string_view name, const connection::authoring::EntityGuid& node,
+      const connection::authoring::DocumentToken& token) {
+    return connection_.createPrefab(name, node, token);
+  }
  private:
   connection::AuthoringConnection& connection_;
 };

@@ -1101,9 +1101,11 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
   }
   if (t[0] == "asset") {
     const std::string command = t.size() > 1 ? "asset " + std::string(t[1]) : "asset";
-    if (t.size() > 1 && t[1] == "static-group") {
+    if (t.size() > 1 && (t[1] == "static-group" || t[1] == "prefab")) {
       namespace ca = connection::assets;
-      constexpr std::string_view usage = "asset static-group <non-nil canonical scene-guid>";
+      const bool prefab = t[1] == "prefab";
+      const std::string_view usage = prefab ? "asset prefab <non-nil canonical prefab-guid>" :
+                                              "asset static-group <non-nil canonical scene-guid>";
       if (t.size() != 3) return failed(command, usageError(std::string(usage)));
       const auto guid = asset_system::parseAssetGuid(t[2]);
       if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != t[2])
@@ -1114,9 +1116,9 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       };
       auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
       if (!endpoint) return refuse(ca::StaticGroupError::Unsupported);
-      const auto group = endpoint->staticGroup(guid.value());
+      const auto group = prefab ? endpoint->prefab(guid.value()) : endpoint->staticGroup(guid.value());
       if (group.isErr()) return refuse(group.error());
-      auto result = ca::encodeStaticGroup(group.value(), guid.value());
+      auto result = ca::encodeStaticGroup(group.value(), guid.value(), prefab);
       if (!result) return refuse(ca::StaticGroupError::InvalidGroup);
       auto human = json::write(*result) + "\n";
       return done(command, std::move(human), std::move(*result));
@@ -1185,6 +1187,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       out.set("source", Value::string(v.source));
       if (v.displayName) out.set("displayName", Value::string(*v.displayName));
       if (v.logicalPath) out.set("logicalPath", Value::string(*v.logicalPath));
+      if (v.isPrefab) out.set("isPrefab", Value::boolean(true));
       return out;
     };
     if (guid) {
@@ -2086,6 +2089,16 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parsed.isErr() || !parsed.value().isString()) return ResultT::Err(usageError(usage));
     return ResultT::Ok(std::vector<ac::Command>{ac::SetNodeName{node.value(), parsed.value().asString()}});
   }
+  if (verb == "prefab-origin") {
+    constexpr std::string_view usage = "prefab-origin <node-guid> <prefab-guid> (guarded scene tx)";
+    if (t.size() != 3) return ResultT::Err(usageError(usage));
+    const auto node = entityAt(1);
+    if (node.isErr()) return ResultT::Err(textError(node.error(), t[1]));
+    const auto prefab = asset_system::parseAssetGuid(t[2]);
+    if (prefab.isErr() || prefab.value() == asset_system::AssetGuid{} || asset_system::toString(prefab.value()) != t[2])
+      return ResultT::Err(usageError(usage));
+    return ResultT::Ok(std::vector<ac::Command>{ac::SetPrefabOrigin{node.value(), prefab.value()}});
+  }
   if (verb == "create") {
     const std::string_view usage = "scene create [<guid>] [--at <position>] [--component <Type>]...";
     ac::CreateNode create;
@@ -2216,6 +2229,11 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   const bool duplicateGuard = std::ranges::any_of(commands, [](const auto& edit) {
     return std::holds_alternative<ac::RequireDuplicateBatchRevision>(edit);
   });
+  const bool prefab = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::SetPrefabOrigin>(edit);
+  });
+  if (prefab && !duplicateGuard)
+    return failed(command, usageError("prefab-origin requires a guarded scene tx"));
   const bool guarded = propertyGuard || transformGuard || duplicateGuard;
   Value batchTargets = Value::array();
   std::string batchField;
@@ -2224,6 +2242,9 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
     if (duplicateGuard && (!info || !info->supportsGuardedDuplicateTransactions))
       return failed(command, plainError("GuardedDuplicateBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded duplicate transactions"));
+    if (prefab && !info->supportsPrefabOrigin)
+      return failed(command, plainError("PrefabOriginUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support Prefab provenance"));
     if (transformGuard && (!info || !info->supportsGuardedTransformTransactions))
       return failed(command, plainError("GuardedTransformBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded Transform transactions"));
@@ -2566,6 +2587,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
       item.set("guid", Value::string(text::formatEntity(node.node)));
       item.set("parent", optionalEntityJson(node.parent));
       item.set("name", Value::string(node.name));
+      if (node.prefabOrigin) item.set("prefabOrigin", Value::string(asset_system::toString(*node.prefabOrigin)));
       list.push(std::move(item));
     }
     Value result = Value::object();
@@ -2654,6 +2676,33 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
       reply.result = std::move(result); return reply;
     }
     return done(command, human + "\n", std::move(result));
+  }
+  if (verb == "create-prefab") {
+    const auto usage = [&] {
+      return failed(command, usageError("scene create-prefab <name> <node-guid> <document-guid> <revision>"));
+    };
+    if (t.size() != 6 || !ac::validSaveAsName(t[2])) return usage();
+    const auto node = asset_system::parseEntityGuid(t[3]);
+    const auto document = asset_system::parseEntityGuid(t[4]);
+    std::uint64_t revision = 0;
+    const auto [end, error] = std::from_chars(t[5].data(), t[5].data() + t[5].size(), revision);
+    if (node.isErr() || document.isErr() || node.value() == ac::EntityGuid{} || document.value() == ac::EntityGuid{} ||
+        error != std::errc{} || end != t[5].data() + t[5].size()) return usage();
+    const auto created = a->createPrefab(t[2], node.value(), {document.value(), revision});
+    if (created.isErr()) {
+      const std::string code(ac::toString(created.error()));
+      if (created.error() == ac::SaveAsError::UnknownOutcome)
+        return failed(command, plainError(code, ErrorCategory::Runtime,
+            "Prefab registration outcome unknown at " + ac::prefabSource(t[2]) +
+            ". Check source.scene.txt and catalog-source.txt and confirm settlement before retrying."));
+      return failed(command, plainError(code, ErrorCategory::Refused, "Prefab registration refused: " + code));
+    }
+    const auto& receipt = created.value();
+    Value result = Value::object();
+    result.set("prefab", Value::string(asset_system::toString(receipt.prefab)));
+    result.set("source", Value::string(receipt.source));
+    result.set("documentRevision", Value::number(receipt.documentRevision));
+    return done(command, "registered " + receipt.source + ". Build and Open the saved scene to use it.\n", std::move(result));
   }
   if (verb == "save-as") {
     if (t.size() != 3) return failed(command, usageError("scene save-as <name>"));

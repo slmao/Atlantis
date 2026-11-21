@@ -8,12 +8,14 @@ public enum AssetError { CatalogUnavailable, UnknownAsset }
 /// <summary>Owned build-catalog facts; source is provenance, not a filesystem access path.</summary>
 public sealed record AssetSummary(AssetGuid Guid, AssetType Type, string Source)
 {
+    public bool IsPrefab { get; init; }
     public string? DisplayName { get; init; }
     public string? LogicalPath { get; init; }
 }
 public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source, uint ArtifactSchema,
                                   uint? SourceSchema, string Tool, IReadOnlyList<AssetGuid> Dependencies)
 {
+    public bool IsPrefab { get; init; }
     public string? DisplayName { get; init; }
     public string? LogicalPath { get; init; }
 }
@@ -21,7 +23,7 @@ public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source,
 public enum StaticGroupError { Unsupported, CatalogUnavailable, UnknownAsset, UnsupportedGroup, InvalidGroup }
 public sealed record StaticGroupRenderable(AssetGuid Mesh, AssetGuid? Material);
 public sealed record StaticGroupNode(int? Parent, Vector3 Position, Vector3 EulerRadians, Vector3 Scale,
-                                     StaticGroupRenderable? Renderable);
+                                     StaticGroupRenderable? Renderable, string Name = "");
 /// <summary>Ordered local values from the Runtime's cooked catalog snapshot.</summary>
 public sealed record StaticGroup(AssetGuid Scene, string Name, IReadOnlyList<StaticGroupNode> Nodes);
 

@@ -39,10 +39,13 @@ public sealed class AssetSession
             Codec.DecodeAssetDetails(v) is A.AssetDetails d && d.Guid == guid ? d : null, Codec.DecodeAssetError);
     }
 
-    public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid)
+    public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid) => ReadGroup(guid, false);
+    public Outcome<A.StaticGroup, A.StaticGroupError> Prefab(AssetGuid guid) => ReadGroup(guid, true);
+
+    private Outcome<A.StaticGroup, A.StaticGroupError> ReadGroup(AssetGuid guid, bool prefab)
     {
         if (guid.IsNil) throw new ArgumentException("a non-nil Scene GUID is required", nameof(guid));
-        const string method = "assets.staticGroup";
+        string method = prefab ? "assets.prefab" : "assets.staticGroup";
         JsonValue response = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("guid", Codec.Encode(guid))));
         if (!response.IsObject || response.Members.Count != 2 || Codec.CountMember(response, "id") != 1)
             throw _session.Malformed(method);
@@ -51,7 +54,7 @@ public sealed class AssetSession
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
             throw _session.Malformed(method);
         return _session.InBand<A.StaticGroup, A.StaticGroupError>(result, method,
-            value => Codec.DecodeStaticGroup(value, guid), Codec.DecodeStaticGroupError);
+            value => Codec.DecodeStaticGroup(value, guid, prefab), Codec.DecodeStaticGroupError);
     }
 
     /// <summary>Requests one still of a cooked mesh. No scene state changes and no automatic retry.</summary>

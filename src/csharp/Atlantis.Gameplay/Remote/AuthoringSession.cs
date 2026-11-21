@@ -228,6 +228,38 @@ public sealed class AuthoringSession
         }
     }
 
+    public Outcome<A.PrefabRegistration, A.SaveAsError> CreatePrefab(string name, EntityGuid node, A.DocumentToken token)
+    {
+        const string method = "authoring.createPrefab";
+        if (!Codec.ValidSaveAsName(name))
+            return Outcome<A.PrefabRegistration, A.SaveAsError>.Err(A.SaveAsError.InvalidName);
+        string source = Codec.PrefabSource(name);
+        _session.ThrowIfFailed();
+        try
+        {
+            var parameters = JsonValue.NewObject().Set("name", JsonValue.String(name))
+                .Set("node", Codec.Encode(node)).Set("expected", Codec.Encode(token));
+            var reply = _session.AwaitResponse(_session.Send(method, parameters));
+            var error = reply.Find("error");
+            var result = reply.Find("result");
+            if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" })
+                return Outcome<A.PrefabRegistration, A.SaveAsError>.Err(A.SaveAsError.NoDocument);
+            if (result is null && error?.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+                error.Find("message") is { IsString: true, AsString: "unknown method authoring.createPrefab" })
+                return Outcome<A.PrefabRegistration, A.SaveAsError>.Err(A.SaveAsError.Unsupported);
+            if (error is not null || result is not { IsObject: true } || result.Members.Count != 1)
+                throw _session.Malformed(method);
+            return _session.InBand<A.PrefabRegistration, A.SaveAsError>(result, method,
+                value => Codec.DecodePrefabRegistration(value) is { } receipt && receipt.Source == source &&
+                    receipt.DocumentRevision == token.DocumentRevision ? receipt : null, Codec.DecodeSaveAsError);
+        }
+        catch (RemoteException e)
+        {
+            throw new RemoteException(e, $"Prefab registration outcome unknown for {name} at {source}. " +
+                "Inspect source.scene.txt and catalog-source.txt. Confirm the previous request has settled before retrying.");
+        }
+    }
+
     // --- Queries.
 
     /// <summary>Every node, in the document's order.</summary>
@@ -294,7 +326,7 @@ public sealed class AuthoringSession
     public CommandTicket Submit(A.Command command)
     {
         if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision
-            or A.RequireDuplicateBatchRevision)
+            or A.RequireDuplicateBatchRevision or A.SetPrefabOrigin)
             return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
@@ -306,11 +338,14 @@ public sealed class AuthoringSession
         bool property = commands.Any(command => command is A.RequireDocumentRevision);
         bool transform = commands.Any(command => command is A.RequireTransformBatchRevision);
         bool duplicate = commands.Any(command => command is A.RequireDuplicateBatchRevision);
-        if (property || transform || duplicate)
+        bool prefab = commands.Any(command => command is A.SetPrefabOrigin);
+        if (property || transform || duplicate || prefab)
         {
             A.DocumentInfo? info = Document();
             if (duplicate && info?.SupportsGuardedDuplicateTransactions != true)
                 throw new NotSupportedException("This open document does not support guarded duplicate transactions.");
+            if (prefab && info?.SupportsPrefabOrigin != true)
+                throw new NotSupportedException("This open document does not support Prefab provenance.");
             if (transform && info?.SupportsGuardedTransformTransactions != true)
                 throw new NotSupportedException("This open document does not support guarded Transform transactions.");
             if (property && info?.SupportsGuardedPropertyTransactions != true)

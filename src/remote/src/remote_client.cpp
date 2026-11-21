@@ -502,16 +502,22 @@ class RemoteAssets final : public connection::AssetConnection {
     });
   }
   ca::StaticGroupResult staticGroup(const AssetGuid& guid) const override {
+    return readGroup(guid, false);
+  }
+  ca::StaticGroupResult prefab(const AssetGuid& guid) const override {
+    return readGroup(guid, true);
+  }
+  ca::StaticGroupResult readGroup(const AssetGuid& guid, bool prefab) const {
     using R = ca::StaticGroupResult;
     using E = ca::StaticGroupError;
     ATLANTIS_CHECK(guid != AssetGuid{});
     auto params = Value::object();
     params.set("guid", codec::encodeAsset(guid));
-    const auto envelope = state_.awaitResponse(state_.send("assets.staticGroup", std::move(params)));
+    const auto envelope = state_.awaitResponse(state_.send(prefab ? "assets.prefab" : "assets.staticGroup", std::move(params)));
     if (envelope && envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
       if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
         if (const auto* ok = result->find("ok")) {
-          if (auto group = ca::decodeStaticGroup(*ok, guid)) return R::Ok(std::move(*group));
+          if (auto group = ca::decodeStaticGroup(*ok, guid, prefab)) return R::Ok(std::move(*group));
         } else if (const auto* err = result->find("err"); err && err->isString()) {
           if (auto error = ca::staticGroupError(err->asString())) return R::Err(*error);
         }
@@ -1254,6 +1260,36 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
       }
     }
     return failed(R::Err(E::UnknownOutcome));
+  }
+
+  Result<ac::PrefabRegistration, ac::SaveAsError> createPrefab(
+      std::string_view name, const ac::EntityGuid& node, const ac::DocumentToken& token) override {
+    using E = ac::SaveAsError;
+    using R = Result<ac::PrefabRegistration, E>;
+    if (!ac::validSaveAsName(name)) return R::Err(E::InvalidName);
+    Value params = Value::object();
+    params.set("name", Value::string(std::string(name)));
+    params.set("node", codec::encodeEntity(node));
+    params.set("expected", codec::encode(token));
+    const auto id = state_->send("authoring.createPrefab", std::move(params));
+    const auto envelope = state_->awaitResponse(id);
+    if (envelope) {
+      const auto* result = envelope->find("result");
+      const auto* error = envelope->find("error");
+      if (result && !error && result->isObject() && result->asObject().size() == 1) {
+        const auto decoded = decodeInBand<ac::PrefabRegistration, E>(
+            *result, &codec::decodePrefabRegistration, &codec::decodeSaveAsError);
+        if (decoded && (decoded->isErr() || (decoded->value().source == ac::prefabSource(name) &&
+                                            decoded->value().documentRevision == token.documentRevision))) return *decoded;
+      } else if (error && !result) {
+        const auto* code = error->find("code");
+        const auto* message = error->find("message");
+        if (code && code->isString() && code->asString() == "NoAuthoring") return R::Err(E::NoDocument);
+        if (code && code->isString() && code->asString() == "BadRequest" && message && message->isString() &&
+            message->asString() == "unknown method authoring.createPrefab") return R::Err(E::Unsupported);
+      }
+    }
+    return failed(R::Err(id == 0 ? E::Unavailable : E::UnknownOutcome));
   }
 
   Result<ac::CreatedScene, ac::CreateSceneError> createScene(std::string_view name) override {

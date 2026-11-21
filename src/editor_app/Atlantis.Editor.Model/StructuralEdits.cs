@@ -29,11 +29,12 @@ public sealed record ComponentState(TypeId Type, IReadOnlyList<(SceneAddress Add
 
 /// <summary>A node's name, place in the order, parent and children, and each component's state (sorted by type).</summary>
 public sealed record NodeState(EntityGuid Node, ulong Position, EntityGuid? Parent, IReadOnlyList<EntityGuid> Children,
-                               IReadOnlyList<ComponentState> Components, string Name = "")
+                               IReadOnlyList<ComponentState> Components, string Name = "", AssetGuid? PrefabOrigin = null)
 {
     /// <summary>The same parent, children (as a set), components and values; the position is not compared (D3: it shifts).</summary>
     public bool SameAs(NodeState other) =>
-        Name == other.Name && Parent == other.Parent && Children.Count == other.Children.Count && !Children.Except(other.Children).Any() &&
+        Name == other.Name && PrefabOrigin == other.PrefabOrigin && Parent == other.Parent &&
+        Children.Count == other.Children.Count && !Children.Except(other.Children).Any() &&
         Components.Count == other.Components.Count && Components.Zip(other.Components).All(p => p.First.SameAs(p.Second));
 }
 
@@ -52,6 +53,7 @@ public sealed record GuardedDuplicateEdit(IReadOnlyList<EntityGuid> Roots, IRead
     int PrefixCount, EntityGuid? Predecessor, Dictionary<EntityGuid, object> Dependencies) : EditEntry
 {
     public bool IsStaticGroup { get; init; }
+    public bool IsPrefab => Copies.Any(copy => copy.State.PrefabOrigin is not null);
     public Dictionary<EntityGuid, object> CopyIdentities { get; private set; } = new();
     private IEnumerable<EntityGuid> CopyIds => Copies.Select(copy => copy.State.Node);
 
@@ -77,6 +79,11 @@ public sealed record GuardedDuplicateEdit(IReadOnlyList<EntityGuid> Roots, IRead
                     break;
                 case SetProperty write: events.Add(new PropertyChanged(write.Address, write.Value)); break;
                 case SetNodeName name: events.Add(new NodeNameChanged(name.Node, name.Name)); break;
+                case SetPrefabOrigin origin:
+                    int index = events.FindIndex(e => e is NodeCreated created && created.Node == origin.Node);
+                    if (index >= 0 && events[index] is NodeCreated created)
+                        events[index] = created with { PrefabOrigin = origin.Prefab };
+                    break;
                 case SetParent parent: events.Add(new ParentChanged(parent.Node, parent.Parent)); break;
                 case DestroyNode destroy: events.Add(new NodeDestroyed(destroy.Node)); break;
             }
@@ -317,7 +324,7 @@ public sealed class DocumentView : IDocumentView
             }
             int count = _tree.ComponentsOf(node).Count;
             result.Add(new NodeState(node, (ulong)positions[node], _tree.ParentOf(node), _tree.ChildrenOf(node).ToList(),
-                                     states.Skip(next).Take(count).ToList(), _tree.NameOf(node)));
+                                     states.Skip(next).Take(count).ToList(), _tree.NameOf(node), _tree.PrefabOriginOf(node)));
             next += count;
         }
         return result;
@@ -452,6 +459,7 @@ public static class StructuralSteps
                                                     state.Components.Where(c => c.Type != transform).Select(c => c.Type).ToList()));
                         foreach (ComponentState component in state.Components) AddValues(commands, component);
                         if (state.Name.Length > 0) commands.Add(new SetNodeName(state.Node, state.Name));
+                        if (state.PrefabOrigin is AssetGuid origin) commands.Add(new SetPrefabOrigin(state.Node, origin));
                         if (state.Parent is EntityGuid parent) commands.Add(new SetParent(state.Node, parent));
                     }
                     break;

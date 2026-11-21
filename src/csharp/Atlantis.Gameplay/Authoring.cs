@@ -22,6 +22,8 @@ public enum Provenance
 /// <summary>The open document's identity: its scene, provenance, source path and node count.</summary>
 public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string SourcePath, ulong NodeCount)
 {
+    public bool SupportsPrefabOrigin { get; init; }
+    public bool SupportsPrefabRegistration { get; init; }
     public bool SupportsGuardedPropertyTransactions { get; init; }
     public bool SupportsGuardedTransformTransactions { get; init; }
     /// <summary>The current document supports revision-guarded duplicate transactions.</summary>
@@ -29,7 +31,7 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
-public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "");
+public readonly record struct NodeSummary(EntityGuid Node, EntityGuid? Parent, string Name = "", AssetGuid? PrefabOrigin = null);
 
 /// <summary>Spec 0069's authoring label domain; names never identify a node.</summary>
 public static class NodeNames
@@ -120,6 +122,7 @@ public sealed record SetActiveCamera(EntityGuid? Camera) : Command;
 
 /// <summary>Sets an authoring label; empty clears it. The Runtime validates its domain.</summary>
 public sealed record SetNodeName(EntityGuid Node, string Name) : Command;
+public sealed record SetPrefabOrigin(EntityGuid Node, AssetGuid Prefab) : Command;
 
 /// <summary>Event kinds; a set of them is a filter's <see cref="EventFilter.Kinds"/>.</summary>
 [Flags]
@@ -158,7 +161,7 @@ public sealed record PropertyChanged(SceneAddress Address, PropertyValue Value) 
 }
 
 /// <summary>A node created at <paramref name="Position"/>; one ComponentAdded per initial component follows.</summary>
-public sealed record NodeCreated(EntityGuid Node, ulong Position) : Event
+public sealed record NodeCreated(EntityGuid Node, ulong Position, AssetGuid? PrefabOrigin = null) : Event
 {
     public override EventKind Kind => EventKind.NodeCreated;
 }
@@ -283,10 +286,11 @@ public enum OpenError
 public enum SaveAsError
 {
     Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
-    Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported,
+    Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, StaleDocument, UnsupportedSubtree,
 }
 
 public sealed record SavedScene(AssetGuid Scene, string Source, ulong DocumentRevision);
+public sealed record PrefabRegistration(AssetGuid Prefab, string Source, ulong DocumentRevision);
 public readonly record struct DocumentToken(EntityGuid DocumentId, ulong DocumentRevision);
 public sealed record DocumentState(DocumentToken Token, AssetGuid Scene, string Source, Provenance Provenance,
     ulong LastPersistedRevision, bool Dirty);

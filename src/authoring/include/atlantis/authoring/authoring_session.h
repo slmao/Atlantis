@@ -86,6 +86,9 @@ using SaveAsSink = std::function<Result<connection::authoring::SavedScene, conne
     std::string_view name, std::string source, std::uint64_t documentRevision)>;
 using CreateSceneSink = std::function<Result<connection::authoring::CreatedScene, connection::authoring::CreateSceneError>(
     std::string_view name, asset_system::AssetGuid scene, std::string source)>;
+using PrefabSink = std::function<Result<connection::authoring::PrefabRegistration, connection::authoring::SaveAsError>(
+    std::string_view name, asset_system::AssetGuid prefab, std::string source, std::uint64_t revision)>;
+using PrefabLookup = std::function<bool(const asset_system::AssetGuid&)>;
 
 
 // Spec 0122: the executable supplies its recovery store. All callbacks run
@@ -145,6 +148,8 @@ class AuthoringSession {
   void setSceneSink(SceneSink sink);
   void setSaveAsSink(SaveAsSink sink);
   void setCreateSceneSink(CreateSceneSink sink);
+  void setPrefabSink(PrefabSink sink);
+  void setPrefabLookup(PrefabLookup lookup);
   void setRecoveryStore(RecoveryStore& store);
 
   // The host reports that the Runtime swapped in an applied document (Plan

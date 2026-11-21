@@ -198,7 +198,7 @@ TEST_CASE("source8 names preserve exact text and source7 remains a strict unname
                        "atlantis_scene_source_version: 7");
   CHECK(parseSceneSource(wrongVersion).isErr());
   wrongVersion.replace(0, std::string_view("atlantis_scene_source_version: 7").size(),
-                       "atlantis_scene_source_version: 9");
+                       "atlantis_scene_source_version: 10");
   CHECK(parseSceneSource(wrongVersion).isErr());
 }
 
@@ -256,8 +256,8 @@ TEST_CASE("parseSceneSource rejects the superseded version 2 outright, with no d
 }
 
 TEST_CASE("parseSceneSource rejects an unrecognized future version line", "[asset_system][scene]") {
-  // Spec 0069: 7 and 8 are recognized; 9 is still a future version.
-  const auto result = parseSceneSource("atlantis_scene_source_version: 9\n");
+  // Spec 0132 admits source 9. The next unrecognized version still fails closed.
+  const auto result = parseSceneSource("atlantis_scene_source_version: 10\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }

@@ -50,6 +50,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             "Read-only ordered local values and renderable bindings of a managed static glTF group in the active catalog. " +
             "New publications are visible after Runtime restart.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.prefab", "assets.prefab", "Read the frozen ordered static Prefab from the saved-scene Runtime.",
+            AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh", "assets.previewMesh", "Render one cooked mesh as a fixed geometry PNG, without scene materials or lighting.",
             AssetModel, ToolSchemas.Parameters(("guid", ToolSchemas.String))),
         Declare("assets.preview_mesh_material", "assets.previewMeshMaterial",
@@ -160,6 +162,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
         Declare("authoring.create_scene", "authoring.createScene", "Create a camera-only scene source without opening it. Inspect both destination files and confirm settlement before retrying a lost reply.", AuthoringModel,
             ToolSchemas.Parameters(("name", ToolSchemas.String))),
+        Declare("authoring.create_prefab", "authoring.createPrefab", "Register a committed static subtree at the expected document revision. Inspect both files and confirm settlement before retrying a lost reply.",
+            AuthoringModel, ToolSchemas.Parameters(("name", ToolSchemas.String), ("node", ToolSchemas.String),
+                ("expected", ToolSchemas.ParametersNode(("documentId", ToolSchemas.String), ("documentRevision", ToolSchemas.Integer))))),
         Declare("authoring.active_camera", "authoring.activeCamera", "Read the document's active camera node or null.", AuthoringModel),
         Declare("authoring.schema", "authoring.schema", "Read scene schema types, fields, IDs, constants and declared target asset types in the wire's section 6.7 shape.", AuthoringModel),
         Declare("control.status", "control.status", "Read pause state, frame, scene and sceneGeneration.", ControlModel),
@@ -225,7 +230,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             JsonValue wireParameters = Json.Parse(parameters.GetRawText());
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
-            if (mapping.Method == "assets.staticGroup") return StaticGroup(wireParameters);
+            if (mapping.Method is "assets.staticGroup" or "assets.prefab") return StaticGroup(mapping.Method, wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
             if (mapping.Method is "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or
@@ -239,6 +244,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 "assets.occlusionImport" or "assets.occlusionImportStatus")
                 return TextureOperation(mapping.Method, wireParameters);
             if (mapping.Method == "authoring.createScene") return CreateScene(wireParameters);
+            if (mapping.Method == "authoring.createPrefab") return CreatePrefab(wireParameters);
             if (mapping.Method == "authoring.saveAs") return SaveAs(wireParameters);
             if (mapping.Method is "authoring.documentState" or "authoring.saveIfCurrent" or "authoring.reopenIfCurrent")
                 return DocumentOperation(mapping.Method, wireParameters);
@@ -282,14 +288,16 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 bool property = commands.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision");
                 bool transform = commands.Any(c => c.Find("kind")?.AsString == "RequireTransformBatchRevision");
                 bool duplicate = commands.Any(c => c.Find("kind")?.AsString == "RequireDuplicateBatchRevision");
-                if (property || transform || duplicate)
+                bool prefab = commands.Any(c => c.Find("kind")?.AsString == "SetPrefabOrigin");
+                if (property || transform || duplicate || prefab)
                 {
                     JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
                     if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
                     var info = document.Find("result") is JsonValue descriptor ? Codec.DecodeDocumentInfo(descriptor) : null;
                     if ((property && info?.SupportsGuardedPropertyTransactions != true) ||
                         (transform && info?.SupportsGuardedTransformTransactions != true) ||
-                        (duplicate && info?.SupportsGuardedDuplicateTransactions != true))
+                        (duplicate && info?.SupportsGuardedDuplicateTransactions != true) ||
+                        (prefab && info?.SupportsPrefabOrigin != true))
                         return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
                 }
             }
@@ -580,19 +588,19 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness, withOcclusion)), image.Width, image.Height, image.PngBytes);
     }
 
-    private CallToolResult StaticGroup(JsonValue parameters)
+    private CallToolResult StaticGroup(string method, JsonValue parameters)
     {
         static CallToolResult Malformed() => Error("MalformedResponse: invalid static group result");
         if (!AssetGuid.TryParse(parameters.Find("guid")?.AsString, out AssetGuid guid) || guid.IsNil)
             return Error("InvalidArguments: expected a non-nil canonical Scene GUID");
-        var response = session.Request("assets.staticGroup", parameters);
+        var response = session.Request(method, parameters);
         if (Codec.IsUnsupportedStaticGroup(response))
             return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
             return Malformed();
         if (result.Find("err") is JsonValue refusal)
             return Codec.DecodeStaticGroupError(refusal) is not null ? Forward(result, true) : Malformed();
-        return result.Find("ok") is JsonValue value && Codec.DecodeStaticGroup(value, guid) is not null
+        return result.Find("ok") is JsonValue value && Codec.DecodeStaticGroup(value, guid, method == "assets.prefab") is not null
             ? Forward(result, false) : Malformed();
     }
 
@@ -735,6 +743,34 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return Forward(result, false);
         }
         return Error("ProtocolError: malformed Save As outcome. Inspect the destination and confirm settlement before retrying.");
+    }
+
+    private CallToolResult CreatePrefab(JsonValue parameters)
+    {
+        string? name = parameters.Find("name")?.AsString;
+        if (!Codec.ValidSaveAsName(name) || parameters.Find("node") is not { } node ||
+            Codec.DecodeEntity(node) is not EntityGuid entity || entity.Value == Guid.Empty ||
+            parameters.Find("expected") is not { } expected || Codec.DecodeDocumentToken(expected) is not { } token)
+            return Error("InvalidArguments: expected Prefab name, node GUID and document token.");
+        string source = Codec.PrefabSource(name!);
+        string unknown = $"Prefab registration outcome unknown at {source}. Inspect source.scene.txt and catalog-source.txt. " +
+            "Confirm the previous request has settled before retrying.";
+        JsonValue reply;
+        try { reply = session.Request("authoring.createPrefab", parameters); }
+        catch (RemoteException e) { return Error(e.Message + " " + unknown); }
+        var error = reply.Find("error");
+        var result = reply.Find("result");
+        if (result is null && error?.Find("code") is { IsString: true, AsString: "NoAuthoring" }) return Forward(error, true);
+        if (result is null && error?.Find("code") is { IsString: true, AsString: "BadRequest" } &&
+            error.Find("message") is { IsString: true, AsString: "unknown method authoring.createPrefab" })
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (error is null && result is { IsObject: true } && result.Members.Count == 1)
+        {
+            if (result.Find("err") is { } refusal && Codec.DecodeSaveAsError(refusal) is not null) return Forward(result, true);
+            if (result.Find("ok") is { } ok && Codec.DecodePrefabRegistration(ok) is { } receipt &&
+                receipt.Source == source && receipt.DocumentRevision == token.DocumentRevision) return Forward(result, false);
+        }
+        return Error("ProtocolError: " + unknown);
     }
 
     private CallToolResult CreateScene(JsonValue parameters)

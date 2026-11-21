@@ -17,6 +17,7 @@ public sealed record RuntimeLaunch(string RuntimePath, string Scene, ulong? Pare
     public string? AssetBuildProfile { get; init; }
     public string? AssetGeneration { get; init; }
     public bool AllowSceneSaveAs { get; init; }
+    public bool AllowPrefabRegistration { get; init; }
 }
 
 public sealed class RuntimeProcess : IDisposable
@@ -79,6 +80,7 @@ public sealed class RuntimeProcess : IDisposable
             start.ArgumentList.Add(generation);
         }
         if (launch.AllowSceneSaveAs) start.ArgumentList.Add("--allow-scene-save-as");
+        if (launch.AllowPrefabRegistration) start.ArgumentList.Add("--allow-prefab-registration");
         if (launch.ParentWindow is ulong parent)
         {
             start.ArgumentList.Add("--parent-window");

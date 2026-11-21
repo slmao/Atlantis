@@ -414,6 +414,7 @@ int main(int argc, char** argv) {
   // and before every client, so every authoring connection closes first.
   atlantis::runtime::AuthoringSources authoringSources;
   authoringSources.allowSceneSaveAs = cliResult.allowSceneSaveAs;
+  authoringSources.allowPrefabRegistration = cliResult.allowPrefabRegistration;
   authoringSources.cookedCatalog = config.assetCatalogPath;
   authoringSources.catalogSource = ATLANTIS_RUNTIME_CATALOG_SOURCE_PATH;
   if (rebuild) {
@@ -430,7 +431,6 @@ int main(int argc, char** argv) {
                                    : std::filesystem::path(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)});
   }
 #endif
-  atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
   atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get(),
       {.available = [&app] { return app.meshPreviewAvailable(); },
        .render = [&app, &config](const atlantis::asset_system::AssetGuid& guid,
@@ -448,6 +448,8 @@ int main(int argc, char** argv) {
                        const atlantis::asset_system::TextureAssetData* occlusion, bool studioIbl) {
          return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed, occlusion, studioIbl);
        }});
+  authoringSources.assets = &assets;
+  atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;
   std::unique_ptr<atlantis::connection::AuthoringConnection> execAuthoring;  // the --exec client's, when it asks
 

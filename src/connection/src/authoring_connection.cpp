@@ -161,8 +161,14 @@ std::string_view toString(SaveAsError error) noexcept {
     case SaveAsError::WriteFailed: return "WriteFailed";
     case SaveAsError::Unsupported: return "Unsupported";
     case SaveAsError::UnknownOutcome: return "UnknownOutcome";
+    case SaveAsError::StaleDocument: return "StaleDocument";
+    case SaveAsError::UnsupportedSubtree: return "UnsupportedSubtree";
   }
   return "Unknown";
+}
+
+std::string prefabSource(std::string_view name) {
+  return "prefabs/prefab_" + std::string(name) + "/source.scene.txt";
 }
 
 std::string_view toString(CreateSceneError error) noexcept {

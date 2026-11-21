@@ -122,6 +122,9 @@ public static partial class Codec
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
+            case A.SetPrefabOrigin c:
+                output.Set("kind", JsonValue.String("SetPrefabOrigin")).Set("node", Encode(c.Node)).Set("prefab", Encode(c.Prefab));
+                break;
             case A.SetNodeName c:
                 if (!A.NodeNames.IsWellFormed(c.Name)) throw new System.ArgumentException("invalid UTF-16 node name", nameof(command));
                 output.Set("kind", JsonValue.String("SetNodeName")).Set("node", Encode(c.Node)).Set("name", JsonValue.String(c.Name));
@@ -135,6 +138,9 @@ public static partial class Codec
     {
         switch (KindOf(value))
         {
+            case "SetPrefabOrigin":
+                return NodeOf(value) is EntityGuid pn && value.Find("prefab") is { } prefab &&
+                    DecodeAsset(prefab) is AssetGuid origin && !origin.IsNil ? new A.SetPrefabOrigin(pn, origin) : null;
             case "SetNodeName":
                 return NodeOf(value) is EntityGuid nn && value.Find("name") is { IsString: true } name && A.NodeNames.IsWellFormed(name.AsString)
                     ? new A.SetNodeName(nn, name.AsString) : null;
@@ -218,6 +224,7 @@ public static partial class Codec
             case A.NodeCreated e:
                 output.Set("kind", JsonValue.String("NodeCreated")).Set("node", Encode(e.Node))
                     .Set("position", JsonValue.Number(e.Position));
+                if (e.PrefabOrigin is AssetGuid origin) output.Set("prefabOrigin", Encode(origin));
                 break;
             case A.NodeDestroyed e:
                 output.Set("kind", JsonValue.String("NodeDestroyed")).Set("node", Encode(e.Node));
@@ -288,10 +295,13 @@ public static partial class Codec
             }
             case "PropertyChanged": return SceneAddressValueOf(value) is var (address, v) ? new A.PropertyChanged(address, v) : null;
             case "NodeCreated":
+            {
+                if (!TryPrefabOrigin(value, out AssetGuid? origin)) return null;
                 return NodeOf(value) is EntityGuid cn && value.Find("position") is JsonValue position &&
                        DecodeUInt64(position) is ulong p
-                    ? new A.NodeCreated(cn, p)
+                    ? new A.NodeCreated(cn, p, origin)
                     : null;
+            }
             case "NodeDestroyed": return NodeOf(value) is EntityGuid dn ? new A.NodeDestroyed(dn) : null;
             case "ComponentAdded":
                 return NodeOf(value) is EntityGuid an && ComponentOf(value) is TypeId ac ? new A.ComponentAdded(an, ac) : null;
@@ -384,6 +394,8 @@ public static partial class Codec
             result.Set("supportsGuardedTransformTransactions", JsonValue.Bool(true));
         if (document.SupportsGuardedDuplicateTransactions)
             result.Set("supportsGuardedDuplicateTransactions", JsonValue.Bool(true));
+        if (document.SupportsPrefabOrigin) result.Set("supportsPrefabOrigin", JsonValue.Bool(true));
+        if (document.SupportsPrefabRegistration) result.Set("supportsPrefabRegistration", JsonValue.Bool(true));
         return result;
     }
 
@@ -408,14 +420,19 @@ public static partial class Codec
             SupportsGuardedTransformTransactions =
                 value.Find("supportsGuardedTransformTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsGuardedDuplicateTransactions =
-                value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true }
+                value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsPrefabOrigin = value.Find("supportsPrefabOrigin") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsPrefabRegistration = value.Find("supportsPrefabRegistration") is { Kind: JsonKind.Bool, AsBool: true }
         } : null;
     }
 
     public static JsonValue Encode(A.NodeSummary node)
     {
         if (!A.NodeNames.IsValid(node.Name)) throw new System.ArgumentException("invalid node name", nameof(node));
-        return JsonValue.NewObject().Set("node", Encode(node.Node)).Set("parent", EncodeOptional(node.Parent)).Set("name", JsonValue.String(node.Name));
+        JsonValue result = JsonValue.NewObject().Set("node", Encode(node.Node)).Set("parent", EncodeOptional(node.Parent))
+            .Set("name", JsonValue.String(node.Name));
+        if (node.PrefabOrigin is AssetGuid origin) result.Set("prefabOrigin", Encode(origin));
+        return result;
     }
 
     public static A.NodeSummary? DecodeNodeSummary(JsonValue value)
@@ -423,7 +440,15 @@ public static partial class Codec
         (bool ok, EntityGuid? parent) = OptionalEntityMember(value, "parent");
         JsonValue? member = value.Find("name");
         if (member is not null && (!member.IsString || !A.NodeNames.IsValid(member.AsString))) return null;
-        return NodeOf(value) is EntityGuid node && ok ? new A.NodeSummary(node, parent, member?.AsString ?? "") : null;
+        return NodeOf(value) is EntityGuid node && ok && TryPrefabOrigin(value, out AssetGuid? origin)
+            ? new A.NodeSummary(node, parent, member?.AsString ?? "", origin) : null;
+    }
+
+    private static bool TryPrefabOrigin(JsonValue value, out AssetGuid? origin)
+    {
+        JsonValue? field = value.Find("prefabOrigin");
+        origin = field is null ? null : DecodeAsset(field);
+        return CountMember(value, "prefabOrigin") <= 1 && (field is null || origin is { IsNil: false });
     }
 
     // --- The error names.
@@ -579,6 +604,13 @@ public static partial class Codec
         return true;
     }
     public static string SaveAsSource(string name) => "scenes/saved/save_" + name + "/scene.scene.txt";
+    public static string PrefabSource(string name) => "prefabs/prefab_" + name + "/source.scene.txt";
+
+    public static A.PrefabRegistration? DecodePrefabRegistration(JsonValue value) =>
+        Exact(value, 3) && value.Find("prefab") is { } prefab &&
+        DecodeAsset(prefab) is AssetGuid guid && !guid.IsNil && value.Find("source") is { IsString: true } source &&
+        value.Find("documentRevision") is { } revision && DecodeUInt64(revision) is ulong captured
+            ? new A.PrefabRegistration(guid, source.AsString, captured) : null;
     public static bool IsLegacySaveAsRefusal(JsonValue reply) =>
         reply.Find("result") is null && reply.Find("error") is { } error &&
         error.Find("code") is { IsString: true, AsString: "BadRequest" } &&

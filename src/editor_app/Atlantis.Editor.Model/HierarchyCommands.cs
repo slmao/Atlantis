@@ -180,12 +180,22 @@ public static class HierarchyCommands
     public const int MaxDuplicateNodes = 64;
     public const string AddMeshLabel = "add mesh to scene";
     public const string AddGroupLabel = "add group to scene";
+    public const string InstantiatePrefabLabel = "instantiate Prefab";
 
     public static (GuardedDuplicateEdit? Edit, string? Refusal) AddStaticGroup(
-        IReadOnlyList<SchemaType> schema, DocumentTree tree, Atlantis.Gameplay.Assets.StaticGroup group)
+        IReadOnlyList<SchemaType> schema, DocumentTree tree, Atlantis.Gameplay.Assets.StaticGroup group, bool prefab = false)
     {
-        if (!tree.OrderSynchronized || group.Nodes.Count is < 2 or >= RequireDuplicateBatchRevision.MaxNodes ||
+        int wrapper = prefab ? 0 : 1;
+        if (!tree.OrderSynchronized || group.Nodes.Count < (prefab ? 1 : 2) ||
+            group.Nodes.Count + wrapper > RequireDuplicateBatchRevision.MaxNodes ||
             !NodeNames.IsValid(group.Name)) return (null, "the group or document order is invalid");
+        int root = 0;
+        if (prefab)
+        {
+            var roots = Enumerable.Range(0, group.Nodes.Count).Where(i => group.Nodes[i].Parent is null).ToArray();
+            if (roots.Length != 1 || group.Scene.IsNil) return (null, "the Prefab needs a single root");
+            root = roots[0];
+        }
         var names = tree.Order.Where(node => tree.ParentOf(node) is null)
             .Select(tree.NameOf).ToHashSet(StringComparer.Ordinal);
         string name = group.Name;
@@ -193,7 +203,7 @@ public static class HierarchyCommands
             name = group.Name + " " + suffix.ToString(CultureInfo.InvariantCulture);
         if (!NodeNames.IsValid(name)) return (null, "no available group name fits the node-name limit");
 
-        var ids = Enumerable.Range(0, group.Nodes.Count + 1).Select(_ => new EntityGuid(Guid.NewGuid())).ToArray();
+        var ids = Enumerable.Range(0, group.Nodes.Count + wrapper).Select(_ => new EntityGuid(Guid.NewGuid())).ToArray();
         if (ids.Distinct().Count() != ids.Length || ids.Any(id => id.Value == Guid.Empty || tree.Contains(id)))
             return (null, "a new node identity conflicts with the document");
         var parents = new int?[ids.Length];
@@ -201,12 +211,12 @@ public static class HierarchyCommands
         {
             if (group.Nodes[i].Parent is int parent && (parent < 0 || parent >= group.Nodes.Count))
                 return (null, "the group contains an invalid parent");
-            parents[i + 1] = group.Nodes[i].Parent is int index ? index + 1 : 0;
+            parents[i + wrapper] = group.Nodes[i].Parent is int index ? index + wrapper : prefab ? null : 0;
         }
         var entries = new List<NodeLife>(ids.Length);
         for (int i = 0; i < ids.Length; ++i)
         {
-            var node = i == 0 ? null : group.Nodes[i - 1];
+            var node = i < wrapper ? null : group.Nodes[i - wrapper];
             var fields = new List<(string Component, string Field, PropertyValue Value)> {
                 ("Transform", "localPosition", PropertyValue.FromVec3(node?.Position ?? Vector3.Zero)),
                 ("Transform", "localEulerAnglesRadians", PropertyValue.FromVec3(node?.EulerRadians ?? Vector3.Zero)),
@@ -236,16 +246,16 @@ public static class HierarchyCommands
                     return (null, "the component schema cannot be represented");
                 components.Add(new(type, leaves.Select(field => values[field.Id]).ToArray()));
             }
-            var children = Enumerable.Range(1, parents.Length - 1).Where(child => parents[child] == i)
+            var children = Enumerable.Range(wrapper, parents.Length - wrapper).Where(child => parents[child] == i)
                 .Select(child => ids[child]).ToArray();
             entries.Add(new NodeLife(new NodeState(ids[i], (ulong)(tree.Count + i),
                 parents[i] is int index ? ids[index] : null, children, components.OrderBy(c => c.Type.Value).ToArray(),
-                i == 0 ? name : ""), true));
+                i == root ? name : node?.Name ?? "", prefab && i == root ? group.Scene : null), true));
         }
         EntityGuid? predecessor = tree.Count == 0 ? null : tree.Order[^1];
         var dependencies = new Dictionary<EntityGuid, object>();
         if (predecessor is EntityGuid preceding) dependencies.Add(preceding, tree.IncarnationOf(preceding)!);
-        return (new GuardedDuplicateEdit([ids[0]], entries, tree.Count, predecessor, dependencies) { IsStaticGroup = true }, null);
+        return (new GuardedDuplicateEdit([ids[root]], entries, tree.Count, predecessor, dependencies) { IsStaticGroup = true }, null);
     }
 
     public static EditPlan AddMesh(IReadOnlyList<SchemaType> schema, ulong position, EntityGuid node, AssetGuid mesh,
@@ -371,6 +381,8 @@ public static class HierarchyCommands
         if (new DocumentView(document, tree).ReadCompleteNodes(nodes) is not { } snapshot)
             return (null, Array.Empty<EntityGuid>(), "the subtree's complete component values could not be read");
         var originals = snapshot.OrderBy(node => node.Position).ToArray();
+        if (originals.Any(node => node.PrefabOrigin is not null))
+            return (null, Array.Empty<EntityGuid>(), "linked Prefab roots cannot use ordinary duplicate replay");
         var copies = new Dictionary<EntityGuid, EntityGuid>(nodes.Count);
         var minted = new HashSet<EntityGuid>();
         foreach (EntityGuid original in nodes)
@@ -435,6 +447,8 @@ public static class HierarchyCommands
     {
         var nodes = new List<EntityGuid> { node };
         nodes.AddRange(tree.DescendantsOf(node));
+        if (nodes.Any(id => tree.PrefabOriginOf(id) is not null))
+            return EditPlan.Refused("destroy subtree", "linked Prefab roots require provenance-aware replay");
         var commands = new List<Command>();
         if (document.ActiveCamera() is EntityGuid camera && nodes.Contains(camera)) commands.Add(new SetActiveCamera(null));
         foreach (EntityGuid n in nodes) commands.Add(new DestroyNode(n));
