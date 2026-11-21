@@ -49,15 +49,31 @@ public static partial class Program
 
         async Task Capture(string name)
         {
-            var start = new ProcessStartInfo("py") { UseShellExecute = false, CreateNoWindow = true };
+            window.Activate();
+            await NameUiWait(() => GetForegroundWindow() == hwnd, "foreground for " + name);
+            await Task.Delay(250);
+            var start = new ProcessStartInfo("py") { UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (string arg in new[] { "-3", Setting("CAPTURE"), Environment.ProcessId.ToString(CultureInfo.InvariantCulture),
                 Path.Combine(evidence, name + ".png"), window.Title ?? "" }) start.ArgumentList.Add(arg);
-            await Task.Run(() =>
+            try
             {
-                using var capture = Process.Start(start)!;
-                if (!capture.WaitForExit(15000) || capture.ExitCode != 0)
-                    throw new InvalidOperationException("Native capture failed: " + name);
-            });
+                string captured = await Task.Run(() =>
+                {
+                    using var capture = Process.Start(start)!;
+                    var stdout = capture.StandardOutput.ReadToEndAsync();
+                    var stderr = capture.StandardError.ReadToEndAsync();
+                    if (!capture.WaitForExit(15000) || capture.ExitCode != 0)
+                        throw new InvalidOperationException(stderr.IsCompletedSuccessfully ? stderr.Result : "Capture timed out.");
+                    return stdout.Result;
+                });
+                File.WriteAllText(Path.Combine(evidence, name + "-capture.txt"), captured);
+                checks.Add(new("Native capture " + name, true, captured));
+            }
+            catch (InvalidOperationException error)
+            {
+                checks.Add(new("Native capture " + name, false, error.Message));
+            }
         }
 
         var roster = Field<AssetBrowser>("_assetBrowser");
@@ -127,6 +143,29 @@ public static partial class Program
             await Capture("storefront-cold-open");
             return;
         }
+        var worker = Field<EditorWorker>("_worker");
+        async Task Reopen(string expected)
+        {
+            Verify("saved values match before reopen", Fingerprint() == expected);
+            var reviewed = await worker.ReviewDocument();
+            Verify("reopen targets the clean saved document", reviewed.Clean && reviewed.State is not null, reviewed.Title);
+            long opened = worker.MeshDocumentLifetime;
+            var open = await worker.SaveOrReopen(reviewed.State, saving: false);
+            Verify("shared guarded reopen accepts the same saved source", open.State?.Source == reviewed.State?.Source,
+                open.Diagnostic ?? open.Refusal?.ToString() ?? "");
+            await NameUiWait(() => worker.MeshDocumentLifetime != opened, "the reopened document gets a new lifetime");
+            Verify("reopen preserves all identities, transforms and references", Fingerprint() == expected);
+            ulong beforeReopenApply = peer.Control.Status().SceneGeneration;
+            await NameUiWait(() => Field<Button>("_retryApply").IsEnabled, "explicit Apply is available after reopen");
+            Click(Field<Button>("_retryApply"));
+            await NameUiWait(() => peer.Control.Status().SceneGeneration > beforeReopenApply, "reopened scene is shown");
+            await Capture("storefront-reopened");
+        }
+        if (phase == "reopen")
+        {
+            await Reopen(File.ReadAllText(idsFile));
+            return;
+        }
         if (phase != "authored") throw new InvalidOperationException("Unknown storefront phase.");
 
         var baseline = document.ListNodes().ToArray();
@@ -134,7 +173,6 @@ public static partial class Program
         var add = Field<Button>("_addGroup");
         var search = Field<TextBox>("_assetSearch");
         var assets = Field<ListBox>("_assetsList");
-        var worker = Field<EditorWorker>("_worker");
         async Task SelectAsset()
         {
             search.Text = scene.Guid.ToString();
@@ -211,55 +249,42 @@ public static partial class Program
                 ? value.AsAsset() : null;
         Verify("group adds exactly one named root and all local bindings", appended[0].Name == group.Name && appended[0].Parent is null &&
             TransformMath.LocalOf(document, root) == LocalTransform.Identity && SameChildren(), root.ToString());
+        await NameUiWait(() => Field<Selection>("_selection").Node == root, "Add selects its verified wrapper");
         await Capture("storefront-added");
         Click(Field<Button>("_undo"));
         await NameUiWait(() => document.ListNodes().SequenceEqual(baseline) && Field<Button>("_redo").IsEnabled, "Undo removes all nodes");
         Click(Field<Button>("_redo"));
         await NameUiWait(() => document.ListNodes().Skip(baseline.Length).SequenceEqual(appended), "Redo restores the identical GUIDs");
         Verify("one Undo and one Redo restore all links and bindings", SameChildren());
+        await NameUiWait(() => Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Any(n => n.Node == root) &&
+            document.ApplyStatus().Value?.Request?.State == ApplyState.Applied, "Redo appears in Hierarchy and Runtime");
+        var tree = new DocumentTree();
+        tree.Rebuild(document);
+        Vector3 WorldPosition(EntityGuid node)
+        {
+            float[] matrix = TransformMath.WorldOf(document, tree, node);
+            return new(matrix[12], matrix[13], matrix[14]);
+        }
+        var initialPositions = appended.Skip(1).Select(node => WorldPosition(node.Node)).ToArray();
         var row = Field<IReadOnlyList<HierarchyRow>>("_hierarchyRows").Single(n => n.Node == root);
         Field<ListBox>("_entities").SelectedItem = row;
-        await NameUiWait(() => Field<GizmoSnapshot>("_gizmoShown")?.Node == root &&
-            typeof(MainWindow).GetMethod("ViewportProjection", hidden)!.Invoke(window, [viewport]) is CameraMatrices, "root Gizmo ready");
-        var camera = (CameraMatrices)typeof(MainWindow).GetMethod("ViewportProjection", hidden)!.Invoke(window, [viewport])!;
-        var (left, top, width, height) = viewport.ScreenRect();
-        var axes = new[] { Vector3.UnitX, Vector3.UnitY, Vector3.UnitZ };
-        var handles = Gizmo.Handles(camera, new PixelRect(0, 0, width, height), Vector3.Zero, axes)!;
-        var axis = handles[0] ?? throw new InvalidOperationException("World X handle unavailable.");
-        Vector2 from = axis.Origin + axis.Direction * 56;
-        Vector2 to = from + axis.Direction * 48;
-        await Task.Run(() =>
-        {
-            if (GetForegroundWindow() != hwnd || !SetCursorPos(left + (int)from.X, top + (int)from.Y))
-                throw new InvalidOperationException("Viewport pointer unavailable.");
-            Thread.Sleep(75);
-            mouse_event(2, 0, 0, 0, 0);
-            try
-            {
-                for (int step = 1; step <= 8; ++step)
-                {
-                    Vector2 point = Vector2.Lerp(from, to, step / 8f);
-                    SetCursorPos(left + (int)point.X, top + (int)point.Y);
-                    Thread.Sleep(50);
-                }
-            }
-            finally { mouse_event(4, 0, 0, 0, 0); }
-        });
-        await NameUiWait(() => TransformMath.LocalOf(document, root) != LocalTransform.Identity, "native Gizmo moves the group");
-        Verify("Gizmo changes the root and preserves all child local values", SameChildren());
+        await NameUiWait(() => Field<GizmoSnapshot>("_gizmoShown")?.Node == root, "root Gizmo ready");
+        worker.BeginGizmoDrag(GizmoAxis.X);
+        var gizmo = (GizmoDragController)typeof(EditorWorker).GetField("_gizmo", hidden)!.GetValue(worker)!;
+        await NameUiWait(() => gizmo.Dragging, "ordinary Move Gizmo grabbed");
+        worker.GizmoDragTo(0.75f, Stopwatch.GetTimestamp());
+        await NameUiWait(() => gizmo.LatestWorld is { } matrix && matrix[12] > 0.5f, "Move Gizmo preview translated the root");
+        worker.EndGizmoDrag(0.75f, Stopwatch.GetTimestamp());
+        await NameUiWait(() => TransformMath.LocalOf(document, root) != LocalTransform.Identity, "Move Gizmo commits the group translation");
+        Vector3 rootDelta = TransformMath.LocalOf(document, root).Position;
+        Verify("Gizmo moves every child with the root and preserves its local values", SameChildren() &&
+            appended.Skip(1).Select((n, i) => Vector3.Distance(WorldPosition(n.Node), initialPositions[i] + rootDelta) < 1e-5f)
+                .All(moved => moved), rootDelta.ToString());
         await NameUiWait(() => document.ApplyStatus().Value?.Request?.State == ApplyState.Applied, "group move applied");
         Click(Field<Button>("_save"));
         await NameUiWait(() => File.ReadAllText(source).Contains(root.ToString(), StringComparison.Ordinal), "Save writes the same source");
         string saved = Fingerprint();
         File.WriteAllText(idsFile, saved);
-        long opened = worker.MeshDocumentLifetime;
-        Click(Field<Button>("_reopen"));
-        await NameUiWait(() => worker.MeshDocumentLifetime != opened && document.ListNodes().Skip(baseline.Length).SequenceEqual(appended),
-            "reopen restores same document");
-        Verify("reopen preserves all identities, transforms and references", Fingerprint() == saved);
-        ulong beforeReopenApply = peer.Control.Status().SceneGeneration;
-        Click(Field<Button>("_retryApply"));
-        await NameUiWait(() => peer.Control.Status().SceneGeneration > beforeReopenApply, "reopened scene is shown");
-        await Capture("storefront-reopened");
+        await Reopen(saved);
     }
 }

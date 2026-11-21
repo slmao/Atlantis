@@ -2345,10 +2345,13 @@ public sealed class EditorWorker : IDisposable
                     PostHistory(lifetime);
                     string notice = created is not null
                         ? ApplyVerifiedEdit(lifetime, result.Notice, publishStatus: false) : result.Notice;
-                    Report(created, notice);
                     PostApplyState(lifetime);
-                    PollDocument(session, pollApply: false);
-                    PostInspector();
+                    try
+                    {
+                        PollDocument(session, pollApply: false);
+                        PostInspector();
+                    }
+                    finally { Report(created, notice); }
                 }
                 finally { lock (_lock) _duplicateBatchQueued = false; }
             });

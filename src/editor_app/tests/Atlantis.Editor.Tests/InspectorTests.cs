@@ -83,7 +83,7 @@ public static partial class Program
             boundary = scene == "--viewport-placement" && Environment.GetEnvironmentVariable("ATLANTIS_0129_TEST_SOURCE") == "1"
                 ? "Hosted Editor and Runtime, actual native target lifetime and a controlled source result."
                 : scene == "--viewport-placement" ? "Native 96-DPI Editor and hosted Runtime, physical OLE gestures and shared authoring readback."
-                : scene == "--static-group-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, Assets controls, native Gizmo pointer, shared readback and native captures."
+                : scene == "--static-group-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, Assets controls, the product Move Gizmo worker, shared readback and native captures."
                 : scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
                 : scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
                 : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
@@ -179,6 +179,12 @@ public static partial class Program
                 if (tasks || recovery || workspaceLayout || viewportPlacement || staticGroup)
                 {
                     EditorVisuals.Install(this);
+                    if (staticGroup)
+                    {
+                        window.Width = 1250;
+                        window.Height = 780;
+                        window.WindowStartupLocation = WindowStartupLocation.CenterScreen;
+                    }
                     if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
                     {
                         window.Width = 1050;

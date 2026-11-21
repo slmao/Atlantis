@@ -4233,12 +4233,8 @@ public sealed class MainWindow : Window
             if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingGroupAdd, intent)) return;
             _pendingGroupAdd = null;
             _addMeshState.Text = notice;
-            if (intent.Current && selection == _selection.Generation && root is EntityGuid created)
-                Dispatcher.UIThread.Post(() =>
-                {
-                    if (ReferenceEquals(_worker, worker) && intent.Current && selection == _selection.Generation &&
-                        _hierarchyRows.Any(row => row.Node == created)) SetSelection(created, true);
-                }, DispatcherPriority.Background);
+            if (intent.Current && selection == _selection.Generation && root is EntityGuid created &&
+                _hierarchyRows.Any(row => row.Node == created)) SetSelection(created, true);
             RefreshGroupAsset();
         }))
         {
