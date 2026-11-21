@@ -92,6 +92,7 @@ public sealed class MainWindow : Window
     private long _savedRecentRead;
     private bool _savedRecentRemoving, _savedRecentVerified, _savedSyncSelection;
     private readonly Button _savedRefresh = new() { Content = "Refresh" };
+    private readonly Button _savedCleanup = new() { Content = "Clean Up Builds…" };
     private readonly Button _savedBuild = new() { Content = "Build", IsEnabled = false };
     private readonly Button _savedOpen = new() { Content = "Open", IsEnabled = false };
     private readonly TextBox _savedManaged = new() { PlaceholderText = "Absolute committed managed import root (optional)" };
@@ -3269,7 +3270,7 @@ public sealed class MainWindow : Window
         var operations = EditorVisuals.Group(EditorVisuals.Heading("Build and open"),
             EditorVisuals.Stack(6, _savedActiveTarget, EditorVisuals.Secondary("Committed managed import root (optional)"),
                 _savedManaged, _savedBuildSummary, _savedOpenResult, EditorVisuals.Actions(_savedBuild, _savedOpen),
-                EditorVisuals.Disclosure("Build details", _savedBuildResult)));
+            EditorVisuals.Disclosure("Build details", _savedBuildResult), _savedCleanup));
         _savedRecent.ItemTemplate = new FuncDataTemplate<SavedRecentRow>((row, _) =>
         {
             // Recycling the last row clears its content before removing the container.
@@ -3312,7 +3313,123 @@ public sealed class MainWindow : Window
         };
         _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
         _savedOpen.Click += async (_, _) => await OpenSelectedSavedScene();
+        _savedCleanup.Click += async (_, _) => await ShowSavedBuildCleanup();
         return panel;
+    }
+
+    private async Task ShowSavedBuildCleanup()
+    {
+        if (_savedWorkspace is not { } workspace || !_savedCleanup.IsEnabled || _shuttingDown) return;
+        var dialog = new Window
+        {
+            Title = "Clean Up Builds", Width = 620, Height = 420, MinWidth = 400, MinHeight = 320,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, ShowInTaskbar = false,
+        };
+        var rows = new ListBox { SelectionMode = SelectionMode.Single };
+        AutomationProperties.SetName(rows, "Builds eligible for cleanup");
+        rows.ItemTemplate = new FuncDataTemplate<SavedSceneBuildCleanup.Candidate>((item, _) => item is null
+            ? new TextBlock()
+            : EditorVisuals.Stack(3, EditorVisuals.Details(item.Path),
+                EditorVisuals.Secondary($"Build size {item.Size:N0} bytes · {item.Reason}")));
+        var refresh = new Button { Content = "Refresh List" };
+        var review = new Button { Content = "Review Deletion…", IsEnabled = false };
+        var remove = new Button { Content = "Delete Build", IsVisible = false };
+        var cancel = new Button { Content = "Cancel Deletion", IsVisible = false };
+        var restore = new Button { Content = "Restore Build Folder", IsVisible = false };
+        var close = new Button { Content = "Close" };
+        var confirmation = EditorVisuals.Details("");
+        confirmation.IsVisible = false;
+        var status = EditorVisuals.Secondary("");
+        var outcome = EditorVisuals.Details("");
+        var explanation = EditorVisuals.Secondary("Protected or unverifiable directories are omitted. Build size is the sum of file lengths.");
+        dialog.Content = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,*,Auto"), Margin = new Thickness(16), RowSpacing = 8,
+            Children =
+            {
+                EditorVisuals.Stack(4, EditorVisuals.Heading("Builds eligible for cleanup"), explanation, status),
+                rows,
+                EditorVisuals.Stack(6, confirmation, outcome, EditorVisuals.Actions(refresh, review, remove, cancel, restore, close)),
+            },
+        };
+        var layout = (Grid)dialog.Content;
+        Grid.SetRow(rows, 1);
+        Grid.SetRow(layout.Children[2], 2);
+
+        SavedSceneBuildCleanup.Candidate? confirmed = null;
+        Func<SavedSceneBuildCleanup.Removal>? restorePending = null;
+        bool closed = false, loading = false, deleting = false;
+        void UpdateControls()
+        {
+            bool browsing = !loading && !deleting && confirmed is null;
+            rows.IsEnabled = refresh.IsEnabled = browsing;
+            review.IsEnabled = browsing && rows.SelectedItem is SavedSceneBuildCleanup.Candidate;
+            review.IsVisible = confirmed is null;
+            confirmation.IsVisible = remove.IsVisible = cancel.IsVisible = confirmed is not null;
+            remove.IsEnabled = cancel.IsEnabled = close.IsEnabled = !deleting;
+            restore.IsVisible = restorePending is not null;
+            restore.IsEnabled = browsing && restorePending is not null;
+        }
+
+        async Task RefreshCandidates()
+        {
+            loading = true;
+            status.Text = "Checking build folders…";
+            rows.ItemsSource = Array.Empty<SavedSceneBuildCleanup.Candidate>();
+            UpdateControls();
+            var listing = await Task.Run(workspace.CleanupCandidates);
+            if (closed) return;
+            loading = false;
+            restorePending = listing.Restore;
+            rows.ItemsSource = listing.Candidates;
+            status.Text = listing.Issue ?? (listing.Candidates.Count == 0 ? "No build folders can be safely cleaned up." : "Select a build folder.");
+            UpdateControls();
+        }
+
+        rows.SelectionChanged += (_, _) => UpdateControls();
+        refresh.Click += async (_, _) => { if (refresh.IsEnabled) await RefreshCandidates(); };
+        review.Click += (_, _) =>
+        {
+            if (!review.IsEnabled || rows.SelectedItem is not SavedSceneBuildCleanup.Candidate candidate) return;
+            confirmed = candidate;
+            outcome.Text = "";
+            confirmation.Text = $"Permanently delete the build outputs and logs?\n{candidate.Path}\nBuild size {candidate.Size:N0} bytes";
+            UpdateControls();
+            cancel.Focus();
+        };
+        cancel.Click += (_, _) => { if (!deleting) { confirmed = null; UpdateControls(); review.Focus(); } };
+        remove.Click += async (_, _) =>
+        {
+            if (deleting || confirmed is not { } candidate) return;
+            deleting = true;
+            outcome.Text = "Checking the confirmed folder and removing it if still eligible…";
+            UpdateControls();
+            var result = await Task.Run(() => workspace.RemoveBuild(candidate));
+            deleting = false;
+            confirmed = null;
+            outcome.Text = result.Detail;
+            outcome.Foreground = result.Removed ? EditorVisuals.Muted : EditorVisuals.Warning;
+            if (!closed) await RefreshCandidates();
+        };
+        restore.Click += async (_, _) =>
+        {
+            if (!restore.IsEnabled || restorePending is not { } recover) return;
+            deleting = true;
+            outcome.Text = "Checking whether the original build folder can be restored…";
+            UpdateControls();
+            var result = await Task.Run(recover);
+            deleting = false;
+            outcome.Text = result.Detail;
+            outcome.Foreground = EditorVisuals.Muted;
+            if (!closed) await RefreshCandidates();
+        };
+        close.Click += (_, _) => dialog.Close();
+        dialog.Closing += (_, args) => args.Cancel = deleting;
+        dialog.Closed += (_, _) => closed = true;
+        dialog.Opened += async (_, _) => await RefreshCandidates();
+        _savedCleanup.IsEnabled = false;
+        try { await dialog.ShowDialog(this); }
+        finally { if (!_shuttingDown) UpdateSavedSceneButtons(); }
     }
 
     private void ShowSavedSceneReceipt(SavedSceneReceipt? receipt)
@@ -3343,6 +3460,7 @@ public sealed class MainWindow : Window
         _savedActiveTarget.Text = input is null ? "" : "Selected scene: " + input.Name;
         _savedActiveTarget.IsVisible = input is not null;
         _savedList.IsEnabled = _savedManaged.IsEnabled = _savedRefresh.IsEnabled = idle;
+        _savedCleanup.IsEnabled = idle;
         _savedRecent.IsEnabled = idle;
         _savedRecentRemove.IsEnabled = idle && !_savedRecentRemoving && _savedRecent.SelectedItem is SavedRecentRow;
         _savedBuild.IsEnabled = targetReady && _savedAttempts.CanBuild(input);

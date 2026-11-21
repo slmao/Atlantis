@@ -1,10 +1,10 @@
 # Plan 0126 — Saved Scenes Cleanup Admission and Recovery
 
 - **Spec:** [Spec 0126](../specs/0126-saved-scene-cleanup-admission.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0175](../adr/0175-saved-scene-cleanup-admission-and-recovery.md) (Proposed)
+- **Joint Human Review:** Spec/Plan 0126 and ADR-0175 approved at `d1dfe5d8`, recorded on [PR #417](https://github.com/slmao/Atlantis/pull/417#issuecomment-7058902123). #416 authorized after maintainer merge `37c441ed`.
+- **ADR:** [ADR-0175](../adr/0175-saved-scene-cleanup-admission-and-recovery.md) (Accepted)
 
 ## Objective and Milestones
 

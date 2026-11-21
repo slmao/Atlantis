@@ -18,6 +18,7 @@ public static partial class Program
 {
     private static void SavedSceneChecks()
     {
+        if (OperatingSystem.IsWindows()) SavedSceneBuildCleanupChecks();
         var attempts = new SavedSceneAttempts();
         var first = new SavedSceneInput("first", null);
         var second = new SavedSceneInput("second", null);
@@ -375,6 +376,12 @@ public static partial class Program
                 "fresh CMake build handles paths with spaces and resolves the real executable");
             Check(new[] { configured.Directory, broken.Directory, stale.Directory, clean.Directory }.Distinct().Count() == 4,
                 "CMake attempts never reuse a build directory");
+            var cleanup = workspace.CleanupCandidates();
+            var candidates = cleanup.Candidates.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var expected = new[] { configured.Directory, broken.Directory, stale.Directory };
+            bool cleanupsSettled = cleanup.Issue is null && candidates.SetEquals(expected);
+            Check(cleanupsSettled, "actual CMake attempts settle for cleanup after failure or supersession, leaving the current attempt protected" +
+                (cleanupsSettled ? "" : $". {cleanup.Issue} Expected {string.Join(", ", expected)}. Found {string.Join(", ", candidates)}."));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
@@ -450,6 +457,11 @@ public static partial class Program
 
     private static async Task CheckSavedSceneWorkflow(MainWindow window, List<NameUiCheck> checks, Action<string> work)
     {
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0125_TEST_PHASE") is { } cleanupPhase)
+        {
+            await CheckSavedSceneBuildCleanupUi(window, checks, work, cleanupPhase);
+            return;
+        }
         if (Environment.GetEnvironmentVariable("ATLANTIS_0124_TEST_PHASE") is { } recentPhase)
         {
             await CheckSavedSceneRecentUi(window, checks, work, recentPhase);

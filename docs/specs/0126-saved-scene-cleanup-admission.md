@@ -1,11 +1,11 @@
 # Spec 0126 — Saved Scenes Cleanup Admission and Recovery
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0126](../plans/0126-saved-scene-cleanup-admission.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0175](../adr/0175-saved-scene-cleanup-admission-and-recovery.md) (Proposed)
+- **Approval:** Maintainer approved `d1dfe5d8` in [PR #417](https://github.com/slmao/Atlantis/pull/417#issuecomment-7058902123), 2026-11-21. Design merged at `37c441ed`.
+- **Related ADR:** [ADR-0175](../adr/0175-saved-scene-cleanup-admission-and-recovery.md) (Accepted)
 
 ## Summary
 

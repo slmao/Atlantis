@@ -1,9 +1,9 @@
 # ADR 0174 — Ownership and Use Evidence for Saved Scenes Cleanup
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Maintainer accepted `a4227c03` in [PR #415](https://github.com/slmao/Atlantis/pull/415#issuecomment-7058022375), 2026-11-21. Design merged at `048680c3`.
 - **Related Spec:** [Spec 0125](../specs/0125-saved-scene-build-cleanup.md)
 
 ## Context
