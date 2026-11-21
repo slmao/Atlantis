@@ -1,4 +1,5 @@
 #include <atlantis/connection/asset_connection.h>
+#include <atlantis/connection/authoring_connection.h>
 
 #include <atlantis/assert.h>
 
@@ -51,14 +52,20 @@ std::optional<StaticGroupError> staticGroupError(std::string_view name) noexcept
 
 namespace {
 using GroupGuid = asset_system::AssetGuid;
-bool validGroup(const StaticGroup& group, const GroupGuid& requested) {
-  if (group.scene == GroupGuid{} || group.scene != requested || !validImportName(group.name) ||
-      group.nodes.size() < 2 || group.nodes.size() > kStaticGroupNodeLimit) return false;
+bool validGroup(const StaticGroup& group, const GroupGuid& requested, bool prefab) {
+  const std::size_t minimum = prefab ? 1 : 2;
+  const std::size_t limit = prefab ? 64 : kStaticGroupNodeLimit;
+  if (group.scene == GroupGuid{} || group.scene != requested ||
+      !(prefab ? authoring::validSaveAsName(group.name) : validImportName(group.name)) ||
+      group.nodes.size() < minimum || group.nodes.size() > limit) return false;
   std::size_t renderables = 0;
+  std::size_t roots = 0;
   for (const auto& node : group.nodes) {
+    if (!node.parent) ++roots;
+    if (node.name.size() > 255 || (!prefab && !node.name.empty())) return false;
     for (const auto& vector : {node.position, node.eulerRadians, node.scale})
       if (!std::ranges::all_of(vector, [](float n) { return std::isfinite(n); })) return false;
-    if (std::ranges::find(node.scale, 0.0f) != node.scale.end()) return false;
+    if (!prefab && std::ranges::find(node.scale, 0.0f) != node.scale.end()) return false;
     std::size_t depth = 0;
     for (auto parent = node.parent; parent; parent = group.nodes[*parent].parent)
       if (*parent >= group.nodes.size() || ++depth >= group.nodes.size()) return false;
@@ -66,7 +73,7 @@ bool validGroup(const StaticGroup& group, const GroupGuid& requested) {
     if (node.renderable->mesh == GroupGuid{} || node.renderable->material == GroupGuid{}) return false;
     ++renderables;
   }
-  return renderables >= 2;
+  return renderables >= minimum && (!prefab || roots == 1);
 }
 
 std::optional<GroupGuid> groupGuid(const json::Value* value) {
@@ -78,8 +85,8 @@ std::optional<GroupGuid> groupGuid(const json::Value* value) {
 }
 }  // namespace
 
-std::optional<json::Value> encodeStaticGroup(const StaticGroup& group, const GroupGuid& requested) {
-  if (!validGroup(group, requested)) return std::nullopt;
+std::optional<json::Value> encodeStaticGroup(const StaticGroup& group, const GroupGuid& requested, bool prefab) {
+  if (!validGroup(group, requested, prefab)) return std::nullopt;
   using J = json::Value;
   const auto vec = [](const std::array<float, 3>& v) {
     return J::array({J::number(v[0]), J::number(v[1]), J::number(v[2])});
@@ -92,9 +99,11 @@ std::optional<json::Value> encodeStaticGroup(const StaticGroup& group, const Gro
       renderable = J::object({{"mesh", J::string(asset_system::toString(mesh.mesh))},
                               {"material", mesh.material ? J::string(asset_system::toString(*mesh.material)) : J()}});
     }
-    nodes.push(J::object({{"parent", node.parent ? J::number(static_cast<std::uint64_t>(*node.parent)) : J()},
+    auto value = J::object({{"parent", node.parent ? J::number(static_cast<std::uint64_t>(*node.parent)) : J()},
                           {"position", vec(node.position)}, {"eulerRadians", vec(node.eulerRadians)},
-                          {"scale", vec(node.scale)}, {"renderable", std::move(renderable)}}));
+                          {"scale", vec(node.scale)}, {"renderable", std::move(renderable)}});
+    if (prefab) value.set("name", J::string(node.name));
+    nodes.push(std::move(value));
   }
   auto payload = J::object({{"scene", J::string(asset_system::toString(group.scene))},
                             {"name", J::string(group.name)}, {"nodes", std::move(nodes)}});
@@ -102,11 +111,11 @@ std::optional<json::Value> encodeStaticGroup(const StaticGroup& group, const Gro
   return payload;
 }
 
-std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const GroupGuid& requested) {
+std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const GroupGuid& requested, bool prefab) {
   const auto* name = payload.find("name");
   const auto* nodes = payload.find("nodes");
   if (!payload.isObject() || payload.asObject().size() != 3 ||
-      !name || !name->isString() || !nodes || !nodes->isArray() || nodes->asArray().size() > kStaticGroupNodeLimit ||
+      !name || !name->isString() || !nodes || !nodes->isArray() || nodes->asArray().size() > (prefab ? 64 : kStaticGroupNodeLimit) ||
       groupGuid(payload.find("scene")) != requested || json::write(payload).size() > kStaticGroupByteLimit)
     return std::nullopt;
   StaticGroup group{requested, name->asString(), {}};
@@ -119,9 +128,14 @@ std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const G
     const auto* parent = value.find("parent");
     const auto* renderable = value.find("renderable");
     StaticGroupNode node{};
-    if (!value.isObject() || value.asObject().size() != 5 || !parent || !renderable ||
+    if (!value.isObject() || value.asObject().size() != (prefab ? 6u : 5u) || !parent || !renderable ||
         !vec(value.find("position"), node.position) || !vec(value.find("eulerRadians"), node.eulerRadians) ||
         !vec(value.find("scale"), node.scale)) return std::nullopt;
+    if (prefab) {
+      const auto* label = value.find("name");
+      if (!label || !label->isString()) return std::nullopt;
+      node.name = label->asString();
+    }
     if (!parent->isNull()) {
       std::uint64_t index;
       if (!parent->toUInt64(index) || index >= nodes->asArray().size()) return std::nullopt;
@@ -138,7 +152,7 @@ std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const G
     }
     group.nodes.push_back(node);
   }
-  if (!validGroup(group, requested)) return std::nullopt;
+  if (!validGroup(group, requested, prefab)) return std::nullopt;
   return group;
 }
 

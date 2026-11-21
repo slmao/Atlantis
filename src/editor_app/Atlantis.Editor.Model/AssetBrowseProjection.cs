@@ -54,8 +54,8 @@ public sealed class AssetBrowseProjection
     public static IReadOnlyList<object> Rows(IReadOnlyList<AssetBrowseProjection> ordered, AssetBrowseGroup group)
     {
         if (group == AssetBrowseGroup.None) return ordered.Select(key => (object)key.Asset).ToArray();
-        var groups = ordered.GroupBy(key => group == AssetBrowseGroup.Type ? key.Asset.Type.ToString() : key.SourceGroup);
-        string[] order = group == AssetBrowseGroup.Type ? Enum.GetNames<AssetType>() : ["assets:", "content:", "Other"];
+        var groups = ordered.GroupBy(key => group == AssetBrowseGroup.Type ? AssetKind(key.Asset) : key.SourceGroup);
+        string[] order = group == AssetBrowseGroup.Type ? [.. Enum.GetNames<AssetType>(), "Prefab"] : ["assets:", "content:", "Other"];
         return groups.OrderBy(g => Array.IndexOf(order, g.Key))
             .SelectMany(g => new object[] { new AssetGroupHeader(g.Key, g.Count()) }.Concat(g.Select(k => (object)k.Asset))).ToArray();
     }
@@ -78,6 +78,11 @@ public sealed class AssetBrowseProjection
     public static string AssetName(AssetSummary asset)
     {
         if (asset.DisplayName is string displayName) return displayName;
+        const string prefabPrefix = "assets:prefabs/prefab_", prefabSuffix = "/source.scene.txt";
+        if (asset.IsPrefab && asset.Source.StartsWith(prefabPrefix, StringComparison.Ordinal) &&
+            asset.Source.EndsWith(prefabSuffix, StringComparison.Ordinal) &&
+            asset.Source.Length > prefabPrefix.Length + prefabSuffix.Length)
+            return asset.Source[prefabPrefix.Length..^prefabSuffix.Length];
         if ((ManagedTextureName(asset, "/source.png") ?? ManagedTextureName(asset, "/occlusion.png")) is string name)
             return name;
         string source = asset.Source;
@@ -91,5 +96,7 @@ public sealed class AssetBrowseProjection
         int extension = file.LastIndexOf('.');
         return extension > 0 ? file[..extension] : file;
     }
+
+    public static string AssetKind(AssetSummary asset) => asset.IsPrefab ? "Prefab" : asset.Type.ToString();
 
 }

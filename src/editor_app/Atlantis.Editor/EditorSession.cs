@@ -2401,7 +2401,7 @@ public sealed class EditorWorker : IDisposable
         Enqueue(session =>
         {
             if (!intent.Current || intent.Lifetime != MeshDocumentLifetime) return;
-            var group = session.Assets.StaticGroup(intent.Scene);
+            var group = intent.IsPrefab ? session.Assets.Prefab(intent.Scene) : session.Assets.StaticGroup(intent.Scene);
             _post(() => { if (intent.Current && intent.Lifetime == MeshDocumentLifetime) read(group); });
         });
 
@@ -2426,7 +2426,7 @@ public sealed class EditorWorker : IDisposable
                         Report(null, "Add refused: the selected asset or open scene changed.");
                         return;
                     }
-                    var group = session.Assets.StaticGroup(intent.Scene);
+                    var group = intent.IsPrefab ? session.Assets.Prefab(intent.Scene) : session.Assets.StaticGroup(intent.Scene);
                     if (group.IsOk == false)
                     {
                         Report(null, "Add refused: " + group.Error + ".");
@@ -2438,7 +2438,8 @@ public sealed class EditorWorker : IDisposable
                     if (result.State == BatchReplayState.Committed && edit is not null && lifetime == MeshDocumentLifetime &&
                         _history is { } history && _historyTarget is { } target)
                     {
-                        history.Record(new EditTransaction(HierarchyCommands.AddGroupLabel, [], [edit]),
+                        history.Record(new EditTransaction(intent.IsPrefab ? HierarchyCommands.InstantiatePrefabLabel :
+                            HierarchyCommands.AddGroupLabel, [], [edit]),
                             target.Committed(Array.Empty<CommandFailure>()));
                         history.Update();
                         created = edit.Roots[0];
@@ -2487,7 +2488,8 @@ public sealed class EditorWorker : IDisposable
             events = Observe();
             if (nodes is null || events is null) return false;
             return _tree.OrderSynchronized && nodes.SequenceEqual(_tree.Order.Select(node =>
-                new NodeSummary(node, _tree.ParentOf(node), _tree.NameOf(node)))) || _tree.ReconcileOrder(nodes);
+                new NodeSummary(node, _tree.ParentOf(node), _tree.NameOf(node), _tree.PrefabOriginOf(node)))) ||
+                _tree.ReconcileOrder(nodes);
         }
 
         bool isGroup = group is not null || edit?.IsStaticGroup == true;
@@ -2520,7 +2522,7 @@ public sealed class EditorWorker : IDisposable
             if (!TargetsMatch()) return Conflict("a selected Hierarchy row was replaced");
             if (initial)
             {
-                var planned = group is not null ? HierarchyCommands.AddStaticGroup(document.Schema, _tree, group)
+                var planned = group is not null ? HierarchyCommands.AddStaticGroup(document.Schema, _tree, group, assetIntent?.IsPrefab == true)
                     : HierarchyCommands.DuplicateSubtrees(document, _tree, targets!.Keys.ToArray());
                 edit = planned.Edit;
                 if (edit is null) return Retry(planned.Refusal ?? "the subtree snapshot is incomplete");
@@ -2535,8 +2537,12 @@ public sealed class EditorWorker : IDisposable
             if (matches == false || (camera is EntityGuid active && edit!.CopyIdentities.ContainsKey(active)))
                 return Conflict("the copy, its parent, the active camera or the recorded append boundary changed");
 
-            if (document.Info() is not { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true })
+            if (document.Info() is not { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true } info ||
+                edit!.IsPrefab && !info.SupportsPrefabOrigin)
                 return Retry("the open document does not support guarded structural transactions");
+            if (forward && edit!.IsPrefab && !initial &&
+                edit.Copies.Any(copy => copy.State.PrefabOrigin is AssetGuid origin && !session.Assets.Prefab(origin).IsOk))
+                return Retry("the source Prefab is unavailable in this Runtime");
             var commands = edit!.Commands(forward, revision, document.Schema);
             var encoded = JsonValue.NewArray();
             foreach (Command command in commands) encoded.Push(Codec.Encode(command));
@@ -2572,7 +2578,7 @@ public sealed class EditorWorker : IDisposable
                     .SequenceEqual(GuardedDuplicateEdit.ExpectedEvents(commands)))
                 return Uncertain();
             if (forward) edit.CaptureCopyIdentities(_tree);
-            string notice = initial ? isGroup ? $"Added group with {edit.Copies.Count} nodes."
+            string notice = initial ? isGroup ? edit.IsPrefab ? $"Instantiated Prefab with {edit.Copies.Count} nodes." : $"Added group with {edit.Copies.Count} nodes."
                 : $"Duplicated {edit.Copies.Count} nodes." : $"{operation}: {edit.Copies.Count} nodes.";
             return (new(BatchReplayState.Committed, notice), edit);
         }
@@ -3649,6 +3655,52 @@ public sealed class EditorWorker : IDisposable
         }
         catch (RemoteException error) { return new DocumentObservation(DocumentAvailability.Unavailable, Diagnostic: error.Message); }
     });
+
+    public void SavePrefab(string name, HierarchyRow row, DocumentToken token, long lifetime, ulong selection,
+        Action<string> settled)
+    {
+        var filter = _hierarchyFilter;
+        Enqueue(session =>
+        {
+            void Report(string text) => _post(() => settled(text));
+            bool Current() => !_stopping && lifetime == MeshDocumentLifetime &&
+                selection == _requestedSelectionGeneration && RowCurrent(row, selection) && StructureAllowed(filter) &&
+                !_gizmoActive && _requestedGroup is null && !_reparentQueued && !_siblingMoveQueued;
+            if (!Current() || _document is not RemoteAuthoringDocument document ||
+                document.ObserveEvents() is not { } events)
+            {
+                Report("Prefab registration refused: the selection or document changed.");
+                return;
+            }
+            PollDocument(session, events, pollApply: false);
+            if (document.Info() is not { SupportsPrefabRegistration: true })
+            {
+                Report("Prefab registration requires an explicitly authorized development Runtime.");
+                return;
+            }
+            try
+            {
+                Outcome<PrefabRegistration, SaveAsError> result;
+                lock (_lock)
+                {
+                    if (!Current())
+                    {
+                        Report("Prefab registration refused: the selection or document changed.");
+                        return;
+                    }
+                    result = session.Authoring.CreatePrefab(name, row.Node, token);
+                }
+                Report(result.IsOk && result.Value is { } receipt
+                    ? $"Registered {name} ({receipt.Prefab}), revision {receipt.DocumentRevision}. Build and Open the saved scene to use it."
+                    : "Prefab registration refused: " + result.Error + ".");
+            }
+            catch (GameplayException e)
+            {
+                Report(e.Message);
+                throw;
+            }
+        });
+    }
 
     public void SaveAs(string name, long lifetime, Action<string, SavedSceneReceipt?> settled) => Enqueue(session =>
     {

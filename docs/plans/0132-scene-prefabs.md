@@ -1,10 +1,10 @@
 # Plan 0132 — Create and Instantiate Static Scene Prefabs
 
 - **Spec:** [Spec 0132](../specs/0132-scene-prefabs.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Proposed)
+- **Joint Human Review:** J1–J4 approved on `7cf1472e`. The maintainer merged [#427](https://github.com/slmao/Atlantis/pull/427) as `377379e4`. [Joint approval](https://github.com/slmao/Atlantis/pull/427#issuecomment-7064986853)
+- **ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Accepted)
 - **Design baseline:** `e132b2f5`, maintainer merge of [#426](https://github.com/slmao/Atlantis/pull/426)
 
 ## Objective

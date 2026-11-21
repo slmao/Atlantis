@@ -16,22 +16,29 @@ public static partial class Codec
         IsLegacyAssetRebuildRefusal(envelope) || envelope.Find("result") is null &&
         envelope.Find("error")?.Find("code") is { IsString: true, AsString: "UnknownMethod" };
 
-    public static A.StaticGroup? DecodeStaticGroup(JsonValue value, AssetGuid requested)
+    public static A.StaticGroup? DecodeStaticGroup(JsonValue value, AssetGuid requested, bool prefab = false)
     {
+        int min = prefab ? 1 : 2;
         if (requested.IsNil || !Exact(value, 3) || value.Find("scene") is not JsonValue identity ||
             DecodeAsset(identity) != requested || value.Find("name") is not { IsString: true } name ||
-            !ValidImportName(name.AsString) || value.Find("nodes") is not { IsArray: true } nodes ||
-            nodes.Items.Count is < 2 or > 63 || Encoding.UTF8.GetByteCount(Json.Write(value)) > 64 * 1024)
+            !(prefab ? ValidSaveAsName(name.AsString) : ValidImportName(name.AsString)) ||
+            value.Find("nodes") is not { IsArray: true } nodes ||
+            nodes.Items.Count < min || nodes.Items.Count > (prefab ? 64 : 63) ||
+            Encoding.UTF8.GetByteCount(Json.Write(value)) > 64 * 1024)
             return null;
         var parsed = new List<A.StaticGroupNode>(nodes.Items.Count);
         int renderables = 0;
         foreach (var node in nodes.Items)
         {
-            if (!Exact(node, 5) || node.Find("parent") is not JsonValue parent ||
+            if (!Exact(node, prefab ? 6 : 5) || node.Find("parent") is not JsonValue parent ||
                 node.Find("renderable") is not JsonValue renderable ||
                 GroupVector(node.Find("position")) is not Vector3 position ||
                 GroupVector(node.Find("eulerRadians")) is not Vector3 euler ||
-                GroupVector(node.Find("scale")) is not Vector3 scale || scale.X == 0 || scale.Y == 0 || scale.Z == 0)
+                GroupVector(node.Find("scale")) is not Vector3 scale ||
+                !prefab && (scale.X == 0 || scale.Y == 0 || scale.Z == 0))
+                return null;
+            var label = node.Find("name");
+            if (prefab && (label is not { IsString: true } || !Atlantis.Gameplay.Authoring.NodeNames.IsValid(label.AsString)))
                 return null;
             int? parentIndex = null;
             if (!parent.IsNull)
@@ -51,9 +58,9 @@ public static partial class Codec
                 binding = new(meshId, materialId);
                 ++renderables;
             }
-            parsed.Add(new(parentIndex, position, euler, scale, binding));
+            parsed.Add(new(parentIndex, position, euler, scale, binding, label?.AsString ?? ""));
         }
-        if (renderables < 2) return null;
+        if (renderables < min || prefab && parsed.Count(node => node.Parent is null) != 1) return null;
         foreach (var node in parsed)
         {
             int depth = 0;
@@ -85,11 +92,13 @@ public static partial class Codec
             .Set("type", JsonValue.String(AssetTypeText(v.Type))).Set("source", JsonValue.String(v.Source));
         if (v.DisplayName is string name) result.Set("displayName", JsonValue.String(name));
         if (v.LogicalPath is string path) result.Set("logicalPath", JsonValue.String(path));
+        if (v.IsPrefab) result.Set("isPrefab", JsonValue.Bool(true));
         return result;
     }
     public static JsonValue Encode(A.AssetDetails v)
     {
-        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source) { DisplayName = v.DisplayName, LogicalPath = v.LogicalPath });
+        JsonValue result = Encode(new A.AssetSummary(v.Guid, v.Type, v.Source)
+            { DisplayName = v.DisplayName, LogicalPath = v.LogicalPath, IsPrefab = v.IsPrefab });
         JsonValue deps = JsonValue.NewArray();
         foreach (AssetGuid guid in v.Dependencies) deps.Push(Encode(guid));
         return result.Set("artifactSchema", JsonValue.Number((ulong)v.ArtifactSchema))
@@ -109,7 +118,11 @@ public static partial class Codec
         var path = v.Find("logicalPath");
         if (path is not null && (known != A.AssetType.Texture || !path.IsString ||
             !ValidTextureLogicalPath(path.AsString) || RegisteredColorToken(s.AsString) is null)) return null;
-        return new A.AssetSummary(guid, known, s.AsString) { DisplayName = optional?.AsString, LogicalPath = path?.AsString };
+        var prefab = v.Find("isPrefab");
+        if (CountMember(v, "isPrefab") > 1 || prefab is not null &&
+            (known != A.AssetType.Scene || prefab.Kind != JsonKind.Bool)) return null;
+        return new A.AssetSummary(guid, known, s.AsString)
+            { DisplayName = optional?.AsString, LogicalPath = path?.AsString, IsPrefab = prefab?.AsBool ?? false };
     }
     public static A.AssetDetails? DecodeAssetDetails(JsonValue v)
     {
@@ -130,7 +143,8 @@ public static partial class Codec
                 string.CompareOrdinal(deps[^1].ToString(), guid.ToString()) >= 0) return null;
             deps.Add(guid);
         }
-        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps) { DisplayName = s.DisplayName, LogicalPath = s.LogicalPath };
+        return new A.AssetDetails(s.Guid, s.Type, s.Source, (uint)artifact, schema, tool.AsString, deps)
+            { DisplayName = s.DisplayName, LogicalPath = s.LogicalPath, IsPrefab = s.IsPrefab };
     }
     public static JsonValue Encode(A.AssetError e) => JsonValue.String(e.ToString());
     public static A.AssetError? DecodeAssetError(JsonValue v) => v.IsString ? v.AsString switch

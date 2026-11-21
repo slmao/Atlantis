@@ -25,6 +25,7 @@ struct AssetSummary {
   std::string source;
   std::optional<std::string> displayName{};
   std::optional<std::string> logicalPath{};
+  bool isPrefab = false;
   friend bool operator==(const AssetSummary&, const AssetSummary&) = default;
 };
 struct AssetDetails {
@@ -37,6 +38,7 @@ struct AssetDetails {
   std::vector<asset_system::AssetGuid> dependencies;
   std::optional<std::string> displayName{};
   std::optional<std::string> logicalPath{};
+  bool isPrefab = false;
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
 
@@ -56,6 +58,7 @@ struct StaticGroupNode {
   std::array<float, 3> eulerRadians;
   std::array<float, 3> scale;
   std::optional<StaticGroupRenderable> renderable;
+  std::string name{};
   friend bool operator==(const StaticGroupNode&, const StaticGroupNode&) = default;
 };
 struct StaticGroup {
@@ -68,9 +71,9 @@ using StaticGroupResult = Result<StaticGroup, StaticGroupError>;
 [[nodiscard]] std::string_view toString(StaticGroupError error) noexcept;
 [[nodiscard]] std::optional<StaticGroupError> staticGroupError(std::string_view name) noexcept;
 [[nodiscard]] std::optional<json::Value> encodeStaticGroup(const StaticGroup& group,
-                                                          const asset_system::AssetGuid& requested);
+                                                          const asset_system::AssetGuid& requested, bool prefab = false);
 [[nodiscard]] std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload,
-                                                           const asset_system::AssetGuid& requested);
+                                                           const asset_system::AssetGuid& requested, bool prefab = false);
 
 inline constexpr std::uint32_t kPreviewDimension = 256;
 inline constexpr std::size_t kPreviewPngMaxBytes = 512 * 1024;
@@ -449,6 +452,9 @@ class AssetConnection {
   // Spec 0130. Read from the same catalog as getAsset. Check RemoteSession
   // failure before using a transport failure's CatalogUnavailable sentinel.
   [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
+    return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::StaticGroupResult prefab(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
   }
   // Spec 0091 / ADR-0151: a synchronous geometry still from this Runtime's

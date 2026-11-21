@@ -4,6 +4,8 @@
 
 #include <filesystem>
 
+namespace atlantis::asset_system { class AssetCatalog; }
+
 namespace atlantis::runtime {
 
 bool runningFromSceneDevelopmentBuild(const std::filesystem::path& runtimeDirectory);
@@ -19,5 +21,11 @@ Result<connection::authoring::CreatedScene, connection::authoring::CreateSceneEr
     const std::filesystem::path& assetsRoot, const std::filesystem::path& catalogSource,
     const std::filesystem::path& cookedCatalog, std::string_view name,
     asset_system::AssetGuid scene, std::string source);
+
+Result<connection::authoring::PrefabRegistration, connection::authoring::SaveAsError> publishPrefab(
+    const std::filesystem::path& assetsRoot, const std::filesystem::path& catalogSource,
+    const std::filesystem::path& cookedCatalog, std::string_view name,
+    asset_system::AssetGuid guid, std::string source, std::uint64_t revision,
+    const asset_system::AssetCatalog& snapshot);
 
 }  // namespace atlantis::runtime

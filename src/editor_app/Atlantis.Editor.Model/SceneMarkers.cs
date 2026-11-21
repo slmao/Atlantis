@@ -94,6 +94,7 @@ public sealed class LocalTransforms
 public sealed record HierarchyRow(EntityGuid Node, EntityGuid? Parent, int Depth, string Label)
 {
     public string Name { get; init; } = "";
+    public AssetGuid? PrefabOrigin { get; init; }
     public IReadOnlyList<TypeId> ComponentTypes { get; init; } = Array.Empty<TypeId>();
     public object Incarnation { get; init; } = new();
 }
@@ -144,6 +145,7 @@ public static class SceneMarkers
             rows.Add(new HierarchyRow(node, tree.ParentOf(node), depth, tree.Label(node, schema))
             {
                 Name = tree.NameOf(node),
+                PrefabOrigin = tree.PrefabOriginOf(node),
                 ComponentTypes = tree.ComponentsOf(node).ToArray(),
                 Incarnation = tree.IncarnationOf(node)!
             });

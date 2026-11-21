@@ -10,6 +10,7 @@
 namespace atlantis::runtime {
 
 class SceneRecoveryStore;
+class AssetHost;
 
 // Plan 0065 P5 (Spec 0065 R1, R2; ADR-0129 D2, D3; ADR-0131 D3, D5): the
 // atlantis_runtime executable as the authoring session's host. Executable-
@@ -24,6 +25,8 @@ struct AuthoringSources {
   atlantis::authoring::SourceRoots roots;
   std::filesystem::path cookedCatalog;
   bool allowSceneSaveAs = false;
+  bool allowPrefabRegistration = false;
+  AssetHost* assets = nullptr;
 };
 
 // The session is created lazily, on the first connect() -- an atlantis_runtime

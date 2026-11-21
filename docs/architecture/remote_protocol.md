@@ -220,6 +220,7 @@ hosts (ADR-0129). `<N>` is a node's entity GUID, `<SA>` a scene address
 | `authoring.apply` | — | `{"ok":null}` or `{"err":"<ApplyError>"}` |
 | `authoring.save` | — | `{"ok":null}` or `{"err":"<SaveError>"}` |
 | `authoring.createScene` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>}}` or `{"err":"<CreateSceneError>"}` |
+| `authoring.createPrefab` | `name: <logical name>, node: <EntityGuid>, expected: <DocumentToken>` | `{"ok":{"prefab":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
 | `authoring.saveAs` | `name: <logical name>` | `{"ok":{"scene":<GUID>,"source":<path>,"documentRevision":<u64>}}` or `{"err":"<SaveAsError>"}` |
 
 **Semantics** are `AuthoringConnection`'s (Spec 0065 R1–R9):
@@ -298,6 +299,7 @@ the same Runtime launch before taking another explicit action.
 | `assets.list` | `{}` | `{"ok":[<AssetSummary>…]}` in strictly increasing GUID order |
 | `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
 | `assets.staticGroup` | `{"guid":"<non-nil canonical Scene GUID>"}` | `{"ok":<StaticGroup>}` |
+| `assets.prefab` | `{"guid":"<non-nil canonical Prefab GUID>"}` | `{"ok":<StaticGroup>}` with a `name` on each node and one root, up to 64 nodes |
 
 List and get may return `{"err":"CatalogUnavailable"}`; get may also return
 `{"err":"UnknownAsset"}`. Exactly one result arm is present. Invalid parameters
@@ -961,6 +963,22 @@ ordinary property events in write order. Apply stays separate.
 
 [ADR-0164](../adr/0164-guarded-duplicate-transactions.md) adds the optional
 `supportsGuardedDuplicateTransactions` member to the open document.
+
+Spec 0132 uses that guard for Prefab instantiation. An append can specify
+`{"kind":"SetPrefabOrigin","node":<EntityGuid>,"prefab":<AssetGuid>}` once on
+a newly created root. The host verifies the Prefab in the current saved
+build. Node summaries and `NodeCreated` optionally include `prefabOrigin`.
+The document optionally advertises `supportsPrefabOrigin` and
+`supportsPrefabRegistration`. Omitted capabilities are unavailable.
+
+`authoring.createPrefab` requires separate checkout write permission and
+refuses a mismatched document token with `StaleDocument` and an ineligible
+subtree with `UnsupportedSubtree`. After a missing or invalid receipt, check
+both files in the canonical registration unit and confirm the request has
+settled before retrying. The registration does not modify the document.
+An explicit Saved Scenes Build/Open makes the Prefab visible in a new
+snapshot. List/get rows optionally include `isPrefab: true` and retain
+`type: "scene"` for existing clients.
 Only literal true enables the new guard. Discovery is independent of
 the earlier guards and is scoped to the current open document.
 

@@ -1,11 +1,11 @@
 # Spec 0132 — Create and Instantiate Static Scene Prefabs
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0132](../plans/0132-scene-prefabs.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Proposed)
+- **Approval:** J1–J4 approved on `7cf1472e`. [Joint approval](https://github.com/slmao/Atlantis/pull/427#issuecomment-7064986853)
+- **Related ADR:** [ADR-0181](../adr/0181-static-prefab-registration-and-provenance.md) (Accepted)
 
 ## Summary
 

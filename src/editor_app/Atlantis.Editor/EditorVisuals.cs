@@ -294,7 +294,8 @@ internal static class EditorVisuals
     {
         var label = Ellipsis(AssetName(asset));
         label.Margin = new Thickness(6, 0);
-        var kind = Secondary(asset.Type.ToString());
+        string kindText = AssetBrowseProjection.AssetKind(asset);
+        var kind = Secondary(kindText);
         kind.VerticalAlignment = VerticalAlignment.Center;
         var row = Columns("Auto,*,Auto", LineIcon(asset.Type switch
         {
@@ -303,7 +304,7 @@ internal static class EditorVisuals
             _ => File
         }), label, kind);
         ToolTip.SetTip(row, asset.Source + "\n" + asset.Guid);
-        AutomationProperties.SetName(row, AssetName(asset) + ", " + asset.Type);
+        AutomationProperties.SetName(row, AssetName(asset) + ", " + kindText);
         return row;
     }
 

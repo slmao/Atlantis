@@ -222,6 +222,15 @@ std::optional<ac::Error> checkSchema(const scene::AuthoringScene& document) {
   for (const scene::ConstraintRule& rule : scene::sceneSchema().constraints) {
     if (const auto refusal = checkConstraint(rule, document, index)) return refusal;
   }
+  for (const auto& node : document.nodes) {
+    if (!node.prefabOrigin) continue;
+    if (*node.prefabOrigin == AssetGuid{}) return ac::Error::InvalidGuardedDuplicateBatch;
+    for (auto parent = node.parent; parent;) {
+      const auto& ancestor = document.nodes[*index.find(*parent)];
+      if (ancestor.prefabOrigin) return ac::Error::InvalidGuardedDuplicateBatch;
+      parent = ancestor.parent;
+    }
+  }
   return std::nullopt;
 }
 

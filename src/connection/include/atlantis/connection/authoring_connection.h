@@ -49,6 +49,8 @@ struct DocumentInfo {
   bool supportsGuardedPropertyTransactions = false;
   bool supportsGuardedTransformTransactions = false;
   bool supportsGuardedDuplicateTransactions = false;
+  bool supportsPrefabOrigin = false;
+  bool supportsPrefabRegistration = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -57,6 +59,7 @@ struct NodeSummary {
   EntityGuid node;
   std::optional<EntityGuid> parent;
   std::string name;  // Spec 0069: empty means unnamed; identity remains the GUID
+  std::optional<AssetGuid> prefabOrigin{};
   friend bool operator==(const NodeSummary&, const NodeSummary&) = default;
 };
 
@@ -101,6 +104,10 @@ struct SetNodeName {
   EntityGuid node;
   std::string name;
 };
+struct SetPrefabOrigin {
+  EntityGuid node;
+  AssetGuid prefab;
+};
 enum class SiblingDirection : std::uint8_t { Up, Down };
 
 struct SwapAdjacentSiblings {
@@ -142,7 +149,7 @@ inline constexpr std::size_t kMaxGuardedDuplicateNodes = 64;
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
                  SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
-                 RequireTransformBatchRevision, RequireDuplicateBatchRevision>;
+                 RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin>;
 
 // ---------------------------------------------------------------- events
 
@@ -154,6 +161,7 @@ struct PropertyChanged {
 struct NodeCreated {  // followed by one ComponentAdded per initial component
   EntityGuid node;
   std::uint64_t position = 0;
+  std::optional<AssetGuid> prefabOrigin{};
   friend bool operator==(const NodeCreated&, const NodeCreated&) = default;
 };
 struct NodeDestroyed {
@@ -408,7 +416,7 @@ struct RecoveryReceipt {
 [[nodiscard]] std::string_view toString(RecoverySource state) noexcept;
 enum class SaveAsError : std::uint8_t {
   Unavailable, InvalidName, NoDocument, ImportedSceneNotSavable, UnsafeTarget,
-  Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome,
+  Busy, NameConflict, IdentityConflict, WriteFailed, Unsupported, UnknownOutcome, StaleDocument, UnsupportedSubtree,
 };
 struct SavedScene {
   asset_system::AssetGuid scene;
@@ -419,6 +427,12 @@ struct SavedScene {
 [[nodiscard]] bool validSaveAsName(std::string_view name) noexcept;
 [[nodiscard]] std::string saveAsSource(std::string_view name);
 [[nodiscard]] std::string_view toString(SaveAsError error) noexcept;
+struct PrefabRegistration {
+  AssetGuid prefab;
+  std::string source;
+  std::uint64_t documentRevision = 0;
+};
+[[nodiscard]] std::string prefabSource(std::string_view name);
 
 enum class CreateSceneError : std::uint8_t {
   Unavailable, InvalidName, UnsafeTarget, Busy, NameConflict, IdentityConflict, WriteFailed,
@@ -566,6 +580,10 @@ class AuthoringConnection {
   virtual Result<authoring::SavedScene, authoring::SaveAsError> saveAs(std::string_view name) = 0;
   virtual Result<authoring::CreatedScene, authoring::CreateSceneError> createScene(std::string_view) {
     return Result<authoring::CreatedScene, authoring::CreateSceneError>::Err(authoring::CreateSceneError::Unavailable);
+  }
+  virtual Result<authoring::PrefabRegistration, authoring::SaveAsError> createPrefab(
+      std::string_view, const authoring::EntityGuid&, const authoring::DocumentToken&) {
+    return Result<authoring::PrefabRegistration, authoring::SaveAsError>::Err(authoring::SaveAsError::Unsupported);
   }
 };
 

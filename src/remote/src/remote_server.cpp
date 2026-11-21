@@ -295,6 +295,18 @@ namespace ac = atlantis::connection::authoring;
   if (method == "authoring.save") {
     return Outcome::Ok(inBand(authoring.save(), &encodeNull, &codec::encodeSaveError));
   }
+  if (method == "authoring.createPrefab") {
+    const auto* name = p.find("name");
+    const auto* node = p.find("node");
+    const auto* expected = p.find("expected");
+    const auto guid = node ? codec::decodeEntity(*node) : std::nullopt;
+    const auto token = expected ? codec::decodeDocumentToken(*expected) : std::nullopt;
+    if (!p.isObject() || p.asObject().size() != 3 || !name || !name->isString() || !guid ||
+        *guid == ac::EntityGuid{} || !token)
+      return Outcome::Err("createPrefab requires name, node and expected document");
+    return Outcome::Ok(inBand(authoring.createPrefab(name->asString(), *guid, *token),
+        [](const ac::PrefabRegistration& receipt) { return codec::encode(receipt); }, &codec::encodeSaveAsError));
+  }
   if (method == "authoring.createScene") {
     const auto* name = p.find("name");
     if (!name || !name->isString()) return Outcome::Err("createScene requires a name");
@@ -775,17 +787,18 @@ struct RemoteServer::State {
       return reply(client.assets ? client.assets->importStatus(guid ? std::optional{ca::ImportId{*guid}} : std::nullopt)
           : ca::ImportStatusResult::Err(ca::ImportError::Unavailable));
     }
-    if (name == "assets.staticGroup") {
+    if (name == "assets.staticGroup" || name == "assets.prefab") {
       namespace ca = connection::assets;
+      const bool prefab = name == "assets.prefab";
       const auto* member = p.find("guid");
       const auto guid = member ? codec::decodeAsset(*member) : std::nullopt;
       if (!p.isObject() || p.asObject().size() != 1 || !guid || *guid == asset_system::AssetGuid{})
         return errorResponse(requestId, "BadRequest", "static group requires one non-nil canonical Scene GUID");
       if (!client.assets && openAssets) client.assets = openAssets();
-      auto result = client.assets ? client.assets->staticGroup(*guid)
+      auto result = client.assets ? (prefab ? client.assets->prefab(*guid) : client.assets->staticGroup(*guid))
                                   : ca::StaticGroupResult::Err(ca::StaticGroupError::CatalogUnavailable);
       if (result.isOk()) {
-        if (auto group = ca::encodeStaticGroup(result.value(), *guid))
+        if (auto group = ca::encodeStaticGroup(result.value(), *guid, prefab))
           return response(requestId, codec::ok(std::move(*group)));
       }
       const auto error = result.isErr() ? result.error() : ca::StaticGroupError::InvalidGroup;

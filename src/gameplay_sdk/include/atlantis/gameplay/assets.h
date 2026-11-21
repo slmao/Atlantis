@@ -20,6 +20,9 @@ class Assets {
   [[nodiscard]] connection::assets::StaticGroupResult staticGroup(const asset_system::AssetGuid& guid) const {
     return connection_.staticGroup(guid);
   }
+  [[nodiscard]] connection::assets::StaticGroupResult prefab(const asset_system::AssetGuid& guid) const {
+    return connection_.prefab(guid);
+  }
 
   [[nodiscard]] connection::assets::MeshPreviewResult previewMesh(const asset_system::AssetGuid& guid) {
     return connection_.previewMesh(guid);

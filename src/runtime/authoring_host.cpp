@@ -1,4 +1,5 @@
 #include "authoring_host.h"
+#include "asset_host.h"
 #include "scene_save_as.h"
 #include "scene_recovery_store.h"
 
@@ -82,6 +83,24 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
         return publishSceneStarter(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
                                    name, scene, std::move(source));
       });
+    }
+    if (sources_.assets && std::holds_alternative<authoring::HandAuthored>(session_->source().provenance) &&
+        runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR)) {
+      session_->setPrefabLookup([this](const as::AssetGuid& guid) {
+        return sources_.assets->connect()->prefab(guid).isOk();
+      });
+      if (sources_.allowPrefabRegistration) {
+        session_->setPrefabSink([this](std::string_view name, as::AssetGuid guid, std::string source,
+                                       std::uint64_t revision) {
+          const auto snapshot = sources_.assets->catalog();
+          if (!snapshot) {
+            using namespace connection::authoring;
+            return Result<PrefabRegistration, SaveAsError>::Err(SaveAsError::WriteFailed);
+          }
+          return publishPrefab(sources_.roots.assetsRoot, sources_.catalogSource, sources_.cookedCatalog,
+                               name, guid, std::move(source), revision, *snapshot);
+        });
+      }
     }
     ATLANTIS_LOG_INFO("authoring: session created for scene {}", as::toString(application_.sceneGuid()));
   }

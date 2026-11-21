@@ -54,6 +54,7 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public string? AssetBuildProfile { get; init; }
     public string? AssetGeneration { get; init; }
     public bool AllowSceneSaveAs { get; init; }
+    public bool AllowPrefabRegistration { get; init; }
     public string? SavedSceneCheckout { get; init; }
     public string? SavedSceneCMake { get; init; }
     public string? SavedSceneAppHost { get; init; }
@@ -137,6 +138,9 @@ public sealed partial class MainWindow : Window
     private long _createRequest;
     private bool _creatingObject;
     private readonly Button _duplicate = new() { Content = "Duplicate subtree", IsEnabled = false };
+    private readonly TextBox _prefabName = new() { PlaceholderText = "Prefab name", MinWidth = 116, MaxLength = 48 };
+    private readonly Button _savePrefab = new() { Content = "Save as Prefab", Focusable = false, IsEnabled = false };
+    private bool _savingPrefab;
     private readonly Button _destroy = new() { Content = "Destroy subtree" };
     private readonly TextBlock _duplicateState = EditorVisuals.Secondary("");
     private bool _duplicating;
@@ -540,6 +544,8 @@ public sealed partial class MainWindow : Window
         _gizmoSnap.IsCheckedChanged += (_, _) => SendGizmoSettings();
         SetupSceneObjectMenu();
         _duplicate.Click += (_, _) => DuplicateSelectedSubtree();
+        _prefabName.TextChanged += (_, _) => UpdateSavePrefab();
+        _savePrefab.Click += (_, _) => SaveSelectedPrefab();
         ToolTip.SetShowOnDisabled(_duplicate, true);
         _undo.Click += (_, _) => _worker?.Undo();
         _redo.Click += (_, _) => _worker?.Redo();
@@ -696,7 +702,7 @@ public sealed partial class MainWindow : Window
         var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(
             _duplicate, _destroy, _toRoot, _pickUp, _moveHere, _moveUp, _moveDown));
         structuralButtons.MaxHeight = 130;
-        var structural = EditorVisuals.Stack(4, structuralButtons, _duplicateState);
+        var structural = EditorVisuals.Stack(4, structuralButtons, EditorVisuals.Actions(_prefabName, _savePrefab), _duplicateState);
         var actions = new ToggleButton { Content = "Actions" };
         structural.IsVisible = false;
         actions.IsCheckedChanged += (_, _) => structural.IsVisible = actions.IsChecked == true;
@@ -1038,6 +1044,7 @@ public sealed partial class MainWindow : Window
         {
             AssetBuildProfile = _options.AssetBuildProfile, AssetGeneration = _options.AssetGeneration,
             AllowSceneSaveAs = _options.AllowSceneSaveAs,
+            AllowPrefabRegistration = _options.AllowPrefabRegistration,
         };
         Task.Run(() =>
         {
@@ -1112,6 +1119,7 @@ public sealed partial class MainWindow : Window
         _creatingObject = false;
         ++_duplicateRequest;
         _duplicating = false;
+        _savingPrefab = false;
         ShowDuplicateState("");
         UpdateHierarchyActions();
         ++_referenceLaunch;
@@ -2060,6 +2068,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateHierarchyActions()
     {
+        UpdateSavePrefab();
         UpdateWorkspaceReset();
         UpdateViewportNavigationActions();
         UpdateHierarchyFilterStatus();
@@ -2133,6 +2142,40 @@ public sealed partial class MainWindow : Window
     {
         _duplicateState.Text = notice;
         _duplicateState.IsVisible = notice.Length > 0;
+    }
+
+    private string? PrefabRegistrationRefusal() => !_options.AllowPrefabRegistration
+        ? "Launch the Editor with --allow-prefab-registration to register a Prefab."
+        : _documentState.State?.Provenance != Atlantis.Gameplay.Authoring.Provenance.HandAuthored ||
+          _referenceSessionFailed || _worker is null
+            ? "Open an editable hand-authored scene."
+        : _hierarchyFilter.Active || _selection.Nodes.Count != 1 || SelectedReparentRow() is null
+            ? "Select one visible subtree with the Hierarchy filter cleared."
+        : GroupEditRefusal();
+
+    private void UpdateSavePrefab()
+    {
+        string? refusal = PrefabRegistrationRefusal();
+        _savePrefab.IsEnabled = !_savingPrefab && refusal is null && Codec.ValidSaveAsName(_prefabName.Text);
+        ToolTip.SetTip(_savePrefab, refusal ?? "Use lowercase letters, numbers or underscores, starting with a letter.");
+    }
+
+    private void SaveSelectedPrefab()
+    {
+        if (_savingPrefab || PrefabRegistrationRefusal() is not null || _worker is not { } worker ||
+            SelectedReparentRow() is not { } row || _documentState.State is not { } document ||
+            _prefabName.Text is not string name || !Codec.ValidSaveAsName(name)) return;
+        _savingPrefab = true;
+        UpdateSavePrefab();
+        long lifetime = _meshDocumentLifetime;
+        ShowDuplicateState("Registering Prefab…");
+        worker.SavePrefab(name, row, document.Token, lifetime, _selection.Generation, notice =>
+        {
+            if (!ReferenceEquals(worker, _worker)) return;
+            _savingPrefab = false;
+            ShowDuplicateState(notice);
+            UpdateSavePrefab();
+        });
     }
 
     private void DuplicateSelectedSubtree()
@@ -3005,7 +3048,7 @@ public sealed partial class MainWindow : Window
         }
         if (!_assetBrowser.SelectionVisible) return;
         if (_assetsList.SelectedItem is AssetSummary summary)
-            _assetDetails.Children.Add(EditorVisuals.Details(summary.Type + "\n" + summary.Source + "\n" + summary.Guid +
+            _assetDetails.Children.Add(EditorVisuals.Details(AssetBrowseProjection.AssetKind(summary) + "\n" + summary.Source + "\n" + summary.Guid +
                 (AssetBrowseProjection.EffectiveLogicalPath(summary) is string location ? "\nAssets path: " + location : "")));
         if (_assetBrowser.Details is not Atlantis.Gameplay.Assets.AssetDetails d)
         { _assetDetails.Children.Add(new TextBlock { Text = _assetBrowser.DetailState }); return; }
@@ -4080,7 +4123,8 @@ public sealed partial class MainWindow : Window
         Process? child = null;
         try
         {
-            var opened = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!, recent));
+            var opened = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!, recent,
+                allowPrefabRegistration: _options.AllowPrefabRegistration));
             child = opened.Child;
             if (opened.Refusal is { } refusal)
             {
@@ -4217,7 +4261,7 @@ public sealed partial class MainWindow : Window
         if (_pendingGroupRead is not { } read || read.Scene != asset.Guid || read.Lifetime != lifetime)
         {
             RetireGroupAsset();
-            var request = new StaticGroupIntent(asset.Guid, lifetime);
+            var request = new StaticGroupIntent(asset.Guid, lifetime, asset.IsPrefab);
             _pendingGroupRead = request;
             worker.ReadStaticGroup(request, result =>
             {
@@ -4231,6 +4275,7 @@ public sealed partial class MainWindow : Window
         string? refusal = GroupEditRefusal();
         if (refusal is not null) _pendingGroupAdd?.Cancel();
         _addGroup.IsVisible = _staticGroupAvailable;
+        _addGroup.Content = asset.IsPrefab ? "Instantiate Prefab" : "Add Group to Scene";
         _addGroup.IsEnabled = _staticGroupAvailable && _pendingGroupAdd is null && refusal is null;
         ToolTip.SetTip(_addGroup, refusal);
     }
@@ -4239,10 +4284,10 @@ public sealed partial class MainWindow : Window
     {
         RefreshGroupAsset();
         if (!_addGroup.IsEnabled || _worker is not { } worker || _pendingGroupRead is not { } read) return;
-        var intent = new StaticGroupIntent(read.Scene, read.Lifetime);
+        var intent = new StaticGroupIntent(read.Scene, read.Lifetime, read.IsPrefab);
         ulong selection = _selection.Generation;
         _pendingGroupAdd = intent;
-        _addMeshState.Text = "Adding group…";
+        _addMeshState.Text = intent.IsPrefab ? "Instantiating Prefab…" : "Adding group…";
         if (!worker.AddStaticGroup(intent, selection, (root, notice) =>
         {
             if (!ReferenceEquals(_worker, worker) || !ReferenceEquals(_pendingGroupAdd, intent)) return;
@@ -5001,6 +5046,12 @@ public sealed partial class MainWindow : Window
         title.TextWrapping = TextWrapping.Wrap;
         _inspectorPanel.Children.Add(EditorVisuals.Stack(1, title, EditorVisuals.Secondary("Scene node")));
         _inspectorPanel.Children.Add(EditorVisuals.Disclosure("Node details", EditorVisuals.Details(subject.ToString())));
+        if (_hierarchyRows.FirstOrDefault(row => row.Node == subject)?.PrefabOrigin is AssetGuid origin)
+        {
+            bool available = _assetBrowser.Items.Any(asset => asset.Guid == origin && asset.IsPrefab);
+            _inspectorPanel.Children.Add(EditorVisuals.Secondary($"Source Prefab {origin}" +
+                (available ? "" : " (unavailable in this Runtime)")));
+        }
         var nameRow = new Grid { ColumnDefinitions = new ColumnDefinitions("90,*"), Margin = new Thickness(0, 2) };
         nameRow.Children.Add(new TextBlock { Text = "Name", VerticalAlignment = VerticalAlignment.Center });
         var nameBox = new TextBox { Text = snapshot.Name, PlaceholderText = "Unnamed", MinWidth = 80 };

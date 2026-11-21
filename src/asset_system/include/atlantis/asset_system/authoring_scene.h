@@ -25,6 +25,7 @@ struct AuthoringNode {
   std::optional<Renderable> renderable;
   std::optional<Light> light;
   std::string name;  // authoring-only display label; empty means unnamed (Spec 0069)
+  std::optional<AssetGuid> prefabOrigin{};
   friend bool operator==(const AuthoringNode&, const AuthoringNode&) = default;
 };
 

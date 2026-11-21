@@ -1,6 +1,7 @@
 #include "asset_host.h"
 #include "asset_rebuild_host.h"
 #include "material_authoring.h"
+#include "prefab_projection.h"
 #include "static_group_projection.h"
 
 #include <atlantis/assert.h>
@@ -50,10 +51,11 @@ struct AssetHost::State final : connection::AssetConnection {
       }
       details_.push_back({r.guid, type, as::toString(r.source), r.artifactSchema, r.sourceSchema, r.tool, r.dependencies,
                           rebuild_ ? rebuild_->displayName(r.guid) : std::nullopt,
-                          rebuild_ ? rebuild_->logicalPath(r.guid) : std::nullopt});
+                          rebuild_ ? rebuild_->logicalPath(r.guid) : std::nullopt,
+                          prefabs::nameOf(r).has_value()});
     }
     std::sort(details_.begin(), details_.end(), [](const auto& a, const auto& b) { return a.guid < b.guid; });
-    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName, d.logicalPath});
+    for (const auto& d : details_) summaries_.push_back({d.guid, d.type, d.source, d.displayName, d.logicalPath, d.isPrefab});
     catalog_ = std::make_shared<const as::AssetCatalog>(std::move(loaded.value()));
     ready_ = true;
   }
@@ -78,6 +80,14 @@ struct AssetHost::State final : connection::AssetConnection {
     const auto path = std::filesystem::absolute(static_groups::pathFromUtf8(path_), ec);
     if (ec) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
     return static_groups::project(path.lexically_normal().parent_path(), *catalog_, guid);
+  }
+  ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override {
+    initialize();
+    if (!catalog_) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
+    std::error_code ec;
+    const auto path = std::filesystem::absolute(static_groups::pathFromUtf8(path_), ec);
+    if (ec) return ac::StaticGroupResult::Err(ac::StaticGroupError::CatalogUnavailable);
+    return prefabs::project(path.lexically_normal().parent_path(), *catalog_, guid);
   }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override {
     using E = ac::PreviewError;
@@ -337,6 +347,7 @@ class BorrowedAssets final : public connection::AssetConnection {
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
   ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override { return host_.staticGroup(guid); }
+  ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override { return host_.prefab(guid); }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
   ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
                                                     const as::AssetGuid& materialGuid) override {
@@ -446,5 +457,9 @@ AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild, PreviewProvide
     : state_(std::make_unique<State>(std::move(path), rebuild, std::move(preview))) {}
 AssetHost::~AssetHost() = default;
 std::unique_ptr<connection::AssetConnection> AssetHost::connect() { return std::make_unique<BorrowedAssets>(*state_); }
+std::shared_ptr<const as::AssetCatalog> AssetHost::catalog() const {
+  state_->initialize();
+  return state_->catalog_;
+}
 void AssetHost::beginServiceInterval() noexcept { state_->previewAdmitted_ = false; }
 }  // namespace atlantis::runtime

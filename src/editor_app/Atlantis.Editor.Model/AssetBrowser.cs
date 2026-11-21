@@ -16,11 +16,12 @@ public sealed class AssetDetailIntent
 }
 
 /// <summary>May be retired by the UI while a group read or guarded Add is queued.</summary>
-public sealed class StaticGroupIntent(AssetGuid scene, long lifetime)
+public sealed class StaticGroupIntent(AssetGuid scene, long lifetime, bool isPrefab = false)
 {
     private readonly object _gate = new();
     public AssetGuid Scene { get; } = scene;
     public long Lifetime { get; } = lifetime;
+    public bool IsPrefab { get; } = isPrefab;
     private volatile bool _current = true;
     public bool Current => _current;
     public void Cancel()

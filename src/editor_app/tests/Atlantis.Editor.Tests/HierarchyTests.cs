@@ -746,6 +746,22 @@ public static partial class Program
         var intent = new StaticGroupIntent(guid, 20);
         intent.Cancel();
         Check(!intent.Current, "a retired Assets intent cannot be reused for a queued add");
+
+        var prefab = group with { Nodes = [second with { Parent = 1, Name = "Chair" }, first with { Name = "Original" }] };
+        var instance = HierarchyCommands.AddStaticGroup(schema, tree, prefab, prefab: true).Edit;
+        Check(instance is { Copies.Count: 2, IsPrefab: true },
+            "prefab adds the two template nodes without an extra wrapper");
+        if (instance is null) return;
+        var root = instance.Roots.Single();
+        var append = instance.Commands(true, 10, schema);
+        Check(instance.Copies[0].State.Name == "Chair" && instance.Copies[0].State.Parent == root &&
+            instance.Copies[1].State.Name == "storefront 2" && instance.Copies[1].State.PrefabOrigin == guid &&
+            instance.Copies[1].State.Parent is null && append.OfType<SetPrefabOrigin>().Single() == new SetPrefabOrigin(root, guid) &&
+            GuardedDuplicateEdit.ExpectedEvents(append).OfType<NodeCreated>().Single(node => node.Node == root).PrefabOrigin == guid,
+            "prefab keeps order and child labels and verifies the root origin on creation");
+        Check(instance.Commands(false, 11, schema).OfType<DestroyNode>().Count() == 2 &&
+            instance.Commands(true, 12, schema).Skip(1).SequenceEqual(append.Skip(1)),
+            "prefab Undo removes the block and Redo uses the same identities and source");
     }
 
     private static void GuardedDuplicateChecks()

@@ -20,6 +20,7 @@ public sealed class DocumentTree
         public EntityGuid? Parent;
         public object ParentStamp = new();
         public string Name = "";
+        public AssetGuid? PrefabOrigin;
         public List<TypeId> Components = new();
         public readonly Dictionary<TypeId, ComponentState> Lifetimes = new();
     }
@@ -61,6 +62,7 @@ public sealed class DocumentTree
     public object? ParentStamp(EntityGuid node) => _rows.GetValueOrDefault(node)?.ParentStamp;
 
     public string NameOf(EntityGuid node) => _rows.TryGetValue(node, out Row? row) ? row.Name : "";
+    public AssetGuid? PrefabOriginOf(EntityGuid node) => _rows.GetValueOrDefault(node)?.PrefabOrigin;
 
     public IReadOnlyList<TypeId> ComponentsOf(EntityGuid node) =>
         _rows.TryGetValue(node, out Row? row) ? row.Components : Array.Empty<TypeId>();
@@ -137,7 +139,8 @@ public sealed class DocumentTree
     public bool ReconcileOrder(IReadOnlyList<NodeSummary> nodes)
     {
         if (nodes.Count != _rows.Count || nodes.Select(n => n.Node).Distinct().Count() != nodes.Count ||
-            nodes.Any(n => !_rows.TryGetValue(n.Node, out Row? row) || row.Parent != n.Parent || row.Name != n.Name))
+            nodes.Any(n => !_rows.TryGetValue(n.Node, out Row? row) || row.Parent != n.Parent || row.Name != n.Name ||
+                row.PrefabOrigin != n.PrefabOrigin))
             return false;
         _order.Clear();
         _order.AddRange(nodes.Select(n => n.Node));
@@ -194,7 +197,8 @@ public sealed class DocumentTree
         for (int i = 0; i < nodes.Count; ++i)
         {
             _order.Add(nodes[i].Node);
-            var row = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name, Components = components[i].ToList() };
+            var row = new Row { Parent = nodes[i].Parent, Name = nodes[i].Name,
+                PrefabOrigin = nodes[i].PrefabOrigin, Components = components[i].ToList() };
             foreach (TypeId type in row.Components) row.Lifetimes.TryAdd(type, new ComponentState());
             _rows[nodes[i].Node] = row;
         }
@@ -238,7 +242,7 @@ public sealed class DocumentTree
                 ++NodeLifetimeGeneration;
                 _order.Insert(position, created.Node);
                 // A node is created with its Transform (a required component, no ComponentAdded for it); the rest arrive as events.
-                var fresh = new Row();
+                var fresh = new Row { PrefabOrigin = created.PrefabOrigin };
                 if (SceneSchema.TypeOf(document.Schema, "Transform") is TypeId transform)
                 {
                     fresh.Components.Add(transform);

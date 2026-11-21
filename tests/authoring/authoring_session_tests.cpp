@@ -433,6 +433,90 @@ TEST_CASE("authoring: guarded duplicate admits atomic append and suffix removal"
   CHECK(drain(c, stream).empty());
 }
 
+TEST_CASE("authoring: prefab capture leaves committed values and the original document intact", "[authoring][session][prefab]") {
+  auto original = baseScene();
+  original.nodes[kMeshNode].name = "Table";
+  scene::AuthoringNode chair;
+  chair.guid = entity(4);
+  chair.name = "Chair";
+  chair.parent = entity(2);
+  chair.transform.localPosition = {1.5f, 0.125f, -3.0f};
+  chair.renderable = scene::Renderable{asset(1), {}};
+  original.nodes.insert(original.nodes.begin(), chair);
+  Fixture f(original);
+  auto& c = *f.connection;
+  using E = ac::SaveAsError;
+  using R = atlantis::Result<ac::PrefabRegistration, E>;
+  const auto before = c.documentState().value().value();
+  CHECK(c.createPrefab("seating", entity(2), before.token).error() == E::Unavailable);
+  std::string captured;
+  as::AssetGuid capturedGuid{};
+  std::size_t writes = 0;
+  f.session.setPrefabSink([&](std::string_view name, as::AssetGuid guid, std::string text, std::uint64_t revision) {
+    ++writes;
+    captured = std::move(text);
+    capturedGuid = guid;
+    return R::Ok({guid, ac::prefabSource(name), revision});
+  });
+  CHECK(c.document()->supportsPrefabRegistration);
+  REQUIRE_FALSE(refusalOf(c, {ac::SetNodeName{entity(2), "Edited Table"}}));
+  CHECK(c.createPrefab("seating", entity(2), before.token).error() == E::StaleDocument);
+  const auto current = c.documentState().value().value();
+  CHECK(c.createPrefab("seating", entity(1), current.token).error() == E::UnsupportedSubtree);
+  REQUIRE(c.createPrefab("seating", entity(2), current.token).isOk());
+  CHECK(writes == 1);
+  const auto saved = documentOf(captured);
+  REQUIRE(saved.nodes.size() == 2);
+  CHECK(saved.nodes[0].name == chair.name);
+  CHECK(saved.nodes[0].transform == chair.transform);
+  CHECK(saved.nodes[0].renderable == chair.renderable);
+  CHECK(saved.nodes[0].parent == saved.nodes[1].guid);
+  CHECK(saved.nodes[1].name == "Edited Table");
+  CHECK_FALSE(saved.nodes[1].parent.has_value());
+  CHECK(saved.nodes[1].guid != entity(2));
+  CHECK(capturedGuid != as::AssetGuid{});
+  CHECK(c.documentState().value() == current);
+  CHECK(readText(f.source) == textOf(original));
+  CHECK_FALSE(c.applyStatus().value().request.has_value());
+}
+
+TEST_CASE("authoring: prefab origin is guarded, preserved by old edits, and omitted from cooked bytes", "[authoring][session][prefab]") {
+  Fixture f;
+  auto& c = *f.connection;
+  const auto source = asset(88);
+  f.session.setPrefabLookup([source](const auto& id) { return id == source; });
+  REQUIRE(c.document()->supportsPrefabOrigin);
+  const auto token = c.documentState().value()->token;
+  const auto count = f.document().nodes.size();
+  const ac::CreateNode create{entity(55), count, {}};
+  const ac::SetPrefabOrigin associate{entity(55), source};
+  const ac::RequireDuplicateBatchRevision guard{token.documentRevision};
+  CHECK(refusalOf(c, {create, associate}) == ac::Error::InvalidGuardedDuplicateBatch);
+  CHECK(refusalOf(c, {guard, create, ac::SetPrefabOrigin{entity(55), asset(89)}}) ==
+        ac::Error::InvalidGuardedDuplicateBatch);
+  CHECK(refusalOf(c, {guard, create, associate, ac::SetParent{entity(55), entity(1)}}) ==
+        ac::Error::InvalidGuardedDuplicateBatch);
+  CHECK(c.documentState().value()->token == token);
+  CHECK(f.document().nodes.size() == count);
+  const auto stream = c.subscribe({});
+  REQUIRE_FALSE(refusalOf(c, {guard, create, associate}));
+  CHECK(drain(c, stream) == std::vector<ac::Event>{ac::NodeCreated{entity(55), count, source}});
+  REQUIRE_FALSE(refusalOf(c, {ac::SetNodeName{entity(55), "Placed Prefab"}}));
+  const auto linked = f.document();
+  auto plain = linked;
+  plain.nodes.back().prefabOrigin.reset();
+  const auto cooked = as::cookSceneToMemory(linked, f.session.source().scene);
+  const auto old = as::cookSceneToMemory(plain, f.session.source().scene);
+  REQUIRE(cooked.isOk());
+  REQUIRE(old.isOk());
+  CHECK(cooked.value().artifactBytes == old.value().artifactBytes);
+  REQUIRE(c.save().isOk());
+  CHECK(readText(f.source).starts_with("atlantis_scene_source_version: 9\n"));
+  REQUIRE(c.open().isOk());
+  CHECK(f.document() == linked);
+  CHECK(c.listNodes().value().back().prefabOrigin == source);
+}
+
 TEST_CASE("authoring: relative sibling moves rotate only occupied slots and settle once", "[authoring][session]") {
   auto initial = baseScene();
   scene::AuthoringNode middle;
