@@ -49,6 +49,7 @@ public sealed partial class MainWindow
     private ProjectSourceKey? _selectedProjectRow;
     private ProjectRootKind? _projectRoot;
     private string? _projectDirectory;
+    private AssetGuid? _projectOutputSelection;
     private bool _projectVisible, _syncProject, _projectPending, _projectStale;
     private long _projectSession, _projectIntent;
     private string? _projectScanNotice;
@@ -62,16 +63,19 @@ public sealed partial class MainWindow
         _projectPanel.IsVisible = false;
         ConfigureDirectoryTree(_runtimeDirectoryTree, "Catalog directories");
         ConfigureDirectoryTree(_projectDirectoryTree, "Project source directories");
-        _runtimeDirectoryTree.SelectionChanged += (_, _) =>
+        _runtimeDirectoryTree.SelectionChanged += (_, e) =>
         {
-            if (_syncProject || _runtimeDirectoryTree.SelectedItem is not AssetFolder folder) return;
+            if (_syncProject || !ReferenceEquals(e.Source, _runtimeDirectoryTree) ||
+                _runtimeDirectoryTree.SelectedItem is not AssetFolder folder || _assetBrowser.Directory == folder.Path) return;
             ++_projectIntent;
             _assetBrowser.Directory = folder.Path;
             RenderAssets();
         };
-        _projectDirectoryTree.SelectionChanged += (_, _) =>
+        _projectDirectoryTree.SelectionChanged += (_, e) =>
         {
-            if (_syncProject || _projectDirectoryTree.SelectedItem is not AssetFolder folder) return;
+            if (_syncProject || !ReferenceEquals(e.Source, _projectDirectoryTree) ||
+                _projectDirectoryTree.SelectedItem is not AssetFolder folder ||
+                (folder.Root, folder.Path) == (_projectRoot, _projectDirectory)) return;
             ++_projectIntent;
             _projectRoot = folder.Root;
             _projectDirectory = folder.Path;
@@ -117,19 +121,27 @@ public sealed partial class MainWindow
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
         _projectSearch.TextChanged += (_, _) => ProjectFiltersChanged();
-        _projectKind.SelectionChanged += (_, _) => ProjectFiltersChanged();
-        _projectRows.SelectionChanged += (_, _) =>
+        _projectKind.SelectionChanged += (_, e) =>
         {
-            if (_syncProject) return;
+            if (ReferenceEquals(e.Source, _projectKind)) ProjectFiltersChanged();
+        };
+        _projectRows.SelectionChanged += (_, e) =>
+        {
+            if (_syncProject || !ReferenceEquals(e.Source, _projectRows)) return;
+            var key = (_projectRows.SelectedItem as SourceRow)?.Key;
+            if (_selectedProjectRow == key) return;
             ++_projectIntent;
-            _selectedProjectRow = (_projectRows.SelectedItem as SourceRow)?.Key;
+            _selectedProjectRow = key;
             UpdateProjectActions();
         };
-        _projectOutputs.SelectionChanged += (_, _) =>
+        _projectOutputs.SelectionChanged += (_, e) =>
         {
-            if (_syncProject) return;
+            if (_syncProject || !ReferenceEquals(e.Source, _projectOutputs)) return;
+            var guid = (_projectOutputs.SelectedItem as AssetSummary)?.Guid;
+            if (_projectOutputSelection == guid) return;
+            _projectOutputSelection = guid;
             ++_projectIntent;
-            _showRuntimeAsset.IsEnabled = _projectOutputs.SelectedItem is AssetSummary && !_projectPending && !_projectStale;
+            _showRuntimeAsset.IsEnabled = guid is not null && !_projectPending && !_projectStale;
         };
         _projectRefresh.Click += (_, _) => RefreshProject();
         _showRuntimeAsset.Click += (_, _) => NavigateToRuntime();
@@ -383,6 +395,7 @@ public sealed partial class MainWindow
                 _projectOutputs.SelectedItem = outputs.FirstOrDefault(row => row.Guid == prior) ??
                     (outputs.Length == 1 ? outputs[0] : null);
             }
+            _projectOutputSelection = (_projectOutputs.SelectedItem as AssetSummary)?.Guid;
             _projectOutputs.IsVisible = outputs.Length > 0;
         }
         finally { _syncProject = false; }
