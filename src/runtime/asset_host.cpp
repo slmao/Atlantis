@@ -2,11 +2,13 @@
 #include "asset_rebuild_host.h"
 #include "material_authoring.h"
 #include "prefab_projection.h"
+#include "project_assets_scan.h"
 #include "scene_recovery_store.h"
 #include "static_group_projection.h"
 
 #include <atlantis/assert.h>
 #include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/guid_mint.h>
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_material.h>
 #include <atlantis/asset_system/load_texture.h>
@@ -14,6 +16,8 @@
 
 #include <algorithm>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <optional>
 #include <utility>
 
@@ -33,6 +37,78 @@ struct AssetHost::State final : connection::AssetConnection {
   mutable std::vector<ac::AssetSummary> summaries_;
   mutable std::map<as::AssetGuid, FrozenPrefab> prefabs_;
   mutable bool ready_ = false;
+
+  std::filesystem::path projectCheckout_;
+  std::atomic<bool> stopProjectRead_{false};
+  std::thread projectWorker_;
+  mutable std::mutex projectMutex_;
+  std::optional<ac::ProjectScan> pendingProject_;
+  std::optional<ac::ProjectScan> lastProject_;
+
+  ~State() override {
+    stopProjectRead_ = true;
+    if (projectWorker_.joinable()) projectWorker_.join();
+  }
+
+  ac::ProjectScanResult scanProject() override {
+    using R = ac::ProjectScanResult;
+    using E = ac::ProjectScanError;
+    if (projectCheckout_.empty()) return R::Err(E::Unsupported);
+    initialize();
+    const ac::ProjectScan pending{as::mintAssetGuids(1).front(), true, false, {}};
+    const auto checkout = [root = projectCheckout_, entries = projectPrefabs()](
+        std::size_t limit, const std::atomic<bool>& stop) {
+      return project_assets::checkout(root, entries, limit, stop);
+    };
+    if (rebuild_ && rebuild_->hasProjectSources()) return rebuild_->scanProject(pending, catalog_, checkout);
+    std::lock_guard lock(projectMutex_);
+    if (pendingProject_) return R::Err(E::Busy);
+    if (projectWorker_.joinable()) projectWorker_.join();
+    pendingProject_ = pending;
+    try {
+      projectWorker_ = std::thread([this, scan = pending, checkout, ready = ready_]() mutable {
+        scan.pending = false;
+        scan.catalogReady = ready;
+        ac::ProjectRoot prefabs{ac::ProjectRootKind::Prefabs, ac::ProjectCoverage::Unavailable,
+                                "The checkout source scan failed.", {}};
+        try {
+          prefabs = checkout(ac::kProjectEntries, stopProjectRead_);
+        } catch (const std::exception&) {
+          // Leave the checkout explicitly unavailable.
+        }
+        scan.roots = {{ac::ProjectRootKind::Inbox, ac::ProjectCoverage::Unavailable,
+                       "This Runtime has no trusted managed profile.", {}}, std::move(prefabs)};
+        project_assets::verifyLimits(scan);
+        std::lock_guard settled(projectMutex_);
+        lastProject_ = std::move(scan);
+        pendingProject_.reset();
+      });
+    } catch (const std::system_error&) {
+      pendingProject_.reset();
+      return R::Err(E::Unavailable);
+    }
+    return R::Ok(pending);
+  }
+  ac::ProjectScanResult projectScanStatus(const as::AssetGuid& id) const override {
+    using R = ac::ProjectScanResult;
+    using E = ac::ProjectScanError;
+    if (projectCheckout_.empty()) return R::Err(E::Unsupported);
+    if (rebuild_ && rebuild_->hasProjectSources()) return rebuild_->projectScanStatus(id);
+    std::lock_guard lock(projectMutex_);
+    if (pendingProject_ && pendingProject_->id == id) return R::Ok(*pendingProject_);
+    if (lastProject_ && lastProject_->id == id) return R::Ok(*lastProject_);
+    return R::Err(E::UnknownScan);
+  }
+  project_assets::FrozenPrefabs projectPrefabs() const {
+    project_assets::FrozenPrefabs out;
+    if (!catalog_) return out;
+    for (const auto& [guid, prefab] : prefabs_) {
+      const auto* record = catalog_->find(guid);
+      if (record && record->source.root == as::CatalogRoot::Assets && record->source.subKey.empty())
+        out.emplace(record->source.path, project_assets::PrefabEvidence{guid, prefab.revision});
+    }
+    return out;
+  }
 
   void initialize() const {
     if (initialized_) return;
@@ -373,6 +449,8 @@ class BorrowedAssets final : public connection::AssetConnection {
   ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override { return host_.staticGroup(guid); }
   ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override { return host_.prefab(guid); }
   ac::PrefabRevisionResult prefabRevision(const as::AssetGuid& guid) const override { return host_.prefabRevision(guid); }
+  ac::ProjectScanResult scanProject() override { return host_.scanProject(); }
+  ac::ProjectScanResult projectScanStatus(const as::AssetGuid& id) const override { return host_.projectScanStatus(id); }
   ac::MeshPreviewResult previewMesh(const as::AssetGuid& guid) override { return host_.previewMesh(guid); }
   ac::MeshMaterialPreviewResult previewMeshMaterial(const as::AssetGuid& meshGuid,
                                                     const as::AssetGuid& materialGuid) override {
@@ -481,6 +559,9 @@ class BorrowedAssets final : public connection::AssetConnection {
 AssetHost::AssetHost(std::string path, AssetRebuildHost* rebuild, PreviewProvider preview)
     : state_(std::make_unique<State>(std::move(path), rebuild, std::move(preview))) {}
 AssetHost::~AssetHost() = default;
+void AssetHost::enableProjectReads(std::filesystem::path checkoutAssetRoot) {
+  state_->projectCheckout_ = std::move(checkoutAssetRoot);
+}
 std::unique_ptr<connection::AssetConnection> AssetHost::connect() { return std::make_unique<BorrowedAssets>(*state_); }
 const AssetHost::FrozenPrefab* AssetHost::frozenPrefab(const as::AssetGuid& guid) const {
   state_->initialize();

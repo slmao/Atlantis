@@ -20,6 +20,10 @@ class Assets {
   [[nodiscard]] connection::assets::StaticGroupResult staticGroup(const asset_system::AssetGuid& guid) const {
     return connection_.staticGroup(guid);
   }
+  [[nodiscard]] connection::assets::ProjectScanResult scanProject() { return connection_.scanProject(); }
+  [[nodiscard]] connection::assets::ProjectScanResult projectScanStatus(const asset_system::AssetGuid& id) const {
+    return connection_.projectScanStatus(id);
+  }
   [[nodiscard]] connection::assets::PrefabRevisionResult prefabRevision(const asset_system::AssetGuid& guid) const {
     return connection_.prefabRevision(guid);
   }

@@ -10,6 +10,8 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <thread>
+#include <chrono>
 #include <algorithm>
 
 namespace {
@@ -33,6 +35,52 @@ as::AssetCatalogRecord record(as::CatalogAssetType type, std::string key) {
   return r;
 }
 }
+TEST_CASE("project scan checks launch permission, independent roots and exact IDs", "[runtime][assets][project]") {
+  CatalogFixture fixture;
+  const auto root = std::filesystem::canonical(fixture.dir) / "asset_root";
+  const auto prefab = root / "prefabs";
+  std::filesystem::create_directories(prefab);
+  struct Clean {
+    std::filesystem::path root;
+    ~Clean() { std::error_code error; std::filesystem::remove_all(root, error); }
+  } clean{root};
+  fixture.write({});
+  AssetHost host(fixture.path.string());
+  auto first = host.connect();
+  CHECK(first->scanProject().error() == ac::ProjectScanError::Unsupported);
+  CHECK(first->listAssets().isOk());
+  host.enableProjectReads(root);
+  auto second = host.connect();
+  const auto wait = [&](const as::AssetGuid& id) {
+    for (int i = 0; i < 400; ++i) {
+      const auto next = second->projectScanStatus(id);
+      REQUIRE(next.isOk());
+      if (!next.value().pending) return next.value();
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    FAIL("Project scan did not settle");
+    return ac::ProjectScan{};
+  };
+  const auto begin = first->scanProject();
+  REQUIRE(begin.isOk());
+  REQUIRE(begin.value().pending);
+  CHECK_FALSE(begin.value().catalogReady);
+  CHECK(begin.value().roots.empty());
+  const auto empty = wait(begin.value().id);
+  REQUIRE(empty.roots.size() == 2);
+  CHECK(empty.catalogReady);
+  CHECK(empty.roots[0].coverage == ac::ProjectCoverage::Unavailable);
+  CHECK(empty.roots[1].coverage == ac::ProjectCoverage::Complete);
+  CHECK(empty.roots[1].sources.empty());
+  std::filesystem::create_directories(prefab / "one/two/three/four/five");
+  const auto next = first->scanProject();
+  REQUIRE(next.isOk());
+  const auto partial = wait(next.value().id);
+  CHECK(partial.roots[1].coverage == ac::ProjectCoverage::Incomplete);
+  CHECK(first->projectScanStatus(empty.id).error() == ac::ProjectScanError::UnknownScan);
+  CHECK(ac::decodeProjectScan(ac::encodeProjectScan(partial)) == partial);
+}
+
 TEST_CASE("assets: first list freezes full catalog facts across connections", "[runtime][assets]") {
   CatalogFixture f;
   atlantis::runtime::AssetHost host(f.path.string());

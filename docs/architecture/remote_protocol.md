@@ -339,6 +339,23 @@ The closed refusals are `CatalogUnavailable`, `UnknownAsset`,
 replies map to `Unsupported`; successful reads leave the connection and
 scene unchanged. Publishing does not change the running catalog.
 
+**Project source inventory (0134).** `assets.scanProject` takes an empty
+object. `assets.projectScanStatus` takes `{"id":"<scan GUID>"}`. The first
+success contains `id`, `pending:true`, `catalogReady:false`, and empty
+`roots`. Status for that exact ID returns pending or a settled reply with
+independent `Inbox` and `Prefabs` roots and the active catalog's readiness.
+Each root has `kind`, `coverage` (`Complete`, `Incomplete` or `Unavailable`),
+`diagnostic` and `sources`. Rows contain `path`, `kind` (`Directory`, `Gltf`,
+`Png`, `Prefab`, `Other`), nullable `importName`, opaque `evidence`,
+`registration` (`Unknown`, `SourceOnly`, `Registered`), nullable `producer`,
+`outputs` of verified asset GUIDs, and `newerPrefabSource`. Associations
+require complete coverage and a ready catalog. Paths are root-relative.
+Bounds are four directory levels, 2,048 combined entries, 4,096 links,
+512 UTF-8 bytes per path and 2 MiB per result. Closed refusals are
+`Unsupported`, `Unavailable`, `Busy` and `UnknownScan`. Earlier hosts do
+not recognize the two verbs. The opt-in confers read access only. The
+existing catalog verbs retain their request and reply shapes.
+
 Spec 0120 adds optional `logicalPath` to list/get for an overridden
 registered base color texture. It is a canonical full path in the Assets
 `textures/` namespace, separate from the original `source` used by producers

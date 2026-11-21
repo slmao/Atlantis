@@ -817,6 +817,20 @@ struct RemoteServer::State {
       return reply(client.assets ? client.assets->importStatus(guid ? std::optional{ca::ImportId{*guid}} : std::nullopt)
           : ca::ImportStatusResult::Err(ca::ImportError::Unavailable));
     }
+    if (name == "assets.scanProject" || name == "assets.projectScanStatus") {
+      namespace ca = connection::assets;
+      const bool start = name == "assets.scanProject";
+      const auto* member = p.find("id");
+      const auto scanId = member ? codec::decodeAsset(*member) : std::nullopt;
+      if (!p.isObject() || (start ? !p.asObject().empty() : p.asObject().size() != 1 || !scanId ||
+          *scanId == asset_system::AssetGuid{} || asset_system::toString(*scanId) != member->asString()))
+        return errorResponse(requestId, "BadRequest", "expected empty scan parameters or one canonical scan ID");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto result = client.assets ? (start ? client.assets->scanProject() : client.assets->projectScanStatus(*scanId))
+          : ca::ProjectScanResult::Err(ca::ProjectScanError::Unsupported);
+      return response(requestId, result.isOk() ? codec::ok(ca::encodeProjectScan(result.value()))
+          : codec::err(Value::string(std::string(ca::toString(result.error())))));
+    }
     if (name == "assets.prefabRevision") {
       namespace ca = connection::assets;
       const auto* member = p.find("guid");

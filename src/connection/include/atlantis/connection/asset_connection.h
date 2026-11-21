@@ -42,6 +42,50 @@ struct AssetDetails {
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
 
+inline constexpr std::size_t kProjectEntries = 2048;
+inline constexpr std::size_t kProjectLinks = 4096;
+inline constexpr std::size_t kProjectResultBytes = 2 * 1024 * 1024;
+enum class ProjectRootKind : std::uint8_t { Inbox, Prefabs };
+enum class ProjectCoverage : std::uint8_t { Complete, Incomplete, Unavailable };
+enum class ProjectSourceKind : std::uint8_t { Directory, Gltf, Png, Prefab, Other };
+enum class ProjectRegistration : std::uint8_t { Unknown, SourceOnly, Registered };
+enum class ProjectScanError : std::uint8_t { Unsupported, Unavailable, Busy, UnknownScan };
+
+struct ProjectSource {
+  std::string path;
+  ProjectSourceKind kind = ProjectSourceKind::Other;
+  std::optional<std::string> importName;
+  std::string evidence;
+  ProjectRegistration registration = ProjectRegistration::Unknown;
+  std::optional<asset_system::AssetGuid> producer;
+  std::vector<asset_system::AssetGuid> outputs;
+  bool newerPrefabSource = false;
+  friend bool operator==(const ProjectSource&, const ProjectSource&) = default;
+};
+struct ProjectRoot {
+  ProjectRootKind kind;
+  ProjectCoverage coverage;
+  std::string diagnostic;
+  std::vector<ProjectSource> sources;
+  friend bool operator==(const ProjectRoot&, const ProjectRoot&) = default;
+};
+struct ProjectScan {
+  asset_system::AssetGuid id;
+  bool pending = true;
+  bool catalogReady = false;
+  std::vector<ProjectRoot> roots;
+  friend bool operator==(const ProjectScan&, const ProjectScan&) = default;
+};
+using ProjectScanResult = Result<ProjectScan, ProjectScanError>;
+[[nodiscard]] std::string_view toString(ProjectScanError value) noexcept;
+[[nodiscard]] std::optional<ProjectScanError> projectScanError(std::string_view name) noexcept;
+[[nodiscard]] std::string_view toString(ProjectRootKind value) noexcept;
+[[nodiscard]] std::string_view toString(ProjectCoverage value) noexcept;
+[[nodiscard]] std::string_view toString(ProjectSourceKind value) noexcept;
+[[nodiscard]] bool validProjectPath(std::string_view path) noexcept;
+[[nodiscard]] json::Value encodeProjectScan(const ProjectScan& scan);
+[[nodiscard]] std::optional<ProjectScan> decodeProjectScan(const json::Value& value);
+
 inline constexpr std::size_t kStaticGroupNodeLimit = 63;
 inline constexpr std::size_t kStaticGroupByteLimit = 64 * 1024;
 enum class StaticGroupError : std::uint8_t {
@@ -458,6 +502,12 @@ class AssetConnection {
   // failure before using a transport failure's CatalogUnavailable sentinel.
   [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::ProjectScanResult scanProject() {
+    return assets::ProjectScanResult::Err(assets::ProjectScanError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::ProjectScanResult projectScanStatus(const asset_system::AssetGuid&) const {
+    return assets::ProjectScanResult::Err(assets::ProjectScanError::Unsupported);
   }
   [[nodiscard]] virtual assets::PrefabRevisionResult prefabRevision(const asset_system::AssetGuid&) const {
     return assets::PrefabRevisionResult::Err(assets::StaticGroupError::Unsupported);

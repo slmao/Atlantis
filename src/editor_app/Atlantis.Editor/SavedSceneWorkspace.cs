@@ -264,9 +264,9 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     private static SavedSceneEligibility Unavailable(string reason) => new(null, reason + " Build again.");
 
     internal SavedSceneOpenResult Open(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent = null,
-        Action? onBuildVerified = null, bool allowPrefabRegistration = false)
+        Action? onBuildVerified = null, bool allowPrefabRegistration = false, bool projectAssets = false)
     {
-        var started = StartChecked(result, apphost, recent, onBuildVerified, allowPrefabRegistration, out var identity);
+        var started = StartChecked(result, apphost, recent, onBuildVerified, allowPrefabRegistration, projectAssets, out var identity);
         if (started.Child is null || identity is null) return started;
         try { _recent.Record(identity); }
         catch (Exception e) when (IsLocalFailure(e))
@@ -275,7 +275,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
     }
 
     private SavedSceneOpenResult StartChecked(SavedSceneBuild result, string apphost, SavedSceneIdentity? recent, Action? onBuildVerified,
-        bool allowPrefabRegistration, out SavedSceneIdentity? identity)
+        bool allowPrefabRegistration, bool projectAssets, out SavedSceneIdentity? identity)
     {
         identity = null;
         FileStream lease;
@@ -314,7 +314,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         }
         catch (Exception e) when (IsLocalFailure(e))
         { return new(null, "Cannot record build protection before opening. " + e.Message); }
-        return new(Process.Start(ChildStart(apphost, result.Executable, allowPrefabRegistration)) ??
+        return new(Process.Start(ChildStart(apphost, result.Executable, allowPrefabRegistration, projectAssets)) ??
             throw new IOException("The Editor process did not start."),
             null, warning);
     }
@@ -535,13 +535,14 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         return executable;
     }
 
-    internal static ProcessStartInfo ChildStart(string editor, string runtime, bool allowPrefabRegistration = false)
+    internal static ProcessStartInfo ChildStart(string editor, string runtime, bool allowPrefabRegistration = false, bool projectAssets = false)
     {
         var start = new ProcessStartInfo(editor) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(editor)! };
         start.ArgumentList.Add("--runtime");
         start.ArgumentList.Add(runtime);
         start.ArgumentList.Add("--scene");
         start.ArgumentList.Add("saved_scene");
+        if (projectAssets) start.ArgumentList.Add("--project-assets");
         if (allowPrefabRegistration) start.ArgumentList.Add("--allow-prefab-registration");
         return start;
     }

@@ -1,11 +1,11 @@
 # Spec 0134 — Project Assets Explorer V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-22
 - **Related Plan:** [Plan 0134](../plans/0134-project-assets-explorer.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0183](../adr/0183-project-source-inventory-and-catalog-links.md) (Proposed)
+- **Approval:** Maintainer approval on `a7268957`, 2026-11-22. [Joint approval](https://github.com/slmao/Atlantis/pull/431#issuecomment-7067495383)
+- **Related ADR:** [ADR-0183](../adr/0183-project-source-inventory-and-catalog-links.md) (Accepted)
 
 ## Summary
 

@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <span>
+#include <set>
 #include <type_traits>
 #include <utility>
 
@@ -779,4 +780,160 @@ bool validFailure(ImportStage stage, ImportFailureCode code) noexcept {
   }
   return false;
 }
+
+namespace {
+using json::Value;
+using namespace std::string_view_literals;
+constexpr std::array projectErrors{"Unsupported"sv, "Unavailable"sv, "Busy"sv, "UnknownScan"sv};
+constexpr std::array projectRoots{"Inbox"sv, "Prefabs"sv};
+constexpr std::array projectCoverage{"Complete"sv, "Incomplete"sv, "Unavailable"sv};
+constexpr std::array projectKinds{"Directory"sv, "Gltf"sv, "Png"sv, "Prefab"sv, "Other"sv};
+constexpr std::array projectRegistrations{"Unknown"sv, "SourceOnly"sv, "Registered"sv};
+
+template<class Enum, std::size_t N>
+std::optional<Enum> fromProjectName(const std::array<std::string_view, N>& names, const Value* member) {
+  if (!member || !member->isString()) return {};
+  const auto found = std::ranges::find(names, member->asString());
+  return found == names.end() ? std::nullopt : std::optional{static_cast<Enum>(found - names.begin())};
+}
+
+std::optional<asset_system::AssetGuid> projectGuid(const Value* member) {
+  if (!member || !member->isString()) return {};
+  auto parsed = asset_system::parseAssetGuid(member->asString());
+  if (parsed.isErr() || parsed.value() == asset_system::AssetGuid{} ||
+      asset_system::toString(parsed.value()) != member->asString()) return {};
+  return parsed.value();
+}
+
+Value stringValue(std::string_view text) { return Value::string(std::string(text)); }
+}
+
+std::string_view toString(ProjectScanError value) noexcept { return projectErrors[static_cast<std::size_t>(value)]; }
+std::string_view toString(ProjectRootKind value) noexcept { return projectRoots[static_cast<std::size_t>(value)]; }
+std::string_view toString(ProjectCoverage value) noexcept { return projectCoverage[static_cast<std::size_t>(value)]; }
+std::string_view toString(ProjectSourceKind value) noexcept { return projectKinds[static_cast<std::size_t>(value)]; }
+std::optional<ProjectScanError> projectScanError(std::string_view name) noexcept {
+  const auto found = std::ranges::find(projectErrors, name);
+  return found == projectErrors.end() ? std::nullopt : std::optional{static_cast<ProjectScanError>(found - projectErrors.begin())};
+}
+
+bool validProjectPath(std::string_view path) noexcept {
+  if (path.empty() || path.size() > 512 || path.ends_with('/')) return false;
+  std::size_t levels = 0;
+  while (!path.empty()) {
+    const auto slash = path.find('/');
+    const auto part = path.substr(0, slash);
+    if (++levels > 5 || part.empty() || part.starts_with('.') || part.ends_with('.') || part.ends_with(' ') ||
+        part.find_first_of("\\:*?\"<>|") != std::string_view::npos ||
+        std::ranges::any_of(part, [](unsigned char c) { return c < 32 || c == 127; })) return false;
+    if (slash == std::string_view::npos) return true;
+    path.remove_prefix(slash + 1);
+  }
+  return false;
+}
+
+json::Value encodeProjectScan(const ProjectScan& scan) {
+  auto roots = Value::array();
+  for (const auto& root : scan.roots) {
+    auto sources = Value::array();
+    for (const auto& row : root.sources) {
+      auto outputs = Value::array();
+      for (const auto& guid : row.outputs) outputs.push(stringValue(asset_system::toString(guid)));
+      auto value = Value::object();
+      value.set("path", stringValue(row.path));
+      value.set("kind", stringValue(toString(row.kind)));
+      value.set("importName", row.importName ? stringValue(*row.importName) : Value());
+      value.set("evidence", stringValue(row.evidence));
+      value.set("registration", stringValue(projectRegistrations[static_cast<std::size_t>(row.registration)]));
+      value.set("producer", row.producer ? stringValue(asset_system::toString(*row.producer)) : Value());
+      value.set("outputs", std::move(outputs));
+      value.set("newerPrefabSource", Value::boolean(row.newerPrefabSource));
+      sources.push(std::move(value));
+    }
+    auto rootValue = Value::object();
+    rootValue.set("kind", stringValue(toString(root.kind)));
+    rootValue.set("coverage", stringValue(toString(root.coverage)));
+    rootValue.set("diagnostic", stringValue(root.diagnostic));
+    rootValue.set("sources", std::move(sources));
+    roots.push(std::move(rootValue));
+  }
+  auto result = Value::object();
+  result.set("id", stringValue(asset_system::toString(scan.id)));
+  result.set("pending", Value::boolean(scan.pending));
+  result.set("catalogReady", Value::boolean(scan.catalogReady));
+  result.set("roots", std::move(roots));
+  return result;
+}
+
+std::optional<ProjectScan> decodeProjectScan(const json::Value& value) {
+  if (!value.isObject() || value.asObject().size() != 4 || json::write(value).size() > kProjectResultBytes) return {};
+  const auto id = projectGuid(value.find("id"));
+  const auto* pending = value.find("pending");
+  const auto* ready = value.find("catalogReady");
+  const auto* roots = value.find("roots");
+  if (!id || !pending || !pending->isBool() || !ready || !ready->isBool() || !roots || !roots->isArray() ||
+      (pending->asBool() ? ready->asBool() || !roots->asArray().empty() : roots->asArray().size() != 2)) return {};
+  ProjectScan scan{*id, pending->asBool(), ready->asBool(), {}};
+  std::set<ProjectRootKind> usedRoots;
+  std::set<asset_system::AssetGuid> usedLinks;
+  std::size_t entries = 0;
+  for (const auto& node : roots->asArray()) {
+    if (!node.isObject() || node.asObject().size() != 4) return {};
+    const auto kind = fromProjectName<ProjectRootKind>(projectRoots, node.find("kind"));
+    const auto coverage = fromProjectName<ProjectCoverage>(projectCoverage, node.find("coverage"));
+    const auto* diagnostic = node.find("diagnostic");
+    const auto* sources = node.find("sources");
+    if (!kind || !usedRoots.insert(*kind).second || !coverage || !diagnostic || !diagnostic->isString() ||
+        diagnostic->asString().size() > 256 || !sources || !sources->isArray() ||
+        (*coverage == ProjectCoverage::Unavailable && !sources->asArray().empty())) return {};
+    ProjectRoot root{*kind, *coverage, diagnostic->asString(), {}};
+    std::set<std::string> paths;
+    for (const auto& row : sources->asArray()) {
+      if (++entries > kProjectEntries || !row.isObject() || row.asObject().size() != 8) return {};
+      const auto* path = row.find("path");
+      const auto sourceKind = fromProjectName<ProjectSourceKind>(projectKinds, row.find("kind"));
+      const auto registration = fromProjectName<ProjectRegistration>(projectRegistrations, row.find("registration"));
+      const auto* name = row.find("importName");
+      const auto* evidence = row.find("evidence");
+      const auto* producer = row.find("producer");
+      const auto* outputs = row.find("outputs");
+      const auto* newer = row.find("newerPrefabSource");
+      if (!path || !path->isString() || !validProjectPath(path->asString()) || !paths.insert(path->asString()).second ||
+          !sourceKind || !registration || !name || !evidence || !evidence->isString() ||
+          !authoring::validPrefabDigest(evidence->asString()) || !producer || !outputs || !outputs->isArray() ||
+          !newer || !newer->isBool()) return {};
+      const auto rootGuid = projectGuid(producer);
+      if ((!producer->isNull() && !rootGuid) || (*registration == ProjectRegistration::Registered) != rootGuid.has_value() ||
+          (*coverage != ProjectCoverage::Complete && *registration != ProjectRegistration::Unknown) ||
+          ((!rootGuid || !scan.catalogReady) && !outputs->asArray().empty()) ||
+          (newer->asBool() && (*sourceKind != ProjectSourceKind::Prefab || outputs->asArray().empty()))) return {};
+      ProjectSource item{path->asString(), *sourceKind, {}, evidence->asString(),
+                         *registration, rootGuid, {}, newer->asBool()};
+      if (!name->isNull()) {
+        if (!name->isString() || !validImportName(name->asString()) || *kind != ProjectRootKind::Inbox) return {};
+        const auto& slug = name->asString();
+        const bool gltf = *sourceKind == ProjectSourceKind::Gltf && item.path == slug + ".gltf";
+        const bool png = *sourceKind == ProjectSourceKind::Png && item.path == slug + "/source.png";
+        if (!gltf && !png) return {};
+        item.importName = slug;
+      }
+      for (const auto& output : outputs->asArray()) {
+        auto linked = projectGuid(&output);
+        if (!linked || !usedLinks.insert(*linked).second || usedLinks.size() > kProjectLinks) return {};
+        item.outputs.push_back(*linked);
+      }
+      if ((*kind == ProjectRootKind::Prefabs && *sourceKind != ProjectSourceKind::Directory &&
+           *sourceKind != ProjectSourceKind::Prefab) ||
+          (*kind == ProjectRootKind::Inbox && *sourceKind == ProjectSourceKind::Prefab) ||
+          (*sourceKind == ProjectSourceKind::Directory && std::ranges::count(item.path, '/') >= 4) ||
+          (*registration != ProjectRegistration::Unknown && !item.importName && *sourceKind != ProjectSourceKind::Prefab) ||
+          ((*sourceKind == ProjectSourceKind::Png || *sourceKind == ProjectSourceKind::Prefab) &&
+           (item.outputs.size() > 1 || (!item.outputs.empty() && item.outputs.front() != rootGuid)))) return {};
+      root.sources.push_back(std::move(item));
+    }
+    scan.roots.push_back(std::move(root));
+  }
+  return scan;
+}
+
 }  // namespace atlantis::connection::assets

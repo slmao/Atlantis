@@ -1,9 +1,9 @@
 # ADR 0183 — Project Source Inventory and Catalog Links
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Maintainers
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer accepted on 2026-11-22 at `a7268957`. [Joint approval](https://github.com/slmao/Atlantis/pull/431#issuecomment-7067495383)
 - **Related Spec:** [0134](../specs/0134-project-assets-explorer.md)
 
 ## Context

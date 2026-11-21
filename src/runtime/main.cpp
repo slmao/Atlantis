@@ -15,6 +15,7 @@
 #include "asset_rebuild_host.h"
 #include "cli.h"
 #include "editor_attachment.h"
+#include "scene_save_as.h"
 
 #include <atlantis/cli/script_runner.h>
 #include <atlantis/connection/runtime_connection.h>
@@ -448,6 +449,9 @@ int main(int argc, char** argv) {
                        const atlantis::asset_system::TextureAssetData* occlusion, bool studioIbl) {
          return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed, occlusion, studioIbl);
        }});
+  if (cliResult.projectAssets &&
+      atlantis::runtime::runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR))
+    assets.enableProjectReads(ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR);
   authoringSources.assets = &assets;
   atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;

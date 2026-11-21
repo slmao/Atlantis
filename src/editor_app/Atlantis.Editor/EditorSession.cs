@@ -465,6 +465,13 @@ public sealed class EditorWorker : IDisposable
     // Query work stays on this worker; posted callbacks own their values.
     public void LoadAssets(Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session => { var result = session.Assets.ListAssets(); _post(() => done(result)); });
+    public void ReadProjectScan(AssetGuid? scanId,
+        Action<Outcome<Atlantis.Gameplay.Assets.ProjectScan, Atlantis.Gameplay.Assets.ProjectScanError>> done) =>
+        Enqueue(session =>
+        {
+            var result = scanId is AssetGuid id ? session.Assets.ProjectScanStatus(id) : session.Assets.ScanProject();
+            _post(() => done(result));
+        });
     public void LoadReferenceAssets(long request, long listRequest,
         Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session =>

@@ -22,6 +22,7 @@ public static class LiveAssetSuite
 
     public static void Run(TestContext t)
     {
+        ProjectScanContract(t);
         PreviewContract(t);
         PairPreviewContract(t);
         MaterialContract(t);
@@ -64,6 +65,32 @@ public static class LiveAssetSuite
             }
             t.Check(client.Failure is not null, "malformed result is sticky");
         }
+    }
+
+    private static void ProjectScanContract(TestContext t)
+    {
+        var id = AssetGuid.Parse("00810081-0081-4081-8081-008100810081");
+        var pending = JsonValue.NewObject().Set("id", Codec.Encode(id)).Set("pending", JsonValue.Bool(true))
+            .Set("catalogReady", JsonValue.Bool(false)).Set("roots", JsonValue.NewArray());
+        JsonValue Reply(JsonValue value) => JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("ok", value));
+        WithPeer(t, id, _ => Reply(pending), client =>
+        {
+            var started = client.Assets.ScanProject();
+            t.Check(started.IsOk && started.Value.Id == id && started.Value.Pending, "exact project start returns a scoped scan ID");
+        }, exact: ("assets.scanProject", JsonValue.NewObject()));
+        var arguments = JsonValue.NewObject().Set("id", Codec.Encode(id));
+        WithPeer(t, id, _ => Reply(Json.Parse(Json.Write(pending).Replace(id.ToString(), "11111111-2222-4333-8444-555555555555"))), client =>
+        {
+            var error = t.Throws<RemoteException>(() => client.Assets.ProjectScanStatus(id), "project scan cannot settle a different ID");
+            t.Check(error?.Error == RemoteError.ProtocolError, "uncorrelated Project response is a protocol error");
+        }, exact: ("assets.projectScanStatus", arguments));
+        var legacy = Json.Parse("""{"error":{"code":"UnknownMethod","message":"unknown method"}}""");
+        WithPeer(t, id, method => method == "assets.list" ? Reply(JsonValue.NewArray()) : legacy, client =>
+        {
+            var old = client.Assets.ProjectScanStatus(id);
+            t.Check(!old.IsOk && old.Error == A.ProjectScanError.Unsupported && client.Failure is null &&
+                client.Assets.ListAssets().IsOk, "unknown-method reply remains an in-band unsupported capability");
+        }, exact: ("assets.projectScanStatus", arguments));
     }
 
     private static void PreviewContract(TestContext t)

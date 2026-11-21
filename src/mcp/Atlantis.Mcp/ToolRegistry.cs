@@ -46,6 +46,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.list", "assets.list", "List the fixed cooked-catalog snapshot in GUID order.", AssetModel),
         Declare("assets.get", "assets.get", "Read one catalog record and its direct dependencies.", AssetModel,
             ToolSchemas.Parameters(("guid", ToolSchemas.String))),
+        Declare("assets.scan_project", "assets.scanProject", "Start a bounded read of the authorized Project source roots.", AssetModel),
+        Declare("assets.project_scan_status", "assets.projectScanStatus", "Read one Project scan by its exact Runtime-scoped ID.",
+            AssetModel, ToolSchemas.Parameters(("id", ToolSchemas.String))),
         Declare("assets.static_group", "assets.staticGroup",
             "Read-only ordered local values and renderable bindings of a managed static glTF group in the active catalog. " +
             "New publications are visible after Runtime restart.",
@@ -242,6 +245,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Compose is not null) wireParameters = mapping.Compose(wireParameters);
             if (mapping.Method is "assets.prefabRevision" or "authoring.updatePrefab" or
                 "authoring.syncPrefab" or "authoring.replayPrefab") return PrefabOperation(mapping.Method, wireParameters);
+            if (mapping.Method is "assets.scanProject" or "assets.projectScanStatus")
+                return ProjectScan(mapping.Method, wireParameters);
             if (mapping.Method is "assets.staticGroup" or "assets.prefab") return StaticGroup(mapping.Method, wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
@@ -598,6 +603,24 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         var image = Codec.DecodeMaterialDraftPreview(ok, mesh!.Value, recipe!, withMaps, withMetallicRoughness, withOcclusion, withCombinedMaps);
         return image is null ? Malformed() : ForwardPreview(JsonValue.NewObject().Set("mesh", Codec.Encode(image.Mesh))
             .Set("recipe", Codec.EncodeMaterialRecipe(image.Recipe, withMaps, withMetallicRoughness, withOcclusion)), image.Width, image.Height, image.PngBytes);
+    }
+
+    private CallToolResult ProjectScan(string method, JsonValue parameters)
+    {
+        static CallToolResult Malformed() => Error("MalformedResponse: invalid Project scan result");
+        bool start = method == "assets.scanProject";
+        AssetGuid id = default;
+        if (!start && (parameters.Find("id") is not { IsString: true } member ||
+            !AssetGuid.TryParse(member.AsString, out id) || id.IsNil || id.ToString() != member.AsString))
+            return Error("InvalidArguments: expected a non-nil canonical scan ID");
+        var response = session.Request(method, parameters);
+        if (Codec.IsUnsupportedStaticGroup(response))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1) return Malformed();
+        if (result.Find("err") is JsonValue refusal)
+            return Codec.DecodeProjectScanError(refusal) is not null ? Forward(result, true) : Malformed();
+        return result.Find("ok") is JsonValue value && Codec.DecodeProjectScan(value) is { } scan &&
+            (start ? scan.Pending : scan.Id == id) ? Forward(result, false) : Malformed();
     }
 
     private CallToolResult StaticGroup(string method, JsonValue parameters)
