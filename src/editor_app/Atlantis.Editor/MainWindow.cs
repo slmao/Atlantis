@@ -3335,6 +3335,7 @@ public sealed class MainWindow : Window
         var review = new Button { Content = "Review Deletion…", IsEnabled = false };
         var remove = new Button { Content = "Delete Build", IsVisible = false };
         var cancel = new Button { Content = "Cancel Deletion", IsVisible = false };
+        var restore = new Button { Content = "Restore Build Folder", IsVisible = false };
         var close = new Button { Content = "Close" };
         var confirmation = EditorVisuals.Details("");
         confirmation.IsVisible = false;
@@ -3348,7 +3349,7 @@ public sealed class MainWindow : Window
             {
                 EditorVisuals.Stack(4, EditorVisuals.Heading("Builds eligible for cleanup"), explanation, status),
                 rows,
-                EditorVisuals.Stack(6, confirmation, outcome, EditorVisuals.Actions(refresh, review, remove, cancel, close)),
+                EditorVisuals.Stack(6, confirmation, outcome, EditorVisuals.Actions(refresh, review, remove, cancel, restore, close)),
             },
         };
         var layout = (Grid)dialog.Content;
@@ -3356,6 +3357,7 @@ public sealed class MainWindow : Window
         Grid.SetRow(layout.Children[2], 2);
 
         SavedSceneBuildCleanup.Candidate? confirmed = null;
+        Func<SavedSceneBuildCleanup.Removal>? restorePending = null;
         bool closed = false, loading = false, deleting = false;
         void UpdateControls()
         {
@@ -3365,6 +3367,8 @@ public sealed class MainWindow : Window
             review.IsVisible = confirmed is null;
             confirmation.IsVisible = remove.IsVisible = cancel.IsVisible = confirmed is not null;
             remove.IsEnabled = cancel.IsEnabled = close.IsEnabled = !deleting;
+            restore.IsVisible = restorePending is not null;
+            restore.IsEnabled = browsing && restorePending is not null;
         }
 
         async Task RefreshCandidates()
@@ -3376,6 +3380,7 @@ public sealed class MainWindow : Window
             var listing = await Task.Run(workspace.CleanupCandidates);
             if (closed) return;
             loading = false;
+            restorePending = listing.Restore;
             rows.ItemsSource = listing.Candidates;
             status.Text = listing.Issue ?? (listing.Candidates.Count == 0 ? "No build folders can be safely cleaned up." : "Select a build folder.");
             UpdateControls();
@@ -3404,6 +3409,18 @@ public sealed class MainWindow : Window
             confirmed = null;
             outcome.Text = result.Detail;
             outcome.Foreground = result.Removed ? EditorVisuals.Muted : EditorVisuals.Warning;
+            if (!closed) await RefreshCandidates();
+        };
+        restore.Click += async (_, _) =>
+        {
+            if (!restore.IsEnabled || restorePending is not { } recover) return;
+            deleting = true;
+            outcome.Text = "Checking whether the original build folder can be restored…";
+            UpdateControls();
+            var result = await Task.Run(recover);
+            deleting = false;
+            outcome.Text = result.Detail;
+            outcome.Foreground = EditorVisuals.Muted;
             if (!closed) await RefreshCandidates();
         };
         close.Click += (_, _) => dialog.Close();

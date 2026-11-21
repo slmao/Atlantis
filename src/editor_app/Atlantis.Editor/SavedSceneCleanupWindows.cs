@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading.Tasks;
 using Microsoft.Win32.SafeHandles;
@@ -102,24 +104,273 @@ internal static class SavedSceneCleanupWindows
                 throw new IOException("The build folder membership changed during inspection.");
         }
 
-        internal void Delete(Action starting)
+        public void Dispose()
         {
+            foreach (var item in _entries) item.Handle.Dispose();
+        }
+    }
+
+    internal sealed record Permission(Entry Directory, byte[] Original, byte[] Sealed);
+
+    // Directory share modes do not prevent creation of a new child by name.
+    // The live handle set and each isolated directory's own DACL are both needed.
+    internal sealed class IsolatedTree : IDisposable
+    {
+        private readonly List<(Entry Entry, SafeFileHandle Handle)> _entries = [];
+        private bool _sealed;
+        internal Entry[] Inventory => _entries.Select(item => item.Entry).ToArray();
+
+        internal IsolatedTree(string path, FileIdentity identity)
+        {
+            try
+            {
+                // MAXIMUM_ALLOWED prevents SetSecurityInfo from propagating ACLs.
+                var root = CreateFile(path, 0x02000000, 0, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                if (root.IsInvalid) { root.Dispose(); throw Win32("Cannot exclusively open the isolated build"); }
+                Scan(root, "", directory: true, depth: 0);
+                if (_entries[0].Entry.Identity != identity) throw new IOException("Isolated build identity changed.");
+            }
+            catch { Dispose(); throw; }
+        }
+
+        private void Scan(SafeFileHandle handle, string relative, bool directory, int depth)
+        {
+            Entry entry;
+            try
+            {
+                if (_entries.Count >= 100_000 || depth > 128) throw new IOException("Build folder exceeds the inspection limit.");
+                entry = Describe(handle, relative, directory);
+            }
+            catch { handle.Dispose(); throw; }
+            _entries.Add((entry, handle));
+            if (!directory) return;
+            foreach (var child in ReadChildren(handle).OrderBy(child => child.Name, StringComparer.Ordinal))
+                Scan(OpenChild(handle, child.Name, child.Directory), Path.Combine(relative, child.Name), child.Directory, depth + 1);
+        }
+
+        internal Permission[] CapturePermissions() => _entries.Where(item => item.Entry.Directory).Select(item =>
+        {
+            byte[] original = ReadSecurity(item.Handle);
+            return new Permission(item.Entry, original, SealedDescriptor(original));
+        }).ToArray();
+
+        private void ChangePermissions(Permission[] permissions, bool seal, Action? afterEach)
+        {
+            var directories = _entries.Where(item => item.Entry.Directory).ToDictionary(item => item.Entry.RelativePath, StringComparer.Ordinal);
+            var updates = new List<(SafeFileHandle Handle, byte[] Desired)>();
+            foreach (var permission in permissions)
+            {
+                if (!directories.TryGetValue(permission.Directory.RelativePath, out var target))
+                    throw new IOException("A directory recorded for permission recovery is missing.");
+                if (target.Entry.Identity != permission.Directory.Identity ||
+                    !SealedDescriptor(permission.Original).SequenceEqual(permission.Sealed))
+                    throw new IOException("A directory recorded for permission recovery changed identity or descriptor.");
+                byte[] current = ReadSecurity(target.Handle);
+                if (!current.SequenceEqual(permission.Original) && !current.SequenceEqual(permission.Sealed))
+                    throw new IOException("A directory's permissions changed. The isolated build was retained.");
+                byte[] desired = seal ? permission.Sealed : permission.Original;
+                if (!current.SequenceEqual(desired)) updates.Add((target.Handle, desired));
+            }
+            if (seal && (permissions.Length != directories.Count ||
+                        permissions.Select(permission => permission.Directory.RelativePath).Distinct(StringComparer.Ordinal).Count() != directories.Count))
+                throw new IOException("A directory has no recorded permission guard.");
+            foreach (var (handle, desired) in updates)
+            {
+                WriteSecurity(handle, desired);
+                if (!ReadSecurity(handle).SequenceEqual(desired))
+                    throw new IOException("Windows did not preserve the required security descriptor.");
+                afterEach?.Invoke();
+            }
+        }
+
+        internal void Seal(Permission[] permissions, Action? afterEach)
+        {
+            ChangePermissions(permissions, seal: true, afterEach);
+            _sealed = true;
+        }
+
+        internal void Restore(Permission[] permissions)
+        {
+            _sealed = false;
+            ChangePermissions(permissions, seal: false, afterEach: null);
+        }
+
+        internal void VerifySealed(Permission[] permissions)
+        {
+            if (!_sealed || _entries.Any(item => item.Handle.IsClosed)) throw new IOException("The build directory guard was lost.");
+            var sealedDirectories = permissions.ToDictionary(permission => permission.Directory.RelativePath, StringComparer.Ordinal);
+            var expected = _entries.Select(item => item.Entry).Where(item => item.RelativePath != "").ToLookup(
+                item => Path.GetDirectoryName(item.RelativePath)!, item => (Path.GetFileName(item.RelativePath), item.Directory), StringComparer.Ordinal);
+            foreach (var (entry, handle) in _entries)
+            {
+                if (Describe(handle, entry.RelativePath, entry.Directory) != entry)
+                    throw new IOException("The build folder changed during isolation.");
+                if (!entry.Directory) continue;
+                if (!ReadSecurity(handle).SequenceEqual(sealedDirectories[entry.RelativePath].Sealed))
+                    throw new IOException("The build directory guard changed.");
+                if (!ReadChildren(handle).ToHashSet().SetEquals(expected[entry.RelativePath]))
+                    throw new IOException("The isolated build membership changed.");
+            }
+        }
+
+        internal void Delete(Permission[] permissions, Action? disposition, Action? removed)
+        {
+            VerifySealed(permissions);
             for (int index = _entries.Count - 1; index >= 0; --index)
             {
                 var (entry, handle) = _entries[index];
-                if (entry.Directory && Directory.EnumerateFileSystemEntries(Path.Combine(_root, entry.RelativePath)).Any())
+                if (entry.Directory && ReadChildren(handle).Count != 0)
                     throw new IOException("The build folder membership changed during removal.");
-                byte disposition = 1;
-                if (!SetFileInformationByHandle(handle, 4, ref disposition, 1)) throw Win32("Cannot remove " + entry.RelativePath);
-                starting();
+                byte requested = 1;
+                disposition?.Invoke();
+                if (!SetFileInformationByHandle(handle, 4, ref requested, 1)) throw Win32("Cannot remove " + entry.RelativePath);
                 handle.Dispose();
+                removed?.Invoke();
             }
         }
 
         public void Dispose()
         {
+            _sealed = false;
             foreach (var item in _entries) item.Handle.Dispose();
         }
+    }
+
+    internal static void MoveAttempt(string source, string destination, FileIdentity identity)
+    {
+        if (Path.GetDirectoryName(source) != Path.GetDirectoryName(destination))
+            throw new IOException("The isolated location must be in the same managed attempt area.");
+        using var handle = Open(source, directory: true, deleting: true);
+        if (Describe(handle, "", directory: true).Identity != identity)
+            throw new IOException("The build directory identity changed before the rename.");
+
+        var name = Encoding.Unicode.GetBytes(destination);
+        int lengthOffset = IntPtr.Size * 2, nameOffset = lengthOffset + sizeof(int);
+        var rename = new byte[nameOffset + name.Length + sizeof(char)];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(rename.AsSpan(lengthOffset), name.Length);
+        name.CopyTo(rename, nameOffset);
+        if (!SetFileInformationByHandle(handle, 3, rename, rename.Length)) throw Win32("Cannot rename the verified build directory");
+    }
+
+    internal static SafeFileHandle HoldVacantOriginal(string path)
+    {
+        // CREATE_NEW will not open or replace a directory or file that won
+        // the original name. The private placeholder is held to delete-on-close.
+        const uint delete = 0x00010000, createNew = 1, deleteOnClose = 0x04000000, noFollow = 0x00200000;
+        var handle = CreateFile(path, delete, 0, IntPtr.Zero, createNew, deleteOnClose | noFollow, IntPtr.Zero);
+        if (!handle.IsInvalid) return handle;
+        var error = Win32("Cannot reserve the vacant original build path " + path);
+        handle.Dispose();
+        throw error;
+    }
+
+    private static List<(string Name, bool Directory)> ReadChildren(SafeFileHandle directory)
+    {
+        const int bytes = 16 * 1024;
+        var children = new List<(string, bool)>();
+        IntPtr buffer = Marshal.AllocHGlobal(bytes);
+        try
+        {
+            int information = 11; // FileIdBothDirectoryRestartInfo
+            while (GetFileInformationByHandleEx(directory, information, buffer, bytes))
+            {
+                information = 10; // FileIdBothDirectoryInfo
+                for (int offset = 0;;)
+                {
+                    const int fileName = 104;
+                    if (offset > bytes - fileName) throw new IOException("Invalid Windows directory entry.");
+                    int next = Marshal.ReadInt32(buffer, offset);
+                    int attributes = Marshal.ReadInt32(buffer, offset + 56);
+                    int length = Marshal.ReadInt32(buffer, offset + 60);
+                    if (length <= 0 || (length & 1) != 0 || length > bytes - offset - fileName)
+                        throw new IOException("Invalid Windows directory entry name.");
+                    string name = Marshal.PtrToStringUni(buffer + offset + fileName, length / 2)!;
+                    if (name is not ("." or ".."))
+                    {
+                        if (name.IndexOfAny(['/', '\\', ':', '\0']) >= 0 || ((FileAttributes)attributes).HasFlag(FileAttributes.ReparsePoint))
+                            throw new IOException("Unsupported entry in the isolated build.");
+                        children.Add((name, ((FileAttributes)attributes).HasFlag(FileAttributes.Directory)));
+                        if (children.Count > 100_000) throw new IOException("Build folder exceeds the inspection limit.");
+                    }
+                    if (next == 0) break;
+                    if (next < fileName + length || next > bytes - offset - fileName)
+                        throw new IOException("Invalid Windows directory entry offset.");
+                    offset += next;
+                }
+            }
+            if (Marshal.GetLastWin32Error() != 18) throw Win32("Cannot enumerate the verified build directory");
+            return children;
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    private static SafeFileHandle OpenChild(SafeFileHandle parent, string name, bool directory)
+    {
+        IntPtr text = Marshal.StringToHGlobalUni(name);
+        IntPtr nativeName = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+        try
+        {
+            var length = checked((ushort)(name.Length * sizeof(char)));
+            Marshal.StructureToPtr(new UnicodeString { Length = length, MaximumLength = length, Buffer = text }, nativeName, false);
+            var attributes = new ObjectAttributes { Length = Marshal.SizeOf<ObjectAttributes>(), Root = parent.DangerousGetHandle(), Name = nativeName };
+            uint access = directory ? 0x02100000u : 0x00110081u;
+            uint options = 0x00200020u | (directory ? 1u : 0x40u);
+            int status = NtCreateFile(out var handle, access, ref attributes, out _, IntPtr.Zero, 0, 0, 1, options, IntPtr.Zero, 0);
+            GC.KeepAlive(parent);
+            if (status == 0 && !handle.IsInvalid) return handle;
+            handle.Dispose();
+            throw new Win32Exception((int)RtlNtStatusToDosError(status), "Cannot exclusively open isolated entry " + name);
+        }
+        finally { Marshal.FreeHGlobal(nativeName); Marshal.FreeHGlobal(text); }
+    }
+
+    private static byte[] ReadSecurity(SafeFileHandle handle)
+    {
+        uint error = GetSecurityInfo(handle, 1, 7, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, out IntPtr descriptor);
+        if (error != 0) throw new Win32Exception((int)error, "Cannot read build directory permissions.");
+        try
+        {
+            int size = GetSecurityDescriptorLength(descriptor);
+            if (size is <= 0 or > 65536) throw new IOException("Unsupported build permission descriptor length.");
+            var result = new byte[size];
+            Marshal.Copy(descriptor, result, 0, size);
+            return result;
+        }
+        finally { _ = LocalFree(descriptor); }
+    }
+
+    private static byte[] SealedDescriptor(byte[] original)
+    {
+        var security = new RawSecurityDescriptor(original, 0);
+        const ControlFlags supported = ControlFlags.SelfRelative | ControlFlags.DiscretionaryAclPresent |
+            ControlFlags.DiscretionaryAclAutoInherited;
+        if (security.InvalidForCleanup(supported)) throw new IOException("Build directory permissions cannot be restored exactly.");
+        security.DiscretionaryAcl!.InsertAce(0, new CommonAce(AceFlags.None, AceQualifier.AccessDenied, 6,
+            new SecurityIdentifier(WellKnownSidType.WorldSid, null), false, null));
+        var result = new byte[security.BinaryLength];
+        security.GetBinaryForm(result, 0);
+        return result;
+    }
+
+    private static bool InvalidForCleanup(this RawSecurityDescriptor security, ControlFlags supported) =>
+        (security.ControlFlags & ~supported) != 0 || security.DiscretionaryAcl is null || security.Owner is null || security.Group is null;
+
+    private static void WriteSecurity(SafeFileHandle handle, byte[] descriptor)
+    {
+        var security = new RawSecurityDescriptor(descriptor, 0);
+        if (security.ControlFlags.HasFlag(ControlFlags.DiscretionaryAclAutoInherited))
+        {
+            var acl = security.DiscretionaryAcl!;
+            var bytes = new byte[acl.BinaryLength];
+            acl.GetBinaryForm(bytes, 0);
+            uint error = SetSecurityInfo(handle, 1, 4, IntPtr.Zero, IntPtr.Zero, bytes, IntPtr.Zero);
+            if (error != 0) throw new Win32Exception((int)error, "Cannot set build directory permissions.");
+            return;
+        }
+        // SetSecurityInfo adds the auto-inherited control bit even when it did
+        // not exist. Use a DACL-only native update for that descriptor form.
+        int status = NtSetSecurityObject(handle, 4, descriptor);
+        if (status != 0) throw new Win32Exception((int)RtlNtStatusToDosError(status), "Cannot set build directory permissions.");
     }
 
     private static SafeFileHandle Open(string path, bool directory, bool deleting)
@@ -476,6 +727,21 @@ internal static class SavedSceneCleanupWindows
     [StructLayout(LayoutKind.Sequential)]
     private struct ProcessInformation { internal IntPtr Process, Thread; internal uint Pid, Tid; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct UnicodeString { internal ushort Length, MaximumLength; internal IntPtr Buffer; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ObjectAttributes
+    {
+        internal int Length;
+        internal IntPtr Root, Name;
+        internal uint Attributes;
+        internal IntPtr Security, Impersonation;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct IoStatusBlock { internal IntPtr Status, Information; }
+
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint mode, uint flags, IntPtr template);
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", SetLastError = true, CharSet = CharSet.Unicode)]
@@ -486,6 +752,24 @@ internal static class SavedSceneCleanupWindows
     private static extern uint GetFileType(SafeFileHandle file);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, ref byte information, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, byte[] information, int size);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, IntPtr information, int size);
+    [DllImport("ntdll.dll")]
+    private static extern int NtCreateFile(out SafeFileHandle file, uint access, ref ObjectAttributes attributes, out IoStatusBlock io,
+        IntPtr size, uint fileAttributes, uint share, uint disposition, uint options, IntPtr extendedAttributes, uint extendedSize);
+    [DllImport("ntdll.dll")]
+    private static extern uint RtlNtStatusToDosError(int status);
+    [DllImport("ntdll.dll")]
+    private static extern int NtSetSecurityObject(SafeFileHandle file, uint flags, byte[] security);
+    [DllImport("advapi32.dll")]
+    private static extern uint GetSecurityInfo(SafeFileHandle file, uint kind, uint flags, IntPtr owner, IntPtr group,
+        IntPtr dacl, IntPtr sacl, out IntPtr descriptor);
+    [DllImport("advapi32.dll")]
+    private static extern int GetSecurityDescriptorLength(IntPtr descriptor);
+    [DllImport("advapi32.dll")]
+    private static extern uint SetSecurityInfo(SafeFileHandle file, uint kind, uint flags, IntPtr owner, IntPtr group, byte[] dacl, IntPtr sacl);
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern SafeFileHandle OpenProcess(uint access, bool inherit, int processId);
     [DllImport("kernel32.dll", EntryPoint = "GetShortPathNameW", SetLastError = true, CharSet = CharSet.Unicode)]

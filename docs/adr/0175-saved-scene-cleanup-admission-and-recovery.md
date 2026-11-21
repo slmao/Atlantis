@@ -1,11 +1,11 @@
 # ADR 0175 — Saved Scenes Cleanup Admission and Recovery
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Maintainer accepted `d1dfe5d8` in [PR #417](https://github.com/slmao/Atlantis/pull/417#issuecomment-7058902123), 2026-11-21. Design merged at `37c441ed`.
 - **Related Spec:** [Spec 0126](../specs/0126-saved-scene-cleanup-admission.md)
-- **Supersedes:** [ADR-0174](0174-saved-scene-build-cleanup-ownership.md) D3 on deletion admission and recovery, upon acceptance. D1 and D2 remain in force.
+- **Supersedes:** [ADR-0174](0174-saved-scene-build-cleanup-ownership.md) D3 on deletion admission and recovery. D1 and D2 remain in force.
 
 ## Context
 

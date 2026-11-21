@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Security.AccessControl;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
@@ -71,8 +73,9 @@ public static partial class Program
             using (var locked = new FileStream(Log(old), FileMode.Open, FileAccess.Read, FileShare.Read))
                 Check(!cleanup.Remove(selected, store).Removed && !List().Candidates.Any(row => row.Path == old),
                     "cleanup refuses a file acquired after confirmation and omits a sharing conflict");
-            Check(cleanup.Remove(selected, store).Removed && !Directory.Exists(old) && File.Exists(Log(current)) &&
-                File.ReadAllBytes(slot).SequenceEqual(prior), "deleting an idle tree preserves the current slot and outputs");
+            var idle = cleanup.Remove(selected, store);
+            Check(idle.Removed && !Directory.Exists(old) && File.Exists(Log(current)) &&
+                File.ReadAllBytes(slot).SequenceEqual(prior), "deleting an idle tree preserves the current slot and outputs: " + idle.Detail);
 
             string inUse = Attempt();
             var beforeUse = Candidate(inUse);
@@ -174,6 +177,166 @@ public static partial class Program
             Check(List().Issue is not null && List().Candidates.Count == 0, "an unreadable current slot disables cleanup");
             File.WriteAllBytes(slot, prior);
 
+            string Staged() => Directory.EnumerateDirectories(attempts, "cleanup-*").Single();
+            byte[] Permissions(string path) => new DirectoryInfo(path).GetAccessControl(
+                AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group).GetSecurityDescriptorBinaryForm();
+            void WriteFromProcess(string path) => Check(CompeteWithCleanup("write", path) == 0, "independent writer added " + Path.GetFileName(path));
+            void RestoreExpected(string path, byte[] acl)
+            {
+                var listing = List();
+                Check(!Directory.Exists(path) && listing.Restore is not null && File.Exists(Log(Staged())),
+                    "refresh preserves the isolated directory and exposes explicit recovery");
+                string result = listing.Restore!().Detail;
+                Check(File.Exists(Log(path)) && Permissions(path).SequenceEqual(acl) && List().Restore is null,
+                    "explicit recovery restores path and exact descriptor: " + result);
+            }
+
+            foreach (var boundary in new[] { SavedSceneBuildCleanup.Checkpoint.OriginalVerified, SavedSceneBuildCleanup.Checkpoint.Isolated })
+            {
+                string late = Attempt();
+                Directory.CreateDirectory(Path.Combine(late, "nested"));
+                File.WriteAllText(Path.Combine(late, "nested", "reviewed.txt"), "reviewed");
+                var confirmed = Candidate(late);
+                byte[] acl = Permissions(late);
+                int dispositions = 0;
+                var refused = cleanup.Remove(confirmed, store, point =>
+                {
+                    if (point != boundary) return;
+                    string actual = point == SavedSceneBuildCleanup.Checkpoint.Isolated ? Staged() : late;
+                    WriteFromProcess(Path.Combine(actual, "nested", "new.txt"));
+                }, deleting: () => ++dispositions);
+                Check(!refused.Removed && dispositions == 0 && File.Exists(Log(late)) && File.ReadAllText(Log(late)) == "data" &&
+                    File.ReadAllText(Path.Combine(late, "nested", "reviewed.txt")) == "reviewed" &&
+                    File.ReadAllText(Path.Combine(late, "nested", "new.txt")) == "competing writer" &&
+                    Permissions(late).SequenceEqual(acl) && File.ReadAllBytes(slot).SequenceEqual(prior),
+                    $"membership change at {boundary} refused with zero dispositions and all bytes preserved: " + refused.Detail);
+                if (!Directory.Exists(late)) throw new InvalidOperationException(refused.Detail);
+                using var held = new SavedSceneCleanupWindows.PinnedDirectories();
+                Check(held.Add(late) == confirmed.Record.DirectoryIdentity, "late membership refusal restored the same root object");
+            }
+
+            string guarded = Attempt();
+            Directory.CreateDirectory(Path.Combine(guarded, "nested"));
+            File.WriteAllText(Path.Combine(guarded, "nested", "reviewed.txt"), "reviewed");
+            int guardedDispositions = 0;
+            var guardedResult = cleanup.Remove(Candidate(guarded), store, afterGuard: _ =>
+            {
+                string staged = Staged(), child = Path.Combine(staged, "nested", "reviewed.txt");
+                string outside = Path.Combine(root, "move-in.txt");
+                File.WriteAllText(outside, "outside");
+                string junction = Path.Combine(root, "guard-alias");
+                using var mklink = Process.Start(new ProcessStartInfo("cmd.exe", $"/d /c mklink /J \"{junction}\" \"{staged}\"")
+                    { CreateNoWindow = true, UseShellExecute = false })!;
+                mklink.WaitForExit();
+                if (mklink.ExitCode != 0) throw new InvalidOperationException("Could not create guarded alias fixture.");
+                try
+                {
+                    Check(CompeteWithCleanup("write", Path.Combine(staged, "nested", "late.txt")) == 7 &&
+                        CompeteWithCleanup("mkdir", Path.Combine(junction, "alias-child")) == 7 &&
+                        CompeteWithCleanup("move", outside, Path.Combine(staged, "arriving.txt")) == 7 &&
+                        CompeteWithCleanup("delete", child) == 7 &&
+                        CompeteWithCleanup("move", child, Path.Combine(root, "escape.txt")) == 7 && File.ReadAllText(outside) == "outside",
+                        "live exclusion denies independent create, alias mkdir, move-in, deletion and move-out after guarded recheck");
+                }
+                finally { Directory.Delete(junction); }
+            }, deleting: () =>
+            {
+                if (guardedDispositions++ == 0)
+                    Check(CompeteWithCleanup("mkdir", guarded) == 7, "the original name remains reserved through the first disposition");
+            });
+            Check(guardedResult.Removed && !Directory.Exists(guarded), "unchanged guarded control deletes only the approved tree: " + guardedResult.Detail);
+
+            string lost = Attempt();
+            int lostDispositions = 0;
+            var lostResult = cleanup.Remove(Candidate(lost), store, afterGuard: release =>
+            {
+                string staged = Staged();
+                release();
+                WriteFromProcess(Path.Combine(staged, "after-loss.txt"));
+            }, deleting: () => ++lostDispositions);
+            Check(!lostResult.Removed && lostDispositions == 0 && File.Exists(Log(lost)) && File.Exists(Path.Combine(lost, "after-loss.txt")),
+                "a lost guard refuses before any disposition: " + lostResult.Detail);
+
+            foreach (var boundary in new[] { SavedSceneBuildCleanup.Checkpoint.Recorded, SavedSceneBuildCleanup.Checkpoint.Isolated,
+                         SavedSceneBuildCleanup.Checkpoint.PermissionChanged, SavedSceneBuildCleanup.Checkpoint.Guarded })
+            {
+                string interrupted = Attempt();
+                Directory.CreateDirectory(Path.Combine(interrupted, "nested"));
+                byte[] rootAcl = Permissions(interrupted), nestedAcl = Permissions(Path.Combine(interrupted, "nested"));
+                int dispositions = 0;
+                try
+                {
+                    _ = cleanup.Remove(Candidate(interrupted), store, point =>
+                    {
+                        if (point == boundary) throw new OperationCanceledException("disposable interruption fixture");
+                    }, deleting: () => ++dispositions);
+                    Check(false, "interrupted cleanup did not reach " + boundary);
+                    continue;
+                }
+                catch (OperationCanceledException) { }
+                if (boundary == SavedSceneBuildCleanup.Checkpoint.Recorded)
+                {
+                    Check(File.Exists(Log(interrupted)) && List().Restore is { } && List().Restore!().Detail.StartsWith("Restored", StringComparison.Ordinal),
+                        "a recorded operation interrupted before rename can clear safely");
+                }
+                else RestoreExpected(interrupted, rootAcl);
+                Check(dispositions == 0 && Permissions(Path.Combine(interrupted, "nested")).SequenceEqual(nestedAcl),
+                    "interruption at " + boundary + " preserves the nested ACL and issues no deletion");
+            }
+
+            string conflict = Attempt();
+            byte[] conflictAcl = Permissions(conflict);
+            var refusedConflict = cleanup.Remove(Candidate(conflict), store, point =>
+            {
+                if (point != SavedSceneBuildCleanup.Checkpoint.Isolated) return;
+                Directory.CreateDirectory(conflict);
+                File.WriteAllText(Log(conflict), "replacement");
+            });
+            string pendingPath = Staged();
+            Check(!refusedConflict.Removed && List().Restore is { } && List().Restore!().Detail.Contains("occupied", StringComparison.Ordinal) &&
+                File.ReadAllText(Log(conflict)) == "replacement" && File.ReadAllText(Log(pendingPath)) == "data",
+                "reused original name preserves both identities without overwrite or deletion");
+            Directory.Move(conflict, conflict + "-replacement");
+            RestoreExpected(conflict, conflictAcl);
+
+            string uncertain = Attempt();
+            byte[] uncertainAcl = Permissions(uncertain);
+            int uncertainDeletes = 0;
+            var uncertainResult = cleanup.Remove(Candidate(uncertain), store, point =>
+            {
+                if (point != SavedSceneBuildCleanup.Checkpoint.Isolated) return;
+                string isolated = Staged();
+                Directory.Move(isolated, Path.Combine(root, "moved-isolation"));
+                Directory.CreateDirectory(isolated);
+                File.WriteAllText(Log(isolated), "unknown replacement");
+            }, deleting: () => ++uncertainDeletes);
+            string uncertainName = Staged();
+            Check(!uncertainResult.Removed && uncertainDeletes == 0 && !Directory.Exists(uncertain) &&
+                List().Restore!().Detail.Contains("identity", StringComparison.Ordinal) && File.ReadAllText(Log(uncertainName)) == "unknown replacement" &&
+                File.ReadAllText(Log(Path.Combine(root, "moved-isolation"))) == "data", "uncertain isolated identity stays retained without deletion or overwrite");
+            Directory.Move(uncertainName, Path.Combine(root, "unknown-replacement"));
+            Directory.Move(Path.Combine(root, "moved-isolation"), uncertainName);
+            RestoreExpected(uncertain, uncertainAcl);
+
+            string interruptedDelete = Attempt();
+            File.WriteAllText(Path.Combine(interruptedDelete, "z.txt"), "first disposition");
+            try
+            {
+                _ = cleanup.Remove(Candidate(interruptedDelete), store, point =>
+                {
+                    if (point == SavedSceneBuildCleanup.Checkpoint.DisposedEntry) throw new OperationCanceledException("post-disposition fixture");
+                });
+                Check(false, "post-disposition interruption did not run");
+            }
+            catch (OperationCanceledException) { }
+            string interruptedStaging = Staged();
+            var afterInterruption = List();
+            Check(!Directory.Exists(interruptedDelete) && File.ReadAllText(Log(interruptedStaging)) == "data" &&
+                !File.Exists(Path.Combine(interruptedStaging, "z.txt")) && afterInterruption.Candidates.Count == 1,
+                "interrupting after an observed disposition leaves a verified remainder and refresh performs no delete");
+            var continued = cleanup.Remove(afterInterruption.Candidates.Single(), store);
+            Check(continued.Removed && !Directory.Exists(interruptedStaging), "explicit confirmation resumes interrupted deletion: " + continued.Detail);
+
             string partial = Attempt();
             string successfulEntry = Path.Combine(partial, "z.txt");
             File.WriteAllText(successfulEntry, "removed first");
@@ -181,13 +344,45 @@ public static partial class Program
             try
             {
                 var outcome = cleanup.Remove(Candidate(partial), store);
-                Check(!outcome.Removed && outcome.Detail.Contains("after deleting some entries", StringComparison.Ordinal) &&
-                    File.Exists(Log(partial)) && !File.Exists(successfulEntry) && List().Candidates.Any(row => row.Path == partial),
-                    "a partial Windows failure retains provenance and requires fresh confirmation");
+                string retained = Staged();
+                Check(!outcome.Removed && outcome.Detail.Contains("after a delete request", StringComparison.Ordinal) &&
+                    File.Exists(Log(retained)) && !File.Exists(Path.Combine(retained, "z.txt")) && List().Candidates.Single().Path == retained &&
+                    List().Restore!().Detail.Contains("incomplete", StringComparison.Ordinal),
+                    "a partial Windows failure retains provenance and requires fresh confirmation: " + outcome.Detail);
+                File.SetAttributes(Log(retained), FileAttributes.Normal);
+                var retry = cleanup.Remove(List().Candidates.Single(), store);
+                Check(retry.Removed && !Directory.Exists(retained) && List().Restore is null, "confirmed verified remainder can be deleted: " + retry.Detail);
             }
-            finally { if (File.Exists(Log(partial))) File.SetAttributes(Log(partial), FileAttributes.Normal); }
+            finally
+            {
+                if (File.Exists(Log(partial))) File.SetAttributes(Log(partial), FileAttributes.Normal);
+                foreach (string retained in Directory.EnumerateDirectories(attempts, "cleanup-*"))
+                {
+                    if (File.Exists(Log(retained))) File.SetAttributes(Log(retained), FileAttributes.Normal);
+                }
+            }
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    private static int CompeteWithCleanup(string verb, string path, string? destination = null)
+    {
+        const string script = "try { switch ($env:ATLANTIS_CLEANUP_VERB) { " +
+            "'write' { [IO.File]::WriteAllText($env:ATLANTIS_CLEANUP_PATH, 'competing writer') } " +
+            "'mkdir' { [void][IO.Directory]::CreateDirectory($env:ATLANTIS_CLEANUP_PATH) } " +
+            "'move' { [IO.File]::Move($env:ATLANTIS_CLEANUP_PATH, $env:ATLANTIS_CLEANUP_DESTINATION) } " +
+            "'delete' { [IO.File]::Delete($env:ATLANTIS_CLEANUP_PATH) } }; exit 0 } " +
+            "catch { if ($_.Exception.InnerException -is [UnauthorizedAccessException] -or $_.Exception.InnerException -is [IO.IOException]) { exit 7 }; exit 9 }";
+        var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"))
+            { CreateNoWindow = true, UseShellExecute = false };
+        foreach (string arg in new[] { "-NoProfile", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) })
+            start.ArgumentList.Add(arg);
+        start.Environment["ATLANTIS_CLEANUP_VERB"] = verb;
+        start.Environment["ATLANTIS_CLEANUP_PATH"] = path;
+        if (destination is not null) start.Environment["ATLANTIS_CLEANUP_DESTINATION"] = destination;
+        using var process = Process.Start(start)!;
+        if (!process.WaitForExit(15000)) throw new InvalidOperationException("The competing Windows process did not settle.");
+        return process.ExitCode;
     }
 
     private sealed record CleanupArtifacts(SavedSceneBuild Older, SavedSceneBuild Current);
@@ -238,8 +433,25 @@ public static partial class Program
         }
 
         var artifacts = JsonSerializer.Deserialize<CleanupArtifacts>(File.ReadAllText(artifactFile))!;
-        string slot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AtlB",
-            SavedSceneReceiptStore.Scope(checkout), "last-build.json");
+        string localBuild = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AtlB");
+        string scope = Path.Combine(localBuild, SavedSceneReceiptStore.Scope(checkout)), attempts = Path.Combine(localBuild, "a");
+        string slot = Path.Combine(scope, "last-build.json");
+        var store = new SavedSceneReceiptStore(scope, attempts, checkout);
+        var cleanup = new SavedSceneBuildCleanup(checkout, scope, attempts);
+        string MakeDisposableAttempt()
+        {
+            // Only the superseded candidate is disposable. Keep the actual
+            // current receipt and its configured Runtime from the original run.
+            using var lease = store.Lease();
+            string path = store.ReserveAttempt();
+            Verify("owned disposable cleanup fixture reserved", cleanup.Reserve(path));
+            Directory.CreateDirectory(Path.Combine(path, "nested"));
+            File.WriteAllText(Path.Combine(path, "build.log"), "disposable build log");
+            File.WriteAllText(Path.Combine(path, "nested", "output"), "disposable output");
+            cleanup.Settle(path, succeeded: true);
+            return path;
+        }
+        string olderPath = phase == "admission" ? MakeDisposableAttempt() : artifacts.Older.Directory;
         byte[] originalSlot = File.ReadAllBytes(slot);
         await NameUiWait(() => open.IsEnabled, "current result reused after restart", 180);
         Verify("the current build is eligible after launcher restart", model.Result == artifacts.Current);
@@ -250,7 +462,7 @@ public static partial class Program
         var rows = dialog.GetVisualDescendants().OfType<ListBox>().Single(box => AutomationProperties.GetName(box) == "Builds eligible for cleanup");
         Button Action(string label) => dialog.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, label));
         await NameUiWait(() => rows.ItemCount > 0 && rows.IsEnabled, "cleanup scan settled", 90);
-        var row = rows.Items.OfType<SavedSceneBuildCleanup.Candidate>().Single(item => item.Path == artifacts.Older.Directory);
+        var row = rows.Items.OfType<SavedSceneBuildCleanup.Candidate>().Single(item => item.Path == olderPath);
         Verify("cleanup lists the older path, size and reason and omits the current build", row.Size > 0 &&
             row.Reason == "Superseded successful build" && !rows.Items.OfType<SavedSceneBuildCleanup.Candidate>().Any(item => item.Path == artifacts.Current.Directory),
             row.Path + " · " + row.Size + " bytes");
@@ -272,6 +484,37 @@ public static partial class Program
         Verify("confirmed removal preserves the current receipt and Runtime executable", File.ReadAllBytes(slot).SequenceEqual(originalSlot) &&
             File.Exists(artifacts.Current.Executable));
         await WaitForSavedSceneCapture(evidence, "removed");
+        if (phase == "admission")
+        {
+            string disputed = MakeDisposableAttempt();
+            var observed = workspace.CleanupCandidates().Candidates.Single(item => item.Path == disputed);
+            int dispositions = 0;
+            HashSet<string> existingStaging = Directory.EnumerateDirectories(attempts, "cleanup-*").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var refusal = cleanup.Remove(observed, store, point =>
+            {
+                if (point != SavedSceneBuildCleanup.Checkpoint.Isolated) return;
+                Directory.CreateDirectory(disputed);
+                File.WriteAllText(Path.Combine(disputed, "replacement"), "unrelated directory");
+            }, deleting: () => ++dispositions);
+            string isolated = Directory.EnumerateDirectories(attempts, "cleanup-*").Single(path => !existingStaging.Contains(path));
+            Verify("occupied original path leaves the isolated folder available for recovery", !refusal.Removed && dispositions == 0 &&
+                File.Exists(Path.Combine(isolated, "build.log")) && File.Exists(Path.Combine(disputed, "replacement")), refusal.Detail);
+            Click(Action("Refresh List"));
+            await NameUiWait(() => Action("Restore Build Folder").IsVisible && Action("Restore Build Folder").IsEnabled, "pending recovery shown");
+            Click(Action("Restore Build Folder"));
+            bool Shows(string text) => dialog.GetVisualDescendants().OfType<SelectableTextBlock>().Any(label =>
+                label.Text?.Contains(text, StringComparison.Ordinal) == true);
+            await NameUiWait(() => Action("Restore Build Folder").IsEnabled && Shows("retained"), "recovery conflict shown");
+            Verify("restore action refuses to overwrite the replacement", File.Exists(Path.Combine(disputed, "replacement")) &&
+                File.Exists(Path.Combine(isolated, "build.log")));
+            await WaitForSavedSceneCapture(evidence, "recovery-conflict");
+            Directory.Move(disputed, disputed + "-replacement");
+            Click(Action("Restore Build Folder"));
+            await NameUiWait(() => rows.IsEnabled && !Action("Restore Build Folder").IsVisible && Shows("Restored"), "explicit restore settled");
+            Verify("explicit recovery returns the isolated build and preserves the replacement", !Directory.Exists(isolated) &&
+                File.Exists(Path.Combine(disputed, "build.log")) && File.Exists(Path.Combine(disputed + "-replacement", "replacement")));
+            await WaitForSavedSceneCapture(evidence, "restored");
+        }
         Click(Action("Close"));
 
         string runtimeWork = Path.Combine(Path.GetTempPath(), "atlantis_editor");
