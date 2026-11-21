@@ -56,6 +56,8 @@ public sealed record EditorOptions(string RuntimePath, string Scene)
     public string? SavedSceneCheckout { get; init; }
     public string? SavedSceneCMake { get; init; }
     public string? SavedSceneAppHost { get; init; }
+    internal WorkspaceLayoutStore? WorkspaceSettings { get; init; }
+    internal bool DisableWorkspaceSettings { get; init; }
     // Plan 0066 M1: the input investigation's options (measurement-only).
     public bool MeasureDrag { get; init; }
     public string? AttachSession { get; init; }
@@ -79,6 +81,12 @@ public sealed class MainWindow : Window
     private readonly EditorOptions _options;
     private readonly string _workDirectory = RuntimeProcess.NewWorkDirectory();
     private readonly EditorLog _log;
+    private readonly WorkspaceLayoutStore? _workspaceStore;
+    private readonly Button _resetWorkspaceLayout = new() { Content = "Reset Workspace Layout" };
+    private readonly TextBlock _workspaceLayoutFeedback = EditorVisuals.Secondary("");
+    private WorkspaceLayout _workspaceLayout;
+    private long _workspaceIntentEpoch;
+    private bool _workspaceSplitterDragging;
     private readonly SavedSceneAttempts _savedAttempts = new();
     private SavedSceneBuild? _savedFresh;
     private System.Threading.CancellationTokenSource? _savedCheck;
@@ -415,6 +423,8 @@ public sealed class MainWindow : Window
     public MainWindow(EditorOptions options)
     {
         _options = options;
+        if (!options.DisableWorkspaceSettings && !options.MeasureDrag && !options.MeasureOverlay && options.ViewportSize is null)
+            _workspaceStore = options.WorkspaceSettings ?? WorkspaceLayoutStore.CurrentUser();
         if (options.SavedSceneCheckout is { } checkout && options.SavedSceneCMake is { } cmake &&
             options.SavedSceneAppHost is not null &&
             options.Scene != "saved_scene" && options.AttachSession is null && !options.MeasureDrag && !options.MeasureOverlay)
@@ -555,7 +565,8 @@ public sealed class MainWindow : Window
         Deactivated += (_, _) => CancelGroupGesture();
         AddHandler(GotFocusEvent, (_, e) =>
         {
-            if (e.Source is Control next && !ReferenceEquals(next, _reopen) && TopLevel.GetTopLevel(next) == this)
+            if (e.Source is Control next && !ReferenceEquals(next, _reopen) && !ReferenceEquals(next, _resetWorkspaceLayout) &&
+                TopLevel.GetTopLevel(next) == this)
                 SettleInspectorBlur();
         }, RoutingStrategies.Bubble);
         AddHandler(KeyDownEvent, (_, e) =>
@@ -644,8 +655,14 @@ public sealed class MainWindow : Window
             Background = EditorVisuals.Inset, CornerRadius = new CornerRadius(6), Padding = new Thickness(2),
             Child = EditorVisuals.Actions(_play, _pause, _step)
         };
+        var layoutTools = EditorVisuals.Stack(2, _resetWorkspaceLayout, _workspaceLayoutFeedback);
+        layoutTools.HorizontalAlignment = HorizontalAlignment.Right;
+        layoutTools.IsVisible = _workspaceStore is not null;
+        _workspaceLayoutFeedback.IsVisible = false;
+        _workspaceLayoutFeedback.TextWrapping = TextWrapping.Wrap;
+        ToolTip.SetShowOnDisabled(_resetWorkspaceLayout, true);
         var commands = EditorVisuals.Bar(EditorVisuals.Columns("*,Auto,*",
-            EditorVisuals.Actions(_save, _undo, _redo), transport));
+            EditorVisuals.Actions(_save, _undo, _redo), transport, layoutTools));
 
         var sceneFiles = EditorVisuals.Scroll(EditorVisuals.Stack(4,
             EditorVisuals.Actions(_reopen, _reviewRecovery), _recoveryLine,
@@ -709,9 +726,9 @@ public sealed class MainWindow : Window
 
         var tabs = new List<TabItem>
         {
-            new() { Header = "Inspector", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Sliders),
+            new() { Header = "Inspector", Tag = WorkspaceTab.Inspector, HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Sliders),
                     Content = EditorVisuals.Scroll(_inspectorPanel) },
-            new() { Header = "Assets", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Catalog),
+            new() { Header = "Assets", Tag = WorkspaceTab.Assets, HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Catalog),
                     Content = BuildAssetsPanel() }
         };
         // Assets and Inspector share this pane. A valid local drag can reveal
@@ -725,7 +742,7 @@ public sealed class MainWindow : Window
             e.Handled = true;
         });
         if (_savedWorkspace is not null)
-            tabs.Add(new TabItem { Header = "Saved Scenes", HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.File),
+            tabs.Add(new TabItem { Header = "Saved Scenes", Tag = WorkspaceTab.SavedScenes, HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.File),
                 Content = BuildSavedScenePanel() });
         _assetTabs.Background = EditorVisuals.Pane;
         _assetTabs.ItemsSource = tabs;
@@ -759,19 +776,10 @@ public sealed class MainWindow : Window
         {
             MinWidth = 960;
             MinHeight = 600;
-            grid.ColumnDefinitions[0].MinWidth = 173;
-            grid.ColumnDefinitions[2].MinWidth = 280;
-            grid.ColumnDefinitions[4].MinWidth = 298;
-            bool customized = false;
-            foreach (var splitter in grid.Children.OfType<GridSplitter>())
-                splitter.AddHandler(Thumb.DragCompletedEvent, (_, _) => customized = true, handledEventsToo: true);
-            grid.SizeChanged += (_, e) =>
-            {
-                if (customized || _targetSize is not null) return;
-                bool compact = e.NewSize.Width < 1100;
-                grid.ColumnDefinitions[0].Width = new GridLength(compact ? 173 : 220);
-                grid.ColumnDefinitions[4].Width = new GridLength(compact ? 308 : 368);
-            };
+            grid.ColumnDefinitions[0].MinWidth = WorkspaceLayout.MinimumHierarchy;
+            grid.ColumnDefinitions[2].MinWidth = WorkspaceLayout.MinimumViewport;
+            grid.ColumnDefinitions[4].MinWidth = WorkspaceLayout.MinimumRight;
+            SetupWorkspaceLayout(grid, tabs);
         }
 
         _retryApply.Content = "Apply";
@@ -813,6 +821,152 @@ public sealed class MainWindow : Window
             root.Children.Add(control);
         }
         return root;
+    }
+
+    private void SetupWorkspaceLayout(Grid grid, IReadOnlyList<TabItem> tabs)
+    {
+        if (_workspaceStore is not null)
+        {
+            try { _workspaceLayout = _workspaceStore.Read(); }
+            catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
+            { SetWorkspaceFeedback("Layout settings unavailable. Using defaults.", e); }
+        }
+
+        WorkspaceSideWidths ActualSides() => new(grid.ColumnDefinitions[0].ActualWidth, grid.ColumnDefinitions[4].ActualWidth);
+        void Reflow()
+        {
+            if (_workspaceSplitterDragging || _targetSize is not null || _workspaceLayout.Project(grid.Bounds.Width) is not { } layout) return;
+            grid.ColumnDefinitions[0].Width = new(layout.Hierarchy);
+            grid.ColumnDefinitions[2].Width = new(1, GridUnitType.Star);
+            grid.ColumnDefinitions[4].Width = new(layout.Right);
+        }
+        void CommitWidths(WorkspaceSideWidths prior)
+        {
+            var actual = ActualSides();
+            if (actual == prior || !actual.IsValid || _targetSize is not null) { Reflow(); return; }
+            _workspaceLayout = _workspaceLayout with { Preferred = actual };
+            Reflow();
+            WriteWorkspaceLayout(store => store.SetWidths(actual), "Layout changed for this window. Settings could not be saved.");
+        }
+        grid.SizeChanged += (_, _) => Reflow();
+        ScalingChanged += (_, _) => Dispatcher.UIThread.Post(Reflow, DispatcherPriority.Loaded);
+
+        WorkspaceSideWidths? dragStart = null;
+        foreach (var splitter in grid.Children.OfType<GridSplitter>())
+        {
+            splitter.Focusable = true;
+            splitter.AddHandler(Thumb.DragStartedEvent, (_, _) =>
+            {
+                dragStart = ActualSides();
+                _workspaceSplitterDragging = true;
+                UpdateWorkspaceReset();
+            }, handledEventsToo: true);
+            splitter.AddHandler(Thumb.DragCompletedEvent, (_, _) =>
+            {
+                _workspaceSplitterDragging = false;
+                if (dragStart is { } prior) AfterWorkspaceInput(() => CommitWidths(prior));
+                dragStart = null;
+                UpdateWorkspaceReset();
+            }, handledEventsToo: true);
+            splitter.AddHandler(KeyDownEvent, (_, e) =>
+            {
+                if (e.Key is not (Key.Left or Key.Right) || _workspaceSplitterDragging) return;
+                var prior = ActualSides();
+                AfterWorkspaceInput(() => CommitWidths(prior));
+            }, RoutingStrategies.Tunnel);
+        }
+
+        if (_workspaceStore is null) return;
+        WorkspaceTab desiredTab = _workspaceLayout.AvailableTab(_savedWorkspace is not null);
+        _assetTabs.SelectedItem = tabs.First(tab => Equals(tab.Tag, desiredTab));
+
+        void CommitTab(TabItem tab)
+        {
+            if (!ReferenceEquals(_assetTabs.SelectedItem, tab) || tab.Tag is not WorkspaceTab choice) return;
+            _workspaceLayout = _workspaceLayout with { Tab = choice };
+            WriteWorkspaceLayout(store => store.SetTab(choice), "Tab changed for this window. Settings could not be saved.");
+        }
+        foreach (var tab in tabs)
+        {
+            tab.AddHandler(PointerPressedEvent, (_, e) =>
+            {
+                if (e.GetCurrentPoint(tab).Properties.IsLeftButtonPressed)
+                    AfterWorkspaceInput(() => CommitTab(tab));
+            }, RoutingStrategies.Tunnel);
+        }
+        _assetTabs.AddHandler(KeyDownEvent, (_, e) =>
+        {
+            if (!ReferenceEquals(e.Source, _assetTabs) && (e.Source is not TabItem tab || !tabs.Contains(tab))) return;
+            if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down or Key.Home or Key.End or Key.Enter or Key.Space)) return;
+            var prior = _assetTabs.SelectedItem;
+            var source = e.Source;
+            bool activation = e.Key is Key.Enter or Key.Space;
+            AfterWorkspaceInput(() =>
+            {
+                if (_assetTabs.SelectedItem is TabItem chosen && (!ReferenceEquals(chosen, prior) ||
+                    (activation && ReferenceEquals(chosen, source)))) CommitTab(chosen);
+            });
+        }, RoutingStrategies.Tunnel);
+
+        // Refuse before Button takes focus. A late click check cannot undo an
+        // Inspector blur that has already settled the user's draft.
+        AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (_resetWorkspaceLayout.IsEffectivelyVisible &&
+                new Rect(_resetWorkspaceLayout.Bounds.Size).Contains(e.GetPosition(_resetWorkspaceLayout)) && !CanResetWorkspace())
+            {
+                UpdateWorkspaceReset();
+                e.Handled = true;
+            }
+        }, RoutingStrategies.Tunnel);
+        _resetWorkspaceLayout.Click += (_, _) =>
+        {
+            if (!CanResetWorkspace()) { UpdateWorkspaceReset(); return; }
+            ++_workspaceIntentEpoch;
+            _workspaceLayout = default;
+            Reflow();
+            _assetTabs.SelectedItem = tabs[0];
+            WriteWorkspaceLayout(store => store.Reset(), "Layout reset for this window. Settings could not be saved.");
+        };
+        UpdateWorkspaceReset();
+    }
+
+    private void AfterWorkspaceInput(Action apply)
+    {
+        long epoch = _workspaceIntentEpoch;
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_shuttingDown && epoch == _workspaceIntentEpoch) apply();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private bool CanResetWorkspace() => !_shuttingDown && !_workspaceSplitterDragging && _targetSize is null &&
+        !_leaveArmed && !_leaveInProgress && !_recoveryDecision && !_savedAttempts.Busy &&
+        _pendingInspectorBlur is null && _pendingSceneFieldEdits == 0 && CurrentSceneInput() is null &&
+        _gizmoGrab is null && _groupGrab is null && _hierarchyDrag is null && _assetDrag is null && !_assetDropPending &&
+        _referenceWindow is null && _materialWindow is null &&
+        _assetBrowser.RenameIntent is null && _assetBrowser.MoveIntent is null && _assetBrowser.RemovalIntent is null;
+
+    private void UpdateWorkspaceReset()
+    {
+        if (_workspaceStore is null) return;
+        _resetWorkspaceLayout.IsEnabled = CanResetWorkspace();
+        ToolTip.SetTip(_resetWorkspaceLayout, _resetWorkspaceLayout.IsEnabled ?
+            "Restore the default pane widths and Inspector tab." : "Finish the current edit or gesture before resetting the layout.");
+    }
+
+    private void WriteWorkspaceLayout(Action<WorkspaceLayoutStore> write, string failure)
+    {
+        if (_workspaceStore is not { } store) return;
+        try { write(store); SetWorkspaceFeedback(""); }
+        catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e)) { SetWorkspaceFeedback(failure, e); }
+    }
+
+    private void SetWorkspaceFeedback(string message, Exception? error = null)
+    {
+        _workspaceLayoutFeedback.Text = message;
+        _workspaceLayoutFeedback.IsVisible = message.Length != 0;
+        if (error is not null) _log.Write("workspace layout: " + error.Message);
     }
 
     private static void AddDocked(DockPanel parent, Control child, Avalonia.Controls.Dock side)
@@ -1865,6 +2019,7 @@ public sealed class MainWindow : Window
 
     private void UpdateHierarchyActions()
     {
+        UpdateWorkspaceReset();
         UpdateViewportNavigationActions();
         UpdateHierarchyFilterStatus();
         bool multiple = _selection.Nodes.Count > 1;
@@ -3827,6 +3982,7 @@ public sealed class MainWindow : Window
 
     private void UpdateAddMeshButton()
     {
+        UpdateWorkspaceReset();
         bool meshSelected = SelectedMesh() is not null;
         _addMesh.IsEnabled = meshSelected && _worker is not null && _canAddMeshToDocument &&
             !_referenceSessionFailed && !_addingMesh && _gizmoGrab is null;
@@ -3855,6 +4011,7 @@ public sealed class MainWindow : Window
 
     private void UpdateRebuildButtons()
     {
+        UpdateWorkspaceReset();
         bool available = _worker is not null && !_referenceSessionFailed && !_rebuildPending;
         _rebuildStart.IsEnabled = available && !_rebuildRunning && !_renameUnknown && _assetBrowser.State == "Ready" &&
                                   _assetsList.SelectedItem is AssetSummary;
@@ -5247,6 +5404,7 @@ public sealed class MainWindow : Window
 
     private void ShowDocumentState(DocumentObservation state)
     {
+        UpdateWorkspaceReset();
         _documentState = state;
         bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
         _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +
@@ -5293,7 +5451,7 @@ public sealed class MainWindow : Window
         void SettleIfCurrent()
         {
             if (_leaveArmed || _leaveInProgress || _recoveryDecision || _shuttingDown || !IsActive ||
-                (_reopen.IsFocused || _reviewRecovery.IsFocused) && _sceneInput?.Box == box) return;
+                (_reopen.IsFocused || _reviewRecovery.IsFocused || _resetWorkspaceLayout.IsFocused) && _sceneInput?.Box == box) return;
             if (TopLevel.GetTopLevel(box) != this) return;
             if (ReferenceEquals(_sceneInput?.Box, box)) _sceneInput = null;
             settle();
@@ -5535,6 +5693,7 @@ public sealed class MainWindow : Window
 
     private void UpdateStatus()
     {
+        UpdateWorkspaceReset();
         string size = _viewport.Window is { } w ? "viewport " + w.Width + "x" + w.Height + " px   " : "";
         _connectionLine.Text = _runtimeLine;
         _status.Text = string.Join("\n", new[] { _runtimeLine, _pickLine + "   " + _cameraLine, size + _inputLine + "   " + _uiLine, _measureLine }

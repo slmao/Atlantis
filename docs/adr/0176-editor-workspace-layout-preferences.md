@@ -1,9 +1,9 @@
 # ADR 0176 — Local Workspace Layout Preferences
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Maintainer
-- **Acceptance:** Pending
+- **Acceptance:** 2026-11-21, [joint approval of `b4e65a82`](https://github.com/slmao/Atlantis/pull/418#issuecomment-7059371967). Maintainer merge `1f14c1b8`.
 - **Related Spec:** [Spec 0127](../specs/0127-editor-workspace-layout.md)
 
 ## Context

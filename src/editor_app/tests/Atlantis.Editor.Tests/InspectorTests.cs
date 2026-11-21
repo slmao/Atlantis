@@ -77,9 +77,10 @@ public static partial class Program
         if (checks.Any(c => !c.Ok) || checks.Count == 0) exit = 1;
         var report = new
         {
-            kind = scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
+            kind = scene == "--workspace-layout-ui" ? "workspace-layout-windows" : scene == "--scene-recovery-ui" ? "scene-recovery-windows" : scene == "--tasks-ui" ? "session-task-issues-windows" : scene == "--texture-move" ? "registered-texture-move-visual-ui" : scene == "--texture-references" ? "direct-texture-reference-navigation" : scene == "--texture-rename" ? "registered-texture-rename-visual-ui" : scene == "--texture-reimport" ? "registered-texture-reimport-visual-ui" : scene == "--mesh-material-preview" ? "product-mesh-material-preview-ui-smoke"
                 : meshPreview ? "product-mesh-preview-ui-smoke" : "product-name-asset-and-apply-ui-smoke",
-            boundary = scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
+            boundary = scene == "--workspace-layout-ui" ? "Native Windows 96-DPI Editor and hosted Runtime, native pointer input and routed keyboard controls, isolated local settings and native screenshots."
+                : scene == "--scene-recovery-ui" ? "Native Windows 96-DPI Editor, hosted saved-scene Runtime and guarded recovery controls."
                 : scene == "--tasks-ui" ? "Native Windows 96-DPI Editor, hosted Runtime, routed controls, native clipboard and captures."
                 : scene == "--texture-move" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls, shared readback and native captures."
                 : scene == "--texture-references" ? "Windows 96-DPI Editor, native hosted Runtime, routed controls and controlled read callbacks."
@@ -120,7 +121,8 @@ public static partial class Program
             {
                 bool savedWorkflow = _scene == "--saved-scene-workflow";
                 bool savedOwnership = _scene == "--saved-scene-ownership";
-                bool savedPanel = savedWorkflow || savedOwnership;
+                bool workspaceLayout = _scene == "--workspace-layout-ui";
+                bool savedPanel = savedWorkflow || savedOwnership || workspaceLayout;
                 bool legacyReadiness = _scene == "--legacy-readiness";
                 bool rebuild = _scene == "--asset-rebuild";
                 bool reimport = _scene is "--texture-reimport" or "--texture-rename";
@@ -146,6 +148,8 @@ public static partial class Program
                     SavedSceneCheckout = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT") : null,
                     SavedSceneCMake = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CMAKE") : null,
                     SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,
+                    DisableWorkspaceSettings = !workspaceLayout,
+                    WorkspaceSettings = workspaceLayout ? new WorkspaceLayoutStore(WorkspaceFixtureDirectory()) : null,
                     AssetBuildProfile = tasks ? Environment.GetEnvironmentVariable("ATLANTIS_0121_PROFILE") : savedWorkflow ? Environment.GetEnvironmentVariable("ATLANTIS_0090_PROFILE") :
                         import && !addToNew ? Environment.GetEnvironmentVariable("ATLANTIS_0086_UI_PROFILE") :
                         reimport ? Environment.GetEnvironmentVariable("ATLANTIS_0116_PROFILE") :
@@ -161,7 +165,7 @@ public static partial class Program
                     AttachSession = saveAs ? Environment.GetEnvironmentVariable("ATLANTIS_0088_UI_SESSION") :
                         lostCreation ? Environment.GetEnvironmentVariable("ATLANTIS_0089_UI_PROXY") : null,
                 });
-                if (tasks || recovery)
+                if (tasks || recovery || workspaceLayout)
                 {
                     EditorVisuals.Install(this);
                     if (Environment.GetEnvironmentVariable("ATLANTIS_0121_COMPACT") == "1")
@@ -175,7 +179,8 @@ public static partial class Program
                 {
                     try
                     {
-                        if (savedWorkflow) await CheckSavedSceneWorkflow(window, _checks, _work);
+                        if (workspaceLayout) await CheckWorkspaceLayoutUi(window, _checks, _work);
+                        else if (savedWorkflow) await CheckSavedSceneWorkflow(window, _checks, _work);
                         else if (savedOwnership) await CheckSavedSceneOwnership(window, _checks);
                         else if (legacyReadiness) await CheckLegacyReadiness(window, _checks, _work);
                         else if (newScene) await CheckNewSceneUi(window, _checks, _scene == "--new-scene" || lostCreation);

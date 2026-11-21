@@ -1,10 +1,10 @@
 # Plan 0127 — Save and Reset the Editor Workspace Layout
 
 - **Spec:** [Spec 0127](../specs/0127-editor-workspace-layout.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0176](../adr/0176-editor-workspace-layout-preferences.md) (Proposed)
+- **Joint Human Review:** 2026-11-21, [J1–J4 and S2–S4 authorized](https://github.com/slmao/Atlantis/pull/418#issuecomment-7059371967) for `b4e65a82`, effective after maintainer merge `1f14c1b8`.
+- **ADR:** [ADR-0176](../adr/0176-editor-workspace-layout-preferences.md) (Accepted)
 
 ## Objective and Milestones
 
