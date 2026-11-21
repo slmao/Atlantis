@@ -84,6 +84,13 @@ public sealed class MainWindow : Window
     private System.Threading.CancellationTokenSource? _savedCheck;
     private readonly SavedSceneWorkspace? _savedWorkspace;
     private readonly ListBox _savedList = new() { Height = 140, SelectionMode = SelectionMode.Single };
+    private readonly ListBox _savedRecent = new() { Height = 100, SelectionMode = SelectionMode.Single, IsVisible = false };
+    private readonly Button _savedRecentRemove = new() { Content = "Remove from Recent", IsEnabled = false };
+    private readonly TextBlock _savedRecentStatus = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _savedRecentFeedback = new() { TextWrapping = TextWrapping.Wrap };
+    private readonly TextBlock _savedActiveTarget = new() { TextWrapping = TextWrapping.Wrap };
+    private long _savedRecentRead;
+    private bool _savedRecentRemoving, _savedRecentVerified, _savedSyncSelection;
     private readonly Button _savedRefresh = new() { Content = "Refresh" };
     private readonly Button _savedBuild = new() { Content = "Build", IsEnabled = false };
     private readonly Button _savedOpen = new() { Content = "Open", IsEnabled = false };
@@ -3260,10 +3267,23 @@ public sealed class MainWindow : Window
         _savedBuildResult.MaxHeight = 170;
         _savedOpen.Classes.Add("editor-primary");
         var operations = EditorVisuals.Group(EditorVisuals.Heading("Build and open"),
-            EditorVisuals.Stack(6, EditorVisuals.Secondary("Committed managed import root (optional)"),
+            EditorVisuals.Stack(6, _savedActiveTarget, EditorVisuals.Secondary("Committed managed import root (optional)"),
                 _savedManaged, _savedBuildSummary, _savedOpenResult, EditorVisuals.Actions(_savedBuild, _savedOpen),
                 EditorVisuals.Disclosure("Build details", _savedBuildResult)));
-        var body = EditorVisuals.Stack(6, checkout, _savedHint, _savedDiscovery, _savedList, operations);
+        _savedRecent.ItemTemplate = new FuncDataTemplate<SavedRecentRow>((row, _) =>
+        {
+            // Recycling the last row clears its content before removing the container.
+            if (row is null) return new TextBlock();
+            return row.Issue is { } issue
+                ? EditorVisuals.Stack(2, new TextBlock { Text = row.Entry.Identity.Name },
+                    new TextBlock { Text = issue, TextWrapping = TextWrapping.Wrap, Foreground = EditorVisuals.Warning })
+                : new TextBlock { Text = row.Entry.Identity.Name };
+        });
+        var recent = EditorVisuals.Group(EditorVisuals.Heading("Recent"),
+            EditorVisuals.Stack(4, _savedRecent, _savedRecentStatus, _savedRecentFeedback, _savedRecentRemove));
+        _savedRecentStatus.Foreground = EditorVisuals.Muted;
+        _savedRecentFeedback.Foreground = EditorVisuals.Warning;
+        var body = EditorVisuals.Stack(6, checkout, _savedHint, recent, _savedDiscovery, _savedList, operations);
         body.Margin = new Thickness(8);
         var panel = new DockPanel();
         AddDocked(panel, header, Dock.Top);
@@ -3271,10 +3291,25 @@ public sealed class MainWindow : Window
         panel.SizeChanged += (_, e) => _savedList.Height = e.NewSize.Height < 510 ? 100 : 126;
 
         AutomationProperties.SetName(_savedList, "Local saved scenes");
+        AutomationProperties.SetName(_savedRecent, "Recent saved scenes");
         AutomationProperties.SetName(_savedManaged, "Committed managed import root");
         _savedRefresh.Click += (_, _) => RefreshSavedScenes();
-        _savedList.SelectionChanged += async (_, _) => await CheckSavedSelection();
-        _savedManaged.TextChanged += async (_, _) => await CheckSavedSelection();
+        _savedList.SelectionChanged += async (_, _) =>
+        {
+            if (_savedSyncSelection || _savedAttempts.Busy) return;
+            _savedAttempts.SelectOrdinary();
+            SetSavedSceneSelection(() => _savedRecent.SelectedItem = null);
+            _savedRecentFeedback.Text = "";
+            await CheckSavedSelection();
+        };
+        _savedRecent.SelectionChanged += async (_, _) => await SelectSavedRecent();
+        _savedRecentRemove.Click += async (_, _) => await RemoveSavedRecent();
+        _savedManaged.TextChanged += async (_, _) =>
+        {
+            if (_savedAttempts.Busy) return;
+            CancelPendingSavedRecent();
+            await CheckSavedSelection();
+        };
         _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
         _savedOpen.Click += async (_, _) => await OpenSelectedSavedScene();
         return panel;
@@ -3289,7 +3324,8 @@ public sealed class MainWindow : Window
 
     private SavedSceneInput? SelectedSavedInput()
     {
-        if (_savedList.SelectedItem is not string name) return null;
+        string? name = _savedAttempts.RecentTarget?.Name ?? _savedList.SelectedItem as string;
+        if (name is null) return null;
         string? text = string.IsNullOrWhiteSpace(_savedManaged.Text) ? null : _savedManaged.Text.Trim();
         if (text is not null && Path.IsPathFullyQualified(text))
         {
@@ -3303,9 +3339,137 @@ public sealed class MainWindow : Window
     {
         bool idle = !_savedAttempts.Busy;
         SavedSceneInput? input = SelectedSavedInput();
+        bool targetReady = _savedAttempts.RecentTarget is null || _savedRecentVerified;
+        _savedActiveTarget.Text = input is null ? "" : "Selected scene: " + input.Name;
+        _savedActiveTarget.IsVisible = input is not null;
         _savedList.IsEnabled = _savedManaged.IsEnabled = _savedRefresh.IsEnabled = idle;
-        _savedBuild.IsEnabled = _savedAttempts.CanBuild(input);
-        _savedOpen.IsEnabled = _savedAttempts.CanOpen(input);
+        _savedRecent.IsEnabled = idle;
+        _savedRecentRemove.IsEnabled = idle && !_savedRecentRemoving && _savedRecent.SelectedItem is SavedRecentRow;
+        _savedBuild.IsEnabled = targetReady && _savedAttempts.CanBuild(input);
+        _savedOpen.IsEnabled = targetReady && _savedAttempts.CanOpen(input);
+    }
+
+    private sealed record SavedRecentRow(SavedSceneRecentEntry Entry, string? Issue)
+    {
+        public override string ToString() => Issue is null ? Entry.Identity.Name : Entry.Identity.Name + " · Unavailable";
+    }
+
+    private void SetSavedSceneSelection(Action change)
+    {
+        _savedSyncSelection = true;
+        try { change(); }
+        finally { _savedSyncSelection = false; }
+    }
+
+    private void CancelPendingSavedRecent()
+    {
+        if (!_savedAttempts.RecentSelectionPending) return;
+        _savedAttempts.CancelRecentSelection();
+        SetSavedSceneSelection(() => _savedRecent.SelectedItem = null);
+        _savedRecentFeedback.Text = "";
+    }
+
+    private async Task RefreshSavedRecent()
+    {
+        if (_savedWorkspace is not { } workspace || _shuttingDown) return;
+        long read = ++_savedRecentRead;
+        var activeBeforeRead = _savedAttempts.RecentTarget;
+        long checkBeforeRead = _savedAttempts.CheckVersion;
+        SavedRecentRow[] rows;
+        string? failure = null;
+        try
+        {
+            rows = await Task.Run(() => workspace.ReadRecent()
+                .Select(entry => new SavedRecentRow(entry, workspace.CheckRecent(entry.Identity))).ToArray());
+        }
+        catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
+        {
+            rows = [];
+            failure = "Recent history is unavailable. " + e.Message;
+        }
+        if (read != _savedRecentRead || _shuttingDown) return;
+        var previous = (_savedRecent.SelectedItem as SavedRecentRow)?.Entry.Identity;
+        // A repaired shortcut needs a fresh explicit selection unless it is already active.
+        var selected = rows.FirstOrDefault(row => row.Entry.Identity == previous &&
+            (row.Issue is not null || row.Entry.Identity == _savedAttempts.RecentTarget));
+        SetSavedSceneSelection(() =>
+        {
+            _savedRecent.ItemsSource = rows;
+            _savedRecent.SelectedItem = selected;
+        });
+        _savedRecent.IsVisible = rows.Length != 0;
+        _savedRecentStatus.Text = failure ?? (rows.Length == 0 ? "No scenes opened yet." : "");
+        if (!_savedAttempts.Busy && _savedAttempts.RecentTarget is { } active &&
+            rows.FirstOrDefault(row => row.Entry.Identity == active)?.Issue is { } issue)
+        {
+            if (active == activeBeforeRead && _savedAttempts.CheckVersion == checkBeforeRead)
+            {
+                _savedCheck?.Cancel();
+                _savedRecentVerified = false;
+                InvalidateSavedResult(issue);
+                _savedBuildSummary.Text = "Recent scene unavailable";
+                _savedBuildSummary.Foreground = EditorVisuals.Warning;
+                _savedBuildResult.Text = issue;
+            }
+            else
+                _ = CheckSavedSelection();
+        }
+        UpdateSavedSceneButtons();
+    }
+
+    private async Task SelectSavedRecent()
+    {
+        if (_savedSyncSelection || _savedAttempts.Busy || _shuttingDown || _savedWorkspace is not { } workspace) return;
+        if (_savedRecent.SelectedItem is not SavedRecentRow row)
+        {
+            _savedAttempts.CancelRecentSelection();
+            UpdateSavedSceneButtons();
+            return;
+        }
+        long check = _savedAttempts.BeginRecentSelection();
+        _savedRecentFeedback.Text = "Checking " + row.Entry.Identity.Name + "…";
+        UpdateSavedSceneButtons();
+        string? issue = await Task.Run(() => workspace.CheckRecent(row.Entry.Identity));
+        if (_shuttingDown || !_savedAttempts.FinishRecentSelection(check, issue is null ? row.Entry.Identity : null)) return;
+        if (issue is not null)
+        {
+            _savedRecentFeedback.Text = issue;
+            _ = RefreshSavedRecent();
+            if (_savedAttempts.RecentTarget == row.Entry.Identity) await CheckSavedSelection();
+            else UpdateSavedSceneButtons();
+            return;
+        }
+        SetSavedSceneSelection(() => _savedList.SelectedItem = null);
+        _savedRecentFeedback.Text = "";
+        await CheckSavedSelection();
+    }
+
+    private async Task RemoveSavedRecent()
+    {
+        if (_savedWorkspace is not { } workspace || _savedAttempts.Busy || _shuttingDown || _savedRecentRemoving ||
+            _savedRecent.SelectedItem is not SavedRecentRow row) return;
+        _savedAttempts.CancelRecentSelection();
+        _savedRecentRemoving = true;
+        UpdateSavedSceneButtons();
+        try
+        {
+            bool removed = await Task.Run(() => workspace.RemoveRecent(row.Entry));
+            if (_shuttingDown) return;
+            if (_savedRecent.SelectedItem is SavedRecentRow selected && selected.Entry == row.Entry)
+                _savedRecentFeedback.Text = removed ? "Removed from Recent." : "The entry changed. Select it again to remove it.";
+            await RefreshSavedRecent();
+        }
+        catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
+        { if (!_shuttingDown) _savedRecentFeedback.Text = "Could not remove the recent entry. " + e.Message; }
+        finally { _savedRecentRemoving = false; if (!_shuttingDown) UpdateSavedSceneButtons(); }
+    }
+
+    private void ShowUnavailableRecent(string? issue)
+    {
+        _savedRecentVerified = issue is null;
+        if (issue is null) return;
+        _savedRecentFeedback.Text = issue;
+        _ = RefreshSavedRecent();
     }
 
     private void InvalidateSavedResult(string why)
@@ -3320,6 +3484,8 @@ public sealed class MainWindow : Window
         if (_savedWorkspace is not { } workspace || _savedAttempts.Busy || _shuttingDown) return;
         _savedCheck?.Cancel();
         long check = _savedAttempts.BeginCheck();
+        var recent = _savedAttempts.RecentTarget;
+        _savedRecentVerified = false;
         UpdateSavedSceneButtons();
         if (SelectedSavedInput() is not { } input)
         {
@@ -3334,14 +3500,23 @@ public sealed class MainWindow : Window
         using var cancel = new System.Threading.CancellationTokenSource();
         _savedCheck = cancel;
         SavedSceneEligibility eligibility;
+        string? issue = null;
         try
         {
-            eligibility = await Task.Run(() => fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh));
+            eligibility = await Task.Run(() =>
+            {
+                if (recent is not null && (issue = workspace.CheckRecent(recent)) is not null) return new SavedSceneEligibility(null, issue);
+                var checkedBuild = fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh);
+                if (recent is not null && checkedBuild.Build is { } build &&
+                    (issue = workspace.CheckRecent(recent, build.Files.Catalog)) is not null) return new SavedSceneEligibility(null, issue);
+                return checkedBuild;
+            });
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested) { return; }
         finally { if (ReferenceEquals(_savedCheck, cancel)) _savedCheck = null; }
         if (_shuttingDown || input != SelectedSavedInput() || !_savedAttempts.FinishCheck(check, eligibility.Build)) return;
 
+        _savedRecentVerified = recent is not null && issue is null;
         _savedOpenResult.Text = eligibility.Detail;
         _savedOpenResult.Foreground = eligibility.Build is null ? EditorVisuals.Warning : EditorVisuals.Success;
         if (eligibility.Build is { Recorded: true } recorded)
@@ -3351,7 +3526,7 @@ public sealed class MainWindow : Window
         }
         else if (fresh is null)
         {
-            _savedBuildSummary.Text = "Build required";
+            _savedBuildSummary.Text = issue is null ? "Build required" : "Recent scene unavailable";
             _savedBuildSummary.Foreground = EditorVisuals.Muted;
             _savedBuildResult.Text = eligibility.Detail;
         }
@@ -3361,6 +3536,7 @@ public sealed class MainWindow : Window
     private void RefreshSavedScenes()
     {
         if (_savedWorkspace is null || _savedAttempts.Busy) return;
+        CancelPendingSavedRecent();
         string? selected = _savedList.SelectedItem as string;
         string[] names;
         try
@@ -3375,12 +3551,16 @@ public sealed class MainWindow : Window
             names = [];
             _savedDiscovery.Text = "Cannot read saved scenes: " + e.Message;
         }
-        _savedList.ItemsSource = names;
-        _savedList.SelectedItem = names.Contains(selected, StringComparer.Ordinal) ? selected : null;
+        SetSavedSceneSelection(() =>
+        {
+            _savedList.ItemsSource = names;
+            _savedList.SelectedItem = names.Contains(selected, StringComparer.Ordinal) ? selected : null;
+        });
         if (_savedFresh is { } fresh && !names.Contains(fresh.Input.Name, StringComparer.Ordinal)) _savedFresh = null;
         if (_savedAttempts.Result is { } result && !names.Contains(result.Input.Name, StringComparer.Ordinal))
             InvalidateSavedResult("The built unit is no longer listed. Build again after restoring it.");
         _ = CheckSavedSelection();
+        _ = RefreshSavedRecent();
     }
 
     private void ShowSavedBuild(SavedSceneInput input, SavedSceneBuildReport report)
@@ -3397,7 +3577,9 @@ public sealed class MainWindow : Window
     private async Task BuildSelectedSavedScene()
     {
         if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
+            (_savedAttempts.RecentTarget is not null && !_savedRecentVerified) ||
             !_savedAttempts.BeginBuild(input)) return;
+        var recent = _savedAttempts.RecentTarget;
         _savedCheck?.Cancel();
         _savedFresh = null;
         _savedOpenResult.Text = "";
@@ -3408,7 +3590,9 @@ public sealed class MainWindow : Window
         {
             if (_savedAttempts.Building) ShowSavedBuild(input, report);
         });
-        var result = await Task.Run(() => workspace.BuildAsync(input, ((IProgress<SavedSceneBuildReport>)progress).Report));
+        var result = await Task.Run(() => workspace.BuildAsync(input, ((IProgress<SavedSceneBuildReport>)progress).Report, recent));
+        if (recent is not null && result.Result is null)
+            ShowUnavailableRecent(await Task.Run(() => workspace.CheckRecent(recent)));
         _savedAttempts.FinishBuild(result.Result);
         _savedFresh = result.Result;
         ShowSavedBuild(input, result);
@@ -3418,22 +3602,29 @@ public sealed class MainWindow : Window
     private async Task OpenSelectedSavedScene()
     {
         if (_savedWorkspace is not { } workspace || SelectedSavedInput() is not { } input ||
+            (_savedAttempts.RecentTarget is not null && !_savedRecentVerified) ||
             _savedAttempts.BeginOpen(input) is not { } result) return;
+        var recent = _savedAttempts.RecentTarget;
         _savedOpenResult.Text = "Starting a separate Editor for " + input.Name;
         _savedOpenResult.Foreground = EditorVisuals.Muted;
         UpdateSavedSceneButtons();
         Process? child = null;
         try
         {
-            string? refusal;
-            (child, refusal) = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!));
-            if (refusal is not null)
+            var opened = await Task.Run(() => workspace.Open(result, _options.SavedSceneAppHost!, recent));
+            child = opened.Child;
+            if (opened.Refusal is { } refusal)
             {
                 _savedFresh = null;
                 InvalidateSavedResult(refusal);
+                if (recent is not null) ShowUnavailableRecent(await Task.Run(() => workspace.CheckRecent(recent)));
             }
             else
+            {
                 _savedOpenResult.Text = $"Editor started for {input.Name}. Check its window for Runtime and document readiness.";
+                _savedRecentFeedback.Text = opened.HistoryWarning ?? "";
+                if (opened.HistoryWarning is null) _ = RefreshSavedRecent();
+            }
         }
         catch (Exception e) when (SavedSceneWorkspace.IsLocalFailure(e))
         {
@@ -3451,11 +3642,14 @@ public sealed class MainWindow : Window
                 await child.WaitForExitAsync();
             if (ReferenceEquals(_savedAttempts.Result, result))
             {
-                bool current = await Task.Run(() => (result.Recorded ? workspace.CheckStored(input) : workspace.CheckFresh(result)).Build == result);
-                if (!current && ReferenceEquals(_savedAttempts.Result, result))
+                var checkedState = await Task.Run(() => (
+                    Current: (result.Recorded ? workspace.CheckStored(input) : workspace.CheckFresh(result)).Build == result,
+                    Issue: recent is null ? null : workspace.CheckRecent(recent)));
+                if ((!checkedState.Current || checkedState.Issue is not null) && ReferenceEquals(_savedAttempts.Result, result))
                 {
                     _savedFresh = null;
                     InvalidateSavedResult("The child closed and the saved unit or build inputs changed. Build again.");
+                    if (recent is not null) ShowUnavailableRecent(checkedState.Issue);
                 }
             }
             _savedAttempts.ChildExited(input.Name);
