@@ -3302,7 +3302,7 @@ public sealed class MainWindow : Window
         _savedManaged.TextChanged += async (_, _) =>
         {
             if (_savedAttempts.Busy) return;
-            _savedAttempts.CancelRecentSelection();
+            CancelPendingSavedRecent();
             await CheckSavedSelection();
         };
         _savedBuild.Click += async (_, _) => await BuildSelectedSavedScene();
@@ -3356,6 +3356,14 @@ public sealed class MainWindow : Window
         finally { _savedSyncSelection = false; }
     }
 
+    private void CancelPendingSavedRecent()
+    {
+        if (!_savedAttempts.RecentSelectionPending) return;
+        _savedAttempts.CancelRecentSelection();
+        SetSavedSceneSelection(() => _savedRecent.SelectedItem = null);
+        _savedRecentFeedback.Text = "";
+    }
+
     private async Task RefreshSavedRecent()
     {
         if (_savedWorkspace is not { } workspace || _shuttingDown) return;
@@ -3373,11 +3381,14 @@ public sealed class MainWindow : Window
             failure = "Recent history is unavailable. " + e.Message;
         }
         if (read != _savedRecentRead || _shuttingDown) return;
-        var selected = (_savedRecent.SelectedItem as SavedRecentRow)?.Entry.Identity;
+        var previous = (_savedRecent.SelectedItem as SavedRecentRow)?.Entry.Identity;
+        // A repaired shortcut needs a fresh explicit selection unless it is already active.
+        var selected = rows.FirstOrDefault(row => row.Entry.Identity == previous &&
+            (row.Issue is not null || row.Entry.Identity == _savedAttempts.RecentTarget));
         SetSavedSceneSelection(() =>
         {
             _savedRecent.ItemsSource = rows;
-            _savedRecent.SelectedItem = rows.FirstOrDefault(row => row.Entry.Identity == selected);
+            _savedRecent.SelectedItem = selected;
         });
         _savedRecent.IsVisible = rows.Length != 0;
         _savedRecentStatus.Text = failure ?? (rows.Length == 0 ? "No scenes opened yet." : "");
@@ -3401,6 +3412,7 @@ public sealed class MainWindow : Window
         if (issue is not null)
         {
             _savedRecentFeedback.Text = issue;
+            _ = RefreshSavedRecent();
             if (_savedAttempts.RecentTarget == row.Entry.Identity) await CheckSavedSelection();
             else UpdateSavedSceneButtons();
             return;
@@ -3472,7 +3484,10 @@ public sealed class MainWindow : Window
             eligibility = await Task.Run(() =>
             {
                 if (recent is not null && (issue = workspace.CheckRecent(recent)) is not null) return new SavedSceneEligibility(null, issue);
-                return fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh);
+                var checkedBuild = fresh is null ? workspace.CheckStored(input, cancel.Token) : workspace.CheckFresh(fresh);
+                if (recent is not null && checkedBuild.Build is { } build &&
+                    (issue = workspace.CheckRecent(recent, build.Files.Catalog)) is not null) return new SavedSceneEligibility(null, issue);
+                return checkedBuild;
             });
         }
         catch (OperationCanceledException) when (cancel.IsCancellationRequested) { return; }
@@ -3499,7 +3514,7 @@ public sealed class MainWindow : Window
     private void RefreshSavedScenes()
     {
         if (_savedWorkspace is null || _savedAttempts.Busy) return;
-        _savedAttempts.CancelRecentSelection();
+        CancelPendingSavedRecent();
         string? selected = _savedList.SelectedItem as string;
         string[] names;
         try
