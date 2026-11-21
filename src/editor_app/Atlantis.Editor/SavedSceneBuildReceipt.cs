@@ -21,6 +21,7 @@ internal sealed record SavedSceneEligibility(SavedSceneBuild? Build, string Deta
 internal sealed class SavedSceneReceiptStore(string root, string attempts, string checkout)
 {
     internal const int Version = 1;
+    internal const int CleanupVersion = 2;
     private const int MaxReceiptBytes = 16 * 1024;
     private sealed record SlotState(string Attempt, SavedSceneBuildReceipt? Receipt);
     internal static string Scope(string checkout) => Convert.ToHexString(
@@ -82,6 +83,7 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
     }
 
     internal SavedSceneBuildReceipt? Read() => ReadSlot()?.Receipt;
+    internal string? CurrentAttempt() => ReadSlot()?.Attempt;
     internal bool IsCurrentAttempt(string attempt) => ReadSlot()?.Attempt == attempt;
 
     private SlotState? ReadSlot()
@@ -92,13 +94,13 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
         using var stream = new FileStream(Slot, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
         if (stream.Length > MaxReceiptBytes) throw new IOException("The recorded build receipt is too large.");
         var state = JsonSerializer.Deserialize<SlotState>(stream);
-        if (state is null) return null;
+        if (state is null) throw new IOException("Missing recorded build slot.");
         if (state.Attempt is not { } attempt) throw new IOException("Missing attempt in the recorded build slot.");
         string leaf = Path.GetFileName(attempt);
         if (Path.GetDirectoryName(attempt) != attempts || leaf.Length != 16 || !leaf.All(Uri.IsHexDigit))
             throw new IOException("The recorded attempt is outside the local build area.");
         if (state.Receipt is not { } receipt) return state;
-        if (receipt.Version != Version || receipt.Checkout != checkout || receipt.Inputs is null ||
+        if (receipt.Version is not (Version or CleanupVersion) || receipt.Checkout != checkout || receipt.Inputs is null ||
             receipt.Build is not { Recorded: true, Input: not null, Files: not null, Directory: not null, Executable: not null } build ||
             string.IsNullOrWhiteSpace(receipt.ConfiguredInputs) || string.IsNullOrWhiteSpace(receipt.Outputs))
             throw new IOException("The recorded build receipt has an unsupported version, checkout or shape.");

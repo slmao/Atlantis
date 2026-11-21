@@ -1,11 +1,11 @@
 # Spec 0125 — Saved Scenes Build Cleanup
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0125](../plans/0125-saved-scene-build-cleanup.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0174](../adr/0174-saved-scene-build-cleanup-ownership.md) (Proposed)
+- **Approval:** Maintainer approved `a4227c03` and J1–J4 in [PR #415](https://github.com/slmao/Atlantis/pull/415#issuecomment-7058022375), 2026-11-21. Design merged at `048680c3`.
+- **Related ADR:** [ADR-0174](../adr/0174-saved-scene-build-cleanup-ownership.md) (Accepted)
 
 ## Summary
 

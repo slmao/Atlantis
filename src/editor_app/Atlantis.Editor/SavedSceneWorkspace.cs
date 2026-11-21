@@ -33,6 +33,11 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         Path.Combine(receiptRoot ?? BuildArea, "a"), checkout);
     private readonly SavedSceneBuildEvidence _evidence = new(checkout, cmake);
     private readonly SavedSceneRecentStore _recent = new(receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)));
+    private readonly SavedSceneBuildCleanup _cleanup = new(checkout,
+        receiptRoot ?? Path.Combine(BuildArea, SavedSceneReceiptStore.Scope(checkout)), Path.Combine(receiptRoot ?? BuildArea, "a"));
+
+    internal SavedSceneBuildCleanup.Listing CleanupCandidates() => _cleanup.List(_store.CurrentAttempt);
+    internal SavedSceneBuildCleanup.Removal RemoveBuild(SavedSceneBuildCleanup.Candidate candidate) => _cleanup.Remove(candidate, _store);
 
     private sealed class ChangedSceneRegistration() : IOException("The saved scene registration changed after verification.");
     private sealed class UnidentifiedSceneRegistration(string message) : IOException(message);
@@ -278,10 +283,12 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         catch (Exception e) when (IsLocalFailure(e))
         { return new(null, "Cannot verify the current build. Another launcher may be using the build slot. " + e.Message); }
         using var held = lease;
+        SavedSceneBuildReceipt? verifiedReceipt = null;
         if (result.Recorded)
         {
+            verifiedReceipt = _store.Read();
             var eligibility = VerifyStored(result.Input);
-            if (eligibility.Build != result)
+            if (eligibility.Build != result || verifiedReceipt?.Build != result)
                 return new(null, eligibility.Build is null ? eligibility.Detail : "The build was superseded. Build again.");
         }
         else if (CheckFresh(result) is { Build: null } ineligible) return new(null, ineligible.Detail);
@@ -298,6 +305,15 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         catch (Exception e) when (IsLocalFailure(e))
         { return new(null, "Cannot verify the saved scene files before opening. " + e.Message + " Build again."); }
         if (recent is not null && identity != recent) return new(null, "This location now contains a different scene.");
+        try
+        {
+            if (verifiedReceipt is not null && _store.Read() != verifiedReceipt)
+                return new(null, "The build was superseded. Build again.");
+            if (verifiedReceipt?.Version == SavedSceneReceiptStore.CleanupVersion)
+                _cleanup.Protect(result.Directory);
+        }
+        catch (Exception e) when (IsLocalFailure(e))
+        { return new(null, "Cannot record build protection before opening. " + e.Message); }
         return new(Process.Start(ChildStart(apphost, result.Executable)) ?? throw new IOException("The Editor process did not start."),
             null, warning);
     }
@@ -321,6 +337,9 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
             }
             attempt = _store.ReserveAttempt();
             _store.Write(attempt, null);
+            bool tracked = _cleanup.Reserve(attempt);
+            using var job = tracked ? new SavedSceneCleanupWindows.BuildJob() : null;
+            bool succeeded = false;
             phase = "Preparing";
             string logPath = Path.Combine(attempt, "build.log");
             Directory.CreateDirectory(attempt);
@@ -347,7 +366,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
                 phase = "Configuring";
                 progress(new(phase, "Configuring the saved slot", attempt, logPath));
-                int configured = await RunAsync(configure, log);
+                int configured = await RunAsync(configure, log, job);
                 if (configured != 0) return new("Failed", $"Configure exited with code {configured}.", attempt, logPath);
 
                 string? VerifyInputs() =>
@@ -368,7 +387,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
 
                 phase = "Building";
                 progress(new(phase, "Building atlantis_runtime (Debug)", attempt, logPath));
-                int built = await RunAsync(["--build", attempt, "--config", "Debug", "--target", "atlantis_runtime"], log);
+                int built = await RunAsync(["--build", attempt, "--config", "Debug", "--target", "atlantis_runtime"], log, job);
                 if (built != 0) return new("Failed", $"Build exited with code {built}.", attempt, logPath);
 
                 phase = "Checking output";
@@ -386,21 +405,28 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
                     try
                     {
                         var recorded = build with { Recorded = true };
-                        _store.Write(attempt, new(SavedSceneReceiptStore.Version, checkout, recorded,
+                        int version = tracked ? SavedSceneReceiptStore.CleanupVersion : SavedSceneReceiptStore.Version;
+                        _store.Write(attempt, new(version, checkout, recorded,
                             new(_evidence.Scene(files), assets, configuration), resolved, outputs));
                         build = recorded;
                     }
                     catch (Exception e) when (IsLocalFailure(e)) { reason = e.Message; }
                 }
+                if (tracked && !build.Recorded) _cleanup.Protect(attempt);
                 string detail = build.Recorded ? "Build succeeded and was recorded for reuse." :
                     "Build succeeded for this session. Reuse after restart unavailable. " + reason;
                 log.WriteLine(detail);
+                succeeded = true;
                 return new("Succeeded", detail, attempt, logPath, build);
             }
             catch (Exception e) when (IsLocalFailure(e))
             {
                 log.WriteLine(e.Message);
                 throw;
+            }
+            finally
+            {
+                if (job is not null && await job.ObserveIdleAsync()) _cleanup.Settle(attempt, succeeded);
             }
         }
         catch (Exception e) when (IsLocalFailure(e))
@@ -415,7 +441,7 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         catch (Exception e) when (IsLocalFailure(e)) { failure = e.Message; return null; }
     }
 
-    private async Task<int> RunAsync(string[] arguments, TextWriter log)
+    private async Task<int> RunAsync(string[] arguments, TextWriter log, SavedSceneCleanupWindows.BuildJob? job)
     {
         var start = new ProcessStartInfo(cmake)
         {
@@ -427,14 +453,26 @@ internal sealed class SavedSceneWorkspace(string checkout, string cmake, string 
         };
         foreach (string arg in arguments) start.ArgumentList.Add(arg);
         log.WriteLine("# " + JsonSerializer.Serialize(new[] { cmake }.Concat(arguments)));
-        using Process process = Process.Start(start) ?? throw new IOException("CMake did not start.");
         async Task Drain(StreamReader reader, string prefix)
         {
             while (await reader.ReadLineAsync() is { } line) log.WriteLine(prefix + line);
         }
-        await Task.WhenAll(Drain(process.StandardOutput, "out "), Drain(process.StandardError, "err "), process.WaitForExitAsync());
-        log.WriteLine("# exit " + process.ExitCode);
-        return process.ExitCode;
+        using var tracked = job?.TryStart(start);
+        int exitCode;
+        if (tracked is not null)
+        {
+            Task<int> exit = tracked.ExitCodeAsync();
+            await Task.WhenAll(Task.Run(() => Drain(tracked.Output, "out ")), Task.Run(() => Drain(tracked.Error, "err ")), exit);
+            exitCode = await exit;
+        }
+        else
+        {
+            using Process process = Process.Start(start) ?? throw new IOException("CMake did not start.");
+            await Task.WhenAll(Drain(process.StandardOutput, "out "), Drain(process.StandardError, "err "), process.WaitForExitAsync());
+            exitCode = process.ExitCode;
+        }
+        log.WriteLine("# exit " + exitCode);
+        return exitCode;
     }
 
     private static string Under(string parent, string path)
