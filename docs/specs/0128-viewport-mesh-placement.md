@@ -1,11 +1,11 @@
 # Spec 0128 — Place One Static Mesh on a Viewport Surface
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0128](../plans/0128-viewport-mesh-placement.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0177](../adr/0177-editor-viewport-placement-boundary.md) (Proposed)
+- **Approval:** 2026-11-21, [joint approval of `cfa48c79`](https://github.com/slmao/Atlantis/pull/420#issuecomment-7060032916). Maintainer merge `a7d0004b`.
+- **Related ADR:** [ADR-0177](../adr/0177-editor-viewport-placement-boundary.md) (Accepted)
 
 ## Summary
 

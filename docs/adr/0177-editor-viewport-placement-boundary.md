@@ -1,9 +1,9 @@
 # ADR 0177 — Editor-Owned Viewport Placement
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-21
 - **Deciders:** Maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** 2026-11-21, [joint approval of `cfa48c79`](https://github.com/slmao/Atlantis/pull/420#issuecomment-7060032916). Maintainer merge `a7d0004b`.
 - **Related Spec:** [Spec 0128](../specs/0128-viewport-mesh-placement.md)
 
 ## Context
