@@ -1,11 +1,11 @@
 # Spec 0130 — Import and Add a Static glTF Group
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-21
 - **Related Plan:** [Plan 0130](../plans/0130-static-gltf-group-instantiation.md)
-- **Approval:** Pending joint review
-- **Related ADR:** [ADR-0179](../adr/0179-static-gltf-group-projection-and-instantiation.md) (Proposed)
+- **Approval:** J1–J4 approved for [873f1271](https://github.com/slmao/Atlantis/pull/423#issuecomment-7062867632) after joint review. The maintainer merged the design in #423.
+- **Related ADR:** [ADR-0179](../adr/0179-static-gltf-group-projection-and-instantiation.md) (Accepted)
 
 ## Summary
 
