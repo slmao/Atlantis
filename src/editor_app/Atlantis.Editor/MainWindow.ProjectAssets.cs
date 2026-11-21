@@ -120,7 +120,10 @@ public sealed partial class MainWindow
                 Text = asset is null ? "" : AssetBrowseProjection.AssetKind(asset) + " · " + EditorVisuals.AssetName(asset),
                 TextTrimming = TextTrimming.CharacterEllipsis
             });
-        _projectSearch.TextChanged += (_, _) => ProjectFiltersChanged();
+        _projectSearch.PropertyChanged += (_, e) =>
+        {
+            if (e.Property == TextBox.TextProperty) ProjectFiltersChanged();
+        };
         _projectKind.SelectionChanged += (_, e) =>
         {
             if (ReferenceEquals(e.Source, _projectKind)) ProjectFiltersChanged();
