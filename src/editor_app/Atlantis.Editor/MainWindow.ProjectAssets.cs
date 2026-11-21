@@ -105,13 +105,17 @@ public sealed partial class MainWindow
         _projectRows.AutoScrollToSelectedItem = false;
         _projectRows.ItemTemplate = new FuncDataTemplate<SourceRow>((row, _) =>
         {
+            if (row is null) return new TextBlock();
             var label = new TextBlock { Text = row.Key.Path, TextTrimming = TextTrimming.CharacterEllipsis };
             ToolTip.SetTip(label, SourceLabel(row.Key));
             return EditorVisuals.Columns("*,Auto", label, EditorVisuals.Secondary(row.Source.Kind.ToString()));
         });
         _projectOutputs.ItemTemplate = new FuncDataTemplate<AssetSummary>((asset, _) =>
-            new TextBlock { Text = AssetBrowseProjection.AssetKind(asset) + " · " + EditorVisuals.AssetName(asset),
-                TextTrimming = TextTrimming.CharacterEllipsis });
+            new TextBlock
+            {
+                Text = asset is null ? "" : AssetBrowseProjection.AssetKind(asset) + " · " + EditorVisuals.AssetName(asset),
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
         _projectSearch.TextChanged += (_, _) => ProjectFiltersChanged();
         _projectKind.SelectionChanged += (_, _) => ProjectFiltersChanged();
         _projectRows.SelectionChanged += (_, _) =>
@@ -147,8 +151,8 @@ public sealed partial class MainWindow
     {
         AutomationProperties.SetName(tree, name);
         tree.ItemTemplate = new FuncTreeDataTemplate<AssetFolder>((item, _) =>
-            new TextBlock { Text = item.Label, TextTrimming = TextTrimming.CharacterEllipsis },
-            item => item.Children);
+            new TextBlock { Text = item?.Label ?? "", TextTrimming = TextTrimming.CharacterEllipsis },
+            item => item?.Children ?? []);
     }
 
     private static string SourceLabel(ProjectSourceKey key) =>

@@ -45,14 +45,16 @@ public sealed class AssetSession
     /// <summary>Starts one explicit read within the Runtime's authorized roots.</summary>
     public Outcome<A.ProjectScan, A.ProjectScanError> ScanProject() =>
         AssetRequest("assets.scanProject", JsonValue.NewObject(), A.ProjectScanError.Unsupported,
-            Codec.DecodeProjectScanError, value => Codec.DecodeProjectScan(value) is { Pending: true } scan ? scan : null);
+            Codec.DecodeProjectScanError, value => Codec.DecodeProjectScan(value) is { Pending: true } scan ? scan : null,
+            acceptUnknownMethod: true);
 
     public Outcome<A.ProjectScan, A.ProjectScanError> ProjectScanStatus(AssetGuid id)
     {
         if (id.IsNil) throw new ArgumentException("a non-nil scan ID is required", nameof(id));
         return AssetRequest("assets.projectScanStatus", JsonValue.NewObject().Set("id", Codec.Encode(id)),
             A.ProjectScanError.Unsupported, Codec.DecodeProjectScanError,
-            value => Codec.DecodeProjectScan(value) is A.ProjectScan scan && scan.Id == id ? scan : null);
+            value => Codec.DecodeProjectScan(value) is A.ProjectScan scan && scan.Id == id ? scan : null,
+            acceptUnknownMethod: true);
     }
 
     public Outcome<A.PrefabRevision, A.StaticGroupError> PrefabRevision(AssetGuid guid)
@@ -457,10 +459,11 @@ public sealed class AssetSession
     }
 
     private Outcome<T, E> AssetRequest<T, E>(string method, JsonValue parameters, E unsupported,
-        Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode) where T : class where E : struct, Enum
+        Func<JsonValue, E?> decodeError, Func<JsonValue, T?> decode, bool acceptUnknownMethod = false)
+        where T : class where E : struct, Enum
     {
         JsonValue response = _session.AwaitResponse(_session.Send(method, parameters));
-        if (Codec.IsLegacyAssetRebuildRefusal(response))
+        if (acceptUnknownMethod ? Codec.IsUnsupportedStaticGroup(response) : Codec.IsLegacyAssetRebuildRefusal(response))
             return Outcome<T, E>.Err(unsupported);
         if (response.Find("error") is not null || response.Find("result") is not JsonValue result)
             throw _session.Malformed(method);
