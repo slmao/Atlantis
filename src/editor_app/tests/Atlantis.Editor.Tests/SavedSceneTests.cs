@@ -888,7 +888,8 @@ public static partial class Program
             await NameUiWait(async () => await Task.Run(() => remote.Authoring.Document() is not null), "child document opened", 60);
             var document = remote.Authoring.Document()!;
             Verify("independent Editor opened the exact saved source and GUID with the build receipt Runtime",
-                string.Equals(document.SourcePath, source, StringComparison.OrdinalIgnoreCase) && document.Scene.Value == recorded.Identity.Scene);
+                string.Equals(Path.GetFullPath(document.SourcePath), Path.GetFullPath(source), StringComparison.OrdinalIgnoreCase) &&
+                document.Scene.Value == recorded.Identity.Scene);
             using var logStream = new FileStream(childLog!, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var logReader = new StreamReader(logStream);
             File.WriteAllText(Path.Combine(evidence, phase + "-child-runtime.log"), await logReader.ReadToEndAsync());
