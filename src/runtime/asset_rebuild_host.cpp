@@ -487,6 +487,28 @@ std::optional<TextureLocations> readLocations(const fs::path& root, const Textur
   return parsed && nameBytes(*parsed) == *bytes ? parsed : std::nullopt;
 }
 
+std::string digestHex(const std::array<unsigned char, 32>& digest) {
+  std::string hex;
+  for (const auto byte : digest) {
+    constexpr std::string_view alphabet = "0123456789abcdef";
+    hex.push_back(alphabet[byte >> 4]);
+    hex.push_back(alphabet[byte & 15]);
+  }
+  return hex;
+}
+
+std::optional<std::string> gltfDigest(std::string_view source) {
+  if (source.empty() || source.size() > kGltfBytes) return {};
+  BCRYPT_ALG_HANDLE provider = nullptr;
+  if (BCryptOpenAlgorithmProvider(&provider, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+  std::array<unsigned char, 32> digest{};
+  auto* bytes = reinterpret_cast<unsigned char*>(const_cast<char*>(source.data()));
+  const auto result = BCryptHash(provider, nullptr, 0, bytes, static_cast<ULONG>(source.size()),
+                                 digest.data(), static_cast<ULONG>(digest.size()));
+  BCryptCloseAlgorithmProvider(provider, 0);
+  return result < 0 ? std::nullopt : std::optional{digestHex(digest)};
+}
+
 std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit,
                                       bool allowEmpty = false) {
   if (!exactTexturePath(root, relative)) return {};
@@ -519,13 +541,7 @@ std::optional<std::string> fileDigest(const fs::path& root, const fs::path& rela
   }
   std::array<unsigned char, 32> digest{};
   if (BCryptFinishHash(sha.hash, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) return {};
-  std::string hex;
-  for (const auto byte : digest) {
-    constexpr std::string_view alphabet = "0123456789abcdef";
-    hex.push_back(alphabet[byte >> 4]);
-    hex.push_back(alphabet[byte & 15]);
-  }
-  return hex;
+  return digestHex(digest);
 }
 
 std::optional<TextureUnit> readTextureUnit(const fs::path& root, const fs::path& unit, std::string_view name) {
@@ -2280,7 +2296,7 @@ struct AssetRebuildHost::State {
           !fs::create_directories(project / replacement, ec) || ec ||
           !writeText(project / replacement / "source.gltf", *review.candidate))
         return fail(Stage::Launch, Code::LaunchFailed, "Cannot freeze the reviewed glTF in private staging.");
-      const auto digest = fileDigest(project, replacement / "source.gltf", kGltfBytes);
+      const auto digest = gltfDigest(*review.candidate);
       if (!digest) return fail(Stage::Launch, Code::LaunchFailed, "Cannot seal the replacement glTF.");
       const KeyedUnit next{prior.root, *digest, keyedEnvelope(name, prior.root, *digest)};
       auto expected = activeKeyed;
@@ -2685,7 +2701,7 @@ struct AssetRebuildHost::State {
         if (*mode) {
           const auto products = static_groups::sourceProducts(parsed.value(), root);
           if (products.isErr()) return failed(IS::Source, IC::InvalidSource, products.error());
-          const auto digest = fileDigest(project, pending / "source.gltf", kGltfBytes);
+          const auto digest = gltfDigest(*bytes);
           if (!digest) return failed(IS::Source, IC::InvalidSource, "Cannot seal the keyed glTF source.");
           source = keyedEnvelope(work.job.name, root, *digest);
           intendedKeyed.emplace(work.job.name, KeyedUnit{root, *digest, source});
@@ -4020,8 +4036,8 @@ ca::RenameTextureResult AssetRebuildHost::renameTexture(
     return R::Err(E::Unavailable);
   }
   if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
-      state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-      state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
+      state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+      state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
   if (!ca::validImportName(request.displayName)) return R::Err(E::InvalidName);
   if (!catalog) return R::Err(E::CatalogUnavailable);
   const auto* record = catalog->find(request.asset);
@@ -4067,8 +4083,8 @@ ca::MoveTextureResult AssetRebuildHost::moveTexture(
     return R::Err(E::Unavailable);
   }
   if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
-      state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-      state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
+      state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+      state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
   if (!ca::validTextureLogicalPath(request.expectedLogicalPath) ||
       !ca::validTextureLogicalPath(request.destinationLogicalPath)) return R::Err(E::InvalidPath);
   if (!catalog) return R::Err(E::CatalogUnavailable);
@@ -4197,16 +4213,18 @@ ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::I
   if (mode == ca::ImportMode::Register) {
     if (committed != state_->registered.end() || state_->producers.contains(managedSourceKey(name)))
       return R::Err(E::NameConflict);
-    if (state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-        state_->textureRegistryChanged)
+    if (state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+        state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
   } else {
     if (committed == state_->registered.end() || state_->activeRegistered.contains(name))
       return R::Err(E::NothingToResume);
     auto expected = state_->activeRegistered;
     expected.emplace(committed->first, committed->second);
-    if (expected != state_->registered || state_->committedMaterials != state_->activeMaterials ||
-        state_->textureRegistryChanged)
+    auto otherKeyed = state_->committedKeyed;
+    if (const auto resumed = otherKeyed.find(name); resumed != otherKeyed.end()) otherKeyed.erase(resumed);
+    if (expected != state_->registered || otherKeyed != state_->activeKeyed ||
+        state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
     root = committed->second;
   }
@@ -4267,7 +4285,8 @@ ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& re
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged() || state_->committedKeyed != state_->activeKeyed)
+    return R::Err(E::ActivationRequired);
   const auto id = newGuid();
   if (!id) return R::Err(E::Unavailable);
   ca::MaterialJob job{{*id}, target, ca::RebuildState::Running, {}, {}, {}};
@@ -4301,7 +4320,8 @@ ca::TextureImportStartResult AssetRebuildHost::startTextureImport(
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged() || state_->committedKeyed != state_->activeKeyed)
+    return R::Err(E::ActivationRequired);
   const auto found = state_->committedTextures.find(name);
   if (kind == TextureKind::Color &&
       labelClaimed(state_->committedNames, state_->committedTextures,
