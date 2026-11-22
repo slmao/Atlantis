@@ -315,6 +315,12 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer _materialPoll = new() { Interval = TimeSpan.FromSeconds(1) };
     private MaterialSettlement _materialSettlement = new();
     private MaterialEditorWindow? _materialWindow;
+    private readonly Button _locateSurfaceMaterial = new() { Content = "Locate Material" };
+    private bool _materialPickArmed;
+    private LocatedMaterialBinding? _locatedMaterial;
+    private LocatedMaterialBinding? _materialCopyOrigin;
+    private MaterialBindingReview? _publishedMaterialCopy;
+    private SceneAddress? _locateMaterialFocus;
     private MaterialRead? _selectedMaterial;
     private AssetGuid? _materialReadTarget;
     private bool _materialPolling, _materialCanWrite, _materialSupported, _materialLegacy;
@@ -528,7 +534,14 @@ public sealed partial class MainWindow : Window
             _worker?.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         };
         InitializeBistroViews();
-        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides, _bistroViews })
+        _locateSurfaceMaterial.Click += (_, _) =>
+        {
+            if (BistroLocatorProtected())
+            { ShowNavigationMessage("Finish the current draft or gesture before locating a material."); return; }
+            _materialPickArmed = !_materialPickArmed;
+            ShowNavigationMessage(_materialPickArmed ? "Click an opaque surface to locate its material." : "Material location canceled.");
+        };
+        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides, _bistroViews, _locateSurfaceMaterial })
             control.AddHandler(PointerPressedEvent, (_, _) =>
             {
                 _navigationToolbarPointer = true;
@@ -739,7 +752,7 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
-            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews, _alignSurfaces);
+            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews, _alignSurfaces, _locateSurfaceMaterial);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
@@ -1098,6 +1111,9 @@ public sealed partial class MainWindow : Window
         EndPreviewSession();
         LoseTextureConnection();
         _materialPoll.Stop(); _materialWindow?.Close(); _materialWindow = null;
+        _locatedMaterial = _materialCopyOrigin = null;
+        _publishedMaterialCopy = null;
+        _materialPickArmed = false;
         _materialSettlement.LoseReceipt();
         _materialPolling = _materialCanWrite = _materialSupported = _materialLegacy = false; _materialSupportsMetallicRoughness = null; _materialSupportsOcclusion = null; _materialSupportsCombinedMaps = null;
         _materialReadTarget = null; _selectedMaterial = null; ++_materialReadEpoch;
@@ -1633,6 +1649,9 @@ public sealed partial class MainWindow : Window
         _viewDirection.IsEnabled = camera && _navigationSupported;
         _viewportGuides.IsEnabled = _worker is not null && _reparentDocumentOpen && !_referenceSessionFailed;
         UpdateBistroActions(camera);
+        _locateSurfaceMaterial.IsEnabled = camera && _options.AttachSession is null && _reparentDocumentOpen &&
+            !_referenceSessionFailed && _navigationReady && !_navigationPending;
+        if (!_locateSurfaceMaterial.IsEnabled) _materialPickArmed = false;
         UpdateAlignmentControls();
         string? tip = camera && !_navigationSupported ? "Focus and direction views require an updated Runtime." : null;
         ToolTip.SetTip(_focusSelection, tip ?? (_selection.Nodes.Count > ViewportNavigation.MaxTargets
@@ -1663,7 +1682,7 @@ public sealed partial class MainWindow : Window
         var focused = FocusManager?.GetFocusedElement();
         return IsNavigationTarget(_resetCamera) || IsNavigationTarget(_focusSelection) ||
             IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed) || IsNavigationTarget(_viewportGuides) ||
-            IsNavigationTarget(_bistroViews);
+            IsNavigationTarget(_bistroViews) || IsNavigationTarget(_locateSurfaceMaterial);
 
         bool IsNavigationTarget(Control control) =>
             control.IsPointerOver || control.IsKeyboardFocusWithin || ReferenceEquals(focused, control) ||
@@ -1921,6 +1940,12 @@ public sealed partial class MainWindow : Window
             PickAlignmentFace(window,matrices,x,y);
             return;
         }
+        if (_materialPickArmed)
+        {
+            _materialPickArmed = false;
+            LocateSurfaceMaterial(window, matrices, x, y);
+            return;
+        }
         ulong request = ++_pickRequest;
         // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
         var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
@@ -1945,6 +1970,105 @@ public sealed partial class MainWindow : Window
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
         float ndcY = (float)y / window.Height * 2.0f - 1.0f;
         _worker.Raycast(CameraConvention.RayThroughNdc(matrices, ndcX, ndcY), arrivalTicks, request, _viewportCameraIntent);
+    }
+
+    private void LocateSurfaceMaterial(ViewportWindow window, CameraMatrices matrices, int x, int y)
+    {
+        if (_worker is not { } worker || BistroLocatorProtected() || !_locateSurfaceMaterial.IsEnabled ||
+            x < 0 || x >= window.Width || y < 0 || y >= window.Height)
+        { ShowNavigationMessage("Finish the current edit and pick a current viewport pixel."); return; }
+        if (!BistroVisibilityAllowed)
+        { ShowNavigationMessage("Restore viewport visibility before locating a material."); return; }
+        var ray = CameraConvention.RayThroughNdc(matrices, (float)x / window.Width * 2 - 1, (float)y / window.Height * 2 - 1);
+        var lens = (_sceneProjection ?? _camera.Pose()).Lens;
+        float dot = Vector3.Dot(ray.Direction, -new Vector3(matrices.View[2], matrices.View[6], matrices.View[10]));
+        if (!float.IsFinite(dot) || dot <= 0) return;
+        ulong request = ++_pickRequest;
+        ulong selection = _selection.Generation;
+        ShowNavigationMessage("Checking the material binding and its known uses…");
+        worker.LocateMaterialBinding(new Ray(ray.Origin, ray.Direction), lens.NearZ / dot, lens.FarZ / dot,
+            selection, _viewportCameraIntent, (binding, error) =>
+        {
+            if (request != _pickRequest || !ReferenceEquals(_worker, worker) || _shuttingDown) return;
+            if (binding is null || selection != _selection.Generation || BistroLocatorProtected() ||
+                !worker.MaterialBindingCurrent(binding) ||
+                _hierarchyRows.FirstOrDefault(row => row.Node == binding.Hit.Entity) is not { } row ||
+                !ReferenceEquals(row.Incarnation, binding.Target.NodeIdentity))
+            { ShowNavigationMessage(error ?? "Material location expired. Pick again."); return; }
+            _locatedMaterial = binding;
+            _locateMaterialFocus = binding.Target.Address;
+            if (!_hierarchyProjection.Rows.Any(item => item.Node == row.Node)) ClearHierarchyFilters();
+            SetSelection(row.Node, scroll: true);
+            ShowNavigationMessage("Located the verified Material slot.");
+            if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+            QueryMaterial();
+        });
+    }
+
+    private bool CanUseLocatedMaterial(LocatedMaterialBinding binding) =>
+        ReferenceEquals(_locatedMaterial, binding) && _selection.Node == binding.Hit.Entity &&
+        !BistroLocatorProtected() && _worker?.MaterialBindingCurrent(binding) == true;
+
+    private Control BuildLocatedMaterial(LocatedMaterialBinding binding)
+    {
+        var status = EditorVisuals.Secondary(binding.Complete ? "Complete for the current document"
+            : "Check incomplete · showing known direct uses");
+        status.TextWrapping = TextWrapping.Wrap;
+        var edit = new Button { Content = "Edit shared material" };
+        var duplicate = new Button { Content = "Duplicate for this binding" };
+        var replace = new Button { Content = "Replace this binding with copy" };
+        var copyNote = new Button { Content = "Copy published review note" };
+        copyNote.Click += async (_, _) =>
+        {
+            if (_publishedMaterialCopy is not { } review || review.Scene != binding.Scene ||
+                review.Node != binding.Hit.Entity || review.Original != binding.Hit.Material || Clipboard is not { } clipboard)
+            { _editLine.Text = "No verified published copy is recorded for this binding."; return; }
+            await clipboard.SetTextAsync(review.ToString());
+            _editLine.Text = "Review note copied.";
+        };
+        var note = new TextBox { PlaceholderText = "Paste the published copy review note", MaxLength = 512 };
+        edit.Click += (_, _) => OpenLocatedMaterial(MaterialMode.Edit, binding, edit);
+        duplicate.Click += (_, _) => OpenLocatedMaterial(MaterialMode.Copy, binding, duplicate);
+        replace.Click += (_, _) =>
+        {
+            if (!CanUseLocatedMaterial(binding) || MaterialBindingReview.Parse(note.Text ?? "") is not { } review ||
+                review.Scene != binding.Scene || review.Node != binding.Hit.Entity || review.Mesh != binding.Hit.Mesh ||
+                review.Original != binding.Hit.Material)
+            { _editLine.Text = "The review note does not match the current binding. Locate the original surface again."; return; }
+            var field = _inspectorShown?.Fields.FirstOrDefault(item => item.Path == MaterialBindingPick.Slot);
+            if (field is null) return;
+            note.Clear();
+            BeginAssetReference(field, replace, binding.Hit.Entity, binding, review.Copy);
+        };
+        return EditorVisuals.Group(EditorVisuals.Heading("Located material"), EditorVisuals.Stack(5,
+            EditorVisuals.Secondary(binding.Name), EditorVisuals.Details(binding.Hit.Material.ToString()),
+            EditorVisuals.Secondary(MaterialBindingPick.Slot), status,
+            EditorVisuals.Disclosure($"{binding.KnownUses.Count} other known uses", new ScrollViewer
+            {
+                MaxHeight = 132,
+                Content = EditorVisuals.Details(string.Join("\n", binding.KnownUses))
+            }),
+            EditorVisuals.Secondary("A shared edit affects every use after activation, including uses outside this document."),
+            EditorVisuals.Actions(edit, duplicate), copyNote, note, replace));
+    }
+
+    private void OpenLocatedMaterial(MaterialMode mode, LocatedMaterialBinding binding, Button origin)
+    {
+        if (!CanUseLocatedMaterial(binding) || _worker is not { } worker || _materialWindow is not null ||
+            !_materialCanWrite || _materialSettlement.BlocksSave)
+        { _editLine.Text = "The binding or material workspace is unavailable. Locate the surface again."; return; }
+        worker.RecheckMaterialBinding(binding, current =>
+        {
+            if (!current || !CanUseLocatedMaterial(binding))
+            { _editLine.Text = "The binding changed. Locate the surface again."; return; }
+            worker.ReadMaterial(binding.Hit.Material, (result, legacy, packed, occlusion, combined) =>
+            {
+                if (!ReferenceEquals(_worker, worker) || !CanUseLocatedMaterial(binding) || !result.IsOk ||
+                    result.Value.Material != binding.Hit.Material || (mode == MaterialMode.Edit && !result.Value.Editable))
+                { _editLine.Text = "This material cannot be edited in the current workspace or the binding expired."; return; }
+                ShowMaterialEditor(mode, origin, result.Value, binding.Name, legacy, packed, occlusion, combined, binding);
+            });
+        });
     }
 
     private void OnPicked(PickResult pick)
@@ -1993,6 +2117,7 @@ public sealed partial class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        if (_locatedMaterial is { } located && _selection.Node != located.Hit.Entity) _locatedMaterial = null;
         if (_alignmentId is not null && _alignmentSelection != _selection.Generation) CancelAlignment("Selection changed.");
         UpdateAlignmentControls();
         if (_advertisedAssetDrop?.Field is { } field && field.Selection != _selection.Generation)
@@ -3252,9 +3377,19 @@ public sealed partial class MainWindow : Window
         var original = mode == MaterialMode.Create ? null : _selectedMaterial;
         if (mode != MaterialMode.Create && original is null) return;
         var name = _assetsList.SelectedItem is AssetSummary row ? EditorVisuals.AssetName(row) : "";
+        ShowMaterialEditor(mode, origin, original, name, _materialLegacy, _materialSupportsMetallicRoughness != false,
+            _materialSupportsOcclusion != false, _materialSupportsCombinedMaps != false);
+    }
+
+    private void ShowMaterialEditor(MaterialMode mode, Button origin, MaterialRead? original, string name,
+        bool legacy, bool packed, bool occlusion, bool combined, LocatedMaterialBinding? binding = null)
+    {
+        if (_materialWindow is not null || !_materialCanWrite || _materialSettlement.BlocksSave) return;
         var dialog = new MaterialEditorWindow(--_materialSurface, new MaterialDraft(mode, original), name, _assetBrowser.Items,
-            !_materialLegacy, _materialSupportsMetallicRoughness != false, _materialSupportsOcclusion != false,
-            _materialSupportsCombinedMaps != false);
+            !legacy, packed, occlusion, combined, binding is null ? null : mode == MaterialMode.Edit
+                ? "Publishing changes this shared material for every use after activation."
+                : "Publishing creates a new material. This scene binding stays unchanged until you explicitly replace it.");
+        if (binding is not null) dialog.SelectPreviewMesh(binding.Hit.Mesh);
         _materialWindow = dialog;
         dialog.DraftChanged += () => SyncPreviewSelection(invalidate: true);
         dialog.PreviewRequested += () =>
@@ -3264,7 +3399,7 @@ public sealed partial class MainWindow : Window
             UpdatePreviewButton();
             StartNextPreview();
         };
-        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness, dialog.WithOcclusion, dialog.WithCombinedMaps);
+        dialog.SaveRequested += request => SubmitMaterial(request, dialog.WithMaps, dialog.WithMetallicRoughness, dialog.WithOcclusion, dialog.WithCombinedMaps, binding);
         dialog.ResumeRequested += ResumeMaterial;
         dialog.Closed += (_, _) =>
         {
@@ -3432,10 +3567,18 @@ public sealed partial class MainWindow : Window
         UpdateTextureButtons();
     }
 
-    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps)
+    private void SubmitMaterial(MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion,
+        bool withCombinedMaps, LocatedMaterialBinding? binding = null)
     {
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
+        if (binding is not null && !CanUseLocatedMaterial(binding))
+        { ShowMaterialState("The material binding changed. Close the dialog and locate it again."); return; }
+        if (request is not MaterialSave.Resume)
+        {
+            _materialCopyOrigin = request.Target.Mode == MaterialMode.Copy ? binding : null;
+            _publishedMaterialCopy = null;
+        }
         _materialSettlement.Begin(request.Target);
         var target = request.Target;
         long task = _materialTask = _taskIssues.Begin(target.Mode + " material",
@@ -3477,6 +3620,12 @@ public sealed partial class MainWindow : Window
             _materialResumeWithOcclusion = withOcclusion;
             _materialResumeWithCombinedMaps = withCombinedMaps;
             ShowMaterialState(); _materialPoll.Start();
+        }, binding, () =>
+        {
+            if (!ReferenceEquals(_worker, worker) || _materialSettlement.Target != target) return;
+            _materialSettlement.Refused();
+            _taskIssues.Admit(task, null, "The material binding changed before publication.", TaskResult.Refused);
+            ShowMaterialState("The material binding changed. Close the dialog and locate it again.");
         });
     }
 
@@ -3522,6 +3671,12 @@ public sealed partial class MainWindow : Window
             _materialSupported = true;
             _materialCanWrite = !status.WorkspaceNeedsRepair;
             if (id is not null) _materialSettlement.Observe(status);
+            if (_publishedMaterialCopy is null && _materialCopyOrigin is { } origin &&
+                _materialSettlement.Job is { State: RebuildState.Succeeded, SavedMaterial: AssetGuid copy })
+            {
+                _publishedMaterialCopy = new(origin.Scene, origin.Hit.Entity, origin.Hit.Mesh, origin.Hit.Material, copy);
+                _materialWindow?.ShowBindingReview(_publishedMaterialCopy.ToString());
+            }
             if (_materialSettlement.Job?.Generation is GenerationId published && status.ActiveGeneration == published)
                 _materialSettlement = new();
             if (_materialSettlement.InFlight) _materialPoll.Start(); else _materialPoll.Stop();
@@ -5211,6 +5366,9 @@ public sealed partial class MainWindow : Window
         title.TextWrapping = TextWrapping.Wrap;
         _inspectorPanel.Children.Add(EditorVisuals.Stack(1, title, EditorVisuals.Secondary("Scene node")));
         _inspectorPanel.Children.Add(EditorVisuals.Disclosure("Node details", EditorVisuals.Details(subject.ToString())));
+        if (_locatedMaterial is { } located && located.Hit.Entity == subject &&
+            _worker?.MaterialBindingCurrent(located) == true)
+            _inspectorPanel.Children.Add(BuildLocatedMaterial(located));
         if (_hierarchyRows.FirstOrDefault(row => row.Node == subject)?.PrefabOrigin is AssetGuid origin)
         {
             var source = EditorVisuals.Secondary("");
@@ -5322,7 +5480,12 @@ public sealed partial class MainWindow : Window
             };
             _inspectorPanel.Children.Add(EditorVisuals.Actions(choice, button));
         }
-        if (focusedAddress is SceneAddress previous) FocusReferenceLauncher(previous);
+        if (_locateMaterialFocus is SceneAddress locatedField && locatedField.Node == subject)
+        {
+            _locateMaterialFocus = null;
+            FocusReferenceLauncher(locatedField);
+        }
+        else if (focusedAddress is SceneAddress previous) FocusReferenceLauncher(previous);
     }
 
     private void FocusReferenceLauncher(SceneAddress address)
@@ -5340,7 +5503,8 @@ public sealed partial class MainWindow : Window
             b.IsEnabled = !_referenceBusy && !_referenceSessionFailed;
     }
 
-    private void BeginAssetReference(InspectorField field, Button launchControl, EntityGuid? sourceSubject)
+    private void BeginAssetReference(InspectorField field, Button launchControl, EntityGuid? sourceSubject,
+        LocatedMaterialBinding? binding = null, AssetGuid? preferred = null)
     {
         var worker = _worker;
         if (_referenceBusy || _referenceSessionFailed || worker is null || _selection.Node is not EntityGuid node) return;
@@ -5357,14 +5521,30 @@ public sealed partial class MainWindow : Window
             if (target is null) { _editLine.Text = error; FinishAssetReference(); return; }
             var chooser = new AssetReferencePickerWindow(worker, target, (listRequest, guid) =>
             {
-                worker.ConfirmAssetReference(target.Request, listRequest, guid, () =>
+                if (binding is not null)
+                {
+                    worker.CancelAssetReference(target.Request);
+                    if (preferred != guid || _selection.Node != binding.Hit.Entity || CurrentSceneInput() is not null)
+                    {
+                        _editLine.Text = "The material binding or expected copy changed. Locate it again.";
+                        FinishAssetReference();
+                        return;
+                    }
+                    worker.ReplaceLocatedMaterial(binding, guid, _selection.Generation, notice =>
+                    {
+                        if (!ReferenceEquals(worker, _worker) || launch != _referenceLaunch) return;
+                        _editLine.Text = notice;
+                        FinishAssetReference();
+                    });
+                }
+                else worker.ConfirmAssetReference(target.Request, listRequest, guid, () =>
                 { if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch) FinishAssetReference(); });
             }, () =>
             {
                 worker.CancelAssetReference(target.Request);
                 if (ReferenceEquals(worker, _worker) && launch == _referenceLaunch)
                 { FinishAssetReference(); }
-            });
+            }, preferred);
             _referenceWindow = chooser;
             chooser.PreviewInputsChanged += () => { if (ReferenceEquals(_referenceWindow, chooser)) SyncPreviewSelection(); };
             chooser.PreviewButton.Click += (_, _) => RequestPreview(withMaterial: true);

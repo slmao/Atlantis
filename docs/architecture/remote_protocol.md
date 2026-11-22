@@ -1065,3 +1065,23 @@ A successful job includes `rootGuid` and `generation`. A failed job
 reports the registration state separately, including `registeredRootGuid`
 if committed. Activation is an explicit local launch action. Existing
 asset and authoring calls keep their wire shapes.
+
+
+### `control.pickMaterialBinding`
+
+One bounded read of the nearest unique material binding in an existing Runtime
+projection (Spec 0138 and ADR-0186). Parameters have required `ray`,
+`minDistance`, `maxDistance`, and `sceneGeneration`; optional `viewport` is
+the existing `{sceneGeneration, revision}` stamp. The ray uses finite numeric
+triples and the existing unit-length tolerance. The distances are finite,
+with `0 <= minDistance < maxDistance`; the query includes both endpoints.
+A supplied viewport must match the requested scene generation, have been
+presented, and have no active visibility policy.
+
+Success is `{"ok":{"sceneGeneration":G,"entity":E,"mesh":M,"material":A,"distance":T,"slot":"Renderable.materialAsset"}}`
+with the matching `viewport` only when supplied. GUIDs are canonical and
+non-nil. Refusals are `{"err":"Code"}`, where Code is `InvalidRequest`,
+`Unavailable`, `Unsupported`, `StaleGeneration`, `StaleViewport`,
+`NotPresented`, `ActivePolicy`, `NoGeometry`, `Miss`, `Ambiguous`,
+`UnsupportedBinding`, or `TooLarge`. Prior hosts refuse the unknown method.
+The ordinary raycast and hosted selection pick shapes are unchanged.

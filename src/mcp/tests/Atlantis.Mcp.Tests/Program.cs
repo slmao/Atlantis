@@ -189,6 +189,9 @@ internal static partial class Program
         ("control.pick_viewport", "control.pickViewport",
             """{"sceneGeneration":4,"revision":8,"kind":"Selection","rays":[{"origin":[0,0,2],"direction":[0,0,-1]}]}""",
             """{"ok":{"sceneGeneration":4,"revision":8,"hit":null}}"""),
+        ("control.pick_material_binding", "control.pickMaterialBinding",
+            """{"ray":{"origin":[0,0,2],"direction":[0,0,-1]},"minDistance":0,"maxDistance":4,"sceneGeneration":7}""",
+            $$$"""{"ok":{"sceneGeneration":7,"entity":"{{{Entity}}}","mesh":"{{{Material}}}","material":"{{{Material}}}","distance":2,"slot":"Renderable.materialAsset"}}"""),
         ("control.pick_alignment_faces", "control.pickAlignmentFaces",
             """{"rays":[{"origin":[0,0,2],"direction":[0,0,-1]}]}""",
             $$$"""{"ok":{"sceneGeneration":7,"faces":[{"entity":"{{{Entity}}}","mesh":"{{{Material}}}","triangles":[2,3],"distance":2,"corners":[[-1,-1,0],[1,-1,0],[1,1,0],[-1,1,0]],"normal":[0,0,1],"worldMatrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]}}"""),
@@ -578,7 +581,7 @@ internal static partial class Program
                 "authoring.saveAs" or "authoring.createScene" or "authoring.createPrefab" or "authoring.updatePrefab" or
                 "authoring.syncPrefab" or "authoring.replayPrefab" or "authoring.documentState" or "authoring.saveIfCurrent" or
                 "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
-                "authoring.discardRecovery" or "control.viewportNavigation" or "control.pickAlignmentFaces" or
+                "authoring.discardRecovery" or "control.viewportNavigation" or "control.pickAlignmentFaces" or "control.pickMaterialBinding" or
                 "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport" or
                 "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
             {

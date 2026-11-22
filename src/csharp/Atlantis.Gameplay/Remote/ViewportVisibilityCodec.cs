@@ -12,6 +12,69 @@ public static partial class Codec
         value.Find("sceneGeneration") is { } generation && generation.TryGetUInt64(out ulong g) &&
         value.Find("revision") is { } revision && revision.TryGetUInt64(out ulong r) ? new(g, r) : null;
 
+    public static bool IsMaterialBindingRequest(MaterialBindingPickRequest request) =>
+        IsAlignmentRay(request.Ray) && float.IsFinite(request.MinDistance) && float.IsFinite(request.MaxDistance) &&
+        request.MinDistance >= 0 && request.MaxDistance > request.MinDistance &&
+        (request.Viewport is null || request.Viewport.Value.SceneGeneration == request.SceneGeneration);
+
+    public static JsonValue Encode(MaterialBindingPickRequest request)
+    {
+        var value = JsonValue.NewObject().Set("ray", Encode(request.Ray))
+            .Set("minDistance", JsonValue.Number(request.MinDistance)).Set("maxDistance", JsonValue.Number(request.MaxDistance))
+            .Set("sceneGeneration", JsonValue.Number(request.SceneGeneration));
+        if (request.Viewport is { } stamp) value.Set("viewport", Encode(stamp));
+        return value;
+    }
+
+    public static MaterialBindingPickRequest? DecodeMaterialBindingRequest(JsonValue value)
+    {
+        var viewport = value.Find("viewport");
+        if (!Exact(value, viewport is null ? 4 : 5) ||
+            value.Find("ray") is not { } rayValue || DecodeAlignmentRay(rayValue) is not Ray ray ||
+            value.Find("minDistance") is not { IsNumber: true } min || DecodeFloat(min) is not float near ||
+            value.Find("maxDistance") is not { IsNumber: true } max || DecodeFloat(max) is not float far ||
+            value.Find("sceneGeneration") is not { IsNumber: true } gen || !gen.TryGetUInt64(out ulong generation))
+            return null;
+        var stamp = MaterialBindingStamp(viewport);
+        var request = new MaterialBindingPickRequest(ray, near, far, generation, stamp);
+        return (viewport is null || stamp is not null) && IsMaterialBindingRequest(request) ? request : null;
+    }
+
+    private static ViewportStamp? MaterialBindingStamp(JsonValue? value) =>
+        value is not null && Exact(value, 2) && value.Find("sceneGeneration") is { IsNumber: true } &&
+        value.Find("revision") is { IsNumber: true } ? DecodeViewportStamp(value) : null;
+
+    public static MaterialBindingPickResult? DecodeMaterialBindingResponse(JsonValue response, MaterialBindingPickRequest request)
+    {
+        if (!Exact(response, 2) || CountMember(response, "id") != 1) return null;
+        var result = response.Find("result");
+        if (result is null && response.Find("error") is { IsObject: true } error && Exact(error, 2) &&
+            error.Find("code") is { IsString: true } code && error.Find("message") is { IsString: true } message)
+            return new(null, code.AsString == "BadRequest" && message.AsString == "unknown method control.pickMaterialBinding"
+                ? MaterialBindingPickError.Unsupported : MaterialBindingPickError.RpcFailure);
+        if (result is null || !Exact(result, 1)) return null;
+        if (result.Find("err") is { IsString: true } refusal &&
+            Enum.TryParse(refusal.AsString, out MaterialBindingPickError kind) &&
+            kind <= MaterialBindingPickError.TooLarge && kind.ToString() == refusal.AsString)
+            return new(null, kind);
+        if (result.Find("ok") is not { IsObject: true } ok ||
+            !Exact(ok, request.Viewport is null ? 6 : 7) ||
+            ok.Find("sceneGeneration") is not { IsNumber: true } generation || !generation.TryGetUInt64(out ulong gen) ||
+            gen != request.SceneGeneration || MaterialBindingStamp(ok.Find("viewport")) != request.Viewport ||
+            (ok.Find("viewport") is null) != (request.Viewport is null) ||
+            ok.Find("slot") is not { IsString: true } slot || slot.AsString != MaterialBindingPick.Slot ||
+            ok.Find("entity") is not { IsString: true } entityToken || DecodeEntity(entityToken) is not EntityGuid entity ||
+            entity.IsNil || entity.ToString() != entityToken.AsString ||
+            ok.Find("mesh") is not { IsString: true } meshToken || DecodeAsset(meshToken) is not AssetGuid mesh ||
+            mesh.IsNil || mesh.ToString() != meshToken.AsString ||
+            ok.Find("material") is not { IsString: true } materialToken || DecodeAsset(materialToken) is not AssetGuid material ||
+            material.IsNil || material.ToString() != materialToken.AsString ||
+            ok.Find("distance") is not { IsNumber: true } distance || DecodeFloat(distance) is not float d ||
+            !float.IsFinite(d) || d < request.MinDistance || d > request.MaxDistance)
+            return null;
+        return new(new(gen, request.Viewport, entity, mesh, material, d), null);
+    }
+
     public static JsonValue Encode(ViewportPolicy policy)
     {
         static JsonValue Members(IReadOnlyList<EntityGuid> ids)

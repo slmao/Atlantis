@@ -86,6 +86,15 @@ internal static class ToolSchemas
     internal static readonly JsonNode PrefabSubtree = Object(("source", String), ("parent", Nullable(String)),
         ("slots", Array(Integer)), ("order", String));
 
+    internal static JsonElement MaterialBindingParameters()
+    {
+        var fields = Object(("ray", Object(("origin", Vector(Number, 3)), ("direction", Vector(Number, 3)))),
+            ("minDistance", Number), ("maxDistance", Number), ("sceneGeneration", Integer),
+            ("viewport", Object(("sceneGeneration", Integer), ("revision", Integer))));
+        fields["required"] = new JsonArray("ray", "minDistance", "maxDistance", "sceneGeneration");
+        return JsonSerializer.SerializeToElement(fields);
+    }
+
     internal static JsonElement PrefabSyncParameters()
     {
         JsonObject shape = Object(("node", String), ("expected", PrefabDocument), ("revision", String), ("prefab", String));

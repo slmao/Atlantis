@@ -1,9 +1,9 @@
 # ADR 0186 — Shared Viewport Material Binding Query
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainers
-- **Acceptance:** Pending joint review
+- **Acceptance:** Accepted at [joint review of d6498282](https://github.com/slmao/Atlantis/pull/439#issuecomment-7075813233).
 - **Related Spec:** [Spec 0138](../specs/0138-viewport-material-slot.md)
 
 ## Context

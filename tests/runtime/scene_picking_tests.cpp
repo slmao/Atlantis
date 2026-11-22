@@ -365,3 +365,35 @@ TEST_CASE("Alignment face evidence keeps ordinary first hits and refuses ambiguo
     CHECK(query().error() == c::AlignmentFaceError::TooLarge);
   }
 }
+
+TEST_CASE("material binding pick keeps one slot and refuses cross-entity ties or clipped hits", "[runtime][picking]") {
+  namespace c = atlantis::connection;
+  using E = c::MaterialBindingPickError;
+  constexpr std::array<float, 16> identity{
+      1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  const auto cube = buildPickGeometry(kLayout, cubeVertexBytes(), kCubeIndices);
+  const std::unordered_map<AssetId, PickMeshGeometry> meshes{{kCubeMesh, cube}};
+  const PickInstance a{newGuid(1), kCubeMesh, identity};
+  auto b = PickInstance{newGuid(2), kCubeMesh, identity};
+  const c::MaterialBindingPickRequest ray{{{0, 0, 2}, {0, 0, -1}}, 0, 3, 0, std::nullopt};
+  const auto pick = [&](std::span<const PickInstance> instances, const c::MaterialBindingPickRequest& request) {
+    return atlantis::runtime::detail::pickMaterialSurface(instances, meshes, request);
+  };
+
+  const auto unique = pick(std::array{a}, ray);
+  REQUIRE(unique.isOk());
+  CHECK(unique.value() == (PickHit{a.entity, 1.5f}));
+  b.worldMatrix[14] = -0.000005f;
+  CHECK(pick(std::array{a, b}, ray).error() == E::Ambiguous);
+  b.worldMatrix[14] = -0.0001f;
+  CHECK(pick(std::array{b, a}, ray).value().entity == a.entity);
+  auto clipped = ray;
+  clipped.maxDistance = 1.4f;
+  CHECK(pick(std::array{a}, clipped).error() == E::Miss);
+  clipped.minDistance = 1.6f;
+  clipped.maxDistance = 2.6f;
+  CHECK(pick(std::array{a}, clipped).value().distance == 2.5f);
+  b.mesh = 0;
+  CHECK(pick(std::array{a, b}, ray).error() == E::NoGeometry);
+  CHECK(pick(std::vector<PickInstance>(c::kMaterialBindingInstances + 1, a), ray).error() == E::TooLarge);
+}

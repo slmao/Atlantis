@@ -1746,6 +1746,58 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return reply(std::move(data));
   }
 
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "material-binding") {
+    constexpr std::string_view command = "runtime material-binding";
+    const auto usage = [&] { return failed(std::string(command), usageError(
+        "runtime material-binding GEN MIN MAX --origin X Y Z --direction X Y Z [--viewport REV]")); };
+    if ((t.size() != 13 && t.size() != 15) || t[5] != "--origin" || t[9] != "--direction") return usage();
+    if (!control_) return failed(std::string(command), plainError("NoRuntimeControl", ErrorCategory::Runtime,
+                                                                  "this connection carries no Runtime control"));
+    const auto integer = [](std::string_view value) -> std::optional<std::uint64_t> {
+      std::uint64_t out = 0;
+      const auto [end, error] = std::from_chars(value.data(), value.data()+value.size(), out);
+      return error == std::errc{} && end == value.data()+value.size() ? std::optional{out} : std::nullopt;
+    };
+    const auto generation = integer(t[2]);
+    const auto distances = parseFloats<2>(t, 3);
+    const auto origin = parseFloats<3>(t, 6);
+    const auto direction = parseFloats<3>(t, 10);
+    if (!generation || !distances || !origin || !direction) return usage();
+    std::optional<connection::ViewportStamp> viewport;
+    if (t.size() == 15) {
+      const auto revision = integer(t[14]);
+      if (t[13] != "--viewport" || !revision) return usage();
+      viewport = connection::ViewportStamp{*generation, *revision};
+    }
+    const connection::MaterialBindingPickRequest request{{*origin, *direction}, (*distances)[0], (*distances)[1],
+                                                         *generation, viewport};
+    if (!connection::validMaterialBindingPick(request)) return usage();
+    const auto result = control_->pickMaterialBinding(request);
+    if (result.isErr()) {
+      using E = connection::MaterialBindingPickError;
+      const auto category = result.error() == E::TransportFailure || result.error() == E::ProtocolFailure
+          ? ErrorCategory::Connection : ErrorCategory::Refused;
+      return failed(std::string(command), plainError(std::string(connection::toString(result.error())), category,
+          "material binding query refused"));
+    }
+    const auto& hit = result.value();
+    auto data = Value::object();
+    data.set("sceneGeneration", Value::number(hit.sceneGeneration));
+    if (hit.viewport) {
+      auto stamp = Value::object();
+      stamp.set("sceneGeneration", Value::number(hit.viewport->sceneGeneration));
+      stamp.set("revision", Value::number(hit.viewport->revision));
+      data.set("viewport", std::move(stamp));
+    }
+    data.set("entity", Value::string(text::formatEntity(hit.entity)));
+    data.set("mesh", Value::string(asset_system::toString(hit.mesh)));
+    data.set("material", Value::string(asset_system::toString(hit.material)));
+    data.set("distance", Value::number(hit.distance));
+    data.set("slot", Value::string(std::string(connection::kMaterialBindingSlot)));
+    auto description = json::write(data) + "\n";
+    return done(std::string(command), std::move(description), std::move(data));
+  }
+
   if (t.size() >= 2 && t[0] == "runtime" && t[1] == "alignment") {
     constexpr std::string_view usage =
         "runtime alignment faces --origin X Y Z --direction X Y Z [--origin X Y Z --direction X Y Z]";

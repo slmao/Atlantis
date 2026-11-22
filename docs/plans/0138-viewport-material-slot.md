@@ -1,10 +1,10 @@
 # Plan 0138 — Locate and Edit a Material Binding from the Viewport
 
 - **Spec:** [Spec 0138](../specs/0138-viewport-material-slot.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0186](../adr/0186-shared-material-binding-pick.md) (Proposed)
+- **Joint Human Review:** Maintainer approved Spec/Plan 0138 and J1–J4 at `d6498282`, accepted ADR-0186 and authorized S2–S4 after merge. [Approval](https://github.com/slmao/Atlantis/pull/439#issuecomment-7075813233). Design merged as `1e4ee5f3`.
+- **ADR:** [ADR-0186](../adr/0186-shared-material-binding-pick.md) (Accepted)
 - **Design baseline:** `66bfd0ba`, maintainer merge of [PR #438](https://github.com/slmao/Atlantis/pull/438)
 
 ## Objective
@@ -34,6 +34,7 @@ visible at every write boundary.
 | `src/connection/include/atlantis/connection/runtime_control.h`, `src/runtime/src/scene_picking.{h,cpp}`, `src/runtime/src/runtime_application.cpp`, Runtime application/control-host headers and adapter, `src/runtime/main.cpp` and `tests/runtime` | Typed read, dispatch and bounded resolution against existing CPU geometry and active catalog. Test ownership, result attribution, ambiguity and nonparticipation in ordinary paths. |
 | `src/remote`, `src/cli`, `src/csharp/Atlantis.Gameplay`, `src/mcp` and their corresponding tests and conformance inputs, `docs/architecture/remote_protocol.md` | Additive request and exact result/refusal shape. MCP forwards through the C# SDK. Legacy rays, queries and mutations stay compatible. |
 | `src/editor_app/Atlantis.Editor/MainWindow.cs`, `EditorSession.cs`, `MaterialEditorWindow.cs`, Inspector and reference-picker code under `src/editor_app/Atlantis.Editor.Model`, corresponding Editor tests | Review, launch intent, known uses, clipboard handoff, exact binding guard, existing Edit/Copy, replacement, history and recovery integration. No renderer changes. |
+| `src/editor_app/Atlantis.Editor/AssetReferencePickerWindow.cs` | Preselect the reviewed copy by exact GUID and allow confirmation only for that candidate. [Approved file-list adjustment](https://github.com/slmao/Atlantis/pull/440#issuecomment-7076148859). |
 | Disposable Bistro fixture and retained evidence | Two actual awning fabric nodes share an eligible material. Keep pinned Bistro geometry and 0131 view. Do not change shipped asset sources. |
 
 ## Sequencing & Dependencies

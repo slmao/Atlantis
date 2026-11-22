@@ -57,6 +57,12 @@ struct PickInstance {
     std::span<const PickInstance> instances,
     const std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry>& geometry, const PickRay& ray);
 
+using MaterialSurfaceRead = atlantis::Result<PickHit, atlantis::connection::MaterialBindingPickError>;
+[[nodiscard]] MaterialSurfaceRead pickMaterialSurface(
+    std::span<const PickInstance> instances,
+    const std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry>& geometry,
+    const atlantis::connection::MaterialBindingPickRequest& request);
+
 using AlignmentFaceRead = atlantis::Result<atlantis::connection::AlignmentFace, atlantis::connection::AlignmentFaceError>;
 [[nodiscard]] AlignmentFaceRead pickAlignmentFace(
     std::span<const PickInstance> instances,

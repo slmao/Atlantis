@@ -98,6 +98,20 @@ public sealed record Ray(Vector3 Origin, Vector3 Direction);
 /// <summary>The nearest Renderable a ray hits, and how far along the ray.</summary>
 public sealed record RayHit(EntityGuid Entity, float Distance);
 
+public sealed record MaterialBindingPickRequest(Ray Ray, float MinDistance, float MaxDistance,
+    ulong SceneGeneration, ViewportStamp? Viewport = null);
+public sealed record MaterialBindingPick(ulong SceneGeneration, ViewportStamp? Viewport,
+    EntityGuid Entity, AssetGuid Mesh, AssetGuid Material, float Distance)
+{
+    public const string Slot = "Renderable.materialAsset";
+}
+public enum MaterialBindingPickError
+{
+    InvalidRequest, Unavailable, Unsupported, StaleGeneration, StaleViewport, NotPresented,
+    ActivePolicy, NoGeometry, Miss, Ambiguous, UnsupportedBinding, TooLarge, RpcFailure,
+}
+public sealed record MaterialBindingPickResult(MaterialBindingPick? Value, MaterialBindingPickError? Error);
+
 public sealed record AlignmentFace(EntityGuid Entity, AssetGuid Mesh, uint FirstTriangle, uint SecondTriangle,
     float Distance, IReadOnlyList<Vector3> Corners, Vector3 Normal, IReadOnlyList<float> WorldMatrix)
 {

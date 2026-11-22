@@ -437,6 +437,32 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
         kind == ViewportPickKind::Alignment ? rays.size() : 0);
   }
 
+  atlantis::connection::MaterialBindingPickResult pickMaterialBinding(
+      const atlantis::connection::MaterialBindingPickRequest& request) override {
+    using R = atlantis::connection::MaterialBindingPickResult;
+    using E = atlantis::connection::MaterialBindingPickError;
+    if (!atlantis::connection::validMaterialBindingPick(request)) return R::Err(E::InvalidRequest);
+    const auto envelope = state_->awaitResponse(state_->send("control.pickMaterialBinding", codec::encode(request)));
+    if (!envelope) return R::Err(state_->failure == RemoteError::ProtocolError ? E::ProtocolFailure : E::TransportFailure);
+    const auto* result = envelope->find("result");
+    const auto* error = envelope->find("error");
+    if (error && !result && error->isObject() && error->asObject().size() == 2) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString() && message && message->isString())
+        return R::Err(code->asString() == "BadRequest" && message->asString() == "unknown method control.pickMaterialBinding"
+            ? E::Unsupported : E::RpcFailure);
+    }
+    if (result && !error && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* ok = result->find("ok"))
+        if (auto decoded = codec::decodeMaterialBindingPick(*ok, request)) return R::Ok(std::move(*decoded));
+      if (const auto* err = result->find("err"))
+        if (const auto refusal = codec::decodeMaterialBindingPickError(*err)) return R::Err(*refusal);
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err(E::ProtocolFailure);
+  }
+
   atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
       std::span<const atlantis::connection::Ray> rays) override {
     using R = atlantis::connection::AlignmentFacesResult;

@@ -8,6 +8,26 @@ using Atlantis.Gameplay.Authoring;
 namespace Atlantis.Editor.Model;
 
 /// <summary>Owned launch values, safe to pass from the session worker to the UI.</summary>
+public sealed record MaterialBindingReview(AssetGuid Scene, EntityGuid Node, AssetGuid Mesh, AssetGuid Original, AssetGuid Copy)
+{
+    private const string Version = "Atlantis.MaterialBinding/1";
+    public override string ToString() => $"{Version} {MaterialBindingPick.Slot} {Scene} {Node} {Mesh} {Original} {Copy}";
+
+    public static MaterialBindingReview? Parse(string text)
+    {
+        if (text.Length > 512 || System.Text.Encoding.UTF8.GetByteCount(text) > 512) return null;
+        var fields = text.Trim().Split(' ');
+        if (fields is not [Version, MaterialBindingPick.Slot, var scene, var node, var mesh, var oldMaterial, var copy])
+            return null;
+        static AssetGuid? Read(string token) => Guid.TryParseExact(token, "D", out var guid) &&
+            guid != Guid.Empty && guid.ToString("D") == token ? new AssetGuid(guid) : null;
+        if (Read(scene) is not AssetGuid sceneGuid || Read(node) is not AssetGuid nodeGuid ||
+            Read(mesh) is not AssetGuid meshGuid || Read(oldMaterial) is not AssetGuid original ||
+            Read(copy) is not AssetGuid destination || original == destination) return null;
+        return new(sceneGuid, new EntityGuid(nodeGuid.Value), meshGuid, original, destination);
+    }
+}
+
 public sealed record AssetReferenceTarget(long Request, SceneAddress Address, string Path, string Label,
                                           PropertyValue Before, AssetType? TargetAssetType, AssetGuid? OpeningMesh)
 {

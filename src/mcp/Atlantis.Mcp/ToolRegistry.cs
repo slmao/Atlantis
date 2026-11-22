@@ -197,6 +197,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             "Pick against a presented viewport revision with one selection ray or one or two alignment rays.", ControlModel,
             ToolSchemas.Parameters(("sceneGeneration", ToolSchemas.Integer), ("revision", ToolSchemas.Integer),
                 ("kind", ToolSchemas.ViewportPickKind), ("rays", ToolSchemas.AlignmentRays))),
+        Declare("control.pick_material_binding", "control.pickMaterialBinding",
+            "Read the single explicit material binding at the nearest unambiguous opaque surface.", ControlModel,
+            ToolSchemas.MaterialBindingParameters()),
         Declare("control.pick_alignment_faces", "control.pickAlignmentFaces",
             "Read checked rectangular first-hit faces for one or two ordered world-space rays.", ControlModel,
             ToolSchemas.Parameters(("rays", ToolSchemas.AlignmentRays))),
@@ -282,6 +285,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return RecoveryOperation(mapping.Method, wireParameters);
             if (mapping.Method is "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport")
                 return ViewportPolicyCall(mapping.Method, wireParameters);
+            if (mapping.Method == "control.pickMaterialBinding") return PickMaterialBinding(wireParameters);
             if (mapping.Method == "control.pickAlignmentFaces") return PickAlignmentFaces(wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
@@ -539,6 +543,17 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             return Error("InvalidArguments: expected valid rays for the specified viewport pick");
         return Exchange(result => Codec.DecodeViewportPick(result, stamp, mode, rays),
             mode == ViewportPickKind.Alignment ? rays : null);
+    }
+
+    private CallToolResult PickMaterialBinding(JsonValue parameters)
+    {
+        if (Codec.DecodeMaterialBindingRequest(parameters) is not { } request)
+            return Error("InvalidArguments: expected a finite unit ray, valid interval and current generation.");
+        var response = session.Request("control.pickMaterialBinding", parameters);
+        if (Codec.DecodeMaterialBindingResponse(response, request) is not { } decoded)
+            return Error("ProtocolError: malformed material binding reply");
+        return response.Find("result") is { } result ? Forward(result, decoded.Error is not null)
+            : Error(decoded.Error?.ToString() ?? "ProtocolError: missing material binding reply");
     }
 
     private CallToolResult PickAlignmentFaces(JsonValue parameters)

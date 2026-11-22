@@ -182,6 +182,11 @@ connection::ViewportPickResult RuntimeControlHost::pickViewport(connection::View
   return target_.pickViewport ? target_.pickViewport(stamp, kind, rays) : RuntimeControl::pickViewport(stamp, kind, rays);
 }
 
+connection::MaterialBindingPickResult RuntimeControlHost::pickMaterialBinding(
+    const connection::MaterialBindingPickRequest& request) {
+  return target_.pickMaterialBinding ? target_.pickMaterialBinding(request) : RuntimeControl::pickMaterialBinding(request);
+}
+
 connection::AlignmentFacesResult RuntimeControlHost::pickAlignmentFaces(std::span<const connection::Ray> rays) {
   return target_.pickAlignmentFaces ? target_.pickAlignmentFaces(rays) : RuntimeControl::pickAlignmentFaces(rays);
 }
