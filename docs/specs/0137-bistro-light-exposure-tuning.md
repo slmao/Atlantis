@@ -1,10 +1,10 @@
 # Spec 0137 — Bistro Storefront Lighting and Exposure Tuning
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-22
 - **Related Plan(s):** [Plan 0137](../plans/0137-bistro-light-exposure-tuning.md)
-- **Approval:** Pending joint review
+- **Approval:** [Joint review of `b318d22b`](https://github.com/slmao/Atlantis/pull/437#issuecomment-7075089343)
 - **Related ADR(s):** None. See Architectural Impact.
 - **Design baseline:** `40ce4ad3`, maintainer merge of [PR #436](https://github.com/slmao/Atlantis/pull/436)
 

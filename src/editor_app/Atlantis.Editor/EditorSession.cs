@@ -283,7 +283,27 @@ public sealed class ReparentSource
     internal HierarchyFilter Filter { get; }
 }
 
-internal sealed record BistroCapture(BistroReferenceView View, RuntimeStatus Status, FrameReport Report, bool PreviousProjection);
+internal sealed record BistroProjection(DocumentToken Document, EntityGuid Camera, ApplyId Apply, ViewportStamp Viewport)
+{
+    internal bool Follows(BistroProjection before) =>
+        Document.DocumentId == before.Document.DocumentId && Camera == before.Camera &&
+        Document.DocumentRevision > before.Document.DocumentRevision && Viewport.SceneGeneration > before.Viewport.SceneGeneration;
+
+    internal static BistroProjection? Confirm(DocumentToken document, EntityGuid camera,
+        ApplySnapshot? state, ViewportStamp viewport)
+    {
+        if (state is not { Projection: { } projected } ||
+            state.CurrentDocumentRevision != document.DocumentRevision ||
+            projected.Receipt.DocumentRevision != document.DocumentRevision ||
+            projected.Generation != viewport.SceneGeneration ||
+            state.Request?.State is ApplyState.Pending or ApplyState.Failed or ApplyState.Superseded)
+            return null;
+        return new(document, camera, projected.Receipt.Id, viewport);
+    }
+}
+
+internal sealed record BistroCapture(BistroReferenceView View, RuntimeStatus Status, FrameReport Report,
+    bool PreviousProjection, BistroProjection? Projection = null);
 
 public sealed class EditorWorker : IDisposable
 {
@@ -995,8 +1015,63 @@ public sealed class EditorWorker : IDisposable
             : reference?.Name ?? (focus ? "Selection framed" : direction + " view"));
     }
 
+    internal void LocateBistroCamera(IReadOnlyList<HierarchyRow> rows, ulong selection, long intent,
+        Action<HierarchyRow?, string?> completed)
+    {
+        long lifetime = MeshDocumentLifetime;
+        Enqueue(session =>
+        {
+            bool Current() => !_stopping && lifetime == MeshDocumentLifetime && _cameraIntent == intent &&
+                selection == _requestedSelectionGeneration && !_dragActive && !_gizmoActive && _requestedGroup is null;
+            void Result(HierarchyRow? row, string? error) => _post(() => completed(row, error));
+            lock (_lock)
+                if (!Current()) { Result(null, "The view or selection changed. Locate the camera again."); return; }
+
+            if (_document is not RemoteAuthoringDocument document ||
+                session.Authoring.DocumentState().Value is not { Provenance: Provenance.HandAuthored } before ||
+                !document.ObserveActiveCamera(out EntityGuid? camera) || camera is null ||
+                document.ObserveEvents() is not { } events)
+            {
+                Result(null, "The document's active camera could not be verified.");
+                return;
+            }
+            PollDocument(session, events);
+            var row = rows.FirstOrDefault(row => row.Node == camera);
+            if (session.Authoring.DocumentState().Value?.Token != before.Token ||
+                row is null || !ReferenceEquals(_tree.IncarnationOf(row.Node), row.Incarnation))
+            {
+                Result(null, "The active camera changed or is hidden. Check Hierarchy and try again.");
+                return;
+            }
+            lock (_lock)
+            {
+                if (!Current()) { Result(null, "The view or selection changed. Locate the camera again."); return; }
+                Result(row, null);
+            }
+        });
+    }
+
+    private BistroProjection? ReadBistroProjection(RemoteSession session, DocumentToken? token, ulong generation)
+    {
+        if (token is not { } document || _document is not RemoteAuthoringDocument source ||
+            _apply?.Status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown or
+                ApplyStatus.Failed or ApplyStatus.NeedsApply or ApplyStatus.Superseded)
+            return null;
+        var apply = source.ApplyStatus();
+        var visibility = session.Control.ViewportVisibility();
+        if (visibility.Value is { Owner: not ViewportOwner.None } incompatible)
+            RecordHostedVisibility(incompatible, false, "Viewport settings changed. Restore them to return to the reference view.");
+        if (!apply.IsOk || visibility.Value is not { Owner: ViewportOwner.None, Presented: true } policy ||
+            policy.Stamp.SceneGeneration != generation ||
+            !source.ObserveActiveCamera(out EntityGuid? active) || active is not { } camera ||
+            session.Authoring.DocumentState().Value is not { Provenance: Provenance.HandAuthored } current ||
+            current.Token != document)
+            return null;
+        return BistroProjection.Confirm(document, camera, apply.Value, policy.Stamp);
+    }
+
     internal void CaptureBistroView(BistroReferenceView view, long intent, string path,
-        Action<BistroCapture?, string?> completion)
+        Action<BistroCapture?, string?> completion, bool paired = false, BistroProjection? baseline = null)
     {
         long lifetime = MeshDocumentLifetime;
         ulong extent;
@@ -1007,11 +1082,13 @@ public sealed class EditorWorker : IDisposable
             bool Current() => !_stopping && !_navigationUncertain && _cameraIntent == intent &&
                 lifetime == MeshDocumentLifetime && extent == _viewportExtentRevision &&
                 _viewportExtent == (BistroReferenceView.Width, BistroReferenceView.Height) &&
-                !_dragActive && !_gizmoActive && _requestedGroup is null && _pendingCameraMotion.Count == 0;
+                !_dragActive && !_gizmoActive && _requestedGroup is null && _pendingCameraMotion.Count == 0 &&
+                (!paired || (_confirmedEditorCamera is not null && !_visibilityUnknown && _groupGrab is null &&
+                    _placementOverlay is null && _alignment is null));
             lock (_lock)
                 if (!Current()) { Result(null, "The reference view changed."); return; }
             var before = session.Control.Status();
-            if (before.Paused || before.SceneGeneration != _navigationGeneration)
+            if (before.Paused || (!paired && before.SceneGeneration != _navigationGeneration))
             {
                 Result(null, before.Paused ? "Resume the Runtime before capturing." : "The Runtime scene changed. Return to the reference view.");
                 return;
@@ -1023,7 +1100,15 @@ public sealed class EditorWorker : IDisposable
                 return state.IsOk ? state.Value?.Token : null;
             }
             var document = ReadDocumentToken();
-            var apply = _document?.ApplyStatus();
+            var proof = paired ? ReadBistroProjection(session, document, before.SceneGeneration) : null;
+            if (paired && (proof is null || (baseline is not null && !proof.Follows(baseline))))
+            {
+                Result(null, proof is null
+                    ? "This document revision is not verified in the viewport. Check Apply status or explicitly Apply."
+                    : "Capture After requires a newer applied revision with the same document and active camera.");
+                return;
+            }
+            var apply = paired ? null : _document?.ApplyStatus();
             if (apply?.Value?.Request?.State == ApplyState.Pending ||
                 _apply?.Status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown)
             {
@@ -1052,9 +1137,11 @@ public sealed class EditorWorker : IDisposable
                 }
                 var after = session.Control.Status();
                 var currentDocument = ReadDocumentToken();
+                var currentProof = paired ? ReadBistroProjection(session, currentDocument, after.SceneGeneration) : null;
                 lock (_lock)
                 {
-                    if (!Current() || document != currentDocument || after.SceneGeneration != before.SceneGeneration || after.Paused ||
+                    if (!Current() || document != currentDocument || proof != currentProof ||
+                        after.SceneGeneration != before.SceneGeneration || after.Paused ||
                         report.Frame <= before.Frame || image.Width != BistroReferenceView.Width ||
                         image.Height != BistroReferenceView.Height || !view.Matches(report.Data.View, report.Data.Projection))
                     {
@@ -1062,7 +1149,7 @@ public sealed class EditorWorker : IDisposable
                         return;
                     }
                 }
-                Result(new(view, before, report, previous), null);
+                Result(new(view, before, report, !paired && previous, proof), null);
             }
             catch (RemoteException error)
             {
