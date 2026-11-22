@@ -432,6 +432,8 @@ public sealed class EditorWorker : IDisposable
     public event Action<DocumentInfo?>? DocumentOpened;
     public event Action<long>? MeshDocumentReopened;
     private long _meshDocumentLifetime;
+    private DocumentToken? _bistroLocatorDocument;
+    private long _bistroLocatorObservation;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<HierarchySnapshot>? HierarchyChanged;
 
@@ -1015,6 +1017,16 @@ public sealed class EditorWorker : IDisposable
             : reference?.Name ?? (focus ? "Selection framed" : direction + " view"));
     }
 
+    private void ObserveBistroLocatorDocument(DocumentToken? document)
+    {
+        lock (_lock)
+        {
+            if (_bistroLocatorDocument == document) return;
+            _bistroLocatorDocument = document;
+            ++_bistroLocatorObservation;
+        }
+    }
+
     internal void LocateBistroCamera(IReadOnlyList<HierarchyRow> rows, ulong selection, long intent,
         Action<HierarchyRow?, string?> completed)
     {
@@ -1037,7 +1049,9 @@ public sealed class EditorWorker : IDisposable
             }
             PollDocument(session, events);
             var row = rows.FirstOrDefault(row => row.Node == camera);
-            if (session.Authoring.DocumentState().Value?.Token != before.Token ||
+            var currentDocument = session.Authoring.DocumentState().Value?.Token;
+            ObserveBistroLocatorDocument(currentDocument);
+            if (currentDocument != before.Token ||
                 row is null || !ReferenceEquals(_tree.IncarnationOf(row.Node), row.Incarnation))
             {
                 Result(null, "The active camera changed or is hidden. Check Hierarchy and try again.");
@@ -1046,7 +1060,14 @@ public sealed class EditorWorker : IDisposable
             lock (_lock)
             {
                 if (!Current()) { Result(null, "The view or selection changed. Locate the camera again."); return; }
-                Result(row, null);
+                long observation = _bistroLocatorObservation;
+                _post(() =>
+                {
+                    bool current;
+                    lock (_lock) current = Current() && observation == _bistroLocatorObservation;
+                    if (current) completed(row, null);
+                    else completed(null, "The document, active camera or selection changed. Locate the camera again.");
+                });
             }
         });
     }
@@ -4131,6 +4152,7 @@ public sealed class EditorWorker : IDisposable
     {
         _persistenceRead = Stopwatch.GetTimestamp();
         var observed = ReadPersistence(session);
+        ObserveBistroLocatorDocument(observed.State?.Token);
         if (observed != _persistence)
         {
             _persistence = observed;
@@ -4151,6 +4173,7 @@ public sealed class EditorWorker : IDisposable
                 (state.Source != expected.Source || state.Provenance != expected.Provenance))
                 return new(Diagnostic: "ProtocolError: document outcome unknown. Check the source on the original Runtime.", Unknown: true);
             var observed = new DocumentObservation(DocumentAvailability.Known, state);
+            ObserveBistroLocatorDocument(state.Token);
             _persistence = observed;
             _post(() => PersistenceChanged?.Invoke(observed));
             return new(State: state);
@@ -4218,6 +4241,7 @@ public sealed class EditorWorker : IDisposable
                     return new(Diagnostic: "ProtocolError: recovery outcome unknown. Check the original Runtime.", Unknown: true);
                 // Publish verified persistence before refreshing the hierarchy or projection.
                 var observed = new DocumentObservation(DocumentAvailability.Known, receipt.Document);
+                ObserveBistroLocatorDocument(receipt.Document.Token);
                 if (_persistence != observed)
                 {
                     _persistence = observed;
@@ -4659,11 +4683,13 @@ public sealed class EditorWorker : IDisposable
         IReadOnlyList<Event> events = observed ?? _document.DrainEvents();
         if (events.Count > 0)
         {
-            _post(() => LeaveDocumentEvents?.Invoke(events));
             lock (_lock)
             {
+                // The locator can already be queued on the UI. Retire it before publishing this observation.
+                if (events.Any(e => e is not Applied)) ++_bistroLocatorObservation;
                 if (_guidesEnabled && events.Any(GuideInputChanged)) InvalidateGuidesLocked();
             }
+            _post(() => LeaveDocumentEvents?.Invoke(events));
         }
         var destroyed = new List<EntityGuid>();
         bool historyChanged = false;

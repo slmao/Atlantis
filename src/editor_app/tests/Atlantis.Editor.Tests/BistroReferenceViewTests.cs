@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -72,6 +73,73 @@ public static partial class Program
         Check(!proof!.Follows(proof) && !(next with { Camera = new(Guid.NewGuid()) }).Follows(proof) &&
             !(next with { Document = next.Document with { DocumentId = new(Guid.NewGuid()) } }).Follows(proof),
             "Bistro After refuses the same projection or another camera or document");
+    }
+
+    private static int RunBistroLocator(string runtimePath, string scene, string evidence)
+    {
+        Directory.CreateDirectory(evidence);
+        using var runtime = RuntimeProcess.Start(new(runtimePath, scene, null, evidence));
+        var session = runtime.WaitForSession(TimeSpan.FromSeconds(25));
+        using var peer = RemoteSession.Connect(session);
+        var posted = new ConcurrentQueue<Action>();
+        using var log = new EditorLog(Path.Combine(evidence, "editor.log"));
+        using var worker = new EditorWorker(session, posted.Enqueue, log);
+        HierarchySnapshot? tree = null;
+        bool switched = false;
+        worker.HierarchyChanged += snapshot => tree = snapshot;
+        worker.LeaveDocumentEvents += events => switched |= events.Any(e => e is ActiveCameraChanged);
+        worker.Start();
+
+        void Pump() { while (posted.TryDequeue(out var action)) action(); }
+        DocumentToken ReadWorkerDocument() => worker.ReviewDocument()
+            .WaitAsync(TimeSpan.FromSeconds(25)).GetAwaiter().GetResult().State?.Token ??
+            throw new InvalidOperationException("Worker could not verify the test document.");
+        void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+            Console.WriteLine("PASS " + message);
+        }
+
+        var originalDocument = ReadWorkerDocument();
+        Pump();
+        var original = peer.Authoring.ActiveCamera().Value!.Value;
+        var alternate = new EntityGuid(Guid.Parse("01370137-0137-4137-8137-013700000010"));
+        var rows = tree!.Rows;
+        var originalRow = rows.Single(row => row.Node == original);
+        EntityGuid selection = rows.First(row => row.Node != original && row.Node != alternate).Node;
+        worker.ShowSelection([selection], 1);
+        HierarchyRow? located = null;
+        string? reason = null;
+        bool delivered = false;
+        void Receive(HierarchyRow? row, string? error)
+        {
+            delivered = true;
+            located = row;
+            reason = error;
+        }
+
+        worker.LocateBistroCamera(rows, 1, 0, Receive);
+        // ReviewDocument is queued behind Locate and drains authoring events on the Worker.
+        // Keep all UI callbacks queued while changing the active camera through the peer.
+        Require(ReadWorkerDocument() == originalDocument && !delivered, "A's locator response is pending UI delivery");
+        peer.Authoring.SubmitTransaction([new SetActiveCamera(alternate)]);
+        Require(peer.Authoring.DrainFailures().Count == 0, "peer changed the active camera to B");
+        var changed = ReadWorkerDocument();
+        Require(changed.DocumentId == originalDocument.DocumentId &&
+            changed.DocumentRevision > originalDocument.DocumentRevision &&
+            peer.Authoring.ActiveCamera().Value == alternate, "Worker observed the newer document before UI delivery");
+        Pump();
+        Require(switched && tree!.Rows.Any(row => row.Node == original &&
+            ReferenceEquals(row.Incarnation, originalRow.Incarnation)), "A's visible row and incarnation still match");
+        Require(delivered && located is null && reason?.Contains("again", StringComparison.Ordinal) == true,
+            "delayed A result returns a retry diagnostic without a selectable row");
+
+        delivered = false;
+        worker.LocateBistroCamera(tree!.Rows, 1, 0, Receive);
+        Require(ReadWorkerDocument() == changed, "retry observes the current document");
+        Pump();
+        Require(delivered && located?.Node == alternate && reason is null, "fresh locator resolves B");
+        return 0;
     }
 
     private static int RunBistroReferenceUi(string runtime, string scene, string evidence, bool tuning = false)
