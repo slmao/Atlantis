@@ -662,8 +662,23 @@ public static partial class Program
             Field<Selection>("_selection").Node != target.Entity || peer.Authoring.DocumentState().Value != before)
             throw new InvalidOperationException("The real Editor did not reveal the unique fabric slot and known sharing.");
         Console.WriteLine($"PASS Windows 100%, fixed Terrace pixel {targetX},{targetY}: {located.Hit}; known other uses {located.KnownUses.Count}");
+        var materialPanel = Field<StackPanel>("_inspectorPanel");
+        await NameUiWait(() => materialPanel.GetVisualDescendants().OfType<Button>()
+            .Any(button => Equals(button.Content, "Duplicate for this binding")), "located material actions rendered", 75);
         await NativeCapture(window, Path.Combine(evidence, "located-fabric-window.png"));
 
+        void CaptureBindingFrame(string stem)
+        {
+            string path = Path.Combine(evidence, stem + ".png");
+            var report = peer.Control.Step(new StepRequest(1, path, WithOverlay: false)).Report;
+            if (report?.Image is not { Width: 960, Height: 540 } ||
+                !BistroReferenceView.Terrace.Matches(report.Data.View, report.Data.Projection))
+                throw new InvalidOperationException("Capture did not use the settled Terrace framing.");
+            File.WriteAllText(Path.Combine(evidence, stem + ".json"), Json.Write(Codec.Encode(report)) + "\n");
+            File.WriteAllText(Path.Combine(evidence, stem + "-apply.txt"), peer.Authoring.ApplyStatus().Value!.Projection!.ToString());
+        }
+        CaptureBindingFrame("before");
+        CaptureBindingFrame("repeat");
         string? output = Environment.GetEnvironmentVariable("ATLANTIS_0138_COPY_NAME");
         if (output is not null)
         {
@@ -701,6 +716,8 @@ public static partial class Program
         Press(Action("Replace this binding with copy"));
         if (Field<AssetReferencePickerWindow>("_referenceWindow") is not null || peer.Authoring.DocumentState().Value != before)
             throw new InvalidOperationException("Stale handoff changed the scene.");
+        if (Field<Button>("_undo").IsEnabled)
+            throw new InvalidOperationException("A stale handoff wrote history.");
         Console.WriteLine("PASS stale handoff leaves document and history untouched");
         text.Text = review.ToString();
         Press(Action("Replace this binding with copy"));
@@ -724,11 +741,23 @@ public static partial class Program
                 throw new InvalidOperationException("A shared binding changed outside the target.");
         }
         Console.WriteLine("PASS only one binding changed after Apply");
+        CaptureBindingFrame("after");
+        await NameUiWait(() => Field<Button>("_undo").IsEnabled, "binding Undo is available");
         Press(Field<Button>("_undo"));
         await CheckValue(fabric);
+        CaptureBindingFrame("undo");
+        await NameUiWait(() => Field<Button>("_redo").IsEnabled, "binding Redo is available");
         Press(Field<Button>("_redo"));
         await CheckValue(review.Copy);
+        CaptureBindingFrame("redo");
         Console.WriteLine("PASS one Undo and Redo restore only the target binding");
+        var saved = peer.Authoring.SaveIfCurrent(peer.Authoring.DocumentState().Value!.Token);
+        if (!saved.IsOk) throw new InvalidOperationException("Save refused: " + saved.Error);
+        var reopened = peer.Authoring.ReopenIfCurrent(saved.Value.Token);
+        if (!reopened.IsOk || peer.Authoring.GetProperty(field).Value.AsAsset() != review.Copy)
+            throw new InvalidOperationException("The saved and reopened source lost the replacement.");
+        File.WriteAllText(Path.Combine(evidence, "saved-source.txt"), reopened.Value.Source);
+        Console.WriteLine("PASS save and reopen preserve the replacement and GUID");
     }
 
     private static async Task NativeCapture(Window target, string output)
