@@ -2514,6 +2514,38 @@ std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) co
   return detail::pickNearest(pickInstances(false), pickGeometry_, ray);
 }
 
+connection::MaterialBindingPickResult RuntimeApplication::pickMaterialBinding(
+    const connection::MaterialBindingPickRequest& request, const asset_system::AssetCatalog* catalog) const {
+  using R = connection::MaterialBindingPickResult;
+  using E = connection::MaterialBindingPickError;
+  if (!connection::validMaterialBindingPick(request)) return R::Err(E::InvalidRequest);
+  if (!scene_ || !worldAccess_ || !catalog) return R::Err(E::Unavailable);
+  if (request.sceneGeneration != sceneGeneration_) return R::Err(E::StaleGeneration);
+  if (request.viewport) {
+    if (!viewportVisibilityEnabled_) return R::Err(E::Unavailable);
+    if (*request.viewport != visibilityStamp()) return R::Err(E::StaleViewport);
+    if (presentedVisibility_ != *request.viewport) return R::Err(E::NotPresented);
+    if (visibility_) return R::Err(E::ActivePolicy);
+  }
+  if (!pickGeometryRetained_) return R::Err(E::NoGeometry);
+  const auto hit = detail::pickMaterialSurface(pickInstances(false), pickGeometry_, request);
+  if (hit.isErr()) return R::Err(hit.error());
+  const auto meshId = detail::renderableMesh(*worldAccess_, hit.value().entity);
+  const auto materialId = detail::renderableMaterial(*worldAccess_, hit.value().entity);
+  if (!meshId || !materialId) return R::Err(E::UnsupportedBinding);
+  const auto geom = pickGeometry_.find(*meshId);
+  const auto data = materialDataMap_.find(*materialId);
+  const auto* mesh = catalog->find(*meshId);
+  const auto* material = catalog->find(*materialId);
+  if (geom == pickGeometry_.end() || !mesh || mesh->type != asset_system::CatalogAssetType::Mesh ||
+      mesh->guid != geom->second.assetGuid || !material || material->type != asset_system::CatalogAssetType::Material ||
+      data == materialDataMap_.end() || !materialResourceMap_.contains(*materialId) ||
+      data->second.kind != asset_system::MaterialKind::PbrDirectLit ||
+      data->second.alphaMode != asset_system::MaterialAlphaMode::Opaque)
+    return R::Err(E::UnsupportedBinding);
+  return R::Ok({sceneGeneration_, request.viewport, hit.value().entity, mesh->guid, material->guid, hit.value().distance});
+}
+
 connection::AlignmentFacesResult RuntimeApplication::pickAlignmentFaces(std::span<const connection::Ray> rays) const {
   using R = connection::AlignmentFacesResult;
   using E = connection::AlignmentFaceError;

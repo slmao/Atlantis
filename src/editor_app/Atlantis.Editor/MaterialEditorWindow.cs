@@ -14,6 +14,7 @@ using Avalonia.Controls.Templates;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Input.Platform;
 
 namespace Atlantis.Editor;
 
@@ -38,6 +39,9 @@ internal sealed class MaterialEditorWindow : Window
     private readonly Button _save = new() { Content = "Save & Publish" };
     private readonly Button _preview = new() { Content = "Preview draft" };
     private readonly Button _resume = new() { Content = "Resume publication", IsVisible = false };
+    private readonly TextBox _bindingReview = new() { IsReadOnly = true };
+    private readonly Button _copyBindingReview = new() { Content = "Copy binding review note" };
+    private readonly StackPanel _bindingReviewActions = new() { IsVisible = false, Spacing = 4 };
     private readonly SelectableTextBlock _state = EditorVisuals.Details("");
     private readonly TextBlock _previewState = EditorVisuals.Secondary("");
     private readonly Image _image = new() { Height = 258, Stretch = Stretch.Uniform, IsVisible = false };
@@ -45,6 +49,14 @@ internal sealed class MaterialEditorWindow : Window
     private bool _saveBlocked;
     private readonly string _assetName;
     internal long Surface { get; }
+    internal void SelectPreviewMesh(AssetGuid mesh) =>
+        _mesh.SelectedItem = _mesh.Items.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == mesh);
+
+    internal void ShowBindingReview(string review)
+    {
+        _bindingReview.Text = review;
+        _bindingReviewActions.IsVisible = true;
+    }
     internal bool WithMaps { get; private set; }
     internal bool WithMetallicRoughness { get; private set; }
     internal bool WithOcclusion { get; private set; }
@@ -55,7 +67,8 @@ internal sealed class MaterialEditorWindow : Window
     internal event Action? ResumeRequested;
 
     internal MaterialEditorWindow(long surface, MaterialDraft draft, string name, IReadOnlyList<AssetSummary> catalog, bool withMaps = true,
-        bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false)
+        bool withMetallicRoughness = false, bool withOcclusion = false, bool withCombinedMaps = false,
+        string? bindingScope = null)
     {
         WithMaps = withMaps;
         WithMetallicRoughness = withMetallicRoughness;
@@ -165,7 +178,16 @@ internal sealed class MaterialEditorWindow : Window
             Changed();
             if (_name.IsReadOnly) _texture.Focus(); else _name.Focus();
         };
-        _form = EditorVisuals.Stack(10,
+        var scope = EditorVisuals.Secondary(bindingScope ?? "");
+        scope.IsVisible = bindingScope is not null;
+        scope.TextWrapping = TextWrapping.Wrap;
+        _copyBindingReview.Click += async (_, _) =>
+        {
+            if (Clipboard is { } clipboard) await clipboard.SetTextAsync(_bindingReview.Text ?? "");
+        };
+        _bindingReviewActions.Children.Add(_bindingReview);
+        _bindingReviewActions.Children.Add(_copyBindingReview);
+        _form = EditorVisuals.Stack(10, scope, _bindingReviewActions,
             EditorVisuals.Group(EditorVisuals.Heading("Material"), EditorVisuals.Stack(5,
                 EditorVisuals.Secondary("Name"), _name, EditorVisuals.Secondary("Base texture"), _texture)),
             EditorVisuals.Group(EditorVisuals.Heading("Surface"), EditorVisuals.Stack(6,

@@ -221,6 +221,49 @@ struct ViewportStamp {
   friend bool operator==(const ViewportStamp&, const ViewportStamp&) = default;
 };
 
+inline constexpr std::size_t kMaterialBindingInstances = 8192;
+inline constexpr std::size_t kMaterialBindingTriangles = 262144;
+inline constexpr std::string_view kMaterialBindingSlot = "Renderable.materialAsset";
+
+struct MaterialBindingPickRequest {
+  Ray ray;
+  float minDistance = 0.0f;
+  float maxDistance = 0.0f;
+  std::uint64_t sceneGeneration = 0;
+  std::optional<ViewportStamp> viewport;
+};
+
+[[nodiscard]] inline bool validMaterialBindingPick(const MaterialBindingPickRequest& request) {
+  return validAlignmentRay(request.ray) && std::isfinite(request.minDistance) &&
+      std::isfinite(request.maxDistance) && request.minDistance >= 0.0f &&
+      request.maxDistance > request.minDistance &&
+      (!request.viewport || request.viewport->sceneGeneration == request.sceneGeneration);
+}
+
+enum class MaterialBindingPickError {
+  InvalidRequest, Unavailable, Unsupported, StaleGeneration, StaleViewport, NotPresented,
+  ActivePolicy, NoGeometry, Miss, Ambiguous, UnsupportedBinding, TooLarge,
+  TransportFailure, RpcFailure, ProtocolFailure,
+};
+
+[[nodiscard]] constexpr std::string_view toString(MaterialBindingPickError error) {
+  constexpr std::array<std::string_view, 15> names{
+      "InvalidRequest", "Unavailable", "Unsupported", "StaleGeneration", "StaleViewport", "NotPresented",
+      "ActivePolicy", "NoGeometry", "Miss", "Ambiguous", "UnsupportedBinding", "TooLarge",
+      "TransportFailure", "RpcFailure", "ProtocolFailure"};
+  return names[static_cast<std::size_t>(error)];
+}
+
+struct MaterialBindingPick {
+  std::uint64_t sceneGeneration;
+  std::optional<ViewportStamp> viewport;
+  atlantis::asset_system::EntityGuid entity;
+  atlantis::asset_system::AssetGuid mesh;
+  atlantis::asset_system::AssetGuid material;
+  float distance;
+};
+using MaterialBindingPickResult = atlantis::Result<MaterialBindingPick, MaterialBindingPickError>;
+
 struct ViewportPolicy {
   ViewportMembers hidden;
   ViewportMembers locked;
@@ -361,6 +404,9 @@ class RuntimeControl {
   // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.
   [[nodiscard]] virtual atlantis::Result<std::optional<RayHit>, ControlError> raycast(const Ray& ray) = 0;
   // ADR-0184: one or two first-hit cap observations from a single live scene.
+  [[nodiscard]] virtual MaterialBindingPickResult pickMaterialBinding(const MaterialBindingPickRequest&) {
+    return MaterialBindingPickResult::Err(MaterialBindingPickError::Unsupported);
+  }
   [[nodiscard]] virtual AlignmentFacesResult pickAlignmentFaces(std::span<const Ray>) {
     return AlignmentFacesResult::Err({AlignmentFaceError::Unsupported});
   }

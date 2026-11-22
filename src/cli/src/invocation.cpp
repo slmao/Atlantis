@@ -31,6 +31,7 @@ constexpr std::string_view kUsage =
     "  property get <guid> <Type>.<field> | property set <guid> <Type>.<field> <value...>\n"
     "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]\n"
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
+    "  runtime material-binding GEN MIN MAX --origin X Y Z --direction X Y Z [--viewport REV]\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
     "  runtime visibility status | set GEN REV [--hide GUID] [--lock GUID] [--keep GUID] | clear GEN REV\n"
     "  runtime visibility pick GEN REV selection|alignment --origin X Y Z --direction X Y Z [<second ray>]\n"

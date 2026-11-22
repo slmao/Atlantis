@@ -82,6 +82,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
         std::span<const atlantis::asset_system::EntityGuid>)> viewportNavigation{};
     std::function<atlantis::connection::AlignmentFacesResult(
         std::span<const atlantis::connection::Ray>)> pickAlignmentFaces{};
+    std::function<atlantis::connection::MaterialBindingPickResult(
+        const atlantis::connection::MaterialBindingPickRequest&)> pickMaterialBinding{};
     std::function<atlantis::connection::ViewportVisibilityResult()> viewportVisibility{};
     std::function<atlantis::connection::ViewportVisibilityResult(atlantis::connection::ViewportStamp,
         std::optional<atlantis::connection::ViewportPolicy>)> setViewportVisibility{};
@@ -121,6 +123,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
       atlantis::connection::ViewportStamp stamp, std::optional<atlantis::connection::ViewportPolicy> policy) override;
   [[nodiscard]] atlantis::connection::ViewportPickResult pickViewport(atlantis::connection::ViewportStamp stamp,
       atlantis::connection::ViewportPickKind kind, std::span<const atlantis::connection::Ray> rays) override;
+  [[nodiscard]] atlantis::connection::MaterialBindingPickResult pickMaterialBinding(
+      const atlantis::connection::MaterialBindingPickRequest& request) override;
   [[nodiscard]] atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
       std::span<const atlantis::connection::Ray> rays) override;
   [[nodiscard]] atlantis::connection::ViewportNavigationResult viewportNavigation(

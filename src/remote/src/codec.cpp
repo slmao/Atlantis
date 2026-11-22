@@ -1562,6 +1562,93 @@ std::optional<connection::ViewportStamp> decodeViewportStamp(const Value& value)
   return connection::ViewportStamp{*g, *r};
 }
 
+Value encode(const connection::MaterialBindingPickRequest& value) {
+  auto out = Value::object();
+  out.set("ray", encode(value.ray));
+  out.set("minDistance", Value::number(value.minDistance));
+  out.set("maxDistance", Value::number(value.maxDistance));
+  out.set("sceneGeneration", Value::number(value.sceneGeneration));
+  if (value.viewport) out.set("viewport", encode(*value.viewport));
+  return out;
+}
+
+std::optional<connection::MaterialBindingPickRequest> decodeMaterialBindingRequest(const Value& value) {
+  const auto* ray = value.find("ray");
+  const auto* nearDistance = value.find("minDistance");
+  const auto* farDistance = value.find("maxDistance");
+  const auto* generation = value.find("sceneGeneration");
+  const auto* viewport = value.find("viewport");
+  if (!value.isObject() || value.asObject().size() != (viewport ? 5 : 4) || !ray || !ray->isObject() ||
+      ray->asObject().size() != 2 || !nearDistance || !nearDistance->isNumber() ||
+      !farDistance || !farDistance->isNumber() || !generation || !generation->isNumber()) return {};
+  const auto rayVector = [&](std::string_view key) {
+    const auto* v = ray->find(key);
+    return v && v->isArray() && v->asArray().size() == 3 &&
+        std::ranges::all_of(v->asArray(), [](const auto& n) { return n.isNumber(); });
+  };
+  if (!rayVector("origin") || !rayVector("direction")) return {};
+  const auto r = decodeRay(*ray);
+  const auto n = decodeFloat(*nearDistance);
+  const auto f = decodeFloat(*farDistance);
+  const auto g = decodeUInt64(*generation);
+  const auto stamp = viewport ? decodeViewportStamp(*viewport) : std::nullopt;
+  if (!r || !n || !f || !g || (viewport && (!stamp || viewport->asObject().size() != 2 ||
+      !viewport->find("sceneGeneration")->isNumber() || !viewport->find("revision")->isNumber()))) return {};
+  const connection::MaterialBindingPickRequest request{*r, *n, *f, *g, stamp};
+  if (!connection::validMaterialBindingPick(request)) return {};
+  return request;
+}
+
+Value encode(const connection::MaterialBindingPick& value) {
+  auto out = Value::object();
+  out.set("sceneGeneration", Value::number(value.sceneGeneration));
+  if (value.viewport) out.set("viewport", encode(*value.viewport));
+  out.set("entity", encodeEntity(value.entity));
+  out.set("mesh", encodeAsset(value.mesh));
+  out.set("material", encodeAsset(value.material));
+  out.set("distance", Value::number(value.distance));
+  out.set("slot", Value::string(std::string(connection::kMaterialBindingSlot)));
+  return out;
+}
+
+std::optional<connection::MaterialBindingPick> decodeMaterialBindingPick(
+    const Value& value, const connection::MaterialBindingPickRequest& request) {
+  const auto* generation = value.find("sceneGeneration");
+  const auto* viewport = value.find("viewport");
+  const auto* entity = value.find("entity");
+  const auto* mesh = value.find("mesh");
+  const auto* material = value.find("material");
+  const auto* distance = value.find("distance");
+  const auto* slot = value.find("slot");
+  if (!value.isObject() || value.asObject().size() != (viewport ? 7 : 6) ||
+      !generation || !generation->isNumber() || !entity || !mesh || !material ||
+      !distance || !distance->isNumber() || !slot || !slot->isString() ||
+      slot->asString() != connection::kMaterialBindingSlot) return {};
+  const auto g = decodeUInt64(*generation);
+  const auto stamp = viewport ? decodeViewportStamp(*viewport) : std::nullopt;
+  const auto e = decodeEntity(*entity);
+  const auto m = decodeAsset(*mesh);
+  const auto a = decodeAsset(*material);
+  const auto d = decodeFloat(*distance);
+  if (!g || *g != request.sceneGeneration || stamp != request.viewport ||
+      (viewport && (!stamp || encode(*stamp) != *viewport)) ||
+      !e || *e == EntityGuid{} || encodeEntity(*e) != *entity ||
+      !m || *m == AssetGuid{} || encodeAsset(*m) != *mesh ||
+      !a || *a == AssetGuid{} || encodeAsset(*a) != *material ||
+      !d || !std::isfinite(*d) || *d < request.minDistance || *d > request.maxDistance) return {};
+  return connection::MaterialBindingPick{*g, stamp, *e, *m, *a, *d};
+}
+
+std::optional<connection::MaterialBindingPickError> decodeMaterialBindingPickError(const Value& value) {
+  if (!value.isString()) return {};
+  using E = connection::MaterialBindingPickError;
+  for (unsigned i = 0; i <= static_cast<unsigned>(E::TooLarge); ++i) {
+    const auto error = static_cast<E>(i);
+    if (value.asString() == connection::toString(error)) return error;
+  }
+  return {};
+}
+
 Value encode(const connection::ViewportPolicy& value) {
   const auto list = [](const connection::ViewportMembers& members) {
     auto out = Value::array();

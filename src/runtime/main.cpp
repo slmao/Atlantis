@@ -491,8 +491,13 @@ int main(int argc, char** argv) {
   // RuntimeControl a --listen client does -- one host, shared when both are
   // given.
   if (cliResult.listenPort.has_value() || cliResult.editor) {
+    auto target = atlantis::runtime::RuntimeControlHost::forApplication(app);
+    target.pickMaterialBinding = [&app, &assets](const atlantis::connection::MaterialBindingPickRequest& request) {
+      const auto catalog = assets.catalog();
+      return app.pickMaterialBinding(request, catalog.get());
+    };
     control = std::make_unique<atlantis::runtime::RuntimeControlHost>(
-        atlantis::runtime::RuntimeControlHost::forApplication(app), atlantis::runtime::RuntimeControlHost::Options{});
+        std::move(target), atlantis::runtime::RuntimeControlHost::Options{});
     // Plan 0066 P4 (ADR-0132 D4; J11): a served RuntimeControl can set a
     // Viewport overlay; its shaders load only when one first arrives.
     app.enableViewportOverlay(atlantis::runtime::ViewportOverlayShaderPaths{

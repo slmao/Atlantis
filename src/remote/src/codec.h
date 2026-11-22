@@ -155,6 +155,12 @@ class OwnedSchema {
 [[nodiscard]] Value encode(const connection::ViewportPick& value);
 [[nodiscard]] Value encode(const connection::ViewportVisibilityFailure& value);
 [[nodiscard]] Value encode(const connection::ViewportStamp& value);
+[[nodiscard]] Value encode(const connection::MaterialBindingPickRequest& value);
+[[nodiscard]] Value encode(const connection::MaterialBindingPick& value);
+[[nodiscard]] std::optional<connection::MaterialBindingPickRequest> decodeMaterialBindingRequest(const Value& value);
+[[nodiscard]] std::optional<connection::MaterialBindingPick> decodeMaterialBindingPick(
+    const Value& value, const connection::MaterialBindingPickRequest& request);
+[[nodiscard]] std::optional<connection::MaterialBindingPickError> decodeMaterialBindingPickError(const Value& value);
 [[nodiscard]] std::optional<connection::ViewportStamp> decodeViewportStamp(const Value& value);
 [[nodiscard]] std::optional<connection::ViewportPolicy> decodeViewportPolicy(const Value& value,
     connection::ViewportVisibilityError& error);

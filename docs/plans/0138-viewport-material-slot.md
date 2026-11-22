@@ -1,10 +1,10 @@
 # Plan 0138 — Locate and Edit a Material Binding from the Viewport
 
 - **Spec:** [Spec 0138](../specs/0138-viewport-material-slot.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
-- **ADR:** [ADR-0186](../adr/0186-shared-material-binding-pick.md) (Proposed)
+- **Joint Human Review:** Maintainer approved Spec/Plan 0138 and J1–J4 at `d6498282`, accepted ADR-0186 and authorized S2–S4 after merge. [Approval](https://github.com/slmao/Atlantis/pull/439#issuecomment-7075813233). Design merged as `1e4ee5f3`.
+- **ADR:** [ADR-0186](../adr/0186-shared-material-binding-pick.md) (Accepted)
 - **Design baseline:** `66bfd0ba`, maintainer merge of [PR #438](https://github.com/slmao/Atlantis/pull/438)
 
 ## Objective

@@ -16,6 +16,7 @@ namespace Atlantis.Editor;
 public sealed class AssetReferencePickerWindow : Window
 {
     private readonly EditorWorker _worker;
+    private readonly AssetGuid? _preferred;
     private readonly AssetBrowser _browser = new();
     private readonly ListBox _list = new();
     private readonly StackPanel _details = new() { Spacing = 4 };
@@ -41,9 +42,9 @@ public sealed class AssetReferencePickerWindow : Window
             ? new AssetPreviewInputs(mesh, material.Guid, Target.Request) : null;
 
     public AssetReferencePickerWindow(EditorWorker worker, AssetReferenceTarget target,
-                                      Action<long, AssetGuid> confirm, Action cancel)
+                                      Action<long, AssetGuid> confirm, Action cancel, AssetGuid? preferred = null)
     {
-        _worker = worker; Target = target;
+        _worker = worker; Target = target; _preferred = preferred;
         bool material = target.SupportsMaterialPreview;
         string title = material ? "Choose material" : "Choose asset";
         Title = title + " — " + target.Label;
@@ -189,8 +190,13 @@ public sealed class AssetReferencePickerWindow : Window
                     else
                     {
                         _current.Text = "Current: " + EditorVisuals.AssetName(listed);
-                        if (_browser.Visible.Any(a => a.Guid == current)) Read(current);
+                        if (_preferred is null && _browser.Visible.Any(a => a.Guid == current)) Read(current);
                     }
+                }
+                if (_preferred is AssetGuid preferred)
+                {
+                    _browser.Search = preferred.ToString();
+                    if (_browser.Visible.Any(a => a.Guid == preferred && a.Type == AssetType.Material)) Read(preferred);
                 }
             }
             Render();
@@ -222,7 +228,8 @@ public sealed class AssetReferencePickerWindow : Window
         try { EditorVisuals.BindAssetList(_list, _browser.Rows, _browser.SelectionVisible ? _browser.Selected : null); }
         finally { _sync = false; }
         _confirm.IsEnabled = !_submitted && _browser.State == "Ready" &&
-            _list.SelectedItem is AssetSummary candidate && candidate.Guid == _browser.Selected;
+            _list.SelectedItem is AssetSummary candidate && candidate.Guid == _browser.Selected &&
+            (_preferred is null || candidate.Guid == _preferred);
         _candidate.Text = _list.SelectedItem is AssetSummary selected
             ? "Selected: " + EditorVisuals.AssetName(selected) :
                 _browser.Selected is not null && _browser.State == "Ready" ? "Selected asset is hidden" : "No candidate selected";

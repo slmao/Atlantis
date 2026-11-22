@@ -44,7 +44,7 @@ public static partial class Program
         bool staticGroupReceipt = false;
         string? bistroReferenceReport = null;
         string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null,
-            staticGroupReport = null, bistroTuningReport = null, bistroLocatorReport = null;
+            staticGroupReport = null, bistroTuningReport = null, bistroLocatorReport = null, materialBindingReport = null;
         for (int i = 0; i < args.Length; ++i)
         {
             if (args[i] == "--repo" && i + 1 < args.Length) repo = args[++i];
@@ -61,6 +61,7 @@ public static partial class Program
             else if (args[i] == "--viewport-placement" && i + 1 < args.Length) placementReport = args[++i];
             else if (args[i] == "--static-group-ui" && i + 1 < args.Length) staticGroupReport = args[++i];
             else if (args[i] == "--static-group-receipt") staticGroupReceipt = true;
+            else if (args[i] == "--material-binding-ui" && i + 1 < args.Length) materialBindingReport = args[++i];
             else if (args[i] == "--bistro-locator" && i + 1 < args.Length) bistroLocatorReport = args[++i];
             else if (args[i] == "--bistro-tuning-ui" && i + 1 < args.Length) bistroTuningReport = args[++i];
             else if (args[i] == "--bistro-reference-ui" && i + 1 < args.Length) bistroReferenceReport = args[++i];
@@ -80,6 +81,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunNameUiSmoke(runtime, staticGroupReport, "--static-group-ui");
         if (staticGroupReceipt)
             return runtime is null ? Usage() : RunStaticGroupReceipt(runtime, scene);
+        if (materialBindingReport is not null)
+            return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, materialBindingReport, materialBinding: true);
         if (bistroLocatorReport is not null)
             return runtime is null ? Usage() : RunBistroLocator(runtime, scene, bistroLocatorReport);
         if (bistroTuningReport is not null)

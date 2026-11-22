@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atlantis/asset_system/asset_catalog.h>
+
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/environment_types.h>
@@ -208,6 +210,9 @@ class RuntimeApplication {
       connection::ViewportPickKind kind, std::span<const connection::Ray> rays) const;
 
   [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
+  [[nodiscard]] atlantis::connection::MaterialBindingPickResult pickMaterialBinding(
+      const atlantis::connection::MaterialBindingPickRequest& request,
+      const atlantis::asset_system::AssetCatalog* catalog) const;
   [[nodiscard]] atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
       std::span<const atlantis::connection::Ray> rays) const;
   // Spec 0064 / ADR-0128 D2: whether the configuration kept pick geometry

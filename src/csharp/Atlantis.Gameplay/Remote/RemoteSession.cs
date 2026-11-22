@@ -498,6 +498,14 @@ public sealed class RemoteControl
         return Codec.DecodeViewportReply(response, method, decode, alignmentRays) ?? throw _session.Malformed(method);
     }
 
+    public MaterialBindingPickResult PickMaterialBinding(MaterialBindingPickRequest request)
+    {
+        const string method = "control.pickMaterialBinding";
+        if (!Codec.IsMaterialBindingRequest(request)) return new(null, MaterialBindingPickError.InvalidRequest);
+        return Codec.DecodeMaterialBindingResponse(_session.AwaitResponse(_session.Send(method, Codec.Encode(request))), request)
+            ?? throw _session.Malformed(method);
+    }
+
     public AlignmentFacesResult PickAlignmentFaces(IReadOnlyList<Ray> rays)
     {
         const string method = "control.pickAlignmentFaces";

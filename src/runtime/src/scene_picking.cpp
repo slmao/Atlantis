@@ -177,8 +177,8 @@ std::vector<PickInstance> collectPickInstances(const access::RuntimeWorldAccess&
 }
 
 namespace {
-template <typename Limit, typename Visit>
-void visitHits(std::span<const PickInstance> instances,
+template <bool Bounded = false, typename Limit, typename Visit>
+bool visitHits(std::span<const PickInstance> instances,
                const std::unordered_map<AssetId, PickMeshGeometry>& geometry, const PickRay& ray,
                Limit&& limit, Visit&& visit) {
   // Each instance's world bounds first; candidates nearest-entry first, so the
@@ -219,23 +219,74 @@ void visitHits(std::span<const PickInstance> instances,
                    [](const Candidate& a, const Candidate& b) { return a.entry < b.entry; });
 
   std::vector<Float3> world;
+  [[maybe_unused]] std::size_t triangles = 0;
   for (const Candidate& candidate : candidates) {
     if (candidate.entry > limit()) break;
     const PickInstance& instance = instances[candidate.index];
     const PickMeshGeometry& mesh = *candidate.mesh;
-    world.resize(mesh.positions.size());
-    for (std::size_t v = 0; v < mesh.positions.size(); ++v) world[v] = transformPoint(instance.worldMatrix, mesh.positions[v]);
+    if constexpr (Bounded) {
+      const std::size_t count = mesh.indices.size() / 3;
+      if (count > atlantis::connection::kMaterialBindingTriangles - triangles) return false;
+      triangles += count;
+    } else {
+      world.resize(mesh.positions.size());
+      for (std::size_t v = 0; v < mesh.positions.size(); ++v)
+        world[v] = transformPoint(instance.worldMatrix, mesh.positions[v]);
+    }
+    const auto vertex = [&](std::uint32_t index) {
+      if constexpr (Bounded) return transformPoint(instance.worldMatrix, mesh.positions[index]);
+      else return world[index];
+    };
     for (std::size_t t = 0; t + 2 < mesh.indices.size(); t += 3) {
       const std::uint32_t i0 = mesh.indices[t];
       const std::uint32_t i1 = mesh.indices[t + 1];
       const std::uint32_t i2 = mesh.indices[t + 2];
-      if (i0 >= world.size() || i1 >= world.size() || i2 >= world.size()) continue;
-      const std::optional<float> hit = intersect(ray, world[i0], world[i1], world[i2]);
+      if (i0 >= mesh.positions.size() || i1 >= mesh.positions.size() || i2 >= mesh.positions.size()) {
+        if constexpr (Bounded) return false;
+        continue;
+      }
+      const std::optional<float> hit = intersect(ray, vertex(i0), vertex(i1), vertex(i2));
       if (!hit.has_value()) continue;
       visit(candidate.index, t/3, *hit);
     }
   }
+  return true;
 }
+}
+
+MaterialSurfaceRead pickMaterialSurface(
+    std::span<const PickInstance> instances,
+    const std::unordered_map<AssetId, PickMeshGeometry>& geometry,
+    const atlantis::connection::MaterialBindingPickRequest& request) {
+  using R = MaterialSurfaceRead;
+  using E = atlantis::connection::MaterialBindingPickError;
+  if (!atlantis::connection::validMaterialBindingPick(request)) return R::Err(E::InvalidRequest);
+  if (instances.size() > atlantis::connection::kMaterialBindingInstances) return R::Err(E::TooLarge);
+  for (const auto& instance : instances) {
+    const auto mesh = geometry.find(instance.mesh);
+    if (mesh == geometry.end() || mesh->second.indices.empty() || mesh->second.indices.size() % 3 != 0 ||
+        !std::ranges::all_of(instance.worldMatrix, [](float value) { return std::isfinite(value); }))
+      return R::Err(E::NoGeometry);
+  }
+  const PickRay ray{request.ray.origin, request.ray.direction};
+  const auto epsilon = [](float distance) { return 1e-5 * std::max(1.0, static_cast<double>(distance)); };
+  std::size_t first = instances.size();
+  float nearest = request.maxDistance;
+  float next = std::numeric_limits<float>::infinity();
+  const auto completed = visitHits<true>(instances, geometry, ray,
+      [&] { return std::min<double>(request.maxDistance, nearest + epsilon(nearest)); },
+      [&](std::size_t index, std::size_t, float distance) {
+        if (distance < request.minDistance || distance > request.maxDistance) return;
+        if (distance <= nearest) {
+          if (index != first && first != instances.size()) next = nearest;
+          nearest = distance;
+          first = index;
+        } else if (index != first) next = std::min(next, distance);
+      });
+  if (!completed) return R::Err(E::TooLarge);
+  if (first == instances.size()) return R::Err(E::Miss);
+  if (static_cast<double>(next) <= nearest + epsilon(nearest)) return R::Err(E::Ambiguous);
+  return R::Ok({instances[first].entity, nearest});
 }
 
 std::optional<PickHit> pickNearest(std::span<const PickInstance> instances,

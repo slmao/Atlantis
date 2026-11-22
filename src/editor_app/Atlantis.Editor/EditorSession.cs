@@ -305,6 +305,10 @@ internal sealed record BistroProjection(DocumentToken Document, EntityGuid Camer
 internal sealed record BistroCapture(BistroReferenceView View, RuntimeStatus Status, FrameReport Report,
     bool PreviousProjection, BistroProjection? Projection = null);
 
+internal sealed record LocatedMaterialBinding(MaterialBindingPickRequest Request, MaterialBindingPick Hit,
+    AssetGuid Scene, DocumentToken Document, ApplyId Apply, long Lifetime, long Camera, ulong Extent, long Observation,
+    BatchPropertyTarget Target, string Name, IReadOnlyList<string> KnownUses, bool Complete);
+
 public sealed class EditorWorker : IDisposable
 {
     private DocumentObservation _persistence = new(DocumentAvailability.Starting);
@@ -716,10 +720,14 @@ public sealed class EditorWorker : IDisposable
             _post(() => done(result, basic, packed, occlusion, false));
         });
 
-    public void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps,
-        Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done) =>
+    internal void SaveMaterial(Atlantis.Gameplay.Assets.MaterialSave request, bool withMaps, bool withMetallicRoughness, bool withOcclusion, bool withCombinedMaps,
+        Action<Outcome<Atlantis.Gameplay.Assets.MaterialJob, Atlantis.Gameplay.Assets.MaterialError>> done,
+        LocatedMaterialBinding? binding = null, Action? expired = null) =>
         Enqueue(session =>
         {
+            if (binding is not null && (request.Target.Material != binding.Hit.Material ||
+                !RecheckMaterialBinding(session, binding)))
+            { if (expired is not null) _post(expired); return; }
             var result = withCombinedMaps ? session.Assets.MaterialSaveWithCombinedMaps(request) :
                 withOcclusion ? session.Assets.MaterialSaveWithOcclusion(request) :
                 withMetallicRoughness ? session.Assets.MaterialSaveWithMetallicRoughness(request) :
@@ -2189,6 +2197,149 @@ public sealed class EditorWorker : IDisposable
             return op.Id;
         }
     }
+
+    private bool MaterialViewCurrentLocked(long lifetime, long camera, ulong extent) =>
+        !_stopping && lifetime == MeshDocumentLifetime && camera == _cameraIntent && extent == _viewportExtentRevision &&
+        !_navigationUncertain && !_visibilityUnknown && !_dragActive && !_gizmoActive && _queuedGizmoBegins == 0 &&
+        _requestedGroup is null && !_groupSettling && _alignment is null && _placementOverlay is null;
+
+    private bool MaterialBindingCurrentLocked(LocatedMaterialBinding binding) =>
+        MaterialViewCurrentLocked(binding.Lifetime, binding.Camera, binding.Extent) &&
+        _bistroLocatorObservation == binding.Observation &&
+        (_hostedVisibility is null ||
+         (_hostedVisibility.Owner == ViewportOwner.None && _hostedVisibility.Stamp == binding.Request.Viewport));
+
+    internal bool MaterialBindingCurrent(LocatedMaterialBinding binding)
+    {
+        lock (_lock) return MaterialBindingCurrentLocked(binding);
+    }
+
+    internal void LocateMaterialBinding(Ray ray, float clipNear, float clipFar, ulong selection, long camera,
+        Action<LocatedMaterialBinding?, string?> completed)
+    {
+        long lifetime = MeshDocumentLifetime;
+        ulong extent;
+        lock (_lock) extent = _viewportExtentRevision;
+        Enqueue(session =>
+        {
+            void Refuse(string reason) => _post(() => completed(null, reason));
+            bool Current()
+            {
+                lock (_lock) return MaterialViewCurrentLocked(lifetime, camera, extent) &&
+                    _requestedSelectionGeneration == selection;
+            }
+            if (!Current() || ReadAlignmentStamp(session) is not { } stamp ||
+                _document is not RemoteAuthoringDocument document)
+            { Refuse("Apply the current editable document and let the viewport settle before locating a material."); return; }
+
+            var visibility = session.Control.ViewportVisibility().Value;
+            if (visibility is not { Presented: true, Owner: ViewportOwner.None } ||
+                visibility.Stamp.SceneGeneration != stamp.Generation)
+            { Refuse("Restore viewport visibility and wait for its presentation before locating a material."); return; }
+            var request = new MaterialBindingPickRequest(ray, clipNear, clipFar, stamp.Generation, visibility.Stamp);
+            var outcome = session.Control.PickMaterialBinding(request);
+            if (outcome.Value is not { } hit)
+            { Refuse("Material location refused: " + outcome.Error + "."); return; }
+            var material = SceneSchema.AddressOf(document.Schema, hit.Entity, "Renderable", "materialAsset");
+            var mesh = SceneSchema.AddressOf(document.Schema, hit.Entity, "Renderable", "meshAsset");
+            if (material is not SceneAddress field || mesh is not SceneAddress meshField ||
+                document.GetProperties([meshField, field]) is not [PropertyValue actualMesh, PropertyValue actualMaterial] ||
+                actualMesh != PropertyValue.FromAsset(hit.Mesh) || actualMaterial != PropertyValue.FromAsset(hit.Material))
+            { Refuse("The Runtime material and the authoring binding disagree. Refresh and pick again."); return; }
+
+            var asset = session.Assets.GetAsset(hit.Material);
+            if (!asset.IsOk || asset.Value is not { Type: AssetType.Material } details || details.Guid != hit.Material)
+            { Refuse("The material could not be verified in the active catalog."); return; }
+
+            const int nodeLimit = 8192;
+            var uses = new List<string>();
+            bool complete = _tree.Count <= nodeLimit;
+            var candidates = _tree.Order.Take(nodeLimit).Where(node => node != hit.Entity &&
+                _tree.ComponentsOf(node).Contains(field.Component));
+            foreach (var chunk in candidates.Chunk(64))
+            {
+                var addresses = chunk.Select(node => new SceneAddress(node, field.Component, field.Field)).ToArray();
+                var values = document.GetProperties(addresses);
+                if (values.Count != addresses.Length) { complete = false; continue; }
+                for (int i = 0; i < chunk.Length; ++i)
+                {
+                    if (values[i] is null) complete = false;
+                    else if (values[i] == actualMaterial) uses.Add(_tree.Label(chunk[i], document.Schema) + " · " + chunk[i]);
+                }
+            }
+            if (ReadAlignmentStamp(session) != stamp || !Current() ||
+                _tree.IncarnationOf(hit.Entity) is not { } nodeId ||
+                _tree.ComponentIncarnationOf(field) is not { } componentId)
+            { Refuse("The material location expired. Pick the surface again."); return; }
+
+            ObserveBistroLocatorDocument(stamp.Document);
+            var target = new BatchPropertyTarget(field, actualMaterial, nodeId, componentId, _tree.PropertyStamp(field));
+            var result = new LocatedMaterialBinding(request, hit, session.Scene, stamp.Document, stamp.Apply, lifetime, camera,
+                extent, _bistroLocatorObservation, target, details.DisplayName ?? details.Source, uses.AsReadOnly(), complete);
+            _post(() =>
+            {
+                if (!Current() || !MaterialBindingCurrent(result)) completed(null, "The material location expired. Pick again.");
+                else completed(result, null);
+            });
+        });
+    }
+
+    private bool RecheckMaterialBinding(RemoteSession session, LocatedMaterialBinding binding)
+    {
+        if (!MaterialBindingCurrent(binding) || ReadAlignmentStamp(session) is not { } stamp ||
+            stamp.Document != binding.Document || stamp.Apply != binding.Apply ||
+            !binding.Target.IsCurrent(_tree, checkStamp: true) ||
+            session.Control.PickMaterialBinding(binding.Request).Value is not { } hit ||
+            hit.Entity != binding.Hit.Entity || hit.Mesh != binding.Hit.Mesh || hit.Material != binding.Hit.Material ||
+            _document?.GetProperty(binding.Target.Address) != PropertyValue.FromAsset(hit.Material)) return false;
+        return ReadAlignmentStamp(session) == stamp && MaterialBindingCurrent(binding) &&
+            binding.Target.IsCurrent(_tree, checkStamp: true);
+    }
+
+    internal void RecheckMaterialBinding(LocatedMaterialBinding binding, Action<bool> completed) => Enqueue(session =>
+    {
+        bool current = RecheckMaterialBinding(session, binding);
+        _post(() => completed(current && MaterialBindingCurrent(binding)));
+    });
+
+    internal void ReplaceLocatedMaterial(LocatedMaterialBinding binding, AssetGuid replacement, ulong selection,
+        Action<string> completed) => Enqueue(session =>
+    {
+        const string expired = "The material binding changed. Locate it again before replacing.";
+        void Report(string message) => _post(() => completed(message));
+        if (replacement.IsNil || replacement == binding.Hit.Material)
+        { Report("Choose the verified published copy."); return; }
+        var candidate = session.Assets.GetAsset(replacement);
+        if (!candidate.IsOk || candidate.Value is not { Type: AssetType.Material } details || details.Guid != replacement)
+        { Report("The copy is unavailable in the active catalog. Activate it explicitly."); return; }
+        var recipe = session.Assets.MaterialReadWithCombinedMaps(replacement);
+        if (!recipe.IsOk || recipe.Value.Material != replacement)
+        { Report("The destination is not a supported opaque material in the active catalog."); return; }
+        if (!RecheckMaterialBinding(session, binding))
+        { Report(expired); return; }
+
+        var write = new PropertyWrite(binding.Target.Address, PropertyValue.FromAsset(binding.Hit.Material), PropertyValue.FromAsset(replacement));
+        var edit = new BatchPropertyEdit("Replace material binding", [binding.Target], [write]);
+        var settled = SettlePropertyBatch(session, edit, true, binding.Lifetime, selection,
+            expectedRevision: binding.Document.DocumentRevision,
+            sendGuard: () => MaterialBindingCurrentLocked(binding) && binding.Target.IsCurrent(_tree, checkStamp: true),
+            uncertaintyDetail: $" Intended {binding.Hit.Entity}: {binding.Hit.Material} to {replacement}.");
+        string notice = settled.Notice;
+        if (settled.State == BatchReplayState.Committed && binding.Lifetime == MeshDocumentLifetime &&
+            _history is { } history && _historyTarget is { } historyTarget)
+        {
+            history.Record(new EditTransaction(edit.Field, [write], new EditEntry[] { edit }),
+                historyTarget.Committed(Array.Empty<CommandFailure>()));
+            history.Update();
+            PostHistory(binding.Lifetime);
+            notice = ApplyVerifiedEdit(binding.Lifetime, notice, publishStatus: false);
+        }
+        else PostHistory(binding.Lifetime);
+        Report(notice);
+        PostApplyState(binding.Lifetime);
+        PollDocument(session, pollApply: false, refreshInspector: false);
+        PostInspector();
+    });
 
     private AlignmentStamp? ReadAlignmentStamp(RemoteSession session)
     {

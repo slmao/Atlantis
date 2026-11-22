@@ -463,6 +463,14 @@ namespace ac = atlantis::connection::authoring;
     if (hit.isErr()) return Outcome::Ok(codec::err(codec::encodeControlError(hit.error())));
     return Outcome::Ok(codec::ok(hit.value().has_value() ? codec::encode(*hit.value()) : Value()));
   }
+  if (method == "control.pickMaterialBinding") {
+    namespace c = atlantis::connection;
+    const auto request = codec::decodeMaterialBindingRequest(p);
+    if (!request) return Outcome::Ok(codec::err(Value::string(std::string(c::toString(c::MaterialBindingPickError::InvalidRequest)))));
+    const auto result = control.pickMaterialBinding(*request);
+    return Outcome::Ok(result.isOk() ? codec::ok(codec::encode(result.value())) :
+        codec::err(Value::string(std::string(c::toString(result.error())))));
+  }
   if (method == "control.pickAlignmentFaces") {
     namespace c = atlantis::connection;
     const auto* values = p.find("rays");
