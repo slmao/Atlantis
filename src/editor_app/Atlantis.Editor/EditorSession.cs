@@ -489,6 +489,211 @@ public sealed class EditorWorker : IDisposable
         set => _measureLatency = value;
     }
 
+    internal bool SceneStatisticsCurrent(SceneStatisticsIntent intent, DocumentToken? document)
+    {
+        lock (_lock)
+            return !_stopping && intent.Current && intent.Lifetime == MeshDocumentLifetime &&
+                (document is null || document == _bistroLocatorDocument);
+    }
+
+    internal void ReadSceneStatistics(SceneStatisticsIntent intent, Action<SceneStatisticsReport, bool> completed)
+    {
+        var stats = new SceneStatistics();
+        string scope = intent.Root is null ? "Whole scene" : $"Selected subtree {intent.Root}";
+        DocumentToken? token = null;
+        AssetGuid? scene = null;
+        ulong? nodes = null, projection = null;
+        long began = Stopwatch.GetTimestamp();
+        bool Deadline() => Stopwatch.GetElapsedTime(began) >= TimeSpan.FromSeconds(30);
+
+        void Finish(bool stale)
+        {
+            var report = stats.Report(scope, scene, token, nodes, projection);
+            _post(() =>
+            {
+                if (intent.Current) completed(report, stale || !SceneStatisticsCurrent(intent, token));
+            });
+        }
+
+        void Continue(Action<RemoteSession> next) => Enqueue(session =>
+        {
+            if (!intent.Current) return;
+            if (Deadline())
+            {
+                stats.IncompleteBindings("The read budget expired. Showing historical results from completed reads.");
+                Finish(true);
+                return;
+            }
+            if (intent.Lifetime != MeshDocumentLifetime ||
+                (token.HasValue && !SceneStatisticsCurrent(intent, token)))
+            {
+                stats.IncompleteBindings("The document changed during the read. Refresh to inspect its current revision.");
+                Finish(true);
+                return;
+            }
+            try { next(session); }
+            catch (RemoteException error)
+            {
+                stats.IncompleteBindings("Read interrupted. " + error.Message);
+                Finish(true);
+                throw;
+            }
+        });
+
+        void Settle(RemoteSession session)
+        {
+            var after = session.Authoring.DocumentState();
+            bool stale = Deadline() || !after.IsOk || after.Value?.Token != token || !RootCurrent();
+            if (stale) stats.IncompleteBindings("The document or scope could not be confirmed. Refresh to check again.");
+            if (after.IsOk) ObserveBistroLocatorDocument(after.Value?.Token);
+            Finish(stale);
+        }
+
+        bool RootCurrent() => intent.Root is not { } root ||
+            intent.RootIdentity is not null && ReferenceEquals(intent.RootIdentity, _tree.IncarnationOf(root));
+
+        Continue(session =>
+        {
+            var before = session.Authoring.DocumentState();
+            if (!Deadline()) projection = session.Control.Status().SceneGeneration;
+            if (!before.IsOk || before.Value is not { } state ||
+                _document is not RemoteAuthoringDocument document || !RootCurrent())
+            {
+                stats.IncompleteBindings("The current document or selected subtree is unavailable.");
+                Finish(false);
+                return;
+            }
+            token = state.Token;
+            scene = state.Scene;
+            ObserveBistroLocatorDocument(token);
+            var summary = Deadline() ? null : document.Info();
+            if (summary is null || summary.Scene != state.Scene || summary.NodeCount > SceneStatistics.NodeLimit)
+            {
+                if (intent.Root is null && summary?.Scene == state.Scene) nodes = summary.NodeCount;
+                stats.IncompleteBindings(summary is null ? "Document counts are unavailable." : "The document exceeds the 8,192-node scan limit.");
+                Continue(Settle);
+                return;
+            }
+            if (intent.Root is null) nodes = summary.NodeCount;
+            var roster = Deadline() ? null : document.ObserveNodes();
+            var selected = roster is not null && (ulong)roster.Count == summary.NodeCount
+                ? SceneStatistics.SelectScope(roster, intent.Root) : null;
+            if (selected is null)
+            {
+                stats.IncompleteBindings("The Hierarchy could not be completely read.");
+                Continue(Settle);
+                return;
+            }
+            nodes = (ulong)selected.Length;
+            if (intent.Root is { } root)
+                scope = $"{(string.IsNullOrEmpty(selected[0].Name) ? "Unnamed node" : selected[0].Name)} · {root}";
+            if (SceneSchema.AddressOf(document.Schema, default, "Renderable", "meshAsset") is not { } mesh ||
+                SceneSchema.AddressOf(document.Schema, default, "Renderable", "materialAsset") is not { } material)
+            {
+                stats.IncompleteBindings("The Runtime does not expose both reference fields.");
+                Continue(Settle);
+                return;
+            }
+            Continue(current =>
+            {
+                var catalog = current.Assets.ListAssets();
+                stats.Catalog = catalog.IsOk ? catalog.Value.ToDictionary(item => item.Guid, item => item.Type) : null;
+                if (!catalog.IsOk) stats.IncompleteBindings("Running Runtime catalog unavailable.");
+                ReadNodes(current, 0);
+            });
+
+            void ReadNodes(RemoteSession current, int offset)
+            {
+                if (offset >= selected.Length) { ReadMaterials(stats.Materials.ToArray(), 0, current); return; }
+                var batch = selected.Skip(offset).Take(SceneStatistics.NodeSliceSize).ToArray();
+                var components = document.ObserveComponents(batch.Select(node => node.Node).ToArray());
+                if (components is null || components.Count != batch.Length)
+                    stats.IncompleteBindings("Some node components could not be read.");
+                else if (!Deadline())
+                {
+                    var subjects = batch.Where((_, index) => components[index].Contains(mesh.Component)).ToArray();
+                    var addresses = subjects.SelectMany(node => new[] { mesh with { Node = node.Node }, material with { Node = node.Node } }).ToArray();
+                    var values = document.GetProperties(addresses);
+                    for (int index = 0; index < subjects.Length; ++index)
+                    {
+                        int item = index * 2;
+                        var subject = subjects[index];
+                        stats.Renderable(subject, addresses[item], values.ElementAtOrDefault(item), addresses[item + 1],
+                            values.ElementAtOrDefault(item + 1), _tree.IncarnationOf(subject.Node),
+                            _tree.ComponentIncarnationOf(addresses[item]));
+                    }
+                }
+                Continue(next => ReadNodes(next, offset + batch.Length));
+            }
+
+            void ReadMaterials(AssetGuid[] guids, int index, RemoteSession current)
+            {
+                if (index == guids.Length)
+                {
+                    var metrics = stats.Meshes.Concat(stats.Textures).ToArray();
+                    Continue(next => ReadMetrics(metrics, 0, next));
+                    return;
+                }
+                var batch = guids.Skip(index).Take(SceneStatistics.MaterialSliceSize)
+                    .Select(guid => (Guid: guid, Request: current.Send("assets.get",
+                        JsonValue.NewObject().Set("guid", Codec.Encode(guid))))).ToArray();
+                foreach (var entry in batch)
+                {
+                    var outcome = current.AwaitResult(entry.Request);
+                    var details = outcome.Find("ok") is { } value ? Codec.DecodeAssetDetails(value) : null;
+                    stats.Material(entry.Guid, details);
+                }
+                Continue(next => ReadMaterials(guids, index + batch.Length, next));
+            }
+
+            void ReadMetrics(AssetGuid[] guids, int offset, RemoteSession current)
+            {
+                if (offset == guids.Length) { Settle(current); return; }
+                var batch = guids.Skip(offset).Take(ContentMetrics.Limit).ToArray();
+                var result = current.Assets.ContentMetrics(batch);
+                if (result.IsOk)
+                {
+                    foreach (var row in result.Value.Rows) stats.Metric(row.Guid, row.Result);
+                    Continue(next => ReadMetrics(guids, offset + batch.Length, next));
+                }
+                else
+                {
+                    stats.UnavailableMetrics(guids.Skip(offset), "Cooked metrics unavailable: " + result.Error + ".");
+                    Continue(Settle);
+                }
+            }
+        });
+    }
+
+    internal void LocateSceneStatistic(SceneStatisticsIntent intent, SceneStatisticsReport report,
+        MissingSceneBinding missing, ulong selection, Action<bool> done) => Enqueue(session =>
+    {
+        bool Current()
+        {
+            lock (_lock) return SceneStatisticsCurrent(intent, report.Document) && !_dragActive && !_gizmoActive &&
+                _requestedGroup is null && _requestedSelectionGeneration == selection;
+        }
+        bool SameOccurrence() => missing.CanLocate &&
+            ReferenceEquals(_tree.IncarnationOf(missing.Address.Node), missing.NodeIdentity) &&
+            ReferenceEquals(_tree.ComponentIncarnationOf(missing.Address), missing.ComponentIdentity) &&
+            (intent.Root is not { } root || ReferenceEquals(intent.RootIdentity, _tree.IncarnationOf(root)));
+        bool Verify()
+        {
+            if (report.Document is not { } token || _document is not { } document ||
+                !Current() || !SameOccurrence()) return false;
+            var before = session.Authoring.DocumentState();
+            if (!before.IsOk || before.Value?.Token != token ||
+                document.GetProperty(missing.Address) != PropertyValue.FromAsset(missing.Asset)) return false;
+            var asset = session.Assets.GetAsset(missing.Asset);
+            var current = session.Authoring.DocumentState();
+            if (current.IsOk) ObserveBistroLocatorDocument(current.Value?.Token);
+            return !asset.IsOk && asset.Error == AssetError.UnknownAsset &&
+                current.IsOk && current.Value?.Token == token && SameOccurrence() && Current();
+        }
+        bool verified = Verify();
+        _post(() => done(verified && Current()));
+    });
+
     // Query work stays on this worker; posted callbacks own their values.
     public void LoadAssets(Action<Outcome<IReadOnlyList<Atlantis.Gameplay.Assets.AssetSummary>, Atlantis.Gameplay.Assets.AssetError>> done) =>
         Enqueue(session => { var result = session.Assets.ListAssets(); _post(() => done(result)); });

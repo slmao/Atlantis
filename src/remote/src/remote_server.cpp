@@ -969,6 +969,20 @@ struct RemoteServer::State {
       payload.set("revision", Value::string(result.value().revision));
       return response(requestId, codec::ok(std::move(payload)));
     }
+    if (name == "assets.contentMetrics") {
+      namespace ca = connection::assets;
+      const auto* ids = p.find("guids");
+      const auto guids = ids ? ca::decodeContentMetricsGuids(*ids) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != 1 || !guids)
+        return errorResponse(requestId, "BadRequest", "expected one to 32 distinct canonical asset GUIDs");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto result = client.assets ? client.assets->contentMetrics(*guids)
+          : ca::ContentMetricsResult::Err(ca::ContentMetricsError::CatalogUnavailable);
+      if (result.isErr()) return response(requestId, codec::err(Value::string(std::string(ca::toString(result.error())))));
+      const auto encoded = ca::encodeContentMetrics(result.value(), *guids);
+      if (!encoded) return errorResponse(requestId, "BadRequest", "invalid content metrics result");
+      return response(requestId, codec::ok(*encoded));
+    }
     if (name == "assets.staticGroup" || name == "assets.prefab") {
       namespace ca = connection::assets;
       const bool prefab = name == "assets.prefab";

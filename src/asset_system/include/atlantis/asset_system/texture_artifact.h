@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace atlantis::asset_system {
@@ -94,6 +95,16 @@ struct TextureArtifactHeader {
   std::uint32_t width;
   std::uint32_t height;
 };
+
+struct TextureContentHeader {
+  TextureArtifactHeader summary;
+  TextureDataLayout layout;
+  std::uint32_t mipCount;
+  std::uint32_t pixelPayloadBytes;
+};
+
+[[nodiscard]] Result<TextureContentHeader, TextureArtifactDecodeError> inspectTextureContentHeader(
+    std::span<const std::byte> prefix, std::uint64_t length);
 
 // Validates the same header and payload size as decodeTextureArtifact(),
 // without allocating the decoded pixel payload.

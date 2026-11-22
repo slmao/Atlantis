@@ -317,6 +317,7 @@ the same Runtime launch before taking another explicit action.
 | Method | Params | Result |
 |---|---|---|
 | `assets.list` | `{}` | `{"ok":[<AssetSummary>…]}` in strictly increasing GUID order |
+| `assets.contentMetrics` | `{"guids":["<canonical asset GUID>", ...]}` | `{"ok":{"rows":[<ContentMetricRow>, ...]}}` |
 | `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
 | `assets.staticGroupReimportReview` | `{"mode":"begin","scene":"<Scene GUID>"}` or `{"mode":"read","id":"<review GUID>"}` or `{"mode":"cancel","id":"<review GUID>"}` | `{"ok":<StaticGroupReview>}` or a rebuild refusal |
 | `assets.commitStaticGroupReimport` | `{"id":"<Ready review GUID>"}` | `{"ok":<Running RebuildJob>}` or a rebuild refusal |
@@ -1108,3 +1109,20 @@ settled via `assets.rebuildStatus` using the returned job ID. A lost
 confirmation receipt is an unknown outcome. Check settlement before
 trying again. Publication uses the existing explicit activation flow.
 Earlier hosts refuse the methods as unsupported.
+
+
+### Cooked content metrics (0140)
+
+This request uses the catalog snapshot established by the normal asset
+queries. It takes 1–32 distinct canonical GUIDs in a single guids array.
+Each result row has guid and exactly one of mesh, texture or err, in
+request order. A mesh carries artifactSchema (4 or 5) and indexedTriangles.
+A texture carries artifactSchema (3), width, height, layout (Rgba8 or Bc7),
+mipCount and pixelPayloadBytes. The latter is the stored mip-chain payload
+size. The service validates header layout and file length, without reading
+the payload or reporting GPU allocations. A per-row err is UnknownAsset,
+UnsupportedAssetType, UnsupportedArtifactSchema, UnreadableArtifact or
+InvalidArtifact. CatalogUnavailable is a whole-request refusal. A malformed
+request is BadRequest. Older hosts refuse the new method as Unsupported
+through the clients' existing unknown-method mapping. The bounded reply
+contains no paths, scene edits, frame samples or capture requests.

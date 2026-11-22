@@ -72,6 +72,8 @@ internal static partial class Program
             $$$"""{"asset":"{{{Entity}}}","expectedGeneration":"{{{Material}}}","checkId":"{{{Material}}}"}""",
             $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.get", "assets.get", $$$"""{"guid":"{{{Entity}}}"}""", $$$"""{"ok":{"guid":"{{{Entity}}}","type":"mesh","source":"assets:mesh.txt","artifactSchema":7,"sourceSchema":null,"tool":"test/1","dependencies":[]}}"""),
+        ("assets.content_metrics", "assets.contentMetrics", $$$"""{"guids":["{{{Entity}}}"]}""",
+            $$$"""{"ok":{"rows":[{"guid":"{{{Entity}}}","mesh":{"artifactSchema":5,"indexedTriangles":42}}]}}"""),
         ("assets.static_group", "assets.staticGroup", $$$"""{"guid":"{{{Entity}}}"}""",
             $$$"""{"ok":{"scene":"{{{Entity}}}","name":"storefront","nodes":[{"parent":null,"position":[1,0,0],"eulerRadians":[0,0,0],"scale":[1,1,1],"renderable":{"mesh":"{{{Material}}}","material":null}},{"parent":0,"position":[0,1,0],"eulerRadians":[0,0,0],"scale":[1,1,1],"renderable":{"mesh":"{{{Material}}}","material":"{{{Entity}}}"}}]}}"""),
         ("assets.preview_mesh", "assets.previewMesh", $$$"""{"guid":"{{{Entity}}}"}""", PreviewMetadata),
@@ -275,7 +277,8 @@ internal static partial class Program
             Check(Json.Write(session.Calls[0].Parameters) == Json.Write(Json.Parse(c.Args)), c.Tool + " arguments unchanged");
             CheckAssetResult(result, c.Method, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
-            Check(c.Tool is "assets.static_group_reimport_review" or "assets.commit_static_group_reimport" ? description.Contains("Runtime restart") :
+            Check(c.Tool == "assets.content_metrics" ? description.Contains("Read-only metadata") :
+                c.Tool is "assets.static_group_reimport_review" or "assets.commit_static_group_reimport" ? description.Contains("Runtime restart") :
                 c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.rename_texture" ? description.Contains("display rename") && description.Contains("Runtime restart") :
                 c.Tool == "assets.move_texture" ? description.Contains("logical Assets move") && description.Contains("Runtime restart") :
@@ -577,7 +580,7 @@ internal static partial class Program
             var arguments = JsonSerializer.Deserialize<Dictionary<string, object?>>(c.Args)!;
             CallToolResult result = await client.CallToolAsync(c.Tool, arguments, cancellationToken: deadline.Token);
             string expected = "{\"method\":\"" + c.Method + "\",\"params\":" + Json.Write(Json.Parse(c.Args)) + "}";
-            if (c.Method is "assets.scanProject" or "assets.projectScanStatus" or "assets.staticGroup" or "assets.prefab" or "assets.prefabRevision" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
+            if (c.Method is "assets.contentMetrics" or "assets.scanProject" or "assets.projectScanStatus" or "assets.staticGroup" or "assets.prefab" or "assets.prefabRevision" or "assets.previewMesh" or "assets.previewMeshMaterial" or "assets.materialRead" or "assets.materialSave" or "assets.materialStatus" or "assets.previewMaterialDraft" or "assets.materialReadWithMaps" or "assets.materialSaveWithMaps" or "assets.previewMaterialDraftWithMaps" or
                 "assets.materialReadWithMetallicRoughness" or "assets.materialSaveWithMetallicRoughness" or
                 "assets.previewMaterialDraftWithMetallicRoughness" or "assets.rebuild" or "assets.renameTexture" or "assets.moveTexture" or "assets.rebuildStatus" or "assets.import" or "assets.importStatus" or "assets.textureImport" or "assets.textureImportStatus" or "assets.normalMapImport" or "assets.normalMapImportStatus" or
                 "assets.metallicRoughnessImport" or "assets.metallicRoughnessImportStatus" or "assets.occlusionImport" or "assets.occlusionImportStatus" or

@@ -22,6 +22,7 @@ public static class LiveAssetSuite
 
     public static void Run(TestContext t)
     {
+        ContentMetricsContract(t);
         ProjectScanContract(t);
         PreviewContract(t);
         PairPreviewContract(t);
@@ -65,6 +66,44 @@ public static class LiveAssetSuite
             }
             t.Check(client.Failure is not null, "malformed result is sticky");
         }
+    }
+
+    private static void ContentMetricsContract(TestContext t)
+    {
+        const string method = "assets.contentMetrics";
+        var guid = AssetGuid.Parse("01400140-0140-4140-8140-014001400001");
+        var other = AssetGuid.Parse("01400140-0140-4140-8140-014001400002");
+        var arguments = JsonValue.NewObject().Set("guids", JsonValue.NewArray().Push(Codec.Encode(guid)));
+        JsonValue Ok(JsonValue value) => JsonValue.NewObject().Set("result", JsonValue.NewObject().Set("ok", value));
+        var legacy = Json.Parse("""{"error":{"code":"UnknownMethod","message":"unknown method"}}""");
+        WithPeer(t, guid, m => m == "assets.list" ? Ok(JsonValue.NewArray()) : legacy, client =>
+        {
+            var refused = client.Assets.ContentMetrics([guid]);
+            t.Check(!refused.IsOk && refused.Error == A.ContentMetricsError.Unsupported &&
+                client.Failure is null && client.Assets.ListAssets().IsOk,
+                "old catalog peer can refuse content metrics without losing the asset session");
+        }, exact: (method, arguments));
+
+        JsonValue Data(AssetGuid row, int bytes) => Json.Parse($$$"""
+            {"rows":[{"guid":"{{{row}}}","texture":{"artifactSchema":3,"width":8,"height":8,
+            "layout":"Bc7","mipCount":4,"pixelPayloadBytes":{{{bytes}}}}}]}
+            """);
+        WithPeer(t, guid, _ => Ok(Data(guid, 112)), client =>
+        {
+            t.Throws<ArgumentException>(() => client.Assets.ContentMetrics([guid, guid]),
+                "content metrics rejects duplicate GUIDs before sending");
+            var result = client.Assets.ContentMetrics([guid]);
+            t.Check(result.IsOk && result.Value.Rows.Single() ==
+                new A.ContentMetricRow(guid, new A.TextureContentMetrics(3, 8, 8, A.ContentTextureLayout.Bc7, 4, 112)),
+                "SDK preserves a correlated full BC7 mip chain payload size");
+        }, exact: (method, arguments));
+        foreach (var malformed in new[] { Data(other, 112), Data(guid, 113) })
+            WithPeer(t, guid, _ => Ok(malformed), client =>
+            {
+                var error = t.Throws<RemoteException>(() => client.Assets.ContentMetrics([guid]),
+                    "content metrics rejects a wrong GUID or impossible byte count");
+                t.Check(error?.Error == RemoteError.ProtocolError, "invalid metrics fail as a protocol error");
+            }, exact: (method, arguments));
     }
 
     private static void ProjectScanContract(TestContext t)

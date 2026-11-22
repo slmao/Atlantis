@@ -20,6 +20,20 @@ public sealed record AssetDetails(AssetGuid Guid, AssetType Type, string Source,
     public string? LogicalPath { get; init; }
 }
 
+public enum ContentMetricsError { Unsupported, CatalogUnavailable, InvalidRequest }
+public enum ContentMetricError { UnknownAsset, UnsupportedAssetType, UnsupportedArtifactSchema, UnreadableArtifact, InvalidArtifact }
+public enum ContentTextureLayout { Rgba8, Bc7 }
+public abstract record ContentMetric;
+public sealed record MeshContentMetrics(uint ArtifactSchema, uint IndexedTriangles) : ContentMetric;
+public sealed record TextureContentMetrics(uint ArtifactSchema, uint Width, uint Height, ContentTextureLayout Layout,
+    uint MipCount, uint PixelPayloadBytes) : ContentMetric;
+public sealed record RefusedContentMetric(ContentMetricError Error) : ContentMetric;
+public sealed record ContentMetricRow(AssetGuid Guid, ContentMetric Result);
+public sealed record ContentMetrics(IReadOnlyList<ContentMetricRow> Rows)
+{
+    public const int Limit = 32;
+}
+
 public enum ProjectRootKind { Inbox, Prefabs }
 public enum ProjectCoverage { Complete, Incomplete, Unavailable }
 public enum ProjectSourceKind { Directory, Gltf, Png, Prefab, Other }

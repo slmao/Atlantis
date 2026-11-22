@@ -5,6 +5,7 @@
 #include <atlantis/asset_system/cook_scene.h>
 #include <atlantis/asset_system/scene_artifact.h>
 #include <atlantis/asset_system/scene_source.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
@@ -518,4 +519,41 @@ TEST_CASE("material draft shares preview admission and does not change the cooke
   REQUIRE(first->previewMaterialDraftWithCombinedMaps(mesh, draft).isOk());
   CHECK(previewStudio);
   CHECK(second->previewMaterialDraftWithOcclusion(mesh, draft).error() == E::Busy);
+}
+
+TEST_CASE("Content metrics preserves catalog identity and returns independent header refusals",
+          "[runtime][assets][content_metrics]") {
+  CatalogFixture fixture;
+  auto texture = record(as::CatalogAssetType::Texture, "texture");
+  texture.artifactSchema = 3;
+  auto material = record(as::CatalogAssetType::Material, "material");
+  fixture.write({texture, material});
+  AssetHost host(fixture.path.string());
+  auto client = host.connect();
+  const std::array guids{texture.guid, material.guid, guid("absent")};
+  auto query = client->contentMetrics(guids);
+  REQUIRE(query.isOk());
+  CHECK(std::get<ac::ContentMetricError>(query.value()[0].result) == ac::ContentMetricError::UnreadableArtifact);
+  CHECK(std::get<ac::ContentMetricError>(query.value()[1].result) == ac::ContentMetricError::UnsupportedAssetType);
+  CHECK(std::get<ac::ContentMetricError>(query.value()[2].result) == ac::ContentMetricError::UnknownAsset);
+  std::vector<std::uint8_t> pixels(64);
+  const auto file = fixture.dir / texture.artifact;
+  const auto cooked = as::encodeTextureArtifact(4, 4, as::TextureColorSpace::Srgb, as::TextureDataLayout::Rgba8,
+                                                1, pixels.data(), pixels.size());
+  struct RemoveFile {
+    std::filesystem::path path;
+    ~RemoveFile() { std::error_code ec; std::filesystem::remove(path, ec); }
+  } remove{file};
+  std::ofstream(file, std::ios::binary).write(reinterpret_cast<const char*>(cooked.data()),
+                                              static_cast<std::streamsize>(cooked.size()));
+  auto metrics = client->contentMetrics(guids);
+  REQUIRE(metrics.isOk());
+  CHECK(std::get<ac::TextureContentMetrics>(metrics.value()[0].result).pixelPayloadBytes == 64);
+  const auto wire = ac::encodeContentMetrics(metrics.value(), guids);
+  REQUIRE(wire);
+  CHECK(ac::decodeContentMetrics(*wire, guids).value() == metrics.value());
+  CHECK_FALSE(ac::decodeContentMetrics(*wire, std::array{material.guid, texture.guid, guids[2]}));
+  std::filesystem::resize_file(file, 41);
+  CHECK(std::get<ac::ContentMetricError>(client->contentMetrics(guids).value()[0].result) ==
+        ac::ContentMetricError::InvalidArtifact);
 }

@@ -1,9 +1,9 @@
 # ADR-0188 — On-Demand Cooked Content Metrics
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainers
-- **Acceptance:** Pending joint review
+- **Acceptance:** 2026-11-22, maintainer approval of [e17cb1dc](https://github.com/slmao/Atlantis/pull/443#issuecomment-7079327582)
 - **Related Spec:** [Spec 0140](../specs/0140-scene-statistics-content-diagnostics.md)
 
 ## Context

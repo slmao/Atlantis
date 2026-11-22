@@ -620,6 +620,33 @@ class RemoteAssets final : public connection::AssetConnection {
       return d && d->guid == guid ? d : std::nullopt;
     });
   }
+  ca::ContentMetricsResult contentMetrics(std::span<const AssetGuid> guids) const override {
+    using R = ca::ContentMetricsResult;
+    using E = ca::ContentMetricsError;
+    if (!ca::validContentMetricsRequest(guids)) return R::Err(E::InvalidRequest);
+    auto ids = Value::array();
+    for (const auto& guid : guids) ids.push(codec::encodeAsset(guid));
+    auto params = Value::object();
+    params.set("guids", std::move(ids));
+    const auto envelope = state_.awaitResponse(state_.send("assets.contentMetrics", std::move(params)));
+    if (!envelope) return R::Err(E::CatalogUnavailable);
+    if (envelope->isObject() && envelope->asObject().size() == 2 && memberCount(*envelope, "id") == 1) {
+      if (const auto* result = envelope->find("result"); result && result->isObject() && result->asObject().size() == 1) {
+        if (const auto* ok = result->find("ok")) {
+          if (auto rows = ca::decodeContentMetrics(*ok, guids)) return R::Ok(std::move(*rows));
+        } else if (const auto* err = result->find("err"); err && err->isString()) {
+          if (auto error = ca::contentMetricsError(err->asString()); error && *error != E::InvalidRequest)
+            return R::Err(*error);
+        }
+      } else if (const auto* error = envelope->find("error"); error && error->isObject()) {
+        const auto* code = error->find("code");
+        if (legacyAssetRefusal(*error) || (code && code->isString() && code->asString() == "UnknownMethod"))
+          return R::Err(E::Unsupported);
+      }
+    }
+    state_.fail(RemoteError::ProtocolError);
+    return R::Err(E::CatalogUnavailable);
+  }
   ca::StaticGroupResult staticGroup(const AssetGuid& guid) const override {
     return readGroup(guid, false);
   }

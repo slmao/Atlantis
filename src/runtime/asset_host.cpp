@@ -12,9 +12,12 @@
 #include <atlantis/asset_system/load.h>
 #include <atlantis/asset_system/load_material.h>
 #include <atlantis/asset_system/load_texture.h>
+#include <atlantis/asset_system/mesh_artifact.h>
+#include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/log.h>
 
 #include <algorithm>
+#include <array>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -24,6 +27,74 @@
 namespace atlantis::runtime {
 namespace as = asset_system;
 namespace ac = connection::assets;
+namespace {
+ac::ContentMetricRow inspectArtifact(const std::filesystem::path& root, const as::AssetCatalogRecord& record) {
+  using E = ac::ContentMetricError;
+  const auto refused = [&](E error) -> ac::ContentMetricRow { return {record.guid, error}; };
+  const bool mesh = record.type == as::CatalogAssetType::Mesh;
+  const bool texture = record.type == as::CatalogAssetType::Texture;
+  if (!mesh && !texture) return refused(E::UnsupportedAssetType);
+  if (mesh ? (record.artifactSchema != as::kMeshArtifactSchemaVersion &&
+              record.artifactSchema != as::kMeshArtifactSchemaVersionU32) :
+             record.artifactSchema != as::kTextureArtifactSchemaVersion)
+    return refused(E::UnsupportedArtifactSchema);
+  auto path = static_groups::pathFromUtf8(record.artifact).make_preferred();
+  if (!static_groups::ordinaryPath(root, path)) return refused(E::UnreadableArtifact);
+#ifdef _WIN32
+  struct File {
+    HANDLE handle;
+    ~File() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+  } file{CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                    FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+  BY_HANDLE_FILE_INFORMATION before{}, after{};
+  if (file.handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(file.handle, &before) ||
+      (before.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+      before.nNumberOfLinks != 1) return refused(E::UnreadableArtifact);
+
+  // The path checks and final handle name together refuse a redirected parent.
+  const DWORD longLength = GetLongPathNameW(path.c_str(), nullptr, 0);
+  if (!longLength) return refused(E::UnreadableArtifact);
+  std::wstring name(longLength, L'\0');
+  const DWORD expanded = GetLongPathNameW(path.c_str(), name.data(), longLength);
+  if (!expanded || expanded >= longLength) return refused(E::UnreadableArtifact);
+  name.resize(expanded);
+  const auto expected = name.starts_with(L"\\\\") ? L"\\\\?\\UNC\\" + name.substr(2) : L"\\\\?\\" + name;
+  std::wstring opened(expected.size() + 1, L'\0');
+  const DWORD nameLength = GetFinalPathNameByHandleW(file.handle, opened.data(), static_cast<DWORD>(opened.size()),
+                                                    FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+  if (nameLength != expected.size() || CompareStringOrdinal(opened.data(), static_cast<int>(nameLength),
+      expected.data(), static_cast<int>(expected.size()), TRUE) != CSTR_EQUAL)
+    return refused(E::UnreadableArtifact);
+
+  std::array<std::byte, std::max(as::kMeshArtifactHeaderSizeBytes, as::kTextureArtifactHeaderSizeBytes)> bytes{};
+  DWORD read = 0;
+  if (!ReadFile(file.handle, bytes.data(), static_cast<DWORD>(bytes.size()), &read, nullptr) ||
+      !GetFileInformationByHandle(file.handle, &after) || !static_groups::ordinaryPath(root, path) ||
+      before.nFileSizeHigh != after.nFileSizeHigh || before.nFileSizeLow != after.nFileSizeLow ||
+      CompareFileTime(&before.ftLastWriteTime, &after.ftLastWriteTime) != 0)
+    return refused(E::UnreadableArtifact);
+  const auto length = (std::uint64_t{before.nFileSizeHigh} << 32) | before.nFileSizeLow;
+  const auto prefix = std::span<const std::byte>{bytes}.first(read);
+  if (mesh) {
+    const auto header = as::inspectMeshContentHeader(prefix, length);
+    if (header.isErr()) return refused(E::InvalidArtifact);
+    if (header.value().schemaVersion != record.artifactSchema || header.value().assetId != record.assetId)
+      return refused(E::InvalidArtifact);
+    return {record.guid, ac::MeshContentMetrics{header.value().schemaVersion, header.value().indexCount / 3}};
+  }
+  const auto header = as::inspectTextureContentHeader(prefix, length);
+  if (header.isErr() || header.value().summary.schemaVersion != record.artifactSchema)
+    return refused(E::InvalidArtifact);
+  const auto& h = header.value();
+  return {record.guid, ac::TextureContentMetrics{h.summary.schemaVersion, h.summary.width, h.summary.height,
+      h.layout == as::TextureDataLayout::Bc7 ? ac::ContentTextureLayout::Bc7 : ac::ContentTextureLayout::Rgba8,
+      h.mipCount, h.pixelPayloadBytes}};
+#else
+  return refused(E::UnreadableArtifact);
+#endif
+}
+}
+
 struct AssetHost::State final : connection::AssetConnection {
   State(std::string path, AssetRebuildHost* rebuild, PreviewProvider preview)
       : path_(std::move(path)), rebuild_(rebuild), preview_(std::move(preview)) {}
@@ -164,6 +235,24 @@ struct AssetHost::State final : connection::AssetConnection {
     const auto it = std::lower_bound(details_.begin(), details_.end(), guid,
                                     [](const auto& d, const auto& key) { return d.guid < key; });
     return it != details_.end() && it->guid == guid ? R::Ok(*it) : R::Err(ac::AssetError::UnknownAsset);
+  }
+  ac::ContentMetricsResult contentMetrics(std::span<const as::AssetGuid> guids) const override {
+    using R = ac::ContentMetricsResult;
+    using E = ac::ContentMetricsError;
+    if (!ac::validContentMetricsRequest(guids)) return R::Err(E::InvalidRequest);
+    initialize();
+    if (!catalog_) return R::Err(E::CatalogUnavailable);
+    std::error_code ec;
+    const auto catalogPath = std::filesystem::absolute(static_groups::pathFromUtf8(path_), ec);
+    if (ec) return R::Err(E::CatalogUnavailable);
+    const auto root = catalogPath.lexically_normal().parent_path();
+    std::vector<ac::ContentMetricRow> rows;
+    rows.reserve(guids.size());
+    for (const auto& guid : guids) {
+      if (const auto* record = catalog_->find(guid)) rows.push_back(inspectArtifact(root, *record));
+      else rows.push_back({guid, ac::ContentMetricError::UnknownAsset});
+    }
+    return R::Ok(std::move(rows));
   }
   ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override {
     initialize();
@@ -454,6 +543,9 @@ class BorrowedAssets final : public connection::AssetConnection {
   explicit BorrowedAssets(connection::AssetConnection& host) : host_(host) {}
   Result<std::vector<ac::AssetSummary>, ac::AssetError> listAssets() const override { return host_.listAssets(); }
   Result<ac::AssetDetails, ac::AssetError> getAsset(const as::AssetGuid& guid) const override { return host_.getAsset(guid); }
+  ac::ContentMetricsResult contentMetrics(std::span<const as::AssetGuid> guids) const override {
+    return host_.contentMetrics(guids);
+  }
   ac::StaticGroupResult staticGroup(const as::AssetGuid& guid) const override { return host_.staticGroup(guid); }
   ac::StaticGroupResult prefab(const as::AssetGuid& guid) const override { return host_.prefab(guid); }
   ac::PrefabRevisionResult prefabRevision(const as::AssetGuid& guid) const override { return host_.prefabRevision(guid); }

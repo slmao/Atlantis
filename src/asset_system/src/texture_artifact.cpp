@@ -113,7 +113,7 @@ struct ValidatedTextureHeader {
 };
 
 atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError> validateTextureHeader(
-    const std::vector<std::byte>& bytes) {
+    std::span<const std::byte> bytes, std::uint64_t length) {
   using ResultT = atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError>;
 
   if (bytes.size() < kTextureArtifactHeaderSizeBytes) return ResultT::Err(TextureArtifactDecodeError::TruncatedHeader);
@@ -183,7 +183,7 @@ atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError> validateTex
   }
 
   const std::uint64_t expectedTotalSize = expectedPixelDataOffset + expectedPixelDataSizeBytes;
-  if (static_cast<std::uint64_t>(bytes.size()) != expectedTotalSize) {
+  if (length != expectedTotalSize) {
     return ResultT::Err(TextureArtifactDecodeError::InconsistentPixelDataSize);
   }
 
@@ -193,10 +193,19 @@ atlantis::Result<ValidatedTextureHeader, TextureArtifactDecodeError> validateTex
 
 }  // namespace
 
+Result<TextureContentHeader, TextureArtifactDecodeError> inspectTextureContentHeader(
+    std::span<const std::byte> prefix, std::uint64_t length) {
+  using R = Result<TextureContentHeader, TextureArtifactDecodeError>;
+  const auto header = validateTextureHeader(prefix, length);
+  if (header.isErr()) return R::Err(header.error());
+  const auto& h = header.value();
+  return R::Ok({h.summary, h.layout, h.mipCount, h.pixelDataSizeBytes});
+}
+
 atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError> peekTextureArtifactHeader(
     const std::vector<std::byte>& bytes) {
   using R = atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError>;
-  const auto header = validateTextureHeader(bytes);
+  const auto header = validateTextureHeader(bytes, bytes.size());
   if (header.isErr()) return R::Err(header.error());
   return R::Ok(header.value().summary);
 }
@@ -204,7 +213,7 @@ atlantis::Result<TextureArtifactHeader, TextureArtifactDecodeError> peekTextureA
 atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError> decodeTextureArtifact(
     const std::vector<std::byte>& bytes) {
   using R = atlantis::Result<DecodedTextureArtifact, TextureArtifactDecodeError>;
-  const auto header = validateTextureHeader(bytes);
+  const auto header = validateTextureHeader(bytes, bytes.size());
   if (header.isErr()) return R::Err(header.error());
   const auto& h = header.value();
   DecodedTextureArtifact decoded;
