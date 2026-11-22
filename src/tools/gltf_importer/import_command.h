@@ -136,7 +136,7 @@ struct GltfImportSummary {
     const std::filesystem::path& outputDir, const std::string& name,
     const atlantis::asset_system::AssetGuid& importRoot,
     const std::optional<std::filesystem::path>& overlayPath = std::nullopt,
-           bool managedStaticMesh = false);
+           bool managedStaticMesh = false, bool stableKeys = false);
 
 // Plan 0047 P7: the import root's GUID, looked up in the catalog source as
 // content:<content-root name>/<glTF file name>, which must be a gltf_import
@@ -146,6 +146,20 @@ struct GltfImportSummary {
     const std::filesystem::path& contentRoot);
 
 namespace detail {
+
+struct ManagedImportKeys {
+  std::vector<std::vector<std::string>> meshes;
+  std::vector<std::string> materials;
+};
+
+[[nodiscard]] inline std::string materialSubKey(std::size_t index, const ManagedImportKeys* keys) {
+  return keys ? "material-key/" + keys->materials[index] : "material/" + std::to_string(index);
+}
+
+[[nodiscard]] inline std::string meshSubKey(std::size_t mesh, std::size_t primitive,
+                                            const ManagedImportKeys* keys) {
+  return keys ? keys->meshes[mesh][primitive] : "mesh/" + std::to_string(mesh) + "/" + std::to_string(primitive);
+}
 
 // Plan 0047 P5 / ruling I2: derivation for the importer's own sub-keys,
 // which must be non-empty and ASCII -- otherwise InvalidAssetSubKey,
@@ -168,7 +182,7 @@ inline constexpr std::string_view kImporterToolVersion = "atlantis-gltf-importer
 
 // Derive the catalog identities without loading buffers or textures or writing an import unit.
 [[nodiscard]] atlantis::Result<std::vector<atlantis::asset_system::AssetGuid>, GltfImportError> importAssetGuids(
-    const std::filesystem::path& input, const atlantis::asset_system::AssetGuid& root);
+    const std::filesystem::path& input, const atlantis::asset_system::AssetGuid& root, bool stableKeys = false);
 
 [[nodiscard]] const char* gltfImportErrorMessage(GltfImportError error) noexcept;
 

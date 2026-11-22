@@ -406,3 +406,49 @@ TEST_CASE("managed static group counts emitted instances and retains local hiera
     CHECK(nodes[1].materialAsset.has_value() == !geometry.materialsJson.empty());
   }
 }
+
+TEST_CASE("Managed keyed glTF derives identity from explicit keys and refuses duplicate primitive keys",
+          "[gltf_importer][guid][managed]") {
+  const fs::path dir = gltf_test::freshDirectory("keyed_import_identity");
+  auto spec = gltf_test::unitQuad();
+  spec.materialsJson = R"([{"extras":{"atlantisId":"stone"}},{"extras":{"atlantisId":"trim"}}])";
+  std::string gltf = gltf_test::buildGltf(spec);
+  auto insert = [&](std::string_view from, std::string_view to) {
+    const auto position = gltf.find(from);
+    REQUIRE(position != std::string::npos);
+    gltf.replace(position, from.size(), to);
+  };
+  insert(R"("version":"2.0")", R"("version":"2.0","extras":{"atlantisReimportIdentity":1})");
+  insert(R"("meshes":[{"primitives":[{)", R"("meshes":[{"extras":{"atlantisId":"wall"},"primitives":[{"extras":{"atlantisId":"face"},)");
+  const auto begin = gltf.find(R"("primitives":[)") + std::string_view(R"("primitives":[)").size();
+  const auto end = gltf.find("]}]", begin);
+  REQUIRE(end != std::string::npos);
+  auto trim = gltf.substr(begin, end - begin);
+  trim.replace(trim.find("face"), 4, "trim");
+  trim.replace(trim.find(R"("material":0)"), 12, R"("material":1)");
+  gltf.insert(end, "," + trim);
+  const auto first = dir / "first.gltf";
+  const auto next = dir / "next.gltf";
+  std::ofstream(first, std::ios::binary) << gltf;
+  REQUIRE(importGltf(first, dir, dir / "first", "keyed", root(), std::nullopt, true, true).isOk());
+  insert(R"("material":1)", R"("material":2)");
+  insert(R"("material":0)", R"("material":1)");
+  insert(R"("material":2)", R"("material":0)");
+  insert(R"("atlantisId":"stone"}},{"extras":{"atlantisId":"trim")", R"("atlantisId":"trim"}},{"extras":{"atlantisId":"stone")");
+  std::ofstream(next, std::ios::binary) << gltf;
+  REQUIRE(importGltf(next, dir, dir / "next", "keyed", root(), std::nullopt, true, true).isOk());
+  const auto mesh = fs::path("keyed_mesh-key.wall.face.amesh.meta.txt");
+  CHECK(readText(dir / "first" / mesh) == readText(dir / "next" / mesh));
+  const auto metadata = as::parseAssetMetadata(readText(dir / "next" / mesh));
+  REQUIRE(metadata.isOk());
+  CHECK(metadata.value().assetGuid == as::deriveAssetGuid(root(), "mesh-key/wall/face"));
+  const auto scene = as::parseSceneSource(readText(dir / "next/keyed/keyed.scene.txt"));
+  REQUIRE(scene.isOk());
+  const auto face = std::ranges::find(scene.value().nodes, metadata.value().assetGuid, &as::ParsedSceneNode::meshAsset);
+  REQUIRE(face != scene.value().nodes.end());
+  CHECK(face->materialAsset == as::deriveAssetGuid(root(), "material-key/stone"));
+
+  insert(R"("atlantisId":"trim"},"attributes")", R"("atlantisId":"face"},"attributes")");
+  std::ofstream(next, std::ios::binary) << gltf;
+  CHECK(importGltf(next, dir, dir / "invalid", "keyed", root(), std::nullopt, true, true).isErr());
+}

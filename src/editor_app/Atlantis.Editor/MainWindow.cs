@@ -378,6 +378,11 @@ public sealed partial class MainWindow : Window
     private StaticGroupIntent? _pendingPrefabUpdate;
     private StaticGroupIntent? _pendingPrefabSync;
     private bool _prefabSyncSupported;
+    private readonly Button _reviewStaticGroupButton = new() { Content = "Review model update", IsVisible = false };
+    private StaticGroupReimportWindow? _staticGroupReviewWindow;
+    private StaticGroupIntent? _staticGroupReviewIntent;
+    private object? _staticGroupReviewCatalog;
+
     private readonly Button _addGroup = new() { Content = "Add Group to Scene", IsVisible = false, Focusable = false };
     private StaticGroupIntent? _pendingGroupRead, _pendingGroupAdd;
     private bool _staticGroupAvailable;
@@ -2755,6 +2760,7 @@ public sealed partial class MainWindow : Window
         ToolTip.SetShowOnDisabled(_addMesh, true);
         _addMesh.Click += (_, _) => AddMeshToScene();
         _addGroup.Click += (_, _) => AddGroupToScene();
+        _reviewStaticGroupButton.Click += (_, _) => StartStaticGroupReview();
         _updatePrefab.Click += async (_, _) => await UpdateSelectedPrefab();
         ToolTip.SetShowOnDisabled(_addGroup, true);
         copy.IsEnabled = false;
@@ -2804,7 +2810,7 @@ public sealed partial class MainWindow : Window
                 _renameEditor, _moveEditor, _removalState, EditorVisuals.Actions(_confirmRemoval, _cancelRemoval),
                 EditorVisuals.Actions(_viewReferences, _cancelReferences), _referenceScope, _referenceStatus,
                 _referenceResults, _locatedSlots,
-                _addMesh, _addGroup, _updatePrefab, _addMeshState, _previewState,
+                _addMesh, _addGroup, _updatePrefab, _reviewStaticGroupButton, _addMeshState, _previewState,
                 _previewImage, _previewMaterial, EditorVisuals.Actions(_previewMesh, _previewPair),
                 EditorVisuals.Disclosure("Asset details", EditorVisuals.Stack(4, copy, _assetDetails))));
 
@@ -4642,10 +4648,84 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private AssetSummary? SelectedManagedStaticGroup() => _assetTabs.SelectedIndex == 1 &&
+        _assetBrowser.State == "Ready" && _assetBrowser.SelectionVisible &&
+        _assetsList.SelectedItem is AssetSummary { Type: AssetType.Scene } asset && !asset.IsPrefab &&
+        asset.Source.StartsWith("content:managed_", StringComparison.Ordinal) &&
+        asset.Source.EndsWith("/source.gltf#scene", StringComparison.Ordinal) ? asset : null;
+
+    private void UpdateStaticGroupReviewButton(bool available)
+    {
+        var selected = SelectedManagedStaticGroup();
+        if (_staticGroupReviewIntent is { } intent &&
+            (_worker is null || _referenceSessionFailed || selected?.Guid != intent.Scene ||
+             !ReferenceEquals(_staticGroupReviewCatalog, _assetBrowser.Items)))
+        {
+            intent.Cancel();
+            _staticGroupReviewWindow?.InvalidateReview();
+        }
+        _reviewStaticGroupButton.IsVisible = selected is not null;
+        _reviewStaticGroupButton.IsEnabled = selected is not null && available && !_rebuildRunning && !_renameUnknown &&
+            _staticGroupReviewWindow is null;
+    }
+
+    private void StartStaticGroupReview()
+    {
+        if (!_reviewStaticGroupButton.IsEnabled || _worker is not { } worker ||
+            SelectedManagedStaticGroup() is not { } selected) return;
+        var intent = new StaticGroupIntent(selected.Guid, _meshDocumentLifetime);
+        _staticGroupReviewIntent = intent;
+        _staticGroupReviewCatalog = _assetBrowser.Items;
+        var dialog = new StaticGroupReimportWindow(EditorVisuals.AssetName(selected), intent,
+            (mode, target, done) => worker.ReviewStaticGroup(mode, target, intent, done),
+            review => ConfirmStaticGroupReview(worker, review, intent, selected));
+        _staticGroupReviewWindow = dialog;
+        dialog.Closed += (_, _) =>
+        {
+            _staticGroupReviewWindow = null;
+            if (!_rebuildPending) _staticGroupReviewIntent = null;
+            UpdateRebuildButtons();
+        };
+        UpdateRebuildButtons();
+        _ = dialog.ShowDialog(this);
+    }
+
+    private bool ConfirmStaticGroupReview(EditorWorker worker, StaticGroupReview review, StaticGroupIntent intent, AssetSummary asset)
+    {
+        if (!ReferenceEquals(worker, _worker) || !intent.Current || review.Scene != asset.Guid ||
+            _rebuildPending || _rebuildRunning || _renameUnknown ||
+            (_activeAssetGeneration is { } active && active != review.Generation)) return false;
+        _rebuildPending = true;
+        _rebuildJob = null;
+        _renameRequestContext = $"review {review.Id} for {asset.Guid}";
+        _assetWriteLabel = "Static model reimport";
+        _rebuildState.Text = "Confirming model update…";
+        long task = _rebuildTask = _taskIssues.Begin("Reimport static model", EditorVisuals.AssetName(asset), asset.Guid);
+        UpdateRebuildButtons();
+        worker.ConfirmStaticGroupReimport(review, intent, (result, diagnostic, refusal) =>
+        {
+            if (!ReferenceEquals(worker, _worker)) return;
+            CompleteAssetMutation(task, asset.Guid, result, diagnostic, refusal);
+            _rebuildPending = false;
+            _staticGroupReviewIntent = null;
+            if (result is { IsOk: true, Value: { } job } && job.Asset == asset.Guid) ShowRebuild(job);
+            else
+            {
+                _renameUnknown = refusal == TaskResult.Unknown || result is { IsOk: true };
+                _rebuildState.Text = diagnostic ?? (result is { IsOk: true }
+                    ? $"Outcome unknown for review {review.Id}. Check settlement before retrying."
+                    : "Model reimport refused: " + result?.Error + ". Start a fresh review.");
+            }
+            UpdateRebuildButtons();
+        });
+        return true;
+    }
+
     private void UpdateRebuildButtons()
     {
         UpdateWorkspaceReset();
         bool available = _worker is not null && !_referenceSessionFailed && !_rebuildPending;
+        UpdateStaticGroupReviewButton(available);
         _rebuildStart.IsEnabled = available && !_rebuildRunning && !_renameUnknown && _assetBrowser.State == "Ready" &&
                                   _assetsList.SelectedItem is AssetSummary;
         _rebuildRefresh.IsEnabled = available && (!_renameUnknown || _rebuildJob is not null);

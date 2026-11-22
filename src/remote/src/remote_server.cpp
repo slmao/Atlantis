@@ -825,6 +825,33 @@ struct RemoteServer::State {
       return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value()))
           : codec::err(Value::string(std::string(ca::toString(result.error())))));
     }
+    if (name == "assets.staticGroupReimportReview" || name == "assets.commitStaticGroupReimport") {
+      namespace ca = connection::assets;
+      using Mode = ca::StaticGroupReviewMode;
+      const bool commit = name == "assets.commitStaticGroupReimport";
+      const auto* command = p.find("mode");
+      const auto mode = command && command->isString() ? std::string_view(command->asString()) : std::string_view{};
+      const auto* target = p.find(mode == "begin" ? "scene" : "id");
+      const auto guid = target ? codec::decodeAsset(*target) : std::nullopt;
+      if (!p.isObject() || p.asObject().size() != (commit ? 1u : 2u) || !guid ||
+          *guid == asset_system::AssetGuid{} || codec::encodeAsset(*guid) != *target ||
+          (!commit && mode != "begin" && mode != "read" && mode != "cancel"))
+        return errorResponse(requestId, "BadRequest", "malformed static glTF reimport request");
+      if (!client.assets && openAssets) client.assets = openAssets();
+      const auto refuse = [&](ca::RebuildError refused) {
+        return response(requestId, codec::err(Value::string(std::string(ca::toString(refused)))));
+      };
+      if (!client.assets) return refuse(ca::RebuildError::Unavailable);
+      if (commit) {
+        const auto result = client.assets->commitStaticGroupReimport(*guid);
+        return result.isOk() ? response(requestId, codec::ok(codec::encode(result.value()))) : refuse(result.error());
+      }
+      const auto result = client.assets->staticGroupReimportReview({
+          mode == "begin" ? Mode::Begin : mode == "read" ? Mode::Read : Mode::Cancel, *guid});
+      if (result.isErr()) return refuse(result.error());
+      auto encoded = ca::encodeStaticGroupReview(result.value());
+      return encoded ? response(requestId, codec::ok(std::move(*encoded))) : refuse(ca::RebuildError::Unavailable);
+    }
     if (name == "assets.rebuild" || name == "assets.rebuildStatus") {
       namespace ca = connection::assets;
       const bool start = name == "assets.rebuild";

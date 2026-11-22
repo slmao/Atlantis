@@ -312,7 +312,8 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
                                                              GltfImportSummary& summary,
                                                              std::vector<std::string>& reportLines,
                                                              std::vector<std::string>& manifestLines,
-                                                             const atlantis::asset_system::ParsedSceneSource* overlay) {
+                                                             const atlantis::asset_system::ParsedSceneSource* overlay,
+                                                             const ManagedImportKeys* keys) {
   const cgltf_scene* scene = defaultScene(data);
   if (scene == nullptr) {
     reportLines.push_back("scene: the glTF defines no scene; no .scene.txt written" +
@@ -379,14 +380,13 @@ atlantis::Result<std::monostate, GltfImportError> writeScene(const cgltf_data& d
         std::optional<atlantis::asset_system::AssetGuid> material;
         if (const cgltf_material* m = mesh->primitives[p].material) {
           const auto materialGuid = deriveImportAssetGuid(
-              importRoot, "material/" + std::to_string(static_cast<std::size_t>(m - data.materials)));
+              importRoot, materialSubKey(static_cast<std::size_t>(m - data.materials), keys));
           if (materialGuid.isErr()) return CheckResult::Err(materialGuid.error());
           material = materialGuid.value();
         } else {
           summary.primitivesWithoutMaterial += 1;
         }
-        const auto meshGuid =
-            deriveImportAssetGuid(importRoot, "mesh/" + std::to_string(meshIndex) + "/" + std::to_string(p));
+        const auto meshGuid = deriveImportAssetGuid(importRoot, meshSubKey(meshIndex, p, keys));
         if (meshGuid.isErr()) return CheckResult::Err(meshGuid.error());
         if (mesh->primitives_count == 1) {
           line.mesh = meshGuid.value();

@@ -226,6 +226,44 @@ public sealed class AssetSession
         return Codec.Encode(id.Value);
     }
 
+    public Outcome<A.StaticGroupReview, A.RebuildError> StaticGroupReimportReview(A.StaticGroupReviewMode mode, AssetGuid target)
+    {
+        if (target.IsNil) throw new ArgumentException("a non-nil review target is required", nameof(target));
+        string token = mode switch
+        {
+            A.StaticGroupReviewMode.Begin => "begin",
+            A.StaticGroupReviewMode.Read => "read",
+            A.StaticGroupReviewMode.Cancel => "cancel",
+            _ => throw new ArgumentOutOfRangeException(nameof(mode))
+        };
+        bool begin = mode == A.StaticGroupReviewMode.Begin;
+        var request = JsonValue.NewObject().Set("mode", JsonValue.String(token)).Set(begin ? "scene" : "id", Codec.Encode(target));
+        return AssetRequest("assets.staticGroupReimportReview", request, A.RebuildError.Unsupported,
+            Codec.DecodeStaticGroupReimportError, value =>
+                Codec.DecodeStaticGroupReview(value) is { } review && (begin ? review.Scene : review.Id) == target &&
+                (!begin || review.State == A.StaticGroupReviewState.Pending) &&
+                (mode != A.StaticGroupReviewMode.Cancel || review.State == A.StaticGroupReviewState.Expired) ? review : null,
+            acceptUnknownMethod: true);
+    }
+
+    public Outcome<A.RebuildJob, A.RebuildError> CommitStaticGroupReimport(AssetGuid id)
+    {
+        if (id.IsNil) throw new ArgumentException("a non-nil review GUID is required", nameof(id));
+        _session.ThrowIfFailed();
+        try
+        {
+            return AssetRequest("assets.commitStaticGroupReimport", JsonValue.NewObject().Set("id", Codec.Encode(id)),
+                A.RebuildError.Unsupported, Codec.DecodeStaticGroupReimportError,
+                value => Codec.DecodeRebuildJob(value) is { State: A.RebuildState.Running } job ? job : null,
+                acceptUnknownMethod: true);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error, $"Static model reimport outcome unknown for review {id}. " +
+                "Inspect the existing rebuild job and registered source and confirm settlement before starting a new review.");
+        }
+    }
+
     public Outcome<A.RebuildStatus, A.RebuildError> RebuildStatus(A.RebuildId? jobId = null)
     {
         if (jobId is { Value.IsNil: true }) throw new ArgumentException("a non-nil job GUID is required", nameof(jobId));

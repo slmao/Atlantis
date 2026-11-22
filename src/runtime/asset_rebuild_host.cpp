@@ -53,6 +53,9 @@ constexpr std::string_view kProjectDirty = ".atlantis-import-dirty";
 constexpr std::string_view kMaterialSources = "assets/managed-material-sources";
 constexpr std::string_view kMaterialLeaf = "source.material.txt";
 constexpr std::string_view kTextureSources = "assets/managed-texture-sources";
+constexpr std::string_view kGltfSources = "assets/managed-gltf-sources";
+constexpr std::string_view kKeyedEnvelope = "atlantis_managed_gltf_registration_version: 1\nidentity: stable_keys_v1\nsource_sha256: ";
+constexpr DWORD kGltfBytes = 16 * 1024 * 1024;
 constexpr std::string_view kTextureLocations = "texture-locations.json";
 constexpr DWORD kLocationBytes = 2 * 1024 * 1024;
 constexpr std::string_view kTextureNames = "texture-display-names.json";
@@ -398,7 +401,8 @@ bool hasPendingTextureRecovery(const fs::path& project) {
     const auto name = utf8(at->path().filename());
     const auto id = as::parseAssetGuid(name);
     if (id.isErr() || as::toString(id.value()) != name) continue;
-    if (!realDirectory(at->path()) || (!absentFile(at->path() / "removal.json") || !absentFile(at->path() / "move.json"))) return true;
+    if (!realDirectory(at->path()) || !absentFile(at->path() / "removal.json") ||
+        !absentFile(at->path() / "move.json") || !absentFile(at->path() / "static-gltf-replacement.json")) return true;
   }
   return static_cast<bool>(ec);
 }
@@ -483,6 +487,28 @@ std::optional<TextureLocations> readLocations(const fs::path& root, const Textur
   return parsed && nameBytes(*parsed) == *bytes ? parsed : std::nullopt;
 }
 
+std::string digestHex(const std::array<unsigned char, 32>& digest) {
+  std::string hex;
+  for (const auto byte : digest) {
+    constexpr std::string_view alphabet = "0123456789abcdef";
+    hex.push_back(alphabet[byte >> 4]);
+    hex.push_back(alphabet[byte & 15]);
+  }
+  return hex;
+}
+
+std::optional<std::string> gltfDigest(std::string_view source) {
+  if (source.empty() || source.size() > kGltfBytes) return {};
+  BCRYPT_ALG_HANDLE provider = nullptr;
+  if (BCryptOpenAlgorithmProvider(&provider, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) return {};
+  std::array<unsigned char, 32> digest{};
+  auto* bytes = reinterpret_cast<unsigned char*>(const_cast<char*>(source.data()));
+  const auto result = BCryptHash(provider, nullptr, 0, bytes, static_cast<ULONG>(source.size()),
+                                 digest.data(), static_cast<ULONG>(digest.size()));
+  BCryptCloseAlgorithmProvider(provider, 0);
+  return result < 0 ? std::nullopt : std::optional{digestHex(digest)};
+}
+
 std::optional<std::string> fileDigest(const fs::path& root, const fs::path& relative, DWORD limit,
                                       bool allowEmpty = false) {
   if (!exactTexturePath(root, relative)) return {};
@@ -515,13 +541,7 @@ std::optional<std::string> fileDigest(const fs::path& root, const fs::path& rela
   }
   std::array<unsigned char, 32> digest{};
   if (BCryptFinishHash(sha.hash, digest.data(), static_cast<ULONG>(digest.size()), 0) < 0) return {};
-  std::string hex;
-  for (const auto byte : digest) {
-    constexpr std::string_view alphabet = "0123456789abcdef";
-    hex.push_back(alphabet[byte >> 4]);
-    hex.push_back(alphabet[byte & 15]);
-  }
-  return hex;
+  return digestHex(digest);
 }
 
 std::optional<TextureUnit> readTextureUnit(const fs::path& root, const fs::path& unit, std::string_view name) {
@@ -633,7 +653,35 @@ std::string_view inventoryHeader(std::string_view data) {
   return data.substr(0, data.find('\n'));
 }
 
-std::optional<Registrations> readRegistrations(const fs::path& root, const std::atomic<bool>* stop = nullptr) {
+struct KeyedUnit {
+  as::AssetGuid root;
+  std::string digest, envelope;
+  friend bool operator==(const KeyedUnit&, const KeyedUnit&) = default;
+};
+using KeyedSources = std::map<std::string, KeyedUnit, std::less<>>;
+
+fs::path gltfUnit(std::string_view name) { return fromUtf8("managed_" + std::string(name)); }
+
+std::string keyedEnvelope(std::string_view name, const as::AssetGuid& root, std::string_view digest) {
+  return std::string(kKeyedEnvelope) + std::string(digest) + "\nasset: guid=" + as::toString(root) +
+      " type=gltf_import root=content path=managed_" + std::string(name) + "/source.gltf\n";
+}
+
+std::optional<KeyedUnit> readKeyedUnit(const fs::path& root, const fs::path& path, std::string_view name) {
+  const auto envelope = readNameFile(root, path / "catalog-source.txt", 1024);
+  if (!envelope || !envelope->starts_with(kKeyedEnvelope)) return {};
+  constexpr std::string_view entryStart = "\nasset: guid=";
+  const auto offset = kKeyedEnvelope.size() + 64;
+  if (envelope->size() < offset + entryStart.size() + 36 ||
+      std::string_view(*envelope).substr(offset, entryStart.size()) != entryStart) return {};
+  const auto id = as::parseAssetGuid(std::string_view(*envelope).substr(offset + entryStart.size(), 36));
+  const auto digest = fileDigest(root, path / "source.gltf", kGltfBytes);
+  if (id.isErr() || id.value() == as::AssetGuid{} || !digest || *envelope != keyedEnvelope(name, id.value(), *digest)) return {};
+  return KeyedUnit{id.value(), *digest, *envelope};
+}
+
+std::optional<Registrations> readRegistrations(const fs::path& root, const std::atomic<bool>* stop = nullptr,
+                                               KeyedSources* keyed = nullptr) {
   const auto registry = root / "registered";
   if (!realDirectory(registry)) return std::nullopt;
   Registrations result;
@@ -649,6 +697,14 @@ std::optional<Registrations> readRegistrations(const fs::path& root, const std::
       return std::nullopt;
     const auto text = readText(dir / "catalog-source.txt");
     if (!text) return std::nullopt;
+    if (text->starts_with(kKeyedEnvelope)) {
+      const auto name = leaf.substr(8);
+      const auto unit = readKeyedUnit(root, fs::path("registered") / dir.filename(), name);
+      if (!unit) return std::nullopt;
+      result.emplace(name, unit->root);
+      if (keyed) keyed->emplace(name, *unit);
+      continue;
+    }
     const auto catalog = as::parseAssetCatalogSource(*text);
     if (catalog.isErr() || catalog.value().entries().size() != 1) return std::nullopt;
     const auto& entry = catalog.value().entries().front();
@@ -684,11 +740,15 @@ std::optional<Producers> readManagedView(const fs::path& root, const fs::path& i
 
 bool matchesManagedCatalog(const as::AssetCatalog& catalog, const Producers& producers) {
   const auto registered = managedRegistrations(producers);
+  std::set<std::string> keyedMeshes;
+  for (const auto& entry : catalog.records())
+    if (entry.type == as::CatalogAssetType::Mesh && entry.source.subKey.starts_with("mesh-key/"))
+      keyedMeshes.insert(as::toString({entry.source.root, entry.source.path, {}}));
   for (const auto& [name, root] : registered) {
     const auto* mesh = catalog.find(as::deriveAssetGuid(root, "mesh/0/0"));
     const auto* scene = catalog.find(as::deriveAssetGuid(root, "scene"));
     const auto key = managedSourceKey(name);
-    if (!mesh || mesh->type != as::CatalogAssetType::Mesh || as::toString(mesh->source) != key + "#mesh/0/0" ||
+    if ((!keyedMeshes.contains(key) && (!mesh || mesh->type != as::CatalogAssetType::Mesh || as::toString(mesh->source) != key + "#mesh/0/0")) ||
         !scene || scene->type != as::CatalogAssetType::Scene || as::toString(scene->source) != key + "#scene")
       return false;
   }
@@ -712,6 +772,33 @@ bool matchesManagedCatalog(const as::AssetCatalog& catalog, const Producers& pro
     if (!record || record->type != as::CatalogAssetType::Material || as::toString(record->source) != key) return false;
   }
   return true;
+}
+
+std::optional<KeyedSources> keyedSources(const fs::path& directory, const as::AssetCatalog& catalog, const Producers& view) {
+  KeyedSources inputs;
+  std::set<std::string> names;
+  for (const auto& record : catalog.records()) {
+    if (!record.source.subKey.starts_with("mesh-key/") && !record.source.subKey.starts_with("material-key/")) continue;
+    const auto key = as::toString({record.source.root, record.source.path, {}});
+    if (const auto name = managedName(key)) names.emplace(*name);
+  }
+  for (const auto& name : names) {
+    const auto producer = view.find(managedSourceKey(name));
+    if (producer == view.end()) return {};
+    const auto unitPath = fs::path(kGltfSources) / gltfUnit(name);
+    const auto unit = readKeyedUnit(directory, unitPath, name);
+    if (!unit || unit->root != producer->second.root) return {};
+    const auto bytes = readNameFile(directory, unitPath / "source.gltf", kGltfBytes);
+    if (!bytes) return {};
+    const auto parsed = json::parse(*bytes);
+    if (parsed.isErr()) return {};
+    const auto products = static_groups::sourceProducts(parsed.value(), unit->root);
+    const auto* scene = catalog.find(as::deriveAssetGuid(unit->root, "scene"));
+    if (products.isErr() || !scene || static_groups::managedName(*scene) != name ||
+        !static_groups::matchesProducts(directory, catalog, *scene, unit->root, products.value())) return {};
+    inputs.emplace(name, *unit);
+  }
+  return inputs;
 }
 
 bool exactImportDelta(const fs::path& staging, const as::AssetCatalog& active, const as::AssetCatalog& staged,
@@ -756,10 +843,25 @@ json::Value generatedSources(const Producers& producers) {
     if (!producer.generated.empty()) value.set(as::toString(producer.root), json::Value::string(utf8(producer.generated)));
   return value;
 }
+
+json::Value keyedManifest(const KeyedSources& units) {
+  auto value = json::Value::object();
+  for (const auto& [name, unit] : units) {
+    const auto path = fs::path(kGltfSources) / gltfUnit(name);
+    auto entry = json::Value::object();
+    entry.set("guid", json::Value::string(as::toString(unit.root)));
+    entry.set("source", json::Value::string(utf8(path / "source.gltf")));
+    entry.set("registration", json::Value::string(utf8(path / "catalog-source.txt")));
+    entry.set("sourceSha256", json::Value::string(unit.digest));
+    entry.set("envelope", json::Value::string(unit.envelope));
+    value.set(managedSourceKey(name), std::move(entry));
+  }
+  return value;
+}
 json::Value manifest(std::string_view owner, ca::GenerationId id, const Producers& producers,
                      const fs::path& managedInventory = {}, const Materials& materials = {},
                      const TextureInputs& textures = {}, const TextureNames& names = {},
-                     const TextureLocations& locations = {}) {
+                     const TextureLocations& locations = {}, const KeyedSources& keyed = {}) {
   auto value = json::Value::object();
   value.set("profile", json::Value::string(std::string(owner)));
   value.set("generation", json::Value::string(as::toString(id.value)));
@@ -774,7 +876,7 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
     return entry.second.kind == TextureKind::Occlusion;
   });
   if (!managedInventory.empty()) {
-    const std::uint64_t version = !locations.empty() ? 9u : !names.empty() ? 8u : hasOcclusion ? 7u : hasPackedMaps ? 6u :
+    const std::uint64_t version = !keyed.empty() ? 10u : !locations.empty() ? 9u : !names.empty() ? 8u : hasOcclusion ? 7u : hasPackedMaps ? 6u :
         hasNormals ? 5u : !textures.empty() ? 4u : materials.empty() ? 2u : 3u;
     value.set("version", json::Value::number(version));
     value.set("catalogSource", json::Value::string(std::string(kManagedSource)));
@@ -794,9 +896,9 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
       entry.set("inputSha256", json::Value::string(input.digest));
       entry.set("artifactSha256", json::Value::string(input.artifact));
       entry.set("metadataSha256", json::Value::string(input.metadata));
-      if (hasNormals || hasPackedMaps || hasOcclusion)
+      if (!keyed.empty() || hasNormals || hasPackedMaps || hasOcclusion)
         entry.set("colorSpace", json::Value::string(input.kind == TextureKind::Color ? "Srgb" : "Unorm"));
-      if (hasPackedMaps || hasOcclusion)
+      if (!keyed.empty() || hasPackedMaps || hasOcclusion)
         entry.set("role", json::Value::string(kTextureRoles[static_cast<std::size_t>(input.kind)]));
       sources.set(key, std::move(entry));
     }
@@ -804,6 +906,7 @@ json::Value manifest(std::string_view owner, ca::GenerationId id, const Producer
   }
   if (!names.empty()) value.set("textureDisplayNames", nameValue(names));
   if (!locations.empty()) value.set("textureLocations", nameValue(locations));
+  if (!keyed.empty()) value.set("gltfSources", keyedManifest(keyed));
   return value;
 }
 
@@ -984,6 +1087,13 @@ struct AssetRebuildHost::State {
     Producers view;
     Clock::time_point expires;
   };
+  struct GltfReview {
+    ca::StaticGroupReview result;
+    std::shared_ptr<const as::AssetCatalog> catalog;
+    Clock::time_point expires;
+    std::shared_ptr<const std::string> candidate;
+    bool admitted = false;
+  };
   struct Work {
     ca::RebuildJob job;
     const Producer* producer;
@@ -993,6 +1103,7 @@ struct AssetRebuildHost::State {
     std::optional<ca::RenameTextureRequest> rename{};
     std::optional<RemovalProof> removal{};
     std::optional<ca::MoveTextureRequest> move{};
+    std::optional<GltfReview> gltf{};
   };
 
   struct ImportWork {
@@ -1020,6 +1131,8 @@ struct AssetRebuildHost::State {
   fs::path staging, publication, active, inventoryPath, inventoryRelative, project;
   Handle projectWriter;
   Registrations registered, activeRegistered;
+  KeyedSources activeKeyed, committedKeyed;
+  std::optional<GltfReview> gltfReview;
   std::optional<ImportWork> importing;
   std::deque<ca::ImportJob> imported;
   Materials activeMaterials, committedMaterials;
@@ -1061,7 +1174,8 @@ struct AssetRebuildHost::State {
   std::optional<ca::RebuildError> slotError() const {
     if (stopping) return ca::RebuildError::Unavailable;
     if (!writer || (!project.empty() && !projectWriter) || running || importing || materialWork || textureWork || projectRead ||
-        (removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking))
+        (removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking) ||
+        (gltfReview && gltfReview->result.state == ca::StaticGroupReviewState::Pending))
       return ca::RebuildError::Busy;
     if (dirty) return ca::RebuildError::WorkspaceNeedsRepair;
     return std::nullopt;
@@ -1069,7 +1183,7 @@ struct AssetRebuildHost::State {
 
   std::optional<ca::RebuildError> admissionLocked() const {
     if (auto error = slotError()) return error;
-    if (!project.empty() && (registered != activeRegistered || committedMaterials != activeMaterials ||
+    if (!project.empty() && (registered != activeRegistered || committedKeyed != activeKeyed || committedMaterials != activeMaterials ||
         textureRegistryChanged || metadataChanged()))
       return ca::RebuildError::Unavailable;
     return std::nullopt;
@@ -1089,11 +1203,23 @@ struct AssetRebuildHost::State {
     return committedNames != activeNames || committedLocations != activeLocations;
   }
 
+  bool sameGltfRegistry(const KeyedSources& expected) const {
+    KeyedSources keyed;
+    return readRegistrations(project, nullptr, &keyed) == activeRegistered && keyed == expected;
+  }
+
   struct Prepared {
     ca::GenerationId id;
     fs::path directory;
     json::Value expectedManifest{};
   };
+  void expireGltfReview(std::string reason) {
+    if (!gltfReview) return;
+    gltfReview->result.state = ca::StaticGroupReviewState::Expired;
+    gltfReview->result.rows.clear();
+    gltfReview->result.diagnostic = std::move(reason);
+    gltfReview->candidate.reset();
+  }
   template<class Interrupted>
   std::variant<Prepared, End> prepare(const as::AssetCatalog& catalog, const Producers& view, Interrupted interrupted,
                                       std::optional<Prepared>* ownedStaging = nullptr, const TextureNames* rename = nullptr,
@@ -1107,6 +1233,7 @@ struct AssetRebuildHost::State {
     if (!files) return fail(Stage::Validation, Code::InvalidOutput, "Staging output is missing or unsafe.", true);
     Materials materials;
     TextureInputs textures;
+    KeyedSources keyed;
     if (!project.empty()) {
       files->push_back(inventoryRelative);
       files->push_back(fs::path(kManagedSource));
@@ -1127,6 +1254,14 @@ struct AssetRebuildHost::State {
         files->push_back(texture.record);
         files->push_back(view.at(key).stamp);
       }
+      auto gltfs = keyedSources(root, catalog, view);
+      if (!gltfs) return fail(Stage::Validation, Code::InvalidOutput, "Invalid keyed glTF evidence.");
+      keyed = std::move(*gltfs);
+      for (const auto& [name, unit] : keyed) {
+        const auto path = fs::path(kGltfSources) / gltfUnit(name);
+        files->push_back(path / "source.gltf");
+        files->push_back(path / "catalog-source.txt");
+      }
     }
     if (interrupted()) return timedOut(Stage::Validation);
     const auto guid = newGuid();
@@ -1142,14 +1277,15 @@ struct AssetRebuildHost::State {
         return interrupted() ? timedOut(Stage::Publication)
                              : fail(Stage::Publication, Code::PublishFailed, "Cannot copy a complete generation.");
     }
-    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials, textures, names, locations);
+    const auto data = manifest(owner, id, view, project.empty() ? fs::path{} : inventoryRelative, materials, textures, names, locations, keyed);
     if (!writeText(temp / kManifest, json::write(data)))
       return fail(Stage::Publication, Code::PublishFailed, "Cannot write generation manifest.");
-    if (!textures.empty()) {
+    if (!textures.empty() || !keyed.empty()) {
       const auto copiedCatalog = readCatalog(temp);
       const auto copiedInput = copiedCatalog ? textureInputs(temp, view, *copiedCatalog) : std::nullopt;
-      if (!copiedInput || manifest(owner, id, view, inventoryRelative, materials, *copiedInput, names, locations) != data)
-        return fail(Stage::Validation, Code::InvalidOutput, "Prepared texture generation differs from staging.", true);
+      if (!copiedInput || (copiedCatalog && keyedSources(temp, *copiedCatalog, view) != keyed) ||
+          manifest(owner, id, view, inventoryRelative, materials, *copiedInput, names, locations, keyed) != data)
+        return fail(Stage::Validation, Code::InvalidOutput, "Prepared generation source evidence differs from staging.", true);
     }
     if (cloned) *cloned = std::move(*files);
     return Prepared{id, temp, data};
@@ -1159,6 +1295,12 @@ struct AssetRebuildHost::State {
                const TextureLocations* moved = nullptr) const {
     if (!namesMatch(renamed ? *renamed : activeNames) || !locationsMatch(moved ? *moved : activeLocations) || !safeRelative(generation.directory, fs::path(kManifest)) ||
         readJson(generation.directory / kManifest) != generation.expectedManifest) return false;
+    if (const auto* expected = generation.expectedManifest.find("gltfSources")) {
+      const auto catalog = readCatalog(generation.directory);
+      const auto view = readManagedView(generation.directory, inventoryRelative, inventoryHeader(inventory));
+      const auto gltfs = catalog && view ? keyedSources(generation.directory, *catalog, *view) : std::nullopt;
+      if (!gltfs || keyedManifest(*gltfs) != *expected) return false;
+    }
     return MoveFileExW(generation.directory.c_str(),
                       (publication / as::toString(generation.id.value)).c_str(), 0);
   }
@@ -1846,7 +1988,7 @@ struct AssetRebuildHost::State {
       if (!inputs || textureRegistrations(*frozen, *inputs) != activeTextures || !materials ||
           *materials != activeMaterials || !matchesFrozenMaterials(*catalog, *materials) ||
           !safeRelative(root, fs::path(kManifest)) || readJson(root / kManifest) !=
-              manifest(owner, expectedGeneration, *frozen, inventoryRelative, *materials, *inputs, activeNames, activeLocations))
+              manifest(owner, expectedGeneration, *frozen, inventoryRelative, *materials, *inputs, activeNames, activeLocations, activeKeyed))
         return fail(Stage::Validation, Code::InvalidOutput, "Active generation differs from the frozen snapshot.");
       if (!createMarker(staging / kDirty, {}) ||
           !createMarker(project / kProjectDirty, utf8(staging) + "\n" + utf8(publication) + "\n"))
@@ -2026,6 +2168,257 @@ struct AssetRebuildHost::State {
     return generation.id;
   }
 
+  void settleGltfReview(GltfReview review) {
+    using S = ca::StaticGroupReviewState;
+    auto& info = review.result;
+    const auto target = activeKeyed.find(info.name);
+    const auto directory = active.parent_path();
+    const auto unitPath = fs::path(kGltfSources) / gltfUnit(info.name);
+    const auto input = fs::path("inbox") / fromUtf8(info.name + ".gltf");
+    const auto old = readNameFile(directory, unitPath / "source.gltf", kGltfBytes);
+    const auto next = readNameFile(project, input, kGltfBytes);
+    info.state = S::Failed;
+    if (!old || target == activeKeyed.end() || readKeyedUnit(directory, unitPath, info.name) != target->second ||
+        !sameGltfRegistry(activeKeyed) || !metadataMatches() || registeredMaterials(project) != activeMaterials ||
+        registeredTextures(project) != activeTextures) {
+      info.diagnostic = "The registered source and active generation no longer agree. Activate or inspect the workspace.";
+    } else if (!next || next->empty()) {
+      info.diagnostic = "Cannot read the bounded ordinary file inbox/" + info.name + ".gltf.";
+    } else {
+      const auto before = json::parse(*old), after = json::parse(*next);
+      if (before.isErr() || after.isErr()) {
+        info.diagnostic = "The glTF JSON cannot be read. Correct the inbox file and review again.";
+      } else {
+        const auto a = static_groups::sourceProducts(before.value(), target->second.root);
+        const auto b = static_groups::sourceProducts(after.value(), target->second.root);
+        if (a.isErr() || b.isErr()) {
+          info.state = S::Blocked;
+          info.diagnostic = a.isErr() ? a.error() : b.error();
+        } else {
+          static_groups::compareProducts(info, a.value(), b.value(), target->second.root);
+          if (info.state == S::Ready) review.candidate = std::make_shared<const std::string>(*next);
+          if (!ca::encodeStaticGroupReview(info)) {
+            info.state = S::Failed;
+            info.rows.clear();
+            info.diagnostic = "The complete review exceeds the reply limit.";
+            review.candidate.reset();
+          }
+        }
+      }
+    }
+    review.expires = Clock::now() + std::chrono::minutes(10);
+    std::lock_guard lock(mutex);
+    if (gltfReview && gltfReview->result.id == info.id && gltfReview->result.state == S::Pending)
+      gltfReview = std::move(review);
+  }
+
+  bool sameGltfDelta(const Work& work, const as::AssetCatalog& candidate) const {
+    const auto source = managedSourceKey(work.gltf->result.name);
+    const auto targetRecord = [&](const as::AssetCatalogRecord& record) {
+      return as::toString({record.source.root, record.source.path, {}}) == source;
+    };
+    const auto stopped = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto activeRoot = active.parent_path();
+    for (const auto& old : work.catalog->records()) {
+      if (stopped()) return false;
+      const auto* next = candidate.find(old.guid);
+      if (!next || next->type != old.type || next->assetId != old.assetId || as::toString(next->source) != as::toString(old.source) ||
+          next->artifactSchema != old.artifactSchema || next->sourceSchema != old.sourceSchema || next->tool != old.tool ||
+          fromUtf8(next->artifact).lexically_relative(staging) != fromUtf8(old.artifact).lexically_relative(activeRoot) ||
+          fromUtf8(next->metadata).lexically_relative(staging) != fromUtf8(old.metadata).lexically_relative(activeRoot)) return false;
+      if (targetRecord(old) && old.type == as::CatalogAssetType::Scene) continue;
+      if (next->dependencies != old.dependencies) return false;
+      if (targetRecord(old) && old.type == as::CatalogAssetType::Mesh) continue;
+      if (!sameOutput(fromUtf8(old.artifact), fromUtf8(next->artifact), stopped) ||
+          !sameOutput(fromUtf8(old.metadata), fromUtf8(next->metadata), stopped)) return false;
+    }
+    for (const auto& next : candidate.records())
+      if (!work.catalog->find(next.guid) && !targetRecord(next)) return false;
+    for (const auto& [key, producer] : producers) {
+      if (key == source || producer.generated.empty()) continue;
+      if (!sameOutput(activeRoot / producer.generated, staging / producer.generated, stopped)) return false;
+    }
+    return !stopped();
+  }
+
+  std::variant<ca::GenerationId, End> reimportGltf(const Work& work, bool& cleanupRepair) {
+    const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
+    const auto& review = *work.gltf;
+    const auto& name = review.result.name;
+    const auto& prior = activeKeyed.at(name);
+    const auto unit = gltfUnit(name);
+    const auto pending = fs::path(".pending") / as::toString(work.job.id.value);
+    const auto replacement = pending / "replace" / unit;
+    const auto backup = pending / "previous";
+    const auto registeredPath = fs::path("registered") / unit;
+    const auto input = fs::path("inbox") / fromUtf8(name + ".gltf");
+    const auto sameInput = [&] { return readNameFile(project, input, kGltfBytes) == *review.candidate; };
+    const auto sameOtherInputs = [&] {
+      return metadataMatches() && registeredMaterials(project) == activeMaterials && registeredTextures(project) == activeTextures;
+    };
+    const auto unitMatches = [&](const fs::path& path, const KeyedUnit& value) {
+      return readKeyedUnit(project, path, name) == value;
+    };
+    const auto rename = [](const fs::path& old, const fs::path& next) { return MoveFileExW(old.c_str(), next.c_str(), 0) != 0; };
+    const auto dirtyEnd = [](std::string reason) {
+      return fail(Stage::Publication, Code::PublishFailed, std::move(reason) +
+          " Keep using the previous generation and inspect the retained replacement journal.", true);
+    };
+    bool marked = false, ownsPending = false;
+    std::optional<Prepared> prepared;
+    const auto execute = [&]() -> std::variant<ca::GenerationId, End> {
+      if (interrupted() || Clock::now() >= review.expires || !sameInput() || !sameGltfRegistry(activeKeyed) || !sameOtherInputs())
+        return fail(Stage::Validation, Code::IdentityChanged, "The reviewed inputs changed or expired. Start a fresh review.");
+      const auto activeRoot = active.parent_path();
+      const auto oldSource = readNameFile(activeRoot, fs::path(kGltfSources) / unit / "source.gltf", kGltfBytes);
+      if (!oldSource || readKeyedUnit(activeRoot, fs::path(kGltfSources) / unit, name) != prior)
+        return fail(Stage::Validation, Code::InvalidOutput, "The active frozen source changed.");
+      const auto before = json::parse(*oldSource), after = json::parse(*review.candidate);
+      if (before.isErr() || after.isErr()) return fail(Stage::Validation, Code::InvalidOutput, "Cannot read the frozen glTF.");
+      const auto a = static_groups::sourceProducts(before.value(), prior.root);
+      const auto b = static_groups::sourceProducts(after.value(), prior.root);
+      auto rechecked = review.result;
+      rechecked.rows.clear();
+      if (a.isErr() || b.isErr()) return fail(Stage::Validation, Code::InvalidOutput, "The reviewed keys are invalid.");
+      static_groups::compareProducts(rechecked, a.value(), b.value(), prior.root);
+      if (rechecked != review.result)
+        return fail(Stage::Validation, Code::IdentityChanged, "The staged comparison no longer matches the confirmed review.");
+      if (!createMarker(staging / kDirty, {}) || !createMarker(project / kProjectDirty, utf8(staging) + "\n" + utf8(publication) + "\n"))
+        return dirtyEnd("Cannot record workspace ownership.");
+      marked = true;
+      std::error_code ec;
+      const auto parent = project / ".pending";
+      if (absentFile(parent)) fs::create_directory(parent, ec);
+      if (ec || !realDirectory(parent) || !fs::create_directory(project / pending, ec) || ec)
+        return dirtyEnd("Cannot establish private staging ownership.");
+      ownsPending = true;
+      if (!safeBuildTree(staging, interrupted) || !safeRelative(staging, fs::path(kPendingSelection)) ||
+          !fs::create_directories(project / replacement, ec) || ec ||
+          !writeText(project / replacement / "source.gltf", *review.candidate))
+        return fail(Stage::Launch, Code::LaunchFailed, "Cannot freeze the reviewed glTF in private staging.");
+      const auto digest = gltfDigest(*review.candidate);
+      if (!digest) return fail(Stage::Launch, Code::LaunchFailed, "Cannot seal the replacement glTF.");
+      const KeyedUnit next{prior.root, *digest, keyedEnvelope(name, prior.root, *digest)};
+      auto expected = activeKeyed;
+      expected.at(name) = next;
+      if (!writeText(project / replacement / "catalog-source.txt", next.envelope) ||
+          !writeText(staging / kPendingSelection, utf8(replacement)) ||
+          !safeRelative(staging, work.producer->stamp, true))
+        return fail(Stage::Launch, Code::LaunchFailed, "Cannot stage the sealed replacement.");
+      fs::remove(staging / work.producer->stamp, ec);
+      if (ec) return fail(Stage::Launch, Code::LaunchFailed, "Cannot invalidate the glTF producer stamp.");
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted, true)) return *error;
+      if (auto error = runBuild(config.cmake, staging, config.configuration, interrupted)) return *error;
+
+      std::string catalogBytes;
+      const auto catalog = readCatalog(staging, &catalogBytes);
+      const auto inventoryBytes = readText(staging / inventoryRelative);
+      const auto view = readManagedView(staging, inventoryRelative, inventoryHeader(inventory));
+      const auto candidateTextures = catalog && view ? textureInputs(staging, *view, *catalog) : std::nullopt;
+      if (!catalog || !inventoryBytes || !view || *view != producers || !candidateTextures ||
+          materialInputs(staging, *view) != activeMaterials || textureRegistrations(*view, *candidateTextures) != activeTextures ||
+          !matchesManagedCatalog(*catalog, *view) || keyedSources(staging, *catalog, *view) != expected ||
+          !sameGltfDelta(work, *catalog))
+        return fail(Stage::Validation, Code::InvalidOutput, "The staged producer, output bytes or dependency closure differ from the reviewed replacement.");
+      Files files;
+      auto result = prepare(*catalog, *view, interrupted, &prepared, nullptr, &files);
+      if (const auto* error = std::get_if<End>(&result)) return *error;
+      prepared = std::get<Prepared>(std::move(result));
+      std::map<fs::path, std::string> frozen;
+      for (const auto& path : files) {
+        if (interrupted()) return timedOut(Stage::Validation);
+        const auto sha = fileDigest(staging, path, MAXDWORD, true);
+        if (!sha) return fail(Stage::Validation, Code::InvalidOutput, "Cannot seal the staged publication files.");
+        frozen.emplace(path, *sha);
+      }
+      std::string frozenCatalog;
+      const auto sealed = readCatalog(staging, &frozenCatalog);
+      if (!sealed || frozenCatalog != catalogBytes || readText(staging / inventoryRelative) != inventoryBytes ||
+          !sameGltfDelta(work, *sealed))
+        return fail(Stage::Validation, Code::InvalidOutput, "The staged publication changed while sealing.");
+      const auto matches = [&](const fs::path& path) {
+        if (!realDirectory(path) || !safeRelative(path, fs::path(kManifest)) || readJson(path / kManifest) != prepared->expectedManifest)
+          return false;
+        const auto stored = readCatalog(path);
+        const auto savedView = readManagedView(path, inventoryRelative, inventoryHeader(inventory));
+        return stored && savedView == view && matchesManagedCatalog(*stored, *savedView) &&
+            keyedSources(path, *stored, *savedView) == expected && std::ranges::all_of(frozen, [&](const auto& item) {
+              return !stopping && fileDigest(path, item.first, MAXDWORD, true) == item.second;
+            });
+      };
+      const auto destination = publication / as::toString(prepared->id.value);
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.afterGltfPreparation) config.afterGltfPreparation(prepared->directory);
+#endif
+      std::lock_guard commit(publicationCommit);
+      if (!matches(prepared->directory) || !unitMatches(replacement, next) || !sameGltfRegistry(activeKeyed) ||
+          !sameOtherInputs() || !sameInput() || interrupted() || Clock::now() >= review.expires)
+        return fail(Stage::Validation, Code::IdentityChanged, "The confirmed inputs or frozen publication changed before exchange.");
+      if (!absentFile(destination) || !unitMatches(registeredPath, prior)) return dirtyEnd("Cannot verify replacement ownership.");
+      auto journal = json::Value::object();
+      journal.set("job", json::Value::string(as::toString(work.job.id.value)));
+      journal.set("generation", json::Value::string(as::toString(prepared->id.value)));
+      journal.set("source", json::Value::string(managedSourceKey(name)));
+      journal.set("old", json::Value::string(prior.envelope));
+      journal.set("new", json::Value::string(next.envelope));
+      auto filesProof = json::Value::object();
+      for (const auto& [path, sha] : frozen) filesProof.set(utf8(path), json::Value::string(sha));
+      journal.set("files", std::move(filesProof));
+      if (!createMarker(project / pending / "static-gltf-replacement.json", json::write(journal)) || interrupted())
+        return fail(Stage::Publication, Code::PublishFailed, "Cannot record the replacement before the deadline.");
+      const auto rollback = [&]() {
+        if (!absentFile(destination) || !sameOtherInputs() || !unitMatches(backup, prior))
+          return dirtyEnd("Cannot prove the previous registration is safe to restore.");
+        if (!absentFile(project / registeredPath) && (!unitMatches(registeredPath, next) ||
+            !absentFile(project / replacement) || !rename(project / registeredPath, project / replacement)))
+          return dirtyEnd("Cannot retire the replacement before rollback.");
+        if (!rename(project / backup, project / registeredPath) || !sameGltfRegistry(activeKeyed))
+          return dirtyEnd("Cannot verify the restored registered glTF.");
+        return fail(Stage::Publication, Code::PublishFailed, "Publication failed. The previous registration was verified and restored.");
+      };
+      if (!rename(project / registeredPath, project / backup) || !unitMatches(backup, prior)) {
+        if (absentFile(project / backup) && sameGltfRegistry(activeKeyed))
+          return fail(Stage::Publication, Code::PublishFailed, "Could not back up the original registration. Review again.");
+        return dirtyEnd("The original registration backup cannot be verified.");
+      }
+      if (!rename(project / replacement, project / registeredPath) || !sameGltfRegistry(expected) ||
+          !sameOtherInputs() || !matches(prepared->directory) || interrupted()) return rollback();
+#ifdef ATLANTIS_REBUILD_TEST_CMAKE
+      if (config.beforeGltfPublication) config.beforeGltfPublication(prepared->directory, destination);
+#endif
+      if (!matches(prepared->directory) || !sameGltfRegistry(expected) || !sameOtherInputs() ||
+          interrupted() || !publish(*prepared)) {
+        if (absentFile(destination)) return rollback();
+        if (!absentFile(prepared->directory) || !matches(destination) || !sameGltfRegistry(expected) || !sameOtherInputs())
+          return dirtyEnd("Cannot confirm the intended generation after publication.");
+      }
+      return prepared->id;
+    };
+    auto result = [&]() -> std::variant<ca::GenerationId, End> {
+      try { return execute(); }
+      catch (const std::exception&) { return dirtyEnd("Could not settle the glTF replacement."); }
+    }();
+    const auto* failure = std::get_if<End>(&result);
+    if (marked && (!failure || !failure->repair)) {
+      std::error_code ec;
+      const auto retire = [&](const fs::path& path) {
+        if (absentFile(path)) return true;
+        if (!realDirectory(path) || !safeBuildTree(path, [] { return false; })) return false;
+        fs::remove_all(path, ec);
+        return !ec;
+      };
+      cleanupRepair = (prepared && !retire(prepared->directory)) || (ownsPending && !retire(project / pending)) ||
+          !safeRelative(staging, fs::path(kPendingSelection)) || !writeText(staging / kPendingSelection, {});
+      if (!cleanupRepair) {
+        fs::remove(staging / kDirty, ec);
+        if (!ec) fs::remove(project / kProjectDirty, ec);
+        cleanupRepair = static_cast<bool>(ec);
+      }
+      if (cleanupRepair && failure) return dirtyEnd("Rollback cleanup could not be confirmed.");
+    }
+    return result;
+  }
+
   std::variant<ca::GenerationId, End> reimportColor(const Work& work, bool& cleanupRepair) {
     const auto interrupted = [&] { return stopping || Clock::now() >= work.deadline; };
     const std::string& name = *work.colorReplacement;
@@ -2128,7 +2521,7 @@ struct AssetRebuildHost::State {
       auto result = prepare(*catalog, *view, interrupted, &prepared);
       if (const auto* error = std::get_if<End>(&result)) return *error;
       prepared = std::get<Prepared>(std::move(result));
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations, activeKeyed);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory)) return false;
         const auto frozen = readManagedView(directory, inventoryRelative);
@@ -2137,7 +2530,7 @@ struct AssetRebuildHost::State {
             !outputFiles(directory, *frozenCatalog, *frozen) || !safeRelative(directory, fs::path(kManifest))) return false;
         const auto copied = textureInputs(directory, *frozen, *frozenCatalog);
         return copied && readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations, activeKeyed) == expectedManifest;
       };
       const auto unitMatches = [&](const fs::path& relative, const TextureUnit& unitInput) {
         return realDirectory(project / relative) && readTextureUnit(project, relative, name) == unitInput &&
@@ -2272,9 +2665,11 @@ struct AssetRebuildHost::State {
         !safeBuildTree(project / "registered", interrupted) ||
         !safeRelative(staging, fs::path(kPendingSelection)))
       return failed(IS::Source, IC::InvalidSource, "Unsafe staging or registered input.", true);
-    const auto diskRegistrations = readRegistrations(project);
-    if (!diskRegistrations || *diskRegistrations != registered)
+    KeyedSources diskKeyed;
+    const auto diskRegistrations = readRegistrations(project, nullptr, &diskKeyed);
+    if (!diskRegistrations || *diskRegistrations != registered || diskKeyed != committedKeyed)
       return failed(IS::Source, IC::InvalidSource, "Registered inputs changed outside the worker.", true);
+    auto intendedKeyed = diskKeyed;
     std::error_code ec;
     as::AssetGuid root;
     if (work.registeredRoot) {
@@ -2295,8 +2690,23 @@ struct AssetRebuildHost::State {
       } catch (const std::exception&) {
         return failed(IS::Registration, IC::RegisterFailed, "Cannot allocate the source GUID.");
       }
-      const auto source = as::serializeAssetCatalogSource(
+      auto source = as::serializeAssetCatalogSource(
           {{root, as::CatalogAssetType::GltfImport, as::CatalogRoot::Content, utf8(name / "source.gltf")}});
+      const auto bytes = readNameFile(project, pending / "source.gltf", kGltfBytes);
+      if (!bytes) return failed(IS::Source, IC::InvalidSource, "Cannot verify the frozen glTF source.");
+      const auto parsed = json::parse(*bytes);
+      if (parsed.isOk() && parsed.value().find("asset")) {
+        const auto mode = static_groups::keyedMode(parsed.value());
+        if (!mode) return failed(IS::Source, IC::InvalidSource, "Invalid managed glTF opt-in marker.");
+        if (*mode) {
+          const auto products = static_groups::sourceProducts(parsed.value(), root);
+          if (products.isErr()) return failed(IS::Source, IC::InvalidSource, products.error());
+          const auto digest = gltfDigest(*bytes);
+          if (!digest) return failed(IS::Source, IC::InvalidSource, "Cannot seal the keyed glTF source.");
+          source = keyedEnvelope(work.job.name, root, *digest);
+          intendedKeyed.emplace(work.job.name, KeyedUnit{root, *digest, source});
+        }
+      }
       if (!writeText(project / pending / "catalog-source.txt", source) || !writeText(selection, utf8(pending)))
         return failed(IS::Source, IC::InvalidSource, "Cannot write pending registration inputs.", true);
     }
@@ -2330,7 +2740,8 @@ struct AssetRebuildHost::State {
         !textures || textureRegistrations(*view, *textures) != activeTextures ||
         materialInputs(staging, *view) != activeMaterials || registeredMaterials(project) != activeMaterials ||
         producer == view->end() || producer->second.type != as::CatalogAssetType::GltfImport ||
-        !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key))
+        !exactImportDelta(staging, *work.catalog, *catalog, producer->second, key) ||
+        keyedSources(staging, *catalog, *view) != intendedKeyed)
       return failed(IS::Validation, IC::IdentityConflict, "Staged identity delta differs from this import.");
     const auto sceneGuid = as::deriveAssetGuid(root, "scene");
     const auto* scene = catalog->find(sceneGuid);
@@ -2388,7 +2799,9 @@ struct AssetRebuildHost::State {
     if (interrupted())
       return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
                     "Import stopped before the commit point.", true);
-    if (!metadataMatches() || registeredTextures(project) != activeTextures)
+    KeyedSources atCommit;
+    if (!metadataMatches() || registeredTextures(project) != activeTextures ||
+        readRegistrations(project, nullptr, &atCommit) != diskRegistrations || atCommit != diskKeyed)
       return failed(IS::Validation, IC::IdentityConflict, "Managed texture registry changed during import.", true);
     const auto& directory = generation.directory;
     std::string copiedCatalogBytes;
@@ -2397,6 +2810,7 @@ struct AssetRebuildHost::State {
         readText(directory / inventoryRelative) != inventoryAfter ||
         !safeRelative(directory, fs::path(kManifest)) ||
         readJson(directory / kManifest) != generation.expectedManifest ||
+        keyedSources(directory, *copiedCatalog, *view) != intendedKeyed ||
         !std::ranges::all_of(frozen, [&](const auto& file) {
           return !interrupted() && fileDigest(directory, file.first, MAXDWORD) == file.second;
         }))
@@ -2408,6 +2822,9 @@ struct AssetRebuildHost::State {
     if (interrupted())
       return failed(work.registeredRoot ? IS::Publication : IS::Registration, IC::TimedOut,
                     "Import stopped before the commit point.", true);
+    if (const auto keyed = intendedKeyed.find(work.job.name); keyed != intendedKeyed.end() &&
+        readKeyedUnit(project, work.registeredRoot ? fs::path("registered") / name : pending, work.job.name) != keyed->second)
+      return failed(IS::Validation, IC::InvalidOutput, "The pending glTF registration no longer matches the frozen output.");
     if (!work.registeredRoot) {
       if (!MoveFileExW((project / pending).c_str(), (project / "registered" / name).c_str(), 0)) {
         const auto disk = readRegistrations(project);
@@ -2423,6 +2840,9 @@ struct AssetRebuildHost::State {
       }
       work.registeredRoot = root;
     }
+    if (const auto keyed = intendedKeyed.find(work.job.name); keyed != intendedKeyed.end() &&
+        readKeyedUnit(project, fs::path("registered") / name, work.job.name) != keyed->second)
+      return failed(IS::Registration, IC::RegisterFailed, "The keyed registration needs workspace repair.", true);
     if (!publish(generation))
       return failed(IS::Publication, IC::PublishFailed, "Cannot publish the registered import generation.");
     return {generation.id, {}, false};
@@ -2459,8 +2879,11 @@ struct AssetRebuildHost::State {
       job.state = ca::RebuildState::Failed;
       job.failure = std::move(result.failure);
     }
+    KeyedSources nowKeyed;
+    if (work.registeredRoot && !readRegistrations(project, nullptr, &nowKeyed)) repair = true;
     std::lock_guard lock(mutex);
     if (work.registeredRoot) registered.insert_or_assign(job.name, *work.registeredRoot);
+    if (work.registeredRoot && !repair) committedKeyed = std::move(nowKeyed);
     dirty = repair;
     imported.push_front(std::move(job));
     if (imported.size() > 16) imported.pop_back();
@@ -2662,7 +3085,7 @@ struct AssetRebuildHost::State {
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.afterMaterialPreparation) config.afterMaterialPreparation(prepared->directory);
 #endif
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView, activeNames, activeLocations);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, expected, *textureView, activeNames, activeLocations, activeKeyed);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
         const auto frozenInventory = readText(directory / inventoryRelative);
@@ -2675,7 +3098,7 @@ struct AssetRebuildHost::State {
         const auto copied = textureInputs(directory, *frozen, *catalog);
         return copied && safeRelative(directory, fs::path(kManifest)) &&
             readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, expected, *copied, activeNames, activeLocations) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, expected, *copied, activeNames, activeLocations, activeKeyed) == expectedManifest;
       };
 
       std::lock_guard commit(publicationCommit);
@@ -2898,7 +3321,7 @@ struct AssetRebuildHost::State {
 #ifdef ATLANTIS_REBUILD_TEST_CMAKE
       if (config.afterTexturePreparation) config.afterTexturePreparation(prepared->directory, project / fragmentPath);
 #endif
-      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations);
+      const auto expectedManifest = manifest(owner, prepared->id, *view, inventoryRelative, *materials, *inputs, activeNames, activeLocations, activeKeyed);
       const auto matchesPrepared = [&](const fs::path& directory) {
         if (!realDirectory(directory) || !safeRelative(directory, inventoryRelative)) return false;
         const auto frozenInventory = readText(directory / inventoryRelative);
@@ -2911,7 +3334,7 @@ struct AssetRebuildHost::State {
         const auto copied = textureInputs(directory, *frozen, *catalog);
         return copied && safeRelative(directory, fs::path(kManifest)) &&
             readJson(directory / kManifest) == expectedManifest &&
-            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations) == expectedManifest;
+            manifest(owner, prepared->id, *frozen, inventoryRelative, *materials, *copied, activeNames, activeLocations, activeKeyed) == expectedManifest;
       };
       std::lock_guard commit(publicationCommit);
       const bool preparedMatches = matchesPrepared(prepared->directory);
@@ -3131,6 +3554,7 @@ struct AssetRebuildHost::State {
   void run() {
     for (;;) {
       std::optional<Work> work;
+      std::optional<GltfReview> review;
       std::optional<ImportWork> import;
       std::optional<MaterialWork> material;
       std::optional<TextureWork> texture;
@@ -3139,13 +3563,18 @@ struct AssetRebuildHost::State {
       {
         std::unique_lock lock(mutex);
         const auto checking = [&] { return removalCheck && removalCheck->check.state == ca::TextureRemovalState::Checking; };
-        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork || projectRead || checking(); });
+        const auto reviewing = [&] { return gltfReview && gltfReview->result.state == ca::StaticGroupReviewState::Pending; };
+        changed.wait(lock, [&] { return stopping || running || importing || materialWork || textureWork || projectRead || checking() || reviewing(); });
         if (stopping && !running && !importing && !materialWork && !textureWork && !projectRead && !checking()) return;
         work = running;
         import = importing;
         material = materialWork;
         texture = textureWork;
         if (checking()) removal = removalCheck;
+        if (running || importing || materialWork || textureWork || checking()) {
+          if (!running || !running->gltf) expireGltfReview("Another workspace operation superseded this review.");
+        }
+        if (reviewing()) review = gltfReview;
         scan = projectRead;
       }
       if (scan) {
@@ -3154,6 +3583,10 @@ struct AssetRebuildHost::State {
       }
       if (removal) {
         settleRemovalCheck(std::move(*removal));
+        continue;
+      }
+      if (review) {
+        settleGltfReview(std::move(*review));
         continue;
       }
       if (texture) {
@@ -3169,8 +3602,10 @@ struct AssetRebuildHost::State {
         continue;
       }
       bool cleanupRepair = false;
-      auto result = work->removal ? removeColor(*work, cleanupRepair) : (work->rename || work->move) ? updateTextureMetadata(*work, cleanupRepair) :
+      auto result = work->gltf ? reimportGltf(*work, cleanupRepair) : work->removal ? removeColor(*work, cleanupRepair) : (work->rename || work->move) ? updateTextureMetadata(*work, cleanupRepair) :
           work->colorReplacement ? reimportColor(*work, cleanupRepair) : build(*work);
+      KeyedSources settledKeyed;
+      const auto gltfRegistry = work->gltf ? readRegistrations(project, nullptr, &settledKeyed) : std::nullopt;
       const auto disk = work->colorReplacement ? registeredTextures(project) : std::nullopt;
       const auto names = (work->rename || work->removal) ? readNameBytes(project) : std::nullopt;
       std::optional<TextureNames> settledNames;
@@ -3185,10 +3620,10 @@ struct AssetRebuildHost::State {
           ? readLocations(project, disk ? *disk : activeTextures) : std::nullopt;
       auto& job = work->job;
       const auto* failure = std::get_if<End>(&result);
-      bool repair = cleanupRepair || (failure && failure->repair) || (work->colorReplacement && !disk) ||
+      bool repair = cleanupRepair || (failure && failure->repair) || (work->colorReplacement && !disk) || (work->gltf && !gltfRegistry) ||
           ((work->rename || work->removal) && !settledNames) ||
           ((work->move || work->removal) && !settledLocations);
-      if (!repair && !work->colorReplacement && !work->rename && !work->move) {
+      if (!repair && !work->colorReplacement && !work->rename && !work->move && !work->gltf) {
         std::error_code ec;
         fs::remove(staging / kDirty, ec);
         repair = static_cast<bool>(ec);
@@ -3202,6 +3637,7 @@ struct AssetRebuildHost::State {
       }
       std::lock_guard lock(mutex);
       dirty = repair;
+      if (gltfRegistry) committedKeyed = std::move(settledKeyed);
       if (disk) {
         committedTextures = *disk;
         textureRegistryChanged = committedTextures != activeTextures;
@@ -3372,6 +3808,9 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       if (!frozen || baseProducers(*frozen) != baseProducers(state->producers) ||
           !matchesManagedCatalog(*catalog, *frozen))
         return R::Err("Invalid managed generation metadata.");
+      auto gltfs = keyedSources(selected, *catalog, *frozen);
+      if (!gltfs) return R::Err("Invalid frozen keyed glTF evidence.");
+      state->activeKeyed = std::move(*gltfs);
       auto materials = materialInputs(selected, *frozen);
       if (!materials || !matchesFrozenMaterials(*catalog, *materials))
         return R::Err("Managed generation material sources are missing or invalid.");
@@ -3394,7 +3833,8 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     }
     const auto managedInventory = state->project.empty() ? fs::path{} : inventory;
     if (*selectedManifest != manifest(state->owner, *generation, state->producers, managedInventory,
-                                     state->activeMaterials, selectedTextures, state->activeNames, state->activeLocations))
+                                     state->activeMaterials, selectedTextures, state->activeNames, state->activeLocations,
+                                     state->activeKeyed))
       return R::Err("Unknown, incomplete or foreign asset generation.");
     if (!outputFiles(selected, *catalog, state->producers))
       return R::Err("Incomplete asset generation files.");
@@ -3411,6 +3851,9 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
       if (!catalog || !matchesManagedCatalog(*catalog, state->producers) ||
           !matchesFrozenMaterials(*catalog, state->activeMaterials))
         return R::Err("Seed catalog does not match its frozen managed producer view.");
+      auto gltfs = keyedSources(seed, *catalog, state->producers);
+      if (!gltfs) return R::Err("Invalid seed keyed glTF evidence.");
+      state->activeKeyed = std::move(*gltfs);
     }
     if (state->writer) {
       const fs::path projectLock = ".atlantis-import-lock";
@@ -3425,7 +3868,7 @@ Result<std::unique_ptr<AssetRebuildHost>, std::string> AssetRebuildHost::open(Co
     state->dirty = readDuringRepair || !safeRelative(*stage, fs::path(kDirty), true) ||
         fs::exists(*stage / kDirty, ec) || static_cast<bool>(ec);
     if (!state->project.empty()) {
-      auto registered = readRegistrations(state->project);
+      auto registered = readRegistrations(state->project, nullptr, &state->committedKeyed);
       auto materials = registeredMaterials(state->project);
       auto textures = registeredTextures(state->project);
       const auto pending = safeRelative(*stage, fs::path(kPendingSelection))
@@ -3468,6 +3911,70 @@ std::optional<ca::RebuildError> AssetRebuildHost::admissionError() const {
   std::lock_guard lock(state_->mutex);
   return state_->admissionLocked();
 }
+ca::StaticGroupReviewResult AssetRebuildHost::reviewStaticGroup(
+    const ca::StaticGroupReviewRequest& request, std::shared_ptr<const as::AssetCatalog> catalog) {
+  using R = ca::StaticGroupReviewResult;
+  using E = ca::RebuildError;
+  using M = ca::StaticGroupReviewMode;
+  using S = ca::StaticGroupReviewState;
+  std::lock_guard lock(state_->mutex);
+  if (request.mode != M::Begin) {
+    if (!state_->gltfReview || state_->gltfReview->result.id != request.target) return R::Err(E::UnknownJob);
+    auto& review = *state_->gltfReview;
+    if (request.mode == M::Cancel) {
+      if (review.admitted) return R::Err(E::Busy);
+      state_->expireGltfReview("Review cancelled.");
+    } else if (review.result.state != S::Expired && Clock::now() >= review.expires) {
+      state_->expireGltfReview("Review expired. Start a new preview.");
+    }
+    return R::Ok(review.result);
+  }
+  if (const auto error = state_->admissionLocked()) return R::Err(*error);
+  if (!state_->config.generation || state_->project.empty()) return R::Err(E::UnsupportedProducer);
+  if (!catalog) return R::Err(E::CatalogUnavailable);
+  const auto* scene = catalog->find(request.target);
+  if (!scene) return R::Err(E::UnknownAsset);
+  const auto name = static_groups::managedName(*scene);
+  if (!name || !state_->activeKeyed.contains(*name)) return R::Err(E::UnsupportedProducer);
+  const auto id = newGuid();
+  if (!id) return R::Err(E::Unavailable);
+  const ca::StaticGroupReview pending{*id, scene->guid, *state_->config.generation, *name, S::Pending, {}, {}};
+  state_->gltfReview = State::GltfReview{pending, std::move(catalog), Clock::time_point::max(), {}};
+  state_->changed.notify_one();
+  return R::Ok(pending);
+}
+
+ca::RebuildStartResult AssetRebuildHost::commitStaticGroup(const as::AssetGuid& id) {
+  using R = ca::RebuildStartResult;
+  using E = ca::RebuildError;
+  std::lock_guard lock(state_->mutex);
+  if (!state_->gltfReview || state_->gltfReview->result.id != id) return R::Err(E::UnknownJob);
+  if (const auto error = state_->admissionLocked()) return R::Err(*error);
+  auto& review = *state_->gltfReview;
+  if (Clock::now() >= review.expires) state_->expireGltfReview("Review expired. Start a new preview.");
+  if (!review.candidate || review.admitted || review.result.state != ca::StaticGroupReviewState::Ready)
+    return R::Err(E::UnknownJob);
+  const auto input = fs::path("inbox") / fromUtf8(review.result.name + ".gltf");
+  const auto activeRoot = state_->active.parent_path();
+  const auto source = readNameFile(state_->project, input, kGltfBytes);
+  if (!source || *source != *review.candidate || !state_->sameGltfRegistry(state_->activeKeyed) ||
+      readManagedView(activeRoot, state_->inventoryRelative, inventoryHeader(state_->inventory)) != state_->producers ||
+      Clock::now() >= review.expires) {
+    state_->expireGltfReview("The source or generation changed. Start a fresh review.");
+    return R::Err(E::UnknownJob);
+  }
+  const auto producer = state_->producers.find(managedSourceKey(review.result.name));
+  const auto jobId = newGuid();
+  if (producer == state_->producers.end() || !jobId) return R::Err(E::Unavailable);
+  ca::RebuildJob job{ca::RebuildId{*jobId}, review.result.scene, ca::RebuildState::Running, {}, {}};
+  state_->running.emplace(State::Work{job, &producer->second, review.catalog, Clock::now() + state_->config.timeout,
+      {}, {}, {}, {}, review});
+  review.admitted = true;
+  state_->expireGltfReview("Confirm was admitted. Observe the rebuild job before retrying.");
+  state_->changed.notify_one();
+  return R::Ok(job);
+}
+
 ca::RebuildStartResult AssetRebuildHost::start(as::AssetGuid asset, std::shared_ptr<const as::AssetCatalog> catalog) {
   std::lock_guard lock(state_->mutex);
   using R = ca::RebuildStartResult;
@@ -3529,8 +4036,8 @@ ca::RenameTextureResult AssetRebuildHost::renameTexture(
     return R::Err(E::Unavailable);
   }
   if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
-      state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-      state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
+      state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+      state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
   if (!ca::validImportName(request.displayName)) return R::Err(E::InvalidName);
   if (!catalog) return R::Err(E::CatalogUnavailable);
   const auto* record = catalog->find(request.asset);
@@ -3576,8 +4083,8 @@ ca::MoveTextureResult AssetRebuildHost::moveTexture(
     return R::Err(E::Unavailable);
   }
   if (state_->config.generation != request.expectedGeneration || state_->metadataChanged() ||
-      state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-      state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
+      state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+      state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged) return R::Err(E::StaleSnapshot);
   if (!ca::validTextureLogicalPath(request.expectedLogicalPath) ||
       !ca::validTextureLogicalPath(request.destinationLogicalPath)) return R::Err(E::InvalidPath);
   if (!catalog) return R::Err(E::CatalogUnavailable);
@@ -3706,16 +4213,18 @@ ca::ImportStartResult AssetRebuildHost::startImport(std::string_view name, ca::I
   if (mode == ca::ImportMode::Register) {
     if (committed != state_->registered.end() || state_->producers.contains(managedSourceKey(name)))
       return R::Err(E::NameConflict);
-    if (state_->registered != state_->activeRegistered || state_->committedMaterials != state_->activeMaterials ||
-        state_->textureRegistryChanged)
+    if (state_->registered != state_->activeRegistered || state_->committedKeyed != state_->activeKeyed ||
+        state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
   } else {
     if (committed == state_->registered.end() || state_->activeRegistered.contains(name))
       return R::Err(E::NothingToResume);
     auto expected = state_->activeRegistered;
     expected.emplace(committed->first, committed->second);
-    if (expected != state_->registered || state_->committedMaterials != state_->activeMaterials ||
-        state_->textureRegistryChanged)
+    auto otherKeyed = state_->committedKeyed;
+    if (const auto resumed = otherKeyed.find(name); resumed != otherKeyed.end()) otherKeyed.erase(resumed);
+    if (expected != state_->registered || otherKeyed != state_->activeKeyed ||
+        state_->committedMaterials != state_->activeMaterials || state_->textureRegistryChanged)
       return R::Err(E::ActivationRequired);
     root = committed->second;
   }
@@ -3776,7 +4285,8 @@ ca::MaterialSaveResult AssetRebuildHost::saveMaterial(const ca::MaterialSave& re
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged() || state_->committedKeyed != state_->activeKeyed)
+    return R::Err(E::ActivationRequired);
   const auto id = newGuid();
   if (!id) return R::Err(E::Unavailable);
   ca::MaterialJob job{{*id}, target, ca::RebuildState::Running, {}, {}, {}};
@@ -3810,7 +4320,8 @@ ca::TextureImportStartResult AssetRebuildHost::startTextureImport(
     return R::Err(E::Unavailable);
   }
   if (!catalog) return R::Err(E::CatalogUnavailable);
-  if (state_->metadataChanged()) return R::Err(E::ActivationRequired);
+  if (state_->metadataChanged() || state_->committedKeyed != state_->activeKeyed)
+    return R::Err(E::ActivationRequired);
   const auto found = state_->committedTextures.find(name);
   if (kind == TextureKind::Color &&
       labelClaimed(state_->committedNames, state_->committedTextures,

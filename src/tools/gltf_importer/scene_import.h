@@ -46,7 +46,7 @@ inline constexpr float kImportedPointLightRangePlaceholder = 10000.0f;
     const cgltf_data& data, const std::filesystem::path& stagingDir, const std::string& name,
     const atlantis::asset_system::AssetGuid& importRoot, const std::string& importRootId, GltfImportSummary& summary,
     std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
-    const atlantis::asset_system::ParsedSceneSource* overlay);
+    const atlantis::asset_system::ParsedSceneSource* overlay, const ManagedImportKeys* keys = nullptr);
 
 // Logical path of mesh primitive (meshIndex, primitiveIndex) -- the one
 // definition both the mesh slice and the scene slice use (human ruling

@@ -320,9 +320,10 @@ atlantis::Result<std::monostate, GltfImportError> checkMaterials(const cgltf_dat
 
 CheckResult collectMaterialAssetGuids(const cgltf_data& data, const fs::path& contentRoot,
                                      const atlantis::asset_system::AssetGuid& root,
-                                     std::vector<atlantis::asset_system::AssetGuid>& guids) {
+                                     std::vector<atlantis::asset_system::AssetGuid>& guids,
+                                     const ManagedImportKeys* keys) {
   for (cgltf_size i = 0; i < data.materials_count; ++i) {
-    guids.push_back(atlantis::asset_system::deriveAssetGuid(root, "material/" + std::to_string(i)));
+    guids.push_back(atlantis::asset_system::deriveAssetGuid(root, materialSubKey(i, keys)));
     const auto used = usedTextures(data.materials[i]);
     if (!used.baseColor) guids.push_back(atlantis::asset_system::deriveAssetGuid(root, "fallback/white"));
     for (const auto* view : {used.baseColor, used.normal, used.emissive}) {
@@ -343,7 +344,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
                                                                  const std::string& importRootId,
                                                                  GltfImportSummary& summary,
                                                                  std::vector<std::string>& reportLines,
-                                                                 std::vector<std::string>& manifestLines) {
+                                                                 std::vector<std::string>& manifestLines,
+                                                                 const ManagedImportKeys* keys) {
   // Textures in first-reference order, deduplicated by logical path.
   struct TextureEntry {
     std::string logicalPath;
@@ -378,7 +380,8 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
 
     ParsedMaterialSource source;
     source.kind = MaterialKind::PbrDirectLit;
-    const auto materialGuid = deriveImportAssetGuid(importRoot, "material/" + std::to_string(i));
+    const auto subKey = materialSubKey(i, keys);
+    const auto materialGuid = deriveImportAssetGuid(importRoot, subKey);
     if (materialGuid.isErr()) return CheckResult::Err(materialGuid.error());
     std::vector<std::string> dropped;
 
@@ -543,14 +546,15 @@ atlantis::Result<std::monostate, GltfImportError> writeMaterials(const cgltf_dat
     }
 
     const std::string text = atlantis::asset_system::serializeMaterialSource(source);
-    const std::string logical = materialLogicalPath(name, i);
+    const std::string logical = keys ? name + "/materials/key_" + keys->materials[i] + ".material.txt"
+                                     : materialLogicalPath(name, i);
     if (!writeFile(stagingDir / logical, text.data(), text.size())) {
       return CheckResult::Err(GltfImportError::OutputWriteFailed);
     }
     materialManifest.push_back("--kind=material --source={import_dir}/" + logical +
                                " --asset-root={import_dir} --output-dir={cooked_dir} --guid=" +
                                atlantis::asset_system::toString(materialGuid.value()) + " --catalog-id=" +
-                               importRootId + "#material/" + std::to_string(i));
+                               importRootId + "#" + subKey);
     summary.materialCount += 1;
   }
 

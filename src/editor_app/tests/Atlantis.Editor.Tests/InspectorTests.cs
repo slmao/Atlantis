@@ -153,7 +153,8 @@ public static partial class Program
                     addToNew || recovery ? "saved_scene" : legacyReadiness || rebuild || reimport || references || moveTexture || tasks || import || newScene || savedPanel || meshPreview || meshMaterialPreview || browse || assetDrag
                         ? "integrated_showcase_demo" : _scene)
                 {
-                    AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow,
+                    AllowSceneSaveAs = _scene == "--new-scene" || lostCreation || savedWorkflow ||
+                        staticGroup && Environment.GetEnvironmentVariable("ATLANTIS_0130_PHASE") == "reimport-place",
                     SavedSceneCheckout = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CHECKOUT") : null,
                     SavedSceneCMake = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_CMAKE") : null,
                     SavedSceneAppHost = savedPanel ? Environment.GetEnvironmentVariable("ATLANTIS_0090_APPHOST") : null,

@@ -282,6 +282,14 @@ struct AssetHost::State final : connection::AssetConnection {
   ac::RebuildStatusResult rebuildStatus(std::optional<ac::RebuildId> id) const override {
     return rebuild_ ? rebuild_->status(id) : ac::RebuildStatusResult::Err(ac::RebuildError::Unavailable);
   }
+  ac::StaticGroupReviewResult staticGroupReimportReview(const ac::StaticGroupReviewRequest& request) override {
+    if (!rebuild_) return ac::StaticGroupReviewResult::Err(ac::RebuildError::Unavailable);
+    if (request.mode == ac::StaticGroupReviewMode::Begin) initialize();
+    return rebuild_->reviewStaticGroup(request, catalog_);
+  }
+  ac::RebuildStartResult commitStaticGroupReimport(const as::AssetGuid& id) override {
+    return rebuild_ ? rebuild_->commitStaticGroup(id) : ac::RebuildStartResult::Err(ac::RebuildError::Unavailable);
+  }
   ac::ImportStartResult importAsset(std::string_view name, ac::ImportMode mode) override {
     if (!rebuild_) return ac::ImportStartResult::Err(ac::ImportError::Unavailable);
     initialize();
@@ -457,6 +465,12 @@ class BorrowedAssets final : public connection::AssetConnection {
     return host_.previewMeshMaterial(meshGuid, materialGuid);
   }
   ac::RebuildStartResult rebuild(const as::AssetGuid& guid) override { return host_.rebuild(guid); }
+  ac::StaticGroupReviewResult staticGroupReimportReview(const ac::StaticGroupReviewRequest& request) override {
+    return host_.staticGroupReimportReview(request);
+  }
+  ac::RebuildStartResult commitStaticGroupReimport(const as::AssetGuid& id) override {
+    return host_.commitStaticGroupReimport(id);
+  }
   ac::RenameTextureResult renameTexture(const ac::RenameTextureRequest& request) override {
     return host_.renameTexture(request);
   }

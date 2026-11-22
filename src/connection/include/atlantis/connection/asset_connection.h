@@ -221,6 +221,41 @@ struct RebuildStatus {
 using RebuildStartResult = Result<RebuildJob, RebuildError>;
 using RebuildStatusResult = Result<RebuildStatus, RebuildError>;
 
+enum class StaticGroupReviewMode : std::uint8_t { Begin, Read, Cancel };
+enum class StaticGroupReviewState : std::uint8_t { Pending, Ready, Blocked, Failed, Expired };
+enum class StaticGroupChange : std::uint8_t { Matched, Added, Removed, Conflict };
+struct StaticGroupReviewRequest {
+  StaticGroupReviewMode mode;
+  asset_system::AssetGuid target;
+};
+struct StaticGroupRevisionRow {
+  std::string label;
+  std::uint32_t index;
+  std::optional<std::uint32_t> slot;
+  std::optional<asset_system::AssetGuid> material;
+  friend bool operator==(const StaticGroupRevisionRow&, const StaticGroupRevisionRow&) = default;
+};
+struct StaticGroupChangeRow {
+  std::string key;
+  asset_system::AssetGuid guid;
+  StaticGroupChange change;
+  std::optional<StaticGroupRevisionRow> before, after;
+  std::string diagnostic;
+  friend bool operator==(const StaticGroupChangeRow&, const StaticGroupChangeRow&) = default;
+};
+struct StaticGroupReview {
+  asset_system::AssetGuid id, scene;
+  GenerationId generation;
+  std::string name;
+  StaticGroupReviewState state;
+  std::string diagnostic;
+  std::vector<StaticGroupChangeRow> rows;
+  friend bool operator==(const StaticGroupReview&, const StaticGroupReview&) = default;
+};
+using StaticGroupReviewResult = Result<StaticGroupReview, RebuildError>;
+[[nodiscard]] std::optional<json::Value> encodeStaticGroupReview(const StaticGroupReview&);
+[[nodiscard]] std::optional<StaticGroupReview> decodeStaticGroupReview(const json::Value&);
+
 enum class RenameTextureError : std::uint8_t {
   Unsupported, Unavailable, Busy, WorkspaceNeedsRepair, CatalogUnavailable, UnknownAsset,
   UnsupportedProducer, InvalidName, NameConflict, StaleSnapshot, Unchanged,
@@ -502,6 +537,14 @@ class AssetConnection {
   // failure before using a transport failure's CatalogUnavailable sentinel.
   [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
+  }
+  // Spec 0139. Call on the connection owner thread. Results own their rows.
+  // Remote failure uses Unavailable. Inspect the session before retrying an uncertain Confirm.
+  [[nodiscard]] virtual assets::StaticGroupReviewResult staticGroupReimportReview(const assets::StaticGroupReviewRequest&) {
+    return assets::StaticGroupReviewResult::Err(assets::RebuildError::Unsupported);
+  }
+  [[nodiscard]] virtual assets::RebuildStartResult commitStaticGroupReimport(const asset_system::AssetGuid&) {
+    return assets::RebuildStartResult::Err(assets::RebuildError::Unsupported);
   }
   [[nodiscard]] virtual assets::ProjectScanResult scanProject() {
     return assets::ProjectScanResult::Err(assets::ProjectScanError::Unsupported);

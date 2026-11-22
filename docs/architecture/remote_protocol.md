@@ -318,6 +318,8 @@ the same Runtime launch before taking another explicit action.
 |---|---|---|
 | `assets.list` | `{}` | `{"ok":[<AssetSummary>…]}` in strictly increasing GUID order |
 | `assets.get` | `{"guid":"<non-nil canonical asset GUID>"}` | `{"ok":<AssetDetails>}` |
+| `assets.staticGroupReimportReview` | `{"mode":"begin","scene":"<Scene GUID>"}` or `{"mode":"read","id":"<review GUID>"}` or `{"mode":"cancel","id":"<review GUID>"}` | `{"ok":<StaticGroupReview>}` or a rebuild refusal |
+| `assets.commitStaticGroupReimport` | `{"id":"<Ready review GUID>"}` | `{"ok":<Running RebuildJob>}` or a rebuild refusal |
 | `assets.staticGroup` | `{"guid":"<non-nil canonical Scene GUID>"}` | `{"ok":<StaticGroup>}` |
 | `assets.prefab` | `{"guid":"<non-nil canonical Prefab GUID>"}` | `{"ok":<StaticGroup>}` with a `name` on each node and one root, up to 64 nodes |
 | `assets.prefabRevision` | `{"guid":"<non-nil canonical Prefab GUID>"}` | In-band `{prefab,revision}` or StaticGroupError from the same frozen definition |
@@ -1085,3 +1087,24 @@ non-nil. Refusals are `{"err":"Code"}`, where Code is `InvalidRequest`,
 `NotPresented`, `ActivePolicy`, `NoGeometry`, `Miss`, `Ambiguous`,
 `UnsupportedBinding`, or `TooLarge`. Prior hosts refuse the unknown method.
 The ordinary raycast and hosted selection pick shapes are unchanged.
+
+### Registered static glTF reimport (0139)
+
+The same named Runtime generation supplies the original keyed glTF and
+the catalog used by the review. Begin returns a `Pending` receipt, with
+`id`, `scene`, `generation` (all non-nil canonical GUIDs), `name`,
+`state`, `diagnostic` and `rows`. Read returns the retained receipt.
+Cancel changes it to `Expired` with no publication. Other states are
+`Ready`, `Blocked` and `Failed`. An unretained or already consumed ID
+returns `UnknownJob`. The complete payload is limited to 64 KiB.
+
+A row contains `key`, `guid`, `change`, `before`, `after`, and
+`diagnostic`. Change is `Matched`, `Added`, `Removed`, or `Conflict`.
+A revision is null or an object containing `label`, zero-based `index`,
+nullable zero-based `slot` and nullable material GUID `material`. Null
+material on a mesh slot represents no explicit material. Only a
+complete `Ready` review can be confirmed. The one-use confirmation is
+settled via `assets.rebuildStatus` using the returned job ID. A lost
+confirmation receipt is an unknown outcome. Check settlement before
+trying again. Publication uses the existing explicit activation flow.
+Earlier hosts refuse the methods as unsupported.

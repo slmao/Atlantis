@@ -123,6 +123,10 @@ internal static partial class Program
             """{"ok":{"activeGeneration":null,"job":null,"workspaceNeedsRepair":true}}"""),
         ("assets.rebuild", "assets.rebuild", $$$"""{"asset":"{{{Entity}}}"}""",
             $$$"""{"ok":{"id":"{{{Entity}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
+        ("assets.static_group_reimport_review", "assets.staticGroupReimportReview", $$$"""{"mode":"begin","scene":"{{{Entity}}}"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","scene":"{{{Entity}}}","generation":"{{{Material}}}","name":"storefront","state":"Pending","diagnostic":"","rows":[]}}"""),
+        ("assets.commit_static_group_reimport", "assets.commitStaticGroupReimport", $$$"""{"id":"{{{Material}}}"}""",
+            $$$"""{"ok":{"id":"{{{Material}}}","asset":"{{{Entity}}}","state":"Running"}}"""),
         ("assets.rebuild_status", "assets.rebuildStatus", "{}", """{"ok":{"activeGeneration":null,"job":null}}"""),
         ("world.list_entities", "connection.listEntities", "{}", $$$"""["{{{Entity}}}"]"""),
         ("world.get_property", "connection.getProperty", "{\"address\":" + WorldAddress + "}", """{"ok":{"u64":"18446744073709551615"}}"""),
@@ -271,7 +275,8 @@ internal static partial class Program
             Check(Json.Write(session.Calls[0].Parameters) == Json.Write(Json.Parse(c.Args)), c.Tool + " arguments unchanged");
             CheckAssetResult(result, c.Method, c.Result, c.Tool);
             string description = ToolRegistry.Mappings.Single(m => m.Tool.Name == c.Tool).Tool.Description ?? "";
-            Check(c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
+            Check(c.Tool is "assets.static_group_reimport_review" or "assets.commit_static_group_reimport" ? description.Contains("Runtime restart") :
+                c.Tool == "assets.rebuild" ? description.Contains("Admit a rebuild") && description.Contains("Runtime restart") :
                 c.Tool == "assets.rename_texture" ? description.Contains("display rename") && description.Contains("Runtime restart") :
                 c.Tool == "assets.move_texture" ? description.Contains("logical Assets move") && description.Contains("Runtime restart") :
                 c.Tool == "assets.check_texture_removal" ? description.Contains("reference check") && description.Contains("Runtime restart") :
@@ -583,7 +588,8 @@ internal static partial class Program
                 "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
                 "authoring.discardRecovery" or "control.viewportNavigation" or "control.pickAlignmentFaces" or "control.pickMaterialBinding" or
                 "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport" or
-                "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
+                "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture" or
+                "assets.staticGroupReimportReview" or "assets.commitStaticGroupReimport")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");
                 continue;

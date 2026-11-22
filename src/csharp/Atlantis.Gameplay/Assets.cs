@@ -87,6 +87,15 @@ public enum TextureReferenceSlot { BaseColor, Normal, MetallicRoughness, Occlusi
 public sealed record TextureRemovalBlocker(AssetGuid Asset, string Source, TextureReferenceSlot? Slot);
 public sealed record TextureRemovalCheck(TextureRemovalCheckId Id, AssetGuid Asset, GenerationId ExpectedGeneration,
     TextureRemovalState State, IReadOnlyList<TextureRemovalBlocker> Blockers, bool Truncated, bool Incomplete, string Diagnostic);
+public enum StaticGroupReviewMode { Begin, Read, Cancel }
+public enum StaticGroupReviewState { Pending, Ready, Blocked, Failed, Expired }
+public enum StaticGroupChange { Matched, Added, Removed, Conflict }
+public sealed record StaticGroupRevisionRow(string Label, uint Index, uint? Slot, AssetGuid? Material);
+public sealed record StaticGroupChangeRow(string Key, AssetGuid Guid, StaticGroupChange Change,
+    StaticGroupRevisionRow? Before, StaticGroupRevisionRow? After, string Diagnostic);
+public sealed record StaticGroupReview(AssetGuid Id, AssetGuid Scene, GenerationId Generation, string Name,
+    StaticGroupReviewState State, string Diagnostic, IReadOnlyList<StaticGroupChangeRow> Rows);
+
 public enum RebuildState { Running, Succeeded, Failed }
 public enum RebuildStage { Launch, Pipeline, Validation, Publication }
 public enum RebuildFailureCode { LaunchFailed, BuildFailed, InvalidOutput, IdentityChanged, PublishFailed, TimedOut }
