@@ -1,8 +1,11 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
@@ -137,6 +140,23 @@ public static partial class Program
             "Inspector focus on the confirmed missing material field", 30);
         await NativeCapture(window, Path.Combine(evidence, "located-inspector.png"));
 
+        // Withhold one unrelated property on the real Runtime connection.
+        // The other node with a proved absence must still be reported.
+        typeof(MainWindow).GetMethod("SetSelection", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, [storefront.Node, true]);
+        View<ComboBox>("_scope").SelectedIndex = 1;
+        var another = subtree.Where(row => row.Node != target.Node)
+            .Select(row => SceneSchema.AddressOf(peer.Authoring.Schema, row.Node, "Renderable", "materialAsset")!.Value)
+            .First(field => peer.Authoring.GetProperty(field).IsOk);
+        await WithStatisticsPropertyWithheld(Field<EditorWorker>("_worker"), SessionFile.Read(runtime.SessionPath), another,
+            async () =>
+            {
+                var partial = await Refresh("incomplete", complete: false);
+                Require(!partial.ReferencesComplete && partial.Missing.Single().Address == address &&
+                    View<TextBlock>("_references").Text!.StartsWith("Check incomplete", StringComparison.Ordinal),
+                    "a withheld binding leaves confirmed missing rows visible with incomplete coverage");
+            });
+
         var repaired = await Apply(original, ApplyState.Applied);
         Require(repaired.Generation > sample.Status.SceneGeneration, "explicit Apply activated the repaired projection");
         await NameUiWait(() => !locate.IsEnabled, "old diagnostic disabled after external repair");
@@ -171,6 +191,73 @@ public static partial class Program
             await NameUiWait(() => (request = peer.Authoring.ApplyStatus(sent.Value!.Id).Value?.Request)?.State == expected,
                 "Apply settles " + expected, 60);
             return request!;
+        }
+    }
+
+    private static async Task WithStatisticsPropertyWithheld(EditorWorker worker, SessionInfo host,
+        SceneAddress withheld, Func<Task> check)
+    {
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(55));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        Task relay = Task.Run(Relay);
+        using var throughRelay = await Task.Run(() => RemoteSession.Connect(
+            host with { Port = (ushort)((IPEndPoint)listener.LocalEndpoint).Port }));
+        const BindingFlags hidden = BindingFlags.Instance | BindingFlags.NonPublic;
+        var enqueue = typeof(EditorWorker).GetMethod("Enqueue", hidden)!;
+        var wire = typeof(RemoteAuthoringDocument).GetField("_wire", hidden)!;
+        var document = typeof(EditorWorker).GetField("_document", hidden)!;
+        var original = wire.GetValue(document.GetValue(worker));
+        async Task Swap(object? value)
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            enqueue.Invoke(worker, [new Action<RemoteSession>(_ =>
+            {
+                wire.SetValue(document.GetValue(worker), value);
+                done.SetResult();
+            })]);
+            await done.Task.WaitAsync(stop.Token);
+        }
+
+        try
+        {
+            await Swap(throughRelay);
+            await check();
+        }
+        finally
+        {
+            await Swap(original);
+            throughRelay.Dispose();
+            stop.Cancel();
+            try { await relay.WaitAsync(TimeSpan.FromSeconds(5)); }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        }
+
+        async Task Relay()
+        {
+            using var client = await listener.AcceptTcpClientAsync(stop.Token);
+            using var real = new TcpClient();
+            await real.ConnectAsync(IPAddress.Loopback, host.Port, stop.Token);
+            using var input = new StreamReader(client.GetStream());
+            using var output = new StreamWriter(client.GetStream()) { AutoFlush = true, NewLine = "\n" };
+            using var requests = new StreamWriter(real.GetStream()) { AutoFlush = true, NewLine = "\n" };
+            using var responses = new StreamReader(real.GetStream());
+            while (await input.ReadLineAsync(stop.Token) is string text)
+            {
+                var request = Json.Parse(text);
+                if (request.Find("method")?.AsString == "authoring.getProperty" &&
+                    request.Find("params")?.Find("address") is { } field &&
+                    Json.Write(field) == Json.Write(Codec.Encode(withheld)))
+                {
+                    var refused = JsonValue.NewObject().Set("id", request.Find("id")!)
+                        .Set("result", JsonValue.NewObject().Set("err", JsonValue.String("ComponentMissing")));
+                    await output.WriteLineAsync(Json.Write(refused).AsMemory(), stop.Token);
+                    continue;
+                }
+                await requests.WriteLineAsync(text.AsMemory(), stop.Token);
+                var reply = await responses.ReadLineAsync(stop.Token) ?? throw new IOException("Runtime closed the relay.");
+                await output.WriteLineAsync(reply.AsMemory(), stop.Token);
+            }
         }
     }
 }
