@@ -429,3 +429,35 @@ TEST_CASE("hosted viewport uses exclusive stamped policy across two clients", "[
   REQUIRE(observer->control().setViewportVisibility(restored.value().stamp, policy).isOk());
   CHECK(editor->control().viewportVisibility().value().owner == O::Other);
 }
+
+TEST_CASE("viewport visibility wire bounds and presented stamps are exact", "[remote][visibility]") {
+  namespace codec = atlantis::remote::codec;
+  namespace json = atlantis::connection::json;
+  using E = connection::ViewportVisibilityError;
+  connection::ViewportPolicy policy{};
+  for (std::size_t i = 1; i <= connection::kViewportVisibilityEntries; ++i) {
+    atlantis::asset_system::EntityGuid id;
+    id.bytes[14] = static_cast<std::byte>(i >> 8);
+    id.bytes[15] = static_cast<std::byte>(i & 255);
+    policy.hidden.push_back(id);
+  }
+  CHECK_FALSE(connection::validateViewportPolicy(policy));
+  E refusal{};
+  CHECK(codec::decodeViewportPolicy(codec::encode(policy), refusal) == policy);
+  policy.locked.push_back(policy.hidden.back());
+  CHECK_FALSE(codec::decodeViewportPolicy(codec::encode(policy), refusal));
+  CHECK(refusal == E::TooLarge);
+  policy.locked.clear();
+  policy.hidden.erase(policy.hidden.begin() + 1, policy.hidden.end());
+  policy.isolated.emplace();
+  CHECK_FALSE(codec::decodeViewportPolicy(codec::encode(policy), refusal));
+  CHECK(refusal == E::InvalidRequest);
+  const connection::ViewportStamp stamp{5, 8};
+  const std::array rays{connection::Ray{}};
+  const auto miss = codec::encode(connection::ViewportPick{stamp, std::optional<connection::RayHit>{}});
+  CHECK(codec::decodeViewportPick(miss, stamp, connection::ViewportPickKind::Selection, rays));
+  CHECK_FALSE(codec::decodeViewportPick(miss, {5, 7}, connection::ViewportPickKind::Selection, rays));
+  const auto malformed = json::parse(R"({"sceneGeneration":5,"revision":8,"hit":{"entity":"01360136-0136-4136-8136-013600000001","distance":-1}})");
+  REQUIRE(malformed.isOk());
+  CHECK_FALSE(codec::decodeViewportPick(malformed.value(), stamp, connection::ViewportPickKind::Selection, rays));
+}
