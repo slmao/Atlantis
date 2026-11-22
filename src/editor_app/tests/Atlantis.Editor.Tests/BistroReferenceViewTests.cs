@@ -815,7 +815,7 @@ public static partial class Program
         var review = MaterialBindingReview.Parse(File.ReadAllText(Environment.GetEnvironmentVariable("ATLANTIS_0138_REVIEW_NOTE")!))!;
         var other = new EntityGuid(Guid.Parse(Environment.GetEnvironmentVariable("ATLANTIS_0138_CONTROL_NODE")!));
         const string name = "material_slot";
-        string source = Path.Combine(checkout, "assets", "scenes", "saved", "save_" + name, "scene.scene.txt");
+        string source = Path.GetFullPath(Path.Combine(checkout, "assets", "scenes", "saved", "save_" + name, "scene.scene.txt"));
         Field<TabControl>("_assetTabs").SelectedIndex = 2;
         var scenes = Field<ListBox>("_savedList");
         await NameUiWait(() => scenes.Items.Contains(name), "same scene appears in Saved Scenes");
