@@ -464,6 +464,40 @@ public sealed class RemoteControl
             JsonValue.NewObject().Set("camera", camera is null ? JsonValue.Null() : Codec.Encode(camera)));
 
     /// <summary>Reads bounds and the Runtime's active scene camera in one snapshot. Empty targets read only the camera.</summary>
+    public ViewportReply<ViewportVisibility> ViewportVisibility() =>
+        ViewportCall("control.viewportVisibility", JsonValue.NewObject(), Codec.DecodeViewportVisibility);
+
+    public ViewportReply<ViewportVisibility> SetViewportVisibility(ViewportStamp expected, ViewportPolicy? policy)
+    {
+        if (policy?.Validate() is { } error) return new(null, new(error));
+        var parameters = Codec.Encode(expected).Set("policy", policy is null ? JsonValue.Null() : Codec.Encode(policy));
+        return ViewportCall("control.setViewportVisibility", parameters, value =>
+            Codec.DecodeViewportVisibility(value) is { } state && state.Acknowledges(expected, policy) ? state : null);
+    }
+
+    public ViewportReply<ViewportPick> PickViewport(ViewportStamp expected, ViewportPickKind kind, IReadOnlyList<Ray> rays)
+    {
+        if (!Enum.IsDefined(kind) || rays.Count == 0 ||
+            rays.Count > (kind == ViewportPickKind.Alignment ? 2 : 1))
+            return new(null, new(ViewportVisibilityError.InvalidRequest));
+        var items = JsonValue.NewArray();
+        foreach (var ray in rays)
+        {
+            if (!Codec.IsAlignmentRay(ray)) return new(null, new(ViewportVisibilityError.InvalidRequest));
+            items.Push(Codec.Encode(ray));
+        }
+        var parameters = Codec.Encode(expected).Set("kind", JsonValue.String(kind.ToString())).Set("rays", items);
+        return ViewportCall("control.pickViewport", parameters,
+            value => Codec.DecodeViewportPick(value, expected, kind, rays), kind == ViewportPickKind.Alignment ? rays : null);
+    }
+
+    private ViewportReply<T> ViewportCall<T>(string method, JsonValue parameters, Func<JsonValue,T?> decode,
+        IReadOnlyList<Ray>? alignmentRays = null) where T : class
+    {
+        var response = _session.AwaitResponse(_session.Send(method, parameters));
+        return Codec.DecodeViewportReply(response, method, decode, alignmentRays) ?? throw _session.Malformed(method);
+    }
+
     public AlignmentFacesResult PickAlignmentFaces(IReadOnlyList<Ray> rays)
     {
         const string method = "control.pickAlignmentFaces";

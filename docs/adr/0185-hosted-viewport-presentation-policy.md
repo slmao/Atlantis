@@ -1,9 +1,9 @@
 # ADR 0185 — Hosted Viewport Presentation Policy
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainers
-- **Acceptance:** Pending joint review.
+- **Acceptance:** Maintainer approved Spec/Plan 0136 and J1–J4 and accepted ADR-0185 at `dd1cabb7`. [Joint review](https://github.com/slmao/Atlantis/pull/435#issuecomment-7074643696). Design merged by the maintainer as `6b27ef35`.
 - **Related Spec:** [Spec 0136](../specs/0136-viewport-visibility-picking.md)
 
 ## Context

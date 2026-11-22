@@ -32,6 +32,8 @@ constexpr std::string_view kUsage =
     "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]\n"
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
+    "  runtime visibility status | set GEN REV [--hide GUID] [--lock GUID] [--keep GUID] | clear GEN REV\n"
+    "  runtime visibility pick GEN REV selection|alignment --origin X Y Z --direction X Y Z [<second ray>]\n"
     "  runtime alignment faces --origin <x> <y> <z> --direction <x> <y> <z> [<second ray>]\n"
     "  runtime camera navigation [GUID ...]\n"
     "  runtime overlay set <file|-> | runtime overlay select <guid>... | runtime overlay clear\n"

@@ -489,9 +489,7 @@ public sealed partial class MainWindow : Window
         _entities.AddHandler(KeyDownEvent, OnHierarchyKeyDown, RoutingStrategies.Tunnel);
         _entities.ItemTemplate = new FuncDataTemplate<HierarchyRow>((row, _) =>
         {
-            string text = row?.Label ?? "";
-            if (row is not null && _hierarchyFilter.Active && !_hierarchyProjection.Matches(row.Node))
-                text = "Path · " + text;
+            string text = ViewportHierarchyLabel(row);
             var label = EditorVisuals.Ellipsis(text);
             label.Margin = new Thickness(Math.Min(row?.Depth ?? 0, 7) * 12, 0, 0, 0);
             ToolTip.SetTip(label, text);
@@ -708,7 +706,8 @@ public sealed partial class MainWindow : Window
         var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(
             _duplicate, _destroy, _toRoot, _pickUp, _moveHere, _moveUp, _moveDown));
         structuralButtons.MaxHeight = 130;
-        var structural = EditorVisuals.Stack(4, structuralButtons, EditorVisuals.Actions(_prefabName, _savePrefab), _duplicateState);
+        var structural = EditorVisuals.Stack(4, structuralButtons, BuildVisibilityHierarchyActions(),
+            EditorVisuals.Actions(_prefabName, _savePrefab), _duplicateState);
         var actions = new ToggleButton { Content = "Actions" };
         structural.IsVisible = false;
         actions.IsCheckedChanged += (_, _) => structural.IsVisible = actions.IsChecked == true;
@@ -747,7 +746,8 @@ public sealed partial class MainWindow : Window
         AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
         AddDocked(view, new Grid { Height = 18, Children = { _viewportNavFeedback, _viewportPlacementFeedback } },
             Avalonia.Controls.Dock.Top);
-        AddDocked(view,BuildAlignmentControls(),Dock.Top);
+        AddDocked(view, BuildAlignmentControls(), Dock.Top);
+        AddDocked(view, BuildVisibilityToolbar(), Dock.Top);
         _bistroViewportArea.Children.Add(_viewport);
         view.Children.Add(_bistroViewportArea);
         AutomationProperties.SetName(_gizmoMode, "Transform mode");
@@ -1166,6 +1166,10 @@ public sealed partial class MainWindow : Window
             SessionPath = sessionPath,
             Recorder = _recorder,
         };
+        worker.HostedVisibilityChanged += (state, unknown, notice) =>
+        {
+            if (ReferenceEquals(_worker, worker) && !_shuttingDown) PublishViewportVisibility(state, unknown, notice);
+        };
         worker.PersistenceChanged += state =>
         {
             if (ReferenceEquals(_worker, worker) && !_shuttingDown) ShowDocumentState(state);
@@ -1228,6 +1232,7 @@ public sealed partial class MainWindow : Window
             UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
+            PublishViewportVisibility(null, false, "Temporary viewport settings cleared on disconnect.");
             CancelAlignment("Alignment connection closed. Inspect the document before retrying a sent confirmation.");
             UpdateAlignmentControls();
             _taskIssues.Disconnect();
@@ -1461,6 +1466,12 @@ public sealed partial class MainWindow : Window
             UpdateStatus();
         };
         _worker = worker;
+        PublishViewportVisibility(null, false, null);
+        if (hosted)
+        {
+            _visibilityBusy = true;
+            worker.ProbeHostedVisibility();
+        }
         worker.Start();
         UpdateStatus();
     }
@@ -1823,7 +1834,8 @@ public sealed partial class MainWindow : Window
     {
         if (_leaveInProgress || _recoveryDecision) return;
         if (_recorder is not null && MeasureDrag(e)) return;
-        if (_alignmentId is null)
+        if (_alignmentId is null && ViewportVisibilityReady &&
+            (_viewportMembership is null || _selection.Nodes.All(_viewportMembership.Pickable)))
         {
             if (GroupGizmoPointer(e)) return;
             if (GizmoPointer(e)) return;
@@ -1894,6 +1906,11 @@ public sealed partial class MainWindow : Window
     {
         ViewportWindow? window = _viewport.Window;
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
+        if (!ViewportVisibilityReady)
+        {
+            CheckViewportVisibility();
+            return;
+        }
         CameraMatrices? matrices = ViewportProjection(window);
         if (matrices is null) return;
         if (_alignmentId is not null)
@@ -1904,11 +1921,22 @@ public sealed partial class MainWindow : Window
         ulong request = ++_pickRequest;
         // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
         var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
-        if (Picking.PickMarker(_markers, matrices, rect, x, y) is EntityGuid marker)
+        var markers = _viewportMembership is { } membership
+            ? _markers.Where(marker => membership.Pickable(marker.Entity)).ToArray() : _markers;
+        if (Picking.PickMarker(markers, matrices, rect, x, y) is EntityGuid marker)
         {
-            SetSelection(marker, true);
-            _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
-            UpdateStatus();
+            var worker = _worker;
+            long camera = _viewportCameraIntent;
+            void SelectMarker()
+            {
+                if (request != _pickRequest || !ReferenceEquals(worker, _worker) || camera != _viewportCameraIntent ||
+                    !ViewportVisibilityReady || _viewportMembership?.Pickable(marker) == false) return;
+                SetSelection(marker, true);
+                _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
+                UpdateStatus();
+            }
+            if (_viewportVisibility is null) SelectMarker();
+            else worker.ConfirmViewportMarker(marker, worker.VisibilityIntent, SelectMarker);
             return;
         }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;
@@ -1925,6 +1953,7 @@ public sealed partial class MainWindow : Window
         }
         else if (pick.Result.Hit is RayHit hit)
         {
+            if (!ViewportVisibilityReady || _viewportMembership?.Pickable(hit.Entity) == false) return;
             SetSelection(hit.Entity, true);
             _pickLine = string.Format(CultureInfo.InvariantCulture, "pick: {0} at {1:F3} ({2:F1} ms)", hit.Entity, hit.Distance,
                                       pick.InputToAnswerMs);
@@ -2102,6 +2131,7 @@ public sealed partial class MainWindow : Window
 
     private void UpdateHierarchyActions()
     {
+        UpdateVisibilityActions();
         UpdateSavePrefab();
         if (GroupEditRefusal() is not null || _selection.Nodes.Count != 1 || _hierarchyFilter.Active)
         {
@@ -2842,7 +2872,8 @@ public sealed partial class MainWindow : Window
         if (operation is not ("enter" or "over" or "drop") || _viewportPlacement is not { } gesture ||
             _worker is not { } worker || _viewport.Window is not { } view) return false;
         string? refusal = AssetDropRefusal(gesture.Drag, null);
-        if (refusal is not null || _groupGrab is not null || ViewportProjection(view) is not { } camera)
+        if (refusal is not null || _groupGrab is not null || !ViewportVisibilityReady ||
+            ViewportProjection(view) is not { } camera)
         {
             ClearViewportPlacementHover(refusal ?? "Wait for the Viewport to settle.");
             return false;
@@ -2875,7 +2906,7 @@ public sealed partial class MainWindow : Window
             var ray = CameraConvention.RayThroughNdc(camera, ((float)x / view.Width) * 2 - 1,
                 ((float)y / view.Height) * 2 - 1);
             gesture.Move(new PlacementRay(x, y, view.Width, view.Height, _viewportCameraIntent,
-                _sceneProjection ?? _camera.Pose(), ray));
+                _sceneProjection ?? _camera.Pose(), ray) { VisibilityIntent = worker.VisibilityIntent });
             ShowPlacementStatus(EditorVisuals.AssetName(gesture.Drag.Asset) + " · Finding surface…");
             if (!_viewportPlacementTimer.IsEnabled) _viewportPlacementTimer.Start();
         }

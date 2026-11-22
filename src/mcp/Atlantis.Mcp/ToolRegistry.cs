@@ -187,6 +187,16 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("request", ToolSchemas.StepRequest))),
         Declare("control.raycast", "control.raycast", "Read the nearest mesh hit or null; NoGeometry when pick geometry is unavailable.", ControlModel,
             ToolSchemas.Parameters(("ray", ToolSchemas.Ray))),
+        Declare("control.viewport_visibility", "control.viewportVisibility",
+            "Read the hosted viewport policy stamp and caller ownership.", ControlModel, ToolSchemas.Parameters()),
+        Declare("control.set_viewport_visibility", "control.setViewportVisibility",
+            "Replace the hosted viewport policy at the expected stamp. Null restores the default view.", ControlModel,
+            ToolSchemas.Parameters(("sceneGeneration", ToolSchemas.Integer), ("revision", ToolSchemas.Integer),
+                ("policy", ToolSchemas.VisibilityPolicy))),
+        Declare("control.pick_viewport", "control.pickViewport",
+            "Pick against a presented viewport revision with one selection ray or one or two alignment rays.", ControlModel,
+            ToolSchemas.Parameters(("sceneGeneration", ToolSchemas.Integer), ("revision", ToolSchemas.Integer),
+                ("kind", ToolSchemas.ViewportPickKind), ("rays", ToolSchemas.AlignmentRays))),
         Declare("control.pick_alignment_faces", "control.pickAlignmentFaces",
             "Read checked rectangular first-hit faces for one or two ordered world-space rays.", ControlModel,
             ToolSchemas.Parameters(("rays", ToolSchemas.AlignmentRays))),
@@ -270,6 +280,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return DocumentOperation(mapping.Method, wireParameters);
             if (mapping.Method is "authoring.recoveryStatus" or "authoring.restoreRecovery" or "authoring.discardRecovery")
                 return RecoveryOperation(mapping.Method, wireParameters);
+            if (mapping.Method is "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport")
+                return ViewportPolicyCall(mapping.Method, wireParameters);
             if (mapping.Method == "control.pickAlignmentFaces") return PickAlignmentFaces(wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
@@ -487,6 +499,46 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             return Error("ProtocolError: " + unknown);
         }
         catch (RemoteException error) { return Error(mayHaveSent ? error.Message + " " + unknown : error.Message); }
+    }
+
+    private CallToolResult ViewportPolicyCall(string method, JsonValue parameters)
+    {
+        CallToolResult Exchange<T>(Func<JsonValue,T?> decode, IReadOnlyList<Ray>? alignment = null) where T : class
+        {
+            var response = session.Request(method, parameters);
+            if (Codec.DecodeViewportReply(response, method, decode, alignment) is not { } typed)
+                return Error("ProtocolError: malformed viewport policy reply");
+            if (typed.Value is not null) return Forward(response.Find("result")!, false);
+            if (typed.Error is not { } error) return Error("ProtocolError: missing viewport refusal");
+            if (error.Code == ViewportVisibilityError.RpcFailure) return Error(error.Detail ?? "RPC failure");
+            return Forward(response.Find("result") ?? Codec.Err(JsonValue.NewObject()
+                .Set("code", JsonValue.String(error.Code.ToString()))), true);
+        }
+
+        if (method == "control.viewportVisibility") return Exchange(Codec.DecodeViewportVisibility);
+        if (Codec.DecodeViewportStamp(parameters) is not ViewportStamp stamp)
+            return Error("InvalidArguments: expected scene generation and policy revision");
+        if (method == "control.setViewportVisibility")
+        {
+            if (parameters.Find("policy") is not { } value) return Error("InvalidArguments: policy required");
+            ViewportPolicy? policy = null;
+            if (!value.IsNull && (policy = Codec.DecodeViewportPolicy(value, out var problem)) is null)
+                return Forward(Codec.Err(JsonValue.NewObject().Set("code", JsonValue.String(problem.ToString()))), true);
+            ViewportVisibility? Read(JsonValue result) => Codec.DecodeViewportVisibility(result) is { } state &&
+                state.Acknowledges(stamp, policy) ? state : null;
+            return Exchange<ViewportVisibility>(Read);
+        }
+        var kind = parameters.Find("kind")?.AsString switch
+        {
+            "Selection" => ViewportPickKind.Selection,
+            "Alignment" => ViewportPickKind.Alignment,
+            _ => (ViewportPickKind?)null
+        };
+        if (kind is not ViewportPickKind mode || parameters.Find("rays") is not { } input ||
+            Codec.DecodeViewportRays(input, mode) is not { } rays)
+            return Error("InvalidArguments: expected valid rays for the specified viewport pick");
+        return Exchange(result => Codec.DecodeViewportPick(result, stamp, mode, rays),
+            mode == ViewportPickKind.Alignment ? rays : null);
     }
 
     private CallToolResult PickAlignmentFaces(JsonValue parameters)

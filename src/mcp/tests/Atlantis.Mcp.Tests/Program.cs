@@ -181,6 +181,14 @@ internal static partial class Program
         ("control.resume", "control.resume", "{}", "null"),
         ("control.step", "control.step", """{"request":{"frames":2,"image":null,"withOverlay":true}}""", """{"ok":{"frame":2,"applied":true,"data":{"directionalLights":[],"pointLights":[],"view":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"projection":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"drawItemCount":3},"image":null}}"""),
         ("control.raycast", "control.raycast", """{"ray":{"origin":[0,1,2],"direction":[0,0,-1]}}""", $$$"""{"ok":{"entity":"{{{Entity}}}","distance":1e-05}}"""),
+        ("control.viewport_visibility", "control.viewportVisibility", "{}",
+            """{"ok":{"sceneGeneration":4,"revision":7,"presented":true,"owner":"None","policy":null}}"""),
+        ("control.set_viewport_visibility", "control.setViewportVisibility",
+            """{"sceneGeneration":4,"revision":7,"policy":null}""",
+            """{"ok":{"sceneGeneration":4,"revision":8,"presented":false,"owner":"None","policy":null}}"""),
+        ("control.pick_viewport", "control.pickViewport",
+            """{"sceneGeneration":4,"revision":8,"kind":"Selection","rays":[{"origin":[0,0,2],"direction":[0,0,-1]}]}""",
+            """{"ok":{"sceneGeneration":4,"revision":8,"hit":null}}"""),
         ("control.pick_alignment_faces", "control.pickAlignmentFaces",
             """{"rays":[{"origin":[0,0,2],"direction":[0,0,-1]}]}""",
             $$$"""{"ok":{"sceneGeneration":7,"faces":[{"entity":"{{{Entity}}}","mesh":"{{{Material}}}","triangles":[2,3],"distance":2,"corners":[[-1,-1,0],[1,-1,0],[1,1,0],[-1,1,0]],"normal":[0,0,1],"worldMatrix":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]}]}}"""),
@@ -571,6 +579,7 @@ internal static partial class Program
                 "authoring.syncPrefab" or "authoring.replayPrefab" or "authoring.documentState" or "authoring.saveIfCurrent" or
                 "authoring.reopenIfCurrent" or "authoring.recoveryStatus" or "authoring.restoreRecovery" or
                 "authoring.discardRecovery" or "control.viewportNavigation" or "control.pickAlignmentFaces" or
+                "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport" or
                 "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
             {
                 Check(result.IsError == true, "typed tool rejects the non-DTO echo response");

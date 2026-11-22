@@ -4,7 +4,10 @@ using Atlantis.Gameplay;
 
 namespace Atlantis.Editor.Model;
 
-public sealed record PlacementRay(int X, int Y, int Width, int Height, long CameraIntent, CameraPose Pose, PickRay Ray);
+public sealed record PlacementRay(int X, int Y, int Width, int Height, long CameraIntent, CameraPose Pose, PickRay Ray)
+{
+    public ulong VisibilityIntent { get; init; }
+}
 
 /// <summary>Only the exact current hover sample may be displayed or admitted.</summary>
 public sealed class MeshPlacementGesture(AssetDragIntent drag)

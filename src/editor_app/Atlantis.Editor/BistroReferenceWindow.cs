@@ -63,12 +63,13 @@ public sealed partial class MainWindow
     }
 
     private bool BistroAllowed =>
-        _worker is { } worker && (_bistroBuiltIn || (_canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime));
+        BistroVisibilityAllowed && _worker is { } worker &&
+        (_bistroBuiltIn || (_canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime));
 
     private void UpdateBistroActions(bool navigation)
     {
         bool hosted = _options.AttachSession is null && _viewport.Window?.RuntimeChildIsHosted() == true;
-        _bistroViews.IsEnabled = navigation && hosted && (BistroAllowed || _canAddMeshToDocument);
+        _bistroViews.IsEnabled = navigation && hosted && BistroVisibilityAllowed && (BistroAllowed || _canAddMeshToDocument);
         _bistroEnable.IsVisible = !BistroAllowed && _canAddMeshToDocument;
         _bistroStreet.IsEnabled = _bistroTerrace.IsEnabled = BistroAllowed;
         _bistroExit.IsEnabled = _bistroView is not null;

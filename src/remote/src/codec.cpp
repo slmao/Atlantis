@@ -1545,6 +1545,172 @@ std::optional<connection::AlignmentFaces> decodeAlignmentFaces(const Value& valu
 }
 
 
+Value encode(const connection::ViewportStamp& value) {
+  Value out = Value::object();
+  out.set("sceneGeneration", Value::number(value.sceneGeneration));
+  out.set("revision", Value::number(value.revision));
+  return out;
+}
+
+std::optional<connection::ViewportStamp> decodeViewportStamp(const Value& value) {
+  if (!value.isObject()) return {};
+  const auto* generation = value.find("sceneGeneration");
+  const auto* revision = value.find("revision");
+  const auto g = generation ? decodeUInt64(*generation) : std::nullopt;
+  const auto r = revision ? decodeUInt64(*revision) : std::nullopt;
+  if (!g || !r) return {};
+  return connection::ViewportStamp{*g, *r};
+}
+
+Value encode(const connection::ViewportPolicy& value) {
+  const auto list = [](const connection::ViewportMembers& members) {
+    auto out = Value::array();
+    for (const auto& item : members) out.push(encodeEntity(item));
+    return out;
+  };
+  auto out = Value::object();
+  out.set("hidden", list(value.hidden));
+  out.set("locked", list(value.locked));
+  out.set("isolated", value.isolated ? list(*value.isolated) : Value{});
+  return out;
+}
+
+std::optional<connection::ViewportPolicy> decodeViewportPolicy(const Value& value,
+    connection::ViewportVisibilityError& error) {
+  using E = connection::ViewportVisibilityError;
+  error = E::InvalidRequest;
+  const auto* hidden = value.find("hidden");
+  const auto* locked = value.find("locked");
+  const auto* isolated = value.find("isolated");
+  if (!value.isObject() || value.asObject().size() != 3 || !hidden || !hidden->isArray() ||
+      !locked || !locked->isArray() || !isolated || !(isolated->isNull() || isolated->isArray())) return {};
+  const std::size_t count = hidden->asArray().size() + locked->asArray().size() +
+      (isolated->isArray() ? isolated->asArray().size() : 0);
+  if (count > connection::kViewportVisibilityEntries) {
+    error = E::TooLarge;
+    return {};
+  }
+  const auto load = [](const Value& list, connection::ViewportMembers& out) {
+    for (const auto& item : list.asArray()) {
+      const auto id = decodeEntity(item);
+      if (!id || encodeEntity(*id) != item) return false;
+      out.push_back(*id);
+    }
+    return true;
+  };
+  connection::ViewportPolicy out{};
+  if (!load(*hidden, out.hidden) || !load(*locked, out.locked) ||
+      (!isolated->isNull() && !load(*isolated, out.isolated.emplace()))) return {};
+  if (const auto reason = connection::validateViewportPolicy(out)) {
+    error = *reason;
+    return {};
+  }
+  return out;
+}
+
+Value encode(const connection::ViewportVisibility& value) {
+  auto out = encode(value.stamp);
+  out.set("presented", Value::boolean(value.presented));
+  out.set("owner", Value::string(value.owner == connection::ViewportOwner::Caller ? "Caller" :
+      value.owner == connection::ViewportOwner::Other ? "Other" : "None"));
+  out.set("policy", value.policy ? encode(*value.policy) : Value{});
+  return out;
+}
+
+std::optional<connection::ViewportVisibility> decodeViewportVisibility(const Value& value) {
+  using O = connection::ViewportOwner;
+  const auto stamp = decodeViewportStamp(value);
+  const auto* presented = value.find("presented");
+  const auto* owner = value.find("owner");
+  const auto* policy = value.find("policy");
+  if (!stamp || value.asObject().size() != 5 || !presented || !presented->isBool() ||
+      !owner || !owner->isString() || !policy) return {};
+  const auto& key = owner->asString();
+  if (key == "Caller") {
+    connection::ViewportVisibilityError error;
+    auto decoded = decodeViewportPolicy(*policy, error);
+    if (!decoded) return {};
+    return connection::ViewportVisibility{*stamp, presented->asBool(), O::Caller, std::move(decoded)};
+  }
+  if (!policy->isNull() || (key != "None" && key != "Other")) return {};
+  return connection::ViewportVisibility{*stamp, presented->asBool(), key == "None" ? O::None : O::Other, {}};
+}
+
+Value encode(const connection::ViewportVisibilityFailure& value) {
+  auto out = Value::object();
+  out.set("code", Value::string(std::string(connection::toString(value.code))));
+  if (value.face) out.set("face", encode(*value.face));
+  return out;
+}
+
+std::optional<connection::ViewportVisibilityFailure> decodeViewportVisibilityFailure(
+    const Value& value, std::size_t rayCount) {
+  using E = connection::ViewportVisibilityError;
+  const auto* code = value.find("code");
+  if (!value.isObject() || !code || !code->isString()) return {};
+  for (const auto reason : {E::Unsupported, E::InvalidRequest, E::Unavailable, E::TooLarge, E::NotOwner,
+       E::StaleGeneration, E::StaleRevision, E::UnknownMember, E::NotPresented, E::NoGeometry, E::FaceRefused}) {
+    if (code->asString() != connection::toString(reason)) continue;
+    if (reason != E::FaceRefused) {
+      if (value.asObject().size() == 1) return connection::ViewportVisibilityFailure{reason};
+      return {};
+    }
+    const auto* face = value.find("face");
+    if (value.asObject().size() != 2 || !face || rayCount == 0) return {};
+    const auto detail = decodeAlignmentFaceFailure(*face, rayCount);
+    if (detail && detail->rayIndex) return connection::ViewportVisibilityFailure{reason, *detail};
+    return {};
+  }
+  return {};
+}
+
+Value encode(const connection::ViewportPick& value) {
+  auto out = encode(value.stamp);
+  if (const auto* hit = std::get_if<std::optional<connection::RayHit>>(&value.value))
+    out.set("hit", *hit ? encode(**hit) : Value{});
+  else
+    out.set("alignment", encode(std::get<connection::AlignmentFaces>(value.value)));
+  return out;
+}
+
+std::optional<connection::ViewportPick> decodeViewportPick(const Value& value, connection::ViewportStamp expected,
+    connection::ViewportPickKind kind, std::span<const connection::Ray> rays) {
+  const auto stamp = decodeViewportStamp(value);
+  if (!stamp || *stamp != expected || value.asObject().size() != 3) return {};
+  if (kind == connection::ViewportPickKind::Alignment) {
+    const auto* faces = value.find("alignment");
+    auto decoded = faces ? decodeAlignmentFaces(*faces, rays) : std::nullopt;
+    if (!decoded || decoded->sceneGeneration != stamp->sceneGeneration) return {};
+    return connection::ViewportPick{*stamp, std::move(*decoded)};
+  }
+  const auto* hit = value.find("hit");
+  if (!hit) return {};
+  if (hit->isNull()) return connection::ViewportPick{*stamp, std::optional<connection::RayHit>{}};
+  const auto decoded = decodeRayHit(*hit);
+  const auto* id = hit->find("entity");
+  const auto* distance = hit->find("distance");
+  if (!decoded || hit->asObject().size() != 2 || decoded->entity == EntityGuid{} ||
+      !id || encodeEntity(decoded->entity) != *id || !distance || !distance->isNumber() ||
+      !std::isfinite(decoded->distance) || decoded->distance <= 0) return {};
+  return connection::ViewportPick{*stamp, decoded};
+}
+
+std::optional<std::vector<connection::Ray>> decodeViewportRays(const Value& value, connection::ViewportPickKind kind) {
+  if (!value.isArray() || value.asArray().empty() ||
+      value.asArray().size() > (kind == connection::ViewportPickKind::Alignment ? 2u : 1u)) return {};
+  std::vector<connection::Ray> out;
+  for (const auto& item : value.asArray()) {
+    if (!item.isObject() || item.asObject().size() != 2) return {};
+    const auto origin = alignmentVector<3>(item.find("origin"));
+    const auto direction = alignmentVector<3>(item.find("direction"));
+    if (!origin || !direction) return {};
+    const connection::Ray ray{*origin, *direction};
+    if (!connection::validAlignmentRay(ray)) return {};
+    out.push_back(ray);
+  }
+  return out;
+}
+
 Value encode(const connection::Ray& ray) {
   Value out = Value::object();
   out.set("origin", encodeFloats(ray.origin));

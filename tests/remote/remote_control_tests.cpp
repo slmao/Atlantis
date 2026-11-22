@@ -77,6 +77,32 @@ class FakeControl final : public connection::RuntimeControl {
     }
     return atlantis::Result<std::optional<connection::RayHit>, connection::ControlError>::Ok(*rayAnswer);
   }
+  bool hostedVisibility = false;
+  connection::ViewportStamp policyStamp{4, 0};
+  std::optional<connection::ViewportPolicy> policy;
+  bool presented = true;
+  connection::ViewportVisibilityResult viewportVisibility() override {
+    if (!hostedVisibility) return RuntimeControl::viewportVisibility();
+    return connection::ViewportVisibilityResult::Ok(
+        {policyStamp, presented, policy ? connection::ViewportOwner::Caller : connection::ViewportOwner::None, policy});
+  }
+  connection::ViewportVisibilityResult setViewportVisibility(connection::ViewportStamp stamp,
+      std::optional<connection::ViewportPolicy> replacement) override {
+    using E = connection::ViewportVisibilityError;
+    if (stamp.sceneGeneration != policyStamp.sceneGeneration) return connection::ViewportVisibilityResult::Err({E::StaleGeneration});
+    if (stamp.revision != policyStamp.revision) return connection::ViewportVisibilityResult::Err({E::StaleRevision});
+    policy = std::move(replacement);
+    ++policyStamp.revision;
+    presented = false;
+    return viewportVisibility();
+  }
+  connection::ViewportPickResult pickViewport(connection::ViewportStamp stamp,
+      connection::ViewportPickKind, std::span<const connection::Ray>) override {
+    using E = connection::ViewportVisibilityError;
+    if (stamp != policyStamp) return connection::ViewportPickResult::Err({E::StaleRevision});
+    if (!presented) return connection::ViewportPickResult::Err({E::NotPresented});
+    return connection::ViewportPickResult::Ok({stamp, std::optional<connection::RayHit>{}});
+  }
   std::optional<connection::ViewportCamera> viewportCamera;
   std::optional<connection::ViewportNavigation> navigation;
   int viewportCameraCalls = 0;
@@ -363,4 +389,75 @@ TEST_CASE("remote control: per-client Viewport overlays, their union, and a capt
   for (int i = 0; i < 20 && control.viewportOverlay.has_value(); ++i) world.server->poll();
   CHECK_FALSE(control.viewportOverlay.has_value());
   CHECK(world.server->clientCount() == 1);
+}
+
+
+TEST_CASE("hosted viewport uses exclusive stamped policy across two clients", "[remote][visibility]") {
+  const auto scene = cookAndDecodeScene(kSceneSource);
+  FakeControl control;
+  ServedWorld world(scene, {}, &control);
+  auto editor = world.attach();
+  const auto observer = world.attach();
+  using E = connection::ViewportVisibilityError;
+  using O = connection::ViewportOwner;
+  REQUIRE(editor->control().viewportVisibility().error().code == E::Unsupported);
+  CHECK_FALSE(editor->failure().has_value());
+  control.hostedVisibility = true;
+  const auto entity = atlantis::asset_system::parseEntityGuid("01360136-0136-4136-8136-013600000001").value();
+  const connection::ViewportPolicy policy{{entity}, {entity}, {}};
+  const auto initial = editor->control().viewportVisibility();
+  REQUIRE(initial.isOk());
+  const auto active = editor->control().setViewportVisibility(initial.value().stamp, policy);
+  REQUIRE(active.isOk());
+  CHECK(active.value().owner == O::Caller);
+  CHECK(active.value().policy == policy);
+  const auto peer = observer->control().viewportVisibility();
+  REQUIRE(peer.isOk());
+  CHECK(peer.value().owner == O::Other);
+  CHECK_FALSE(peer.value().policy);
+  CHECK(observer->control().setViewportVisibility(peer.value().stamp, std::nullopt).error().code == E::NotOwner);
+  const std::array rays{connection::Ray{}};
+  CHECK(observer->control().pickViewport(peer.value().stamp, connection::ViewportPickKind::Selection, rays).error().code == E::NotOwner);
+  CHECK(editor->control().pickViewport(active.value().stamp, connection::ViewportPickKind::Selection, rays).error().code == E::NotPresented);
+  control.presented = true;
+  CHECK(editor->control().pickViewport(active.value().stamp, connection::ViewportPickKind::Selection, rays).isOk());
+  CHECK(editor->control().setViewportVisibility(initial.value().stamp, std::nullopt).error().code == E::StaleRevision);
+  CHECK(control.policy == policy);
+  const auto restored = editor->control().setViewportVisibility(active.value().stamp, std::nullopt);
+  REQUIRE(restored.isOk());
+  CHECK(restored.value().owner == O::None);
+  REQUIRE(observer->control().setViewportVisibility(restored.value().stamp, policy).isOk());
+  CHECK(editor->control().viewportVisibility().value().owner == O::Other);
+}
+
+TEST_CASE("viewport visibility wire bounds and presented stamps are exact", "[remote][visibility]") {
+  namespace codec = atlantis::remote::codec;
+  namespace json = atlantis::connection::json;
+  using E = connection::ViewportVisibilityError;
+  connection::ViewportPolicy policy{};
+  for (std::size_t i = 1; i <= connection::kViewportVisibilityEntries; ++i) {
+    atlantis::asset_system::EntityGuid id;
+    id.bytes[14] = static_cast<std::byte>(i >> 8);
+    id.bytes[15] = static_cast<std::byte>(i & 255);
+    policy.hidden.push_back(id);
+  }
+  CHECK_FALSE(connection::validateViewportPolicy(policy));
+  E refusal{};
+  CHECK(codec::decodeViewportPolicy(codec::encode(policy), refusal) == policy);
+  policy.locked.push_back(policy.hidden.back());
+  CHECK_FALSE(codec::decodeViewportPolicy(codec::encode(policy), refusal));
+  CHECK(refusal == E::TooLarge);
+  policy.locked.clear();
+  policy.hidden.erase(policy.hidden.begin() + 1, policy.hidden.end());
+  policy.isolated.emplace();
+  CHECK_FALSE(codec::decodeViewportPolicy(codec::encode(policy), refusal));
+  CHECK(refusal == E::InvalidRequest);
+  const connection::ViewportStamp stamp{5, 8};
+  const std::array rays{connection::Ray{}};
+  const auto miss = codec::encode(connection::ViewportPick{stamp, std::optional<connection::RayHit>{}});
+  CHECK(codec::decodeViewportPick(miss, stamp, connection::ViewportPickKind::Selection, rays));
+  CHECK_FALSE(codec::decodeViewportPick(miss, {5, 7}, connection::ViewportPickKind::Selection, rays));
+  const auto malformed = json::parse(R"({"sceneGeneration":5,"revision":8,"hit":{"entity":"01360136-0136-4136-8136-013600000001","distance":-1}})");
+  REQUIRE(malformed.isOk());
+  CHECK_FALSE(codec::decodeViewportPick(malformed.value(), stamp, connection::ViewportPickKind::Selection, rays));
 }

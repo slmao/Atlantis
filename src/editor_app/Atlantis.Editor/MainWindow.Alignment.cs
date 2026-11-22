@@ -58,7 +58,9 @@ public sealed partial class MainWindow
     private bool AlignmentContextAllows()
     {
         return !_shuttingDown && !_referenceSessionFailed && _worker is not null && _canAddMeshToDocument &&
-            _navigationReady && !_navigationPending && _selection.Nodes.Count == 1 && !HasHiddenSelection() &&
+            _navigationReady && !_navigationPending && ViewportVisibilityReady &&
+            _selection.Nodes.Count == 1 && !HasHiddenSelection() &&
+            (_selection.Node is not EntityGuid node || _viewportMembership?.Pickable(node) != false) &&
             _viewport.Window is { Width: > 0, Height: > 0 } && !_leaveInProgress && !_recoveryDecision &&
             _pendingInspectorBlur is null && _pendingSceneFieldEdits == 0 && CurrentSceneInput() is null &&
             _batchDraft is null && _referenceWindow is null && !_referenceBusy && _materialWindow is null &&
@@ -163,7 +165,8 @@ public sealed partial class MainWindow
         float ndcX = (float)x / window.Width * 2 - 1;
         float ndcY = (float)y / window.Height * 2 - 1;
         var sample = new PlacementRay(x,y,window.Width,window.Height,_viewportCameraIntent,
-            _sceneProjection ?? _camera.Pose(),CameraConvention.RayThroughNdc(matrices,ndcX,ndcY));
+            _sceneProjection ?? _camera.Pose(), CameraConvention.RayThroughNdc(matrices,ndcX,ndcY))
+            { VisibilityIntent = _worker?.VisibilityIntent ?? 0 };
         if (_worker?.PickAlignment(id,sample,AlignmentGap()) == true) AlignmentWait("Checking the picked face…");
     }
 }

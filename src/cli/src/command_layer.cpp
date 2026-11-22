@@ -73,6 +73,36 @@ std::vector<std::string_view> tokenize(std::string_view line) {
 
 namespace {
 
+Value alignmentFacesJson(const connection::AlignmentFaces& value);
+
+Value viewportStampJson(connection::ViewportStamp stamp) {
+  auto out = Value::object();
+  out.set("sceneGeneration", Value::number(stamp.sceneGeneration));
+  out.set("revision", Value::number(stamp.revision));
+  return out;
+}
+
+Value viewportVisibilityJson(const connection::ViewportVisibility& state) {
+  auto out = viewportStampJson(state.stamp);
+  out.set("presented", Value::boolean(state.presented));
+  using O = connection::ViewportOwner;
+  out.set("owner", Value::string(state.owner == O::Caller ? "Caller" : state.owner == O::Other ? "Other" : "None"));
+  Value policy;
+  if (state.policy) {
+    const auto list = [](const auto& members) {
+      auto result = Value::array();
+      for (const auto& id : members) result.push(Value::string(text::formatEntity(id)));
+      return result;
+    };
+    policy = Value::object();
+    policy.set("hidden", list(state.policy->hidden));
+    policy.set("locked", list(state.policy->locked));
+    policy.set("isolated", state.policy->isolated ? list(*state.policy->isolated) : Value{});
+  }
+  out.set("policy",std::move(policy));
+  return out;
+}
+
 // --- Formatting --------------------------------------------------------------
 
 // %.9g, as Spec 0054's text forms print floats.
@@ -608,6 +638,29 @@ template <std::size_t N>
 [[nodiscard]] CliError overlayError(connection::ControlError why) {
   return plainError(std::string(connection::toString(why)), ErrorCategory::Runtime,
                     "the Runtime refused the overlay: " + std::string(connection::toString(why)));
+}
+
+Value alignmentFacesJson(const connection::AlignmentFaces& value) {
+    auto faces = Value::array();
+    for (const auto& face : value.faces) {
+      auto entry = Value::object();
+      entry.set("entity",Value::string(text::formatEntity(face.entity)));
+      entry.set("mesh",Value::string(asset_system::toString(face.mesh)));
+      auto triangles = Value::array();
+      for (auto triangle : face.triangles) triangles.push(Value::number(std::uint64_t{triangle}));
+      entry.set("triangles",std::move(triangles));
+      entry.set("distance",Value::number(face.distance));
+      auto corners = Value::array();
+      for (const auto& corner : face.corners) corners.push(floatsJson(corner));
+      entry.set("corners",std::move(corners));
+      entry.set("normal",floatsJson(face.normal));
+      entry.set("worldMatrix",floatsJson(face.worldMatrix));
+      faces.push(std::move(entry));
+    }
+    auto data = Value::object();
+    data.set("sceneGeneration",Value::number(value.sceneGeneration));
+    data.set("faces",std::move(faces));
+  return data;
 }
 
 }  // namespace
@@ -1602,6 +1655,97 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return failed(command, usageError(std::string(kUsage)));
   }
 
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "visibility") {
+    const std::string command = "runtime visibility";
+    const auto usage = [&] { return failed(command, usageError(
+        "runtime visibility status | clear GEN REV | set GEN REV [--hide GUID] [--lock GUID] [--keep GUID] | "
+        "pick GEN REV selection|alignment --origin X Y Z --direction X Y Z [<second ray>]")); };
+    if (t.size() < 3) return usage();
+    if (!control_) return failed(command, plainError("NoRuntimeControl", ErrorCategory::Runtime,
+                                                      "this connection carries no Runtime control"));
+    const auto refusal = [&](const connection::ViewportVisibilityFailure& error) {
+      using E = connection::ViewportVisibilityError;
+      const auto category = error.code == E::TransportFailure || error.code == E::ProtocolFailure
+          ? ErrorCategory::Connection : ErrorCategory::Refused;
+      std::string reason = "viewport operation refused";
+      if (error.face) {
+        reason += ": ";
+        reason += connection::toString(error.face->code);
+        if (error.face->rayIndex) reason += " at ray " + std::to_string(*error.face->rayIndex);
+      }
+      return failed(command, plainError(std::string(connection::toString(error.code)), category, std::move(reason)));
+    };
+    const auto reply = [&](Value value) {
+      auto description = json::write(value) + "\n";
+      return done(command, std::move(description), std::move(value));
+    };
+    if (t.size() == 3 && t[2] == "status") {
+      const auto status = control_->viewportVisibility();
+      return status.isOk() ? reply(viewportVisibilityJson(status.value())) : refusal(status.error());
+    }
+    if (t.size() < 5) return usage();
+    const auto parse = [](std::string_view value) -> std::optional<std::uint64_t> {
+      std::uint64_t count = 0;
+      const auto result = std::from_chars(value.data(), value.data() + value.size(), count);
+      if (result.ec != std::errc{} || result.ptr != value.data() + value.size()) return {};
+      return count;
+    };
+    const auto generation = parse(t[3]), revision = parse(t[4]);
+    if (!generation || !revision) return usage();
+    const connection::ViewportStamp stamp{*generation, *revision};
+    if (t[2] == "set" || t[2] == "clear") {
+      if ((t[2] == "clear" && t.size() != 5) || (t.size() - 5) % 2 != 0) return usage();
+      if ((t.size() - 5) / 2 > connection::kViewportVisibilityEntries)
+        return refusal({connection::ViewportVisibilityError::TooLarge});
+      std::optional<connection::ViewportPolicy> policy;
+      if (t[2] == "set") {
+        policy.emplace();
+        for (std::size_t i = 5; i < t.size(); i += 2) {
+          const auto id = text::parseEntity(t[i+1]);
+          if (id.isErr() || text::formatEntity(id.value()) != t[i+1]) return usage();
+          if (t[i] == "--hide") policy->hidden.push_back(id.value());
+          else if (t[i] == "--lock") policy->locked.push_back(id.value());
+          else if (t[i] == "--keep") {
+            if (!policy->isolated) policy->isolated.emplace();
+            policy->isolated->push_back(id.value());
+          } else return usage();
+        }
+        std::ranges::sort(policy->hidden);
+        std::ranges::sort(policy->locked);
+        if (policy->isolated) std::ranges::sort(*policy->isolated);
+        if (const auto error = connection::validateViewportPolicy(*policy)) return refusal({*error});
+      }
+      const auto state = control_->setViewportVisibility(stamp, std::move(policy));
+      return state.isOk() ? reply(viewportVisibilityJson(state.value())) : refusal(state.error());
+    }
+    if (t[2] != "pick" || (t.size() != 14 && t.size() != 22) ||
+        (t[5] != "selection" && t[5] != "alignment") || (t[5] == "selection" && t.size() != 14))
+      return usage();
+    const auto kind = t[5] == "alignment" ? connection::ViewportPickKind::Alignment : connection::ViewportPickKind::Selection;
+    std::vector<connection::Ray> rays;
+    for (std::size_t i = 6; i < t.size(); i += 8) {
+      const auto origin = parseFloats<3>(t, i+1);
+      const auto direction = parseFloats<3>(t, i+5);
+      if (t[i] != "--origin" || t[i+4] != "--direction" || !origin || !direction ||
+          !connection::validAlignmentRay({*origin, *direction})) return usage();
+      rays.push_back({*origin, *direction});
+    }
+    const auto result = control_->pickViewport(stamp, kind, rays);
+    if (result.isErr()) return refusal(result.error());
+    auto data = viewportStampJson(result.value().stamp);
+    const auto* hit = std::get_if<std::optional<connection::RayHit>>(&result.value().value);
+    if (hit) {
+      Value out;
+      if (*hit) {
+        out = Value::object();
+        out.set("entity", Value::string(text::formatEntity((*hit)->entity)));
+        out.set("distance", Value::number((*hit)->distance));
+      }
+      data.set("hit", std::move(out));
+    } else data.set("alignment", alignmentFacesJson(std::get<connection::AlignmentFaces>(result.value().value)));
+    return reply(std::move(data));
+  }
+
   if (t.size() >= 2 && t[0] == "runtime" && t[1] == "alignment") {
     constexpr std::string_view usage =
         "runtime alignment faces --origin X Y Z --direction X Y Z [--origin X Y Z --direction X Y Z]";
@@ -1626,25 +1770,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return failed(std::string(command), plainError(std::string(connection::toString(error.code)), ErrorCategory::Runtime,
           error.rayIndex ? "alignment face refused for ray " + std::to_string(*error.rayIndex) : "alignment face query refused"));
     }
-    auto faces = Value::array();
-    for (const auto& face : result.value().faces) {
-      auto entry = Value::object();
-      entry.set("entity",Value::string(text::formatEntity(face.entity)));
-      entry.set("mesh",Value::string(asset_system::toString(face.mesh)));
-      auto triangles = Value::array();
-      for (auto triangle : face.triangles) triangles.push(Value::number(std::uint64_t{triangle}));
-      entry.set("triangles",std::move(triangles));
-      entry.set("distance",Value::number(face.distance));
-      auto corners = Value::array();
-      for (const auto& corner : face.corners) corners.push(floatsJson(corner));
-      entry.set("corners",std::move(corners));
-      entry.set("normal",floatsJson(face.normal));
-      entry.set("worldMatrix",floatsJson(face.worldMatrix));
-      faces.push(std::move(entry));
-    }
-    auto data = Value::object();
-    data.set("sceneGeneration",Value::number(result.value().sceneGeneration));
-    data.set("faces",std::move(faces));
+    auto data = alignmentFacesJson(result.value());
     auto description = connection::json::write(data) + "\n";
     return done(std::string(command), std::move(description), std::move(data));
   }
