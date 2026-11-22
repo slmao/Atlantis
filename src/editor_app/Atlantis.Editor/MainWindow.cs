@@ -1925,9 +1925,18 @@ public sealed partial class MainWindow : Window
             ? _markers.Where(marker => membership.Pickable(marker.Entity)).ToArray() : _markers;
         if (Picking.PickMarker(markers, matrices, rect, x, y) is EntityGuid marker)
         {
-            SetSelection(marker, true);
-            _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
-            UpdateStatus();
+            var worker = _worker;
+            long camera = _viewportCameraIntent;
+            void SelectMarker()
+            {
+                if (request != _pickRequest || !ReferenceEquals(worker, _worker) || camera != _viewportCameraIntent ||
+                    !ViewportVisibilityReady || _viewportMembership?.Pickable(marker) == false) return;
+                SetSelection(marker, true);
+                _pickLine = "pick: marker " + marker.Value.ToString("N")[..8];
+                UpdateStatus();
+            }
+            if (_viewportVisibility is null) SelectMarker();
+            else worker.ConfirmViewportMarker(marker, worker.VisibilityIntent, SelectMarker);
             return;
         }
         float ndcX = (float)x / window.Width * 2.0f - 1.0f;

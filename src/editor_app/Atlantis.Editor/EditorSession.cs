@@ -357,7 +357,8 @@ public sealed class EditorWorker : IDisposable
     private bool _sceneObjectQueued;
     private int _queuedGizmoBegins;
     public bool DuplicateBatchAvailable => _duplicateBatchWritable;
-    private sealed record GroupGrab(long Id, GroupGizmoSnapshot View, GizmoAxis Axis);
+    private sealed record GroupGrab(long Id, GroupGizmoSnapshot View, GizmoAxis Axis, ulong Visibility);
+    private ulong _gizmoVisibility;
     private long _nextGroupGrab;
     private GroupGrab? _requestedGroup;
     private GroupGrab? _groupGrab;
@@ -1288,6 +1289,27 @@ public sealed class EditorWorker : IDisposable
             ? "Temporary viewport settings cleared for the replaced projection." : null);
     }
 
+    public void ConfirmViewportMarker(EntityGuid marker, ulong intent, Action accepted) => Enqueue(session =>
+    {
+        long lifetime = MeshDocumentLifetime;
+        if (!ConfirmHostedPicking(session, intent) || _hostedMembership?.Pickable(marker) == false) return;
+        _post(() =>
+        {
+            if (lifetime == MeshDocumentLifetime && intent == VisibilityIntent) accepted();
+        });
+    });
+
+    private bool ConfirmHostedPicking(RemoteSession session, ulong intent)
+    {
+        if (intent != VisibilityIntent || _visibilityUnknown) return false;
+        if (_hostedVisibility is not { } known) return true;
+        var live = session.Control.ViewportVisibility();
+        if (live.Value is { Presented: true, Owner: not ViewportOwner.Other } state &&
+            state.Stamp == known.Stamp && intent == VisibilityIntent) return true;
+        RefreshHostedVisibility(session, "The viewport changed. Try the gesture again.");
+        return false;
+    }
+
     private RaycastResult ViewportRaycast(RemoteSession session, Ray ray)
     {
         if (_visibilityUnknown) return new(null, ControlError.InvalidRequest);
@@ -1718,6 +1740,7 @@ public sealed class EditorWorker : IDisposable
         {
             if (_stopping) return;
             ++_queuedGizmoBegins;
+            ulong visibility = _visibilityIntent;
             InvalidateGuidesLocked();
             Enqueue(session =>
             {
@@ -1725,7 +1748,9 @@ public sealed class EditorWorker : IDisposable
                 {
                     PollDocument(session);
                     if (_apply?.CanPreview != true) return;
-                    if (_gizmo is null || _selected is not EntityGuid node) return;
+                    if (_gizmo is null || _selected is not EntityGuid node ||
+                        !ConfirmHostedPicking(session, visibility) || _hostedMembership?.Pickable(node) == false) return;
+                    _gizmoVisibility = visibility;
                     GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
                     GizmoMode mode = GizmoLayout.EffectiveMode(availability, _gizmoMode);
                     GizmoSpace space = GizmoLayout.EffectiveSpace(_transforms.WorldOf(_document!, _tree, node), _gizmoSpace);
@@ -1779,14 +1804,16 @@ public sealed class EditorWorker : IDisposable
         {
             if (_stopping || _gizmoActive || _batchSettling || _duplicateBatchQueued || _groupSettling || _requestedGroup is not null ||
                 shown.Lifetime != MeshDocumentLifetime || shown.Selection != _requestedSelectionGeneration) return null;
-            var grab = new GroupGrab(++_nextGroupGrab, shown, axis);
+            var grab = new GroupGrab(++_nextGroupGrab, shown, axis, _visibilityIntent);
             _requestedGroup = grab;
             InvalidateGuidesLocked();
             Enqueue(session =>
             {
                 if (!GroupCurrent(grab)) return;
                 GroupGizmo? fresh = ReadGroupPlacement(session);
-                if (!GroupCurrent(grab) || !GroupFilterAllows() || fresh is null || !shown.Placement.SameLayout(fresh) ||
+                if (!GroupCurrent(grab) || !GroupFilterAllows() || !ConfirmHostedPicking(session, grab.Visibility) ||
+                    (_hostedMembership is not null && !_selectedNodes.All(_hostedMembership.Pickable)) ||
+                    fresh is null || !shown.Placement.SameLayout(fresh) ||
                     shown.Mode != _gizmoMode || shown.Snap != _gizmoSnap)
                 {
                     CancelGroupGizmo(grab.Id);
@@ -1857,7 +1884,8 @@ public sealed class EditorWorker : IDisposable
     {
         lock (_lock)
             return ReferenceEquals(grab, _requestedGroup) && !_stopping &&
-                grab.View.Lifetime == MeshDocumentLifetime && grab.View.Selection == _requestedSelectionGeneration;
+                grab.View.Lifetime == MeshDocumentLifetime && grab.View.Selection == _requestedSelectionGeneration &&
+                grab.Visibility == _visibilityIntent;
     }
 
     private bool GroupFilterAllows()
@@ -1909,7 +1937,7 @@ public sealed class EditorWorker : IDisposable
         if (!ReferenceEquals(_groupGrab, grab) || !GroupCurrent(grab)) return;
         RetireGroup(grab);
         SendOverlay(session, retiring: grab);
-        if (!GroupCurrent(grab)) return;
+        if (!GroupCurrent(grab) || !ConfirmHostedPicking(session, grab.Visibility)) return;
         var view = grab.View;
         GroupGizmoSample result = view.Placement.Solve(view.Mode, grab.Axis, amount, view.Snap);
         if (result.Refusal is string refusal)
@@ -1919,7 +1947,8 @@ public sealed class EditorWorker : IDisposable
         }
         string label = view.Mode + " group";
         var edit = new BatchPropertyEdit(label, view.Placement.Targets, result.Writes, view.Placement);
-        var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab, filter);
+        var settled = SettlePropertyBatch(session, edit, forward: true, view.Lifetime, view.Selection, grab, filter,
+            sendGuard: () => grab.Visibility == _visibilityIntent);
         string notice = settled.Notice;
         bool recorded = false;
         if (settled.State == BatchReplayState.Committed && result.Writes.Count > 0 &&
@@ -3684,6 +3713,12 @@ public sealed class EditorWorker : IDisposable
     {
         if (_document is null || _apply is null || _gizmo is null || !_apply.CanPreview) return;
         EntityGuid? node = _selected;
+        if (_gizmo.Dragging && !ConfirmHostedPicking(session, _gizmoVisibility))
+        {
+            _gizmo.Revert();
+            SendOverlay(session);
+            return;
+        }
         EditPlan plan = _gizmo.Release();
         if (plan.Refusal is string reason)
         {
