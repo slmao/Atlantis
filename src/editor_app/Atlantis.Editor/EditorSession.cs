@@ -687,6 +687,32 @@ public sealed class EditorWorker : IDisposable
             catch (RemoteException error) { _post(() => done(null, error.Message, TaskResult.Unknown, error.Error)); }
         });
 
+    public void ReviewStaticGroup(StaticGroupReviewMode mode, AssetGuid target, StaticGroupIntent intent,
+        Action<Outcome<StaticGroupReview, RebuildError>?, string?> done) =>
+        Enqueue(session =>
+        {
+            if (mode != StaticGroupReviewMode.Cancel && !intent.Current) { _post(() => done(null, null)); return; }
+            try
+            {
+                var result = session.Assets.StaticGroupReimportReview(mode, target);
+                _post(() => done(result, null));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message)); }
+        });
+
+    public void ConfirmStaticGroupReimport(StaticGroupReview review, StaticGroupIntent intent,
+        Action<Outcome<RebuildJob, RebuildError>?, string?, TaskResult> done) =>
+        Enqueue(session =>
+        {
+            if (!intent.Current) { _post(() => done(null, "Reimport canceled before sending.", TaskResult.NotSent)); return; }
+            try
+            {
+                var result = session.Assets.CommitStaticGroupReimport(review.Id);
+                _post(() => done(result, null, TaskResult.Refused));
+            }
+            catch (RemoteException error) { _post(() => done(null, error.Message, TaskResult.Unknown)); }
+        });
+
     public void RebuildAsset(AssetGuid guid, Action<Outcome<Atlantis.Gameplay.Assets.RebuildJob, Atlantis.Gameplay.Assets.RebuildError>> done) =>
         Enqueue(session => { var result = session.Assets.Rebuild(guid); _post(() => done(result)); });
     public void QueryRebuild(Atlantis.Gameplay.Assets.RebuildId? id,

@@ -158,6 +158,114 @@ std::optional<StaticGroup> decodeStaticGroup(const json::Value& payload, const G
 }
 
 namespace {
+constexpr std::array<std::string_view, 5> kReviewStates{"Pending", "Ready", "Blocked", "Failed", "Expired"};
+constexpr std::array<std::string_view, 4> kChangeKinds{"Matched", "Added", "Removed", "Conflict"};
+constexpr std::size_t kReviewRows = 4 * kStaticGroupNodeLimit;
+
+template<class E, std::size_t N>
+std::optional<E> reviewEnum(const json::Value* value, const std::array<std::string_view, N>& names) {
+  if (!value || !value->isString()) return {};
+  const auto found = std::ranges::find(names, value->asString());
+  return found != names.end() ? std::optional{static_cast<E>(found - names.begin())} : std::nullopt;
+}
+
+const std::string* reviewText(const json::Value* value, std::size_t limit) {
+  return value && value->isString() && value->asString().size() <= limit ? &value->asString() : nullptr;
+}
+
+json::Value reviewGuid(const GroupGuid& value) { return json::Value::string(asset_system::toString(value)); }
+
+json::Value encodeRevision(const std::optional<StaticGroupRevisionRow>& revision) {
+  if (!revision) return {};
+  auto row = json::Value::object();
+  row.set("label", json::Value::string(revision->label));
+  row.set("index", json::Value::number(std::uint64_t{revision->index}));
+  row.set("slot", revision->slot ? json::Value::number(std::uint64_t{*revision->slot}) : json::Value{});
+  row.set("material", revision->material ? reviewGuid(*revision->material) : json::Value{});
+  return row;
+}
+
+bool decodeRevision(const json::Value* data, std::optional<StaticGroupRevisionRow>& result) {
+  if (!data) return false;
+  if (data->isNull()) return true;
+  const auto* label = reviewText(data->find("label"), 128);
+  const auto* index = data->find("index");
+  const auto* slot = data->find("slot");
+  const auto* material = data->find("material");
+  std::uint64_t i = 0, s = 0;
+  if (!data->isObject() || data->asObject().size() != 4 || !label || !index || !slot || !material ||
+      !index->toUInt64(i) || i >= kStaticGroupNodeLimit ||
+      (!slot->isNull() && (!slot->toUInt64(s) || s >= kStaticGroupNodeLimit))) return false;
+  auto guid = groupGuid(material);
+  if (!material->isNull() && (!guid || slot->isNull())) return false;
+  result.emplace(StaticGroupRevisionRow{*label, static_cast<std::uint32_t>(i),
+      slot->isNull() ? std::nullopt : std::optional{static_cast<std::uint32_t>(s)}, guid});
+  return true;
+}
+}
+
+std::optional<StaticGroupReview> decodeStaticGroupReview(const json::Value& data) {
+  if (!data.isObject() || data.asObject().size() != 7 || json::write(data).size() > kStaticGroupByteLimit) return {};
+  const auto id = groupGuid(data.find("id")), scene = groupGuid(data.find("scene")), generation = groupGuid(data.find("generation"));
+  const auto* name = reviewText(data.find("name"), 48);
+  const auto* diagnostic = reviewText(data.find("diagnostic"), 1024);
+  const auto state = reviewEnum<StaticGroupReviewState>(data.find("state"), kReviewStates);
+  const auto* rows = data.find("rows");
+  if (!id || !scene || !generation || !name || !validImportName(*name) || !diagnostic || !state || !rows ||
+      !rows->isArray() || rows->asArray().size() > kReviewRows) return {};
+  const bool ready = *state == StaticGroupReviewState::Ready;
+  if ((ready && rows->asArray().empty()) ||
+      (!ready && *state != StaticGroupReviewState::Blocked && !rows->asArray().empty())) return {};
+  StaticGroupReview review{*id, *scene, GenerationId{*generation}, *name, *state, *diagnostic, {}};
+  std::set<std::string> keys;
+  for (const auto& row : rows->asArray()) {
+    const auto* key = reviewText(row.find("key"), 75);
+    const auto guid = groupGuid(row.find("guid"));
+    const auto change = reviewEnum<StaticGroupChange>(row.find("change"), kChangeKinds);
+    const auto* note = reviewText(row.find("diagnostic"), 160);
+    std::optional<StaticGroupRevisionRow> before, after;
+    if (!row.isObject() || row.asObject().size() != 6 || !key || !keys.insert(*key).second || !guid || !change || !note ||
+        !decodeRevision(row.find("before"), before) || !decodeRevision(row.find("after"), after)) return {};
+    const bool isMesh = key->starts_with("mesh-key/");
+    if ((!isMesh && !key->starts_with("material-key/")) ||
+        (before && before->slot.has_value() != isMesh) || (after && after->slot.has_value() != isMesh) ||
+        (!before && !after) || (*change == StaticGroupChange::Added && (before || !after)) ||
+        (*change == StaticGroupChange::Removed && (!before || after)) ||
+        (*change == StaticGroupChange::Matched && (!before || !after || before->material != after->material)) ||
+        (ready && (*change == StaticGroupChange::Conflict || *change == StaticGroupChange::Removed))) return {};
+    review.rows.push_back({*key, *guid, *change, std::move(before), std::move(after), *note});
+  }
+  return review;
+}
+
+std::optional<json::Value> encodeStaticGroupReview(const StaticGroupReview& review) {
+  const auto state = static_cast<std::size_t>(review.state);
+  if (state >= kReviewStates.size() || review.rows.size() > kReviewRows) return {};
+  auto data = json::Value::object();
+  data.set("id", reviewGuid(review.id));
+  data.set("scene", reviewGuid(review.scene));
+  data.set("generation", reviewGuid(review.generation.value));
+  data.set("name", json::Value::string(review.name));
+  data.set("state", json::Value::string(std::string(kReviewStates[state])));
+  data.set("diagnostic", json::Value::string(review.diagnostic));
+  auto rows = json::Value::array();
+  for (const auto& row : review.rows) {
+    const auto change = static_cast<std::size_t>(row.change);
+    if (change >= kChangeKinds.size()) return {};
+    auto dataRow = json::Value::object();
+    dataRow.set("key", json::Value::string(row.key));
+    dataRow.set("guid", reviewGuid(row.guid));
+    dataRow.set("change", json::Value::string(std::string(kChangeKinds[change])));
+    dataRow.set("before", encodeRevision(row.before));
+    dataRow.set("after", encodeRevision(row.after));
+    dataRow.set("diagnostic", json::Value::string(row.diagnostic));
+    rows.push(std::move(dataRow));
+  }
+  data.set("rows", std::move(rows));
+  return decodeStaticGroupReview(data) ? std::optional{std::move(data)} : std::nullopt;
+}
+
+namespace {
 constexpr std::string_view kBase64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 constexpr std::size_t kEncodedPreviewLimit = 4 * ((kPreviewPngMaxBytes + 2) / 3);
 constexpr std::array<std::uint8_t, 16> kPngHeader{137, 80, 78, 71, 13, 10, 26, 10,

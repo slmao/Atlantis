@@ -135,6 +135,12 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.remove_texture", "assets.removeTexture",
             "Confirm one unused texture registration removal with a Ready receipt. Keep the original inbox PNG. Poll rebuild_status by job ID.", RebuildModel,
             ToolSchemas.TextureRemovalParameters(confirm: true)),
+        Declare("assets.static_group_reimport_review", "assets.staticGroupReimportReview",
+            "Begin, read or cancel the structural review of one keyed static glTF. Review does not publish.",
+            RebuildModel, ToolSchemas.StaticGroupReviewParameters()),
+        Declare("assets.commit_static_group_reimport", "assets.commitStaticGroupReimport",
+            "Confirm a Ready review once. Poll rebuild_status by job ID. If the outcome is unknown, verify settlement before retrying.",
+            RebuildModel, ToolSchemas.Parameters(("id", ToolSchemas.String))),
         Declare("assets.rebuild_status", "assets.rebuildStatus", "Read-only status for a retained rebuild or the latest admitted job.", RebuildModel,
             ToolSchemas.RebuildStatusParameters()),
         Declare("authoring.list_nodes", "authoring.listNodes", "List nodes in document order.", AuthoringModel),
@@ -292,6 +298,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method == "assets.moveTexture") return MoveTexture(wireParameters);
             if (mapping.Method is "assets.checkTextureRemoval" or "assets.textureRemovalCheckStatus" or "assets.removeTexture")
                 return TextureRemoval(mapping.Method, wireParameters);
+            if (mapping.Method is "assets.staticGroupReimportReview" or "assets.commitStaticGroupReimport")
+                return StaticGroupReimport(mapping.Method, wireParameters);
             bool rebuild = mapping.Method == "assets.rebuild", rebuildStatus = mapping.Method == "assets.rebuildStatus";
             bool import = mapping.Method == "assets.import", importStatus = mapping.Method == "assets.importStatus";
             string? importName = import ? wireParameters.Find("name")?.AsString : null;
@@ -391,6 +399,45 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         catch (RemoteException e)
         {
             return Error(e.Message);
+        }
+    }
+
+    private CallToolResult StaticGroupReimport(string method, JsonValue parameters)
+    {
+        bool confirm = method == "assets.commitStaticGroupReimport";
+        string? mode = parameters.Find("mode")?.AsString;
+        if (parameters.Find(mode == "begin" ? "scene" : "id") is not { IsString: true } target ||
+            Codec.DecodeAsset(target) is not AssetGuid guid || guid.IsNil || target.AsString != guid.ToString())
+            return Error("InvalidArguments: expected a non-nil canonical GUID");
+        if (!confirm && mode is not ("begin" or "read" or "cancel"))
+            return Error("InvalidArguments: expected begin, read or cancel");
+        bool mayHaveSent = false;
+        string unknown = $"Static model reimport outcome unknown for review {guid}. Check settlement before retrying.";
+        try
+        {
+            var response = session.Request(method, parameters, out mayHaveSent);
+            if (Codec.IsUnsupportedStaticGroup(response))
+                return Forward(Codec.Err(JsonValue.String("Unsupported")), true);
+            if (response is { IsObject: true } && response.Members.Count == 2 && Codec.CountMember(response, "id") == 1 &&
+                response.Find("result") is { IsObject: true } result && result.Members.Count == 1)
+            {
+                if (result.Find("err") is { } err && Codec.DecodeStaticGroupReimportError(err) is not null)
+                    return Forward(result, true);
+                if (result.Find("ok") is { } ok)
+                {
+                    if (confirm && Codec.DecodeRebuildJob(ok) is { State: A.RebuildState.Running })
+                        return Forward(result, false);
+                    if (!confirm && Codec.DecodeStaticGroupReview(ok) is { } review &&
+                        (mode == "begin" ? review.Scene == guid && review.State == A.StaticGroupReviewState.Pending :
+                            review.Id == guid && (mode != "cancel" || review.State == A.StaticGroupReviewState.Expired)))
+                        return Forward(result, false);
+                }
+            }
+            return Error(confirm ? "ProtocolError: " + unknown : "ProtocolError: malformed static model review");
+        }
+        catch (RemoteException error)
+        {
+            return Error(confirm && mayHaveSent ? error.Message + " " + unknown : error.Message);
         }
     }
 

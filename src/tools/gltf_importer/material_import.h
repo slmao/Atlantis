@@ -18,7 +18,8 @@ namespace atlantis::gltf_importer::detail {
 
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> collectMaterialAssetGuids(
     const cgltf_data& data, const std::filesystem::path& contentRoot,
-    const atlantis::asset_system::AssetGuid& root, std::vector<atlantis::asset_system::AssetGuid>& guids);
+    const atlantis::asset_system::AssetGuid& root, std::vector<atlantis::asset_system::AssetGuid>& guids,
+    const ManagedImportKeys* keys = nullptr);
 
 // Everything that can make the material slice fail is checked here, before
 // any output exists: extension scope, texture features, sampler wraps,
@@ -35,7 +36,8 @@ namespace atlantis::gltf_importer::detail {
 [[nodiscard]] atlantis::Result<std::monostate, GltfImportError> writeMaterials(
     const cgltf_data& data, const std::filesystem::path& contentRoot, const std::filesystem::path& stagingDir,
     const std::string& name, const atlantis::asset_system::AssetGuid& importRoot, const std::string& importRootId,
-    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines);
+    GltfImportSummary& summary, std::vector<std::string>& reportLines, std::vector<std::string>& manifestLines,
+    const ManagedImportKeys* keys = nullptr);
 
 // Logical path of material <index>, as the scene slice (Milestone 5) will
 // reference it: "<name>/materials/<index>.material.txt".

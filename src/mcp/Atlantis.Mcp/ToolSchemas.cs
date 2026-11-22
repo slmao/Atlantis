@@ -145,6 +145,13 @@ internal static class ToolSchemas
         ? Parameters(("asset", String), ("expectedGeneration", String), ("checkId", String))
         : Parameters(("asset", String), ("expectedGeneration", String));
 
+    internal static JsonElement StaticGroupReviewParameters() => JsonSerializer.SerializeToElement(new JsonObject
+    {
+        ["type"] = "object",
+        ["oneOf"] = Choice(Object(("mode", Enum("begin")), ("scene", String)),
+            Object(("mode", Enum("read", "cancel")), ("id", String)))["oneOf"]!.DeepClone()
+    });
+
     internal static JsonElement RebuildStatusParameters()
     {
         JsonObject shape = Object(("jobId", String));

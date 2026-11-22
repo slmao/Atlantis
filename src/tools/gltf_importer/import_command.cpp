@@ -526,10 +526,74 @@ bool validManagedStaticGroup(const cgltf_data& data) {
   return true;
 }
 
+// Read only an exact reserved member from cgltf's retained extras object.
+// A repeated member, escaped spelling or wrong JSON type cannot supply a key.
+std::optional<std::string_view> extraMember(const cgltf_data& source, const cgltf_extras& extras,
+                                            std::string_view name, jsmntype_t type) {
+  if (!source.json || extras.end_offset <= extras.start_offset || extras.end_offset > source.json_size)
+    return std::nullopt;
+  const std::string_view data{source.json + extras.start_offset, extras.end_offset - extras.start_offset};
+  jsmn_parser parser;
+  jsmn_init(&parser);
+  const int count = jsmn_parse(&parser, data.data(), data.size(), nullptr, 0);
+  if (count < 3) return std::nullopt;
+  std::vector<jsmntok_t> tokens(static_cast<std::size_t>(count));
+  jsmn_init(&parser);
+  if (jsmn_parse(&parser, data.data(), data.size(), tokens.data(), tokens.size()) != count ||
+      tokens.front().type != JSMN_OBJECT) return std::nullopt;
+  const auto spelling = [&](int i) {
+    const auto& token = tokens[static_cast<std::size_t>(i)];
+    return data.substr(static_cast<std::size_t>(token.start), static_cast<std::size_t>(token.end - token.start));
+  };
+  std::optional<std::string_view> value;
+  for (int i = 1; i + 1 < count;) {
+    if (spelling(i) == name) {
+      if (value || tokens[static_cast<std::size_t>(i + 1)].type != type) return std::nullopt;
+      value = spelling(i + 1);
+    }
+    i = cgltf_skip_json(tokens.data(), i + 1);
+    if (i < 0) return std::nullopt;
+  }
+  return value;
+}
+
+std::optional<detail::ManagedImportKeys> managedImportKeys(const cgltf_data& data) {
+  if (extraMember(data, data.asset.extras, "atlantisReimportIdentity", JSMN_PRIMITIVE) != "1" ||
+      !validManagedStaticGroup(data)) return std::nullopt;
+  const auto id = [&data](const cgltf_extras& extras) -> std::optional<std::string> {
+    const auto value = extraMember(data, extras, "atlantisId", JSMN_STRING);
+    if (!value || value->empty() || value->size() > 32 || value->front() < 'a' || value->front() > 'z' ||
+        !std::ranges::all_of(*value, [](char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == '_';
+        })) return std::nullopt;
+    return std::string(*value);
+  };
+  detail::ManagedImportKeys keys;
+  std::set<std::string> meshes, materials;
+  for (std::size_t i = 0; i < data.meshes_count; ++i) {
+    const auto& mesh = data.meshes[i];
+    const auto meshId = id(mesh.extras);
+    if (!meshId || !meshes.insert(*meshId).second) return std::nullopt;
+    std::set<std::string> slots;
+    auto& parts = keys.meshes.emplace_back();
+    for (std::size_t p = 0; p < mesh.primitives_count; ++p) {
+      const auto slot = id(mesh.primitives[p].extras);
+      if (!slot || !slots.insert(*slot).second) return std::nullopt;
+      parts.push_back("mesh-key/" + *meshId + "/" + *slot);
+    }
+  }
+  for (std::size_t i = 0; i < data.materials_count; ++i) {
+    auto material = id(data.materials[i].extras);
+    if (!material || !materials.insert(*material).second) return std::nullopt;
+    keys.materials.push_back(std::move(*material));
+  }
+  return keys;
+}
+
 }  // namespace
 
 atlantis::Result<std::vector<atlantis::asset_system::AssetGuid>, GltfImportError> importAssetGuids(
-    const fs::path& input, const atlantis::asset_system::AssetGuid& root) {
+    const fs::path& input, const atlantis::asset_system::AssetGuid& root, bool stableKeys) {
   namespace as = atlantis::asset_system;
   using ResultT = atlantis::Result<std::vector<as::AssetGuid>, GltfImportError>;
   std::ifstream stream(input, std::ios::binary);
@@ -541,13 +605,17 @@ atlantis::Result<std::vector<atlantis::asset_system::AssetGuid>, GltfImportError
   if (cgltf_parse(&options, text.data(), text.size(), &guard.data) != cgltf_result_success || !guard.data)
     return ResultT::Err(GltfImportError::MalformedGltf);
 
+  const auto keys = stableKeys ? managedImportKeys(*guard.data) : std::nullopt;
+  if (stableKeys && !keys) return ResultT::Err(GltfImportError::InvalidAssetSubKey);
+  const auto* keyed = keys ? &*keys : nullptr;
+
   std::vector<as::AssetGuid> guids{as::deriveAssetGuid(root, "scene")};
   for (cgltf_size mesh = 0; mesh < guard.data->meshes_count; ++mesh) {
     for (cgltf_size primitive = 0; primitive < guard.data->meshes[mesh].primitives_count; ++primitive) {
-      guids.push_back(as::deriveAssetGuid(root, "mesh/" + std::to_string(mesh) + "/" + std::to_string(primitive)));
+      guids.push_back(as::deriveAssetGuid(root, detail::meshSubKey(mesh, primitive, keyed)));
     }
   }
-  const auto materials = detail::collectMaterialAssetGuids(*guard.data, input.parent_path(), root, guids);
+  const auto materials = detail::collectMaterialAssetGuids(*guard.data, input.parent_path(), root, guids, keyed);
   if (materials.isErr()) return ResultT::Err(materials.error());
   return ResultT::Ok(std::move(guids));
 }
@@ -556,8 +624,9 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
                                                                  const fs::path& outputDir, const std::string& name,
                                                                  const atlantis::asset_system::AssetGuid& importRoot,
                                                                  const std::optional<fs::path>& overlayPath,
-                                                                 bool managedStaticMesh) {
+                                                                 bool managedStaticMesh, bool stableKeys) {
   using ResultT = atlantis::Result<GltfImportSummary, GltfImportError>;
+  if (stableKeys && !managedStaticMesh) return ResultT::Err(GltfImportError::InvalidAssetSubKey);
   if (managedStaticMesh) {
     std::error_code ec;
     const auto size = fs::file_size(inputPath, ec);
@@ -593,6 +662,9 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   }
   if (managedStaticMesh && !validManagedStaticMesh(*guard.data) && !validManagedStaticGroup(*guard.data))
     return ResultT::Err(GltfImportError::MalformedGltf);
+  const auto keys = stableKeys ? managedImportKeys(*guard.data) : std::nullopt;
+  if (stableKeys && !keys) return ResultT::Err(GltfImportError::InvalidAssetSubKey);
+  const auto* keyed = keys ? &*keys : nullptr;
   // cgltf concatenates relative buffer URIs onto this path verbatim --
   // it must end with a directory separator or the first path segment
   // merges ("content/bistro" + "bistro.bin").
@@ -635,17 +707,21 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
       const cgltf_primitive& primitive = mesh.primitives[primitiveIndex];
       const PrimitiveAccessors accessors = attributesOf(primitive);
       const cgltf_size vertexCount = accessors.position->count;
-      const std::string base =
-          name + "_mesh_" + std::to_string(meshIndex) + "_" + std::to_string(primitiveIndex);
+      const std::string meshSubKey = detail::meshSubKey(meshIndex, primitiveIndex, keyed);
+      std::string base = name + "_mesh_" + std::to_string(meshIndex) + "_" + std::to_string(primitiveIndex);
+      if (keyed) {
+        base = name + "_" + meshSubKey;
+        std::ranges::replace(base, '/', '.');
+      }
 
       // Mesh names are not unique across the file (Bistro's three
       // >65535-vertex meshes are all named "subset_1"), so the logical
       // path is index-based -- always a valid logical path by construction.
-      const std::string logicalPath = detail::meshLogicalPath(name, meshIndex, primitiveIndex);
+      const std::string logicalPath = keyed ? "meshes/" + name + "/" + meshSubKey
+                                           : detail::meshLogicalPath(name, meshIndex, primitiveIndex);
       const auto normalizedResult = atlantis::asset_system::normalizeLogicalPath(logicalPath);
       if (normalizedResult.isErr()) return ResultT::Err(GltfImportError::OutputWriteFailed);
       const std::string& normalized = normalizedResult.value();
-      const std::string meshSubKey = "mesh/" + std::to_string(meshIndex) + "/" + std::to_string(primitiveIndex);
       const auto meshGuid = detail::deriveImportAssetGuid(importRoot, meshSubKey);
       if (meshGuid.isErr()) return ResultT::Err(meshGuid.error());
       const atlantis::asset_system::AssetId assetId = atlantis::asset_system::assetKey(meshGuid.value());
@@ -789,11 +865,11 @@ atlantis::Result<GltfImportSummary, GltfImportError> importGltf(const fs::path& 
   std::vector<std::string> manifestLines;
   const auto materials =
       detail::writeMaterials(*guard.data, contentRoot, staging.path, name, importRoot, importRootId, summary,
-                             reportLines, manifestLines);
+                             reportLines, manifestLines, keyed);
   if (materials.isErr()) return ResultT::Err(materials.error());
   const auto scene =
       detail::writeScene(*guard.data, staging.path, name, importRoot, importRootId, summary, reportLines,
-                         manifestLines, overlayPtr);
+                         manifestLines, overlayPtr, keyed);
   if (scene.isErr()) return ResultT::Err(scene.error());
   std::string manifest =
       "# atlantis_gltf_importer cook manifest (Plan 0037). One atlantis_asset_cooker invocation per\n"

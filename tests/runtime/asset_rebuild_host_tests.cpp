@@ -1628,3 +1628,52 @@ configure_file("${catalog}" "${CMAKE_BINARY_DIR}/assets/managed-catalog-source.t
       CHECK_FALSE((file.is_directory() && !file.path().filename().string().starts_with(".pending-")));
   }
 }
+
+TEST_CASE("Keyed storefront comparisons preserve slot identity across array order",
+          "[runtime][assets][static-gltf-reimport]") {
+  namespace groups = atlantis::runtime::static_groups;
+  namespace json = atlantis::connection::json;
+  const auto root = as::parseAssetGuid("01390000-0000-4000-8000-000000000001").value();
+  const auto parse = [&](std::string_view materialTable, std::string_view primitiveTable) {
+    const std::string source = R"({"asset":{"extras":{"atlantisReimportIdentity":1}},"materials":)" +
+        std::string(materialTable) + R"(,"meshes":[{"extras":{"atlantisId":"wall"},"primitives":)" +
+        std::string(primitiveTable) + "}]}";
+    auto data = json::parse(source);
+    REQUIRE(data.isOk());
+    return groups::sourceProducts(data.value(), root);
+  };
+  constexpr auto originalMaterials = R"([{"extras":{"atlantisId":"stone"}},{"extras":{"atlantisId":"paint"}}])";
+  constexpr auto reorderedMaterials = R"([{"extras":{"atlantisId":"paint"}},{"extras":{"atlantisId":"stone"}}])";
+  const auto original = parse(originalMaterials,
+      R"([{"extras":{"atlantisId":"face"},"material":0},{"extras":{"atlantisId":"trim"},"material":1}])");
+  const auto reordered = parse(reorderedMaterials,
+      R"([{"extras":{"atlantisId":"trim"},"material":0},{"extras":{"atlantisId":"face"},"material":1}])");
+  REQUIRE(original.isOk());
+  REQUIRE(reordered.isOk());
+  ca::StaticGroupReview review{root, as::deriveAssetGuid(root, "scene"), {root}, "storefront",
+      ca::StaticGroupReviewState::Pending, {}, {}};
+  groups::compareProducts(review, original.value(), reordered.value(), root);
+  CHECK(review.state == ca::StaticGroupReviewState::Ready);
+  CHECK(review.rows.size() == 4);
+  CHECK(std::ranges::all_of(review.rows, [](const auto& row) {
+    return row.change == ca::StaticGroupChange::Matched && row.before && row.after &&
+           row.before->material == row.after->material && row.before != row.after;
+  }));
+  const auto encoded = ca::encodeStaticGroupReview(review);
+  REQUIRE(encoded);
+  CHECK(ca::decodeStaticGroupReview(*encoded) == review);
+  const auto missing = parse(reorderedMaterials,
+      R"([{"extras":{"atlantisId":"trim"},"material":0},{"extras":{"atlantisId":"face"}}])");
+  REQUIRE(missing.isOk());
+  review.rows.clear();
+  groups::compareProducts(review, original.value(), missing.value(), root);
+  CHECK(review.state == ca::StaticGroupReviewState::Blocked);
+  const auto face = std::ranges::find(review.rows, "mesh-key/wall/face", &ca::StaticGroupChangeRow::key);
+  REQUIRE(face != review.rows.end());
+  CHECK(face->change == ca::StaticGroupChange::Conflict);
+  CHECK(face->guid == as::deriveAssetGuid(root, "mesh-key/wall/face"));
+  const auto ambiguous = parse(originalMaterials,
+      R"([{"extras":{"atlantisId":"face"},"material":0},{"extras":{"atlantisId":"face"},"material":1}])");
+  REQUIRE(ambiguous.isErr());
+  CHECK(ambiguous.error().find("mesh-key/wall/face") != std::string::npos);
+}

@@ -762,6 +762,37 @@ class RemoteAssets final : public connection::AssetConnection {
       return job && job->asset == guid && job->state == ca::RebuildState::Running ? job : std::nullopt;
     });
   }
+  static std::optional<ca::RebuildError> decodeStaticGroupReimportError(const Value& value, bool start) {
+    if (value.isString() && value.asString() == "UnknownJob") return ca::RebuildError::UnknownJob;
+    return codec::decodeRebuildError(value, start);
+  }
+  ca::StaticGroupReviewResult staticGroupReimportReview(const ca::StaticGroupReviewRequest& request) override {
+    using Mode = ca::StaticGroupReviewMode;
+    ATLANTIS_CHECK(request.target != AssetGuid{});
+    const bool begin = request.mode == Mode::Begin;
+    auto params = Value::object();
+    params.set("mode", Value::string(begin ? "begin" : request.mode == Mode::Read ? "read" : "cancel"));
+    params.set(begin ? "scene" : "id", codec::encodeAsset(request.target));
+    return jobRequest<ca::StaticGroupReview>("assets.staticGroupReimportReview", std::move(params), true,
+        decodeStaticGroupReimportError, [&](const Value& value) {
+          auto result = ca::decodeStaticGroupReview(value);
+          if (!result || (begin ? result->scene : result->id) != request.target ||
+              (begin && result->state != ca::StaticGroupReviewState::Pending) ||
+              (request.mode == Mode::Cancel && result->state != ca::StaticGroupReviewState::Expired))
+            result.reset();
+          return result;
+        });
+  }
+  ca::RebuildStartResult commitStaticGroupReimport(const AssetGuid& id) override {
+    ATLANTIS_CHECK(id != AssetGuid{});
+    auto params = Value::object();
+    params.set("id", codec::encodeAsset(id));
+    return jobRequest<ca::RebuildJob>("assets.commitStaticGroupReimport", std::move(params), true,
+        decodeStaticGroupReimportError, [](const Value& value) {
+          auto job = codec::decodeRebuildJob(value);
+          return job && job->state == ca::RebuildState::Running ? job : std::nullopt;
+        });
+  }
   ca::RenameTextureResult renameTexture(const ca::RenameTextureRequest& request) override {
     ATLANTIS_CHECK(request.asset != AssetGuid{} && request.expectedGeneration.value != AssetGuid{});
     Value params = Value::object();
@@ -1110,7 +1141,12 @@ class RemoteAssets final : public connection::AssetConnection {
         const auto* err = result->find("err");
         if (ok && !err) { if (auto v = decode(*ok)) return R::Ok(std::move(*v)); }
         if (err && !ok) { if (auto e = decodeError(*err, start)) return R::Err(*e); }
-      } else if (error && !result && legacyAssetRefusal(*error)) return R::Err(E::Unsupported);
+      } else if (error && !result) {
+        const auto* code = error->find("code");
+        const bool reimport = method == "assets.staticGroupReimportReview" || method == "assets.commitStaticGroupReimport";
+        if (legacyAssetRefusal(*error) || (reimport && code && code->isString() && code->asString() == "UnknownMethod"))
+          return R::Err(E::Unsupported);
+      }
     }
     state_.fail(RemoteError::ProtocolError);
     return R::Err(E::Unavailable);

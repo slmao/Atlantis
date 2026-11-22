@@ -56,6 +56,7 @@ constexpr std::string_view kUsage =
     "  assets texture-removal-check-status <CheckId>\n"
     "  assets remove-texture <GUID> <ExpectedGeneration> <CheckId>\n"
     "  assets rebuild <GUID> | assets rebuild-status [<JobId>]   managed asset rebuild\n"
+    "  assets static-group-reimport-review begin|read|cancel <GUID> | assets static-group-reimport-confirm <ReviewId>\n"
     "  assets material-read <GUID> | assets material-save <JSON> | assets material-status [<JobId>]\n"
     "  assets texture-import <name> [--resume] | assets texture-import-status [<JobId>]\n"
     "  assets normal-map-import <name> [--resume] | assets normal-map-import-status [<JobId>]\n"
@@ -468,6 +469,11 @@ int Invocation::finish(Reply reply) {
       failure->message += "; texture removal outcome unknown for " + checked.result.find("asset")->asString() +
           " in generation " + checked.result.find("expectedGeneration")->asString() +
           ". Inspect the workspace and generations and confirm settlement before checking again.";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "assets static-group-reimport-confirm") {
+      if (const auto* id = checked.result.find("reviewId"); id && id->isString()) failure->subject = checked.result;
+      failure->message += "; static glTF reimport admission unknown. Inspect the job and generations before retrying.";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets rebuild" || checked.command == "assets rebuild-status") {

@@ -1,9 +1,9 @@
 # ADR-0187 — Stable Identity for Managed Static glTF Reimport
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainers
-- **Acceptance:** Pending joint review
+- **Acceptance:** Maintainer accepted `69d35d2f` on 2026-11-22 in [PR #441](https://github.com/slmao/Atlantis/pull/441#issuecomment-7077272130)
 - **Related Spec:** [Spec 0139](../specs/0139-static-gltf-reimport.md)
 
 ## Context

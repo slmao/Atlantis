@@ -1002,6 +1002,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return reply;
     }
     const bool rebuild = t.size() > 1 && t[1] == "rebuild";
+    const bool gltfReview = t.size() > 1 && t[1] == "static-group-reimport-review";
+    const bool gltfConfirm = t.size() > 1 && t[1] == "static-group-reimport-confirm";
     const bool move = t.size() > 1 && t[1] == "move-texture";
     const bool rename = t.size() > 1 && t[1] == "rename-texture";
     const bool rebuildStatus = t.size() > 1 && t[1] == "rebuild-status";
@@ -1016,7 +1018,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const bool texture = occlusionImport || normalImport || packedImport || (t.size() > 1 && t[1] == "texture-import");
     const bool textureStatus = occlusionStatus || normalStatus || packedStatus || (t.size() > 1 && t[1] == "texture-import-status");
     const auto mode = t.size() == 4 && t[3] == "--resume" ? ca::ImportMode::Resume : ca::ImportMode::Register;
-    if (!((move && t.size() == 6) || (rename && t.size() == 5) || (rebuild && t.size() == 3) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
+    if (!((move && t.size() == 6) || (rename && t.size() == 5) || ((rebuild || gltfConfirm) && t.size() == 3) ||
+          (gltfReview && t.size() == 4) || ((rebuildStatus || importStatus || textureStatus) && t.size() <= 3) ||
           ((import || texture) && ((t.size() == 3) || mode == ca::ImportMode::Resume) && ca::validImportName(t[2]))))
       return failed(command, usageError("assets move-texture <GUID> <ExpectedGeneration> <ExpectedPath> <DestinationPath> | "
                                          "assets rename-texture <GUID> <ExpectedGeneration> <DisplayName> | "
@@ -1119,6 +1122,28 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
         reply.result.set("destinationLogicalPath", Value::string(std::string(t[5])));
       }
       return reply;
+    }
+    if (gltfReview || gltfConfirm) {
+      using Mode = ca::StaticGroupReviewMode;
+      const auto usage = [&] { return failed(command, usageError(gltfConfirm ?
+          "assets static-group-reimport-confirm <review-id>" :
+          "assets static-group-reimport-review begin|read|cancel <guid>")); };
+      const auto token = gltfConfirm ? t[2] : t[3];
+      const auto guid = asset_system::parseAssetGuid(token);
+      if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != token) return usage();
+      if (gltfConfirm) {
+        auto reply = renderStart(endpoint->commitStaticGroupReimport(guid.value()));
+        if (reply.error) reply.result = Value::object().set("reviewId", Value::string(std::string(token)));
+        return reply;
+      }
+      if (t[2] != "begin" && t[2] != "read" && t[2] != "cancel") return usage();
+      const auto result = endpoint->staticGroupReimportReview({t[2] == "begin" ? Mode::Begin : t[2] == "read" ? Mode::Read : Mode::Cancel,
+                                                                guid.value()});
+      if (result.isErr()) return refuse(result.error());
+      auto encoded = ca::encodeStaticGroupReview(result.value());
+      if (!encoded) return refuse(ca::RebuildError::Unavailable);
+      auto human = json::write(*encoded) + "\n";
+      return done(command, std::move(human), std::move(*encoded));
     }
     if (rebuild) return renderStart(endpoint->rebuild(*id));
     if (import) return renderStart(endpoint->importAsset(t[2], mode));

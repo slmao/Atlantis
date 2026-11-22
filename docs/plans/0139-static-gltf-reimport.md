@@ -1,10 +1,10 @@
 # Plan 0139 — Preview and Reimport a Registered Static glTF
 
 - **Spec:** [Spec 0139](../specs/0139-static-gltf-reimport.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of both documents and implementation authorization
-- **ADR:** [ADR-0187](../adr/0187-static-gltf-reimport-identity.md) (Proposed)
+- **Joint Human Review:** Maintainer approved Spec/Plan 0139 and J1–J4 at `69d35d2f` on 2026-11-22. S2–S4 authorized after [PR #441](https://github.com/slmao/Atlantis/pull/441#issuecomment-7077272130) merged as `be9e0ad2`.
+- **ADR:** [ADR-0187](../adr/0187-static-gltf-reimport-identity.md) (Accepted)
 - **Design baseline:** `2ea0cd9b`
 
 ## Objective

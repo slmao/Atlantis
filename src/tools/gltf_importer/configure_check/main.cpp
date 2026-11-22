@@ -40,8 +40,13 @@ int wmain(int argc, wchar_t** argv) {
     if (tab == std::string::npos) return 1;
     const auto owner = as::parseAssetGuid(std::string_view(line).substr(0, tab));
     if (owner.isErr()) return 1;
-    const auto path = fs::path(std::u8string(line.begin() + static_cast<std::ptrdiff_t>(tab + 1), line.end()));
-    const auto generated = importer::importAssetGuids(path, owner.value());
+    auto pathText = std::string_view(line).substr(tab + 1);
+    const auto mode = pathText.find('\t');
+    const bool keyed = mode != std::string_view::npos && pathText.substr(mode + 1) == "keyed";
+    if (mode != std::string_view::npos && !keyed) return 1;
+    pathText = pathText.substr(0, mode);
+    const auto path = fs::path(std::u8string(pathText.begin(), pathText.end()));
+    const auto generated = importer::importAssetGuids(path, owner.value(), keyed);
     if (generated.isErr()) {
       std::cerr << "Cannot read generated asset identities for " << path << ": "
                 << importer::gltfImportErrorMessage(generated.error()) << '\n';

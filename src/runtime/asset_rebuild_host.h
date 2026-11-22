@@ -34,6 +34,8 @@ class AssetRebuildHost {
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeRenamePublication{};
     std::function<void(const std::filesystem::path&)> afterRemovalPreparation{};
     std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeRemovalPublication{};
+    std::function<void(const std::filesystem::path&)> afterGltfPreparation{};
+    std::function<void(const std::filesystem::path&, const std::filesystem::path&)> beforeGltfPublication{};
 #endif
   };
 
@@ -49,6 +51,9 @@ class AssetRebuildHost {
       asset_system::AssetGuid asset, std::shared_ptr<const asset_system::AssetCatalog> catalog);
   [[nodiscard]] connection::assets::RebuildStatusResult status(
       std::optional<connection::assets::RebuildId> id) const;
+  [[nodiscard]] connection::assets::StaticGroupReviewResult reviewStaticGroup(
+      const connection::assets::StaticGroupReviewRequest&, std::shared_ptr<const asset_system::AssetCatalog> catalog);
+  [[nodiscard]] connection::assets::RebuildStartResult commitStaticGroup(const asset_system::AssetGuid& review);
   [[nodiscard]] std::optional<std::string> logicalPath(asset_system::AssetGuid asset) const;
   [[nodiscard]] std::optional<std::string> displayName(asset_system::AssetGuid asset) const;
   [[nodiscard]] connection::assets::RenameTextureResult renameTexture(

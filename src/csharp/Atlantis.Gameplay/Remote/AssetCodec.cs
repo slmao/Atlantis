@@ -399,6 +399,84 @@ public static partial class Codec
             .Set("diagnostic", JsonValue.String(check.Diagnostic));
     }
 
+    public static A.RebuildError? DecodeStaticGroupReimportError(JsonValue value) =>
+        value is { IsString: true } && value.AsString == "UnknownJob"
+            ? A.RebuildError.UnknownJob : DecodeRebuildError(value, true);
+
+    public static A.StaticGroupReview? DecodeStaticGroupReview(JsonValue value)
+    {
+        if (!value.IsObject || value.Members.Count != 7 || Encoding.UTF8.GetByteCount(Json.Write(value)) > 64 * 1024 ||
+            RebuildGuid(value.Find("id")) is not { } id || RebuildGuid(value.Find("scene")) is not { } scene ||
+            RebuildGuid(value.Find("generation")) is not { } generation ||
+            value.Find("name") is not { IsString: true } name || !ValidImportName(name.AsString) ||
+            Text(value.Find("diagnostic"), 1024) is not { } diagnostic ||
+            RebuildToken<A.StaticGroupReviewState>(value.Find("state")) is not { } state ||
+            value.Find("rows") is not { IsArray: true } rows || rows.Items.Count > 4 * 63) return null;
+        bool ready = state == A.StaticGroupReviewState.Ready;
+        if (ready && rows.Items.Count == 0 ||
+            !ready && state != A.StaticGroupReviewState.Blocked && rows.Items.Count != 0) return null;
+        var keys = new HashSet<string>(StringComparer.Ordinal);
+        var parsed = new List<A.StaticGroupChangeRow>(rows.Items.Count);
+        foreach (var entry in rows.Items)
+        {
+            if (!entry.IsObject || entry.Members.Count != 6 || Text(entry.Find("key"), 75) is not { } key ||
+                !keys.Add(key) || RebuildGuid(entry.Find("guid")) is not { } guid ||
+                RebuildToken<A.StaticGroupChange>(entry.Find("change")) is not { } change ||
+                Text(entry.Find("diagnostic"), 160) is not { } note ||
+                !Revision(entry.Find("before"), out var before) || !Revision(entry.Find("after"), out var after)) return null;
+            bool mesh = key.StartsWith("mesh-key/", StringComparison.Ordinal);
+            if ((!mesh && !key.StartsWith("material-key/", StringComparison.Ordinal)) ||
+                (before is not null && before.Slot.HasValue != mesh) || (after is not null && after.Slot.HasValue != mesh) ||
+                (before is null && after is null) || (change == A.StaticGroupChange.Added && (before is not null || after is null)) ||
+                (change == A.StaticGroupChange.Removed && (before is null || after is not null)) ||
+                (change == A.StaticGroupChange.Matched && (before is null || after is null || before.Material != after.Material)) ||
+                (ready && change is A.StaticGroupChange.Conflict or A.StaticGroupChange.Removed)) return null;
+            parsed.Add(new(key, guid, change, before, after, note));
+        }
+        return new(id, scene, new(generation), name.AsString, state, diagnostic, parsed.AsReadOnly());
+
+        static string? Text(JsonValue? item, int limit) =>
+            item is { IsString: true } && Encoding.UTF8.GetByteCount(item.AsString) <= limit ? item.AsString : null;
+
+        static bool Revision(JsonValue? item, out A.StaticGroupRevisionRow? row)
+        {
+            row = null;
+            if (item is null) return false;
+            if (item.IsNull) return true;
+            if (!item.IsObject || item.Members.Count != 4 || Text(item.Find("label"), 128) is not { } label ||
+                item.Find("index") is not { } rawIndex || !rawIndex.TryGetUInt64(out ulong index) || index >= 63 ||
+                item.Find("slot") is not { } rawSlot || item.Find("material") is not { } rawMaterial) return false;
+            uint? slot = null;
+            if (!rawSlot.IsNull)
+            {
+                if (!rawSlot.TryGetUInt64(out ulong number) || number >= 63) return false;
+                slot = (uint)number;
+            }
+            var material = RebuildGuid(rawMaterial);
+            if (!rawMaterial.IsNull && (material is null || slot is null)) return false;
+            row = new(label, (uint)index, slot, material);
+            return true;
+        }
+    }
+
+    public static JsonValue Encode(A.StaticGroupReview review)
+    {
+        var rows = JsonValue.NewArray();
+        foreach (var row in review.Rows)
+            rows.Push(JsonValue.NewObject().Set("key", JsonValue.String(row.Key)).Set("guid", Encode(row.Guid))
+                .Set("change", JsonValue.String(row.Change.ToString())).Set("before", Revision(row.Before))
+                .Set("after", Revision(row.After)).Set("diagnostic", JsonValue.String(row.Diagnostic)));
+        return JsonValue.NewObject().Set("id", Encode(review.Id)).Set("scene", Encode(review.Scene))
+            .Set("generation", Encode(review.Generation.Value)).Set("name", JsonValue.String(review.Name))
+            .Set("state", JsonValue.String(review.State.ToString())).Set("diagnostic", JsonValue.String(review.Diagnostic))
+            .Set("rows", rows);
+
+        static JsonValue Revision(A.StaticGroupRevisionRow? row) => row is null ? JsonValue.Null() :
+            JsonValue.NewObject().Set("label", JsonValue.String(row.Label)).Set("index", JsonValue.Number((ulong)row.Index))
+                .Set("slot", row.Slot is uint slot ? JsonValue.Number((ulong)slot) : JsonValue.Null())
+                .Set("material", row.Material is AssetGuid material ? Encode(material) : JsonValue.Null());
+    }
+
     public static A.RebuildError? DecodeRebuildError(JsonValue value, bool start)
     {
         A.RebuildError? error = RebuildToken<A.RebuildError>(value);
