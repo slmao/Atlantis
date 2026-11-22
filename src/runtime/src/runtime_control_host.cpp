@@ -67,6 +67,14 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   target.pickAlignmentFaces = [&application](std::span<const connection::Ray> rays) {
     return application.pickAlignmentFaces(rays);
   };
+  target.viewportVisibility = [&application] { return application.viewportVisibility(); };
+  target.setViewportVisibility = [&application](connection::ViewportStamp stamp, std::optional<connection::ViewportPolicy> policy) {
+    return application.setViewportVisibility(stamp, std::move(policy));
+  };
+  target.pickViewport = [&application](connection::ViewportStamp stamp, connection::ViewportPickKind kind,
+                                       std::span<const connection::Ray> rays) {
+    return application.pickViewport(stamp, kind, rays);
+  };
   target.sceneGeneration = [&application] { return application.sceneGeneration(); };
   return target;
 }
@@ -157,6 +165,21 @@ connection::DiagnosticBatch RuntimeControlHost::diagnostics(std::uint64_t afterS
 
 void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCamera> camera) {
   if (target_.setViewportCamera) target_.setViewportCamera(camera);
+}
+
+connection::ViewportVisibilityResult RuntimeControlHost::viewportVisibility() {
+  return target_.viewportVisibility ? target_.viewportVisibility() : RuntimeControl::viewportVisibility();
+}
+
+connection::ViewportVisibilityResult RuntimeControlHost::setViewportVisibility(
+    connection::ViewportStamp stamp, std::optional<connection::ViewportPolicy> policy) {
+  return target_.setViewportVisibility ? target_.setViewportVisibility(stamp, std::move(policy))
+                                       : RuntimeControl::setViewportVisibility(stamp, std::move(policy));
+}
+
+connection::ViewportPickResult RuntimeControlHost::pickViewport(connection::ViewportStamp stamp,
+    connection::ViewportPickKind kind, std::span<const connection::Ray> rays) {
+  return target_.pickViewport ? target_.pickViewport(stamp, kind, rays) : RuntimeControl::pickViewport(stamp, kind, rays);
 }
 
 connection::AlignmentFacesResult RuntimeControlHost::pickAlignmentFaces(std::span<const connection::Ray> rays) {

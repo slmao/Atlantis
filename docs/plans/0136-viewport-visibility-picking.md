@@ -1,10 +1,10 @@
 # Plan 0136 — Viewport Visibility and Picking Controls
 
 - **Spec:** [Spec 0136](../specs/0136-viewport-visibility-picking.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
-- **ADR:** [ADR-0185](../adr/0185-hosted-viewport-presentation-policy.md) (Proposed)
+- **Joint Human Review:** Maintainer approved Spec/Plan 0136 and J1–J4 and accepted ADR-0185 at `dd1cabb7`. [Joint review](https://github.com/slmao/Atlantis/pull/435#issuecomment-7074643696). Design merged by the maintainer as `6b27ef35`.
+- **ADR:** [ADR-0185](../adr/0185-hosted-viewport-presentation-policy.md) (Accepted)
 - **Design baseline:** `45a6018b`, maintainer merge of [#434](https://github.com/slmao/Atlantis/pull/434)
 
 ## Objective

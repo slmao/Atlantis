@@ -1138,13 +1138,185 @@ public sealed class EditorWorker : IDisposable
         PublishNavigation(intent, _navigationUncertain ? "The Runtime scene changed. Invoke navigation again." : null);
     }
 
+    private ViewportVisibility? _hostedVisibility;
+    private ViewportMembership? _hostedMembership;
+    private bool _visibilityUnknown;
+    private ulong _visibilityIntent;
+    public event Action<ViewportVisibility?, bool, string?>? HostedVisibilityChanged;
+    public ulong VisibilityIntent { get { lock (_lock) return _visibilityIntent; } }
+
+    public void ProbeHostedVisibility() => Enqueue(session => RefreshHostedVisibility(session));
+
+    private void RecordHostedVisibility(ViewportVisibility? current, bool unknown, string? notice)
+    {
+        bool changed = current?.Stamp != _hostedVisibility?.Stamp || current?.Owner != _hostedVisibility?.Owner ||
+            unknown != _visibilityUnknown;
+        if (changed)
+        {
+            lock (_lock) ++_visibilityIntent;
+            _hostedMembership = current?.Policy is { } policy ? new ViewportMembership(policy) : null;
+        }
+        _hostedVisibility = current;
+        _visibilityUnknown = unknown;
+        ulong intent = VisibilityIntent;
+        _post(() =>
+        {
+            if (VisibilityIntent == intent) HostedVisibilityChanged?.Invoke(current, unknown, notice);
+        });
+    }
+
+    private void RefreshHostedVisibility(RemoteSession session, string? notice = null)
+    {
+        var read = session.Control.ViewportVisibility();
+        if (read.Value is { } state)
+        {
+            bool changed = state.Stamp != _hostedVisibility?.Stamp || state.Owner != _hostedVisibility?.Owner;
+            RecordHostedVisibility(state, false, notice);
+            if (changed) SendOverlay(session);
+        }
+        else if (read.Error?.Code is ViewportVisibilityError.Unsupported or ViewportVisibilityError.Unavailable)
+            RecordHostedVisibility(null, false, "Viewport visibility controls are unavailable on this Runtime.");
+        else
+            RecordHostedVisibility(_hostedVisibility, true, "Viewport state is uncertain. Check its state before editing.");
+    }
+
+    public void ChangeHostedVisibility(VisibilityAction action, IReadOnlyList<HierarchyRow> rows, long lifetime,
+        ulong selection)
+    {
+        ulong intent;
+        lock (_lock) intent = ++_visibilityIntent;
+        Enqueue(session =>
+        {
+            var status = session.Control.ViewportVisibility();
+            if (status.Value is not { } current)
+            {
+                RefreshHostedVisibility(session);
+                return;
+            }
+            if (current.Owner == ViewportOwner.Other)
+            {
+                RecordHostedVisibility(current, false, "Another client controls this viewport.");
+                return;
+            }
+
+            bool Current() => VisibilityIntent == intent && lifetime == MeshDocumentLifetime &&
+                (action is VisibilityAction.Restore or VisibilityAction.ExitIsolation ||
+                 selection == _requestedSelectionGeneration);
+            if (!Current())
+            {
+                RecordHostedVisibility(current, false, "Viewport action expired.");
+                return;
+            }
+            if (action is not (VisibilityAction.Restore or VisibilityAction.ExitIsolation))
+            {
+                if (_document is not RemoteAuthoringDocument document || document.ObserveEvents() is not { } events)
+                {
+                    RecordHostedVisibility(current, false, "Apply the current scene before changing viewport visibility.");
+                    return;
+                }
+                PollDocument(session, events, pollApply: false);
+                var info = session.Authoring.DocumentState();
+                var apply = document.ApplyStatus();
+                if (!Current() || !info.IsOk || info.Value is not { } documentState || !apply.IsOk ||
+                    apply.Value is not { Projection: { } projection } snapshot ||
+                    snapshot.Request?.State == ApplyState.Pending ||
+                    snapshot.CurrentDocumentRevision != documentState.Token.DocumentRevision ||
+                    projection.Receipt.DocumentRevision != documentState.Token.DocumentRevision ||
+                    projection.Generation != current.Stamp.SceneGeneration)
+                {
+                    RecordHostedVisibility(current, false, "Apply the current scene before changing viewport visibility.");
+                    return;
+                }
+            }
+            var (next, refusal) = ViewportMembership.Plan(_tree, current.Policy, action, rows);
+            if (refusal is not null || !Current())
+            {
+                RecordHostedVisibility(current, false, refusal ?? "Viewport action expired.");
+                return;
+            }
+            if (session.Control.SetViewportOverlay(null) is not null)
+            {
+                RecordHostedVisibility(current, false, "The viewport overlay could not be retired.");
+                return;
+            }
+            const string method = "control.setViewportVisibility";
+            var parameters = Codec.Encode(current.Stamp).Set("policy", next is null ? JsonValue.Null() : Codec.Encode(next));
+            ViewportReply<ViewportVisibility> result;
+            try
+            {
+                ulong request;
+                lock (_lock)
+                {
+                    if (!Current())
+                    {
+                        Enqueue(s => RefreshHostedVisibility(s, "Viewport action expired."));
+                        return;
+                    }
+                    request = session.Send(method, parameters);
+                }
+                result = Codec.DecodeViewportReply<ViewportVisibility>(session.AwaitResponse(request), method,
+                    value => Codec.DecodeViewportVisibility(value) is { } state && state.Acknowledges(current.Stamp, next)
+                        ? state : null) ?? throw new RemoteException(RemoteError.ProtocolError, "Malformed viewport visibility receipt.");
+            }
+            catch (RemoteException)
+            {
+                RecordHostedVisibility(current, true, "The visibility result is unknown. Check its state before retrying.");
+                throw;
+            }
+            if (result.Value is { } accepted)
+            {
+                RecordHostedVisibility(accepted, false, null);
+                RefreshHostedVisibility(session);
+                SendOverlay(session);
+            }
+            else
+            {
+                RefreshHostedVisibility(session, "Viewport change refused: " + result.Error?.Code + ".");
+                SendOverlay(session);
+            }
+        });
+    }
+
+    private void ResetVisibilityOnDocumentEvents(RemoteSession session, IReadOnlyList<Event> events)
+    {
+        if ((_hostedVisibility is null && !_visibilityUnknown) ||
+            !events.Any(e => e is DocumentReopened or Applied)) return;
+        bool reopen = events.Any(e => e is DocumentReopened);
+        if (reopen && session.Control.ViewportVisibility().Value is { Owner: ViewportOwner.Caller } owned)
+            _ = session.Control.SetViewportVisibility(owned.Stamp, null);
+        RefreshHostedVisibility(session, _hostedVisibility?.Policy is not null || _visibilityUnknown
+            ? "Temporary viewport settings cleared for the replaced projection." : null);
+    }
+
+    private RaycastResult ViewportRaycast(RemoteSession session, Ray ray)
+    {
+        if (_visibilityUnknown) return new(null, ControlError.InvalidRequest);
+        if (_hostedVisibility is not { } current) return session.Control.Raycast(ray);
+        var result = session.Control.PickViewport(current.Stamp, ViewportPickKind.Selection, [ray]);
+        if (result.Value is { } hit) return new(hit.Hit, null);
+        RefreshHostedVisibility(session, "Viewport selection refused: " + result.Error?.Code + ".");
+        return new(null, ControlError.InvalidRequest);
+    }
+
+    private AlignmentFacesResult ViewportAlignmentFaces(RemoteSession session, IReadOnlyList<Ray> rays)
+    {
+        if (_visibilityUnknown) return new(null, new(AlignmentFaceError.InvalidRequest));
+        if (_hostedVisibility is not { } current) return session.Control.PickAlignmentFaces(rays);
+        var result = session.Control.PickViewport(current.Stamp, ViewportPickKind.Alignment, rays);
+        if (result.Value?.Alignment is { } faces) return new(faces, null);
+        if (result.Error?.Face is { } face) return new(null, face);
+        RefreshHostedVisibility(session, "Viewport alignment query refused: " + result.Error?.Code + ".");
+        return new(null, new(AlignmentFaceError.InvalidRequest));
+    }
+
     public void Raycast(PickRay ray, long inputTicks, ulong request = 0, long? cameraIntent = null) => Enqueue(session =>
     {
         lock (_lock)
             if (cameraIntent is long intent && _cameraIntent != intent) return;
         long lifetime = MeshDocumentLifetime;
         ulong nodesBefore = _tree.NodeLifetimeGeneration;
-        RaycastResult result = session.Control.Raycast(new Ray(ray.Origin, ray.Direction));
+        ulong visibility = VisibilityIntent;
+        RaycastResult result = ViewportRaycast(session, new Ray(ray.Origin, ray.Direction));
         if (request != 0 && _document is not null)
         {
             PollDocument(session, pollApply: false);
@@ -1160,7 +1332,7 @@ public sealed class EditorWorker : IDisposable
                                  SessionPath ?? "<session file>", ray.Origin.X, ray.Origin.Y, ray.Origin.Z, ray.Direction.X,
                                  ray.Direction.Y, ray.Direction.Z));
         var answer = new PickResult(result, ray, ms) { Request = request };
-        _post(() => { if (lifetime == MeshDocumentLifetime) Picked?.Invoke(answer); });
+        _post(() => { if (lifetime == MeshDocumentLifetime && visibility == VisibilityIntent) Picked?.Invoke(answer); });
     });
 
     /// <summary>
@@ -1840,6 +2012,7 @@ public sealed class EditorWorker : IDisposable
         public bool Confirming;
         public (long Camera, (int Width, int Height) Extent, ulong ExtentRevision)? ConfirmView;
         public AlignmentStamp? Stamp;
+        public ulong Visibility;
         public PlacementRay? SourceSample, TargetSample;
         public AlignmentBasis? Source, Target;
         public SurfaceAlignmentSolution? Solution;
@@ -1852,7 +2025,7 @@ public sealed class EditorWorker : IDisposable
 
     private bool AlignmentCurrentLocked(AlignmentOperation op) =>
         ReferenceEquals(op,_alignment) && !_stopping && op.Lifetime == MeshDocumentLifetime &&
-        op.Selection == _requestedSelectionGeneration &&
+        op.Selection == _requestedSelectionGeneration && op.Visibility == _visibilityIntent && !_visibilityUnknown &&
         (!op.Confirming || !_navigationUncertain &&
           op.ConfirmView == (_cameraIntent,_viewportExtent,_viewportExtentRevision));
 
@@ -1863,7 +2036,7 @@ public sealed class EditorWorker : IDisposable
             if (_stopping || _alignment is not null || _groupSettling || _gizmoActive ||
                 _batchSettling || _duplicateBatchQueued || lifetime != MeshDocumentLifetime ||
                 selection != _requestedSelectionGeneration || _navigationUncertain) return null;
-            var op = new AlignmentOperation(++_nextAlignment,node,lifetime,selection,report);
+            var op = new AlignmentOperation(++_nextAlignment,node,lifetime,selection,report) { Visibility = _visibilityIntent };
             _alignment = op;
             Enqueue(session =>
             {
@@ -1990,7 +2163,7 @@ public sealed class EditorWorker : IDisposable
         { EndAlignment(session,op,"The document or projection changed. Pick the faces again."); return; }
 
         Ray[] rays = op.SourceSample is { } saved ? [AlignmentRay(saved),AlignmentRay(sample)] : [AlignmentRay(sample)];
-        var result = session.Control.PickAlignmentFaces(rays);
+        var result = ViewportAlignmentFaces(session, rays);
         if (!Current() || ReadAlignmentStamp(session) != stamp)
         { EndAlignment(session,op,"The view or projection changed. Pick the faces again."); return; }
         if (result.Value is not { } observed || observed.SceneGeneration != stamp.Generation)
@@ -2092,7 +2265,7 @@ public sealed class EditorWorker : IDisposable
             !AlignmentBasisCurrent(source) || !AlignmentBasisCurrent(target))
         { EndAlignment(session,op,"Alignment expired. Pick the faces again."); return; }
 
-        var result = session.Control.PickAlignmentFaces([AlignmentRay(sourceRay),AlignmentRay(targetRay)]);
+        var result = ViewportAlignmentFaces(session, [AlignmentRay(sourceRay),AlignmentRay(targetRay)]);
         if (result.Value is not { } fresh || fresh.SceneGeneration != stamp.Generation ||
             !fresh.Faces[0].SameEvidence(source.Face) || !fresh.Faces[1].SameEvidence(target.Face) ||
             !ClearAlignmentOverlay(session,op) || ReadAlignmentStamp(session) != stamp ||
@@ -2137,7 +2310,8 @@ public sealed class EditorWorker : IDisposable
 
     private bool PlacementViewCurrent(PlacementRay sample) =>
         !_stopping && !_navigationUncertain && _cameraIntent == sample.CameraIntent &&
-        _viewportExtent == (sample.Width, sample.Height) && !_gizmoActive && _groupGrab is null;
+        _viewportExtent == (sample.Width, sample.Height) && sample.VisibilityIntent == _visibilityIntent &&
+        !_visibilityUnknown && !_gizmoActive && _groupGrab is null;
 
     private bool ProjectionAvailable(ApplySnapshot? snapshot) =>
         snapshot is { CurrentDocumentRevision: not null } && snapshot.Request?.State != ApplyState.Pending &&
@@ -2177,7 +2351,7 @@ public sealed class EditorWorker : IDisposable
         PollDocument(session, events, pollApply: false, refreshInspector: false, refreshOverlay: false, refreshHierarchy: false);
         if (!Current()) { Reject(null); return; }
         ulong generation = session.Control.Status().SceneGeneration;
-        var hit = session.Control.Raycast(new Ray(sample.Ray.Origin, sample.Ray.Direction));
+        var hit = ViewportRaycast(session, new Ray(sample.Ray.Origin, sample.Ray.Direction));
         if (session.Control.Status().SceneGeneration != generation || !PlacementRevisionCurrent(document, revision))
         { Reject("The surface changed. Move to preview again."); return; }
         if (hit.Error is { } error) { Reject("Placement ray: " + error); return; }
@@ -2301,7 +2475,7 @@ public sealed class EditorWorker : IDisposable
                 if (!PlacementRevisionCurrent(document, release.DocumentRevision) || !SameProjection())
                 { RefuseTarget("the placement projection changed."); return; }
                 var ray = release.Sample.Ray;
-                var fresh = session.Control.Raycast(new Ray(ray.Origin, ray.Direction)).Hit;
+                var fresh = ViewportRaycast(session, new Ray(ray.Origin, ray.Direction)).Hit;
                 if (fresh is null || fresh.Entity != release.Surface || fresh.Distance != release.Distance ||
                     !SameProjection() || !Observe() || !PlacementRevisionCurrent(document, release.DocumentRevision))
                 { RefuseTarget("the placement surface changed."); return; }
@@ -4419,6 +4593,7 @@ public sealed class EditorWorker : IDisposable
             _duplicateBatchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
         }
         else if (historyChanged) PostHistory();
+        ResetVisibilityOnDocumentEvents(session, events);
         if (destroyed.Count > 0)
         {
             _selectedNodes = _selectedNodes.Where(node => !destroyed.Contains(node)).ToArray();
@@ -4699,7 +4874,11 @@ public sealed class EditorWorker : IDisposable
         GizmoSnapshot snapshot = new(null, null, null);
         ulong selection = _selectionGeneration;
         long lifetime = MeshDocumentLifetime;
-        if (_document is not null && _gizmo is not null && _apply?.CanPreview == true && _selected is EntityGuid node && _tree.Contains(node))
+        var membership = _hostedMembership;
+        bool allowGizmos = !_visibilityUnknown && _hostedVisibility?.Owner != ViewportOwner.Other &&
+            (membership is null || _selectedNodes.All(membership.Pickable));
+        if (allowGizmos && _document is not null && _gizmo is not null && _apply?.CanPreview == true &&
+            _selected is EntityGuid node && _tree.Contains(node))
         {
             float[] world = _gizmo.Dragging && _gizmo.LatestWorld is { } latest ? latest : _transforms.WorldOf(_document, _tree, node);
             GizmoAvailability availability = _gizmo.Availability(node, _gizmoSpace);
@@ -4711,7 +4890,7 @@ public sealed class EditorWorker : IDisposable
             snapshot = new GizmoSnapshot(node, world, availability);
         }
         GroupGizmoSample? preview = null;
-        if (_selectedNodes.Count > 1 && _groupWritable)
+        if (allowGizmos && _selectedNodes.Count > 1 && _groupWritable)
         {
             GroupGrab? grab = _groupGrab is { } active && GroupCurrent(active) ? active : null;
             GroupGizmo? placement = grab?.View.Placement ?? ReadGroupPlacement(session);
@@ -4723,10 +4902,14 @@ public sealed class EditorWorker : IDisposable
                 snapshot = new GizmoSnapshot(null, null, null, shown);
             }
         }
+        IReadOnlyList<Marker> markers = membership is null ? _markers :
+            _markers.Where(marker => membership.Visible(marker.Entity)).ToArray();
+        IReadOnlyList<EntityGuid> visible = membership is null ? _selectedNodes :
+            _selectedNodes.Where(membership.Visible).ToArray();
         ViewportOverlay overlay = _selectedNodes.Count > 1
-            ? GizmoOverlay.ForMultiselection(_selectedNodes, _markers, gizmo, preview)
-            : GizmoOverlay.ForSelection(_selected, gizmo, _markers);
-        var guides = _guides;
+            ? GizmoOverlay.ForMultiselection(visible, markers, gizmo, preview)
+            : GizmoOverlay.ForSelection(visible.Count == 1 ? visible[0] : null, gizmo, markers);
+        var guides = _selected is EntityGuid subject && membership?.Visible(subject) == false ? null : _guides;
         lock (_lock)
         {
             if (guides is { } proposed && !GuideCurrentLocked(proposed.Intent)) guides = null;

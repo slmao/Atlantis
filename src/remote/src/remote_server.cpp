@@ -534,6 +534,19 @@ struct RemoteServer::State {
   // Spec 0064 / ADR-0128 D1 (Plan 0064 J2): the client whose camera the
   // control draws from; cleared, with the camera, when that client goes.
   std::optional<std::uint64_t> cameraOwner;
+  std::optional<std::uint64_t> visibilityOwner;
+
+  atlantis::connection::ViewportVisibilityResult viewportVisibility(std::uint64_t clientKey) {
+    namespace c = atlantis::connection;
+    auto result = control->viewportVisibility();
+    if (result.isErr()) return result;
+    if (result.value().owner == c::ViewportOwner::None) visibilityOwner.reset();
+    else if (visibilityOwner != clientKey) {
+      result.value().owner = c::ViewportOwner::Other;
+      result.value().policy.reset();
+    }
+    return result;
+  }
   // Spec 0066 R2 / ADR-0132 D2 (Plan 0066 J2): each client's Viewport overlay;
   // the control draws their union, and a client's goes when it does.
   std::map<std::uint64_t, atlantis::connection::ViewportOverlay> overlays;
@@ -542,6 +555,12 @@ struct RemoteServer::State {
     if (cameraOwner == key && control != nullptr) {
       control->setViewportCamera(std::nullopt);
       cameraOwner.reset();
+    }
+    if (visibilityOwner == key && control != nullptr) {
+      auto current = viewportVisibility(key);
+      if (current.isOk() && current.value().owner == atlantis::connection::ViewportOwner::Caller)
+        (void)control->setViewportVisibility(current.value().stamp, std::nullopt);
+      visibilityOwner.reset();
     }
     if (overlays.erase(key) > 0) setOverlayUnion();
   }
@@ -631,6 +650,52 @@ struct RemoteServer::State {
     const std::string_view name = method->asString();
     if (name.starts_with("control.")) {
       if (control == nullptr) return errorResponse(requestId, "NoControl", "this server carries no RuntimeControl");
+      if (name == "control.viewportVisibility" || name == "control.setViewportVisibility" ||
+          name == "control.pickViewport") {
+        namespace c = atlantis::connection;
+        using E = c::ViewportVisibilityError;
+        const auto reply = [&](const auto& result) {
+          return response(requestId, result.isOk() ? codec::ok(codec::encode(result.value())) :
+                                                    codec::err(codec::encode(result.error())));
+        };
+        const auto refuse = [&](E error) {
+          return response(requestId, codec::err(codec::encode(c::ViewportVisibilityFailure{error})));
+        };
+        if (!p.isObject()) return refuse(E::InvalidRequest);
+        if (name == "control.viewportVisibility") {
+          if (!p.asObject().empty()) return refuse(E::InvalidRequest);
+          return reply(viewportVisibility(clientKey));
+        }
+        const auto stamp = codec::decodeViewportStamp(p);
+        if (!stamp) return refuse(E::InvalidRequest);
+        const auto current = viewportVisibility(clientKey);
+        if (current.isErr()) return reply(current);
+        if (current.value().owner == c::ViewportOwner::Other) return refuse(E::NotOwner);
+        if (name == "control.setViewportVisibility") {
+          const auto* encoded = p.find("policy");
+          if (!encoded || p.asObject().size() != 3) return refuse(E::InvalidRequest);
+          std::optional<c::ViewportPolicy> policy;
+          if (!encoded->isNull()) {
+            E error;
+            policy = codec::decodeViewportPolicy(*encoded, error);
+            if (!policy) return refuse(error);
+          }
+          const bool claim = policy.has_value();
+          const auto result = control->setViewportVisibility(*stamp, std::move(policy));
+          if (result.isOk()) visibilityOwner = claim ? std::optional{clientKey} : std::nullopt;
+          return reply(result);
+        }
+        const auto* kind = p.find("kind");
+        const auto* rays = p.find("rays");
+        if (!kind || !kind->isString() || !rays || p.asObject().size() != 4 ||
+            (kind->asString() != "Selection" && kind->asString() != "Alignment"))
+          return refuse(E::InvalidRequest);
+        const auto mode = kind->asString() == "Alignment" ? c::ViewportPickKind::Alignment :
+                                                           c::ViewportPickKind::Selection;
+        const auto decoded = codec::decodeViewportRays(*rays, mode);
+        if (!decoded) return refuse(E::InvalidRequest);
+        return reply(control->pickViewport(*stamp, mode, *decoded));
+      }
       // Spec 0064 / ADR-0128 D1: {"camera":<ViewportCamera>|null} -> null.
       if (name == "control.setViewportCamera") {
         const Value* camera = p.find("camera");

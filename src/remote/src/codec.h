@@ -150,6 +150,22 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::ViewportOverlay> decodeViewportOverlay(const Value& value);
 [[nodiscard]] Value encode(const connection::ViewportCamera& camera);
 [[nodiscard]] std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& value);
+[[nodiscard]] Value encode(const connection::ViewportPolicy& value);
+[[nodiscard]] Value encode(const connection::ViewportVisibility& value);
+[[nodiscard]] Value encode(const connection::ViewportPick& value);
+[[nodiscard]] Value encode(const connection::ViewportVisibilityFailure& value);
+[[nodiscard]] Value encode(const connection::ViewportStamp& value);
+[[nodiscard]] std::optional<connection::ViewportStamp> decodeViewportStamp(const Value& value);
+[[nodiscard]] std::optional<connection::ViewportPolicy> decodeViewportPolicy(const Value& value,
+    connection::ViewportVisibilityError& error);
+[[nodiscard]] std::optional<connection::ViewportVisibility> decodeViewportVisibility(const Value& value);
+[[nodiscard]] std::optional<connection::ViewportPick> decodeViewportPick(const Value& value,
+    connection::ViewportStamp expected, connection::ViewportPickKind kind, std::span<const connection::Ray> rays);
+[[nodiscard]] std::optional<connection::ViewportVisibilityFailure> decodeViewportVisibilityFailure(
+    const Value& value, std::size_t rayCount = 0);
+[[nodiscard]] std::optional<std::vector<connection::Ray>> decodeViewportRays(
+    const Value& value, connection::ViewportPickKind kind);
+
 [[nodiscard]] Value encode(const connection::AlignmentFaces& result);
 [[nodiscard]] Value encode(const connection::AlignmentFaceFailure& failure);
 [[nodiscard]] std::optional<connection::AlignmentFaces> decodeAlignmentFaces(

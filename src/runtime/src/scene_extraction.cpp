@@ -670,6 +670,17 @@ std::vector<RenderableExtractionInput> collectRenderables(atlantis::world::Baked
   return inNodeOrder(std::move(collected));
 }
 
+std::vector<RenderableExtractionInput> collectVisibleRenderables(atlantis::world::BakedScene& scene,
+    const std::function<bool(atlantis::world::ecs::EntityId)>& visible) {
+  std::vector<std::pair<atlantis::world::ecs::EntityId, RenderableExtractionInput>> collected;
+  scene.world.query<const atlantis::world::Renderable, const atlantis::world::WorldMatrix>(
+      [&](atlantis::world::ecs::EntityId id, const atlantis::world::Renderable& renderable,
+          const atlantis::world::WorldMatrix& worldMatrix) {
+        if (visible(id)) collected.push_back({id, {renderable, atlantis::world::toColumnMajor(worldMatrix)}});
+      });
+  return inNodeOrder(std::move(collected));
+}
+
 std::vector<atlantis::asset_system::AssetId> collectReferencedMaterialIds(
     std::span<const RenderableExtractionInput> renderables) {
   std::vector<atlantis::asset_system::AssetId> referenced;

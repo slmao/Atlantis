@@ -212,6 +212,69 @@ struct RayHit {
   friend bool operator==(const RayHit&, const RayHit&) = default;
 };
 
+inline constexpr std::size_t kViewportVisibilityEntries = 8192;
+using ViewportMembers = std::vector<atlantis::asset_system::EntityGuid>;
+
+struct ViewportStamp {
+  std::uint64_t sceneGeneration = 0;
+  std::uint64_t revision = 0;
+  friend bool operator==(const ViewportStamp&, const ViewportStamp&) = default;
+};
+
+struct ViewportPolicy {
+  ViewportMembers hidden;
+  ViewportMembers locked;
+  std::optional<ViewportMembers> isolated;
+  friend bool operator==(const ViewportPolicy&, const ViewportPolicy&) = default;
+};
+
+enum class ViewportOwner { None, Caller, Other };
+struct ViewportVisibility {
+  ViewportStamp stamp;
+  bool presented = false;
+  ViewportOwner owner = ViewportOwner::None;
+  std::optional<ViewportPolicy> policy;
+};
+
+enum class ViewportVisibilityError {
+  Unsupported, InvalidRequest, Unavailable, TooLarge, NotOwner, StaleGeneration, StaleRevision,
+  UnknownMember, NotPresented, NoGeometry, FaceRefused, TransportFailure, RpcFailure, ProtocolFailure,
+};
+[[nodiscard]] constexpr std::string_view toString(ViewportVisibilityError error) noexcept {
+  constexpr std::array<std::string_view, 14> names{
+      "Unsupported", "InvalidRequest", "Unavailable", "TooLarge", "NotOwner", "StaleGeneration",
+      "StaleRevision", "UnknownMember", "NotPresented", "NoGeometry", "FaceRefused",
+      "TransportFailure", "RpcFailure", "ProtocolFailure"};
+  return names[static_cast<std::size_t>(error)];
+}
+
+struct ViewportVisibilityFailure {
+  ViewportVisibilityError code;
+  std::optional<AlignmentFaceFailure> face = {};
+};
+
+using ViewportVisibilityResult = atlantis::Result<ViewportVisibility, ViewportVisibilityFailure>;
+enum class ViewportPickKind { Selection, Alignment };
+struct ViewportPick {
+  ViewportStamp stamp;
+  std::variant<std::optional<RayHit>, AlignmentFaces> value;
+};
+using ViewportPickResult = atlantis::Result<ViewportPick, ViewportVisibilityFailure>;
+
+[[nodiscard]] inline std::optional<ViewportVisibilityError> validateViewportPolicy(const ViewportPolicy& policy) {
+  const std::size_t total = policy.hidden.size() + policy.locked.size() +
+                            (policy.isolated ? policy.isolated->size() : 0);
+  if (total > kViewportVisibilityEntries) return ViewportVisibilityError::TooLarge;
+  const auto validList = [](const ViewportMembers& list) {
+    return (list.empty() || list.front() != atlantis::asset_system::EntityGuid{}) &&
+           std::is_sorted(list.begin(), list.end()) && std::adjacent_find(list.begin(), list.end()) == list.end();
+  };
+  if (total == 0 || !validList(policy.hidden) || !validList(policy.locked) ||
+      (policy.isolated && (policy.isolated->empty() || !validList(*policy.isolated))))
+    return ViewportVisibilityError::InvalidRequest;
+  return std::nullopt;
+}
+
 enum class ControlError {
   InvalidRequest,  // zero frames; a Viewport overlay not well formed or over its limits
   NotRendering,    // the Runtime has no drawable frame to capture (no window surface yet, or minimized)
@@ -262,6 +325,17 @@ struct DiagnosticBatch {
 class RuntimeControl {
  public:
   virtual ~RuntimeControl() = default;
+
+  [[nodiscard]] virtual ViewportVisibilityResult viewportVisibility() {
+    return ViewportVisibilityResult::Err({ViewportVisibilityError::Unsupported});
+  }
+  [[nodiscard]] virtual ViewportVisibilityResult setViewportVisibility(
+      ViewportStamp, std::optional<ViewportPolicy>) {
+    return ViewportVisibilityResult::Err({ViewportVisibilityError::Unsupported});
+  }
+  [[nodiscard]] virtual ViewportPickResult pickViewport(ViewportStamp, ViewportPickKind, std::span<const Ray>) {
+    return ViewportPickResult::Err({ViewportVisibilityError::Unsupported});
+  }
 
   [[nodiscard]] virtual RuntimeStatus status() = 0;
   // Pause holds command application at the start of each frame; frames go on

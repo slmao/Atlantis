@@ -33,6 +33,27 @@ public static partial class Program
         Change(new NodeNameChanged(sibling, "Fill light"));
         Change(new NodeNameChanged(other, "Light camera name only"));
 
+        var visibilityRows = Rows();
+        var parentRow = visibilityRows.Single(row => row.Node == parent);
+        var childRow = visibilityRows.Single(row => row.Node == child);
+        var unrelatedRow = visibilityRows.Single(row => row.Node == other);
+        var hideNode = ViewportMembership.Plan(tree, null, VisibilityAction.HideNode, [parentRow]);
+        Check(hideNode.Refusal is null && hideNode.Policy?.Hidden.SequenceEqual([parent]) == true,
+            "viewport hide node preserves descendants");
+        var hideTree = ViewportMembership.Plan(tree, null, VisibilityAction.HideSubtree, [parentRow, childRow]);
+        Check(hideTree.Policy?.Hidden.Count == 4, "viewport subtree membership deduplicates overlapping roots");
+        var locked = ViewportMembership.Plan(tree, hideNode.Policy, VisibilityAction.LockPick, [unrelatedRow]);
+        var isolated = ViewportMembership.Plan(tree, locked.Policy, VisibilityAction.Isolate, [unrelatedRow, parentRow]);
+        var view = new ViewportMembership(isolated.Policy);
+        Check(!view.Visible(parent) && view.Visible(child) && view.Visible(other) && !view.Pickable(other),
+            "isolation preserves manual hides and visible pick locks");
+        var exited = ViewportMembership.Plan(tree, isolated.Policy, VisibilityAction.ExitIsolation, []);
+        Check(locked.Policy?.SameMembership(exited.Policy) == true &&
+            ViewportMembership.Plan(tree, exited.Policy, VisibilityAction.Restore, []).Policy is null,
+            "exit isolation retains manual sets and restore clears them without selection");
+        Check(ViewportMembership.Plan(tree, null, VisibilityAction.Isolate, []).Refusal is not null,
+            "empty selection cannot replace viewport isolation");
+
         var filter = new HierarchyFilter("  liGht ", FakeDocument.Light);
         var rows = Rows();
         var projection = filter.Project(rows);
@@ -76,8 +97,11 @@ public static partial class Program
         Check(!filter.Project(Rows()).Rows.Any(), "Hierarchy projection drops a path when its last match is removed");
         Change(new Atlantis.Gameplay.Authoring.ComponentAdded(sibling, FakeDocument.Light));
         Check(filter.Project(Rows()).Matches(sibling), "Hierarchy projection follows component creation");
+        var oldVisibilityRow = Rows().Single(row => row.Node == grandchild);
         Change(new NodeDestroyed(grandchild));
         Change(new NodeCreated(grandchild, (ulong)tree.Count));
+        Check(ViewportMembership.Plan(tree, null, VisibilityAction.HideNode, [oldVisibilityRow]).Refusal is not null,
+            "viewport action refuses a stale row even if its GUID was reused");
         Check(anchor.Restore(Rows())?.Node == child, "Hierarchy scroll anchors do not follow replacements with the same GUID");
         Change(new DocumentReopened(default));
         Check(anchor.Restore(Rows())?.Node == Rows()[0].Node, "Hierarchy scroll falls back to the top after a new document");

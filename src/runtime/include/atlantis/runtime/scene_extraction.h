@@ -14,6 +14,7 @@
 #include <span>
 #include <type_traits>
 #include <variant>
+#include <functional>
 #include <vector>
 
 namespace atlantis::runtime {
@@ -467,6 +468,8 @@ struct RenderableExtractionInput {
 // Every entity with a Renderable, in node order. One call per frame feeds both
 // the referenced-material list and the DrawItem walk.
 [[nodiscard]] std::vector<RenderableExtractionInput> collectRenderables(atlantis::world::BakedScene& scene);
+[[nodiscard]] std::vector<RenderableExtractionInput> collectVisibleRenderables(
+    atlantis::world::BakedScene& scene, const std::function<bool(atlantis::world::ecs::EntityId)>& visible);
 
 // The distinct material AssetIds `renderables` name, in first-reference order
 // (Spec 0018 D8's reproducible realization order); an absent material is

@@ -399,6 +399,44 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     params.set("camera", camera.has_value() ? codec::encode(*camera) : Value());
     (void)state_->call("control.setViewportCamera", std::move(params));
   }
+  atlantis::connection::ViewportVisibilityResult viewportVisibility() override {
+    return requestViewport<atlantis::connection::ViewportVisibilityResult>(
+        "control.viewportVisibility", Value::object(), codec::decodeViewportVisibility);
+  }
+
+  atlantis::connection::ViewportVisibilityResult setViewportVisibility(atlantis::connection::ViewportStamp stamp,
+      std::optional<atlantis::connection::ViewportPolicy> policy) override {
+    using R = atlantis::connection::ViewportVisibilityResult;
+    if (policy) {
+      if (const auto error = atlantis::connection::validateViewportPolicy(*policy)) return R::Err({*error});
+    }
+    auto params = codec::encode(stamp);
+    params.set("policy", policy ? codec::encode(*policy) : Value{});
+    return requestViewport<R>("control.setViewportVisibility", std::move(params), [stamp, &policy](const auto& value) {
+      auto result = codec::decodeViewportVisibility(value);
+      if (!result || result->stamp.sceneGeneration != stamp.sceneGeneration || result->policy != policy ||
+          result->owner != (policy ? atlantis::connection::ViewportOwner::Caller : atlantis::connection::ViewportOwner::None) ||
+          result->stamp.revision < stamp.revision || (policy && result->stamp.revision == stamp.revision))
+        return decltype(result){};
+      return result;
+    });
+  }
+
+  atlantis::connection::ViewportPickResult pickViewport(atlantis::connection::ViewportStamp stamp,
+      atlantis::connection::ViewportPickKind kind, std::span<const atlantis::connection::Ray> rays) override {
+    using namespace atlantis::connection;
+    if (rays.empty() || rays.size() > (kind == ViewportPickKind::Alignment ? 2u : 1u) ||
+        !std::ranges::all_of(rays, validAlignmentRay)) return ViewportPickResult::Err({ViewportVisibilityError::InvalidRequest});
+    auto params = codec::encode(stamp);
+    params.set("kind", Value::string(kind == ViewportPickKind::Alignment ? "Alignment" : "Selection"));
+    auto items = Value::array();
+    for (const auto& ray : rays) items.push(codec::encode(ray));
+    params.set("rays", std::move(items));
+    return requestViewport<ViewportPickResult>("control.pickViewport", std::move(params),
+        [&](const auto& v) { return codec::decodeViewportPick(v, stamp, kind, rays); },
+        kind == ViewportPickKind::Alignment ? rays.size() : 0);
+  }
+
   atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
       std::span<const atlantis::connection::Ray> rays) override {
     using R = atlantis::connection::AlignmentFacesResult;
@@ -505,6 +543,30 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
   }
 
  private:
+  template <typename R, typename Decode>
+  R requestViewport(std::string_view method, Value params, Decode decode, std::size_t rayCount = 0) {
+    using E = atlantis::connection::ViewportVisibilityError;
+    const auto envelope = state_->awaitResponse(state_->send(method, std::move(params)));
+    if (!envelope) return R::Err({state_->failure == RemoteError::ProtocolError ? E::ProtocolFailure : E::TransportFailure});
+    const auto* result = envelope->find("result");
+    const auto* error = envelope->find("error");
+    if (error && !result && error->isObject() && error->asObject().size() == 2) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString() && message && message->isString())
+        return R::Err({code->asString() == "BadRequest" && message->asString() == "unknown method " + std::string(method)
+            ? E::Unsupported : E::RpcFailure});
+    }
+    if (result && !error && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* ok = result->find("ok"))
+        if (auto value = decode(*ok)) return R::Ok(std::move(*value));
+      if (const auto* err = result->find("err"))
+        if (const auto refusal = codec::decodeViewportVisibilityFailure(*err, rayCount)) return R::Err(*refusal);
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err({E::ProtocolFailure});
+  }
+
   RemoteSession::State* state_;
 };
 

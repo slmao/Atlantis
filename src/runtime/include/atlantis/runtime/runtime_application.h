@@ -201,6 +201,12 @@ class RuntimeApplication {
   // failing checkInvertibleNormalTransform(), ADR-0134 D2) is not pickable
   // (ADR-0123 D2, amended 2026-10-25 and 2026-10-26). renderableLocalBounds(): the local bounds of the entity's
   // Renderable mesh. Between frames, frame thread only.
+  [[nodiscard]] connection::ViewportVisibilityResult viewportVisibility() const;
+  [[nodiscard]] connection::ViewportVisibilityResult setViewportVisibility(
+      connection::ViewportStamp stamp, std::optional<connection::ViewportPolicy> policy);
+  [[nodiscard]] connection::ViewportPickResult pickViewport(connection::ViewportStamp stamp,
+      connection::ViewportPickKind kind, std::span<const connection::Ray> rays) const;
+
   [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
   [[nodiscard]] atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
       std::span<const atlantis::connection::Ray> rays) const;
@@ -277,7 +283,7 @@ class RuntimeApplication {
   void detachOverlay();
 
  private:
-  [[nodiscard]] std::vector<detail::PickInstance> pickInstances(bool alignment) const;
+  [[nodiscard]] std::vector<detail::PickInstance> pickInstances(bool alignment, bool useVisibility = false) const;
   [[nodiscard]] connection::assets::MeshPreviewResult previewMeshWithCompletion(
       const BootstrapConfig& config, const asset_system::AssetGuid& guid, const asset_system::StaticMeshAssetData& mesh,
       detail::PreviewCompletion complete);
@@ -317,7 +323,7 @@ class RuntimeApplication {
   // the capture's waitIdle()) drained the GPU work that last used the
   // overlay's resources.
   [[nodiscard]] std::optional<atlantis::renderer::ViewportOverlayDrawList> viewportOverlayDrawList(
-      const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format);
+      const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format, bool useVisibility = false);
   [[nodiscard]] atlantis::renderer::FrameEndStates drawViewportOverlayInto(
       atlantis::rhi::CommandList& commandList, atlantis::rhi::RenderTarget& target,
       atlantis::renderer::FrameEndStates sceneEnd, atlantis::rhi::ResourceState finalState,
@@ -619,6 +625,24 @@ class RuntimeApplication {
   std::optional<ReloadResult> reloadResult_;
   bool reloadsStopped_ = false;
   std::string assetCatalogPath_;
+  using VisibilityHandles = std::unordered_map<std::uint32_t, atlantis::world::ecs::EntityId>;
+  struct ResolvedVisibility {
+    connection::ViewportPolicy policy;
+    VisibilityHandles hidden;
+    VisibilityHandles locked;
+    std::optional<VisibilityHandles> isolated;
+  };
+  bool viewportVisibilityEnabled_ = false;
+  std::uint64_t visibilityRevision_ = 0;
+  std::optional<connection::ViewportStamp> presentedVisibility_;
+  std::optional<ResolvedVisibility> visibility_;
+  [[nodiscard]] connection::ViewportStamp visibilityStamp() const noexcept;
+  [[nodiscard]] std::optional<connection::ViewportVisibilityError> checkVisibilityStamp(connection::ViewportStamp stamp) const;
+  [[nodiscard]] bool filteredViewportDraw() const noexcept;
+  [[nodiscard]] bool viewportVisible(atlantis::world::ecs::EntityId entity) const;
+  [[nodiscard]] bool viewportPickable(const asset_system::EntityGuid& guid) const;
+  void clearViewportVisibility();
+
   std::uint64_t sceneGeneration_ = 0;
   std::optional<atlantis::world::ecs::EntityId> activeCameraEntity_;  // cached for logging only; scene_ is the source of truth
   RuntimeLifecycleTracker lifecycle_;

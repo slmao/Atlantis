@@ -1155,7 +1155,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   materialDataMap_ = std::move(outcome.materialDataMap);
   textureDataMap_ = std::move(outcome.textureDataMap);
   pickGeometry_ = std::move(outcome.pickGeometry);  // Plan 0062 P5
-  pickGeometryRetained_ = config.retainPickGeometry;  // Spec 0064 / ADR-0128 D2
+  pickGeometryRetained_ = config.retainPickGeometry;
+  viewportVisibilityEnabled_ = config.parentWindow.has_value() && pickGeometryRetained_;  // Spec 0064 / ADR-0128 D2
   sceneGuid_ = outcome.sceneGuid;
   assetCatalogPath_ = config.assetCatalogPath;  // Plan 0065 P4: a reload resolves through it
   environmentData_ = std::move(loadedEnvironment);
@@ -1358,6 +1359,7 @@ void RuntimeApplication::performPendingSceneReload() {
   } else if (!wantsBloom) {
     bloomTargets_.reset();  // a fresh start on a scene without bloom builds none
   }
+  clearViewportVisibility();
   ++sceneGeneration_;
   if (applyId) {
     reloadResult_.emplace(*applyId, Result<std::uint64_t, connection::authoring::ReloadError>::Ok(sceneGeneration_));
@@ -1939,7 +1941,11 @@ void RuntimeApplication::runFrame() {
   ATL_PROFILE_SCOPE_END(runtimeZone2);
   ATL_PROFILE_SCOPE_NAMED(extractionZone3, "RenderExtraction");
   std::vector<DrawItem> drawItems;
-  for (const RenderableExtractionInput& renderable : renderables) {
+  // Realize resources from the full scene above so ordinary captures remain complete.
+  const auto visible = filteredViewportDraw()
+      ? std::optional{collectVisibleRenderables(*scene_, [this](auto entity) { return viewportVisible(entity); })}
+      : std::nullopt;
+  for (const RenderableExtractionInput& renderable : visible ? *visible : renderables) {
     const auto resolveResult = resolveMeshAsset(renderable.renderable.meshAsset, knownMeshAssetIds);
     if (resolveResult.isErr()) {
       // Recoverable, per-entity: a single bad reference should not
@@ -2047,7 +2053,7 @@ void RuntimeApplication::runFrame() {
   const atlantis::rhi::ResourceState sceneFinalState =
       overlay_ ? atlantis::rhi::ResourceState::ShaderRead : atlantis::rhi::ResourceState::PresentSource;
   const std::optional<atlantis::renderer::ViewportOverlayDrawList> viewportOverlayList =
-      viewportOverlay_.has_value() ? viewportOverlayDrawList(*viewportOverlay_, currentFormat) : std::nullopt;
+      viewportOverlay_.has_value() ? viewportOverlayDrawList(*viewportOverlay_, currentFormat, filteredViewportDraw()) : std::nullopt;
   const atlantis::renderer::FrameEndStates sceneEnd = renderer_.drawFrame(*commandList, overlay_ ? overlayViewportTarget() : *target, *depthTexture_, *cameraBuffer_, drawItems,
                        viewportOverlayList ? atlantis::rhi::ResourceState::ColorAttachmentOutput : sceneFinalState, *hdrColorTarget_, *fullscreenTriangleVertexBuffer_,
                        *fullscreenTriangleIndexBuffer_, *effectiveOutputTransformPipeline, *outputTransformSampler_,
@@ -2183,6 +2189,7 @@ void RuntimeApplication::runFrame() {
     lifecycle_.markFailed();
     return;
   }
+  if (viewportVisibilityEnabled_) presentedVisibility_ = visibilityStamp();
 }
 
 std::string_view toString(OverlayAttachError error) noexcept {
@@ -2470,9 +2477,12 @@ connection::ViewportNavigationResult RuntimeApplication::viewportNavigation(
 // pickable either: the same predicate, under the same condition. Every other
 // entity -- non-uniformly scaled, sheared, unlit or material-less included --
 // is picked.
-std::vector<detail::PickInstance> RuntimeApplication::pickInstances(bool alignment) const {
+std::vector<detail::PickInstance> RuntimeApplication::pickInstances(bool alignment, bool useVisibility) const {
   if (!scene_ || !worldAccess_ || pickGeometry_.empty()) return {};
   auto instances = detail::collectPickInstances(*worldAccess_, *scene_);
+  if (useVisibility && visibility_) {
+    std::erase_if(instances, [this](const detail::PickInstance& instance) { return !viewportPickable(instance.entity); });
+  }
   // erase_if predicates cannot modify their element. Only an explicit face
   // read asks for the extra material proof.
   if (alignment) {
@@ -2518,6 +2528,106 @@ connection::AlignmentFacesResult RuntimeApplication::pickAlignmentFaces(std::spa
     out.faces.push_back(std::move(face.value()));
   }
   return R::Ok(std::move(out));
+}
+
+connection::ViewportStamp RuntimeApplication::visibilityStamp() const noexcept {
+  return {sceneGeneration_, visibilityRevision_};
+}
+
+std::optional<connection::ViewportVisibilityError> RuntimeApplication::checkVisibilityStamp(
+    connection::ViewportStamp stamp) const {
+  using E = connection::ViewportVisibilityError;
+  if (!viewportVisibilityEnabled_ || !scene_) return E::Unavailable;
+  if (stamp.sceneGeneration != sceneGeneration_) return E::StaleGeneration;
+  if (stamp.revision != visibilityRevision_) return E::StaleRevision;
+  return std::nullopt;
+}
+
+connection::ViewportVisibilityResult RuntimeApplication::viewportVisibility() const {
+  using R = connection::ViewportVisibilityResult;
+  if (const auto error = checkVisibilityStamp(visibilityStamp())) return R::Err({*error});
+  return R::Ok({visibilityStamp(), presentedVisibility_ == visibilityStamp(),
+      visibility_ ? connection::ViewportOwner::Caller : connection::ViewportOwner::None,
+      visibility_ ? std::optional{visibility_->policy} : std::nullopt});
+}
+
+connection::ViewportVisibilityResult RuntimeApplication::setViewportVisibility(
+    connection::ViewportStamp stamp, std::optional<connection::ViewportPolicy> policy) {
+  using R = connection::ViewportVisibilityResult;
+  using E = connection::ViewportVisibilityError;
+  if (const auto error = checkVisibilityStamp(stamp)) return R::Err({*error});
+  if (!policy) {
+    clearViewportVisibility();
+    return viewportVisibility();
+  }
+  if (const auto error = connection::validateViewportPolicy(*policy)) return R::Err({*error});
+  ResolvedVisibility next{std::move(*policy), {}, {}, {}};
+  const auto resolve = [this](const connection::ViewportMembers& members, VisibilityHandles& out) {
+    for (const auto& guid : members) {
+      const auto id = scene_->entities.find(guid);
+      if (!id || !scene_->world.isValid(*id)) return false;
+      out.emplace(id->index(), *id);
+    }
+    return true;
+  };
+  if (!resolve(next.policy.hidden, next.hidden) || !resolve(next.policy.locked, next.locked) ||
+      (next.policy.isolated && !resolve(*next.policy.isolated, next.isolated.emplace())))
+    return R::Err({E::UnknownMember});
+  visibility_ = std::move(next);
+  ++visibilityRevision_;
+  return viewportVisibility();
+}
+
+void RuntimeApplication::clearViewportVisibility() {
+  if (!visibility_) return;
+  visibility_.reset();
+  ++visibilityRevision_;
+}
+
+bool RuntimeApplication::filteredViewportDraw() const noexcept {
+  return visibility_ && (!visibility_->hidden.empty() || visibility_->isolated);
+}
+
+namespace {
+bool containsViewportHandle(const auto& set, atlantis::world::ecs::EntityId entity) {
+  const auto it = set.find(entity.index());
+  return it != set.end() && it->second == entity;
+}
+}
+
+bool RuntimeApplication::viewportVisible(atlantis::world::ecs::EntityId entity) const {
+  return !visibility_ || (!containsViewportHandle(visibility_->hidden, entity) &&
+      (!visibility_->isolated || containsViewportHandle(*visibility_->isolated, entity)));
+}
+
+bool RuntimeApplication::viewportPickable(const asset_system::EntityGuid& guid) const {
+  if (!visibility_) return true;
+  const auto baked = scene_->entities.find(guid);
+  if (!baked || !scene_->world.isValid(*baked)) return !visibility_->isolated;
+  return viewportVisible(*baked) && !containsViewportHandle(visibility_->locked, *baked);
+}
+
+connection::ViewportPickResult RuntimeApplication::pickViewport(connection::ViewportStamp stamp,
+    connection::ViewportPickKind kind, std::span<const connection::Ray> rays) const {
+  using R = connection::ViewportPickResult;
+  using E = connection::ViewportVisibilityError;
+  if (const auto error = checkVisibilityStamp(stamp)) return R::Err({*error});
+  const bool alignment = kind == connection::ViewportPickKind::Alignment;
+  if (rays.empty() || rays.size() > (alignment ? connection::kAlignmentRayLimit : 1) ||
+      !std::ranges::all_of(rays, connection::validAlignmentRay)) return R::Err({E::InvalidRequest});
+  if (presentedVisibility_ != stamp) return R::Err({E::NotPresented});
+  const auto instances = pickInstances(alignment, true);
+  if (!alignment) {
+    const auto hit = detail::pickNearest(instances, pickGeometry_, PickRay{rays[0].origin, rays[0].direction});
+    return R::Ok({stamp, hit ? std::optional{connection::RayHit{hit->entity, hit->distance}} : std::nullopt});
+  }
+  connection::AlignmentFaces evidence{stamp.sceneGeneration, {}};
+  for (std::uint32_t i = 0; i < rays.size(); ++i) {
+    auto face = detail::pickAlignmentFace(instances, pickGeometry_, rays[i]);
+    if (face.isErr()) return R::Err({E::FaceRefused, connection::AlignmentFaceFailure{face.error(), i}});
+    evidence.faces.push_back(std::move(face.value()));
+  }
+  return R::Ok({stamp, std::move(evidence)});
 }
 
 std::optional<LocalBounds> RuntimeApplication::renderableLocalBounds(
@@ -2670,7 +2780,7 @@ bool RuntimeApplication::viewportOverlayPipelinesFor(atlantis::rhi::Format forma
 // mesh is not loaded) is skipped without a word -- a selection goes stale
 // between frames (Spec 0066 R4).
 std::optional<atlantis::renderer::ViewportOverlayDrawList> RuntimeApplication::viewportOverlayDrawList(
-    const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format) {
+    const atlantis::connection::ViewportOverlay& overlay, atlantis::rhi::Format format, bool useVisibility) {
   using atlantis::renderer::ViewportOverlayDepth;
   if (overlay.selection.empty() && overlay.groups.empty()) return std::nullopt;
   if (!viewportOverlayPipelinesFor(format)) return std::nullopt;
@@ -2689,7 +2799,8 @@ std::optional<atlantis::renderer::ViewportOverlayDrawList> RuntimeApplication::v
   if (scene_) {
     for (const atlantis::asset_system::EntityGuid& guid : overlay.selection) {
       const std::optional<atlantis::world::ecs::EntityId> entity = scene_->entities.find(guid);
-      if (!entity.has_value() || !scene_->world.isValid(*entity)) continue;
+      if (!entity.has_value() || !scene_->world.isValid(*entity) ||
+          (useVisibility && !viewportVisible(*entity))) continue;
       const auto renderable = scene_->world.get<atlantis::world::Renderable>(*entity);
       const auto worldMatrix = scene_->world.get<atlantis::world::WorldMatrix>(*entity);
       if (renderable.isErr() || worldMatrix.isErr()) continue;
