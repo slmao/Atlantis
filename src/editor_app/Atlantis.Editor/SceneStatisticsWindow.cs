@@ -4,6 +4,7 @@ using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Templates;
 using Avalonia.Media;
 using Avalonia.Threading;
 
@@ -157,7 +158,14 @@ internal sealed class SceneStatisticsWindow : Window
     private readonly TextBlock _frame = EditorVisuals.Secondary("");
     private readonly TextBlock _references = EditorVisuals.Secondary("");
     private readonly TextBlock _notice = EditorVisuals.Secondary("");
-    private readonly ListBox _missing = new();
+    private readonly ListBox _missing = new()
+    {
+        ItemTemplate = new FuncDataTemplate<MissingSceneBinding>((binding, _) => new TextBlock
+        {
+            Text = binding?.ToString(),
+            TextWrapping = TextWrapping.Wrap,
+        }),
+    };
     private readonly DispatcherTimer _expiry = new() { Interval = TimeSpan.FromSeconds(30) };
     private Action? _expired;
     private bool _current, _locating;
