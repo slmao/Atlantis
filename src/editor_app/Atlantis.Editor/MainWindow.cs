@@ -1168,7 +1168,10 @@ public sealed partial class MainWindow : Window
         };
         worker.HostedVisibilityChanged += (state, unknown, notice) =>
         {
-            if (ReferenceEquals(_worker, worker) && !_shuttingDown) PublishViewportVisibility(state, unknown, notice);
+            if (!ReferenceEquals(_worker, worker) || _shuttingDown) return;
+            PublishViewportVisibility(state, unknown, notice);
+            if (BistroTuningView && !BistroVisibilityAllowed)
+                LeaveBistroView("Viewport settings changed. Restore them to return to the reference view.");
         };
         worker.PersistenceChanged += state =>
         {

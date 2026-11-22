@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -9,6 +10,8 @@ using System.Threading.Tasks;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
+using Atlantis.Gameplay.Authoring;
+using Avalonia.Automation;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -44,16 +47,109 @@ public static partial class Program
         foreach (string value in new[] { "null", "\"nan\"", "\"inf\"", "\"0\"", "1e40" })
             Check(Codec.DecodeFrameData(Codec.Encode(data).Set("exposureCompensationEv", Json.Parse(value))) is null,
                 "frame rejects malformed exposure " + value);
+        BistroProjectionChecks();
     }
 
-    private static int RunBistroReferenceUi(string runtime, string scene, string evidence)
+    private static void BistroProjectionChecks()
+    {
+        var document = new DocumentToken(new(Guid.NewGuid()), 12);
+        var camera = new EntityGuid(Guid.NewGuid());
+        var receipt = new ApplyReceipt(new(Guid.NewGuid()), document.DocumentRevision);
+        var view = new ViewportStamp(5, 1);
+        var snapshot = new ApplySnapshot(document.DocumentRevision, new(receipt, ApplyState.Applied, 5),
+            new(receipt, 5));
+        var proof = BistroProjection.Confirm(document, camera, snapshot, view);
+        Check(proof is not null, "Bistro pair accepts a confirmed current projection");
+        Check(BistroProjection.Confirm(document, camera, null, view) is null, "Bistro pair requires projection evidence");
+        Check(BistroProjection.Confirm(document with { DocumentRevision = 13 }, camera, snapshot, view) is null,
+            "Bistro pair refuses a newer commit on the previous projection");
+        Check(BistroProjection.Confirm(document, camera, snapshot, view with { SceneGeneration = 6 }) is null,
+            "Bistro pair refuses the wrong Runtime generation");
+        foreach (var stopped in new[] { ApplyState.Failed, ApplyState.Pending, ApplyState.Superseded })
+            Check(BistroProjection.Confirm(document, camera, snapshot with { Request = new(receipt, stopped) }, view) is null,
+                "Bistro pair refuses " + stopped);
+        var next = proof! with { Document = document with { DocumentRevision = 13 }, Viewport = new(6, 2) };
+        Check(next.Follows(proof!), "Bistro After accepts a later revision at the same active camera");
+        Check(!proof!.Follows(proof) && !(next with { Camera = new(Guid.NewGuid()) }).Follows(proof) &&
+            !(next with { Document = next.Document with { DocumentId = new(Guid.NewGuid()) } }).Follows(proof),
+            "Bistro After refuses the same projection or another camera or document");
+    }
+
+    private static int RunBistroLocator(string runtimePath, string scene, string evidence)
     {
         Directory.CreateDirectory(evidence);
-        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence)).UsePlatformDetect()
+        using var runtime = RuntimeProcess.Start(new(runtimePath, scene, null, evidence));
+        var session = runtime.WaitForSession(TimeSpan.FromSeconds(25));
+        using var peer = RemoteSession.Connect(session);
+        var posted = new ConcurrentQueue<Action>();
+        using var log = new EditorLog(Path.Combine(evidence, "editor.log"));
+        using var worker = new EditorWorker(session, posted.Enqueue, log);
+        HierarchySnapshot? tree = null;
+        bool switched = false;
+        worker.HierarchyChanged += snapshot => tree = snapshot;
+        worker.LeaveDocumentEvents += events => switched |= events.Any(e => e is ActiveCameraChanged);
+        worker.Start();
+
+        void Pump() { while (posted.TryDequeue(out var action)) action(); }
+        DocumentToken ReadWorkerDocument() => worker.ReviewDocument()
+            .WaitAsync(TimeSpan.FromSeconds(25)).GetAwaiter().GetResult().State?.Token ??
+            throw new InvalidOperationException("Worker could not verify the test document.");
+        void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+            Console.WriteLine("PASS " + message);
+        }
+
+        var originalDocument = ReadWorkerDocument();
+        Pump();
+        var original = peer.Authoring.ActiveCamera().Value!.Value;
+        var alternate = new EntityGuid(Guid.Parse("01370137-0137-4137-8137-013700000010"));
+        var rows = tree!.Rows;
+        var originalRow = rows.Single(row => row.Node == original);
+        EntityGuid selection = rows.First(row => row.Node != original && row.Node != alternate).Node;
+        worker.ShowSelection([selection], 1);
+        HierarchyRow? located = null;
+        string? reason = null;
+        bool delivered = false;
+        void Receive(HierarchyRow? row, string? error)
+        {
+            delivered = true;
+            located = row;
+            reason = error;
+        }
+
+        worker.LocateBistroCamera(rows, 1, 0, Receive);
+        // ReviewDocument is queued behind Locate and drains authoring events on the Worker.
+        // Keep all UI callbacks queued while changing the active camera through the peer.
+        Require(ReadWorkerDocument() == originalDocument && !delivered, "A's locator response is pending UI delivery");
+        peer.Authoring.SubmitTransaction([new SetActiveCamera(alternate)]);
+        Require(peer.Authoring.DrainFailures().Count == 0, "peer changed the active camera to B");
+        var changed = ReadWorkerDocument();
+        Require(changed.DocumentId == originalDocument.DocumentId &&
+            changed.DocumentRevision > originalDocument.DocumentRevision &&
+            peer.Authoring.ActiveCamera().Value == alternate, "Worker observed the newer document before UI delivery");
+        Pump();
+        Require(switched && tree!.Rows.Any(row => row.Node == original &&
+            ReferenceEquals(row.Incarnation, originalRow.Incarnation)), "A's visible row and incarnation still match");
+        Require(delivered && located is null && reason?.Contains("again", StringComparison.Ordinal) == true,
+            "delayed A result returns a retry diagnostic without a selectable row");
+
+        delivered = false;
+        worker.LocateBistroCamera(tree!.Rows, 1, 0, Receive);
+        Require(ReadWorkerDocument() == changed, "retry observes the current document");
+        Pump();
+        Require(delivered && located?.Node == alternate && reason is null, "fresh locator resolves B");
+        return 0;
+    }
+
+    private static int RunBistroReferenceUi(string runtime, string scene, string evidence, bool tuning = false)
+    {
+        Directory.CreateDirectory(evidence);
+        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence, tuning)).UsePlatformDetect()
             .StartWithClassicDesktopLifetime([]);
     }
 
-    private sealed class BistroReferenceApp(string runtime, string scene, string evidence) : Application
+    private sealed class BistroReferenceApp(string runtime, string scene, string evidence, bool tuning) : Application
     {
         public override void Initialize()
         {
@@ -72,7 +168,12 @@ public static partial class Program
             window.Opened += (_, _) => Dispatcher.UIThread.Post(async () =>
             {
                 int exit = 1;
-                try { await CheckBistroReferenceUi(window, evidence); exit = 0; }
+                try
+                {
+                    if (tuning) await CheckBistroTuningUi(window, evidence);
+                    else await CheckBistroReferenceUi(window, evidence);
+                    exit = 0;
+                }
                 catch (Exception error) { Console.Error.WriteLine(error); }
                 finally
                 {
@@ -253,20 +354,264 @@ public static partial class Program
         await NameUiWait(() => Field<Selection>("_selection").Node == expected!.Entity &&
             Field<GizmoSnapshot>("_gizmoShown")?.Node == expected.Entity, "native pick and Gizmo target match the fixed projection");
         Verify(true, "native pick and Gizmo target match the fixed projection");
-        static async Task NativeCapture(Window target, string output)
+    }
+
+    private static async Task CheckBistroTuningUi(MainWindow window, string evidence)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        static void Click(MenuItem item) => item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        static void Press(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        void Verify(bool ok, string name)
         {
-            string? helper = Environment.GetEnvironmentVariable("ATLANTIS_0131_CAPTURE");
-            if (helper is null) return;
-            var handle = target.TryGetPlatformHandle()!.Handle;
-            target.Activate();
-            await NameUiWait(() => GetForegroundWindow() == handle, "foreground native capture window");
-            await Task.Delay(200);
-            using var process = Process.Start(new ProcessStartInfo("python") { UseShellExecute = false, CreateNoWindow = true,
-                ArgumentList = { helper, handle.ToString(), output } })!;
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
-            if (process.ExitCode != 0)
-                throw new InvalidOperationException("Native window capture failed: " + output);
+            if (!ok) throw new InvalidOperationException(name);
+            Console.WriteLine("PASS " + name);
         }
+
+        await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } process && File.Exists(process.SessionPath) &&
+            Field<Button>("_bistroViews").IsEnabled, "Bistro tuning document and hosted Runtime", 120);
+        var runtime = Field<RuntimeProcess>("_runtime");
+        File.WriteAllText(Path.Combine(evidence, "runtime-workdir.txt"), runtime.Launch.WorkDirectory);
+        var viewport = Field<ViewportHost>("_viewport").Window!;
+        Verify(GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && viewport.RuntimeChildIsHosted(),
+            "actual Windows 100% and embedded Runtime");
+        using var peer = RemoteSession.Connect(SessionFile.Read(runtime.SessionPath));
+        var active = peer.Authoring.ActiveCamera().Value!.Value;
+        var alternate = new EntityGuid(Guid.Parse("01370137-0137-4137-8137-013700000010"));
+        EntityGuid[] lights = [new(Guid.Parse("01370137-0137-4137-8137-013700000001")),
+            new(Guid.Parse("01370137-0137-4137-8137-013700000002"))];
+        var schema = peer.Authoring.Schema;
+        var cameraPose = Json.Write(Codec.Encode(peer.Control.ViewportNavigation([]).Value!.SceneCamera));
+        var source = peer.Authoring.DocumentState().Value!.Source;
+        var sourceBytes = File.ReadAllBytes(source);
+        float Read(EntityGuid node, string component, string field)
+        {
+            var address = SceneSchema.AddressOf(schema, node, component, field)!.Value;
+            return peer.Authoring.GetProperty(address).Value.TryGetFloat32(out float value)
+                ? value : throw new InvalidOperationException("Missing " + field);
+        }
+
+        var selected = Field<Selection>("_selection");
+        var list = Field<ListBox>("_entities");
+        void Select(EntityGuid node) => list.SelectedItem = list.Items.OfType<HierarchyRow>().Single(row => row.Node == node);
+        var before = Field<MenuItem>("_bistroBefore");
+        var after = Field<MenuItem>("_bistroAfter");
+        var locate = Field<MenuItem>("_bistroLocateCamera");
+        Click(Field<MenuItem>("_bistroEnable"));
+        Click(Field<MenuItem>("_bistroTerrace"));
+        await NameUiWait(() => before.IsEnabled, "fixed terrace settled");
+        Verify(viewport.RuntimeChildHasExtent(960, 540), "960 × 540 native drawable");
+        if (peer.Authoring.ApplyStatus().Value?.Projection is null)
+        {
+            Click(before);
+            await NameUiWait(() => Field<TextBlock>("_viewportNavFeedback").Text?.Contains(
+                "not verified", StringComparison.Ordinal) == true, "unverified projection refused");
+            Verify(Field<BistroReferenceWindow>("_bistroCompare") is null, "unverified capture did not populate a slot");
+            Verify(peer.Authoring.ApplyTracked().IsOk, "explicit baseline projection");
+        }
+
+        async Task<ApplyProjection> Settle(ulong afterRevision = 0)
+        {
+            ApplyProjection? confirmed = null;
+            await NameUiWait(() =>
+            {
+                var state = peer.Authoring.ApplyStatus().Value;
+                confirmed = state?.Projection;
+                return confirmed is not null && confirmed.Receipt.DocumentRevision >= afterRevision &&
+                    confirmed.Receipt.DocumentRevision == state!.CurrentDocumentRevision &&
+                    state.Request?.State == ApplyState.Applied &&
+                    peer.Control.Status().SceneGeneration == confirmed.Generation && before.IsEnabled;
+            }, "verified projection", 75);
+            return confirmed!;
+        }
+
+        async Task<BistroCapture> Capture(MenuItem action, string stem)
+        {
+            bool later = action == after;
+            BistroReferenceWindow.PairImage? Current()
+            {
+                var compare = Field<BistroReferenceWindow>("_bistroCompare");
+                return later ? compare?.After : compare?.Before;
+            }
+            var prior = Current();
+            var state = peer.Authoring.DocumentState().Value;
+            var projection = peer.Authoring.ApplyStatus().Value!.Projection!;
+            bool undo = Field<Button>("_undo").IsEnabled;
+            Click(action);
+            await NameUiWait(() => Current() is { } image && image != prior, stem, 40);
+            var result = Current()!;
+            var capture = result.Capture;
+            Verify(capture.Projection is { } proof && proof.Document == state!.Token && proof.Camera == active &&
+                proof.Apply == projection.Receipt.Id && proof.Viewport.SceneGeneration == projection.Generation &&
+                capture.Report.Image is { Width: 960, Height: 540 } &&
+                BistroReferenceView.Terrace.Matches(capture.Report.Data.View, capture.Report.Data.Projection),
+                stem + " is settled and matches fixed framing");
+            var observed = peer.Authoring.DocumentState().Value;
+            var observedProjection = peer.Authoring.ApplyStatus().Value?.Projection;
+            bool canUndo = Field<Button>("_undo").IsEnabled;
+            Verify(observed == state && observedProjection == projection && canUndo == undo,
+                stem + " leaves document, history and Apply unchanged" +
+                (observed == state && observedProjection == projection && canUndo == undo ? "" :
+                    $" (document match: {observed == state}, projection match: {observedProjection == projection}, Undo: {undo} -> {canUndo})"));
+            string path = Path.Combine(evidence, stem);
+            File.WriteAllBytes(path + ".png", result.Png);
+            File.WriteAllText(path + ".json", Json.Write(Codec.Encode(capture.Report)) + "\n");
+            File.WriteAllText(path + "-projection.txt", capture.Projection + "\n");
+            return capture;
+        }
+
+        float[] Intensities(BistroCapture capture) => new[] { new System.Numerics.Vector3(-10, 2, 13),
+            new System.Numerics.Vector3(-12, 2.5f, 12) }.Select(position =>
+            capture.Report.Data.PointLights.Single(light => light.Position == position).Intensity).ToArray();
+        bool SameOtherLights(BistroCapture left, BistroCapture right) =>
+            left.Report.Data.DirectionalLights.SequenceEqual(right.Report.Data.DirectionalLights) &&
+            left.Report.Data.PointLights.Select(light => IntensitiesOfFixture(light) ? light with { Intensity = 0 } : light)
+                .SequenceEqual(right.Report.Data.PointLights.Select(light => IntensitiesOfFixture(light) ? light with { Intensity = 0 } : light));
+        static bool IntensitiesOfFixture(FramePointLight light) =>
+            light.Position == new System.Numerics.Vector3(-10, 2, 13) ||
+            light.Position == new System.Numerics.Vector3(-12, 2.5f, 12);
+
+        var initialized = await Settle();
+        var lightRepeat = await Capture(before, "light-repeat");
+        var lightBefore = await Capture(before, "light-before");
+        float[] mixed = lights.Select(node => Read(node, "Light", "intensity")).ToArray();
+        Verify(mixed.SequenceEqual(new[] { 0.125f, 0.25f }) && Intensities(lightBefore).SequenceEqual(mixed) &&
+            lightBefore.Report.Data.ExposureCompensationEv is float && SameOtherLights(lightRepeat, lightBefore),
+            "mixed point lights are individually present in the report");
+        var beforePair = Field<BistroReferenceWindow>("_bistroCompare").Before;
+        Click(after);
+        await NameUiWait(() => Field<TextBlock>("_viewportNavFeedback").Text?.Contains(
+            "newer applied revision", StringComparison.Ordinal) == true, "same revision rejected as After");
+        Verify(Field<BistroReferenceWindow>("_bistroCompare").Before == beforePair &&
+            Field<BistroReferenceWindow>("_bistroCompare").After is null, "rejection preserves Before");
+
+        list.SelectedItems!.Clear();
+        foreach (EntityGuid light in lights)
+            list.SelectedItems.Add(list.Items.OfType<HierarchyRow>().Single(row => row.Node == light));
+        var inputs = Field<Dictionary<string, TextBox>>("_batchInputs");
+        await NameUiWait(() => inputs.TryGetValue("Light.intensity", out _), "mixed intensity field in batch Inspector");
+        inputs["Light.intensity"].Text = "12";
+        var set = Field<StackPanel>("_inspectorPanel").GetVisualDescendants().OfType<Button>()
+            .Single(button => AutomationProperties.GetName(button) == "Set Light.intensity");
+        Press(Field<Button>("_pause"));
+        await NameUiWait(() => Field<Button>("_play").IsEnabled, "Runtime paused before batch commit");
+        Press(set);
+        await NameUiWait(() => peer.Authoring.ApplyStatus().Value?.Request?.State == ApplyState.Pending &&
+            Field<Button>("_undo").IsEnabled, "document committed while Apply is pending");
+        var pending = peer.Authoring.ApplyStatus().Value!;
+        Verify(pending.CurrentDocumentRevision > initialized.Receipt.DocumentRevision &&
+            pending.Projection == initialized && !after.IsEnabled && Field<BistroReferenceWindow>("_bistroCompare").Before == beforePair &&
+            lights.All(node => Read(node, "Light", "intensity") == 12), "pending Apply retains Before with its original projection");
+        Press(Field<Button>("_play"));
+        var committedLight = await Settle(initialized.Receipt.DocumentRevision + 1);
+        Verify(committedLight.Receipt.DocumentRevision == initialized.Receipt.DocumentRevision + 1 &&
+            Field<Button>("_undo").IsEnabled && lights.All(node => Read(node, "Light", "intensity") == 12),
+            "one guarded batch commit lights both points");
+        var lightAfter = await Capture(after, "light-after");
+        Verify(Intensities(lightAfter).SequenceEqual(new[] { 12f, 12f }) && SameOtherLights(lightBefore, lightAfter) &&
+            lightBefore.Report.Data.ExposureCompensationEv == lightAfter.Report.Data.ExposureCompensationEv,
+            "only point light intensity changed in the frame report");
+        await NativeCapture(Field<BistroReferenceWindow>("_bistroCompare"), Path.Combine(evidence, "light-pair-window.png"));
+        Press(Field<Button>("_undo"));
+        var undoneLight = await Settle(committedLight.Receipt.DocumentRevision + 1);
+        await NameUiWait(() => !Field<Button>("_undo").IsEnabled, "Undo history settled after restoring lights");
+        var lightRestored = await Capture(after, "light-undo");
+        Verify(!Field<Button>("_undo").IsEnabled && lights.Select(node => Read(node, "Light", "intensity")).SequenceEqual(mixed) &&
+            Intensities(lightRestored).SequenceEqual(mixed) && SameOtherLights(lightBefore, lightRestored),
+            "one Undo restores both original values and the projected light report");
+
+        var exposureRepeat = await Capture(before, "exposure-repeat");
+        var exposureBefore = await Capture(before, "exposure-before");
+        Verify(Field<BistroReferenceWindow>("_bistroCompare").After is null, "new Before clears old After");
+        var reference = Path.Combine(Path.GetDirectoryName(evidence)!, BistroReferenceView.Terrace.ReferenceFile);
+        if (File.Exists(reference))
+        {
+            var comparison = Field<BistroReferenceWindow>("_bistroCompare");
+            Verify(comparison.LoadReference(BistroReferenceView.Terrace, reference),
+                "original attributed ORCA source remains available");
+            var tabs = (TabControl)comparison.Content!;
+            tabs.SelectedIndex = 0;
+            await NativeCapture(comparison, Path.Combine(evidence, "orca-reference-window.png"));
+            tabs.SelectedIndex = 1;
+        }
+
+        Select(alternate);
+        await NameUiWait(() => Field<TextBox>("_nameBox")?.Text == "Bistro alternate camera", "alternate camera in Inspector");
+        var draft = Field<TextBox>("_nameBox");
+        draft.Text = "Retain this unsubmitted text";
+        Click(locate);
+        Verify(selected.Node == alternate && draft.Text == "Retain this unsubmitted text", "locator protects unsubmitted draft");
+        Verify(NameUiKey(draft, Key.Escape), "dismiss the test draft");
+        Click(locate);
+        Select(lights[0]);
+        await NameUiWait(() => Field<TextBlock>("_viewportNavFeedback").Text?.Contains("again", StringComparison.Ordinal) == true,
+            "locator retired after selection changes");
+        Verify(selected.Node == lights[0], "late locator cannot change selection");
+        var search = Field<TextBox>("_hierarchySearch");
+        search.Text = "Terrace fill";
+        await NameUiWait(() => !list.Items.OfType<HierarchyRow>().Any(row => row.Node == active), "filter hides the camera");
+        Click(locate);
+        await NameUiWait(() => Field<TextBlock>("_viewportNavFeedback").Text?.Contains("hidden", StringComparison.Ordinal) == true,
+            "locator refuses hidden camera");
+        Verify(selected.Node == lights[0], "hidden locator keeps current selection");
+        search.Text = "";
+        await NameUiWait(() => list.Items.OfType<HierarchyRow>().Any(row => row.Node == active), "camera visible");
+        Click(locate);
+        await NameUiWait(() => selected.Node == active, "locate selects the actual active camera");
+
+        float ev = Read(active, "Camera", "exposureCompensationEv");
+        var inspector = Field<StackPanel>("_inspectorPanel");
+        TextBox? ExposureBox() => inspector.GetVisualDescendants().OfType<Grid>()
+            .SingleOrDefault(row => Equals(row.Tag, "Camera.exposureCompensationEv"))?
+            .GetVisualDescendants().OfType<TextBox>().SingleOrDefault();
+        await NameUiWait(() => ExposureBox() is not null, "active camera exposure field");
+        var exposure = ExposureBox()!;
+        window.Activate();
+        exposure.Focus();
+        exposure.Text = (ev + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        NameUiKey(exposure, Key.Enter);
+        var committedExposure = await Settle(undoneLight.Receipt.DocumentRevision + 1);
+        Verify(committedExposure.Receipt.DocumentRevision == undoneLight.Receipt.DocumentRevision + 1 &&
+            Read(active, "Camera", "exposureCompensationEv") == ev + 1, "one exposure commit");
+        var exposureAfter = await Capture(after, "exposure-after");
+        Verify(exposureAfter.Report.Data.ExposureCompensationEv == ev + 1 &&
+            exposureRepeat.Report.Data.ExposureCompensationEv == ev &&
+            exposureBefore.Report.Data.PointLights.SequenceEqual(exposureAfter.Report.Data.PointLights) &&
+            exposureBefore.Report.Data.DirectionalLights.SequenceEqual(exposureAfter.Report.Data.DirectionalLights),
+            "exposure alone changed with identical effective lights");
+        await NativeCapture(Field<BistroReferenceWindow>("_bistroCompare"), Path.Combine(evidence, "exposure-pair-window.png"));
+        Press(Field<Button>("_undo"));
+        await Settle(committedExposure.Receipt.DocumentRevision + 1);
+        await NameUiWait(() => !Field<Button>("_undo").IsEnabled, "Undo history settled after restoring EV");
+        var exposureRestored = await Capture(after, "exposure-undo");
+        Verify(!Field<Button>("_undo").IsEnabled && Read(active, "Camera", "exposureCompensationEv") == ev &&
+            exposureRestored.Report.Data.ExposureCompensationEv == ev &&
+            exposureRestored.Report.Data.PointLights.SequenceEqual(exposureBefore.Report.Data.PointLights),
+            "one Undo restores authored and effective exposure");
+        Verify(peer.Authoring.ActiveCamera().Value == active &&
+            Json.Write(Codec.Encode(peer.Control.ViewportNavigation([]).Value!.SceneCamera)) == cameraPose &&
+            File.ReadAllBytes(source).SequenceEqual(sourceBytes), "camera identity, pose, lens and formal source unchanged");
+
+        Click(before);
+        Click(Field<MenuItem>("_bistroExit"));
+        await NameUiWait(() => !before.IsEnabled && !after.IsEnabled, "leave invalidates tuning");
+        await Task.Delay(650);
+        Verify(Field<BistroReferenceWindow>("_bistroCompare").Before is null &&
+            Field<BistroReferenceWindow>("_bistroCompare").After is null, "late capture cannot reopen a retired pair");
+    }
+
+    private static async Task NativeCapture(Window target, string output)
+    {
+        string? helper = Environment.GetEnvironmentVariable("ATLANTIS_0131_CAPTURE");
+        if (helper is null) return;
+        var handle = target.TryGetPlatformHandle()!.Handle;
+        target.Activate();
+        await NameUiWait(() => GetForegroundWindow() == handle, "foreground native capture window");
+        await Task.Delay(200);
+        using var process = Process.Start(new ProcessStartInfo("python") { UseShellExecute = false, CreateNoWindow = true,
+            ArgumentList = { helper, handle.ToString(), output } })!;
+        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException("Native window capture failed: " + output);
     }
 
     private static nint Coordinates(int x, int y) => (nint)(unchecked((uint)(ushort)x | ((uint)(ushort)y << 16)));

@@ -23,6 +23,9 @@ public sealed partial class MainWindow
     private readonly MenuItem _bistroStreet = new() { Header = "Street Corner" };
     private readonly MenuItem _bistroTerrace = new() { Header = "Storefront Terrace" };
     private readonly MenuItem _bistroCapture = new() { Header = "Capture and compare" };
+    private readonly MenuItem _bistroBefore = new() { Header = "Capture Before" };
+    private readonly MenuItem _bistroAfter = new() { Header = "Capture After" };
+    private readonly MenuItem _bistroLocateCamera = new() { Header = "Locate active scene camera" };
     private readonly MenuItem _bistroExit = new() { Header = "Leave reference view" };
     private readonly MenuItem _bistroEnable = new() { Header = "Use reference views for this Bistro copy" };
     private readonly DispatcherTimer _bistroLayoutTimer = new() { Interval = TimeSpan.FromMilliseconds(40) };
@@ -30,6 +33,7 @@ public sealed partial class MainWindow
     private BistroReferenceWindow? _bistroCompare;
     private long? _bistroOptIn;
     private long _bistroRevision;
+    private long _bistroLocatorIntent;
     private long _bistroLayoutStarted;
     private string? _bistroUnknownPath;
     private bool _bistroBuiltIn, _bistroSent, _bistroReady, _bistroCapturing, _bistroResizeRecovery, _bistroApplyBlocked;
@@ -38,7 +42,8 @@ public sealed partial class MainWindow
     {
         _bistroViews.Flyout = new MenuFlyout
         {
-            Items = { _bistroEnable, _bistroStreet, _bistroTerrace, new Separator(), _bistroCapture, _bistroExit },
+            Items = { _bistroEnable, _bistroStreet, _bistroTerrace, new Separator(), _bistroLocateCamera,
+                _bistroBefore, _bistroAfter, _bistroCapture, _bistroExit },
         };
         _bistroEnable.Click += (_, _) =>
         {
@@ -50,6 +55,9 @@ public sealed partial class MainWindow
         _bistroStreet.Click += (_, _) => SelectBistroView(BistroReferenceView.Street);
         _bistroTerrace.Click += (_, _) => SelectBistroView(BistroReferenceView.Terrace);
         _bistroCapture.Click += (_, _) => CaptureBistroView();
+        _bistroBefore.Click += (_, _) => CaptureBistroView(paired: true);
+        _bistroAfter.Click += (_, _) => CaptureBistroView(paired: true, after: true);
+        _bistroLocateCamera.Click += (_, _) => LocateBistroCamera();
         _bistroExit.Click += (_, _) => LeaveBistroView("Reference view closed.");
         _bistroViewportArea.SizeChanged += (_, _) => OnBistroAreaChanged();
         _bistroLayoutTimer.Tick += (_, _) => SettleBistroDrawable();
@@ -66,6 +74,11 @@ public sealed partial class MainWindow
         BistroVisibilityAllowed && _worker is { } worker &&
         (_bistroBuiltIn || (_canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime));
 
+    private bool BistroTuningView => _bistroView == BistroReferenceView.Terrace &&
+        _worker is { } worker && _canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime;
+
+    private bool BistroTuningAllowed => BistroTuningView && BistroVisibilityAllowed;
+
     private void UpdateBistroActions(bool navigation)
     {
         bool hosted = _options.AttachSession is null && _viewport.Window?.RuntimeChildIsHosted() == true;
@@ -75,6 +88,10 @@ public sealed partial class MainWindow
         _bistroExit.IsEnabled = _bistroView is not null;
         _bistroCapture.IsEnabled = _bistroReady && !_navigationPending && !_bistroCapturing &&
             !_bistroApplyBlocked && !_play.IsEnabled && navigation;
+        _bistroBefore.IsVisible = _bistroAfter.IsVisible = _bistroLocateCamera.IsVisible = BistroTuningAllowed;
+        _bistroLocateCamera.IsEnabled = BistroTuningAllowed && _bistroReady && navigation;
+        _bistroBefore.IsEnabled = BistroTuningAllowed && _bistroCapture.IsEnabled;
+        _bistroAfter.IsEnabled = _bistroBefore.IsEnabled && _bistroCompare?.Before is not null;
     }
 
     private bool BistroAreaFits() =>
@@ -90,6 +107,7 @@ public sealed partial class MainWindow
             ShowNavigationMessage("Enlarge the viewport to at least 960 × 540 physical pixels.");
             return;
         }
+        if (_bistroView != view) _bistroCompare?.ClearPair();
         _bistroView = view;
         RetireViewportOleTarget(expireRelease: true);
         _viewport.SetPhysicalSize((BistroReferenceView.Width, BistroReferenceView.Height), RenderScaling);
@@ -154,6 +172,7 @@ public sealed partial class MainWindow
         ++_pickRequest;
         if (!_bistroSent) _navigationPending = false;
         _bistroView = null;
+        _bistroCompare?.ClearPair();
         _bistroReady = _bistroSent = _bistroCapturing = false;
         _bistroResizeRecovery = true;
         _bistroLayoutTimer.Stop();
@@ -170,9 +189,45 @@ public sealed partial class MainWindow
         return !_bistroResizeRecovery;
     }
 
-    private void CaptureBistroView()
+    private bool BistroLocatorProtected() => CurrentSceneInput() is not null || _batchDraft is not null ||
+        _draftProtection.Stale is not null || _pendingInspectorBlur is not null || _pendingSceneFieldEdits != 0 ||
+        _referenceBusy || _leaveArmed || _leaveInProgress || _recoveryDecision || _gizmoGrab is not null || _groupGrab is not null ||
+        _hierarchyDrag is not null || _assetDrag is not null || _alignmentId is not null;
+
+    private void LocateBistroCamera()
     {
-        if (!_bistroCapture.IsEnabled || _worker is not { } worker || _bistroView is not { } view) return;
+        if (!_bistroLocateCamera.IsEnabled || _worker is not { } worker) return;
+        if (BistroLocatorProtected())
+        {
+            ShowNavigationMessage("Finish the current draft or gesture before locating the active camera.");
+            return;
+        }
+        long request = ++_bistroLocatorIntent;
+        long revision = _bistroRevision;
+        ulong selection = _selection.Generation;
+        worker.LocateBistroCamera(_hierarchyProjection.Rows, selection, _viewportCameraIntent, (row, error) =>
+        {
+            if (!ReferenceEquals(_worker, worker) || request != _bistroLocatorIntent ||
+                revision != _bistroRevision || !BistroTuningAllowed) return;
+            if (selection != _selection.Generation || BistroLocatorProtected() ||
+                row is null || !_hierarchyProjection.Rows.Any(current =>
+                    current.Node == row.Node && ReferenceEquals(current.Incarnation, row.Incarnation)))
+            {
+                ShowNavigationMessage(error ?? "The selection, draft or camera changed. Locate the camera again.");
+                return;
+            }
+            SetSelection(row.Node, scroll: true);
+            ShowNavigationMessage("Active scene camera selected.");
+        });
+    }
+
+    private void CaptureBistroView(bool paired = false, bool after = false)
+    {
+        MenuItem action = !paired ? _bistroCapture : after ? _bistroAfter : _bistroBefore;
+        if (!action.IsEnabled || _worker is not { } worker || _bistroView is not { } view) return;
+        var comparison = _bistroCompare;
+        var baseline = after ? comparison?.Before?.Capture.Projection : null;
+        if (after && baseline is null) return;
         long revision = _bistroRevision;
         long lifetime = worker.MeshDocumentLifetime;
         string path = Path.Combine(_workDirectory, "bistro-" + Guid.NewGuid().ToString("N") + ".png");
@@ -190,7 +245,7 @@ public sealed partial class MainWindow
             }
             try
             {
-                if (!current) return;
+                if (!current || (paired && (!BistroTuningAllowed || _bistroCompare != comparison))) return;
                 if (capture is null)
                 {
                     ShowNavigationMessage(error ?? "Capture unavailable.");
@@ -206,16 +261,22 @@ public sealed partial class MainWindow
                     bitmap.Dispose();
                     throw new IOException("The PNG does not have the reference dimensions.");
                 }
-                if (_bistroCompare is null)
+                var comparisonWindow = _bistroCompare;
+                if (comparisonWindow is null)
                 {
-                    var window = new BistroReferenceWindow();
-                    window.Closed += (_, _) => _bistroCompare = null;
-                    _bistroCompare = window;
-                    window.SetCapture(capture, bitmap, png);
-                    window.Show(this);
+                    comparisonWindow = new BistroReferenceWindow();
+                    comparisonWindow.Closed += (_, _) =>
+                    {
+                        _bistroCompare = null;
+                        UpdateViewportNavigationActions();
+                    };
+                    _bistroCompare = comparisonWindow;
                 }
-                else _bistroCompare.SetCapture(capture, bitmap, png);
-                ShowNavigationMessage(view.Name + " captured.");
+                if (paired) comparisonWindow.SetPairCapture(capture, bitmap, png, after);
+                else comparisonWindow.SetCapture(capture, bitmap, png);
+                if (!comparisonWindow.IsVisible) comparisonWindow.Show(this);
+                UpdateViewportNavigationActions();
+                ShowNavigationMessage(paired ? (after ? "After captured." : "Before captured.") : view.Name + " captured.");
             }
             catch (Exception problem) when (problem is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
             {
@@ -227,7 +288,7 @@ public sealed partial class MainWindow
                 if (error?.Contains("outcome unknown", StringComparison.Ordinal) == true) _bistroUnknownPath = path;
                 else DeleteBistroOutput(path);
             }
-        });
+        }, paired, baseline);
     }
 
     private void DeleteBistroOutput(string path)
@@ -249,6 +310,52 @@ internal sealed class BistroReferenceWindow : Window
     private Bitmap? _captureBitmap, _referenceBitmap;
     internal BistroCapture? Latest { get; private set; }
     internal ReadOnlyMemory<byte> CapturedPng { get; private set; }
+    private BistroReferenceView? _referenceView;
+    private readonly TabControl _tabs = new();
+    private readonly TabItem _pairTab;
+    private readonly TabItem _referenceTab;
+    private CapturePane BeforePane { get; } = new("Before");
+    private CapturePane AfterPane { get; } = new("After");
+    internal PairImage? Before => BeforePane.Current;
+    internal PairImage? After => AfterPane.Current;
+
+    internal sealed record PairImage(BistroCapture Capture, Bitmap Bitmap, byte[] Png);
+
+    private sealed class CapturePane
+    {
+        private readonly Image _image = new() { Stretch = Stretch.Uniform, Height = 260 };
+        private readonly TextBlock _details = new() { TextWrapping = TextWrapping.Wrap };
+        private readonly TextBox _lights = new() { IsReadOnly = true, AcceptsReturn = true, Height = 100 };
+        internal StackPanel Content { get; }
+        internal PairImage? Current { get; private set; }
+
+        internal CapturePane(string title)
+        {
+            Content = new StackPanel { Spacing = 8, Children = {
+                EditorVisuals.Heading(title), _image, _details, _lights,
+            } };
+            Set(null);
+        }
+
+        internal void Set(PairImage? image)
+        {
+            var previous = Current;
+            Current = image;
+            _image.Source = image?.Bitmap;
+            previous?.Bitmap.Dispose();
+            if (image is { Capture: { Projection: { } proof } capture })
+            {
+                _details.Text = Describe(capture) + "\nDocument revision " + proof.Document.DocumentRevision +
+                    " · Apply " + proof.Apply + "\nActive scene camera " + proof.Camera;
+                _lights.Text = DescribeLights(capture);
+            }
+            else
+            {
+                _details.Text = "Capture at the settled Storefront Terrace view.";
+                _lights.Text = "";
+            }
+        }
+    }
 
     public BistroReferenceWindow()
     {
@@ -258,13 +365,13 @@ internal sealed class BistroReferenceWindow : Window
         MinHeight = 440;
         ShowActivated = false;
         var source = new Button { Content = "Open official PNG" };
-        source.Click += (_, _) => { if (Latest is { } capture) OpenSource(capture.View.ReferenceUrl); };
+        source.Click += (_, _) => { if (_referenceView is { } view) OpenSource(view.ReferenceUrl); };
         var gallery = new Button { Content = "ORCA source" };
         gallery.Click += (_, _) => OpenSource(BistroReferenceView.Gallery);
         var local = new Button { Content = "Choose local PNG…" };
         local.Click += async (_, _) =>
         {
-            if (Latest?.View is not { } view) return;
+            if (_referenceView is not { } view) return;
             try
             {
                 var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
@@ -272,7 +379,7 @@ internal sealed class BistroReferenceWindow : Window
                     Title = "Select " + view.ReferenceFile,
                     FileTypeFilter = [new FilePickerFileType("PNG") { Patterns = ["*.png"] }],
                 });
-                if (Latest?.View == view && files.FirstOrDefault()?.TryGetLocalPath() is { } path)
+                if (_referenceView == view && files.FirstOrDefault()?.TryGetLocalPath() is { } path)
                     LoadReference(view, path);
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
@@ -290,9 +397,18 @@ internal sealed class BistroReferenceWindow : Window
         var columns = EditorVisuals.Columns("*,*", left, right);
         columns.ColumnSpacing = 14;
         columns.Margin = new Thickness(14);
-        Content = new ScrollViewer { Content = columns };
+        _referenceTab = new TabItem { Header = "Reference comparison", Content = new ScrollViewer { Content = columns } };
+        var pair = EditorVisuals.Columns("*,*", BeforePane.Content, AfterPane.Content);
+        pair.ColumnSpacing = 14;
+        pair.Margin = new Thickness(14);
+        _pairTab = new TabItem { Header = "Before / After", Content = new ScrollViewer { Content = pair }, IsVisible = false };
+        _tabs.Items.Add(_referenceTab);
+        _tabs.Items.Add(_pairTab);
+        _tabs.SelectedItem = _referenceTab;
+        Content = _tabs;
         Closed += (_, _) =>
         {
+            ClearPair();
             Latest = null;
             CapturedPng = default;
             _atlantis.Source = _orca.Source = null;
@@ -307,40 +423,82 @@ internal sealed class BistroReferenceWindow : Window
         catch (System.ComponentModel.Win32Exception) { _referenceStatus.Text = url; }
     }
 
+    private void SelectReference(BistroReferenceView view)
+    {
+        if (_referenceView == view) return;
+        _referenceView = view;
+        _orca.Source = null;
+        _referenceBitmap?.Dispose();
+        _referenceBitmap = null;
+        _referenceStatus.Text = "Choose the original " + view.ReferenceFile + " to show the reference.";
+        _referenceDetails.Text = BistroReferenceView.Attribution + " · 1920 × 1061\n" +
+            "Pose, field of view, exposure, direct and ambient lighting, and color pipeline: Unknown";
+    }
+
+    internal void ClearPair()
+    {
+        BeforePane.Set(null);
+        AfterPane.Set(null);
+        if (_tabs.SelectedItem == _pairTab) _tabs.SelectedItem = _referenceTab;
+        _pairTab.IsVisible = false;
+    }
+
+    internal void SetPairCapture(BistroCapture capture, Bitmap bitmap, byte[] png, bool after)
+    {
+        SelectReference(capture.View);
+        if (Latest is { } ordinary && ordinary.View != capture.View)
+        {
+            Latest = null;
+            CapturedPng = default;
+            _atlantis.Source = null;
+            _captureBitmap?.Dispose();
+            _captureBitmap = null;
+            _atlantisDetails.Text = "";
+            _lighting.Text = "";
+        }
+        if (!after) AfterPane.Set(null);
+        (after ? AfterPane : BeforePane).Set(new(capture, bitmap, png));
+        Title = capture.View.Name + " · Lighting and exposure";
+        _pairTab.IsVisible = true;
+        _tabs.SelectedItem = _pairTab;
+    }
+
     internal void SetCapture(BistroCapture capture, Bitmap bitmap, byte[] png)
     {
-        if (Latest?.View != capture.View)
-        {
-            _orca.Source = null;
-            _referenceBitmap?.Dispose();
-            _referenceBitmap = null;
-            _referenceStatus.Text = "Choose the original " + capture.View.ReferenceFile + " to show the reference.";
-        }
+        SelectReference(capture.View);
         Latest = capture;
         CapturedPng = png;
         Title = capture.View.Name + " · Reference comparison";
         _atlantis.Source = bitmap;
         _captureBitmap?.Dispose();
         _captureBitmap = bitmap;
+        _atlantisDetails.Text = Describe(capture) + "\n" + BistroReferenceView.Attribution + " · NVIDIA RTXDI asset conversion";
+        _lighting.Text = DescribeLights(capture);
+        _tabs.SelectedItem = _referenceTab;
+    }
+
+    private static string Describe(BistroCapture capture)
+    {
         string ev = capture.Report.Data.ExposureCompensationEv is float exposure
             ? exposure.ToString("G", CultureInfo.InvariantCulture) + " EV" : "Unavailable on this Runtime";
-        _atlantisDetails.Text = "960 × 540 · Frame " + capture.Report.Frame + " · Exposure " + ev +
+        return "960 × 540 · Frame " + capture.Report.Frame + " · Exposure " + ev +
             "\nRuntime scene " + capture.Status.Scene + " · Generation " + capture.Status.SceneGeneration +
-            (capture.PreviousProjection ? " · Last visible projection; document changes await Apply" : "") +
-            "\n" + BistroReferenceView.Attribution + " · NVIDIA RTXDI asset conversion";
-        _referenceDetails.Text = BistroReferenceView.Attribution + " · 1920 × 1061\n" +
-            "Pose, field of view, exposure, direct and ambient lighting, and color pipeline: Unknown";
+            (capture.PreviousProjection ? " · Last visible projection; document changes await Apply" : "");
+    }
+
+    private static string DescribeLights(BistroCapture capture)
+    {
         var lights = new StringBuilder("Reported direct lights\n");
         foreach (var light in capture.Report.Data.DirectionalLights)
             lights.AppendLine(FormattableString.Invariant($"Directional {light.Direction} · color {light.Color} · intensity {light.Intensity}"));
         foreach (var light in capture.Report.Data.PointLights)
             lights.AppendLine(FormattableString.Invariant($"Point {light.Position} · color {light.Color} · intensity {light.Intensity} · range {light.Range}"));
-        _lighting.Text = lights.ToString();
+        return lights.ToString();
     }
 
     internal bool LoadReference(BistroReferenceView view, string path)
     {
-        if (Latest?.View != view) return false;
+        if (_referenceView != view) return false;
         byte[] bytes = ReadPng(path);
         if (!string.Equals(Convert.ToHexString(SHA256.HashData(bytes)), view.Sha256, StringComparison.OrdinalIgnoreCase))
         {
