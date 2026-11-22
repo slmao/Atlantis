@@ -75,6 +75,7 @@ constexpr std::string_view kUsage =
     "  scene name <guid> <json-string> (empty string clears the name)\n"
     "  scene apply | scene apply-status [id] | scene save | scene tx <file|->   the authoring document (Spec 0065);\n"
     "                    require-duplicate-revision <revision> leads a guarded scene tx (Spec 0108)\n"
+    "                    require-name-document <document-guid> <revision> leads a guarded name tx (Spec 0141)\n"
     "  scene create <name>    create a camera-only scene source (Spec 0089); GUID/option forms create nodes\n"
     "  scene save-as <name>   create an independent hand-authored scene copy (Spec 0088);\n"
     "  scene prefab-update <donor> <document> <revision> <source-sha256> <prefab>\n"

@@ -357,6 +357,21 @@ struct AuthoringSession::State {
     return ac::Error::InvalidGuardedDuplicateBatch;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene&, const ac::RequireNameBatchDocument&,
+                                 std::vector<ac::Event>&) const {
+    ATLANTIS_CHECK_MSG(false, "the transaction admits name guards before candidate execution");
+    return ac::Error::InvalidGuardedNameBatch;
+  }
+
+  static bool validGuardedNameBatch(const std::vector<ac::Command>& commands) {
+    if (commands.size() < 2 || commands.size() > ac::kMaxGuardedNameWrites + 1) return false;
+    std::set<EntityGuid> nodes;
+    return std::all_of(commands.begin() + 1, commands.end(), [&](const auto& command) {
+      const auto* name = std::get_if<ac::SetNodeName>(&command);
+      return name && name->node != EntityGuid{} && nodes.insert(name->node).second;
+    });
+  }
+
   struct DuplicateNode {
     EntityGuid id;
     std::uint64_t position = 0;
@@ -504,16 +519,27 @@ struct AuthoringSession::State {
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
-    const auto guard = std::ranges::find_if(commands, [](const ac::Command& command) {
+    const auto nameGuard = std::ranges::find_if(commands, [](const auto& command) {
+      return std::holds_alternative<ac::RequireNameBatchDocument>(command);
+    });
+    const auto guard = nameGuard != commands.end() ? nameGuard : std::ranges::find_if(commands, [](const ac::Command& command) {
       return std::holds_alternative<ac::RequireDocumentRevision>(command) ||
              std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
              std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
     });
     const auto* duplicate = guard == commands.end() ? nullptr : std::get_if<ac::RequireDuplicateBatchRevision>(&*guard);
-    if (!duplicate && std::ranges::any_of(commands, [](const auto& command) {
+    if (nameGuard == commands.end() && !duplicate && std::ranges::any_of(commands, [](const auto& command) {
           return std::holds_alternative<ac::SetPrefabOrigin>(command);
         })) return ac::CommandFailure{first, ac::Error::InvalidGuardedDuplicateBatch};
-    if (duplicate) {
+    if (nameGuard != commands.end()) {
+      const auto ticket = CommandTicket{first.value + static_cast<std::uint64_t>(nameGuard - commands.begin())};
+      if (nameGuard != commands.begin() || !std::holds_alternative<HandAuthored>(source.provenance) ||
+          !validGuardedNameBatch(commands))
+        return ac::CommandFailure{ticket, ac::Error::InvalidGuardedNameBatch};
+      const auto& expected = std::get<ac::RequireNameBatchDocument>(*nameGuard).expectedDocument;
+      if (expected != ac::DocumentToken{documentId, documentRevision})
+        return ac::CommandFailure{ticket, ac::Error::NameBatchStaleDocument};
+    } else if (duplicate) {
       const auto nodes = duplicateShape(commands);
       const auto ticket = CommandTicket{first.value + static_cast<std::uint64_t>(guard - commands.begin())};
       if (!nodes || !std::holds_alternative<HandAuthored>(source.provenance))
@@ -821,7 +847,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
                             static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported,
                             !imported && static_cast<bool>(state_.prefabLookup),
                             !imported && static_cast<bool>(state_.prefabSink),
-                            !imported && static_cast<bool>(state_.prefabRead)};
+                            !imported && static_cast<bool>(state_.prefabRead), !imported};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {

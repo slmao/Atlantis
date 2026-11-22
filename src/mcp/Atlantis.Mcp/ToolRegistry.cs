@@ -339,7 +339,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 bool transform = commands.Any(c => c.Find("kind")?.AsString == "RequireTransformBatchRevision");
                 bool duplicate = commands.Any(c => c.Find("kind")?.AsString == "RequireDuplicateBatchRevision");
                 bool prefab = commands.Any(c => c.Find("kind")?.AsString == "SetPrefabOrigin");
-                if (property || transform || duplicate || prefab)
+                bool names = commands.Any(c => c.Find("kind")?.AsString == "RequireNameBatchDocument");
+                if (property || transform || duplicate || prefab || names)
                 {
                     JsonValue document = session.Request("authoring.document", JsonValue.NewObject());
                     if (document.Find("error") is JsonValue discoveryError) return Forward(discoveryError, true);
@@ -347,6 +348,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                     if ((property && info?.SupportsGuardedPropertyTransactions != true) ||
                         (transform && info?.SupportsGuardedTransformTransactions != true) ||
                         (duplicate && info?.SupportsGuardedDuplicateTransactions != true) ||
+                        (names && info?.SupportsGuardedNameTransactions != true) ||
                         (prefab && info?.SupportsPrefabOrigin != true))
                         return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
                 }

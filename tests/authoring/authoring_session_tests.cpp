@@ -1415,3 +1415,75 @@ TEST_CASE("authoring: Prefab sync preserves the root and settles whole-subtree r
   CHECK(c.replayPrefab(root, changed.value().after, changed.value().before, beforeConflict).error() == E::ReplayConflict);
   CHECK(token() == beforeConflict);
 }
+
+TEST_CASE("authoring: a guarded name batch matches its document token and writes every name or none",
+          "[authoring][session][name]") {
+  Fixture f;
+  auto& writer = *f.connection;
+  auto other = f.session.connect();
+  REQUIRE(writer.document()->supportsGuardedNameTransactions);
+  const auto subscription = other->subscribe({});
+  using G = ac::RequireNameBatchDocument;
+  using E = ac::Error;
+  const auto start = writer.documentState().value()->token;
+  const auto initial = f.document();
+  const ac::SetNodeName one{entity(2), "Bistro Lamp 01"};
+  const ac::SetNodeName two{entity(3), "Bistro Lamp 02"};
+  CHECK(refusalOf(writer, {G{start}, one, one}) == E::InvalidGuardedNameBatch);
+  CHECK(refusalOf(writer, {one, G{start}, two}) == E::InvalidGuardedNameBatch);
+  CHECK(refusalOf(writer, {G{start}, one, G{start}}) == E::InvalidGuardedNameBatch);
+  CHECK(refusalOf(writer, {G{start}, ac::RequireDocumentRevision{start.documentRevision}, one}) ==
+        E::InvalidGuardedNameBatch);
+  CHECK(refusalOf(writer, {G{start}, ac::SetNodeName{ac::EntityGuid{}, "bad"}}) == E::InvalidGuardedNameBatch);
+  CHECK(refusalOf(writer, {G{{entity(99), start.documentRevision}}, one}) == E::NameBatchStaleDocument);
+  const auto invalid = writer.submitTransaction({G{start}, one, ac::SetNodeName{entity(3), std::string(256, 'x')}});
+  CHECK(writer.drainFailures() == std::vector<ac::CommandFailure>{
+      {wa::CommandTicket{invalid.first.value + 2}, E::InvalidNodeName}});
+  CHECK(f.document() == initial);
+  CHECK(writer.documentState().value()->token == start);
+  CHECK(drain(*other, subscription).empty());
+
+  const auto issued = writer.submitTransaction({G{start}, two, one});
+  CHECK(issued.count == 3);
+  REQUIRE(writer.drainFailures().empty());
+  auto renamed = initial;
+  renamed.nodes[1].name = one.name;
+  renamed.nodes[2].name = two.name;
+  CHECK(f.document() == renamed);
+  CHECK(writer.documentState().value()->token.documentRevision == start.documentRevision + 1);
+  CHECK(drain(*other, subscription) == std::vector<ac::Event>{
+      ac::NodeNameChanged{entity(3), two.name}, ac::NodeNameChanged{entity(2), one.name}});
+
+  auto opened = writer.documentState().value()->token;
+  REQUIRE_FALSE(refusalOf(*other, {ac::DestroyNode{entity(3)}, ac::CreateNode{entity(3), 2, {}},
+                                  ac::SetNodeName{entity(3), two.name}}));
+  (void)drain(*other, subscription);
+  const auto replaced = f.document();
+  CHECK(refusalOf(writer, {G{opened}, one, two}) == E::NameBatchStaleDocument);
+  CHECK(f.document() == replaced);
+  CHECK(drain(*other, subscription).empty());
+
+  AuthoringSession imported(DocumentSource{sceneGuid(), Imported{f.source}});
+  auto incoming = imported.connect();
+  REQUIRE(incoming->open().isOk());
+  CHECK_FALSE(incoming->document()->supportsGuardedNameTransactions);
+  CHECK(refusalOf(*incoming, {G{incoming->documentState().value()->token}, one}) == E::InvalidGuardedNameBatch);
+  CHECK_FALSE(refusalOf(*incoming, {one}));
+}
+
+TEST_CASE("authoring: guarded name batches admit 64 distinct writes and reject 65",
+          "[authoring][session][name]") {
+  Fixture f;
+  auto& writer = *f.connection;
+  std::vector<ac::Command> creation;
+  for (unsigned n = 0; n < 65; ++n) creation.push_back(ac::CreateNode{entity(100 + n), 3 + n, {}});
+  REQUIRE_FALSE(refusalOf(writer, creation));
+  const auto before = writer.documentState().value()->token;
+  std::vector<ac::Command> names{ac::RequireNameBatchDocument{before}};
+  for (unsigned n = 0; n < 65; ++n) names.push_back(ac::SetNodeName{entity(100 + n), "Lamp"});
+  CHECK(refusalOf(writer, names) == ac::Error::InvalidGuardedNameBatch);
+  CHECK(writer.documentState().value()->token == before);
+  names.pop_back();
+  CHECK_FALSE(refusalOf(writer, names));
+  CHECK(writer.documentState().value()->token.documentRevision == before.documentRevision + 1);
+}

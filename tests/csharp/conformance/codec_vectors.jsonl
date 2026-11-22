@@ -79,6 +79,7 @@
 {"case":"authoring.command.camera.none","type":"AuthoringCommand","wire":{"kind":"SetActiveCamera","camera":null}}
 {"case":"authoring.command.name","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":"  名 \"quoted\" \\ "}}
 {"case":"authoring.command.name.empty","type":"AuthoringCommand","wire":{"kind":"SetNodeName","node":"52052052-0003-4052-8052-000000000003","name":""}}
+{"case":"authoring.command.name.guard","type":"AuthoringCommand","wire":{"kind":"RequireNameBatchDocument","expectedDocument":{"documentId":"52052052-0003-4052-8052-000000000003","documentRevision":17}}}
 {"case":"authoring.command.swap_siblings","type":"AuthoringCommand","wire":{"kind":"SwapAdjacentSiblings","node":"52052052-0003-4052-8052-000000000003","sibling":"52052052-0001-4052-8052-000000000001","parent":null,"direction":"Up","expectedRevision":17}}
 {"case":"authoring.command.require_revision","type":"AuthoringCommand","wire":{"kind":"RequireDocumentRevision","expectedRevision":17}}
 {"case":"authoring.command.require_transform_revision","type":"AuthoringCommand","wire":{"kind":"RequireTransformBatchRevision","expectedRevision":18}}
@@ -147,6 +148,8 @@
 {"case":"authoring.error.PropertyBatchStaleRevision","type":"AuthoringError","wire":"PropertyBatchStaleRevision"}
 {"case":"authoring.error.InvalidGuardedDuplicateBatch","type":"AuthoringError","wire":"InvalidGuardedDuplicateBatch"}
 {"case":"authoring.error.DuplicateBatchStaleRevision","type":"AuthoringError","wire":"DuplicateBatchStaleRevision"}
+{"case":"authoring.error.InvalidGuardedNameBatch","type":"AuthoringError","wire":"InvalidGuardedNameBatch"}
+{"case":"authoring.error.NameBatchStaleDocument","type":"AuthoringError","wire":"NameBatchStaleDocument"}
 {"case":"authoring.open_error.SourceUnreadable","type":"OpenError","wire":"SourceUnreadable"}
 {"case":"authoring.open_error.SourceParseFailed","type":"OpenError","wire":"SourceParseFailed"}
 {"case":"authoring.open_error.SourceInvalid","type":"OpenError","wire":"SourceInvalid"}

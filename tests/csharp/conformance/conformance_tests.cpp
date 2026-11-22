@@ -170,6 +170,7 @@ void authoringVectors(std::vector<Vector>& out) {
   command("camera.none", ac::SetActiveCamera{std::nullopt});
   command("name", ac::SetNodeName{kNode, "  \xe5\x90\x8d \"quoted\" \\ "});
   command("name.empty", ac::SetNodeName{kNode, ""});
+  command("name.guard", ac::RequireNameBatchDocument{{kNode, 17}});
   command("swap_siblings", ac::SwapAdjacentSiblings{kNode, kParent, std::nullopt, ac::SiblingDirection::Up, 17});
   command("require_revision", ac::RequireDocumentRevision{17});
   command("require_transform_revision", ac::RequireTransformBatchRevision{18});
@@ -231,7 +232,7 @@ void authoringVectors(std::vector<Vector>& out) {
   out.push_back({"authoring.node.named", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent, "  \xe5\x90\x8d \"quoted\" \\ "})});
 
   // The refusal set: every name of every error set, in declaration order.
-  for (int e = 0; e <= static_cast<int>(ac::Error::DuplicateBatchStaleRevision); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::NameBatchStaleDocument); ++e) {
     const auto error = static_cast<ac::Error>(e);
     out.push_back(
         {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});

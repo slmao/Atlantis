@@ -52,6 +52,7 @@ struct DocumentInfo {
   bool supportsPrefabOrigin = false;
   bool supportsPrefabRegistration = false;
   bool supportsPrefabSync = false;
+  bool supportsGuardedNameTransactions = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -148,10 +149,21 @@ struct RequireDuplicateBatchRevision {
 };
 inline constexpr std::size_t kMaxGuardedDuplicateNodes = 64;
 
+struct DocumentToken {
+  asset_system::EntityGuid documentId;
+  std::uint64_t documentRevision = 0;
+  friend bool operator==(const DocumentToken&, const DocumentToken&) = default;
+};
+/// First command of a guarded, names-only transaction (ADR-0189).
+struct RequireNameBatchDocument {
+  DocumentToken expectedDocument;
+};
+inline constexpr std::size_t kMaxGuardedNameWrites = 64;
+
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
                  SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
-                 RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin>;
+                 RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin, RequireNameBatchDocument>;
 
 // ---------------------------------------------------------------- events
 
@@ -322,6 +334,8 @@ enum class Error : std::uint8_t {
   PropertyBatchStaleRevision,
   InvalidGuardedDuplicateBatch,
   DuplicateBatchStaleRevision,
+  InvalidGuardedNameBatch,
+  NameBatchStaleDocument,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;
@@ -344,11 +358,6 @@ enum class SaveError : std::uint8_t {
   NoDocument,
   ImportedSceneNotSavable,  // ADR-0129 D4
   WriteFailed,              // the temporary file could not be written or renamed; the source is untouched
-};
-struct DocumentToken {
-  asset_system::EntityGuid documentId;
-  std::uint64_t documentRevision = 0;
-  friend bool operator==(const DocumentToken&, const DocumentToken&) = default;
 };
 struct DocumentState {
   DocumentToken token;

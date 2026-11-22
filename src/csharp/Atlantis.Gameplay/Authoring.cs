@@ -29,6 +29,8 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
     public bool SupportsGuardedTransformTransactions { get; init; }
     /// <summary>The current document supports revision-guarded duplicate transactions.</summary>
     public bool SupportsGuardedDuplicateTransactions { get; init; }
+    /// <summary>The current hand-authored document supports guarded name transactions.</summary>
+    public bool SupportsGuardedNameTransactions { get; init; }
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
@@ -117,6 +119,12 @@ public sealed record RequireTransformBatchRevision(ulong ExpectedRevision) : Com
 public sealed record RequireDuplicateBatchRevision(ulong ExpectedRevision) : Command
 {
     public const int MaxNodes = 64;
+}
+
+/// <summary>First command of a guarded, names-only transaction (ADR-0189).</summary>
+public sealed record RequireNameBatchDocument(DocumentToken ExpectedDocument) : Command
+{
+    public const int MaxWrites = 64;
 }
 
 /// <summary>Sets the active camera; null clears it.</summary>
@@ -267,6 +275,8 @@ public enum AuthoringError
     PropertyBatchStaleRevision,
     InvalidGuardedDuplicateBatch,
     DuplicateBatchStaleRevision,
+    InvalidGuardedNameBatch,
+    NameBatchStaleDocument,
 }
 
 /// <summary>

@@ -387,6 +387,21 @@ public static class CodecSuite
                             Codec.DecodeAuthoringCommand(wires["authoring.command.create.minted"]), "CreateNode, minted");
         t.Equal<A.Command?>(new A.SetParent(node, null), Codec.DecodeAuthoringCommand(wires["authoring.command.parent.root"]),
                             "SetParent to the root");
+        var nameGuard = wires["authoring.command.name.guard"];
+        t.Check(Codec.DecodeAuthoringCommand(nameGuard) is A.RequireNameBatchDocument { ExpectedDocument.DocumentRevision: 17 },
+            "shared name guard uses the full document token");
+        var extraNameGuard = Json.Parse(Json.Write(nameGuard));
+        extraNameGuard.Find("expectedDocument")!.Set("extra", JsonValue.Bool(true));
+        t.Check(Codec.DecodeAuthoringCommand(extraNameGuard) is null, "name guard rejects unrecognized document token members");
+        var nameCapability = Json.Parse(Json.Write(wires["authoring.document"]));
+        t.Check(Codec.DecodeDocumentInfo(nameCapability)?.SupportsGuardedNameTransactions == false,
+            "a legacy descriptor keeps name writes unavailable");
+        nameCapability.Set("supportsGuardedNameTransactions", JsonValue.String("true"));
+        t.Check(Codec.DecodeDocumentInfo(nameCapability)?.SupportsGuardedNameTransactions == false,
+            "malformed name capability preserves the descriptor without enabling guarded names");
+        nameCapability.Set("supportsGuardedNameTransactions", JsonValue.Bool(true));
+        t.Check(Codec.DecodeDocumentInfo(nameCapability)?.SupportsGuardedNameTransactions == true,
+            "literal positive name capability is recognized");
         t.Equal<A.Command?>(new A.SetActiveCamera(other), Codec.DecodeAuthoringCommand(wires["authoring.command.camera"]),
                             "SetActiveCamera");
         t.Equal<A.Command?>(new A.SetActiveCamera(null), Codec.DecodeAuthoringCommand(wires["authoring.command.camera.none"]),
@@ -439,7 +454,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(33, index, "the AuthoringError set has the C++ set's 33 names");
+        t.Equal(35, index, "the AuthoringError set has the C++ set's 35 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);
