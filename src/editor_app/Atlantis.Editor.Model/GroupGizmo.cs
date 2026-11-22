@@ -14,7 +14,7 @@ public sealed record GroupGizmoSample(IReadOnlyList<PropertyWrite> Writes,
 public sealed class GroupGizmo
 {
     private sealed record Edge(EntityGuid Node, EntityGuid? Parent, object Identity, object Stamp);
-    private sealed record Root(EntityGuid Node, LocalTransform Local, float[] World, float[]? ParentInverse,
+    private sealed record Root(EntityGuid Node, LocalTransform Local, float[] World, float[] ParentWorld, float[]? ParentInverse,
         BatchPropertyTarget[] Fields);
 
     private readonly Edge[] _paths;
@@ -34,9 +34,21 @@ public sealed class GroupGizmo
             (float)roots.Average(root => (double)root.World[13]), (float)roots.Average(root => (double)root.World[14]));
     }
 
-    public static GroupGizmo? Read(IAuthoringDocument document, DocumentTree tree, IReadOnlyList<EntityGuid> selection)
+    public static GroupGizmo? Read(IAuthoringDocument document, DocumentTree tree, IReadOnlyList<EntityGuid> selection) =>
+        selection.Count >= 2 ? ReadPlacement(document, tree, selection) : null;
+
+    public static GroupGizmo? ReadSingle(IAuthoringDocument document, DocumentTree tree, EntityGuid node) =>
+        ReadPlacement(document, tree, [node]);
+
+    public (LocalTransform Local, float[] World, float[] ParentWorld) SingleBaseline()
     {
-        if (selection.Count is < 2 or > RequireTransformBatchRevision.MaxNodes || !tree.OrderSynchronized) return null;
+        var root = _roots.Single();
+        return (root.Local,root.World,root.ParentWorld);
+    }
+
+    private static GroupGizmo? ReadPlacement(IAuthoringDocument document, DocumentTree tree, IReadOnlyList<EntityGuid> selection)
+    {
+        if (selection.Count > RequireTransformBatchRevision.MaxNodes || !tree.OrderSynchronized) return null;
         var selected = selection.ToHashSet();
         var roots = new List<EntityGuid>();
         var paths = new Dictionary<EntityGuid, Edge>();
@@ -103,8 +115,11 @@ public sealed class GroupGizmo
             }
             return world;
         }
-        Root[] computed = roots.Select(node => new Root(node, locals[node], WorldOf(node),
-            TransformMath.InverseAffine(WorldOf(paths[node].Parent)), byNode[node])).ToArray();
+        Root[] computed = roots.Select(node =>
+        {
+            var parent = WorldOf(paths[node].Parent);
+            return new Root(node,locals[node],WorldOf(node),parent,TransformMath.InverseAffine(parent),byNode[node]);
+        }).ToArray();
         if (computed.Any(root => !root.World.All(float.IsFinite))) return null;
         return new GroupGizmo(paths.Values.ToArray(), needed.Select(node => paths[node]).ToArray(), computed, targets);
     }

@@ -463,6 +463,29 @@ namespace ac = atlantis::connection::authoring;
     if (hit.isErr()) return Outcome::Ok(codec::err(codec::encodeControlError(hit.error())));
     return Outcome::Ok(codec::ok(hit.value().has_value() ? codec::encode(*hit.value()) : Value()));
   }
+  if (method == "control.pickAlignmentFaces") {
+    namespace c = atlantis::connection;
+    const auto* values = p.find("rays");
+    if (!p.isObject() || p.asObject().size() != 1 || !values || !values->isArray()) return bad("rays");
+    const auto invalid = [] {
+      return Outcome::Ok(codec::err(codec::encode(c::AlignmentFaceFailure{c::AlignmentFaceError::InvalidRequest})));
+    };
+    if (values->asArray().empty() || values->asArray().size() > c::kAlignmentRayLimit) return invalid();
+    std::vector<c::Ray> rays;
+    for (const auto& v : values->asArray()) {
+      const auto vector = [&](std::string_view key) {
+        const auto* coordinates = v.find(key);
+        return coordinates && coordinates->isArray() && coordinates->asArray().size() == 3 &&
+            std::ranges::all_of(coordinates->asArray(), [](const auto& n) { return n.isNumber(); });
+      };
+      if (!v.isObject() || v.asObject().size() != 2 || !vector("origin") || !vector("direction")) return bad("ray");
+      const auto ray = codec::decodeRay(v);
+      if (!ray || !c::validAlignmentRay(*ray)) return invalid();
+      rays.push_back(*ray);
+    }
+    const auto result = control.pickAlignmentFaces(rays);
+    return Outcome::Ok(result.isOk() ? codec::ok(codec::encode(result.value())) : codec::err(codec::encode(result.error())));
+  }
   if (method == "control.viewportNavigation") {
     namespace c = atlantis::connection;
     const auto* values = p.find("targets");

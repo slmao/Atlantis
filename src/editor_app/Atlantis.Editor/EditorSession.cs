@@ -1827,6 +1827,314 @@ public sealed class EditorWorker : IDisposable
     public void AddComponent(TypeId component, HierarchyRow? row = null) =>
         Edit(document => (_inspector!.AddComponent(component), null), protectStructure: true, row: row);
 
+    public sealed record AlignmentView(long Id, bool Active, bool Busy, bool CanConfirm, string Notice,
+        EntityGuid? Target = null);
+    private sealed class AlignmentOperation(long id, EntityGuid node, long lifetime, ulong selection, Action<AlignmentView> report)
+    {
+        public long Id { get; } = id;
+        public EntityGuid Node { get; } = node;
+        public long Lifetime { get; } = lifetime;
+        public ulong Selection { get; } = selection;
+        public Action<AlignmentView> Report { get; } = report;
+        public bool Busy = true;
+        public bool Confirming;
+        public (long Camera, (int Width, int Height) Extent, ulong ExtentRevision)? ConfirmView;
+        public AlignmentStamp? Stamp;
+        public PlacementRay? SourceSample, TargetSample;
+        public AlignmentBasis? Source, Target;
+        public SurfaceAlignmentSolution? Solution;
+    }
+    private sealed record AlignmentStamp(DocumentToken Document, ApplyId Apply, ulong Generation);
+    private sealed record AlignmentBasis(AlignmentFace Face, GroupGizmo Transform, BatchPropertyTarget Mesh);
+    private AlignmentOperation? _alignment;
+    private (AlignmentOperation Operation, OverlayGroup Group)? _alignmentOverlay;
+    private long _nextAlignment;
+
+    private bool AlignmentCurrentLocked(AlignmentOperation op) =>
+        ReferenceEquals(op,_alignment) && !_stopping && op.Lifetime == MeshDocumentLifetime &&
+        op.Selection == _requestedSelectionGeneration &&
+        (!op.Confirming || !_navigationUncertain &&
+          op.ConfirmView == (_cameraIntent,_viewportExtent,_viewportExtentRevision));
+
+    public long? BeginAlignment(EntityGuid node, long lifetime, ulong selection, Action<AlignmentView> report)
+    {
+        lock (_lock)
+        {
+            if (_stopping || _alignment is not null || _groupSettling || _gizmoActive ||
+                _batchSettling || _duplicateBatchQueued || lifetime != MeshDocumentLifetime ||
+                selection != _requestedSelectionGeneration || _navigationUncertain) return null;
+            var op = new AlignmentOperation(++_nextAlignment,node,lifetime,selection,report);
+            _alignment = op;
+            Enqueue(session =>
+            {
+                if (!_groupWritable || _selected != op.Node || !GroupFilterAllows() ||
+                    ReadAlignmentStamp(session) is not { } stamp)
+                {
+                    EndAlignment(session,op,"Apply the current writable document before aligning.");
+                    return;
+                }
+                op.Stamp = stamp;
+                ShowAlignment(op,"Pick a rectangular face on the selected object.");
+            });
+            return op.Id;
+        }
+    }
+
+    private AlignmentStamp? ReadAlignmentStamp(RemoteSession session)
+    {
+        if (_document is not RemoteAuthoringDocument document ||
+            document.ObserveEvents() is not { } events) return null;
+        PollDocument(session,events,pollApply:false,refreshInspector:false,refreshOverlay:false,refreshHierarchy:false);
+        var info = session.Authoring.DocumentState();
+        var apply = document.ApplyStatus();
+        if (!info.IsOk || info.Value is not { Provenance: Provenance.HandAuthored } state ||
+            !apply.IsOk || apply.Value is not { Projection: { } projected } snapshot ||
+            snapshot.CurrentDocumentRevision != state.Token.DocumentRevision ||
+            projected.Receipt.DocumentRevision != state.Token.DocumentRevision ||
+            snapshot.Request?.State is ApplyState.Pending or ApplyState.Failed or ApplyState.Superseded ||
+            _apply?.Status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown or ApplyStatus.Failed or ApplyStatus.NeedsApply ||
+            session.Control.Status().SceneGeneration != projected.Generation)
+            return null;
+        return new(state.Token,projected.Receipt.Id,projected.Generation);
+    }
+
+    private AlignmentBasis? ReadAlignmentBasis(AlignmentFace face)
+    {
+        if (_document is not RemoteAuthoringDocument document ||
+            GroupGizmo.ReadSingle(document,_tree,face.Entity) is not { } transform ||
+            SceneSchema.AddressOf(document.Schema,face.Entity,"Renderable","meshAsset") is not SceneAddress address ||
+            document.GetProperty(address) is not PropertyValue value || !value.TryGetAsset(out AssetGuid mesh) ||
+            mesh != face.Mesh || _tree.IncarnationOf(face.Entity) is not { } node ||
+            _tree.ComponentIncarnationOf(address) is not { } component ||
+            _tree.PropertyStamp(address) is not { } stamp ||
+            !SurfaceAlignment.MatchesAuthored(face,transform.SingleBaseline().World))
+            return null;
+        return new(face,transform,new(address,value,node,component,stamp));
+    }
+
+    private bool AlignmentBasisCurrent(AlignmentBasis basis) =>
+        basis.Mesh.IsCurrent(_tree,checkStamp:true) &&
+        basis.Transform.IsCurrent(_tree,preview:true,checkStamps:true) &&
+        basis.Transform.Targets.All(target => target.IsCurrent(_tree,checkStamp:true));
+
+    private void ShowAlignment(AlignmentOperation op, string notice, bool available = false)
+    {
+        lock (_lock)
+        {
+            if (!AlignmentCurrentLocked(op)) return;
+            op.Busy = false;
+        }
+        EntityGuid? target = op.Target?.Face.Entity;
+        _post(() =>
+        {
+            lock (_lock)
+                if (!ReferenceEquals(_alignment,op) || op.Busy) return;
+            op.Report(new(op.Id,true,false,available,notice,target));
+        });
+    }
+
+    public void CancelAlignment(long id)
+    {
+        lock (_lock)
+        {
+            if (_alignment is not { } op || op.Id != id) return;
+            _alignment = null;
+            Enqueue(session => ClearAlignmentOverlay(session,op));
+        }
+    }
+
+    private void EndAlignment(RemoteSession session, AlignmentOperation op, string notice)
+    {
+        bool current;
+        lock (_lock)
+        {
+            current = ReferenceEquals(_alignment,op);
+            if (current) _alignment = null;
+        }
+        ClearAlignmentOverlay(session,op);
+        if (current) _post(() => op.Report(new(op.Id,false,false,false,notice)));
+    }
+
+    private bool ClearAlignmentOverlay(RemoteSession session, AlignmentOperation op)
+    {
+        if (_alignmentOverlay is not { } shown || !ReferenceEquals(shown.Operation,op)) return true;
+        _alignmentOverlay = null;
+        bool accepted = false;
+        SendOverlay(session, observeAdmission: result => accepted = result);
+        if (!accepted) session.Control.SetViewportOverlay(null);
+        return accepted;
+    }
+
+    private bool QueueAlignment(long id, Action<RemoteSession,AlignmentOperation> action)
+    {
+        lock (_lock)
+        {
+            if (_alignment is not { } op || op.Id != id || op.Busy || op.Confirming || !AlignmentCurrentLocked(op))
+                return false;
+            op.Busy = true;
+            Enqueue(session => action(session,op));
+            return true;
+        }
+    }
+
+    private static Ray AlignmentRay(PlacementRay sample) => new(sample.Ray.Origin,sample.Ray.Direction);
+    public bool PickAlignment(long id, PlacementRay sample, double gap) => QueueAlignment(id,(session,op) =>
+    {
+        bool Current()
+        {
+            lock (_lock) return AlignmentCurrentLocked(op) && PlacementViewCurrent(sample);
+        }
+        if (!Current()) { EndAlignment(session,op,"Viewport changed. Start alignment again."); return; }
+        if (!ClearAlignmentOverlay(session,op) || op.Stamp is not { } stamp || ReadAlignmentStamp(session) != stamp ||
+            op.Source is { } oldSource && !AlignmentBasisCurrent(oldSource))
+        { EndAlignment(session,op,"The document or projection changed. Pick the faces again."); return; }
+
+        Ray[] rays = op.SourceSample is { } saved ? [AlignmentRay(saved),AlignmentRay(sample)] : [AlignmentRay(sample)];
+        var result = session.Control.PickAlignmentFaces(rays);
+        if (!Current() || ReadAlignmentStamp(session) != stamp)
+        { EndAlignment(session,op,"The view or projection changed. Pick the faces again."); return; }
+        if (result.Value is not { } observed || observed.SceneGeneration != stamp.Generation)
+        {
+            op.Target = null;
+            op.TargetSample = null;
+            op.Solution = null;
+            if (result.Error?.Code == AlignmentFaceError.Unsupported)
+                EndAlignment(session,op,"Surface alignment requires a compatible Runtime.");
+            else if (op.Source is not null && result.Error?.RayIndex is not 1)
+                EndAlignment(session,op,"The moving face changed. Pick the faces again.");
+            else ShowAlignment(op,"Face pick refused: " + (result.Error?.Code.ToString() ?? "projection changed") + ".");
+            return;
+        }
+        AlignmentFace face = observed.Faces[^1];
+        if (ViewportMeshPlacement.HitPosition(sample,new(face.Entity,face.Distance)) is null ||
+            ReadAlignmentBasis(face) is not { } basis || ReadAlignmentStamp(session) != stamp ||
+            !AlignmentBasisCurrent(basis) || !Current())
+        { EndAlignment(session,op,"Face is outside the confirmed view or differs from authoring."); return; }
+
+        if (op.Source is null)
+        {
+            if (face.Entity != op.Node) { ShowAlignment(op,"Pick a face on the selected object."); return; }
+            op.Source = basis;
+            op.SourceSample = sample;
+            ShowAlignment(op,"Moving face recorded. Pick the fixed target face.");
+            return;
+        }
+
+        if (!op.Source.Face.SameEvidence(observed.Faces[0]))
+        { EndAlignment(session,op,"The moving face changed. Pick the faces again."); return; }
+        for (EntityGuid? node = face.Entity; node is EntityGuid current; node = _tree.ParentOf(current))
+            if (current == op.Node)
+            {
+                op.Target = null;
+                op.TargetSample = null;
+                op.Solution = null;
+                ShowAlignment(op,"Pick a target outside the moving subtree.");
+                return;
+            }
+        op.Target = basis;
+        op.TargetSample = sample;
+        UpdateAlignmentPreview(session,op,gap);
+    });
+
+    public bool SetAlignmentGap(long id, double gap) => QueueAlignment(id,(session,op) =>
+    {
+        if (op.Source is null || op.Target is null)
+        { ShowAlignment(op,op.Source is null ? "Pick the moving face." : "Pick the fixed target face."); return; }
+        UpdateAlignmentPreview(session,op,gap);
+    });
+
+    private void UpdateAlignmentPreview(RemoteSession session, AlignmentOperation op, double gap)
+    {
+        var source = op.Source!;
+        var target = op.Target!;
+        if (op.Stamp is not { } stamp || ReadAlignmentStamp(session) != stamp ||
+            !AlignmentBasisCurrent(source) || !AlignmentBasisCurrent(target))
+        { EndAlignment(session,op,"The faces changed. Pick again."); return; }
+        var basis = source.Transform.SingleBaseline();
+        op.Solution = SurfaceAlignment.Solve(source.Face,target.Face,basis.Local,basis.ParentWorld,gap);
+        if (op.Solution is not { } candidate)
+        {
+            if (!ClearAlignmentOverlay(session,op))
+            { EndAlignment(session,op,"Could not restore the ordinary overlay."); return; }
+            ShowAlignment(op,"The faces, gap or current transform cannot make a precise seam.");
+            return;
+        }
+        _alignmentOverlay = (op,SurfaceAlignment.Preview(target.Face,candidate));
+        bool admitted = false;
+        SendOverlay(session,observeAdmission: result => admitted = result);
+        if (!admitted || _alignmentOverlay is null)
+        { EndAlignment(session,op,"Surface preview could not be displayed."); return; }
+        ShowAlignment(op,FormattableString.Invariant($"Preview gap {candidate.Gap:G9} world units. Confirm to move."),true);
+    }
+
+    public bool ConfirmAlignment(long id)
+    {
+        lock (_lock)
+        {
+            if (_alignment is not { } op || op.Id != id || op.Busy || op.Confirming ||
+                !AlignmentCurrentLocked(op) || op.Solution is null) return false;
+            op.ConfirmView = (_cameraIntent,_viewportExtent,_viewportExtentRevision);
+            op.Busy = op.Confirming = true;
+            Enqueue(session => CommitAlignment(session,op));
+            return true;
+        }
+    }
+
+    private void CommitAlignment(RemoteSession session, AlignmentOperation op)
+    {
+        bool Current()
+        {
+            lock (_lock) return AlignmentCurrentLocked(op);
+        }
+        if (!Current() || op.Stamp is not { } stamp || op.Source is not { } source || op.Target is not { } target ||
+            op.SourceSample is not { } sourceRay || op.TargetSample is not { } targetRay ||
+            op.Solution is not { } candidate || !GroupFilterAllows() || ReadAlignmentStamp(session) != stamp ||
+            !AlignmentBasisCurrent(source) || !AlignmentBasisCurrent(target))
+        { EndAlignment(session,op,"Alignment expired. Pick the faces again."); return; }
+
+        var result = session.Control.PickAlignmentFaces([AlignmentRay(sourceRay),AlignmentRay(targetRay)]);
+        if (result.Value is not { } fresh || fresh.SceneGeneration != stamp.Generation ||
+            !fresh.Faces[0].SameEvidence(source.Face) || !fresh.Faces[1].SameEvidence(target.Face) ||
+            !ClearAlignmentOverlay(session,op) || ReadAlignmentStamp(session) != stamp ||
+            !AlignmentBasisCurrent(source) || !AlignmentBasisCurrent(target) || !Current())
+        { EndAlignment(session,op,"The faces or projection changed. Pick again."); return; }
+
+        var positionAddress = SceneSchema.AddressOf(_document!.Schema,op.Node,"Transform","localPosition");
+        var position = source.Transform.Targets.SingleOrDefault(item => item.Address == positionAddress);
+        if (positionAddress is null || position?.Value is null)
+        { EndAlignment(session,op,"The moving position is unavailable."); return; }
+        var value = PropertyValue.FromVec3(candidate.Position);
+        if (position.Value == value)
+        { EndAlignment(session,op,"The position is already aligned."); return; }
+        PropertyWrite[] writes = [new(position.Address,position.Value!.Value,value)];
+        var edit = new BatchPropertyEdit("Align surfaces",source.Transform.Targets,writes,source.Transform);
+        HierarchyFilter filter;
+        lock (_lock) filter = _hierarchyFilter;
+        var settled = SettlePropertyBatch(session,edit,true,op.Lifetime,op.Selection,filter:filter,
+            expectedRevision:stamp.Document.DocumentRevision, sendGuard:() => AlignmentCurrentLocked(op) &&
+                AlignmentBasisCurrent(source) && AlignmentBasisCurrent(target), uncertaintyDetail:
+                FormattableString.Invariant($" Align {op.Node} to local position {candidate.Position}."));
+        string notice = settled.Notice;
+        bool recorded = false;
+        if (settled.State == BatchReplayState.Committed && op.Lifetime == MeshDocumentLifetime &&
+            _history is { } history && _historyTarget is { } historyTarget)
+        {
+            history.Record(new EditTransaction("Align surfaces",writes,new EditEntry[] { edit }),
+                historyTarget.Committed(Array.Empty<CommandFailure>()));
+            history.Update();
+            recorded = true;
+        }
+        PostHistory(op.Lifetime);
+        if (recorded) notice = ApplyVerifiedEdit(op.Lifetime,notice,publishStatus:false);
+        GroupNotice(op.Lifetime,notice);
+        PostApplyState(op.Lifetime);
+        EndAlignment(session,op,notice);
+        PollDocument(session,pollApply:false,refreshInspector:false,refreshOverlay:false);
+        PostInspector();
+        SendOverlay(session);
+    }
+
+
     private bool PlacementViewCurrent(PlacementRay sample) =>
         !_stopping && !_navigationUncertain && _cameraIntent == sample.CameraIntent &&
         _viewportExtent == (sample.Width, sample.Height) && !_gizmoActive && _groupGrab is null;
@@ -3079,7 +3387,8 @@ public sealed class EditorWorker : IDisposable
     }
 
     private BatchReplayResult SettlePropertyBatch(RemoteSession session, BatchPropertyEdit edit, bool forward,
-        long lifetime, ulong? selection = null, GroupGrab? grab = null, HierarchyFilter? filter = null)
+        long lifetime, ulong? selection = null, GroupGrab? grab = null, HierarchyFilter? filter = null,
+        ulong? expectedRevision = null, Func<bool>? sendGuard = null, string? uncertaintyDetail = null)
     {
         bool group = edit.Group is not null;
         if (_document is not RemoteAuthoringDocument document || !(group ? _groupWritable : _batchWritable))
@@ -3087,7 +3396,7 @@ public sealed class EditorWorker : IDisposable
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime &&
             (selection is null || selection == _requestedSelectionGeneration) &&
             (filter is null || ReferenceEquals(_hierarchyFilter, filter)) &&
-            (grab is null || ReferenceEquals(grab, _requestedGroup));
+            (grab is null || ReferenceEquals(grab, _requestedGroup)) && (sendGuard?.Invoke() ?? true);
         bool Current()
         {
             lock (_lock) return IsCurrent();
@@ -3127,11 +3436,12 @@ public sealed class EditorWorker : IDisposable
             }
             return new(BatchReplayState.Drop, committed
                 ? "Committed " + subject + ". History unavailable. Refresh, inspect and Apply explicitly."
-                : "Edit outcome unknown for " + subject + ". Refresh and inspect before retrying.");
+                : "Edit outcome unknown for " + subject + "." + uncertaintyDetail + " Refresh and inspect before retrying.");
         }
         try
         {
-            if (!Current() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue || !Observe())
+            if (!Current() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue ||
+                (expectedRevision is ulong pinned && pinned != revision) || !Observe())
                 return Stale();
             if (!TargetsCurrent(selection is not null)) return Conflict();
             IReadOnlyList<PropertyValue?> prior = document.GetProperties(addresses);
@@ -4074,6 +4384,11 @@ public sealed class EditorWorker : IDisposable
             if (e is NodeDestroyed gone) destroyed.Add(gone.Node);
             if (e is PropertyChanged or ParentChanged or DocumentReopened) _transformsChanged = true;
         }
+        AlignmentOperation? expiredAlignment;
+        lock (_lock) expiredAlignment = _alignment is { Stamp: not null, Confirming: false } pending &&
+            events.Count > 0 ? pending : null;
+        if (expiredAlignment is not null)
+            EndAlignment(session,expiredAlignment,"Alignment expired. Pick the faces again.");
         if (events.Count > 0 && _placementOverlay is { } expiredPlacement)
         {
             _placementOverlay = null;
@@ -4378,7 +4693,7 @@ public sealed class EditorWorker : IDisposable
         throw new RemoteException(RemoteError.ProtocolError, "Malformed viewport overlay reply.");
     }
 
-    private MeshPlacementHit? SendOverlay(RemoteSession session, GroupGrab? retiring = null)
+    private MeshPlacementHit? SendOverlay(RemoteSession session, GroupGrab? retiring = null, Action<bool>? observeAdmission = null)
     {
         OverlayGroup? gizmo = null;
         GizmoSnapshot snapshot = new(null, null, null);
@@ -4416,8 +4731,22 @@ public sealed class EditorWorker : IDisposable
         {
             if (guides is { } proposed && !GuideCurrentLocked(proposed.Intent)) guides = null;
         }
+        bool alignmentShown = false, alignmentRefused = false, overlayAdmitted = true;
+        if (_alignmentOverlay is { } alignment)
+        {
+            var ordinary = guides is { } available ? ViewportGuides.Compose(overlay,available.Value) : overlay;
+            var combined = ordinary with { Groups = [..ordinary.Groups, alignment.Group] };
+            alignmentShown = SendGuardedOverlay(session,combined,() => AlignmentCurrentLocked(alignment.Operation),out var error)
+                && error is null;
+            if (!alignmentShown)
+            {
+                alignmentRefused = true;
+                _alignmentOverlay = null;
+                EndAlignment(session,alignment.Operation,"Surface preview could not be displayed.");
+            }
+        }
         MeshPlacementHit? shownPlacement = null;
-        if (_placementOverlay is { } placing)
+        if (!alignmentShown && _placementOverlay is { } placing)
         {
             bool Current() => placing.Hit.Gesture.Drag.Lifetime == MeshDocumentLifetime &&
                 PlacementViewCurrent(placing.Hit.Sample) && placing.Hit.Gesture.IsHover(placing.Hit.Sample) &&
@@ -4428,12 +4757,13 @@ public sealed class EditorWorker : IDisposable
                 shownPlacement = placing.Hit;
             else _placementOverlay = null;
         }
-        if (shownPlacement is null && guides is { } guide && guide.Value.Groups.Count > 0)
+        if (!alignmentShown && shownPlacement is null && guides is { } guide && guide.Value.Groups.Count > 0)
         {
             if (!SendGuideOverlay(session, ViewportGuides.Compose(overlay, guide.Value), guide.Intent, out ControlError? refusal))
                 return null;
             if (refusal is ControlError error)
             {
+                overlayAdmitted = false;
                 string notice = "Guide overlay refused: " + error;
                 _log.Write(notice);
                 if (!SendGuideOverlay(session, overlay, guide.Intent, out ControlError? fallback)) return null;
@@ -4442,8 +4772,9 @@ public sealed class EditorWorker : IDisposable
             }
             else PostGuideFeedback(guide.Intent, guide.Value.Unavailable);
         }
-        else if (shownPlacement is null && session.Control.SetViewportOverlay(overlay) is ControlError refused)
+        else if (!alignmentShown && shownPlacement is null && session.Control.SetViewportOverlay(overlay) is ControlError refused)
         {
+            overlayAdmitted = false;
             _log.Write("overlay refused: " + refused);
             // A failed placement read can leave no Group snapshot while retiring guides.
             if (retiring is not null || snapshot.Group is not null)
@@ -4457,6 +4788,8 @@ public sealed class EditorWorker : IDisposable
             }
         }
         else if (guides is { } displayed) PostGuideFeedback(displayed.Intent, displayed.Value.Unavailable);
+        if (alignmentRefused && !overlayAdmitted) session.Control.SetViewportOverlay(null);
+        observeAdmission?.Invoke(overlayAdmitted);
         _post(() =>
         {
             bool current;

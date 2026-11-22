@@ -150,6 +150,12 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::ViewportOverlay> decodeViewportOverlay(const Value& value);
 [[nodiscard]] Value encode(const connection::ViewportCamera& camera);
 [[nodiscard]] std::optional<connection::ViewportCamera> decodeViewportCamera(const Value& value);
+[[nodiscard]] Value encode(const connection::AlignmentFaces& result);
+[[nodiscard]] Value encode(const connection::AlignmentFaceFailure& failure);
+[[nodiscard]] std::optional<connection::AlignmentFaces> decodeAlignmentFaces(
+    const Value& value, std::span<const connection::Ray> rays);
+[[nodiscard]] std::optional<connection::AlignmentFaceFailure> decodeAlignmentFaceFailure(
+    const Value& value, std::size_t rayCount);
 [[nodiscard]] Value encode(const connection::Ray& ray);
 [[nodiscard]] std::optional<connection::Ray> decodeRay(const Value& value);
 [[nodiscard]] Value encode(const connection::RayHit& hit);

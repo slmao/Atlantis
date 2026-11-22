@@ -298,3 +298,70 @@ TEST_CASE("cold bake and extraction honor rotated sibling slots and change the e
   expect(baseline, first.guid, second.guid, third.guid);
   expect(reordered, second.guid, third.guid, first.guid);
 }
+
+TEST_CASE("Alignment face evidence keeps ordinary first hits and refuses ambiguous caps", "[runtime][alignment]") {
+  namespace c = atlantis::connection;
+  auto geometry = cubeGeometry();
+  auto& mesh = geometry.at(kCubeMesh);
+  mesh.assetGuid.bytes[0] = std::byte{0x13};
+  PickInstance source{newGuid(1), kCubeMesh, {1,0,0,0, 0,2,0,0, 0,0,1,0, 3,0,0,1}, true};
+  const c::Ray ray{{1,0,0},{1,0,0}};
+  const auto query = [&] { return atlantis::runtime::detail::pickAlignmentFace(std::span(&source,1),geometry,ray); };
+  const auto face = query();
+  REQUIRE(face.isOk());
+  CHECK(face.value().entity == source.entity);
+  CHECK(face.value().mesh == mesh.assetGuid);
+  CHECK(face.value().triangles == std::array<std::uint32_t,2>{8,9});
+  CHECK(face.value().normal == std::array<float,3>{-1,0,0});
+  CHECK(face.value().corners[0] == std::array<float,3>{2.5f,-1,-0.5f});
+  CHECK(face.value().distance == 1.5f);
+
+  SECTION("duplicated vertices with the same positions still share the diagonal") {
+    for (std::size_t i = 27; i < 30; ++i) {
+      const auto position = mesh.positions[mesh.indices[i]];
+      mesh.indices[i] = static_cast<std::uint32_t>(mesh.positions.size());
+      mesh.positions.push_back(position);
+    }
+    REQUIRE(query().isOk());
+    CHECK(query().value().corners == face.value().corners);
+  }
+  SECTION("opacity gates the alignment query but not ordinary picking") {
+    source.opaqueForAlignment = false;
+    REQUIRE(query().isErr());
+    CHECK(query().error() == c::AlignmentFaceError::UnsupportedFace);
+    REQUIRE(pickNearest(std::span(&source,1),geometry,PickRay{ray.origin,ray.direction}));
+  }
+  SECTION("outside edge is ambiguous") {
+    const c::Ray edge{{1,1,0},{1,0,0}};
+    const auto result = atlantis::runtime::detail::pickAlignmentFace(std::span(&source,1),geometry,edge);
+    REQUIRE(result.isErr());
+    CHECK(result.error() == c::AlignmentFaceError::Ambiguous);
+  }
+  SECTION("a reflected transform is unsupported") {
+    source.worldMatrix[0] = -1;
+    REQUIRE(query().isErr());
+    CHECK(query().error() == c::AlignmentFaceError::UnsupportedFace);
+  }
+  SECTION("a duplicated eligible hit across nodes cannot pass through") {
+    auto copy = source;
+    copy.entity = newGuid(2);
+    const std::array instances{source,copy};
+    const auto result = atlantis::runtime::detail::pickAlignmentFace(instances,geometry,ray);
+    REQUIRE(result.isErr());
+    CHECK(result.error() == c::AlignmentFaceError::Ambiguous);
+    REQUIRE(pickNearest(instances,geometry,PickRay{ray.origin,ray.direction}));
+    CHECK(pickNearest(instances,geometry,PickRay{ray.origin,ray.direction})->entity == source.entity);
+  }
+  SECTION("geometry at the cap is ambiguous") {
+    mesh.indices.insert(mesh.indices.end(), {0, 4, 2});
+    REQUIRE(query().isErr());
+    CHECK(query().error() == c::AlignmentFaceError::Ambiguous);
+  }
+  SECTION("the exact bound is allowed and exceeded bound refuses the first hit") {
+    mesh.indices.resize(c::kAlignmentTriangleLimit * 3, 0);
+    REQUIRE(query().isOk());
+    mesh.indices.insert(mesh.indices.end(), {0, 0, 0});
+    REQUIRE(query().isErr());
+    CHECK(query().error() == c::AlignmentFaceError::TooLarge);
+  }
+}

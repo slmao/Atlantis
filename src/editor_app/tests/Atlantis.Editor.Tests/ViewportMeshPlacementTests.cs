@@ -11,8 +11,36 @@ namespace Atlantis.Editor.Tests;
 
 public static partial class Program
 {
+    private static void SurfaceAlignmentChecks()
+    {
+        var source = new EntityGuid(Guid.NewGuid());
+        var target = new EntityGuid(Guid.NewGuid());
+        var mesh = AssetGuid.Parse("01350135-0135-4135-8135-013501350001");
+        float[] world = [2,0,0,0, 0,1,0,0, 0,0,1,0, 8,2,0.25f,1];
+        float[] parent = [2,0,0,0, 0,1,0,0, 0,0,1,0, 2,0,0,1];
+        float[] identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+        var local = new LocalTransform(new(3,2,0.25f),Vector3.Zero,Vector3.One);
+        var moving = new AlignmentFace(source,mesh,0,1,1,
+            [new(7,1,-0.25f),new(7,1,0.75f),new(7,3,0.75f),new(7,3,-0.25f)],-Vector3.UnitX,world);
+        var fixedCap = new AlignmentFace(target,mesh,2,5,1,
+            [new(3,0,-0.5f),new(3,2,-0.5f),new(3,2,0.5f),new(3,0,0.5f)],Vector3.UnitX,identity);
+        var zero = SurfaceAlignment.Solve(moving,fixedCap,local,parent,0);
+        var spaced = SurfaceAlignment.Solve(moving,fixedCap,local,parent,0.250);
+        Check(zero?.Position == new Vector3(1,1,0) && zero.CornerErrors.All(error => error == 0),
+            "alignment translates an offset cap under a scaled parent to four exact corners");
+        Check(spaced?.Position == new Vector3(1.125f,1,0) && spaced.Gap == 0.25 &&
+            spaced.CornerErrors.All(error => error == 0) && SurfaceAlignment.Preview(fixedCap,spaced).Segments.Count == 9,
+            "alignment computes the gap along the target normal after narrowing local position");
+        Check(SurfaceAlignment.Solve(moving,fixedCap,local,parent,-0.1) is null &&
+            SurfaceAlignment.Solve(moving,fixedCap,local,parent,double.PositiveInfinity) is null &&
+            SurfaceAlignment.Solve(moving,fixedCap with { Normal = Vector3.UnitY },local,parent,0) is null &&
+            SurfaceAlignment.Solve(moving,fixedCap with { Corners = [..fixedCap.Corners.Take(3), new(3,0,1)] },local,parent,0) is null,
+            "alignment refuses invalid gaps, nonopposed caps and noncongruent corners");
+    }
+
     private static void ViewportPlacementChecks()
     {
+        SurfaceAlignmentChecks();
         var asset = new AssetSummary(AssetGuid.Parse("01280128-0128-4128-8128-012801280001"), AssetType.Mesh, "fixture");
         var surface = new EntityGuid(Guid.NewGuid());
         var pose = new CameraPose(

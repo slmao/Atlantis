@@ -1,9 +1,9 @@
 # ADR 0184 — Shared Alignment Face Query
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainers
-- **Acceptance:** Pending joint review.
+- **Acceptance:** Maintainer joint approval of Spec/Plan and J1–J4 at `d9ac83c1`, including the J3 race. [Approval record](https://github.com/slmao/Atlantis/pull/433#issuecomment-7074129488). Design merged by the maintainer as `e374506b`.
 - **Related Spec:** [Spec 0135](../specs/0135-viewport-surface-alignment.md)
 
 ## Context

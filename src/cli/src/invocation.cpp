@@ -32,6 +32,7 @@ constexpr std::string_view kUsage =
     "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]\n"
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
+    "  runtime alignment faces --origin <x> <y> <z> --direction <x> <y> <z> [<second ray>]\n"
     "  runtime camera navigation [GUID ...]\n"
     "  runtime overlay set <file|-> | runtime overlay select <guid>... | runtime overlay clear\n"
     "  tx <file|->       write commands, one per line, submitted as one transaction\n"

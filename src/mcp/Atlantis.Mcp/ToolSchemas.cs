@@ -50,6 +50,11 @@ internal static class ToolSchemas
         Command("SetPrefabOrigin", ("node", String), ("prefab", String)));
 
     internal static readonly JsonNode StepRequest = ObjectWithOptionalOverlay();
+    internal static readonly JsonNode AlignmentRays = new JsonObject
+    {
+        ["type"] = "array", ["items"] = Object(("origin", Vector(Number, 3)), ("direction", Vector(Number, 3))),
+        ["minItems"] = 1, ["maxItems"] = 2
+    };
     internal static readonly JsonNode Ray = Object(("origin", Vec3), ("direction", Vec3));
     internal static readonly JsonNode NavigationTargets = new JsonObject
     {

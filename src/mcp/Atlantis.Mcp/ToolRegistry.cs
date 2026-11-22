@@ -187,6 +187,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             ToolSchemas.Parameters(("request", ToolSchemas.StepRequest))),
         Declare("control.raycast", "control.raycast", "Read the nearest mesh hit or null; NoGeometry when pick geometry is unavailable.", ControlModel,
             ToolSchemas.Parameters(("ray", ToolSchemas.Ray))),
+        Declare("control.pick_alignment_faces", "control.pickAlignmentFaces",
+            "Read checked rectangular first-hit faces for one or two ordered world-space rays.", ControlModel,
+            ToolSchemas.Parameters(("rays", ToolSchemas.AlignmentRays))),
         Declare("control.viewport_navigation", "control.viewportNavigation", "Read the active scene camera and ordered world bounds. Pass [] for the camera only.", ControlModel,
             ToolSchemas.Parameters(("targets", ToolSchemas.NavigationTargets))),
         Declare("control.set_viewport_camera", "control.setViewportCamera", "Set this client's viewport camera; null restores the scene camera.", ControlModel,
@@ -267,6 +270,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 return DocumentOperation(mapping.Method, wireParameters);
             if (mapping.Method is "authoring.recoveryStatus" or "authoring.restoreRecovery" or "authoring.discardRecovery")
                 return RecoveryOperation(mapping.Method, wireParameters);
+            if (mapping.Method == "control.pickAlignmentFaces") return PickAlignmentFaces(wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
             if (mapping.Method == "assets.renameTexture") return RenameTexture(wireParameters);
             if (mapping.Method == "assets.moveTexture") return MoveTexture(wireParameters);
@@ -483,6 +487,26 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             return Error("ProtocolError: " + unknown);
         }
         catch (RemoteException error) { return Error(mayHaveSent ? error.Message + " " + unknown : error.Message); }
+    }
+
+    private CallToolResult PickAlignmentFaces(JsonValue parameters)
+    {
+        if (parameters.Find("rays") is not { IsArray: true } items || items.Items.Count is < 1 or > 2)
+            return Error("InvalidArguments: supply one or two rays");
+        var rays = new List<Ray>();
+        foreach (var item in items.Items)
+        {
+            if (Codec.DecodeAlignmentRay(item) is not { } ray) return Error("InvalidArguments: expected a finite unit ray");
+            rays.Add(ray);
+        }
+        var response = session.Request("control.pickAlignmentFaces", parameters);
+        if (Codec.DecodeAlignmentFacesResponse(response, rays) is not { } decoded)
+            return Error("ProtocolError: malformed alignment face reply");
+        if (decoded.Value is not null) return Forward(response.Find("result")!, false);
+        if (decoded.Error is not { } failure) return Error("ProtocolError: missing alignment refusal");
+        if (failure.Code == AlignmentFaceError.RpcFailure) return Error(failure.Detail ?? "RPC failure");
+        if (response.Find("result") is { } result) return Forward(result, true);
+        return Forward(Codec.Err(JsonValue.NewObject().Set("code", JsonValue.String(failure.Code.ToString()))), true);
     }
 
     private CallToolResult ViewportNavigation(JsonValue parameters)

@@ -464,6 +464,20 @@ public sealed class RemoteControl
             JsonValue.NewObject().Set("camera", camera is null ? JsonValue.Null() : Codec.Encode(camera)));
 
     /// <summary>Reads bounds and the Runtime's active scene camera in one snapshot. Empty targets read only the camera.</summary>
+    public AlignmentFacesResult PickAlignmentFaces(IReadOnlyList<Ray> rays)
+    {
+        const string method = "control.pickAlignmentFaces";
+        if (rays.Count is < 1 or > 2) return new(null, new(AlignmentFaceError.InvalidRequest));
+        var items = JsonValue.NewArray();
+        foreach (var ray in rays)
+        {
+            if (!Codec.IsAlignmentRay(ray)) return new(null, new(AlignmentFaceError.InvalidRequest));
+            items.Push(Codec.Encode(ray));
+        }
+        JsonValue response = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject().Set("rays", items)));
+        return Codec.DecodeAlignmentFacesResponse(response, rays) ?? throw _session.Malformed(method);
+    }
+
     public ViewportNavigationResult ViewportNavigation(IReadOnlyList<EntityGuid> targets)
     {
         const string method = "control.viewportNavigation";

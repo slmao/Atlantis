@@ -1,10 +1,10 @@
 # Plan 0135 — Precise Viewport Surface Alignment
 
 - **Spec:** [Spec 0135](../specs/0135-viewport-surface-alignment.md)
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
-- **ADR:** [ADR-0184](../adr/0184-shared-alignment-face-query.md) (Proposed)
+- **Joint Human Review:** Maintainer joint approval of Spec/Plan and J1–J4 at `d9ac83c1`, including the J3 race. [Approval record](https://github.com/slmao/Atlantis/pull/433#issuecomment-7074129488). Design merged by the maintainer as `e374506b`.
+- **ADR:** [ADR-0184](../adr/0184-shared-alignment-face-query.md) (Accepted)
 - **Design baseline:** `931efd5e`, maintainer merge of [#432](https://github.com/slmao/Atlantis/pull/432)
 
 ## Objective

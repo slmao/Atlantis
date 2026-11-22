@@ -41,6 +41,7 @@ namespace atlantis::runtime {
 struct PickMeshGeometry {
   std::vector<std::array<float, 3>> positions;
   std::vector<std::uint32_t> indices;
+  atlantis::asset_system::AssetGuid assetGuid{};
   std::array<float, 3> localMin{0.0f, 0.0f, 0.0f};
   std::array<float, 3> localMax{0.0f, 0.0f, 0.0f};
 };

@@ -209,12 +209,11 @@ struct LoadedDependencies {
     out.meshResourceMap.emplace(distinctMeshIds[i], std::move(createResult.value()));
     // Plan 0062 P5 (ADR-0123 D2): the same asset data, before it is dropped.
     if (retainPickGeometry) {
-      out.pickGeometry.emplace(distinctMeshIds[i],
-                               meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
-                                   ? detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
-                                                               meshAssetData.indices32())
-                                   : detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(),
-                                                               meshAssetData.indices()));
+      auto pick = meshAssetData.indexType() == atlantis::asset_system::MeshIndexType::Uint32
+          ? detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(), meshAssetData.indices32())
+          : detail::buildPickGeometry(vertexInputLayout, meshAssetData.vertexBytes(), meshAssetData.indices());
+      pick.assetGuid = resolvedMeshEntries[i]->guid;
+      out.pickGeometry.emplace(distinctMeshIds[i], std::move(pick));
     }
   }
 

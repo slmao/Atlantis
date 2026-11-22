@@ -1602,6 +1602,53 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return failed(command, usageError(std::string(kUsage)));
   }
 
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "alignment") {
+    constexpr std::string_view usage =
+        "runtime alignment faces --origin X Y Z --direction X Y Z [--origin X Y Z --direction X Y Z]";
+    constexpr std::string_view command = "runtime alignment faces";
+    if ((t.size() != 11 && t.size() != 19) || t[2] != "faces")
+      return failed(std::string(command), usageError(std::string(usage)));
+    if (!control_)
+      return failed(std::string(command), plainError("NoRuntimeControl", ErrorCategory::Runtime,
+          "this connection carries no Runtime control"));
+    std::vector<connection::Ray> rays;
+    for (std::size_t i = 3; i < t.size(); i += 8) {
+      const auto origin = parseFloats<3>(t, i+1);
+      const auto direction = parseFloats<3>(t, i+5);
+      if (t[i] != "--origin" || t[i+4] != "--direction" || !origin || !direction ||
+          !connection::validAlignmentRay({*origin,*direction}))
+        return failed(std::string(command), usageError(std::string(usage)));
+      rays.push_back({*origin,*direction});
+    }
+    const auto result = control_->pickAlignmentFaces(rays);
+    if (result.isErr()) {
+      const auto& error = result.error();
+      return failed(std::string(command), plainError(std::string(connection::toString(error.code)), ErrorCategory::Runtime,
+          error.rayIndex ? "alignment face refused for ray " + std::to_string(*error.rayIndex) : "alignment face query refused"));
+    }
+    auto faces = Value::array();
+    for (const auto& face : result.value().faces) {
+      auto entry = Value::object();
+      entry.set("entity",Value::string(text::formatEntity(face.entity)));
+      entry.set("mesh",Value::string(asset_system::toString(face.mesh)));
+      auto triangles = Value::array();
+      for (auto triangle : face.triangles) triangles.push(Value::number(std::uint64_t{triangle}));
+      entry.set("triangles",std::move(triangles));
+      entry.set("distance",Value::number(face.distance));
+      auto corners = Value::array();
+      for (const auto& corner : face.corners) corners.push(floatsJson(corner));
+      entry.set("corners",std::move(corners));
+      entry.set("normal",floatsJson(face.normal));
+      entry.set("worldMatrix",floatsJson(face.worldMatrix));
+      faces.push(std::move(entry));
+    }
+    auto data = Value::object();
+    data.set("sceneGeneration",Value::number(result.value().sceneGeneration));
+    data.set("faces",std::move(faces));
+    auto description = connection::json::write(data) + "\n";
+    return done(std::string(command), std::move(description), std::move(data));
+  }
+
   // Spec 0064 / ADR-0128 D1-D3 (Plan 0064 P3): the Viewport camera and the
   // ray-cast -- the same RuntimeControl calls Atlantis Editor App makes.
   //   runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f>
