@@ -1,10 +1,10 @@
 # Plan 0140 — Scene Statistics and Content Diagnostics
 
 - **Spec:** [Spec 0140](../specs/0140-scene-statistics-content-diagnostics.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending approval of both documents and authorization for implementation
-- **ADR:** [ADR-0188](../adr/0188-on-demand-cooked-content-metrics.md) (Proposed)
+- **Joint Human Review:** 2026-11-22, maintainer approval of [e17cb1dc](https://github.com/slmao/Atlantis/pull/443#issuecomment-7079327582) approved Spec/Plan and J1–J4, authorizing S2–S4 after merge as d4ef16a2.
+- **ADR:** [ADR-0188](../adr/0188-on-demand-cooked-content-metrics.md) (Accepted)
 - **Design baseline:** 67b40518
 
 ## Objective

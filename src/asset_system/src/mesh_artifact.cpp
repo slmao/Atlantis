@@ -102,9 +102,19 @@ std::vector<std::byte> encodeMeshArtifact(AssetId assetId, const ParsedMeshSourc
   return out;
 }
 
-atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(const std::vector<std::byte>& bytes) {
-  using ResultT = atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError>;
+namespace {
 
+struct CheckedMeshHeader {
+  MeshContentHeader content;
+  std::uint32_t vertexStrideBytes;
+  std::uint32_t vertexCount;
+  std::uint32_t vertexBytesOffset;
+  std::uint32_t indexBytesOffset;
+};
+
+Result<CheckedMeshHeader, ArtifactDecodeError> validateMeshHeader(std::span<const std::byte> bytes,
+                                                               std::uint64_t length, std::uint32_t expected) {
+  using ResultT = Result<CheckedMeshHeader, ArtifactDecodeError>;
   if (bytes.size() < kMeshArtifactHeaderSizeBytes) return ResultT::Err(ArtifactDecodeError::TooSmallForHeader);
 
   for (std::size_t i = 0; i < kMagic.size(); ++i) {
@@ -112,7 +122,8 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   }
 
   const std::uint32_t schemaVersion = readU32LE(bytes.data() + 8);
-  if (schemaVersion != kMeshArtifactSchemaVersion) return ResultT::Err(ArtifactDecodeError::UnknownSchemaVersion);
+  if ((schemaVersion != kMeshArtifactSchemaVersion && schemaVersion != kMeshArtifactSchemaVersionU32) ||
+      (expected && schemaVersion != expected)) return ResultT::Err(ArtifactDecodeError::UnknownSchemaVersion);
 
   const std::uint32_t vertexStrideBytes = readU32LE(bytes.data() + 12);
   if (vertexStrideBytes != kMeshArtifactVertexStrideBytes) {
@@ -125,7 +136,7 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   const std::uint32_t vertexBytesOffset = readU32LE(bytes.data() + 32);
   const std::uint32_t indexBytesOffset = readU32LE(bytes.data() + 36);
 
-  if (vertexCount == 0 || vertexCount > 65535) return ResultT::Err(ArtifactDecodeError::VertexCountOutOfRange);
+  if (vertexCount == 0 || (schemaVersion == kMeshArtifactSchemaVersion && vertexCount > 65535)) return ResultT::Err(ArtifactDecodeError::VertexCountOutOfRange);
   if (indexCount == 0 || indexCount % 3 != 0) return ResultT::Err(ArtifactDecodeError::IndexCountNotMultipleOfThree);
 
   // Every size computed in uint64_t before comparison/allocation, so a
@@ -134,14 +145,37 @@ atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(co
   const std::uint64_t expectedVertexBytesOffset = kMeshArtifactHeaderSizeBytes;
   const std::uint64_t expectedIndexBytesOffset =
       expectedVertexBytesOffset + static_cast<std::uint64_t>(vertexCount) * vertexStrideBytes;
-  const std::uint64_t expectedTotalSize = expectedIndexBytesOffset + static_cast<std::uint64_t>(indexCount) * 2;
+  const std::uint64_t expectedTotalSize = expectedIndexBytesOffset + static_cast<std::uint64_t>(indexCount) *
+      (schemaVersion == kMeshArtifactSchemaVersion ? 2 : 4);
 
   if (vertexBytesOffset != expectedVertexBytesOffset || indexBytesOffset != expectedIndexBytesOffset) {
     return ResultT::Err(ArtifactDecodeError::InconsistentOffsets);
   }
-  if (static_cast<std::uint64_t>(bytes.size()) != expectedTotalSize) {
+  if (length != expectedTotalSize) {
     return ResultT::Err(ArtifactDecodeError::SizeMismatch);
   }
+
+  return ResultT::Ok({{schemaVersion, assetId, indexCount}, vertexStrideBytes, vertexCount,
+                      vertexBytesOffset, indexBytesOffset});
+}
+
+}  // namespace
+
+Result<MeshContentHeader, ArtifactDecodeError> inspectMeshContentHeader(
+    std::span<const std::byte> prefix, std::uint64_t length) {
+  using R = Result<MeshContentHeader, ArtifactDecodeError>;
+  const auto parsed = validateMeshHeader(prefix, length, 0);
+  return parsed.isOk() ? R::Ok(parsed.value().content) : R::Err(parsed.error());
+}
+
+atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError> decodeMeshArtifact(const std::vector<std::byte>& bytes) {
+  using ResultT = atlantis::Result<DecodedMeshArtifact, ArtifactDecodeError>;
+
+  const auto parsed = validateMeshHeader(bytes, bytes.size(), kMeshArtifactSchemaVersion);
+  if (parsed.isErr()) return ResultT::Err(parsed.error());
+  const auto& [content, vertexStrideBytes, vertexCount, vertexBytesOffset, indexBytesOffset] = parsed.value();
+  const auto assetId = content.assetId;
+  const auto indexCount = content.indexCount;
 
   DecodedMeshArtifact decoded;
   decoded.assetId = assetId;
@@ -284,43 +318,11 @@ atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError> decodeMeshArtifact
     const std::vector<std::byte>& bytes) {
   using ResultT = atlantis::Result<DecodedMeshArtifactU32, ArtifactDecodeError>;
 
-  if (bytes.size() < kMeshArtifactHeaderSizeBytes) return ResultT::Err(ArtifactDecodeError::TooSmallForHeader);
-
-  for (std::size_t i = 0; i < kMagic.size(); ++i) {
-    if (bytes[i] != static_cast<std::byte>(kMagic[i])) return ResultT::Err(ArtifactDecodeError::BadMagic);
-  }
-
-  const std::uint32_t schemaVersion = readU32LE(bytes.data() + 8);
-  if (schemaVersion != kMeshArtifactSchemaVersionU32) return ResultT::Err(ArtifactDecodeError::UnknownSchemaVersion);
-
-  const std::uint32_t vertexStrideBytes = readU32LE(bytes.data() + 12);
-  if (vertexStrideBytes != kMeshArtifactVertexStrideBytes) {
-    return ResultT::Err(ArtifactDecodeError::UnsupportedVertexStride);
-  }
-
-  const AssetId assetId = readU64LE(bytes.data() + 16);
-  const std::uint32_t vertexCount = readU32LE(bytes.data() + 24);
-  const std::uint32_t indexCount = readU32LE(bytes.data() + 28);
-  const std::uint32_t vertexBytesOffset = readU32LE(bytes.data() + 32);
-  const std::uint32_t indexBytesOffset = readU32LE(bytes.data() + 36);
-
-  if (vertexCount == 0) return ResultT::Err(ArtifactDecodeError::VertexCountOutOfRange);
-  if (indexCount == 0 || indexCount % 3 != 0) return ResultT::Err(ArtifactDecodeError::IndexCountNotMultipleOfThree);
-
-  // Every size computed in uint64_t before comparison/allocation, so a
-  // header crafted to overflow the u32 offset fields cannot drive an
-  // oversized or wrapped-around allocation.
-  const std::uint64_t expectedVertexBytesOffset = kMeshArtifactHeaderSizeBytes;
-  const std::uint64_t expectedIndexBytesOffset =
-      expectedVertexBytesOffset + static_cast<std::uint64_t>(vertexCount) * vertexStrideBytes;
-  const std::uint64_t expectedTotalSize = expectedIndexBytesOffset + static_cast<std::uint64_t>(indexCount) * 4;
-
-  if (vertexBytesOffset != expectedVertexBytesOffset || indexBytesOffset != expectedIndexBytesOffset) {
-    return ResultT::Err(ArtifactDecodeError::InconsistentOffsets);
-  }
-  if (static_cast<std::uint64_t>(bytes.size()) != expectedTotalSize) {
-    return ResultT::Err(ArtifactDecodeError::SizeMismatch);
-  }
+  const auto parsed = validateMeshHeader(bytes, bytes.size(), kMeshArtifactSchemaVersionU32);
+  if (parsed.isErr()) return ResultT::Err(parsed.error());
+  const auto& [content, vertexStrideBytes, vertexCount, vertexBytesOffset, indexBytesOffset] = parsed.value();
+  const auto assetId = content.assetId;
+  const auto indexCount = content.indexCount;
 
   DecodedMeshArtifactU32 decoded;
   decoded.assetId = assetId;

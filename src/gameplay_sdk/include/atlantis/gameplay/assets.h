@@ -17,6 +17,10 @@ class Assets {
       const asset_system::AssetGuid& guid) const {
     return connection_.getAsset(guid);
   }
+  [[nodiscard]] connection::assets::ContentMetricsResult contentMetrics(
+      std::span<const asset_system::AssetGuid> guids) const {
+    return connection_.contentMetrics(guids);
+  }
   [[nodiscard]] connection::assets::StaticGroupResult staticGroup(const asset_system::AssetGuid& guid) const {
     return connection_.staticGroup(guid);
   }

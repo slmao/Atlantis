@@ -1202,6 +1202,26 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       auto output = connection::json::write(value) + "\n";
       return done(command, std::move(output), std::move(value));
     }
+    if (t.size() > 1 && t[1] == "content-metrics") {
+      namespace ca = connection::assets;
+      const std::string usage = "asset content-metrics <GUID> [<GUID> ...] (up to 32 distinct GUIDs)";
+      if (t.size() < 3 || t.size() > 2 + ca::kContentMetricsLimit) return failed(command, usageError(usage));
+      auto array = Value::array();
+      for (std::size_t i = 2; i < t.size(); ++i) array.push(Value::string(std::string(t[i])));
+      const auto guids = ca::decodeContentMetricsGuids(array);
+      if (!guids) return failed(command, usageError(usage));
+      auto* endpoint = assetsProvider_ ? assetsProvider_() : nullptr;
+      auto result = endpoint ? endpoint->contentMetrics(*guids) :
+          ca::ContentMetricsResult::Err(ca::ContentMetricsError::Unsupported);
+      if (result.isErr()) {
+        const std::string name(ca::toString(result.error()));
+        return failed(command, plainError(name, ErrorCategory::Refused, name));
+      }
+      auto value = ca::encodeContentMetrics(result.value(), *guids);
+      if (!value) return failed(command, plainError("InvalidResult", ErrorCategory::Refused, "Invalid content metrics result."));
+      auto output = connection::json::write(*value) + "\n";
+      return done(command, std::move(output), std::move(*value));
+    }
     if (t.size() > 1 && (t[1] == "static-group" || t[1] == "prefab" || t[1] == "prefab-revision")) {
       namespace ca = connection::assets;
       const bool prefab = t[1] == "prefab";
@@ -1280,7 +1300,7 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       return done(command, std::move(human), std::move(*result));
     }
     if (!((t.size() == 2 && t[1] == "list") || (t.size() == 3 && t[1] == "get")))
-      return failed(command, usageError("asset list | asset get <asset-guid> | asset preview <mesh-guid> | "
+      return failed(command, usageError("asset list | asset get <asset-guid> | asset content-metrics <GUID>... | asset preview <mesh-guid> | "
                                         "asset preview-material <mesh-guid> <material-guid> | asset static-group <scene-guid>"));
     std::optional<asset_system::AssetGuid> guid;
     if (t[1] == "get") {

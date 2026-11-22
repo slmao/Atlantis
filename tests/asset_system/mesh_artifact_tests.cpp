@@ -408,3 +408,22 @@ TEST_CASE("decodeMeshArtifact rejects a tangent whose own handedness is not exac
   REQUIRE(result.isErr());
   CHECK(result.error() == ArtifactDecodeError::InvalidTangentHandedness);
 }
+
+TEST_CASE("Mesh statistics validate both index widths without requiring the vertex buffer",
+          "[asset_system][content_metrics]") {
+  auto source = makeOneVertexSource();
+  source.indices = {0, 0, 0, 0, 0, 0};
+  constexpr AssetId id = 1234;
+  const auto tangents = makeOneVertexFallbackTangent();
+  const auto v4 = encodeMeshArtifact(id, source, tangents);
+  const auto v5 = encodeMeshArtifactU32FromIndices(id, source.vertices, {0, 0, 0, 0, 0, 0}, tangents);
+  for (const auto* bytes : {&v4, &v5}) {
+    const auto prefix = std::span<const std::byte>{*bytes}.first(kMeshArtifactHeaderSizeBytes);
+    const auto fact = inspectMeshContentHeader(prefix, bytes->size());
+    REQUIRE(fact.isOk());
+    CHECK(fact.value().schemaVersion == (bytes == &v4 ? 4u : 5u));
+    CHECK(fact.value().assetId == id);
+    CHECK(fact.value().indexCount == 6);
+    CHECK(inspectMeshContentHeader(prefix, bytes->size() - 1).isErr());
+  }
+}

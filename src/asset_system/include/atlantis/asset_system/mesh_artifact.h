@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace atlantis::asset_system {
@@ -117,5 +118,15 @@ struct MeshArtifactHeaderPeek {
 // to the caller that knows which versions it serves.
 [[nodiscard]] atlantis::Result<MeshArtifactHeaderPeek, ArtifactDecodeError> peekMeshArtifactHeader(
     const std::vector<std::byte>& bytes);
+
+struct MeshContentHeader {
+  std::uint32_t schemaVersion;
+  AssetId assetId;
+  std::uint32_t indexCount;
+};
+
+// Checks layout and logical file length. Does not inspect vertices or indices.
+[[nodiscard]] Result<MeshContentHeader, ArtifactDecodeError> inspectMeshContentHeader(
+    std::span<const std::byte> prefix, std::uint64_t length);
 
 }  // namespace atlantis::asset_system

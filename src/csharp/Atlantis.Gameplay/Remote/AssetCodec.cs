@@ -10,6 +10,81 @@ namespace Atlantis.Gameplay.Remote;
 
 public static partial class Codec
 {
+    public static AssetGuid[]? DecodeContentMetricsGuids(JsonValue? input)
+    {
+        if (input is not { IsArray: true } || input.Items.Count is 0 or > A.ContentMetrics.Limit) return null;
+        var guids = new List<AssetGuid>(input.Items.Count);
+        foreach (var item in input.Items)
+        {
+            if (DecodeProjectGuid(item) is not AssetGuid guid || guids.Contains(guid)) return null;
+            guids.Add(guid);
+        }
+        return guids.ToArray();
+    }
+
+    public static A.ContentMetricsError? DecodeContentMetricsError(JsonValue value) =>
+        value is { IsString: true } ? value.AsString switch
+        {
+            "Unsupported" => A.ContentMetricsError.Unsupported,
+            "CatalogUnavailable" => A.ContentMetricsError.CatalogUnavailable,
+            _ => null
+        } : null;
+
+    public static A.ContentMetrics? DecodeContentMetrics(JsonValue value, IReadOnlyList<AssetGuid> requested)
+    {
+        if (!Exact(value, 1) || value.Find("rows") is not { IsArray: true } rows ||
+            rows.Items.Count != requested.Count || requested.Count is 0 or > A.ContentMetrics.Limit ||
+            Encoding.UTF8.GetByteCount(Json.Write(value)) > 16 * 1024) return null;
+        var decoded = new List<A.ContentMetricRow>(requested.Count);
+        foreach (var row in rows.Items)
+        {
+            if (!Exact(row, 2) || row.Find("guid") is not { } id ||
+                DecodeProjectGuid(id) is not AssetGuid guid || requested[decoded.Count] != guid) return null;
+            A.ContentMetric result;
+            if (row.Find("mesh") is { } mesh && Exact(mesh, 2) &&
+                ContentU32(mesh, "artifactSchema") is uint schema && schema is 4 or 5 && ContentU32(mesh, "indexedTriangles") is uint triangles &&
+                triangles <= uint.MaxValue / 3)
+            {
+                result = new A.MeshContentMetrics(schema, triangles);
+            }
+            else if (row.Find("texture") is { } texture && Exact(texture, 6) && ContentU32(texture, "artifactSchema") == 3 &&
+                ContentU32(texture, "width") is uint width && width <= 8192 &&
+                ContentU32(texture, "height") is uint height && height <= 8192 &&
+                RebuildToken<A.ContentTextureLayout>(texture.Find("layout")) is { } layout &&
+                ContentU32(texture, "mipCount") is uint count && count <= 14 &&
+                ContentU32(texture, "pixelPayloadBytes") is uint bytes &&
+                ValidContentTexture(width, height, layout, count, bytes))
+            {
+                result = new A.TextureContentMetrics(3, width, height, layout, count, bytes);
+            }
+            else if (RebuildToken<A.ContentMetricError>(row.Find("err")) is { } reason)
+            {
+                result = new A.RefusedContentMetric(reason);
+            }
+            else return null;
+            decoded.Add(new(guid, result));
+        }
+        return new(decoded.AsReadOnly());
+    }
+
+    private static bool ValidContentTexture(uint width, uint height, A.ContentTextureLayout layout, uint count, uint bytes)
+    {
+        bool bc7 = layout == A.ContentTextureLayout.Bc7;
+        if (count > BitOperations.Log2(Math.Max(width, height)) + 1 ||
+            bc7 && (width % 4 != 0 || height % 4 != 0)) return false;
+        ulong expected = 0;
+        for (int level = 0; level < count; ++level)
+        {
+            uint w = Math.Max(1u, width >> level), h = Math.Max(1u, height >> level);
+            expected += bc7 ? (ulong)((w + 3) / 4) * ((h + 3) / 4) * 16 : (ulong)w * h * 4;
+        }
+        return expected == bytes;
+    }
+
+    private static uint? ContentU32(JsonValue value, string name) =>
+        value.Find(name) is { } member && member.TryGetUInt64(out ulong number) && number is > 0 and <= uint.MaxValue
+            ? (uint)number : null;
+
     public static A.ProjectScanError? DecodeProjectScanError(JsonValue value) => RebuildToken<A.ProjectScanError>(value);
 
     public static A.ProjectScan? DecodeProjectScan(JsonValue value)

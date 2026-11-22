@@ -274,6 +274,7 @@ public sealed partial class MainWindow
                 }
                 if (paired) comparisonWindow.SetPairCapture(capture, bitmap, png, after);
                 else comparisonWindow.SetCapture(capture, bitmap, png);
+                RememberSceneStatisticsFrame(worker, capture);
                 if (!comparisonWindow.IsVisible) comparisonWindow.Show(this);
                 UpdateViewportNavigationActions();
                 ShowNavigationMessage(paired ? (after ? "After captured." : "Before captured.") : view.Name + " captured.");

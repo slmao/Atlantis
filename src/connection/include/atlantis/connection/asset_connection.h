@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,42 @@ struct AssetDetails {
   bool isPrefab = false;
   friend bool operator==(const AssetDetails&, const AssetDetails&) = default;
 };
+
+inline constexpr std::size_t kContentMetricsLimit = 32;
+inline constexpr std::size_t kContentMetricsReplyBytes = 16 * 1024;
+enum class ContentMetricsError : std::uint8_t { Unsupported, CatalogUnavailable, InvalidRequest };
+enum class ContentMetricError : std::uint8_t {
+  UnknownAsset, UnsupportedAssetType, UnsupportedArtifactSchema, UnreadableArtifact, InvalidArtifact,
+};
+enum class ContentTextureLayout : std::uint8_t { Rgba8, Bc7 };
+struct MeshContentMetrics {
+  std::uint32_t artifactSchema;
+  std::uint32_t indexedTriangles;
+  friend bool operator==(const MeshContentMetrics&, const MeshContentMetrics&) = default;
+};
+struct TextureContentMetrics {
+  std::uint32_t artifactSchema;
+  std::uint32_t width;
+  std::uint32_t height;
+  ContentTextureLayout layout;
+  std::uint32_t mipCount;
+  std::uint32_t pixelPayloadBytes;
+  friend bool operator==(const TextureContentMetrics&, const TextureContentMetrics&) = default;
+};
+struct ContentMetricRow {
+  asset_system::AssetGuid guid;
+  std::variant<MeshContentMetrics, TextureContentMetrics, ContentMetricError> result;
+  friend bool operator==(const ContentMetricRow&, const ContentMetricRow&) = default;
+};
+using ContentMetricsResult = Result<std::vector<ContentMetricRow>, ContentMetricsError>;
+[[nodiscard]] bool validContentMetricsRequest(std::span<const asset_system::AssetGuid> guids);
+[[nodiscard]] std::optional<std::vector<asset_system::AssetGuid>> decodeContentMetricsGuids(const json::Value& value);
+[[nodiscard]] std::optional<json::Value> encodeContentMetrics(std::span<const ContentMetricRow> rows,
+    std::span<const asset_system::AssetGuid> guids);
+[[nodiscard]] std::optional<std::vector<ContentMetricRow>> decodeContentMetrics(const json::Value& value,
+    std::span<const asset_system::AssetGuid> guids);
+[[nodiscard]] std::string_view toString(ContentMetricsError error) noexcept;
+[[nodiscard]] std::optional<ContentMetricsError> contentMetricsError(std::string_view error) noexcept;
 
 inline constexpr std::size_t kProjectEntries = 2048;
 inline constexpr std::size_t kProjectLinks = 4096;
@@ -535,6 +572,10 @@ class AssetConnection {
       const asset_system::AssetGuid& guid) const = 0;
   // Spec 0130. Read from the same catalog as getAsset. Check RemoteSession
   // failure before using a transport failure's CatalogUnavailable sentinel.
+  // Request-driven, like getAsset. The borrowed GUID span is retained only for this call.
+  [[nodiscard]] virtual assets::ContentMetricsResult contentMetrics(std::span<const asset_system::AssetGuid>) const {
+    return assets::ContentMetricsResult::Err(assets::ContentMetricsError::Unsupported);
+  }
   [[nodiscard]] virtual assets::StaticGroupResult staticGroup(const asset_system::AssetGuid&) const {
     return assets::StaticGroupResult::Err(assets::StaticGroupError::Unsupported);
   }

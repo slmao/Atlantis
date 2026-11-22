@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
+#include <limits>
 #include <span>
 #include <set>
 #include <type_traits>
@@ -30,6 +32,144 @@ std::string_view toString(AssetError error) noexcept {
   }
   ATLANTIS_CHECK(false);
   return {};
+}
+
+namespace {
+constexpr std::array<std::string_view, 3> kContentErrors{"Unsupported", "CatalogUnavailable", "InvalidRequest"};
+constexpr std::array<std::string_view, 5> kContentRowErrors{"UnknownAsset", "UnsupportedAssetType",
+    "UnsupportedArtifactSchema", "UnreadableArtifact", "InvalidArtifact"};
+
+std::optional<std::uint32_t> contentU32(const json::Value& object, std::string_view key) {
+  const auto* value = object.find(key);
+  std::uint64_t result = 0;
+  if (!value || !value->toUInt64(result) || result == 0 || result > std::numeric_limits<std::uint32_t>::max())
+    return std::nullopt;
+  return static_cast<std::uint32_t>(result);
+}
+
+std::optional<asset_system::AssetGuid> canonicalContentGuid(const json::Value* value) {
+  if (!value || !value->isString()) return std::nullopt;
+  const auto guid = asset_system::parseAssetGuid(value->asString());
+  if (guid.isErr() || guid.value() == asset_system::AssetGuid{} || asset_system::toString(guid.value()) != value->asString())
+    return std::nullopt;
+  return guid.value();
+}
+
+bool validContentTexture(const TextureContentMetrics& texture) {
+  if (texture.artifactSchema != 3 || !texture.width || texture.width > 8192 || !texture.height || texture.height > 8192 ||
+      !texture.mipCount || texture.mipCount > 14 || !texture.pixelPayloadBytes ||
+      texture.pixelPayloadBytes > 357913940) return false;
+  const bool bc7 = texture.layout == ContentTextureLayout::Bc7;
+  if (bc7 ? (texture.width % 4 != 0 || texture.height % 4 != 0) :
+            texture.layout != ContentTextureLayout::Rgba8) return false;
+  if (texture.mipCount > static_cast<std::uint32_t>(std::bit_width(std::max(texture.width, texture.height)))) return false;
+  std::uint64_t bytes = 0;
+  for (std::uint32_t level = 0; level < texture.mipCount; ++level) {
+    const auto width = std::max(1u, texture.width >> level);
+    const auto height = std::max(1u, texture.height >> level);
+    bytes += bc7 ? std::uint64_t{(width + 3) / 4} * ((height + 3) / 4) * 16
+                 : std::uint64_t{width} * height * 4;
+  }
+  return bytes == texture.pixelPayloadBytes;
+}
+}
+
+std::string_view toString(ContentMetricsError error) noexcept {
+  return kContentErrors[static_cast<std::size_t>(error)];
+}
+std::optional<ContentMetricsError> contentMetricsError(std::string_view error) noexcept {
+  const auto it = std::ranges::find(kContentErrors, error);
+  if (it == kContentErrors.end()) return std::nullopt;
+  return static_cast<ContentMetricsError>(it - kContentErrors.begin());
+}
+
+bool validContentMetricsRequest(std::span<const asset_system::AssetGuid> guids) {
+  if (guids.empty() || guids.size() > kContentMetricsLimit) return false;
+  std::set<asset_system::AssetGuid> unique;
+  for (const auto& id : guids)
+    if (id == asset_system::AssetGuid{} || !unique.insert(id).second) return false;
+  return true;
+}
+
+std::optional<std::vector<asset_system::AssetGuid>> decodeContentMetricsGuids(const json::Value& value) {
+  if (!value.isArray() || value.asArray().size() > kContentMetricsLimit) return std::nullopt;
+  std::vector<asset_system::AssetGuid> guids;
+  for (const auto& entry : value.asArray()) {
+    const auto guid = canonicalContentGuid(&entry);
+    if (!guid) return std::nullopt;
+    guids.push_back(*guid);
+  }
+  return validContentMetricsRequest(guids) ? std::optional{std::move(guids)} : std::nullopt;
+}
+
+std::optional<std::vector<ContentMetricRow>> decodeContentMetrics(const json::Value& value,
+    std::span<const asset_system::AssetGuid> guids) {
+  const auto* rows = value.find("rows");
+  if (!value.isObject() || value.asObject().size() != 1 || !rows || !rows->isArray() ||
+      rows->asArray().size() != guids.size() || !validContentMetricsRequest(guids) ||
+      json::write(value).size() > kContentMetricsReplyBytes) return std::nullopt;
+  std::vector<ContentMetricRow> result;
+  for (const auto& row : rows->asArray()) {
+    const auto guid = canonicalContentGuid(row.find("guid"));
+    if (!row.isObject() || row.asObject().size() != 2 || !guid || *guid != guids[result.size()]) return std::nullopt;
+    if (const auto* mesh = row.find("mesh"); mesh && mesh->isObject() && mesh->asObject().size() == 2) {
+      const auto schema = contentU32(*mesh, "artifactSchema");
+      const auto triangles = contentU32(*mesh, "indexedTriangles");
+      if (!schema || (*schema != 4 && *schema != 5) || !triangles || *triangles > UINT32_MAX / 3) return std::nullopt;
+      result.push_back({*guid, MeshContentMetrics{*schema, *triangles}});
+    } else if (const auto* texture = row.find("texture"); texture && texture->isObject() && texture->asObject().size() == 6) {
+      const auto schema = contentU32(*texture, "artifactSchema"), width = contentU32(*texture, "width"),
+          height = contentU32(*texture, "height"), mips = contentU32(*texture, "mipCount"),
+          bytes = contentU32(*texture, "pixelPayloadBytes");
+      const auto* layout = texture->find("layout");
+      if (!schema || !width || !height || !mips || !bytes || !layout || !layout->isString() ||
+          (layout->asString() != "Rgba8" && layout->asString() != "Bc7")) return std::nullopt;
+      const TextureContentMetrics decoded{*schema, *width, *height,
+          layout->asString() == "Rgba8" ? ContentTextureLayout::Rgba8 : ContentTextureLayout::Bc7, *mips, *bytes};
+      if (!validContentTexture(decoded)) return std::nullopt;
+      result.push_back({*guid, decoded});
+    } else if (const auto* error = row.find("err"); error && error->isString()) {
+      const auto it = std::ranges::find(kContentRowErrors, error->asString());
+      if (it == kContentRowErrors.end()) return std::nullopt;
+      result.push_back({*guid, static_cast<ContentMetricError>(it - kContentRowErrors.begin())});
+    } else return std::nullopt;
+  }
+  return result;
+}
+
+std::optional<json::Value> encodeContentMetrics(std::span<const ContentMetricRow> rows,
+    std::span<const asset_system::AssetGuid> guids) {
+  if (rows.size() != guids.size() || !validContentMetricsRequest(guids)) return std::nullopt;
+  auto entries = json::Value::array();
+  const auto number = [](auto value) { return json::Value::number(static_cast<std::uint64_t>(value)); };
+  for (const auto& row : rows) {
+    auto entry = json::Value::object();
+    entry.set("guid", json::Value::string(asset_system::toString(row.guid)));
+    if (const auto* mesh = std::get_if<MeshContentMetrics>(&row.result)) {
+      auto result = json::Value::object();
+      result.set("artifactSchema", number(mesh->artifactSchema));
+      result.set("indexedTriangles", number(mesh->indexedTriangles));
+      entry.set("mesh", std::move(result));
+    } else if (const auto* texture = std::get_if<TextureContentMetrics>(&row.result)) {
+      if (!validContentTexture(*texture)) return std::nullopt;
+      auto result = json::Value::object();
+      result.set("artifactSchema", number(texture->artifactSchema));
+      result.set("width", number(texture->width));
+      result.set("height", number(texture->height));
+      result.set("layout", json::Value::string(texture->layout == ContentTextureLayout::Rgba8 ? "Rgba8" : "Bc7"));
+      result.set("mipCount", number(texture->mipCount));
+      result.set("pixelPayloadBytes", number(texture->pixelPayloadBytes));
+      entry.set("texture", std::move(result));
+    } else {
+      const auto index = static_cast<std::size_t>(std::get<ContentMetricError>(row.result));
+      if (index >= kContentRowErrors.size()) return std::nullopt;
+      entry.set("err", json::Value::string(std::string(kContentRowErrors[index])));
+    }
+    entries.push(std::move(entry));
+  }
+  auto result = json::Value::object();
+  result.set("rows", std::move(entries));
+  return decodeContentMetrics(result, guids) ? std::optional{std::move(result)} : std::nullopt;
 }
 
 std::string_view toString(StaticGroupError error) noexcept {

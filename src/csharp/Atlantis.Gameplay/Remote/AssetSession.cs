@@ -39,6 +39,25 @@ public sealed class AssetSession
             Codec.DecodeAssetDetails(v) is A.AssetDetails d && d.Guid == guid ? d : null, Codec.DecodeAssetError);
     }
 
+    /// <summary>Reads cooked header facts from the running catalog without opening payloads.</summary>
+    public Outcome<A.ContentMetrics, A.ContentMetricsError> ContentMetrics(IReadOnlyList<AssetGuid> guids)
+    {
+        if (guids.Count is 0 or > A.ContentMetrics.Limit)
+            throw new ArgumentException("one to 32 distinct non-nil asset GUIDs are required", nameof(guids));
+        var requested = new List<AssetGuid>(guids.Count);
+        var ids = JsonValue.NewArray();
+        foreach (var guid in guids)
+        {
+            if (guid.IsNil || requested.Contains(guid))
+                throw new ArgumentException("one to 32 distinct non-nil asset GUIDs are required", nameof(guids));
+            requested.Add(guid);
+            ids.Push(Codec.Encode(guid));
+        }
+        return AssetRequest("assets.contentMetrics", JsonValue.NewObject().Set("guids", ids),
+            A.ContentMetricsError.Unsupported, Codec.DecodeContentMetricsError,
+            value => Codec.DecodeContentMetrics(value, requested), acceptUnknownMethod: true);
+    }
+
     public Outcome<A.StaticGroup, A.StaticGroupError> StaticGroup(AssetGuid guid) => ReadGroup(guid, false);
     public Outcome<A.StaticGroup, A.StaticGroupError> Prefab(AssetGuid guid) => ReadGroup(guid, true);
 

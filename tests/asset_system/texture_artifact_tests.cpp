@@ -368,3 +368,18 @@ TEST_CASE("decodeTextureArtifact rejects a chain one byte short or long", "[asse
   REQUIRE(result.isErr());
   CHECK(result.error() == TextureArtifactDecodeError::InconsistentPixelDataSize);
 }
+
+TEST_CASE("Content header validates the whole cooked mip length without reading payload", "[asset_system][content_metrics]") {
+  const auto layout = TextureDataLayout::Bc7;
+  std::vector<std::uint8_t> pixels(112);
+  const auto cooked = encodeTextureArtifact(8, 8, TextureColorSpace::Srgb, layout, 4, pixels.data(), pixels.size());
+  const auto prefix = std::span<const std::byte>{cooked}.first(kTextureArtifactHeaderSizeBytes);
+  const auto inspected = inspectTextureContentHeader(prefix, cooked.size());
+  REQUIRE(inspected.isOk());
+  CHECK(inspected.value().summary.width == 8);
+  CHECK(inspected.value().mipCount == 4);
+  CHECK(inspected.value().layout == layout);
+  CHECK(inspected.value().pixelPayloadBytes == 112);
+  CHECK(inspectTextureContentHeader(prefix, cooked.size() + 1).isErr());
+  CHECK(inspectTextureContentHeader(prefix.first(20), cooked.size()).isErr());
+}

@@ -515,6 +515,7 @@ public sealed partial class MainWindow : Window
         DragDrop.AddDragLeaveHandler(_entities, (_, _) => ClearHierarchyDropFeedback());
         DragDrop.AddDropHandler(_entities, OnHierarchyDrop);
 
+        _sceneStatisticsButton.Click += (_, _) => OpenSceneStatistics();
         Content = BuildWorkspace();
 
         _viewport.WindowCreated += OnViewportWindow;
@@ -710,7 +711,7 @@ public sealed partial class MainWindow : Window
         _workspaceLayoutFeedback.TextWrapping = TextWrapping.Wrap;
         ToolTip.SetShowOnDisabled(_resetWorkspaceLayout, true);
         var commands = EditorVisuals.Bar(EditorVisuals.Columns("*,Auto,*",
-            EditorVisuals.Actions(_save, _undo, _redo), transport, layoutTools));
+            EditorVisuals.Actions(_save, _undo, _redo, _sceneStatisticsButton), transport, layoutTools));
 
         var sceneFiles = EditorVisuals.Scroll(EditorVisuals.Stack(4,
             EditorVisuals.Actions(_reopen, _reviewRecovery), _recoveryLine,
@@ -2122,6 +2123,7 @@ public sealed partial class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        ObserveSceneStatistics();
         if (_locatedMaterial is { } located && _selection.Node != located.Hit.Entity) _locatedMaterial = null;
         if (_alignmentId is not null && _alignmentSelection != _selection.Generation) CancelAlignment("Selection changed.");
         UpdateAlignmentControls();
@@ -6175,6 +6177,7 @@ public sealed partial class MainWindow : Window
         UpdateWorkspaceReset();
         RefreshGroupAsset();
         _documentState = state;
+        ObserveSceneStatistics();
         UpdateViewportNavigationActions();
         bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
         _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +

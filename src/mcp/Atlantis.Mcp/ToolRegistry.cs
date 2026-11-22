@@ -49,6 +49,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("assets.scan_project", "assets.scanProject", "Start a bounded read of the authorized Project source roots.", AssetModel),
         Declare("assets.project_scan_status", "assets.projectScanStatus", "Read one Project scan by its exact Runtime-scoped ID.",
             AssetModel, ToolSchemas.Parameters(("id", ToolSchemas.String))),
+        Declare("assets.content_metrics", "assets.contentMetrics",
+            "Read on-demand cooked triangle or texture payload facts for up to 32 distinct asset GUIDs.",
+            " Read-only metadata from the running asset catalog. Texture bytes describe cooked payloads.",
+            ToolSchemas.Parameters(("guids", ToolSchemas.Array(ToolSchemas.String)))),
         Declare("assets.static_group", "assets.staticGroup",
             "Read-only ordered local values and renderable bindings of a managed static glTF group in the active catalog. " +
             "New publications are visible after Runtime restart.",
@@ -269,6 +273,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
                 "authoring.syncPrefab" or "authoring.replayPrefab") return PrefabOperation(mapping.Method, wireParameters);
             if (mapping.Method is "assets.scanProject" or "assets.projectScanStatus")
                 return ProjectScan(mapping.Method, wireParameters);
+            if (mapping.Method == "assets.contentMetrics") return ContentMetrics(wireParameters);
             if (mapping.Method is "assets.staticGroup" or "assets.prefab") return StaticGroup(mapping.Method, wireParameters);
             if (mapping.Method == "assets.previewMesh") return PreviewMesh(wireParameters);
             if (mapping.Method == "assets.previewMeshMaterial") return PreviewMeshMaterial(wireParameters);
@@ -759,6 +764,22 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             return Codec.DecodeProjectScanError(refusal) is not null ? Forward(result, true) : Malformed();
         return result.Find("ok") is JsonValue value && Codec.DecodeProjectScan(value) is { } scan &&
             (start ? scan.Pending : scan.Id == id) ? Forward(result, false) : Malformed();
+    }
+
+    private CallToolResult ContentMetrics(JsonValue parameters)
+    {
+        if (Codec.DecodeContentMetricsGuids(parameters.Find("guids")) is not { } guids)
+            return Error("InvalidArguments: expected one to 32 distinct canonical asset GUIDs.");
+        var response = session.Request("assets.contentMetrics", parameters);
+        if (Codec.IsUnsupportedStaticGroup(response))
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        if (response is { IsObject: true } && response.Members.Count == 2 && Codec.CountMember(response, "id") == 1 &&
+            response.Find("result") is { IsObject: true } result && result.Members.Count == 1)
+        {
+            if (result.Find("err") is { } err && Codec.DecodeContentMetricsError(err) is not null) return Forward(result, true);
+            if (result.Find("ok") is { } ok && Codec.DecodeContentMetrics(ok, guids) is not null) return Forward(result, false);
+        }
+        return Error("MalformedResponse: invalid cooked content metrics result.");
     }
 
     private CallToolResult StaticGroup(string method, JsonValue parameters)
