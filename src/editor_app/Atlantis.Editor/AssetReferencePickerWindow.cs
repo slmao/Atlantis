@@ -189,13 +189,13 @@ public sealed class AssetReferencePickerWindow : Window
                         _current.Text += " (listed as " + listed.Type + ")";
                     else
                     {
-                        _current.Text = "Current: " + EditorVisuals.AssetName(listed);
+                        _current.Text = "Current: " + EditorVisuals.AssetName(listed) +
+                            (_preferred is null ? "" : " · " + current);
                         if (_preferred is null && _browser.Visible.Any(a => a.Guid == current)) Read(current);
                     }
                 }
                 if (_preferred is AssetGuid preferred)
                 {
-                    _browser.Search = preferred.ToString();
                     if (_browser.Visible.Any(a => a.Guid == preferred && a.Type == AssetType.Material)) Read(preferred);
                 }
             }

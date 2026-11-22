@@ -164,7 +164,10 @@ public static partial class Program
             var desktop = (IClassicDesktopStyleApplicationLifetime)ApplicationLifetime!;
             var window = new MainWindow(new EditorOptions(runtime, scene) { DisableWorkspaceSettings = true,
                 AssetBuildProfile = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_PROFILE") : null,
-                AssetGeneration = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_GENERATION") : null })
+                AssetGeneration = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_GENERATION") : null,
+                SavedSceneCheckout = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_CHECKOUT") : null,
+                SavedSceneAppHost = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_APPHOST") : null,
+                SavedSceneCMake = materialBinding ? Environment.GetEnvironmentVariable("ATLANTIS_0138_CMAKE") : null })
             {
                 Width = 1620, Height = 880, WindowStartupLocation = WindowStartupLocation.CenterScreen,
             };
@@ -610,6 +613,13 @@ public static partial class Program
         static T ModalField<T>(Window modal, string name) where T : class =>
             (T)modal.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(modal)!;
         static void Press(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        if (Environment.GetEnvironmentVariable("ATLANTIS_0138_CHECKOUT") is { } checkout)
+        {
+            if (GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) != 96)
+                throw new InvalidOperationException("The test requires Windows 100%.");
+            await VerifySavedMaterialOpen(window, checkout, evidence);
+            return;
+        }
         await NameUiWait(() => Field<RuntimeProcess>("_runtime") is { } process && File.Exists(process.SessionPath) &&
             Field<Button>("_bistroViews").IsEnabled, "ready hosted material binding fixture", 120);
         var runtime = Field<RuntimeProcess>("_runtime");
@@ -624,7 +634,8 @@ public static partial class Program
             "baseline projection settled", 75);
         Field<MenuItem>("_bistroEnable").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
         Field<MenuItem>("_bistroTerrace").RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
-        await NameUiWait(() => Field<Button>("_locateSurfaceMaterial").IsEnabled && viewport.RuntimeChildHasExtent(960, 540),
+        await NameUiWait(() => Field<Button>("_locateSurfaceMaterial").IsEnabled && viewport.RuntimeChildHasExtent(960, 540) &&
+            Field<ViewportVisibility>("_viewportVisibility") is { Presented: true, Owner: ViewportOwner.None },
             "fixed Terrace is ready");
         var pose = BistroReferenceView.Terrace.Pose();
         var matrices = CameraConvention.Matrices(pose, 960f / 540)!;
@@ -650,11 +661,20 @@ public static partial class Program
         {
             Press(Field<Button>("_locateSurfaceMaterial"));
             window.Activate();
+            await NameUiWait(() => GetForegroundWindow() == window.TryGetPlatformHandle()!.Handle, "foreground hosted Editor");
+            await Task.Delay(250);
             PostBistroInput(viewport.RuntimeChild, 0x0201, 1, Coordinates(targetX, targetY));
             await Task.Delay(70);
             PostBistroInput(viewport.RuntimeChild, 0x0202, 0, Coordinates(targetX, targetY));
-            await NameUiWait(() => Field<LocatedMaterialBinding>("_locatedMaterial")?.Hit.Entity == target.Entity,
-                "verified fabric hit in Inspector", 75);
+            try
+            {
+                await NameUiWait(() => Field<LocatedMaterialBinding>("_locatedMaterial")?.Hit.Entity == target.Entity,
+                    "verified fabric hit in Inspector", 25);
+            }
+            catch (TimeoutException error)
+            {
+                throw new InvalidOperationException(Field<string>("_navigationFeedback"), error);
+            }
             return Field<LocatedMaterialBinding>("_locatedMaterial");
         }
         var located = await Locate();
@@ -680,12 +700,32 @@ public static partial class Program
         CaptureBindingFrame("before");
         CaptureBindingFrame("repeat");
         string? output = Environment.GetEnvironmentVariable("ATLANTIS_0138_COPY_NAME");
-        if (output is not null)
+        if (output is not null || Environment.GetEnvironmentVariable("ATLANTIS_0138_SHARED_CANCEL") == "1")
         {
+            await NameUiWait(() => Field<Button>("_newMaterial").IsEnabled, "material write authority and catalog ready");
             var panel = Field<StackPanel>("_inspectorPanel");
             Button Find(string label) => panel.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
+            if (output is null)
+            {
+                Press(Find("Edit shared material"));
+                await NameUiWait(() => Field<MaterialEditorWindow>("_materialWindow") is not null, "shared editor opens");
+                var shared = Field<MaterialEditorWindow>("_materialWindow");
+                await NativeCapture(shared, Path.Combine(evidence, "shared-edit-confirmation.png"));
+                shared.Close();
+                if (peer.Authoring.DocumentState().Value != before || Field<Button>("_undo").IsEnabled)
+                    throw new InvalidOperationException("Canceling the shared edit changed scene state or history.");
+                Console.WriteLine("PASS shared edit warning and Cancel without scene or history changes");
+                return;
+            }
             Press(Find("Duplicate for this binding"));
-            await NameUiWait(() => Field<MaterialEditorWindow>("_materialWindow") is not null, "existing copy editor opens", 75);
+            try
+            {
+                await NameUiWait(() => Field<MaterialEditorWindow>("_materialWindow") is not null, "existing copy editor opens", 15);
+            }
+            catch (TimeoutException error)
+            {
+                throw new InvalidOperationException(Field<TextBlock>("_editLine").Text, error);
+            }
             var editor = Field<MaterialEditorWindow>("_materialWindow");
             ModalField<TextBox>(editor, "_name")!.Text = output;
             ModalField<TextBox[]>(editor, "_values")![0].Text = "0.08";
@@ -758,6 +798,69 @@ public static partial class Program
             throw new InvalidOperationException("The saved and reopened source lost the replacement.");
         File.WriteAllText(Path.Combine(evidence, "saved-source.txt"), reopened.Value.Source);
         Console.WriteLine("PASS save and reopen preserve the replacement and GUID");
+    }
+
+    private static async Task VerifySavedMaterialOpen(MainWindow window, string checkout, string evidence)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        var review = MaterialBindingReview.Parse(File.ReadAllText(Environment.GetEnvironmentVariable("ATLANTIS_0138_REVIEW_NOTE")!))!;
+        var other = new EntityGuid(Guid.Parse(Environment.GetEnvironmentVariable("ATLANTIS_0138_CONTROL_NODE")!));
+        const string name = "material_slot";
+        string source = Path.Combine(checkout, "assets", "scenes", "saved", "save_" + name, "scene.scene.txt");
+        Field<TabControl>("_assetTabs").SelectedIndex = 2;
+        var scenes = Field<ListBox>("_savedList");
+        await NameUiWait(() => scenes.Items.Contains(name), "same scene appears in Saved Scenes");
+        scenes.SelectedItem = name;
+        Field<TextBox>("_savedManaged").Text = Environment.GetEnvironmentVariable("ATLANTIS_0138_MANAGED");
+        var build = Field<Button>("_savedBuild");
+        var open = Field<Button>("_savedOpen");
+        await NameUiWait(() => build.IsEnabled, "explicit saved scene build is enabled");
+        build.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        var attempts = Field<SavedSceneAttempts>("_savedAttempts");
+        await NameUiWait(() => !attempts.Busy, "Saved Scenes build settles", 720);
+        if (attempts.Result is not { } artifact || !open.IsEnabled)
+            throw new InvalidOperationException(Field<TextBox>("_savedBuildResult").Text);
+        File.Copy(Path.Combine(artifact.Directory, "build.log"), Path.Combine(evidence, "saved-build.log"), true);
+        await NativeCapture(window, Path.Combine(evidence, "saved-build-ready.png"));
+        var prior = Process.GetProcessesByName("Atlantis.Editor").Select(process => { using (process) return process.Id; }).ToArray();
+        open.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        await NameUiWait(() => attempts.HasChild(name), "Saved Scenes opens an independent Editor", 75);
+        using var child = Process.GetProcessesByName("Atlantis.Editor").Single(process => !prior.Contains(process.Id));
+        try
+        {
+            string? sessionPath = null;
+            await NameUiWait(() =>
+            {
+                foreach (string directory in Directory.EnumerateDirectories(Path.Combine(Path.GetTempPath(), "atlantis_editor")))
+                {
+                    string log = Path.Combine(directory, "runtime.log");
+                    string candidate = Path.Combine(directory, "runtime.session.json");
+                    if (!File.Exists(log) || !File.Exists(candidate)) continue;
+                    using var reader = new StreamReader(new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
+                    if (reader.ReadLine()?.StartsWith("# " + artifact.Executable + " ", StringComparison.OrdinalIgnoreCase) != true) continue;
+                    sessionPath = candidate;
+                    return true;
+                }
+                return false;
+            }, "independent Runtime publishes its own session", 120);
+            using var cold = RemoteSession.Connect(SessionFile.Read(sessionPath!));
+            await NameUiWait(() => cold.Authoring.Document() is { } info && info.Scene == review.Scene &&
+                Path.GetFullPath(info.SourcePath).Equals(source, StringComparison.OrdinalIgnoreCase), "independent Editor opens the same source");
+            var address = SceneSchema.AddressOf(cold.Authoring.Schema, review.Node, "Renderable", "materialAsset")!.Value;
+            if (cold.Authoring.GetProperty(address).Value.AsAsset() != review.Copy ||
+                cold.Authoring.GetProperty(address with { Node = other }).Value.AsAsset() != review.Original)
+                throw new InvalidOperationException("The cold build did not retain both exact slot bindings.");
+            var preview = cold.Assets.PreviewMeshMaterial(review.Mesh, review.Copy);
+            if (!preview.IsOk) throw new InvalidOperationException("Cold build preview failed: " + preview.Error);
+            File.WriteAllBytes(Path.Combine(evidence, "cold-material-preview.png"), preview.Value.PngBytes);
+            File.WriteAllText(Path.Combine(evidence, "cold-source.txt"), source + "\n" + review + "\n" + other + "\n" + artifact.Executable);
+            Console.WriteLine("PASS Saved Scenes Build/Open launches the exact saved source with both bindings and a rendered copy preview");
+        }
+        finally
+        {
+            child.Refresh();
+            if (!child.HasExited) child.CloseMainWindow();
+        }
     }
 
     private static async Task NativeCapture(Window target, string output)

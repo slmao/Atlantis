@@ -2000,6 +2000,8 @@ public sealed partial class MainWindow : Window
             if (!_hierarchyProjection.Rows.Any(item => item.Node == row.Node)) ClearHierarchyFilters();
             SetSelection(row.Node, scroll: true);
             ShowNavigationMessage("Located the verified Material slot.");
+            if (_assetBrowser.State is "Not loaded" or "Disconnected") LoadAssets();
+            QueryMaterial();
         });
     }
 
@@ -2114,6 +2116,7 @@ public sealed partial class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        if (_locatedMaterial is { } located && _selection.Node != located.Hit.Entity) _locatedMaterial = null;
         if (_alignmentId is not null && _alignmentSelection != _selection.Generation) CancelAlignment("Selection changed.");
         UpdateAlignmentControls();
         if (_advertisedAssetDrop?.Field is { } field && field.Selection != _selection.Generation)
@@ -3568,6 +3571,8 @@ public sealed partial class MainWindow : Window
     {
         if (_worker is not { } worker || _referenceSessionFailed || !_materialCanWrite ||
             (_materialSettlement.BlocksSave && request is not MaterialSave.Resume)) return;
+        if (binding is not null && !CanUseLocatedMaterial(binding))
+        { ShowMaterialState("The material binding changed. Close the dialog and locate it again."); return; }
         if (request is not MaterialSave.Resume)
         {
             _materialCopyOrigin = request.Target.Mode == MaterialMode.Copy ? binding : null;
