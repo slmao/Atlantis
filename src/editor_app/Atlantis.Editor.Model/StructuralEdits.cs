@@ -125,6 +125,9 @@ public sealed record ParentEntry(EntityGuid Node, EntityGuid? Before, EntityGuid
 
 public sealed record NameEntry(EntityGuid Node, string Before, string After) : EditEntry;
 
+/// <summary>Exact names and node occurrences from a verified guarded batch.</summary>
+public sealed record BatchRenameEdit(EntityGuid Document, IReadOnlyList<BatchRenameRow> Rows) : EditEntry;
+
 public abstract record SiblingEditEntry(EntityGuid Node, EntityGuid Anchor, EntityGuid? Parent) : EditEntry
 {
     public abstract (Command Command, Event Delta)? Plan(DocumentTree tree, bool forward, ulong revision);

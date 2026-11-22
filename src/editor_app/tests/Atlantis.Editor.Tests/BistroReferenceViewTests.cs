@@ -153,14 +153,14 @@ public static partial class Program
     }
 
     private static int RunBistroReferenceUi(string runtime, string scene, string evidence,
-        bool tuning = false, bool materialBinding = false, bool statistics = false)
+        bool tuning = false, bool materialBinding = false, bool statistics = false, bool batchRename = false)
     {
         Directory.CreateDirectory(evidence);
-        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence, tuning, materialBinding, statistics)).UsePlatformDetect()
+        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence, tuning, materialBinding, statistics, batchRename)).UsePlatformDetect()
             .StartWithClassicDesktopLifetime([]);
     }
 
-    private sealed class BistroReferenceApp(string runtime, string scene, string evidence, bool tuning, bool materialBinding, bool statistics) : Application
+    private sealed class BistroReferenceApp(string runtime, string scene, string evidence, bool tuning, bool materialBinding, bool statistics, bool batchRename) : Application
     {
         public override void Initialize()
         {
@@ -186,7 +186,8 @@ public static partial class Program
                 int exit = 1;
                 try
                 {
-                    if (statistics) await CheckSceneStatisticsUi(window, evidence);
+                    if (batchRename) await CheckBatchRenameUi(window, evidence);
+                    else if (statistics) await CheckSceneStatisticsUi(window, evidence);
                     else if (materialBinding) await CheckMaterialBindingUi(window, evidence);
                     else if (tuning) await CheckBistroTuningUi(window, evidence);
                     else await CheckBistroReferenceUi(window, evidence);

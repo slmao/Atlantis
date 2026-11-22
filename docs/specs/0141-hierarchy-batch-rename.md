@@ -1,11 +1,11 @@
 # Spec 0141 — Hierarchy Batch Rename
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-22
 - **Related Plan:** [Plan 0141](../plans/0141-hierarchy-batch-rename.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0189](../adr/0189-document-guarded-node-name-batch.md) (Proposed)
+- **Approval:** Maintainer, 2026-11-22, [joint approval of `0ece893c`](https://github.com/slmao/Atlantis/pull/445#issuecomment-7081010194)
+- **Related ADR:** [ADR-0189](../adr/0189-document-guarded-node-name-batch.md) (Accepted)
 - **Design baseline:** `4bf9791c`, maintainer merge of [PR #444](https://github.com/slmao/Atlantis/pull/444)
 
 ## Summary and motivation

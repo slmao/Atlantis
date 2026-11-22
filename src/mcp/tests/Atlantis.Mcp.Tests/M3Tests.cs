@@ -86,20 +86,23 @@ internal static partial class Program
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
             if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision"
-                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision")
+                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument")
             {
-                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision";
+                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument";
                 QueueSession exact = new()
                 {
                     GuardedCapability = kind == "RequireDocumentRevision" ? JsonValue.Bool(true) : null,
                     TransformCapability = kind == "RequireTransformBatchRevision" ? JsonValue.Bool(true) : null,
                     DuplicateCapability = kind == "RequireDuplicateBatchRevision" ? JsonValue.Bool(true) : null,
+                    NameCapability = kind == "RequireNameBatchDocument" ? JsonValue.Bool(true) : null,
                 };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
                 JsonValue commands = JsonValue.NewArray().Push(command);
                 if (kind == "RequireDuplicateBatchRevision")
                     commands.Push(Json.Parse("{\"kind\":\"DestroyNode\",\"node\":\"52052052-0001-4052-8052-000000000001\"}"));
+                else if (kind == "RequireNameBatchDocument")
+                    commands.Push(Json.Parse("""{"kind":"SetNodeName","node":"52052052-0001-4052-8052-000000000001","name":"Lamp 01"}"""));
                 else if (guarded) commands.Push(JsonValue.NewObject().Set("kind", JsonValue.String("SetProperty"))
                     .Set("address", Json.Parse(SceneAddress)).Set("value", Json.Parse("{\"f32\":4}")));
                 string args = Json.Write(JsonValue.NewObject().Set("commands", commands));
@@ -196,6 +199,20 @@ internal static partial class Program
             Check(session.Calls[start].Method == "authoring.document" &&
                 session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
                 "guarded transactions ask the current document and send only on literal true");
+        }
+        const string guardedNames = """
+            {"commands":[{"kind":"RequireNameBatchDocument","expectedDocument":{"documentId":"52052052-0001-4052-8052-000000000001","documentRevision":7}},
+            {"kind":"SetNodeName","node":"52052052-0001-4052-8052-000000000001","name":"Lamp 01"}]}
+            """;
+        foreach (JsonValue? capability in new[] { null, JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
+        {
+            session.NameCapability = capability;
+            int start = session.Calls.Count;
+            var submitted = registry.Invoke(Request("authoring.submit_transaction", guardedNames));
+            bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
+            Check(session.Calls[start].Method == "authoring.document" &&
+                session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
+                "guarded names require a positive current document capability, without write fallback");
         }
         foreach (JsonValue? capability in new[] { null, JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
         {
@@ -403,6 +420,7 @@ internal static partial class Program
         public JsonValue? GuardedCapability { get; set; }
         public JsonValue? TransformCapability { get; set; }
         public JsonValue? DuplicateCapability { get; set; }
+        public JsonValue? NameCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -432,6 +450,7 @@ internal static partial class Program
                     if (GuardedCapability is not null) result.Set("supportsGuardedPropertyTransactions", GuardedCapability);
                     if (TransformCapability is not null) result.Set("supportsGuardedTransformTransactions", TransformCapability);
                     if (DuplicateCapability is not null) result.Set("supportsGuardedDuplicateTransactions", DuplicateCapability);
+                    if (NameCapability is not null) result.Set("supportsGuardedNameTransactions", NameCapability);
                     break;
                 case "authoring.submitTransaction":
                 {

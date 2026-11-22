@@ -41,8 +41,8 @@ public static partial class Program
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
         bool hierarchyFilterRace = false;
-        bool staticGroupReceipt = false;
-        string? bistroReferenceReport = null, sceneStatisticsReport = null;
+        bool staticGroupReceipt = false, batchRenameReceipts = false;
+        string? bistroReferenceReport = null, sceneStatisticsReport = null, batchRenameReport = null;
         string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null,
             staticGroupReport = null, bistroTuningReport = null, bistroLocatorReport = null, materialBindingReport = null;
         for (int i = 0; i < args.Length; ++i)
@@ -64,6 +64,8 @@ public static partial class Program
             else if (args[i] == "--material-binding-ui" && i + 1 < args.Length) materialBindingReport = args[++i];
             else if (args[i] == "--bistro-locator" && i + 1 < args.Length) bistroLocatorReport = args[++i];
             else if (args[i] == "--bistro-tuning-ui" && i + 1 < args.Length) bistroTuningReport = args[++i];
+            else if (args[i] == "--batch-rename-receipts") batchRenameReceipts = true;
+            else if (args[i] == "--batch-rename-ui" && i + 1 < args.Length) batchRenameReport = args[++i];
             else if (args[i] == "--scene-statistics-ui" && i + 1 < args.Length) sceneStatisticsReport = args[++i];
             else if (args[i] == "--bistro-reference-ui" && i + 1 < args.Length) bistroReferenceReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
@@ -88,6 +90,10 @@ public static partial class Program
             return runtime is null ? Usage() : RunBistroLocator(runtime, scene, bistroLocatorReport);
         if (bistroTuningReport is not null)
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, bistroTuningReport, tuning: true);
+        if (batchRenameReceipts)
+            return runtime is null ? Usage() : RunBatchRenameReceipts(runtime, scene).GetAwaiter().GetResult();
+        if (batchRenameReport is not null)
+            return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, batchRenameReport, batchRename: true);
         if (sceneStatisticsReport is not null)
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, sceneStatisticsReport, statistics: true);
         if (bistroReferenceReport is not null)
@@ -120,6 +126,7 @@ public static partial class Program
             ViewportNavigationChecks();
             BistroReferenceChecks();
             SceneStatisticsChecks();
+            BatchRenameChecks();
             DragReportChecks();
             GizmoChecks(Path.Combine(repo, "tests", "csharp", "conformance", "camera_vectors.jsonl"));
             // Plan 0068 M1 (ADR-0137 D1): every ported model against its vectors.

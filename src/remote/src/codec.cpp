@@ -1850,6 +1850,7 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::InvalidSiblingSwap, authoring::Error::InvalidSiblingMove,
     authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
     authoring::Error::InvalidGuardedDuplicateBatch, authoring::Error::DuplicateBatchStaleRevision,
+    authoring::Error::InvalidGuardedNameBatch, authoring::Error::NameBatchStaleDocument,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -2014,6 +2015,9 @@ Value encode(const authoring::Command& command) {
         } else if constexpr (std::is_same_v<C, authoring::RequireTransformBatchRevision>) {
           out.set("kind", Value::string("RequireTransformBatchRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::RequireNameBatchDocument>) {
+          out.set("kind", Value::string("RequireNameBatchDocument"));
+          out.set("expectedDocument", encode(c.expectedDocument));
         } else if constexpr (std::is_same_v<C, authoring::RequireDuplicateBatchRevision>) {
           out.set("kind", Value::string("RequireDuplicateBatchRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
@@ -2118,6 +2122,13 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
     if (!expected) return std::nullopt;
     return authoring::Command(authoring::RequireTransformBatchRevision{*expected});
+  }
+  if (*kind == "RequireNameBatchDocument") {
+    const auto* token = value.find("expectedDocument");
+    if (value.asObject().size() != 2 || !token || !token->isObject() || token->asObject().size() != 2)
+      return std::nullopt;
+    const auto expected = decodeDocumentToken(*token);
+    return expected ? std::optional<authoring::Command>{authoring::RequireNameBatchDocument{*expected}} : std::nullopt;
   }
   if (*kind == "RequireDuplicateBatchRevision") {
     const auto* revision = value.find("expectedRevision");
@@ -2357,6 +2368,7 @@ Value encode(const authoring::DocumentInfo& document) {
   if (document.supportsGuardedPropertyTransactions) out.set("supportsGuardedPropertyTransactions", Value::boolean(true));
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
+  if (document.supportsGuardedNameTransactions) out.set("supportsGuardedNameTransactions", Value::boolean(true));
   if (document.supportsPrefabOrigin) out.set("supportsPrefabOrigin", Value::boolean(true));
   if (document.supportsPrefabSync) out.set("supportsPrefabSync", Value::boolean(true));
   if (document.supportsPrefabRegistration) out.set("supportsPrefabRegistration", Value::boolean(true));
@@ -2395,6 +2407,9 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   } else if (provenance->asString() != "HandAuthored") {
     return std::nullopt;
   }
+  const auto* names = value.find("supportsGuardedNameTransactions");
+  out.supportsGuardedNameTransactions = out.provenance == authoring::Provenance::HandAuthored &&
+                                        names && names->isBool() && names->asBool();
   return out;
 }
 

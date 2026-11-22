@@ -405,3 +405,37 @@ TEST_CASE("recovery wire values are bounded and typed", "[remote][authoring][rec
         ac::RecoveryError::SourceChanged);
   CHECK_FALSE(codec::decodeRecoveryError(atlantis::connection::json::Value::string("TransportFailure")));
 }
+
+TEST_CASE("remote authoring: closed name guard carries the document token across clients",
+          "[remote][authoring][name]") {
+  ServedAuthoring served;
+  auto first = served.world.attach();
+  auto second = served.world.attach();
+  auto& writer = first->authoring();
+  auto& reader = second->authoring();
+  REQUIRE(writer.open().isOk());
+  REQUIRE(writer.document()->supportsGuardedNameTransactions);
+  const auto expected = writer.documentState().value()->token;
+  const ac::Command guard = ac::RequireNameBatchDocument{expected};
+  auto encoded = codec::encode(guard);
+  auto decoded = codec::decodeAuthoringCommand(encoded);
+  REQUIRE(decoded);
+  CHECK(std::get<ac::RequireNameBatchDocument>(*decoded).expectedDocument == expected);
+  auto bad = encoded;
+  bad.set("extra", codec::Value::boolean(true));
+  CHECK_FALSE(codec::decodeAuthoringCommand(bad));
+  auto token = codec::encode(expected);
+  token.set("extra", codec::Value::boolean(true));
+  bad = encoded;
+  bad.set("expectedDocument", std::move(token));
+  CHECK_FALSE(codec::decodeAuthoringCommand(bad));
+  const auto stream = reader.subscribe({});
+  const auto ticket = writer.submitTransaction({guard, ac::SetNodeName{node(1), "Lamp 01"}, ac::SetNodeName{node(3), "Lamp 02"}});
+  CHECK(ticket.count == 3);
+  CHECK(writer.drainFailures().empty());
+  CHECK(reader.drainEvents(stream).value() == std::vector<ac::Event>{
+      ac::NodeNameChanged{node(1), "Lamp 01"}, ac::NodeNameChanged{node(3), "Lamp 02"}});
+  const auto stale = writer.submitTransaction({guard, ac::SetNodeName{node(1), "refused"}});
+  CHECK(writer.drainFailures() == std::vector<ac::CommandFailure>{{stale.first, ac::Error::NameBatchStaleDocument}});
+  CHECK(reader.drainEvents(stream).value().empty());
+}

@@ -72,6 +72,8 @@ std::string_view toString(Error error) noexcept {
     case Error::PropertyBatchStaleRevision: return "PropertyBatchStaleRevision";
     case Error::InvalidGuardedDuplicateBatch: return "InvalidGuardedDuplicateBatch";
     case Error::DuplicateBatchStaleRevision: return "DuplicateBatchStaleRevision";
+    case Error::InvalidGuardedNameBatch: return "InvalidGuardedNameBatch";
+    case Error::NameBatchStaleDocument: return "NameBatchStaleDocument";
     case Error::NoDocument: return "NoDocument";
     case Error::UnknownNode: return "UnknownNode";
     case Error::UnknownComponentType: return "UnknownComponentType";

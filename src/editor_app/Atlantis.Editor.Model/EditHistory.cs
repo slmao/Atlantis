@@ -179,15 +179,17 @@ public sealed class EditHistory
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
         Func<NodeLife, bool, BatchReplayResult>? preset = null,
-        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null) =>
-        Take(_undo, Step.Undo, swap, batch, duplicate, preset, prefab);
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null,
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null) =>
+        Take(_undo, Step.Undo, swap, batch, duplicate, preset, prefab, rename);
 
     public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
         Func<NodeLife, bool, BatchReplayResult>? preset = null,
-        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null) =>
-        Take(_redo, Step.Redo, swap, batch, duplicate, preset, prefab);
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab = null,
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null) =>
+        Take(_redo, Step.Redo, swap, batch, duplicate, preset, prefab, rename);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -242,7 +244,8 @@ public sealed class EditHistory
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate,
         Func<NodeLife, bool, BatchReplayResult>? preset,
-        Func<PrefabHistory, bool, BatchReplayResult>? prefab)
+        Func<PrefabHistory, bool, BatchReplayResult>? prefab,
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename)
     {
         if (Waiting)
         {
@@ -263,6 +266,8 @@ public sealed class EditHistory
             return HistoryResult.Submitted;
         }
         BatchReplayResult? guarded = null;
+        if (edit.Structure is [BatchRenameEdit names])
+            guarded = (rename ?? throw new InvalidOperationException("Name replay requires guarded settlement."))(names, forward);
         if (edit.Structure is [PrefabHistory instance])
             guarded = (prefab ?? throw new InvalidOperationException("Prefab replay requires guarded settlement."))(instance, forward);
         if (edit.Structure is [BatchPropertyEdit properties])

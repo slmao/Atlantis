@@ -377,6 +377,7 @@ public sealed class EditorWorker : IDisposable
     private bool _batchWritable;
     private bool _groupWritable;
     private volatile bool _duplicateBatchWritable;
+    private volatile bool _nameBatchWritable;
     private bool _duplicateBatchQueued;
     private bool _sceneObjectQueued;
     private int _queuedGizmoBegins;
@@ -4037,6 +4038,176 @@ public sealed class EditorWorker : IDisposable
         }
     }
 
+    internal bool BatchRenameAvailable => _nameBatchWritable;
+
+    private static DocumentToken? ReadRenameToken(RemoteSession session)
+    {
+        var state = session.Authoring.DocumentState();
+        return state.IsOk && state.Value is { Provenance: Provenance.HandAuthored } document ? document.Token : null;
+    }
+
+    private bool RenameIntentCurrent(BatchRenameIntent intent, HierarchyFilter filter) =>
+        intent.Current && intent.Lifetime == MeshDocumentLifetime && !_stopping && _nameBatchWritable &&
+        intent.SelectionGeneration == _requestedSelectionGeneration && ReferenceEquals(_hierarchyFilter, filter) &&
+        !_dragActive && !_gizmoActive && _queuedGizmoBegins == 0 && _requestedGroup is null && !_groupSettling &&
+        intent.Nodes.SequenceEqual(_selectedNodes);
+
+    internal void PreviewBatchRename(BatchRenameIntent intent, Action<BatchRenamePreview?, string> completed) => Enqueue(session =>
+    {
+        HierarchyFilter filter;
+        lock (_lock) filter = _hierarchyFilter;
+        BatchRenamePreview? preview = null;
+        string notice = "The selection or document changed. Refresh the preview.";
+        try
+        {
+            if (_document is RemoteAuthoringDocument document &&
+                ReadRenameToken(session) is { } token && token.DocumentRevision < ulong.MaxValue &&
+                document.ObserveNodes() is { } roster && document.ObserveEvents() is { } events)
+            {
+                PollDocument(session, events, pollApply: false, refreshInspector: false, refreshOverlay: false);
+                bool current;
+                lock (_lock) current = RenameIntentCurrent(intent, filter);
+                if (current && ReadRenameToken(session) == token)
+                    preview = BatchRenamePreview.Capture(token, filter, _tree, roster, intent.Nodes);
+            }
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            notice = "Cannot read the rename preview: " + error.Message;
+        }
+        _post(() => { if (intent.Current) completed(preview, preview is null ? notice : ""); });
+    });
+
+    internal bool CommitBatchRename(BatchRenameIntent intent, BatchRenamePreview preview,
+        IReadOnlyList<BatchRenameRow> rows, Action<BatchReplayResult> completed)
+    {
+        lock (_lock)
+        {
+            if (_batchSettling || _duplicateBatchQueued || _sceneObjectQueued ||
+                !RenameIntentCurrent(intent, preview.Filter)) return false;
+            _batchSettling = true;
+            Enqueue(session =>
+            {
+                try
+                {
+                    var edit = new BatchRenameEdit(preview.Document.DocumentId, rows.Where(row => row.Changed).ToArray());
+                    var result = SettleBatchRename(session, edit, true, intent.Lifetime, intent, preview);
+                    string notice = result.Notice;
+                    if (result.State == BatchReplayState.Committed && intent.Lifetime == MeshDocumentLifetime &&
+                        _history is { } history && _historyTarget is { } target)
+                    {
+                        history.Record(new EditTransaction("Rename nodes", [], [edit]), target.Committed([]));
+                        history.Update();
+                        PostHistory(intent.Lifetime);
+                        notice = ApplyVerifiedEdit(intent.Lifetime, notice, publishStatus: false);
+                    }
+                    else PostHistory(intent.Lifetime);
+                    _post(() =>
+                    {
+                        completed(result with { Notice = notice });
+                        if (intent.Lifetime == MeshDocumentLifetime) EditNotice?.Invoke(notice);
+                    });
+                    PostApplyState(intent.Lifetime, refreshOverlay: false);
+                    PollDocument(session, pollApply: false);
+                }
+                finally { lock (_lock) _batchSettling = false; }
+            });
+            return true;
+        }
+    }
+
+    private BatchReplayResult SettleBatchRename(RemoteSession session, BatchRenameEdit edit, bool forward,
+        long lifetime, BatchRenameIntent? intent = null, BatchRenamePreview? preview = null)
+    {
+        var retry = new BatchReplayResult(BatchReplayState.Retry, "Rename not sent. Refresh the preview or inspect the document before retrying.");
+        var conflict = new BatchReplayResult(BatchReplayState.Drop, "A rename target or name changed elsewhere. No names were written.");
+        if (_document is not RemoteAuthoringDocument document || edit.Rows.Count == 0) return retry;
+        bool SameDocument() => lifetime == MeshDocumentLifetime;
+        bool Current() => SameDocument() && !_stopping && _nameBatchWritable &&
+            (intent is null || preview is not null && RenameIntentCurrent(intent, preview.Filter));
+        bool OccurrencesMatch() => edit.Rows.All(row => ReferenceEquals(row.Target.Occurrence, _tree.IncarnationOf(row.Target.Node)));
+        bool Observe(IReadOnlyList<Event>? events)
+        {
+            if (events is null) return false;
+            PollDocument(session, events, pollApply: false, allowOrderRefresh: false, refreshInspector: false,
+                refreshOverlay: false, refreshHierarchy: false);
+            return true;
+        }
+
+        var writes = edit.Rows.Select(row => new SetNodeName(row.Target.Node, forward ? row.After : row.Target.Before)).ToArray();
+        bool sent = false, committed = false;
+        BatchReplayResult Uncertain()
+        {
+            if (SameDocument())
+            {
+                _apply?.RequireExplicitApply("name batch could not be verified");
+                if (intent is not null) _history?.DiscardRedo();
+            }
+            string targets = string.Join(", ", writes.Select(write => write.Node));
+            return new(BatchReplayState.Drop, (committed ? "Names committed, but history is unavailable" : "Rename outcome unknown") +
+                $" for {targets}. Inspect the current names and confirm settlement before retrying. Apply explicitly.");
+        }
+        try
+        {
+            lock (_lock) if (!Current()) return retry;
+            if (document.Info() is not { Provenance: Provenance.HandAuthored, SupportsGuardedNameTransactions: true })
+                return new(BatchReplayState.Retry, "This Runtime does not support guarded name transactions for the open document.");
+            if (ReadRenameToken(session) is not { } before || before.DocumentRevision == ulong.MaxValue)
+                return retry;
+            if (before.DocumentId != edit.Document) return conflict;
+            if (preview is not null && before != preview.Document) return retry with
+                { Notice = "The document changed after preview. Refresh before confirming." };
+            if (document.ObserveNodes() is not { } roster || !Observe(document.ObserveEvents()) ||
+                ReadRenameToken(session) != before) return retry;
+            if (!OccurrencesMatch()) return conflict;
+            var byNode = roster.ToDictionary(node => node.Node);
+            if (edit.Rows.Any(row => !byNode.TryGetValue(row.Target.Node, out var node) ||
+                    node.Name != (forward ? row.Target.Before : row.After))) return conflict;
+            if (preview is not null && (intent is null ||
+                BatchRenamePreview.Capture(before, preview.Filter, _tree, roster, intent.Nodes) is not { } current ||
+                !current.Targets.SequenceEqual(preview.Targets))) return conflict;
+
+            var commands = JsonValue.NewArray().Push(Codec.Encode(new RequireNameBatchDocument(before)));
+            foreach (var write in writes) commands.Push(Codec.Encode(write));
+            ulong request;
+            lock (_lock)
+            {
+                if (!Current()) return retry;
+                sent = true;
+                request = session.Send("authoring.submitTransaction", JsonValue.NewObject().Set("commands", commands));
+            }
+            var ticket = Codec.DecodeTransactionTicket(session.AwaitResult(request));
+            if (ticket is not { First.Value: > 0 } issued || issued.Count != (ulong)writes.Length + 1 ||
+                issued.Count - 1 > ulong.MaxValue - issued.First.Value) return Uncertain();
+            var failures = document.DrainFailures();
+            if (failures.FirstOrDefault(failure => issued.Contains(failure.Ticket)) is { Ticket.Value: > 0 } refused)
+                return new(refused.Error == AuthoringError.NameBatchStaleDocument ? BatchReplayState.Retry : BatchReplayState.Drop,
+                    "Batch rename refused: " + refused.Error + ". Refresh and inspect the document before retrying.");
+            committed = true;
+
+            var expected = before with { DocumentRevision = before.DocumentRevision + 1 };
+            var settled = ReadRenameToken(session);
+            var readback = document.ObserveNodes()?.ToDictionary(node => node.Node);
+            var observed = document.ObserveEvents();
+            if (settled != expected || ReadRenameToken(session) != expected || observed is null || readback is null ||
+                !observed.Where(e => e is not Applied).SequenceEqual(writes.Select(write => new NodeNameChanged(write.Node, write.Name))) ||
+                !writes.All(write => readback.TryGetValue(write.Node, out var node) && node.Name == write.Name))
+            {
+                if (observed is not null) Observe(observed);
+                return Uncertain();
+            }
+            Observe(observed);
+            if (!SameDocument() || !OccurrencesMatch()) return Uncertain();
+            return new(BatchReplayState.Committed, intent is null
+                ? forward ? "Redid batch rename." : "Undid batch rename." : $"Renamed {writes.Length} nodes.");
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            return sent ? Uncertain() : retry with { Notice = "Rename not sent: " + error.Message };
+        }
+    }
+
+
     public bool CommitBatch(BatchInspectorSnapshot snapshot, CommonInspectorField field, PropertyValue value)
     {
         lock (_lock)
@@ -4383,6 +4554,13 @@ public sealed class EditorWorker : IDisposable
             reordered = settlement.State == BatchReplayState.Committed;
             return settlement;
         }
+        BatchReplayResult ReplayNames(BatchRenameEdit edit, bool forward)
+        {
+            batchReplay = true;
+            var settlement = SettleBatchRename(session, edit, forward, lifetime);
+            reordered = settlement.State == BatchReplayState.Committed;
+            return settlement;
+        }
         BatchReplayResult ReplayDuplicate(GuardedDuplicateEdit edit, bool forward)
         {
             batchReplay = true;
@@ -4419,8 +4597,8 @@ public sealed class EditorWorker : IDisposable
                 return new(BatchReplayState.Retry, error.Message);
             }
         }
-        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab) :
-            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab);
+        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames) :
+            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames);
         siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,
@@ -5041,6 +5219,7 @@ public sealed class EditorWorker : IDisposable
             _batchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             _duplicateBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
+            _nameBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedNameTransactions: true };
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
                                      _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
@@ -5112,6 +5291,7 @@ public sealed class EditorWorker : IDisposable
             _batchWritable = false;
             _groupWritable = false;
             _duplicateBatchWritable = false;
+            _nameBatchWritable = false;
             CancelGroupGizmo();
             _post(() => MeshDocumentReopened?.Invoke(lifetime));
             _history?.Clear();  // ADR-0135 D4: the history clears on DocumentReopened, not on an apply
@@ -5121,6 +5301,7 @@ public sealed class EditorWorker : IDisposable
             _batchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedPropertyTransactions: true };
             _groupWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             _duplicateBatchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
+            _nameBatchWritable = reopened is { Provenance: Provenance.HandAuthored, SupportsGuardedNameTransactions: true };
         }
         else if (historyChanged) PostHistory();
         ResetVisibilityOnDocumentEvents(session, events);

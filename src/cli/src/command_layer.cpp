@@ -2455,6 +2455,18 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
     if (parent.isErr()) return ResultT::Err(parent.error());
     return ResultT::Ok(std::vector<ac::Command>{ac::SetParent{node.value(), parent.value()}});
   }
+  if (verb == "require-name-document") {
+    if (t.size() != 3) return ResultT::Err(usageError("require-name-document <document-guid> <revision> (first line of scene tx)"));
+    const auto id = entityAt(1);
+    if (id.isErr()) return ResultT::Err(textError(id.error(), t[1]));
+    if (id.value() == EntityGuid{} || text::formatEntity(id.value()) != t[1])
+      return ResultT::Err(usageError("the document ID must be canonical and non-nil"));
+    std::uint64_t revision{};
+    const auto parsed = std::from_chars(t[2].data(), t[2].data() + t[2].size(), revision);
+    if (parsed.ec != std::errc{} || parsed.ptr != t[2].data() + t[2].size() || revision == 0)
+      return ResultT::Err(textError(text::TextError::MalformedNumber, t[2]));
+    return ResultT::Ok(std::vector<ac::Command>{ac::RequireNameBatchDocument{{id.value(), revision}}});
+  }
   if (verb == "require-revision" || verb == "require-transform-revision" || verb == "require-duplicate-revision") {
     if (t.size() != 2) return ResultT::Err(usageError(std::string(verb) + " <revision> (first line of scene tx)"));
     std::uint64_t revision{};
@@ -2536,11 +2548,17 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   });
   if (prefab && !duplicateGuard)
     return failed(command, usageError("prefab-origin requires a guarded scene tx"));
-  const bool guarded = propertyGuard || transformGuard || duplicateGuard;
+  const bool nameGuard = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireNameBatchDocument>(edit);
+  });
+  const bool guarded = propertyGuard || transformGuard || duplicateGuard || nameGuard;
   Value batchTargets = Value::array();
   std::string batchField;
   if (guarded) {
     const auto info = a->document();
+    if (nameGuard && (!info || !info->supportsGuardedNameTransactions))
+      return failed(command, plainError("GuardedNameBatchUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded name transactions"));
     if (duplicateGuard && (!info || !info->supportsGuardedDuplicateTransactions))
       return failed(command, plainError("GuardedDuplicateBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded duplicate transactions"));
@@ -2554,6 +2572,11 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       return failed(command, plainError("GuardedPropertyBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded property transactions"));
     for (const auto& edit : commands) {
+      if (nameGuard) {
+        if (const auto* write = std::get_if<ac::SetNodeName>(&edit))
+          batchTargets.push(Value::string(text::formatEntity(write->node)));
+        continue;
+      }
       if (duplicateGuard) {
         if (const auto* create = std::get_if<ac::CreateNode>(&edit); create && create->node)
           batchTargets.push(Value::string(text::formatEntity(*create->node)));
@@ -2596,6 +2619,10 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       return failed(command, plainError("GuardedDuplicateBatchUnknown", ErrorCategory::Runtime,
           std::move(message), subject({{"nodes", std::move(batchTargets)}})));
     }
+    if (nameGuard)
+      return failed(command, plainError("GuardedNameBatchUnknown", ErrorCategory::Runtime,
+          "Guarded name batch outcome unknown. Reconnect, inspect the target GUIDs with scene nodes, and confirm the prior request ended before retrying.",
+          subject({{"nodes", std::move(batchTargets)}})));
     std::string message = "Guarded property batch outcome unknown";
     if (!batchField.empty()) message += " for " + batchField;
     message += ". Reconnect and inspect the addressed properties before retrying.";

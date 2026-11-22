@@ -725,7 +725,8 @@ public sealed partial class MainWindow : Window
         var structuralButtons = EditorVisuals.Scroll(EditorVisuals.Actions(
             _duplicate, _destroy, _toRoot, _pickUp, _moveHere, _moveUp, _moveDown));
         structuralButtons.MaxHeight = 130;
-        var structural = EditorVisuals.Stack(4, structuralButtons, BuildVisibilityHierarchyActions(),
+        _batchRename.Click += (_, _) => OpenBatchRename();
+        var structural = EditorVisuals.Stack(4, structuralButtons, _batchRename, BuildVisibilityHierarchyActions(),
             EditorVisuals.Actions(_prefabName, _savePrefab), _duplicateState);
         var actions = new ToggleButton { Content = "Actions" };
         structural.IsVisible = false;
@@ -2267,6 +2268,7 @@ public sealed partial class MainWindow : Window
     private void UpdateHierarchyActions()
     {
         UpdateVisibilityActions();
+        UpdateBatchRename();
         UpdateSavePrefab();
         if (GroupEditRefusal() is not null || _selection.Nodes.Count != 1 || _hierarchyFilter.Active)
         {

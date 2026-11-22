@@ -884,6 +884,7 @@ AuthoringCommand  {"kind":"SetProperty","address":<SceneAddress>,"value":<V>}
                   {"kind":"SwapAdjacentSiblings","node":<N>,"sibling":<N>,"parent":<N>|null,"direction":"Up"|"Down","expectedRevision":<n>}
                   {"kind":"MoveSiblingRelative","node":<N>,"anchor":<N>,"parent":<N>|null,"placement":"Before"|"After","expectedRevision":<n>}
                   {"kind":"RequireDocumentRevision","expectedRevision":<n>}
+                  {"kind":"RequireNameBatchDocument","expectedDocument":{"documentId":<N>,"documentRevision":<n>}}
 AuthoringEvent    {"kind":"PropertyChanged","address":<SceneAddress>,"value":<V>}
                   {"kind":"NodeCreated","node":<N>,"position":<n>}   {"kind":"NodeDestroyed","node":<N>}
                   {"kind":"ComponentAdded","node":<N>,"component":<T>}
@@ -922,7 +923,9 @@ NodeSummary       {"node":<N>,"parent":<N>|null,"name":"<label>"}
     `ComponentExclusivity`, `LightRangeMatchesKind`, `MaxDirectionalLights`,
     `MaxPointLights`, `CookRefused`, `NotRepresentableInSource`, `InvalidNodeName`,
     `SiblingOrderStaleRevision`, `SiblingOrderRequiresHandAuthored`, `InvalidSiblingSwap`,
-    `InvalidSiblingMove`, `InvalidGuardedPropertyBatch`, `PropertyBatchStaleRevision`;
+    `InvalidSiblingMove`, `InvalidGuardedPropertyBatch`, `PropertyBatchStaleRevision`,
+    `InvalidGuardedDuplicateBatch`, `DuplicateBatchStaleRevision`,
+    `InvalidGuardedNameBatch`, `NameBatchStaleDocument`;
   - **`OpenError`:** `SourceUnreadable`, `SourceParseFailed`,
     `SourceInvalid`;
   - **`SaveError`:** `NoDocument`, `ImportedSceneNotSavable`, `WriteFailed`;
@@ -1056,6 +1059,24 @@ Success has one document revision and emits ordinary authored events.
 The guard takes one ticket and emits no event. Drain matching failures
 before requesting Apply. Older peers keep their existing commands,
 and an older host refuses this guard during transaction decoding.
+
+### Guarded name transactions
+
+[ADR-0189](../adr/0189-document-guarded-node-name-batch.md) adds the optional
+`supportsGuardedNameTransactions` boolean to the open hand-authored document.
+Only literal true enables this transaction on the current open document.
+
+`RequireNameBatchDocument` goes first in `authoring.submitTransaction`.
+Its only payload member is `expectedDocument`, with exactly the existing
+canonical `documentId` and positive unsigned `documentRevision`. The
+following 1–64 commands are ordinary `SetNodeName` for distinct non-nil
+nodes. The guard consumes its own ticket and emits no event.
+`InvalidGuardedNameBatch` settles an invalid shape or unsupported source.
+`NameBatchStaleDocument` settles a token mismatch. Both identify the guard
+ticket. A successful batch advances one revision and emits existing
+`NodeNameChanged` events in write order. Drain matching failures before
+requesting Apply. An older host refuses the unknown guard during decoding
+and guarded clients do not send unguarded replacement writes.
 
 ### Managed asset import
 

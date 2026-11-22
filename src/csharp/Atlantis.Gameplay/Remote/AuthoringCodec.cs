@@ -111,6 +111,10 @@ public static partial class Codec
                 output.Set("kind", JsonValue.String("RequireDocumentRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.RequireNameBatchDocument c:
+                output.Set("kind", JsonValue.String("RequireNameBatchDocument"))
+                    .Set("expectedDocument", Encode(c.ExpectedDocument));
+                break;
             case A.RequireDuplicateBatchRevision c:
                 output.Set("kind", JsonValue.String("RequireDuplicateBatchRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
@@ -198,6 +202,9 @@ public static partial class Codec
             case "RequireDocumentRevision":
                 return value.Find("expectedRevision") is JsonValue required && DecodeUInt64(required) is ulong guardedRevision
                     ? new A.RequireDocumentRevision(guardedRevision) : null;
+            case "RequireNameBatchDocument":
+                return Exact(value, 2) && value.Find("expectedDocument") is { } nameDocument && Exact(nameDocument, 2) &&
+                    DecodeDocumentToken(nameDocument) is { } token ? new A.RequireNameBatchDocument(token) : null;
             case "RequireDuplicateBatchRevision":
                 return value.Find("expectedRevision") is JsonValue duplicateGuard && DecodeUInt64(duplicateGuard) is ulong duplicateRevision
                     ? new A.RequireDuplicateBatchRevision(duplicateRevision) : null;
@@ -394,6 +401,7 @@ public static partial class Codec
             result.Set("supportsGuardedTransformTransactions", JsonValue.Bool(true));
         if (document.SupportsGuardedDuplicateTransactions)
             result.Set("supportsGuardedDuplicateTransactions", JsonValue.Bool(true));
+        if (document.SupportsGuardedNameTransactions) result.Set("supportsGuardedNameTransactions", JsonValue.Bool(true));
         if (document.SupportsPrefabOrigin) result.Set("supportsPrefabOrigin", JsonValue.Bool(true));
         if (document.SupportsPrefabSync) result.Set("supportsPrefabSync", JsonValue.Bool(true));
         if (document.SupportsPrefabRegistration) result.Set("supportsPrefabRegistration", JsonValue.Bool(true));
@@ -422,6 +430,8 @@ public static partial class Codec
                 value.Find("supportsGuardedTransformTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsGuardedDuplicateTransactions =
                 value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsGuardedNameTransactions = p == A.Provenance.HandAuthored &&
+                value.Find("supportsGuardedNameTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabOrigin = value.Find("supportsPrefabOrigin") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabSync = value.Find("supportsPrefabSync") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabRegistration = value.Find("supportsPrefabRegistration") is { Kind: JsonKind.Bool, AsBool: true }

@@ -1,9 +1,9 @@
 # ADR 0189 — Document-Guarded Node Name Batch
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-22
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Maintainer, 2026-11-22, [joint approval of `0ece893c`](https://github.com/slmao/Atlantis/pull/445#issuecomment-7081010194)
 - **Related Spec:** [Spec 0141](../specs/0141-hierarchy-batch-rename.md)
 
 ## Context
