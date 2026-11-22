@@ -64,6 +64,9 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
   target.viewportNavigation = [&application](std::span<const atlantis::asset_system::EntityGuid> targets) {
     return application.viewportNavigation(targets);
   };
+  target.pickAlignmentFaces = [&application](std::span<const connection::Ray> rays) {
+    return application.pickAlignmentFaces(rays);
+  };
   target.sceneGeneration = [&application] { return application.sceneGeneration(); };
   return target;
 }
@@ -154,6 +157,10 @@ connection::DiagnosticBatch RuntimeControlHost::diagnostics(std::uint64_t afterS
 
 void RuntimeControlHost::setViewportCamera(std::optional<connection::ViewportCamera> camera) {
   if (target_.setViewportCamera) target_.setViewportCamera(camera);
+}
+
+connection::AlignmentFacesResult RuntimeControlHost::pickAlignmentFaces(std::span<const connection::Ray> rays) {
+  return target_.pickAlignmentFaces ? target_.pickAlignmentFaces(rays) : RuntimeControl::pickAlignmentFaces(rays);
 }
 
 connection::ViewportNavigationResult RuntimeControlHost::viewportNavigation(

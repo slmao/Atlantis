@@ -56,6 +56,7 @@ namespace atlantis::runtime {
 
 namespace detail {
 struct MeshPreviewResources;
+struct PickInstance;
 using PreviewCompletion = atlantis::Result<std::monostate, rhi::SubmitError> (*)(rhi::Device&);
 }
 
@@ -201,6 +202,8 @@ class RuntimeApplication {
   // (ADR-0123 D2, amended 2026-10-25 and 2026-10-26). renderableLocalBounds(): the local bounds of the entity's
   // Renderable mesh. Between frames, frame thread only.
   [[nodiscard]] std::optional<PickHit> pickRenderable(const PickRay& ray) const;
+  [[nodiscard]] atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
+      std::span<const atlantis::connection::Ray> rays) const;
   // Spec 0064 / ADR-0128 D2: whether the configuration kept pick geometry
   // (BootstrapConfig::retainPickGeometry) -- false means pickRenderable() can
   // answer nothing.
@@ -274,6 +277,7 @@ class RuntimeApplication {
   void detachOverlay();
 
  private:
+  [[nodiscard]] std::vector<detail::PickInstance> pickInstances(bool alignment) const;
   [[nodiscard]] connection::assets::MeshPreviewResult previewMeshWithCompletion(
       const BootstrapConfig& config, const asset_system::AssetGuid& guid, const asset_system::StaticMeshAssetData& mesh,
       detail::PreviewCompletion complete);

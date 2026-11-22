@@ -2470,9 +2470,23 @@ connection::ViewportNavigationResult RuntimeApplication::viewportNavigation(
 // pickable either: the same predicate, under the same condition. Every other
 // entity -- non-uniformly scaled, sheared, unlit or material-less included --
 // is picked.
-std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) const {
-  if (!scene_ || !worldAccess_.has_value() || pickGeometry_.empty()) return std::nullopt;
-  std::vector<detail::PickInstance> instances = detail::collectPickInstances(*worldAccess_, *scene_);
+std::vector<detail::PickInstance> RuntimeApplication::pickInstances(bool alignment) const {
+  if (!scene_ || !worldAccess_ || pickGeometry_.empty()) return {};
+  auto instances = detail::collectPickInstances(*worldAccess_, *scene_);
+  // erase_if predicates cannot modify their element. Only an explicit face
+  // read asks for the extra material proof.
+  if (alignment) {
+    for (auto& instance : instances) {
+      const auto material = detail::renderableMaterial(*worldAccess_, instance.entity);
+      if (!material) {
+        instance.opaqueForAlignment = static_cast<bool>(fallbackMaterial_);
+        continue;
+      }
+      const auto it = materialDataMap_.find(*material);
+      instance.opaqueForAlignment = it != materialDataMap_.end() &&
+          it->second.alphaMode == asset_system::MaterialAlphaMode::Opaque;
+    }
+  }
   std::erase_if(instances, [this](const detail::PickInstance& instance) {
     const std::optional<atlantis::asset_system::AssetId> material =
         detail::renderableMaterial(*worldAccess_, instance.entity);
@@ -2483,7 +2497,27 @@ std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) co
                                 materialData->second.kind == atlantis::asset_system::MaterialKind::PbrDirectLit;
     return litGated && checkInvertibleNormalTransform(instance.worldMatrix).isErr();
   });
-  return detail::pickNearest(instances, pickGeometry_, ray);
+  return instances;
+}
+
+std::optional<PickHit> RuntimeApplication::pickRenderable(const PickRay& ray) const {
+  return detail::pickNearest(pickInstances(false), pickGeometry_, ray);
+}
+
+connection::AlignmentFacesResult RuntimeApplication::pickAlignmentFaces(std::span<const connection::Ray> rays) const {
+  using R = connection::AlignmentFacesResult;
+  using E = connection::AlignmentFaceError;
+  if (rays.empty() || rays.size() > connection::kAlignmentRayLimit ||
+      !std::ranges::all_of(rays, connection::validAlignmentRay)) return R::Err({E::InvalidRequest});
+  if (!pickGeometryRetained_) return R::Err({E::NoGeometry});
+  const auto instances = pickInstances(true);
+  connection::AlignmentFaces out{sceneGeneration(), {}};
+  for (std::uint32_t i = 0; i < rays.size(); ++i) {
+    auto face = detail::pickAlignmentFace(instances, pickGeometry_, rays[i]);
+    if (face.isErr()) return R::Err({face.error(), i});
+    out.faces.push_back(std::move(face.value()));
+  }
+  return R::Ok(std::move(out));
 }
 
 std::optional<LocalBounds> RuntimeApplication::renderableLocalBounds(

@@ -1401,6 +1401,150 @@ std::optional<connection::ViewportNavigationFailure> decodeViewportNavigationFai
   return std::nullopt;
 }
 
+
+Value encode(const connection::AlignmentFaces& result) {
+  auto faces = Value::array();
+  for (const auto& face : result.faces) {
+    auto item = Value::object();
+    auto triangles = Value::array();
+    for (auto triangle : face.triangles) triangles.push(Value::number(std::uint64_t{triangle}));
+    auto corners = Value::array();
+    for (const auto& corner : face.corners) corners.push(encodeFloats(corner));
+    item.set("entity", encodeEntity(face.entity));
+    item.set("mesh", encodeAsset(face.mesh));
+    item.set("triangles", std::move(triangles));
+    item.set("distance", encodeFloat(face.distance));
+    item.set("corners", std::move(corners));
+    item.set("normal", encodeFloats(face.normal));
+    item.set("worldMatrix", encodeFloats(face.worldMatrix));
+    faces.push(std::move(item));
+  }
+  auto out = Value::object();
+  out.set("sceneGeneration", Value::number(result.sceneGeneration));
+  out.set("faces", std::move(faces));
+  return out;
+}
+
+Value encode(const connection::AlignmentFaceFailure& failure) {
+  auto out = Value::object();
+  out.set("code", Value::string(std::string(connection::toString(failure.code))));
+  if (failure.rayIndex) out.set("rayIndex", Value::number(std::uint64_t{*failure.rayIndex}));
+  return out;
+}
+
+std::optional<connection::AlignmentFaceFailure> decodeAlignmentFaceFailure(const Value& value,
+    std::size_t rayCount) {
+  using E = connection::AlignmentFaceError;
+  const auto* code = value.find("code");
+  const auto* index = value.find("rayIndex");
+  if (!value.isObject() || value.asObject().size() != (index ? 2u : 1u) || !code || !code->isString()) return {};
+  for (const auto error : {E::InvalidRequest, E::NoGeometry, E::Miss, E::UnsupportedFace, E::Ambiguous, E::TooLarge, E::Unsupported}) {
+    if (code->asString() != connection::toString(error)) continue;
+    const bool local = error == E::Miss || error == E::UnsupportedFace || error == E::Ambiguous || error == E::TooLarge;
+    const auto ord = index ? decodeUInt64(*index) : std::nullopt;
+    if (local != (index != nullptr) || (index && (!ord || *ord >= rayCount))) return {};
+    return connection::AlignmentFaceFailure{error, ord ? std::optional{static_cast<std::uint32_t>(*ord)} : std::nullopt};
+  }
+  return {};
+}
+
+namespace {
+template <std::size_t N>
+std::optional<std::array<float, N>> alignmentVector(const Value* value) {
+  if (!value || !value->isArray() || !std::ranges::all_of(value->asArray(), [](const Value& item) {
+        return item.isNumber();
+      })) return {};
+  auto result = decodeVector<N>(*value);
+  if (!result || !std::ranges::all_of(*result, [](float item) { return std::isfinite(item); })) return {};
+  return result;
+}
+
+bool validFaceEvidence(const connection::AlignmentFace& f, const connection::Ray& ray) {
+  using V = std::array<double, 3>;
+  const auto sub = [](const auto& a, const auto& b) -> V {
+    return {static_cast<double>(a[0])-b[0],static_cast<double>(a[1])-b[1],static_cast<double>(a[2])-b[2]};
+  };
+  const auto dot = [](const auto& a, const auto& b) {
+    return static_cast<double>(a[0])*b[0]+static_cast<double>(a[1])*b[1]+static_cast<double>(a[2])*b[2];
+  };
+  const auto cross = [](const V& a, const V& b) -> V {
+    return {a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]};
+  };
+  const auto len = [&](const V& a) { return std::sqrt(dot(a,a)); };
+  const auto& m = f.worldMatrix;
+  const V x{m[0],m[1],m[2]}, y{m[4],m[5],m[6]}, z{m[8],m[9],m[10]};
+  if (m[3] != 0 || m[7] != 0 || m[11] != 0 || m[15] != 1 ||
+      !(dot(cross(x,y), z) > 0.9999*len(x)*len(y)*len(z)) ||
+      std::abs(dot(x,y)) > 1e-4*len(x)*len(y) || std::abs(dot(y,z)) > 1e-4*len(y)*len(z) ||
+      std::abs(dot(z,x)) > 1e-4*len(z)*len(x) ||
+      std::abs(dot(f.normal,f.normal)-1) > 1e-4 || dot(f.normal,ray.direction) >= -1e-6) return false;
+  V point{};
+  for (std::size_t i = 0; i < 3; ++i)
+    point[i] = ray.origin[i] + static_cast<double>(ray.direction[i]) * f.distance;
+  std::array<V,4> edges{};
+  double longest = 0;
+  for (std::size_t i = 0; i < 4; ++i) {
+    edges[i] = sub(f.corners[(i+1)%4],f.corners[i]);
+    longest = std::max(longest,len(edges[i]));
+  }
+  const double epsilon = std::max(1e-5,1e-5*longest);
+  if (!std::isfinite(longest) || !(std::abs(dot(sub(point,f.corners[0]),f.normal)) <= epsilon)) return false;
+  for (std::size_t i = 0; i < 4; ++i) {
+    const auto& a = edges[i];
+    const auto& b = edges[(i+1)%4];
+    const auto& c = edges[(i+2)%4];
+    if (len(a) < std::max(1e-3,100*epsilon) ||
+        std::abs(dot(a,b)) > 0.0017453283658983088*len(a)*len(b) ||
+        dot(cross(a,b),f.normal) < 0.99999*len(a)*len(b) ||
+        std::abs(dot(sub(f.corners[i],f.corners[0]),f.normal)) > epsilon ||
+        len({a[0]+c[0],a[1]+c[1],a[2]+c[2]}) > epsilon ||
+        !(dot(cross(a,sub(point,f.corners[i])),f.normal) > epsilon*len(a))) return false;
+  }
+  return true;
+}
+}
+
+std::optional<connection::AlignmentFaces> decodeAlignmentFaces(const Value& value,
+    std::span<const connection::Ray> rays) {
+  const auto* n = value.find("sceneGeneration");
+  const auto generation = n ? decodeUInt64(*n) : std::nullopt;
+  const auto* faces = value.find("faces");
+  if (!value.isObject() || value.asObject().size() != 2 || !generation || rays.empty() ||
+      rays.size() > connection::kAlignmentRayLimit || !faces || !faces->isArray() ||
+      faces->asArray().size() != rays.size()) return {};
+  connection::AlignmentFaces out{*generation,{}};
+  for (const auto& item : faces->asArray()) {
+    const auto* entity = item.find("entity");
+    const auto* mesh = item.find("mesh");
+    const auto* triangles = item.find("triangles");
+    const auto* corners = item.find("corners");
+    const auto e = entity ? decodeEntity(*entity) : std::nullopt;
+    const auto a = mesh ? decodeAsset(*mesh) : std::nullopt;
+    const auto* distanceValue = item.find("distance");
+    const auto distance = distanceValue && distanceValue->isNumber() ? decodeFloat(*distanceValue) : std::nullopt;
+    const auto normal = alignmentVector<3>(item.find("normal"));
+    const auto matrix = alignmentVector<16>(item.find("worldMatrix"));
+    if (!item.isObject() || item.asObject().size() != 7 || !e || !a || *e == EntityGuid{} || *a == AssetGuid{} ||
+        entity->asString() != encodeEntity(*e).asString() || mesh->asString() != encodeAsset(*a).asString() ||
+        !distance || !std::isfinite(*distance) || !(*distance > 0) || !normal || !matrix || !triangles || !triangles->isArray() || triangles->asArray().size() != 2 ||
+        !corners || !corners->isArray() || corners->asArray().size() != 4) return {};
+    auto first = decodeUInt64(triangles->asArray()[0]);
+    auto second = decodeUInt64(triangles->asArray()[1]);
+    if (!first || !second || *first >= *second || *second >= connection::kAlignmentTriangleLimit) return {};
+    connection::AlignmentFace face{*e,*a,{static_cast<std::uint32_t>(*first),static_cast<std::uint32_t>(*second)},
+        *distance,{},*normal,*matrix};
+    for (std::size_t i = 0; i < 4; ++i) {
+      auto corner = alignmentVector<3>(&corners->asArray()[i]);
+      if (!corner) return {};
+      face.corners[i] = *corner;
+    }
+    if (!validFaceEvidence(face, rays[out.faces.size()])) return {};
+    out.faces.push_back(std::move(face));
+  }
+  return out;
+}
+
+
 Value encode(const connection::Ray& ray) {
   Value out = Value::object();
   out.set("origin", encodeFloats(ray.origin));

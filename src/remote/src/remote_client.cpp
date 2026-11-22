@@ -399,6 +399,37 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     params.set("camera", camera.has_value() ? codec::encode(*camera) : Value());
     (void)state_->call("control.setViewportCamera", std::move(params));
   }
+  atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
+      std::span<const atlantis::connection::Ray> rays) override {
+    using R = atlantis::connection::AlignmentFacesResult;
+    using E = atlantis::connection::AlignmentFaceError;
+    if (rays.empty() || rays.size() > atlantis::connection::kAlignmentRayLimit ||
+        !std::ranges::all_of(rays, atlantis::connection::validAlignmentRay)) return R::Err({E::InvalidRequest});
+    auto params = Value::object();
+    auto items = Value::array();
+    for (const auto& ray : rays) items.push(codec::encode(ray));
+    params.set("rays", std::move(items));
+    const auto envelope = state_->awaitResponse(state_->send("control.pickAlignmentFaces", std::move(params)));
+    if (!envelope)
+      return R::Err({state_->failure == RemoteError::ProtocolError ? E::ProtocolFailure : E::TransportFailure});
+    const auto* result = envelope->find("result");
+    const auto* error = envelope->find("error");
+    if (error && !result && error->isObject() && error->asObject().size() == 2) {
+      const auto* code = error->find("code");
+      const auto* message = error->find("message");
+      if (code && code->isString() && message && message->isString())
+        return R::Err({code->asString() == "BadRequest" && message->asString() == "unknown method control.pickAlignmentFaces"
+            ? E::Unsupported : E::RpcFailure});
+    }
+    if (result && !error && result->isObject() && result->asObject().size() == 1) {
+      if (const auto* ok = result->find("ok"))
+        if (auto decoded = codec::decodeAlignmentFaces(*ok, rays)) return R::Ok(std::move(*decoded));
+      if (const auto* err = result->find("err"))
+        if (const auto refusal = codec::decodeAlignmentFaceFailure(*err, rays.size())) return R::Err(*refusal);
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err({E::ProtocolFailure});
+  }
   atlantis::connection::ViewportNavigationResult viewportNavigation(
       std::span<const atlantis::asset_system::EntityGuid> targets) override {
     using ResultT = atlantis::connection::ViewportNavigationResult;

@@ -6,6 +6,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -164,6 +165,47 @@ struct Ray {
   std::array<float, 3> direction{0.0f, 0.0f, -1.0f};
   friend bool operator==(const Ray&, const Ray&) = default;
 };
+inline constexpr std::uint32_t kAlignmentTriangleLimit = 65536;
+inline constexpr std::size_t kAlignmentRayLimit = 2;
+
+struct AlignmentFace {
+  atlantis::asset_system::EntityGuid entity;
+  atlantis::asset_system::AssetGuid mesh;
+  std::array<std::uint32_t, 2> triangles{};
+  float distance = 0;
+  std::array<std::array<float, 3>, 4> corners{};
+  std::array<float, 3> normal{};
+  std::array<float, 16> worldMatrix{};
+  friend bool operator==(const AlignmentFace&, const AlignmentFace&) = default;
+};
+struct AlignmentFaces {
+  std::uint64_t sceneGeneration = 0;
+  std::vector<AlignmentFace> faces;
+  friend bool operator==(const AlignmentFaces&, const AlignmentFaces&) = default;
+};
+enum class AlignmentFaceError {
+  InvalidRequest, NoGeometry, Miss, UnsupportedFace, Ambiguous, TooLarge, Unsupported,
+  TransportFailure, RpcFailure, ProtocolFailure,
+};
+[[nodiscard]] constexpr std::string_view toString(AlignmentFaceError error) noexcept {
+  constexpr std::array<std::string_view, 10> names{
+      "InvalidRequest", "NoGeometry", "Miss", "UnsupportedFace", "Ambiguous", "TooLarge", "Unsupported",
+      "TransportFailure", "RpcFailure", "ProtocolFailure"};
+  return names[static_cast<std::size_t>(error)];
+}
+struct AlignmentFaceFailure {
+  AlignmentFaceError code;
+  std::optional<std::uint32_t> rayIndex = {};
+  friend bool operator==(const AlignmentFaceFailure&, const AlignmentFaceFailure&) = default;
+};
+using AlignmentFacesResult = atlantis::Result<AlignmentFaces, AlignmentFaceFailure>;
+[[nodiscard]] inline bool validAlignmentRay(const Ray& ray) {
+  if (!std::ranges::all_of(ray.origin, [](float value) { return std::isfinite(value); })) return false;
+  double length = 0;
+  for (const float value : ray.direction) length += static_cast<double>(value) * value;
+  return std::abs(length - 1.0) <= 1e-4;
+}
+
 struct RayHit {
   atlantis::asset_system::EntityGuid entity;
   float distance = 0.0f;
@@ -244,6 +286,10 @@ class RuntimeControl {
   // current WorldMatrix (both triangle faces, alpha masks ignored; ADR-0123
   // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.
   [[nodiscard]] virtual atlantis::Result<std::optional<RayHit>, ControlError> raycast(const Ray& ray) = 0;
+  // ADR-0184: one or two first-hit cap observations from a single live scene.
+  [[nodiscard]] virtual AlignmentFacesResult pickAlignmentFaces(std::span<const Ray>) {
+    return AlignmentFacesResult::Err({AlignmentFaceError::Unsupported});
+  }
   // ADR-0165: owned values from a single live scene sample, in target order.
   // Targets are borrowed for this call only. An empty span asks for the active
   // scene camera without an override or any geometry read.

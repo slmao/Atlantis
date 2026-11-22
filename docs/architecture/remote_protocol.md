@@ -143,6 +143,7 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
 | `control.diagnostics` | `after: <n>, max: <n>` | `{"entries":[…],"latest":<n>,"dropped":<n>}` |
 | `control.setViewportCamera` | `camera: <ViewportCamera>\|null` | `null` |
 | `control.viewportNavigation` | `targets: [<entity GUID>, …]` | `{"ok":{"sceneGeneration":<n>,"sceneCamera":<ViewportCamera>,"bounds":[…]}}\|{"err":{"code":<name>,"target"?:<entity GUID>}}` |
+| `control.pickAlignmentFaces` | `rays: [<Ray>, …]` (one or two unit rays) | `{"ok":{"sceneGeneration":<n>,"faces":[…]}}\|{"err":{"code":<name>,"rayIndex"?:<zero-based index>}}` |
 | `control.raycast` | `ray: <Ray>` | `{"ok":<RayHit>\|null}` or `{"err":"<ControlError>"}` |
 | `control.setViewportOverlay` | `overlay: <ViewportOverlay>\|null` | `{"ok":null}` or `{"err":"InvalidRequest"}` |
 
@@ -166,6 +167,7 @@ error     {"id":<id>,"error":{"code":"<name>","message":"<text>"}}
   cannot use (for example `nearZ` of zero) is ignored for that frame.
 - The camera is owned by the client that set it: when that client
   disconnects, the server clears it (ADR-0128, ruling J2).
+- `control.pickAlignmentFaces` samples all requested rays in one live frame-thread dispatch. Each face contains `entity`, `mesh`, ascending cooked `triangles`, `distance`, four winding-ordered world `corners`, outward `normal` and column-major `worldMatrix`. The first refusal discards all faces. `Miss`, `UnsupportedFace`, `Ambiguous` and `TooLarge` carry `rayIndex`. `InvalidRequest`, `NoGeometry` and `Unsupported` are unindexed. See [ADR-0184](../adr/0184-shared-alignment-face-query.md).
 - `control.raycast` answers the nearest Renderable the ray hits, in world
   units along a unit `direction`, or `null` for a miss. It answers
   `NoGeometry` when the Runtime keeps no pick geometry: `--listen` keeps it

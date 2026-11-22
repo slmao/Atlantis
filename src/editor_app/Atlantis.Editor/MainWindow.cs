@@ -590,6 +590,7 @@ public sealed partial class MainWindow : Window
         _pause.Click += (_, _) => _worker?.Pause();
         _step.Click += (_, _) => _worker?.StepFrame();
         Deactivated += (_, _) => CancelGroupGesture();
+        Deactivated += (_, _) => CancelAlignment();
         Deactivated += (_, _) => RetireViewportOleTarget(expireRelease: true);
         ScalingChanged += (_, _) => RetireViewportOleTarget(expireRelease: true);
         PositionChanged += (_, _) => RetireViewportOleTarget(expireRelease: true);
@@ -608,7 +609,7 @@ public sealed partial class MainWindow : Window
                 _ = AskToLeave(reopen: true);
                 return;
             }
-            if (e.Key == Key.Escape && CancelGroupGesture()) e.Handled = true;
+            if (e.Key == Key.Escape && (CancelAlignment() || CancelGroupGesture())) e.Handled = true;
         }, RoutingStrategies.Tunnel);
         KeyDown += (_, e) =>
         {
@@ -739,13 +740,14 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
-            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews);
+            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews, _alignSurfaces);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
         AddDocked(view, viewHeader, Avalonia.Controls.Dock.Top);
         AddDocked(view, new Grid { Height = 18, Children = { _viewportNavFeedback, _viewportPlacementFeedback } },
             Avalonia.Controls.Dock.Top);
+        AddDocked(view,BuildAlignmentControls(),Dock.Top);
         _bistroViewportArea.Children.Add(_viewport);
         view.Children.Add(_bistroViewportArea);
         AutomationProperties.SetName(_gizmoMode, "Transform mode");
@@ -1035,7 +1037,7 @@ public sealed partial class MainWindow : Window
         window.Wheel += OnWheel;
         window.Key += (key, down, _) =>
         {
-            if (key == 0x1b && down && CancelGroupGesture()) return;
+            if (key == 0x1b && down && (CancelAlignment() || CancelGroupGesture())) return;
             _inputLine = "forwarded key 0x" + key.ToString("x2", CultureInfo.InvariantCulture) + (down ? " down" : " up");
             UpdateStatus();
         };
@@ -1226,6 +1228,8 @@ public sealed partial class MainWindow : Window
             UpdateViewportNavigationActions();
             EndPreviewSession();
             _referenceSessionFailed = true;
+            CancelAlignment("Alignment connection closed. Inspect the document before retrying a sent confirmation.");
+            UpdateAlignmentControls();
             _taskIssues.Disconnect();
             ++_hierarchyScrollIntent;
             ShowGuideFeedback("Session unavailable.");
@@ -1388,6 +1392,7 @@ public sealed partial class MainWindow : Window
             _viewportGuides.IsEnabled = _reparentDocumentOpen;
             _prefabSyncSupported = info?.SupportsPrefabSync == true;
             _canAddMeshToDocument = info?.Provenance == Atlantis.Gameplay.Authoring.Provenance.HandAuthored;
+            UpdateAlignmentControls();
             UpdateAddMeshButton();
             UpdateHierarchyActions();
             UpdateSaveAsButton();
@@ -1404,6 +1409,7 @@ public sealed partial class MainWindow : Window
             _creatingObject = false;
             ++_meshRequest;
             _meshDocumentLifetime = lifetime;
+            CancelAlignment("Document reopened.");
             ++_pickRequest;
             ClearBatchInspector();
             if (_selection.Nodes.Count > 0) SetSelection(null, false);
@@ -1613,6 +1619,7 @@ public sealed partial class MainWindow : Window
         _viewDirection.IsEnabled = camera && _navigationSupported;
         _viewportGuides.IsEnabled = _worker is not null && _reparentDocumentOpen && !_referenceSessionFailed;
         UpdateBistroActions(camera);
+        UpdateAlignmentControls();
         string? tip = camera && !_navigationSupported ? "Focus and direction views require an updated Runtime." : null;
         ToolTip.SetTip(_focusSelection, tip ?? (_selection.Nodes.Count > ViewportNavigation.MaxTargets
             ? "Focus supports up to 64 selected nodes." : null));
@@ -1816,8 +1823,11 @@ public sealed partial class MainWindow : Window
     {
         if (_leaveInProgress || _recoveryDecision) return;
         if (_recorder is not null && MeasureDrag(e)) return;
-        if (GroupGizmoPointer(e)) return;
-        if (GizmoPointer(e)) return;
+        if (_alignmentId is null)
+        {
+            if (GroupGizmoPointer(e)) return;
+            if (GizmoPointer(e)) return;
+        }
         switch (e.Kind)
         {
             case ViewportPointer.LeftDown:
@@ -1886,6 +1896,11 @@ public sealed partial class MainWindow : Window
         if (window is null || _worker is null || window.Width <= 0 || window.Height <= 0) return;
         CameraMatrices? matrices = ViewportProjection(window);
         if (matrices is null) return;
+        if (_alignmentId is not null)
+        {
+            PickAlignmentFace(window,matrices,x,y);
+            return;
+        }
         ulong request = ++_pickRequest;
         // E1's order: a light or camera marker under the pointer wins, else the geometry pick (the Runtime's raycast).
         var rect = new Atlantis.Editor.Model.PixelRect(0, 0, window.Width, window.Height);
@@ -1946,6 +1961,8 @@ public sealed partial class MainWindow : Window
 
     private void PublishSelection(bool scroll)
     {
+        if (_alignmentId is not null && _alignmentSelection != _selection.Generation) CancelAlignment("Selection changed.");
+        UpdateAlignmentControls();
         if (_advertisedAssetDrop?.Field is { } field && field.Selection != _selection.Generation)
             ClearAssetDropFeedback();
         if (_gizmoShown?.Group?.Selection != _selection.Generation) CancelGroupGesture();
@@ -2695,7 +2712,7 @@ public sealed partial class MainWindow : Window
     private void OnAssetPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         _assetPress = null;
-        if (_projectVisible || _assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
+        if (_alignmentId is not null || _projectVisible || _assetDragSourceRunning || _assetDropPending || _assetDrag is not null ||
             !e.GetCurrentPoint(_assetsList).Properties.IsLeftButtonPressed ||
             e.ClickCount != 1 || HierarchyItem(e.Source) is not { DataContext: AssetSummary row }) return;
         _assetPress = (row.Guid, e, e.GetPosition(_assetsList));
@@ -5072,6 +5089,7 @@ public sealed partial class MainWindow : Window
                     if (_batchDraft is { } previous && previous.Field.Field.Path != definition.Path)
                         DiscardBatchDraft(snapshot);
                     string text = box.Text ?? "";
+                    CancelAlignment("Finish the current draft before aligning.");
                     _batchDraft = (snapshot, field, text);
                     if (text != definition.Text) _assetDrag?.Cancel();
                     ShowDocumentState(_documentState);
@@ -5685,6 +5703,8 @@ public sealed partial class MainWindow : Window
         }
         _hierarchyFilter = filter;
         _worker?.SetHierarchyFilter(filter);
+        if (_alignmentId is not null && HasHiddenSelection())
+            CancelAlignment("The selected object is hidden. Clear the filter before aligning.");
         if ((_pickedUp ?? _hierarchyDrag?.Source) is { } source) _worker?.CancelReparent(source);
         _pickedUp = null;
         _hierarchyPress = null;
@@ -5896,7 +5916,11 @@ public sealed partial class MainWindow : Window
                 (!box.IsFocused && _sceneInput?.Box != box)) return;
             string text = box.Text ?? "";
             _sceneInput = text == baseline() ? null : CaptureInput(box, key, component, field, text);
-            if (_sceneInput is not null) _assetDrag?.Cancel();
+            if (_sceneInput is not null)
+            {
+                CancelAlignment("Finish the current draft before aligning.");
+                _assetDrag?.Cancel();
+            }
             ShowDocumentState(_documentState);
         };
     }

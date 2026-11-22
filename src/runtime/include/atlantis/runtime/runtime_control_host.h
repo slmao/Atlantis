@@ -80,6 +80,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
     std::function<void(const std::optional<atlantis::connection::ViewportOverlay>&)> setViewportOverlay;
     std::function<atlantis::connection::ViewportNavigationResult(
         std::span<const atlantis::asset_system::EntityGuid>)> viewportNavigation{};
+    std::function<atlantis::connection::AlignmentFacesResult(
+        std::span<const atlantis::connection::Ray>)> pickAlignmentFaces{};
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 
@@ -109,6 +111,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
                 done) override;
   atlantis::connection::DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) override;
   void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
+  [[nodiscard]] atlantis::connection::AlignmentFacesResult pickAlignmentFaces(
+      std::span<const atlantis::connection::Ray> rays) override;
   [[nodiscard]] atlantis::connection::ViewportNavigationResult viewportNavigation(
       std::span<const atlantis::asset_system::EntityGuid> targets) override;
   [[nodiscard]] atlantis::Result<std::optional<atlantis::connection::RayHit>, atlantis::connection::ControlError> raycast(

@@ -98,6 +98,26 @@ public sealed record Ray(Vector3 Origin, Vector3 Direction);
 /// <summary>The nearest Renderable a ray hits, and how far along the ray.</summary>
 public sealed record RayHit(EntityGuid Entity, float Distance);
 
+public sealed record AlignmentFace(EntityGuid Entity, AssetGuid Mesh, uint FirstTriangle, uint SecondTriangle,
+    float Distance, IReadOnlyList<Vector3> Corners, Vector3 Normal, IReadOnlyList<float> WorldMatrix)
+{
+    public bool SameEvidence(AlignmentFace other)
+    {
+        if (Entity != other.Entity || Mesh != other.Mesh || FirstTriangle != other.FirstTriangle ||
+            SecondTriangle != other.SecondTriangle || Distance != other.Distance || Normal != other.Normal ||
+            Corners.Count != other.Corners.Count || WorldMatrix.Count != other.WorldMatrix.Count) return false;
+        for (int i = 0; i < Corners.Count; ++i)
+            if (Corners[i] != other.Corners[i]) return false;
+        for (int i = 0; i < WorldMatrix.Count; ++i)
+            if (WorldMatrix[i] != other.WorldMatrix[i]) return false;
+        return true;
+    }
+}
+public sealed record AlignmentFaces(ulong SceneGeneration, IReadOnlyList<AlignmentFace> Faces);
+public enum AlignmentFaceError { InvalidRequest, NoGeometry, Miss, UnsupportedFace, Ambiguous, TooLarge, Unsupported, RpcFailure }
+public sealed record AlignmentFaceFailure(AlignmentFaceError Code, int? RayIndex = null, string? Detail = null);
+public sealed record AlignmentFacesResult(AlignmentFaces? Value, AlignmentFaceFailure? Error);
+
 /// <summary>A ray-cast's outcome: a hit or a miss (<c>Hit</c> null), or why there is no answer.</summary>
 public sealed record RaycastResult(RayHit? Hit, ControlError? Error)
 {

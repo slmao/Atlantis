@@ -2,6 +2,7 @@
 
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/asset_system/asset_id.h>
+#include <atlantis/connection/runtime_control.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/scene_load.h>
 #include <atlantis/world/access/runtime_world_access.h>
@@ -39,6 +40,7 @@ struct PickInstance {
   atlantis::asset_system::EntityGuid entity;
   atlantis::asset_system::AssetId mesh = 0;
   std::array<float, 16> worldMatrix{};  // column-major
+  bool opaqueForAlignment = false;
 };
 
 // Every pickable entity, read through the World's operation boundary (so
@@ -54,6 +56,12 @@ struct PickInstance {
 [[nodiscard]] std::optional<PickHit> pickNearest(
     std::span<const PickInstance> instances,
     const std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry>& geometry, const PickRay& ray);
+
+using AlignmentFaceRead = atlantis::Result<atlantis::connection::AlignmentFace, atlantis::connection::AlignmentFaceError>;
+[[nodiscard]] AlignmentFaceRead pickAlignmentFace(
+    std::span<const PickInstance> instances,
+    const std::unordered_map<atlantis::asset_system::AssetId, PickMeshGeometry>& geometry,
+    const atlantis::connection::Ray& ray);
 
 // The entity's Renderable mesh, through the operation boundary; empty when it
 // is not addressable or has no Renderable.
