@@ -474,6 +474,14 @@ TEST_CASE("atlantis: viewport navigation rejects invalid selection and reports u
   CHECK(fixture.run(duplicate) == 2);
 }
 
+TEST_CASE("atlantis: material-binding checks the clipped unit ray and reports older hosts", "[cli][tree][runtime]") {
+  Cli fixture(true, true);
+  CHECK(fixture.run("runtime material-binding 1 4 3 --origin 0 1 5 --direction 0 0 -1") == 2);
+  CHECK(fixture.run("runtime material-binding 1 0 3 --origin 0 1 5 --direction 0 0 -2") == 2);
+  CHECK(fixture.run("runtime material-binding 1 0 3 --origin 0 1 5 --direction 0 0 -1 --viewport 0") != 0);
+  CHECK(fixture.err.str().find("\"code\":\"Unsupported\"") != std::string::npos);
+}
+
 // Plan 0066 P2 (Spec 0066 R2, R5, R6; ADR-0132 D2): the Viewport overlay commands and a capture's --with-overlay,
 // against the fake Runtime (which refuses an overlay as the Runtime does).
 TEST_CASE("atlantis: runtime overlay set, select and clear, and runtime step --with-overlay",

@@ -2253,7 +2253,7 @@ public sealed class EditorWorker : IDisposable
 
             const int nodeLimit = 8192;
             var uses = new List<string>();
-            bool complete = _tree.Count <= nodeLimit;
+            bool complete = _tree.OrderSynchronized && _tree.Order.Count == _tree.Count && _tree.Count <= nodeLimit;
             var candidates = _tree.Order.Take(nodeLimit).Where(node => node != hit.Entity &&
                 _tree.ComponentsOf(node).Contains(field.Component));
             foreach (var chunk in candidates.Chunk(64))

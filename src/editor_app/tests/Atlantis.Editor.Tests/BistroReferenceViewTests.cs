@@ -28,6 +28,15 @@ public static partial class Program
 {
     private static void BistroReferenceChecks()
     {
+        var materialReview = new MaterialBindingReview(new AssetGuid(Guid.NewGuid()), new EntityGuid(Guid.NewGuid()),
+            new AssetGuid(Guid.NewGuid()), new AssetGuid(Guid.NewGuid()), new AssetGuid(Guid.NewGuid()));
+        string note = materialReview.ToString();
+        Check(MaterialBindingReview.Parse(note) == materialReview, "material binding review round-trips exact identities");
+        Check(MaterialBindingReview.Parse(note.Replace(MaterialBindingPick.Slot, "Renderable.meshAsset")) is null &&
+            MaterialBindingReview.Parse((materialReview with { Copy = materialReview.Original }).ToString()) is null &&
+            MaterialBindingReview.Parse(note + new string(' ', 512)) is null,
+            "material binding review rejects a different slot, identical destination or oversized handoff");
+
         foreach (var preset in new[] { BistroReferenceView.Street, BistroReferenceView.Terrace })
         {
             var pose = preset.Pose();

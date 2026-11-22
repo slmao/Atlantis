@@ -2037,6 +2037,7 @@ public sealed partial class MainWindow : Window
             { _editLine.Text = "The review note does not match the current binding. Locate the original surface again."; return; }
             var field = _inspectorShown?.Fields.FirstOrDefault(item => item.Path == MaterialBindingPick.Slot);
             if (field is null) return;
+            note.Clear();
             BeginAssetReference(field, replace, binding.Hit.Entity, binding, review.Copy);
         };
         return EditorVisuals.Group(EditorVisuals.Heading("Located material"), EditorVisuals.Stack(5,
