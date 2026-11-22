@@ -4660,7 +4660,10 @@ public sealed partial class MainWindow : Window
         if (_staticGroupReviewIntent is { } intent &&
             (_worker is null || _referenceSessionFailed || selected?.Guid != intent.Scene ||
              !ReferenceEquals(_staticGroupReviewCatalog, _assetBrowser.Items)))
+        {
             intent.Cancel();
+            _staticGroupReviewWindow?.InvalidateReview();
+        }
         _reviewStaticGroupButton.IsVisible = selected is not null;
         _reviewStaticGroupButton.IsEnabled = selected is not null && available && !_rebuildRunning && !_renameUnknown &&
             _staticGroupReviewWindow is null;
@@ -4687,11 +4690,11 @@ public sealed partial class MainWindow : Window
         _ = dialog.ShowDialog(this);
     }
 
-    private void ConfirmStaticGroupReview(EditorWorker worker, StaticGroupReview review, StaticGroupIntent intent, AssetSummary asset)
+    private bool ConfirmStaticGroupReview(EditorWorker worker, StaticGroupReview review, StaticGroupIntent intent, AssetSummary asset)
     {
         if (!ReferenceEquals(worker, _worker) || !intent.Current || review.Scene != asset.Guid ||
             _rebuildPending || _rebuildRunning || _renameUnknown ||
-            (_activeAssetGeneration is { } active && active != review.Generation)) return;
+            (_activeAssetGeneration is { } active && active != review.Generation)) return false;
         _rebuildPending = true;
         _rebuildJob = null;
         _renameRequestContext = $"review {review.Id} for {asset.Guid}";
@@ -4715,6 +4718,7 @@ public sealed partial class MainWindow : Window
             }
             UpdateRebuildButtons();
         });
+        return true;
     }
 
     private void UpdateRebuildButtons()

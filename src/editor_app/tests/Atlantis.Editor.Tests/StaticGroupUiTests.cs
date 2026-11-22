@@ -218,6 +218,141 @@ public static partial class Program
 
         var scene = roster.Items.Single(a => a.Source == storefront && a.Type == AssetType.Scene);
         var group = peer.Assets.StaticGroup(scene.Guid).Value!;
+        if (phase == "reimport")
+        {
+            var reviewSearch = Field<TextBox>("_assetSearch");
+            var list = Field<ListBox>("_assetsList");
+            var reviewButton = Field<Button>("_reviewStaticGroupButton");
+            reviewSearch.Text = scene.Guid.ToString();
+            await NameUiWait(() => list.Items.OfType<AssetSummary>().Any(a => a.Guid == scene.Guid), "storefront visible");
+            list.SelectedItem = list.Items.OfType<AssetSummary>().Single(a => a.Guid == scene.Guid);
+            await NameUiWait(() => reviewButton.IsEnabled, "review button ready");
+            var inbox = Path.Combine(Setting("PROJECT"), "inbox/storefront.gltf");
+            var registration = Path.Combine(Setting("PROJECT"), "registered/managed_storefront/source.gltf");
+            byte[] original = File.ReadAllBytes(registration);
+            var beforeReview = peer.Authoring.DocumentState().Value!;
+            foreach (var (name, state) in new[] { ("missing", "Blocked"), ("ambiguous", "Blocked"), ("updated", "Ready") })
+            {
+                File.Copy(Path.Combine(evidence, name + ".gltf"), inbox, true);
+                Click(reviewButton);
+                await NameUiWait(() => Field<StaticGroupReimportWindow>("_staticGroupReviewWindow") is { IsVisible: true }, "review window opens");
+                var dialog = Field<StaticGroupReimportWindow>("_staticGroupReviewWindow");
+                var confirm = dialog.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Confirm reimport"));
+                var status = (TextBlock)typeof(StaticGroupReimportWindow).GetField("_status", hidden)!.GetValue(dialog)!;
+                await NameUiWait(() => state == "Ready" ? confirm.IsEnabled :
+                    status.Text?.StartsWith(state + ".", StringComparison.Ordinal) == true, "review settles for " + name);
+                Verify("review confirmation state for " + name, confirm.IsEnabled == (state == "Ready"), status.Text ?? "");
+                Verify("native review dialog DPI", GetDpiForWindow(dialog.TryGetPlatformHandle()!.Handle) == 96);
+                await NativeCapture(dialog, Path.Combine(evidence, "review-" + name + ".png"));
+                Click(dialog.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Cancel")));
+                await NameUiWait(() => Field<StaticGroupReimportWindow>("_staticGroupReviewWindow") is null, "review closes on Cancel");
+            }
+            Verify("reviews preserve selection, registration and document state",
+                roster.Selected == scene.Guid && original.AsSpan().SequenceEqual(File.ReadAllBytes(registration)) &&
+                beforeReview == peer.Authoring.DocumentState().Value);
+            await Capture("review-closed");
+            return;
+        }
+        if (phase is "reimport-place" or "reimport-reopen" or "reimport-cold")
+        {
+            await CheckPlacedReimport();
+            return;
+        }
+        async Task CheckPlacedReimport()
+        {
+            var edit = new RemoteAuthoringDocument(peer.Authoring, peer);
+            var before = edit.ListNodes().Select(n => n.Node).ToHashSet();
+            EntityGuid[] placed;
+            string prefix = phase;
+            var evidenceFile = Path.Combine(evidence, "reimport-placement.json");
+            if (phase == "reimport-place")
+            {
+                string source = Path.GetFullPath(Setting("DISPOSABLE_SCENE"));
+                Verify("named Runtime uses the designated disposable scene",
+                    Path.GetFullPath(edit.Info()!.SourcePath).Equals(source, StringComparison.OrdinalIgnoreCase), source);
+                var assetsList = Field<ListBox>("_assetsList");
+                Field<TextBox>("_assetSearch").Text = scene.Guid.ToString();
+                await NameUiWait(() => assetsList.Items.OfType<AssetSummary>().Any(a => a.Guid == scene.Guid), "storefront visible");
+                assetsList.SelectedItem = assetsList.Items.OfType<AssetSummary>().Single(a => a.Guid == scene.Guid);
+                var addGroup = Field<Button>("_addGroup");
+                await NameUiWait(() => addGroup.IsVisible && addGroup.IsEnabled, "group Add enabled");
+                Click(addGroup);
+                await NameUiWait(() => edit.ListNodes().Count == before.Count + group.Nodes.Count + 1 &&
+                    edit.ApplyStatus().Value?.Request?.State == ApplyState.Applied, "group committed and applied");
+                placed = edit.ListNodes().Where(n => !before.Contains(n.Node)).Select(n => n.Node).ToArray();
+                var awningMesh = group.Nodes.Last(n => n.Renderable is not null).Renderable!.Mesh;
+                var awning = placed.Single(id => Binding(id, "meshAsset") == awningMesh);
+                var originalMaterial = Binding(awning, "materialAsset");
+                var replacement = group.Nodes.Select(n => n.Renderable?.Material).OfType<AssetGuid>()
+                    .First(material => material != originalMaterial);
+                var position = SceneSchema.AddressOf(edit.Schema, placed[0], "Transform", "localPosition")!.Value;
+                var material = SceneSchema.AddressOf(edit.Schema, awning, "Renderable", "materialAsset")!.Value;
+                ulong oldRevision = edit.ApplyStatus().Value!.CurrentDocumentRevision!.Value;
+                edit.SubmitTransaction([new Atlantis.Gameplay.Authoring.SetProperty(position,
+                    PropertyValue.FromVec3(new Vector3(-12, 0.25f, 12.1f))),
+                    new Atlantis.Gameplay.Authoring.SetProperty(material, PropertyValue.FromAsset(replacement))]);
+                await NameUiWait(() => edit.ApplyStatus().Value?.CurrentDocumentRevision > oldRevision, "placement and override settle");
+                Verify("placement and awning override commit as requested",
+                    TransformMath.LocalOf(edit, placed[0]).Position == new Vector3(-12, 0.25f, 12.1f) &&
+                    Binding(awning, "materialAsset") == replacement);
+                Verify("explicit Apply admits the placed projection", peer.Authoring.ApplyTracked().IsOk);
+                await NameUiWait(() => edit.ApplyStatus().Value?.Request?.State == ApplyState.Applied, "override projected");
+                var worker = Field<EditorWorker>("_worker");
+                var reviewed = await worker.ReviewDocument();
+                var saved = await worker.SaveOrReopen(reviewed.State!, saving: true);
+                Verify("original hand-authored source is saved", saved.State is { Dirty: false });
+                var copy = peer.Authoring.SaveAs("storefront_0139");
+                Verify("existing Save As produces the independent 0090 source", copy.IsOk, copy.IsOk ? copy.Value.Source : copy.Error.ToString());
+                File.WriteAllText(Path.Combine(evidence, "reimport-placed-source.txt"), copy.Value.Source);
+                File.WriteAllText(Path.Combine(evidence, "reimport-placed-ids.txt"), string.Join("\n", placed.Select(id => id.ToString())));
+                File.WriteAllText(evidenceFile, Fingerprint(placed));
+            }
+            else
+            {
+                placed = File.ReadAllLines(Path.Combine(evidence, "reimport-placed-ids.txt")).Select(EntityGuid.Parse).ToArray();
+                Verify("source has the same node GUIDs, hierarchy, placement and material overrides",
+                    Fingerprint(placed) == File.ReadAllText(evidenceFile), edit.Info()!.SourcePath);
+                if (phase == "reimport-reopen")
+                {
+                    Verify("upgraded named generation exposes the new sign without writing to the placed group",
+                        runtime.Launch.AssetGeneration is not null && group.Nodes.Count > placed.Length - 1 &&
+                        !placed.Any(id => Binding(id, "meshAsset") == group.Nodes.Last().Renderable?.Mesh));
+                    Verify("applying the reopened document is explicit", peer.Authoring.ApplyTracked().IsOk);
+                    await NameUiWait(() => edit.ApplyStatus().Value?.Request?.State == ApplyState.Applied, "active generation displays saved placement");
+                }
+            }
+            var view = BistroReferenceView.Terrace;
+            var pose = view.Pose();
+            window.Width = 1650;
+            window.Height = 910;
+            Field<ViewportHost>("_viewport").SetPhysicalSize((BistroReferenceView.Width, BistroReferenceView.Height), window.RenderScaling);
+            await NameUiWait(() => viewport.Width == BistroReferenceView.Width && viewport.Height == BistroReferenceView.Height,
+                "physical reference viewport size");
+            peer.Control.SetViewportCamera(new ViewportCamera(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ));
+            try
+            {
+                var report = peer.Control.Step(new StepRequest(2, Path.Combine(evidence, prefix + "-fixed.png"))).Report;
+                Verify("960 by 540 capture from the fixed Bistro terrace pose", report?.Image is { Width: 960, Height: 540 } &&
+                    view.Matches(report.Data.View, report.Data.Projection));
+                File.WriteAllText(Path.Combine(evidence, prefix + "-frame.json"), System.Text.Json.JsonSerializer.Serialize(report));
+                await Capture(prefix + "-window");
+            }
+            finally { peer.Control.SetViewportCamera(null); }
+
+            string Fingerprint(EntityGuid[] subject)
+            {
+                var tree = new DocumentTree();
+                tree.Rebuild(edit);
+                return string.Join("\n", subject.Select(id => FormattableString.Invariant(
+                    $"{id} {tree.ParentOf(id)} {TransformMath.LocalOf(edit, id)} ") +
+                    string.Join(",", TransformMath.WorldOf(edit, tree, id).Select(x => x.ToString("R", CultureInfo.InvariantCulture))) +
+                    $" {Binding(id, "meshAsset")} {Binding(id, "materialAsset")}"));
+            }
+
+            AssetGuid? Binding(EntityGuid id, string key) =>
+                SceneSchema.AddressOf(edit.Schema, id, "Renderable", key) is SceneAddress address &&
+                edit.GetProperty(address) is { IsAbsent: false } value ? value.AsAsset() : null;
+        }
         Verify("shared cooked projection retains four authored nodes and three material bindings", group.Nodes.Count == 4 &&
             group.Nodes[0].Parent is null && group.Nodes[1].Parent == 0 && group.Nodes[2].Parent == 1 &&
             group.Nodes.Count(n => n.Renderable is not null) == 3 &&

@@ -23,7 +23,7 @@ internal sealed class StaticGroupReimportWindow : Window
 
     public StaticGroupReimportWindow(string name, StaticGroupIntent intent,
         Action<StaticGroupReviewMode, AssetGuid, Action<Outcome<StaticGroupReview, RebuildError>?, string?>> read,
-        Action<StaticGroupReview> confirm)
+        Func<StaticGroupReview, bool> confirm)
     {
         _intent = intent;
         _read = read;
@@ -39,8 +39,12 @@ internal sealed class StaticGroupReimportWindow : Window
         _confirm.Click += (_, _) =>
         {
             if (!_intent.Current || _review is not { State: StaticGroupReviewState.Ready } ready) return;
+            if (!confirm(ready))
+            {
+                InvalidateReview();
+                return;
+            }
             _confirmed = true;
-            confirm(ready);
             Close();
         };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
@@ -68,6 +72,14 @@ internal sealed class StaticGroupReimportWindow : Window
             if (_review is { State: StaticGroupReviewState.Pending } pending)
                 Request(StaticGroupReviewMode.Read, pending.Id);
         };
+    }
+
+    public void InvalidateReview()
+    {
+        _intent.Cancel();
+        _confirm.IsEnabled = false;
+        _poll.Stop();
+        _status.Text = "The selected asset, active generation or workspace state changed. Close and start a fresh review.";
     }
 
     private void Request(StaticGroupReviewMode mode, AssetGuid target)
