@@ -823,17 +823,23 @@ public static partial class Program
         Field<TextBox>("_savedManaged").Text = Environment.GetEnvironmentVariable("ATLANTIS_0138_MANAGED");
         var build = Field<Button>("_savedBuild");
         var open = Field<Button>("_savedOpen");
-        await NameUiWait(() => build.IsEnabled, "explicit saved scene build is enabled");
-        build.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         var attempts = Field<SavedSceneAttempts>("_savedAttempts");
-        await NameUiWait(() => !attempts.Busy, "Saved Scenes build settles", 720);
+        bool reuseBuild = Environment.GetEnvironmentVariable("ATLANTIS_0138_USE_BUILD_RECEIPT") == "1";
+        if (reuseBuild)
+            await NameUiWait(() => open.IsEnabled, "verified receipt enables Open on the saved build", 180);
+        else
+        {
+            await NameUiWait(() => build.IsEnabled, "explicit saved scene build is enabled");
+            build.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => !attempts.Busy, "Saved Scenes build settles", 720);
+        }
         if (attempts.Result is not { } artifact || !open.IsEnabled)
             throw new InvalidOperationException(Field<TextBox>("_savedBuildResult").Text);
         File.Copy(Path.Combine(artifact.Directory, "build.log"), Path.Combine(evidence, "saved-build.log"), true);
         await NativeCapture(window, Path.Combine(evidence, "saved-build-ready.png"));
         var prior = Process.GetProcessesByName("Atlantis.Editor").Select(process => { using (process) return process.Id; }).ToArray();
         open.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await NameUiWait(() => attempts.HasChild(name), "Saved Scenes opens an independent Editor", 75);
+        await NameUiWait(() => !attempts.Starting && attempts.HasChild(name), "Saved Scenes opens an independent Editor", 75);
         using var child = Process.GetProcessesByName("Atlantis.Editor").Single(process => !prior.Contains(process.Id));
         try
         {
