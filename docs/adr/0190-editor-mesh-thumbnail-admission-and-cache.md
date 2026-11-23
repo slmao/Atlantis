@@ -1,9 +1,9 @@
 # ADR 0190 — Editor Mesh Thumbnail Admission and Cache
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-23
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending
+- **Acceptance:** Maintainer, 2026-11-23, [joint approval of `fc5c7974`](https://github.com/slmao/Atlantis/pull/447#issuecomment-7105301892)
 - **Related Spec:** [Spec 0142](../specs/0142-assets-mesh-thumbnails.md)
 
 ## Context

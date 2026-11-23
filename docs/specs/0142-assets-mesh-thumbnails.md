@@ -1,11 +1,11 @@
 # Spec 0142 — Static Mesh Thumbnails in Assets
 
-- **Status:** In Review
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-23
 - **Related Plan:** [Plan 0142](../plans/0142-assets-mesh-thumbnails.md)
-- **Approval:** Pending joint human review
-- **Related ADR:** [ADR-0190](../adr/0190-editor-mesh-thumbnail-admission-and-cache.md) (Proposed)
+- **Approval:** Maintainer, 2026-11-23, [joint approval of `fc5c7974`](https://github.com/slmao/Atlantis/pull/447#issuecomment-7105301892)
+- **Related ADR:** [ADR-0190](../adr/0190-editor-mesh-thumbnail-admission-and-cache.md) (Accepted)
 - **Design baseline:** `0372c4a3`, maintainer merge of [PR #446](https://github.com/slmao/Atlantis/pull/446)
 
 ## Summary and motivation
