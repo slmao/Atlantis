@@ -167,9 +167,18 @@ public static partial class Program
                         "failed invalidation leaves the complete previous receipt and refuses Build admission");
                 }
                 string next = store.ReserveAttempt();
-                store.Write(next, null);
-                Check(reopenedStore.Read() is null && !reopenedStore.IsCurrentAttempt(recordedDirectory) &&
-                    reopenedStore.IsCurrentAttempt(next), "a new admission supersedes even an in-memory fresh build from another launcher");
+                byte[] previousBytes = File.ReadAllBytes(slotFile);
+                using (var reading = new FileStream(slotFile, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete))
+                {
+                    store.Write(next, null);
+                    Check(reopenedStore.Read() is null && !reopenedStore.IsCurrentAttempt(recordedDirectory) &&
+                        reopenedStore.IsCurrentAttempt(next),
+                        "a new admission supersedes the previous build during a delete-sharing receipt read");
+                    using var previous = new MemoryStream();
+                    reading.CopyTo(previous);
+                    Check(previous.ToArray().SequenceEqual(previousBytes),
+                        "an already-open receipt reader finishes on the complete old bytes");
+                }
                 store.Write(recordedDirectory, record with { Version = 99 });
                 bool unsupported = false;
                 try { _ = reopenedStore.Read(); }
