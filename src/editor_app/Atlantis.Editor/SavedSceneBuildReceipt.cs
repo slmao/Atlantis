@@ -60,6 +60,7 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
         }
     }
 
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     internal void Write(string attempt, SavedSceneBuildReceipt? receipt)
     {
         string stage = Path.Combine(root, "receipt-" + Guid.NewGuid().ToString("N") + ".tmp");
@@ -72,8 +73,12 @@ internal sealed class SavedSceneReceiptStore(string root, string attempts, strin
                 stream.Write(bytes);
                 stream.Flush(flushToDisk: true);
             }
-            if (File.Exists(Slot)) SavedSceneWorkspace.Ordinary(Slot, directory: false);
-            File.Move(stage, Slot, overwrite: true);
+            if (File.Exists(Slot))
+            {
+                SavedSceneWorkspace.Ordinary(Slot, directory: false);
+                SavedSceneCleanupWindows.ReplaceReceipt(stage, Slot);
+            }
+            else File.Move(stage, Slot);
         }
         finally
         {

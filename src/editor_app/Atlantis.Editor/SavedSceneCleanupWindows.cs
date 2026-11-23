@@ -244,12 +244,29 @@ internal static class SavedSceneCleanupWindows
         if (Describe(handle, "", directory: true).Identity != identity)
             throw new IOException("The build directory identity changed before the rename.");
 
+        Rename(handle, destination, 3, 0, "Cannot rename the verified build directory");
+    }
+
+    internal static void ReplaceReceipt(string stage, string slot)
+    {
+        const int fileRenameInfoEx = 22, replaceIfExists = 1, posixSemantics = 2;
+        using var handle = Open(stage, directory: false, deleting: true);
+        _ = Describe(handle, "", directory: false);
+        // Readers that share deletion can finish reading their old file while
+        // the kernel atomically switches the name to the complete new receipt.
+        Rename(handle, slot, fileRenameInfoEx, replaceIfExists | posixSemantics,
+            "Cannot replace the Saved Scenes build receipt");
+    }
+
+    private static void Rename(SafeFileHandle handle, string destination, int informationClass, int flags, string failure)
+    {
         var name = Encoding.Unicode.GetBytes(destination);
         int lengthOffset = IntPtr.Size * 2, nameOffset = lengthOffset + sizeof(int);
         var rename = new byte[nameOffset + name.Length + sizeof(char)];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(rename, flags);
         System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(rename.AsSpan(lengthOffset), name.Length);
         name.CopyTo(rename, nameOffset);
-        if (!SetFileInformationByHandle(handle, 3, rename, rename.Length)) throw Win32("Cannot rename the verified build directory");
+        if (!SetFileInformationByHandle(handle, informationClass, rename, rename.Length)) throw Win32(failure);
     }
 
     internal static SafeFileHandle HoldVacantOriginal(string path)
