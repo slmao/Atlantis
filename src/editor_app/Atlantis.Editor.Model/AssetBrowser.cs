@@ -424,6 +424,8 @@ public sealed class AssetPreviewRequests
     private long _epoch;
     private AssetPreviewInputs? _inputs;
     private AssetPreviewIntent? _current, _next, _active;
+    private readonly AssetThumbnailDemand _thumbnails = new();
+    private bool _thumbnailLayoutPending;
 
     public bool SetInputs(AssetPreviewInputs? inputs, bool invalidate = false)
     {
@@ -479,11 +481,56 @@ public sealed class AssetPreviewRequests
     {
         lock (_gate)
         {
-            if (_active is not null) return null;
+            if (_active is not null || _thumbnails.Active is not null) return null;
             _active = _next;
             _next = null;
             return _active;
         }
+    }
+
+    public void SetThumbnailLayoutPending(bool pending)
+    {
+        lock (_gate) _thumbnailLayoutPending = pending;
+    }
+
+    public void InvalidateThumbnails(long now, bool catalog = false)
+    {
+        lock (_gate) _thumbnails.Invalidate(now, catalog);
+    }
+
+    public void SetThumbnailDemand(IReadOnlyList<AssetGuid> visible, IReadOnlyList<AssetGuid> missing, bool blocked, long now)
+    {
+        lock (_gate) _thumbnails.Update(visible, missing, blocked, now);
+    }
+
+    public long? ThumbnailDelay(long now)
+    {
+        lock (_gate) return _active is null && _next is null && !_thumbnailLayoutPending ? _thumbnails.Delay(now) : null;
+    }
+
+    public AssetThumbnailIntent? TakeThumbnail(long now)
+    {
+        lock (_gate) return _active is null && _next is null && !_thumbnailLayoutPending ? _thumbnails.Take(now) : null;
+    }
+
+    public bool CanSetUpThumbnail(AssetThumbnailIntent intent)
+    {
+        lock (_gate) return _next is null && !_thumbnailLayoutPending && _thumbnails.IsCurrent(intent);
+    }
+
+    public bool AdmitThumbnail(AssetThumbnailIntent intent, long now)
+    {
+        lock (_gate) return _next is null && !_thumbnailLayoutPending && _thumbnails.Admit(intent, now);
+    }
+
+    public bool IsThumbnailCurrent(AssetThumbnailIntent intent)
+    {
+        lock (_gate) return _thumbnails.IsCurrent(intent);
+    }
+
+    public bool SettleThumbnail(AssetThumbnailIntent intent)
+    {
+        lock (_gate) return _thumbnails.Settle(intent);
     }
 
     // This is the send admission point after setup. An invalidation that

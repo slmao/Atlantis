@@ -11,6 +11,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
 using Avalonia.Styling;
 using Avalonia.VisualTree;
 using Avalonia.Threading;
@@ -227,7 +228,7 @@ internal static class EditorVisuals
     internal static string? ManagedTextureName(AssetSummary asset, string suffix) =>
         AssetBrowseProjection.ManagedTextureName(asset, suffix);
 
-    internal static void ConfigureAssetList(ListBox list)
+    internal static void ConfigureAssetList(ListBox list, bool thumbnails = false)
     {
         // Selection and projection have different scroll policies (Spec 0114 R3).
         // Avalonia also scrolls when AutoScrollToSelectedItem is re-enabled, so
@@ -237,7 +238,7 @@ internal static class EditorVisuals
         list.ItemsPanel = new FuncTemplate<Panel?>(() => new VirtualizingStackPanel());
         list.ItemTemplate = new FuncDataTemplate<object>((value, _) => value switch
         {
-            AssetSummary asset => AssetRow(asset),
+            AssetSummary asset => AssetRow(asset, thumbnails),
             AssetGroupHeader group => Heading(group.Label + " (" + group.Count + ")"),
             _ => new TextBlock()
         });
@@ -265,14 +266,9 @@ internal static class EditorVisuals
                 list.SelectedItem = rows.OfType<AssetSummary>().FirstOrDefault(asset => asset.Guid == selected);
             return;
         }
-        var scroll = list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
-        var inView = list.GetVisualDescendants().OfType<ListBoxItem>()
-            .Where(item => item.DataContext is AssetSummary && scroll is not null)
-            .Select(item => (Asset: (AssetSummary)item.DataContext!, Y: item.TranslatePoint(default, scroll!)?.Y, item.Bounds.Height))
-            .Where(item => item.Y is double y && y + item.Height > 0 && y < scroll!.Viewport.Height)
-            .OrderBy(item => item.Y).ToArray();
-        AssetGuid? anchor = inView.FirstOrDefault(item => item.Asset.Guid == selected).Asset?.Guid ??
-            inView.FirstOrDefault().Asset?.Guid;
+        var inView = VisibleAssetRows(list).Select(row => row.Asset).ToArray();
+        AssetGuid? anchor = inView.FirstOrDefault(asset => asset.Guid == selected)?.Guid ??
+            inView.FirstOrDefault()?.Guid;
         if ((list.SelectedItem as AssetSummary)?.Guid != selected && selected is not null) anchor = selected;
         list.SelectionChanged -= RevealAssetSelection;
         try
@@ -290,19 +286,62 @@ internal static class EditorVisuals
         }, DispatcherPriority.Loaded);
     }
 
-    internal static Control AssetRow(AssetSummary asset)
+    internal static IEnumerable<(ListBoxItem Row, AssetSummary Asset)> VisibleAssetRows(ListBox list)
+    {
+        var scroll = list.GetVisualDescendants().OfType<ScrollViewer>().FirstOrDefault();
+        if (scroll is null || scroll.Viewport.Height <= 0 || scroll.Viewport.Width <= 0) yield break;
+        var rows = scroll.GetVisualDescendants().OfType<ListBoxItem>()
+            .Where(row => row.IsVisible && row.Bounds.Height > 0 && row.DataContext is AssetSummary)
+            .Select(row => (Row: row, Point: row.TranslatePoint(default, scroll)))
+            .Where(row => row.Point is Point p && p.Y + row.Row.Bounds.Height > 0 && p.Y < scroll.Viewport.Height &&
+                p.X + row.Row.Bounds.Width > 0 && p.X < scroll.Viewport.Width)
+            .OrderBy(row => row.Point!.Value.Y);
+        foreach (var row in rows) yield return (row.Row, (AssetSummary)row.Row.DataContext!);
+    }
+
+    internal sealed class AssetThumbnailSlot : Grid
+    {
+        internal AssetGuid Guid { get; }
+        private readonly Control _icon = LineIcon(Cube);
+        private readonly Image _image = new() { Stretch = Stretch.Uniform, IsVisible = false };
+
+        internal AssetThumbnailSlot(AssetGuid guid)
+        {
+            Guid = guid;
+            Width = Height = 40;
+            IsHitTestVisible = false;
+            _icon.HorizontalAlignment = HorizontalAlignment.Center;
+            _icon.VerticalAlignment = VerticalAlignment.Center;
+            Children.Add(_icon);
+            Children.Add(_image);
+        }
+
+        internal void Show(Bitmap? image, string? failure)
+        {
+            _image.Source = image;
+            _image.IsVisible = image is not null;
+            _icon.IsVisible = image is null;
+            AutomationProperties.SetHelpText(this, failure);
+            if (Parent is Control row) AutomationProperties.SetHelpText(row, failure);
+        }
+    }
+
+    internal static Control AssetRow(AssetSummary asset, bool thumbnails = false)
     {
         var label = Ellipsis(AssetName(asset));
         label.Margin = new Thickness(6, 0);
         string kindText = AssetBrowseProjection.AssetKind(asset);
         var kind = Secondary(kindText);
         kind.VerticalAlignment = VerticalAlignment.Center;
-        var row = Columns("Auto,*,Auto", LineIcon(asset.Type switch
-        {
-            AssetType.Mesh => Cube,
-            AssetType.Material => Material,
-            _ => File
-        }), label, kind);
+        Control icon = thumbnails && asset.Type == AssetType.Mesh
+            ? new AssetThumbnailSlot(asset.Guid)
+            : LineIcon(asset.Type switch
+            {
+                AssetType.Mesh => Cube,
+                AssetType.Material => Material,
+                _ => File
+            });
+        var row = Columns("Auto,*,Auto", icon, label, kind);
         ToolTip.SetTip(row, asset.Source + "\n" + asset.Guid);
         AutomationProperties.SetName(row, AssetName(asset) + ", " + kindText);
         return row;

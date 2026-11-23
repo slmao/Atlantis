@@ -983,6 +983,10 @@ existing device; it does not enter the scene frame path. Remote, CLI and both
 SDKs share the bounded PNG contract. MCP maps the typed C# result to one image
 block and small metadata. The product Editor uses an ordinary SDK connection
 on a worker and discards superseded results. See [ADR-0151](../adr/0151-shared-offscreen-mesh-preview.md).
+Spec 0142 adds visible Assets row thumbnails through the same Editor
+preview slot, with explicit preview priority and guarded automatic demand.
+The Editor owns a bounded, Runtime/catalog-scoped cache of scaled images.
+See [ADR-0190](../adr/0190-editor-mesh-thumbnail-admission-and-cache.md).
 
 Spec 0092 adds `previewMeshMaterial` through the same clients. AssetHost
 validates the pair and the material's single cooked base texture in the

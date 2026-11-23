@@ -43,6 +43,7 @@ public static partial class Program
         bool hierarchyFilterRace = false;
         bool staticGroupReceipt = false, batchRenameReceipts = false;
         string? bistroReferenceReport = null, sceneStatisticsReport = null, batchRenameReport = null;
+        string? meshThumbnailReport = null;
         string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null,
             staticGroupReport = null, bistroTuningReport = null, bistroLocatorReport = null, materialBindingReport = null;
         for (int i = 0; i < args.Length; ++i)
@@ -67,6 +68,7 @@ public static partial class Program
             else if (args[i] == "--batch-rename-receipts") batchRenameReceipts = true;
             else if (args[i] == "--batch-rename-ui" && i + 1 < args.Length) batchRenameReport = args[++i];
             else if (args[i] == "--scene-statistics-ui" && i + 1 < args.Length) sceneStatisticsReport = args[++i];
+            else if (args[i] == "--mesh-thumbnail-ui" && i + 1 < args.Length) meshThumbnailReport = args[++i];
             else if (args[i] == "--bistro-reference-ui" && i + 1 < args.Length) bistroReferenceReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
@@ -96,6 +98,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, batchRenameReport, batchRename: true);
         if (sceneStatisticsReport is not null)
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, sceneStatisticsReport, statistics: true);
+        if (meshThumbnailReport is not null)
+            return runtime is null ? Usage() : RunMeshThumbnailUi(runtime, scene, meshThumbnailReport);
         if (bistroReferenceReport is not null)
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, bistroReferenceReport);
         if (assetDropReceipt is not null)
@@ -150,6 +154,7 @@ public static partial class Program
             // Plan 0068 M3: the Inspector's model.
             InspectorChecks();
             AssetBrowserChecks();
+            MeshThumbnailChecks();
             AssetReferencePickerChecks();
             AssetDragDropChecks();
             SavedSceneChecks();

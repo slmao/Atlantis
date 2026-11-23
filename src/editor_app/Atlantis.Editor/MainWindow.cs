@@ -2735,7 +2735,8 @@ public sealed partial class MainWindow : Window
             search, EditorVisuals.Actions(types, _assetSort, _assetGroup, _assetClearFilters),
             _assetsState));
 
-        EditorVisuals.ConfigureAssetList(_assetsList);
+        EditorVisuals.ConfigureAssetList(_assetsList, thumbnails: true);
+        ObserveAssetThumbnails();
         AutomationProperties.SetName(_assetsList, "Asset results");
         _assetsList.AddHandler(PointerPressedEvent, OnAssetPointerPressed, RoutingStrategies.Tunnel);
         _assetsList.AddHandler(PointerMovedEvent, OnAssetPointerMoved, RoutingStrategies.Tunnel);
@@ -2914,6 +2915,7 @@ public sealed partial class MainWindow : Window
         // OLE pumps messages while dragging. The token can retire before the native source returns.
         if (_assetDragSourceRunning) return;
         _assetDragSourceRunning = true;
+        UpdateThumbnailView();
         try
         {
             SettleInspectorBlur();
@@ -2950,6 +2952,7 @@ public sealed partial class MainWindow : Window
             _assetDropFields.Clear();
             if (!_assetDropPending && ReferenceEquals(_assetDrag, drag)) _assetDrag = null;
             _assetDragSourceRunning = false;
+            UpdateThumbnailView();
         }
     }
 
@@ -3192,6 +3195,7 @@ public sealed partial class MainWindow : Window
     {
         var worker = _worker; if (worker is null || _referenceSessionFailed) return;
         ++_projectIntent;
+        ResetThumbnails();
         long request = _assetBrowser.BeginList(); RenderAssets();
         worker.LoadAssets(result =>
         {
@@ -3233,10 +3237,12 @@ public sealed partial class MainWindow : Window
         _assetsSync = true;
         try
         {
+            if (!ReferenceEquals(_assetsList.ItemsSource, _assetBrowser.Rows)) RetireThumbnailDemand();
             EditorVisuals.BindAssetList(_assetsList, _assetBrowser.Rows,
                 _assetBrowser.SelectionVisible ? _assetBrowser.Selected : null);
             if (_assetBrowser.State == "Ready" && !ReferenceEquals(_previewCatalog, _assetBrowser.Items))
             {
+                ResetThumbnails();
                 _previewCatalog = _assetBrowser.Items;
                 var previous = (_previewMaterial.SelectedItem as AssetSummary)?.Guid;
                 var materials = _previewCatalog.Where(a => a.Type == AssetType.Material).ToArray();
@@ -3747,11 +3753,13 @@ public sealed partial class MainWindow : Window
         }
         if (_previewRequests.SetInputs(inputs, invalidate)) ClearPreview();
         UpdatePreviewButton();
+        UpdateThumbnailView();
     }
 
     private void EndPreviewSession()
     {
         _previewSession = null;
+        ResetThumbnails();
         _previewMaterial.SelectedItem = null;
         SyncPreviewSelection(invalidate: true);
     }
@@ -3802,19 +3810,23 @@ public sealed partial class MainWindow : Window
 
     private async void StartNextPreview()
     {
-        if (_previewSession is not { } session || _previewRequests.TakeNext() is not { } intent) return;
+        if (_previewSession is not { } session) return;
+        if (_previewRequests.TakeNext() is not { } intent)
+        {
+            ScheduleThumbnail();
+            return;
+        }
         // One worker owns each ordinary SDK connection from setup through disposal.
         // Window closure invalidates its intent without waiting on that worker.
-        var result = await Task.Run(() => ReadPreview(session, intent));
-        var chooser = _referenceWindow;
-        if (_previewRequests.Settle(intent) && ReferenceEquals(_previewSession, session) &&
-            intent.Surface == (_materialWindow?.Surface ?? chooser?.Target.Request ?? 0))
+        try
         {
+            var result = await Task.Run(() => ReadPreview(session, intent));
+            var chooser = _referenceWindow;
+            if (!_previewRequests.CanSend(intent) || !ReferenceEquals(_previewSession, session) ||
+                intent.Surface != (_materialWindow?.Surface ?? chooser?.Target.Request ?? 0)) return;
             if (_materialWindow is { } draftWindow)
             {
                 draftWindow.ShowPreview(result.Png, result.Message);
-                UpdatePreviewButton();
-                StartNextPreview();
                 return;
             }
             var image = chooser?.PreviewImage ?? _previewImage;
@@ -3843,9 +3855,13 @@ public sealed partial class MainWindow : Window
                 _previewRetry = result.Retry;
                 _previewUnavailable = !result.Retry;
             }
-            UpdatePreviewButton();
         }
-        StartNextPreview();
+        finally
+        {
+            _previewRequests.Settle(intent);
+            UpdatePreviewButton();
+            StartNextPreview();
+        }
     }
 
     private (byte[]? Png, string? Message, bool Retry) ReadPreview(SessionInfo session, AssetPreviewIntent intent)
