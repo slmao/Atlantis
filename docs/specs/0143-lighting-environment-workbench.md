@@ -1,12 +1,12 @@
 # Spec 0143 — Lighting and Environment Workbench
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-24
 - **Milestone:** 3D Scene and Render Effects Editor V1, first slice
 - **Design baseline:** `b27d93fe` on `main`
 - **Related Plan:** [Plan 0143](../plans/0143-lighting-environment-workbench.md)
-- **Approval:** Pending joint Spec and Plan review
+- **Approval:** [Maintainer joint approval of `f026851b`](https://github.com/slmao/Atlantis/pull/450#issuecomment-7136435565)
 - **Related ADR:** None proposed. [ADR-0069](../adr/0069-environment-asset-preprocessing-and-ownership.md) and [ADR-0180](../adr/0180-shared-frame-report-exposure.md) continue to apply.
 
 ## Summary

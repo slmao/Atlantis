@@ -439,6 +439,9 @@ public sealed class EditorWorker : IDisposable
     private long _meshDocumentLifetime;
     private DocumentToken? _bistroLocatorDocument;
     private long _bistroLocatorObservation;
+    private long _hierarchyObservation;
+    private IReadOnlyDictionary<EntityGuid, HierarchyLightKind?>? _hierarchyLightKinds;
+    private ulong _hierarchyLightRevision;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<HierarchySnapshot>? HierarchyChanged;
 
@@ -448,6 +451,85 @@ public sealed class EditorWorker : IDisposable
         {
             if (!_hierarchyFilter.EquivalentTo(filter)) _hierarchyFilter = filter;
         }
+    }
+
+    public void SelectMatchingLights(HierarchyFilter filter, IReadOnlyList<HierarchyRow> expected, ulong selection,
+        Action<bool, string> completed)
+    {
+        long lifetime = MeshDocumentLifetime;
+        Enqueue(session =>
+        {
+            const string stale = "The lights, filter or selection changed. Review the matches and try again.";
+            bool Current() => !_stopping && lifetime == MeshDocumentLifetime && ReferenceEquals(_hierarchyFilter, filter) &&
+                selection == _requestedSelectionGeneration && !_dragActive && !_gizmoActive && _queuedGizmoBegins == 0 &&
+                _requestedGroup is null && !_groupSettling && _reparentSource is null && _alignment is null;
+            void Result(bool allowed, string reason, long? observation = null) => _post(() =>
+            {
+                lock (_lock)
+                {
+                    if (allowed && (!Current() || _hierarchyObservation != observation)) completed(false, stale);
+                    else completed(allowed, reason);
+                }
+            });
+            lock (_lock)
+                if (!Current()) { Result(false, stale); return; }
+
+            if (_document is not RemoteAuthoringDocument document ||
+                session.Authoring.DocumentState().Value is not { } before || document.ObserveEvents() is not { } opening)
+            {
+                Result(false, "The current document could not be verified. Try again.");
+                return;
+            }
+            PollDocument(session, opening, pollApply: false, refreshOverlay: false);
+            var kinds = SceneMarkers.ReadLightKinds(document, _tree);
+            if (document.ObserveEvents() is not { } closing)
+            {
+                Result(false, "Light types could not be verified. Try again.");
+                return;
+            }
+            PollDocument(session, closing, pollApply: false, refreshOverlay: false);
+            if (session.Authoring.DocumentState().Value?.Token != before.Token || !_tree.OrderSynchronized)
+            {
+                Result(false, stale);
+                return;
+            }
+
+            var projection = filter.Project(SceneMarkers.Rows(_tree, document.Schema, kinds));
+            if (!SameLightKinds(kinds))
+            {
+                _hierarchyLightKinds = kinds;
+                ++_hierarchyLightRevision;
+                PostHierarchy(session, refreshOverlay: false);
+            }
+            if (kinds is null || !projection.LightKindsComplete)
+            {
+                Result(false, "Some light types could not be verified. Try again.");
+                return;
+            }
+            if (!projection.SameMatchingLights(expected))
+            {
+                Result(false, stale);
+                return;
+            }
+            lock (_lock)
+            {
+                if (!Current()) { Result(false, stale); return; }
+                Result(true, "", _hierarchyObservation);
+            }
+        });
+    }
+
+    private bool SameLightKinds(IReadOnlyDictionary<EntityGuid, HierarchyLightKind?>? kinds) =>
+        kinds is null ? _hierarchyLightKinds is null : _hierarchyLightKinds is { } previous &&
+        kinds.Count == previous.Count && kinds.All(pair => previous.TryGetValue(pair.Key, out var kind) && kind == pair.Value);
+
+    private void RefreshHierarchyLightKinds()
+    {
+        if (_document is not { } document) return;
+        var kinds = SceneMarkers.ReadLightKinds(document, _tree);
+        if (SameLightKinds(kinds)) return;
+        _hierarchyLightKinds = kinds;
+        ++_hierarchyLightRevision;
     }
 
     private bool StructureAllowed(HierarchyFilter? intent) =>
@@ -2240,7 +2322,7 @@ public sealed class EditorWorker : IDisposable
     {
         HierarchyFilter filter;
         lock (_lock) filter = _hierarchyFilter;
-        return filter.IncludesSelection(_tree, _selectedNodes);
+        return filter.IncludesSelection(_tree, _selectedNodes, _hierarchyLightKinds);
     }
 
     private void RetireGroup(GroupGrab grab)
@@ -4040,6 +4122,15 @@ public sealed class EditorWorker : IDisposable
 
     internal bool BatchRenameAvailable => _nameBatchWritable;
 
+    private BatchRenamePreview? CaptureFilteredRename(DocumentToken token, HierarchyFilter filter,
+        IReadOnlyList<NodeSummary> roster, IReadOnlyList<EntityGuid> nodes)
+    {
+        if (filter.Light is null) return BatchRenamePreview.Capture(token, filter, _tree, roster, nodes);
+        if (!filter.IncludesSelection(_tree, nodes, _hierarchyLightKinds)) return null;
+        var preview = BatchRenamePreview.Capture(token, HierarchyFilter.Empty, _tree, roster, nodes);
+        return preview is null ? null : preview with { Filter = filter };
+    }
+
     private static DocumentToken? ReadRenameToken(RemoteSession session)
     {
         var state = session.Authoring.DocumentState();
@@ -4068,7 +4159,7 @@ public sealed class EditorWorker : IDisposable
                 bool current;
                 lock (_lock) current = RenameIntentCurrent(intent, filter);
                 if (current && ReadRenameToken(session) == token)
-                    preview = BatchRenamePreview.Capture(token, filter, _tree, roster, intent.Nodes);
+                    preview = CaptureFilteredRename(token, filter, roster, intent.Nodes);
             }
         }
         catch (Exception error) when (error is GameplayException or IOException)
@@ -4164,7 +4255,7 @@ public sealed class EditorWorker : IDisposable
             if (edit.Rows.Any(row => !byNode.TryGetValue(row.Target.Node, out var node) ||
                     node.Name != (forward ? row.Target.Before : row.After))) return conflict;
             if (preview is not null && (intent is null ||
-                BatchRenamePreview.Capture(before, preview.Filter, _tree, roster, intent.Nodes) is not { } current ||
+                CaptureFilteredRename(before, preview.Filter, roster, intent.Nodes) is not { } current ||
                 !current.Targets.SequenceEqual(preview.Targets))) return conflict;
 
             var commands = JsonValue.NewArray().Push(Codec.Encode(new RequireNameBatchDocument(before)));
@@ -4322,7 +4413,7 @@ public sealed class EditorWorker : IDisposable
             if (filter?.Active == true)
             {
                 if (!Observe() || ReadOrderRevision(document) != revision) return Stale();
-                if (!filter.IncludesSelection(_tree, _selectedNodes))
+                if (!filter.IncludesSelection(_tree, _selectedNodes, _hierarchyLightKinds))
                     return new(BatchReplayState.Retry, "Some selected nodes are hidden. Locate selection before editing.");
             }
             Command guard = group ? new RequireTransformBatchRevision(revision) : new RequireDocumentRevision(revision);
@@ -5220,6 +5311,7 @@ public sealed class EditorWorker : IDisposable
             _groupWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedTransformTransactions: true };
             _duplicateBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedDuplicateTransactions: true };
             _nameBatchWritable = info is { Provenance: Provenance.HandAuthored, SupportsGuardedNameTransactions: true };
+            RefreshHierarchyLightKinds();
             PostHierarchy(session);
             _log.Write(string.Format(CultureInfo.InvariantCulture, "authoring: {0} nodes, the Hierarchy built in {1:F0} ms ({2})",
                                      _tree.Count, Stopwatch.GetElapsedTime(start).TotalMilliseconds, info?.Provenance));
@@ -5246,8 +5338,12 @@ public sealed class EditorWorker : IDisposable
         {
             lock (_lock)
             {
-                // The locator can already be queued on the UI. Retire it before publishing this observation.
-                if (events.Any(e => e is not Applied)) ++_bistroLocatorObservation;
+                // Retire selection lookups already queued on the UI before publishing this observation.
+                if (events.Any(e => e is not Applied))
+                {
+                    ++_bistroLocatorObservation;
+                    ++_hierarchyObservation;
+                }
                 if (_guidesEnabled && events.Any(GuideInputChanged)) InvalidateGuidesLocked();
             }
             _post(() => LeaveDocumentEvents?.Invoke(events));
@@ -5337,7 +5433,11 @@ public sealed class EditorWorker : IDisposable
                 _tree.ReconcileOrder(snapshot))
                 _log.Write("Hierarchy order refreshed at document revision " + before);
         }
-        if (_groupGrab is { } group && ((_tree.Generation != _postedGeneration && !GroupFilterAllows()) ||
+        ulong lightRevision = _hierarchyLightRevision;
+        if (_tree.Generation != _postedGeneration || events.Any(e => e is PropertyChanged changed &&
+            SceneSchema.AddressOf(_document.Schema, changed.Address.Node, "Light", "kind") == changed.Address))
+            RefreshHierarchyLightKinds();
+        if (_groupGrab is { } group && (((_tree.Generation != _postedGeneration || lightRevision != _hierarchyLightRevision) && !GroupFilterAllows()) ||
             !group.View.Placement.IsCurrent(_tree, preview: true, checkStamps: true) ||
             group.View.Placement.Targets.Any(target => !target.IsCurrent(_tree, checkStamp: true))))
         {
@@ -5345,7 +5445,7 @@ public sealed class EditorWorker : IDisposable
             RetireGroup(group);
             GroupNotice(group.View.Lifetime, "The group placement changed elsewhere. Grab the refreshed Gizmo again.");
         }
-        if (refreshHierarchy && (_tree.Generation != _postedGeneration || _transformsChanged))
+        if (refreshHierarchy && (_tree.Generation != _postedGeneration || _transformsChanged || lightRevision != _hierarchyLightRevision))
             PostHierarchy(session, refreshOverlay);
         if (!pollApply) return;
         _apply.Poll();
@@ -5476,13 +5576,17 @@ public sealed class EditorWorker : IDisposable
         _siblingMoveSupported = _document is RemoteAuthoringDocument { SupportsSiblingMove: true };
         _postedGeneration = _tree.Generation;
         _transformsChanged = false;
-        IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema);
+        IReadOnlyList<HierarchyRow> rows = SceneMarkers.Rows(_tree, _document.Schema, _hierarchyLightKinds);
         foreach (HierarchyRow row in rows)
             _hierarchyIncarnations.Add(row, _tree.IncarnationOf(row.Node)!);
         _markers = SceneMarkers.Of(_document, _tree, _transforms);
         IReadOnlyList<Marker> markers = _markers;
         var snapshot = new HierarchySnapshot(MeshDocumentLifetime, _tree.Generation, rows,
-            HierarchyFilter.ComponentChoices(_document.Schema), markers);
+            HierarchyFilter.ComponentChoices(_document.Schema), markers)
+        {
+            HasLightMetadata = _hierarchyLightKinds is not null,
+            LightRevision = _hierarchyLightRevision
+        };
         _post(() => { if (snapshot.Lifetime == MeshDocumentLifetime) HierarchyChanged?.Invoke(snapshot); });
         if (refreshOverlay) SendOverlay(session);
     }

@@ -97,6 +97,8 @@ public sealed record HierarchyRow(EntityGuid Node, EntityGuid? Parent, int Depth
     public AssetGuid? PrefabOrigin { get; init; }
     public IReadOnlyList<TypeId> ComponentTypes { get; init; } = Array.Empty<TypeId>();
     public object Incarnation { get; init; } = new();
+    public HierarchyLightKind? LightKind { get; init; }
+    public bool LightKindUnknown { get; init; }
 }
 
 public static class SceneMarkers
@@ -134,23 +136,54 @@ public static class SceneMarkers
     }
 
     /// <summary>The tree flattened depth first (each node, then its children), with depths and labels.</summary>
-    public static IReadOnlyList<HierarchyRow> Rows(DocumentTree tree, IReadOnlyList<SchemaType> schema)
+    public static IReadOnlyList<HierarchyRow> Rows(DocumentTree tree, IReadOnlyList<SchemaType> schema,
+        IReadOnlyDictionary<EntityGuid, HierarchyLightKind?>? lightKinds = null)
     {
         var rows = new List<HierarchyRow>(tree.Count);
+        TypeId? light = SceneSchema.TypeOf(schema, "Light");
         var stack = new Stack<(EntityGuid Node, int Depth)>();
         foreach (EntityGuid root in tree.ChildrenOf(null).Reverse()) stack.Push((root, 0));
         while (stack.Count > 0)
         {
             var (node, depth) = stack.Pop();
+            var components = tree.ComponentsOf(node).ToArray();
+            var kind = lightKinds?.GetValueOrDefault(node);
             rows.Add(new HierarchyRow(node, tree.ParentOf(node), depth, tree.Label(node, schema))
             {
                 Name = tree.NameOf(node),
                 PrefabOrigin = tree.PrefabOriginOf(node),
-                ComponentTypes = tree.ComponentsOf(node).ToArray(),
-                Incarnation = tree.IncarnationOf(node)!
+                ComponentTypes = components,
+                Incarnation = tree.IncarnationOf(node)!,
+                LightKind = kind,
+                LightKindUnknown = light is TypeId type && components.Contains(type) && kind is null
             });
             foreach (EntityGuid child in tree.ChildrenOf(node).Reverse()) stack.Push((child, depth + 1));
         }
         return rows;
+    }
+
+    public static IReadOnlyDictionary<EntityGuid, HierarchyLightKind?>? ReadLightKinds(IAuthoringDocument document, DocumentTree tree)
+    {
+        var light = document.Schema.FirstOrDefault(t => t.Kind == TypeKind.Struct && t.ShortName == "Light");
+        var field = light?.Fields.FirstOrDefault(f => f.Name == "kind" && f.Kind == TypeKind.Enum);
+        if (light is null || field is null) return null;
+        var constants = document.Schema.FirstOrDefault(t => t.Id == field.Type && t.Kind == TypeKind.Enum)?.Constants;
+        var directional = constants?.FirstOrDefault(c => c.Name == "Directional");
+        var point = constants?.FirstOrDefault(c => c.Name == "Point");
+        if (directional is null || point is null || directional.Value == point.Value) return null;
+
+        var addresses = tree.Order.Where(node => tree.ComponentsOf(node).Contains(light.Id))
+            .Select(node => new SceneAddress(node, light.Id, field.Id)).ToArray();
+        var values = document.GetProperties(addresses);
+        var kinds = new Dictionary<EntityGuid, HierarchyLightKind?>(addresses.Length);
+        for (int i = 0; i < addresses.Length; ++i)
+        {
+            HierarchyLightKind? kind = null;
+            if (i < values.Count && values[i] is PropertyValue value && value.TryGetEnum(out long member))
+                kind = member == directional.Value ? HierarchyLightKind.Directional :
+                       member == point.Value ? HierarchyLightKind.Point : null;
+            kinds.Add(addresses[i].Node, kind);
+        }
+        return kinds;
     }
 }
