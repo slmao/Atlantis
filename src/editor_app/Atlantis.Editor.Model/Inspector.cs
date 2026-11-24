@@ -92,19 +92,26 @@ public sealed class InspectorModel
         _components = _document.ListComponents(node).ToList();
         foreach (TypeId component in _components.OrderBy(c => SceneSchema.NameOf(schema, c) == "Transform" ? 0 : 1)
                                                 .ThenBy(c => SceneSchema.NameOf(schema, c), StringComparer.Ordinal))
+            _fields.AddRange(ReadFields(_document, node, component));
+    }
+
+    public static IReadOnlyList<InspectorField> ReadFields(IAuthoringDocument document, EntityGuid node, TypeId component,
+        Func<string, bool>? include = null)
+    {
+        var schema = document.Schema;
+        string name = SceneSchema.NameOf(schema, component);
+        var leaves = SchemaText.LeavesOf(schema, component).Where(leaf => include?.Invoke(leaf.Path) != false).ToArray();
+        var addresses = leaves.Select(leaf => new SceneAddress(node, component, leaf.Leaf.Id)).ToArray();
+        // Keep the ordinary Inspector's existing reads. The narrow panel reads its fields as one batch.
+        var values = include is null ? addresses.Select(document.GetProperty).ToArray() : document.GetProperties(addresses);
+        return leaves.Select((leaf, index) =>
         {
-            string componentName = SceneSchema.NameOf(schema, component);
-            foreach (LeafPath leaf in SchemaText.LeavesOf(schema, component))
-            {
-                SchemaField field = leaf.Leaf;
-                var address = new SceneAddress(node, component, field.Id);
-                IReadOnlyList<SchemaConstant> choices = field.Kind == TypeKind.Enum
-                    ? SchemaText.FindType(schema, field.Type)?.Constants ?? Array.Empty<SchemaConstant>()
-                    : Array.Empty<SchemaConstant>();
-                _fields.Add(new InspectorField(component, componentName, leaf.Path, leaf.Path[(componentName.Length + 1)..], field,
-                                               ControlOf(field), IsEditable(field), field.IsOptional, choices, _document.GetProperty(address)));
-            }
-        }
+            SchemaField field = leaf.Leaf;
+            IReadOnlyList<SchemaConstant> choices = field.Kind == TypeKind.Enum
+                ? SchemaText.FindType(schema, field.Type)?.Constants ?? Array.Empty<SchemaConstant>() : Array.Empty<SchemaConstant>();
+            return new InspectorField(component, name, leaf.Path, leaf.Path[(name.Length + 1)..], field,
+                ControlOf(field), IsEditable(field), field.IsOptional, choices, index < values.Count ? values[index] : null);
+        }).ToArray();
     }
 
     public IReadOnlyList<CommonInspectorField>? ReadCommon(IReadOnlyList<EntityGuid> nodes, DocumentTree tree)

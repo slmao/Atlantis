@@ -1,12 +1,12 @@
 # Spec 0144 — Post Processing Panel V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-25
 - **Milestone:** 3D Scene and Render Effects Editor V1, second slice
 - **Design baseline:** `8c75b99b` on `main`, maintainer merge of [PR #451](https://github.com/slmao/Atlantis/pull/451)
 - **Related Plan:** [Plan 0144](../plans/0144-post-processing-panel.md)
-- **Approval:** Pending joint Spec and Plan review
+- **Approval:** [Maintainer joint approval of `bf52f24c`](https://github.com/slmao/Atlantis/pull/452#issuecomment-7137943834)
 - **Related ADR:** None proposed
 
 ## Problem and scope

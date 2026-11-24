@@ -437,6 +437,10 @@ public sealed class EditorWorker : IDisposable
     public event Action<DocumentInfo?>? DocumentOpened;
     public event Action<long>? MeshDocumentReopened;
     private long _meshDocumentLifetime;
+    private long _postProcessingEpoch;
+    private bool _postProcessingOpen, _postProcessingReadQueued, _postProcessingWriting;
+    private PostProcessingView? _postProcessingView;
+    internal event Action<PostProcessingView?, string>? PostProcessingChanged;
     private DocumentToken? _bistroLocatorDocument;
     private long _bistroLocatorObservation;
     private long _hierarchyObservation;
@@ -444,6 +448,155 @@ public sealed class EditorWorker : IDisposable
     private ulong _hierarchyLightRevision;
     public long MeshDocumentLifetime => Interlocked.Read(ref _meshDocumentLifetime);
     public event Action<HierarchySnapshot>? HierarchyChanged;
+
+    internal void ShowPostProcessing(bool visible)
+    {
+        lock (_lock)
+        {
+            _postProcessingOpen = visible;
+            InvalidatePostProcessingLocked();
+        }
+    }
+
+    private void InvalidatePostProcessingLocked()
+    {
+        long epoch = ++_postProcessingEpoch;
+        _postProcessingView = null;
+        if (!_postProcessingOpen) return;
+        PublishPostProcessing(epoch, null, "Reading the active scene camera…");
+        if (_postProcessingReadQueued) return;
+        _postProcessingReadQueued = true;
+        Enqueue(ReadPostProcessing);
+    }
+
+    private void PublishPostProcessing(long epoch, PostProcessingView? view, string notice) => _post(() =>
+    {
+        lock (_lock)
+            if (_postProcessingOpen && !_stopping && epoch == _postProcessingEpoch &&
+                (view is not null ? ReferenceEquals(view, _postProcessingView) : _postProcessingView is null))
+                PostProcessingChanged?.Invoke(view, notice);
+    });
+
+    private void ReadPostProcessing(RemoteSession session)
+    {
+        long epoch;
+        long lifetime = MeshDocumentLifetime;
+        lock (_lock)
+        {
+            _postProcessingReadQueued = false;
+            if (!_postProcessingOpen || _stopping) return;
+            epoch = _postProcessingEpoch;
+        }
+
+        if (_document is not RemoteAuthoringDocument document)
+        {
+            PublishPostProcessing(epoch, null, "No authoring document.");
+            return;
+        }
+        try
+        {
+            var before = ReadPersistence(session);
+            if (before.Availability is not (DocumentAvailability.Known or DocumentAvailability.Legacy) ||
+                before.Availability == DocumentAvailability.Known && before.State is null ||
+                document.ObserveEvents() is not { } opening)
+            {
+                PublishPostProcessing(epoch, null, "The active scene camera could not be verified. Refresh to retry.");
+                return;
+            }
+            PollDocument(session, opening, pollApply: false, refreshInspector: false);
+            if (!document.ObserveActiveCamera(out EntityGuid? active) || active is not EntityGuid camera)
+            {
+                PublishPostProcessing(epoch, null, "No verified active scene camera.");
+                return;
+            }
+
+            var fields = PostProcessingPanel.Read(document, _tree, camera);
+            if (!document.ObserveActiveCamera(out EntityGuid? current) || document.ObserveEvents() is not { } closing)
+            {
+                PublishPostProcessing(epoch, null, "Camera fields could not be verified. Refresh to retry.");
+                return;
+            }
+            PollDocument(session, closing, pollApply: false, refreshInspector: false);
+            if (current != camera || !ReadPersistence(session).Matches(before) || fields.Count == 0 ||
+                fields.Any(field => !field.Target.IsCurrent(_tree, checkStamp: true)))
+            {
+                PublishPostProcessing(epoch, null, "The active scene camera changed or its fields are unavailable. Refresh to retry.");
+                return;
+            }
+            bool writable = before.Writable && _batchWritable;
+            var view = new PostProcessingView(epoch, lifetime, before.State?.Token, camera, _tree.NameOf(camera), writable, fields);
+            lock (_lock)
+            {
+                if (!_postProcessingOpen || lifetime != MeshDocumentLifetime || epoch != _postProcessingEpoch) return;
+                _postProcessingView = view;
+                PublishPostProcessing(epoch, view, writable ? "" : "Read-only. A writable document and guarded editing support are required.");
+            }
+        }
+        catch (Exception error) when (error is GameplayException or IOException)
+        {
+            PublishPostProcessing(epoch, null, "Camera fields unavailable. " + error.Message);
+        }
+    }
+
+    internal bool CommitPostProcessing(PostProcessingDraft draft, PropertyValue value, Action<BatchReplayResult> completed)
+    {
+        var view = draft.View;
+        var target = draft.Input.Target;
+        bool Current() => !_stopping && _postProcessingOpen && view.Lifetime == MeshDocumentLifetime &&
+            !_dragActive && !_gizmoActive && _queuedGizmoBegins == 0 && _requestedGroup is null && !_groupSettling &&
+            draft.CanSubmit(_postProcessingView);
+        lock (_lock)
+        {
+            if (_postProcessingWriting || _batchSettling || !Current() || view.Document is not DocumentToken token ||
+                target.Value is not PropertyValue original || original == value) return false;
+            _postProcessingWriting = true;
+            Enqueue(session =>
+            {
+                var result = new BatchReplayResult(BatchReplayState.Retry,
+                    $"{view.Label} ({view.Camera}) changed. Refresh before editing.");
+                try
+                {
+                    var label = $"{view.Label} · {draft.Input.Field.Path}";
+                    var write = new PropertyWrite(target.Address, original, value);
+                    var edit = new BatchPropertyEdit(label, [target], [write]);
+                    if (_document is RemoteAuthoringDocument document && document.ObserveEvents() is { } events)
+                    {
+                        PollDocument(session, events, pollApply: false, refreshInspector: false);
+                        if (ReadPersistence(session).State?.Token == token && document.ObserveActiveCamera(out EntityGuid? camera) &&
+                            camera == view.Camera && ReadPersistence(session).State?.Token == token)
+                        {
+                            result = SettlePropertyBatch(session, edit, true, view.Lifetime, expectedRevision: token.DocumentRevision,
+                                sendGuard: () => Current() && target.IsCurrent(_tree, checkStamp: true), directEdit: true);
+                            if (result.State == BatchReplayState.Committed && view.Lifetime == MeshDocumentLifetime &&
+                                _history is { } history && _historyTarget is { } historyTarget)
+                            {
+                                history.Record(new EditTransaction(label, [write], [edit]), historyTarget.Committed([]));
+                                history.Update();
+                                PostHistory(view.Lifetime);
+                                result = result with { Notice = ApplyVerifiedEdit(view.Lifetime, result.Notice, publishStatus: false) };
+                            }
+                            else PostHistory(view.Lifetime);
+                        }
+                    }
+                }
+                catch (Exception error) when (error is GameplayException or IOException)
+                {
+                    if (result.State == BatchReplayState.Committed)
+                        result = result with { Notice = $"{view.Label} ({view.Camera}) was edited. Check Apply before retrying. {error.Message}" };
+                    else result = new(BatchReplayState.Retry, $"Could not verify {view.Label} ({view.Camera}). {error.Message}");
+                }
+                finally
+                {
+                    lock (_lock) _postProcessingWriting = false;
+                }
+                _post(() => completed(result));
+                PostApplyState(view.Lifetime);
+                PollDocument(session, pollApply: false, refreshInspector: false);
+                PostInspector();
+            });
+            return true;
+        }
+    }
 
     public void SetHierarchyFilter(HierarchyFilter filter)
     {
@@ -4343,7 +4496,7 @@ public sealed class EditorWorker : IDisposable
 
     private BatchReplayResult SettlePropertyBatch(RemoteSession session, BatchPropertyEdit edit, bool forward,
         long lifetime, ulong? selection = null, GroupGrab? grab = null, HierarchyFilter? filter = null,
-        ulong? expectedRevision = null, Func<bool>? sendGuard = null, string? uncertaintyDetail = null)
+        ulong? expectedRevision = null, Func<bool>? sendGuard = null, string? uncertaintyDetail = null, bool directEdit = false)
     {
         bool group = edit.Group is not null;
         if (_document is not RemoteAuthoringDocument document || !(group ? _groupWritable : _batchWritable))
@@ -4387,7 +4540,7 @@ public sealed class EditorWorker : IDisposable
             if (SameDocument())
             {
                 _apply?.RequireExplicitApply("property batch could not be verified");
-                if (selection is not null) _history?.DiscardRedo();
+                if (selection is not null || directEdit) _history?.DiscardRedo();
             }
             return new(BatchReplayState.Drop, committed
                 ? "Committed " + subject + ". History unavailable. Refresh, inspect and Apply explicitly."
@@ -4398,10 +4551,10 @@ public sealed class EditorWorker : IDisposable
             if (!Current() || ReadOrderRevision(document) is not ulong revision || revision == ulong.MaxValue ||
                 (expectedRevision is ulong pinned && pinned != revision) || !Observe())
                 return Stale();
-            if (!TargetsCurrent(selection is not null)) return Conflict();
+            if (!TargetsCurrent(selection is not null || directEdit)) return Conflict();
             IReadOnlyList<PropertyValue?> prior = document.GetProperties(addresses);
             if (!Observe() || !Current()) return Stale();
-            if (!TargetsCurrent(selection is not null)) return Conflict();
+            if (!TargetsCurrent(selection is not null || directEdit)) return Conflict();
             if (ReadOrderRevision(document) != revision) return Stale();
             if (!prior.SequenceEqual(expectedValues)) return Conflict();
             if (changed.Length == 0) return new(BatchReplayState.Committed, "The selected values are unchanged.");
@@ -4452,7 +4605,7 @@ public sealed class EditorWorker : IDisposable
                 !values.SequenceEqual(changed.Select(write => (PropertyValue?)write.Value)) ||
                 !TargetsCurrent(stamps: false))
                 return Uncertain();
-            return new(BatchReplayState.Committed, (selection is not null ? "Set " : forward ? "Redid " : "Undid ") + subject + ".");
+            return new(BatchReplayState.Committed, (selection is not null || directEdit ? "Set " : forward ? "Redid " : "Undid ") + subject + ".");
         }
         catch (Exception error) when (error is GameplayException or IOException)
         {
@@ -5343,6 +5496,7 @@ public sealed class EditorWorker : IDisposable
                 {
                     ++_bistroLocatorObservation;
                     ++_hierarchyObservation;
+                    if (_postProcessingOpen) InvalidatePostProcessingLocked();
                 }
                 if (_guidesEnabled && events.Any(GuideInputChanged)) InvalidateGuidesLocked();
             }

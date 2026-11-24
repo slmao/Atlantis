@@ -792,7 +792,7 @@ public sealed partial class MainWindow : Window
         var tabs = new List<TabItem>
         {
             new() { Header = "Inspector", Tag = WorkspaceTab.Inspector, HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Sliders),
-                    Content = EditorVisuals.Scroll(_inspectorPanel) },
+                    Content = BuildInspectorModes() },
             new() { Header = "Assets", Tag = WorkspaceTab.Assets, HeaderTemplate = EditorVisuals.LabelTemplate(EditorVisuals.Catalog),
                     Content = BuildAssetsPanel() }
         };
@@ -1138,6 +1138,8 @@ public sealed partial class MainWindow : Window
         _reparentDocumentOpen = false;
         RetireAssetDrop();
         _worker?.Stop();
+        _postProcessingPending = null;
+        ShowPostProcessing(null, "Authoring session changed.");
         _viewportCameraIntent = 0;
         _cameraInitialized = _navigationSupported = _navigationReady = _navigationPending = false;
         _sceneProjection = null;
@@ -1218,6 +1220,12 @@ public sealed partial class MainWindow : Window
         {
             if (ReferenceEquals(_worker, worker)) ObserveDraftChanges(events);
         };
+        worker.PostProcessingChanged += (view, notice) =>
+        {
+            if (ReferenceEquals(_worker, worker) && _postProcessingVisible && !_referenceSessionFailed && !_shuttingDown)
+                ShowPostProcessing(view, notice);
+        };
+        if (_postProcessingVisible) worker.ShowPostProcessing(true);
         ShowGuideFeedback(null);
         worker.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         worker.GuideFeedback += message =>
@@ -1261,6 +1269,8 @@ public sealed partial class MainWindow : Window
         worker.Failed += message =>
         {
             if (!ReferenceEquals(_worker, worker)) return;
+            _postProcessingPending = null;
+            ShowPostProcessing(null, "Authoring session unavailable.");
             LeaveBistroView();
             ShowDocumentState(new(DocumentAvailability.Unavailable, Diagnostic: message));
             _cameraInitialized = _navigationReady = _navigationPending = false;
@@ -6269,9 +6279,10 @@ public sealed partial class MainWindow : Window
         _documentState = state;
         ObserveSceneStatistics();
         UpdateViewportNavigationActions();
-        bool draft = _sceneInput is not null || _batchDraft is not null || _leaveInput is not null && !_leaveInputStale;
+        bool draft = _sceneInput is not null || _batchDraft is not null || _postProcessingDraft is not null ||
+            _leaveInput is not null && !_leaveInputStale;
         _documentLine.Text = state.Title + (draft ? " · Unsubmitted input" : "") +
-            (_draftProtection.Stale is not null ? " · Stale input" : "");
+            (_draftProtection.Stale is not null || _postProcessingStale is not null ? " · Stale input" : "");
         ToolTip.SetTip(_documentLine, state.State?.Source ?? state.Diagnostic);
         _reopen.Content = state.State is null && state.Diagnostic is null && state.Availability == DocumentAvailability.Known
             ? "Open Source" : "Reopen from Source";
@@ -6286,6 +6297,7 @@ public sealed partial class MainWindow : Window
 
     private SceneInput? CurrentSceneInput()
     {
+        if (PostProcessingInput() is { } postProcessing) return postProcessing;
         if (_batchDraft is { } batch && batch.Text != batch.Field.Field.Text &&
             _batchInputs.TryGetValue(batch.Field.Field.Path, out var box))
         {
@@ -6344,6 +6356,12 @@ public sealed partial class MainWindow : Window
     private void ObserveDraftChanges(IReadOnlyList<Doc.Event> events)
     {
         var input = _leaveInProgress ? (_leaveInputStale ? null : _leaveInput) : CurrentSceneInput();
+        if (input is not null && input.Box == _postProcessingDraftBox)
+        {
+            if (events.Any(e => e is not Doc.Applied))
+                ShowPostProcessing(null, "The document changed. Review the active camera before editing.");
+            return;
+        }
         if (input is null || !_draftProtection.Observe(input.Draft, events)) return;
         _invalidatedInput = input.Box;
         input.Box.IsReadOnly = true;
@@ -6358,6 +6376,11 @@ public sealed partial class MainWindow : Window
     private string? LeaveDraftSummary()
     {
         string? stale = _draftProtection.Stale is { } copy ? $"Stale input (copy only) · {copy.Key}\n{copy.Text}" : null;
+        if (_postProcessingStale is { } postProcessing)
+        {
+            string text = $"Stale input (copy only) · {postProcessing.View.Label} · {postProcessing.Input.Field.Path}\n{postProcessing.Text}";
+            stale = stale is null ? text : stale + "\n\n" + text;
+        }
         if (_leaveInputStale || _leaveInput is not { } active) return stale;
         string current = $"Unsubmitted input · {active.Draft.Key}\n{active.Draft.Text}";
         return stale is null ? current : stale + "\n\n" + current;
@@ -6407,7 +6430,8 @@ public sealed partial class MainWindow : Window
             while (Current())
             {
                 if (reopen && reviewed.Availability == DocumentAvailability.Legacy) break;
-                bool prompt = mustConfirm || _draftProtection.RequiresConfirmation(reviewed, _leaveInput is not null && !_leaveInputStale);
+                bool prompt = mustConfirm || _postProcessingStale is not null ||
+                    _draftProtection.RequiresConfirmation(reviewed, _leaveInput is not null && !_leaveInputStale);
                 var choice = LeaveChoice.Discard;
                 if (prompt)
                 {
@@ -6541,6 +6565,7 @@ public sealed partial class MainWindow : Window
             if (closed || reopened)
             {
                 _draftProtection.ConfirmLeave();
+                ClearPostProcessingInput();
                 _sceneInput = null;
                 _batchDraft = null;
             }
