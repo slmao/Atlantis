@@ -1,10 +1,10 @@
 # Plan 0144 — Post Processing Panel V1
 
 - **Spec:** [Spec 0144](../specs/0144-post-processing-panel.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Design baseline:** `8c75b99b` on `main`
-- **Joint Human Review:** Pending
+- **Joint Human Review:** The maintainer approved Spec/Plan 0144 and J1–J4 on `bf52f24c` on 2026-11-25 Singapore time and authorized S2–S4 after merge. [Approval record](https://github.com/slmao/Atlantis/pull/452#issuecomment-7137943834). The maintainer merged PR #452 as `26b73bda`.
 - **ADR:** None proposed
 
 ## Objective

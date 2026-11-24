@@ -40,7 +40,7 @@ public static partial class Program
     {
         string? repo = null, runtime = null, cli = null, scene = "integrated_showcase_demo";
         bool integration = false, acceptance = false, sceneObjectUi = false, dropApplyReply = false, guideCaptures = false;
-        bool hierarchyFilterRace = false;
+        bool hierarchyFilterRace = false, postProcessingRace = false, postProcessingLegacy = false;
         bool staticGroupReceipt = false, batchRenameReceipts = false;
         string? bistroReferenceReport = null, sceneStatisticsReport = null, batchRenameReport = null;
         string? meshThumbnailReport = null;
@@ -56,6 +56,8 @@ public static partial class Program
             else if (args[i] == "--guide-captures") guideCaptures = true;
             else if (args[i] == "--asset-drop-receipt" && i + 1 < args.Length) assetDropReceipt = args[++i];
             else if (args[i] == "--hierarchy-filter-race") hierarchyFilterRace = true;
+            else if (args[i] == "--post-processing-race") postProcessingRace = true;
+            else if (args[i] == "--post-processing-legacy") postProcessingLegacy = true;
             else if (args[i] == "--scene-recovery-ui" && i + 1 < args.Length) recoveryReport = args[++i];
             else if (args[i] == "--tasks-ui" && i + 1 < args.Length) tasksReport = args[++i];
             else if (args[i] == "--workspace-layout-ui" && i + 1 < args.Length) layoutReport = args[++i];
@@ -110,6 +112,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunGuideCaptures(runtime, scene);
         if (hierarchyFilterRace)
             return runtime is null ? Usage() : RunHierarchyFilterRace(runtime, scene);
+        if (postProcessingRace || postProcessingLegacy)
+            return runtime is null ? Usage() : RunPostProcessingRace(runtime, scene, postProcessingLegacy);
         if (integration)
         {
             // Plan 0068 M7 (P5): the live scripted session against atlantis_runtime (GPU).
@@ -153,6 +157,7 @@ public static partial class Program
             TaskIssuesChecks();
             // Plan 0068 M3: the Inspector's model.
             InspectorChecks();
+            PostProcessingChecks();
             AssetBrowserChecks();
             MeshThumbnailChecks();
             AssetReferencePickerChecks();

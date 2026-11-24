@@ -174,7 +174,7 @@ keeps approval and implementation state separate.
 | Spec | Title | Status | Plan | Implementation | Scope |
 |---|---|---|---|---|---|
 | 0143 | [Lighting and Environment Workbench](0143-lighting-environment-workbench.md) | Approved | [Plan 0143](../plans/0143-lighting-environment-workbench.md) (Approved) | Merged in [PR #451](https://github.com/slmao/Atlantis/pull/451) as `8c75b99b` | First slice. Independently reopenable Bistro daylight copy at fixed exposure. |
-| 0144 | [Post Processing Panel V1](0144-post-processing-panel.md) | Draft | [Plan 0144](../plans/0144-post-processing-panel.md) (Draft) | Pending joint review | Second slice. Edit existing exposure, fog and Bloom on the verified active camera and reopen the saved settings. |
+| 0144 | [Post Processing Panel V1](0144-post-processing-panel.md) | Approved | [Plan 0144](../plans/0144-post-processing-panel.md) (Approved) | [Joint approval](https://github.com/slmao/Atlantis/pull/452#issuecomment-7137943834) | Second slice. Edit existing exposure, fog and Bloom on the verified active camera and reopen the saved settings. |
 
 ### B. Candidate Spec Backlog
 
