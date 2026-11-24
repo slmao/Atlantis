@@ -7,25 +7,33 @@ namespace Atlantis.Editor.Model;
 
 public sealed record HierarchyComponent(TypeId? Id, string Label);
 
+public enum HierarchyLightKind { All, Directional, Point }
+
 public sealed record HierarchySnapshot(long Lifetime, ulong Generation, IReadOnlyList<HierarchyRow> Rows,
-    IReadOnlyList<HierarchyComponent> Components, IReadOnlyList<Marker> Markers);
+    IReadOnlyList<HierarchyComponent> Components, IReadOnlyList<Marker> Markers)
+{
+    public bool HasLightMetadata { get; init; }
+    public ulong LightRevision { get; init; }
+}
 
 public sealed record HierarchyFilter
 {
     public static HierarchyFilter Empty { get; } = new("", null);
 
-    public HierarchyFilter(string? name, TypeId? component)
+    public HierarchyFilter(string? name, TypeId? component, HierarchyLightKind? light = null)
     {
         Name = name?.Trim() ?? "";
         Component = component;
+        Light = light;
     }
 
     public string Name { get; }
     public TypeId? Component { get; }
-    public bool Active => Name.Length != 0 || Component is not null;
+    public HierarchyLightKind? Light { get; }
+    public bool Active => Name.Length != 0 || Component is not null || Light is not null;
 
     public bool EquivalentTo(HierarchyFilter other) =>
-        Component == other.Component && string.Equals(Name, other.Name, StringComparison.OrdinalIgnoreCase);
+        Component == other.Component && Light == other.Light && string.Equals(Name, other.Name, StringComparison.OrdinalIgnoreCase);
 
     public bool Matches(string name, IReadOnlyList<TypeId> components) =>
         (Name.Length == 0 || name.Contains(Name, StringComparison.OrdinalIgnoreCase)) &&
@@ -45,15 +53,27 @@ public sealed record HierarchyFilter
             return new(rows, rows.Select(row => row.Node).ToHashSet(), new());
 
         var parents = rows.ToDictionary(row => row.Node, row => row.Parent);
-        var matches = rows.Where(row => Matches(row.Name, row.ComponentTypes)).Select(row => row.Node).ToHashSet();
+        var candidates = rows.Where(row => Matches(row.Name, row.ComponentTypes));
+        var direct = candidates.Where(row => MatchesLight(row.LightKind)).ToArray();
+        var matches = direct.Select(row => row.Node).ToHashSet();
         var visible = IncludeAncestors(matches, node => parents.GetValueOrDefault(node));
-        return new(rows.Where(row => visible.Contains(row.Node)).ToArray(), visible, matches);
+        return new(rows.Where(row => visible.Contains(row.Node)).ToArray(), visible, matches)
+        {
+            MatchingLights = Light is null ? Array.Empty<HierarchyRow>() : direct,
+            LightKindsComplete = Light is null || !candidates.Any(row => row.LightKindUnknown)
+        };
     }
 
-    public bool IncludesSelection(DocumentTree tree, IReadOnlyList<EntityGuid> selection)
+    private bool MatchesLight(HierarchyLightKind? kind) => Light is null ||
+        kind is not null && (Light == HierarchyLightKind.All || Light == kind);
+
+    public bool IncludesSelection(DocumentTree tree, IReadOnlyList<EntityGuid> selection,
+        IReadOnlyDictionary<EntityGuid, HierarchyLightKind?>? lightKinds = null)
     {
         if (!Active) return true;
-        var matches = tree.Order.Where(node => Matches(tree.NameOf(node), tree.ComponentsOf(node)));
+        if (Light is not null && lightKinds is null) return false;
+        var matches = tree.Order.Where(node => Matches(tree.NameOf(node), tree.ComponentsOf(node)) &&
+            MatchesLight(lightKinds?.GetValueOrDefault(node)));
         var visible = IncludeAncestors(matches, tree.ParentOf);
         return selection.All(visible.Contains);
     }
@@ -82,9 +102,16 @@ public sealed class HierarchyProjection
     }
 
     public IReadOnlyList<HierarchyRow> Rows { get; }
+    public IReadOnlyList<HierarchyRow> MatchingLights { get; init; } = Array.Empty<HierarchyRow>();
+    public bool LightKindsComplete { get; init; } = true;
     public int MatchCount => _matches.Count;
     public bool Matches(EntityGuid node) => _matches.Contains(node);
     public bool Visible(EntityGuid node) => _visible.Contains(node);
+
+    public bool SameMatchingLights(IReadOnlyList<HierarchyRow> expected) =>
+        LightKindsComplete && MatchingLights.Count > 0 && MatchingLights.Count == expected.Count &&
+        MatchingLights.Zip(expected).All(pair => pair.First.Node == pair.Second.Node &&
+            pair.First.LightKind == pair.Second.LightKind && ReferenceEquals(pair.First.Incarnation, pair.Second.Incarnation));
 
     public HierarchyRow? Locate(IReadOnlyList<HierarchyRow> full, IReadOnlyList<EntityGuid> selected) =>
         full.FirstOrDefault(row => selected.Contains(row.Node) && !Visible(row.Node)) ??

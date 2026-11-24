@@ -118,6 +118,9 @@ public sealed partial class MainWindow : Window
     private readonly ListBox _entities = new();
     private readonly TextBox _hierarchySearch = new() { PlaceholderText = "Search by name" };
     private readonly ComboBox _hierarchyComponent = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _hierarchyLight = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Button _selectMatchingLights = new() { Content = "Select matching lights", Focusable = false };
+    private readonly TextBlock _hierarchyLightNote = EditorVisuals.Secondary("Sky and image-based lighting are set at Runtime launch.");
     private readonly Button _clearHierarchyFilter = new() { Content = "Clear filters" };
     private readonly Button _locateHierarchySelection = new() { Content = "Locate selection" };
     private readonly TextBlock _hierarchyFilterStatus = EditorVisuals.Secondary("");
@@ -131,6 +134,13 @@ public sealed partial class MainWindow : Window
     private HierarchyProjection _hierarchyProjection = HierarchyFilter.Empty.Project(Array.Empty<HierarchyRow>());
     private HierarchyScrollAnchor? _hierarchyBeforeFilter;
     private ulong? _hierarchyViewGeneration;
+    private ulong _hierarchyViewLightRevision;
+    private bool _hierarchyHasLightMetadata;
+    private long _lightSelectionRequest;
+    private sealed record LightFilterChoice(HierarchyLightKind? Kind, string Label)
+    {
+        public override string ToString() => Label;
+    }
     private long _hierarchyScrollIntent;
     private bool _updatingHierarchyControls;
     private readonly Selection _selection = new();
@@ -5889,6 +5899,7 @@ public sealed partial class MainWindow : Window
     {
         AutomationProperties.SetName(_hierarchySearch, "Search by name");
         AutomationProperties.SetName(_hierarchyComponent, "Filter by component");
+        AutomationProperties.SetName(_hierarchyLight, "Filter by light type");
         _hierarchyComponent.ItemTemplate = new FuncDataTemplate<HierarchyComponent>((item, _) =>
         {
             var label = EditorVisuals.Ellipsis(item?.Label ?? "");
@@ -5902,6 +5913,15 @@ public sealed partial class MainWindow : Window
             if (change.Property == TextBox.TextProperty) ApplyHierarchyFilters();
         };
         _hierarchyComponent.SelectionChanged += (_, _) => ApplyHierarchyFilters();
+        _hierarchyLight.ItemsSource = new LightFilterChoice[]
+        {
+            new(null, "Light filter off"), new(HierarchyLightKind.All, "All lights"),
+            new(HierarchyLightKind.Directional, "Directional lights"), new(HierarchyLightKind.Point, "Point lights")
+        };
+        _hierarchyLight.SelectedIndex = 0;
+        _hierarchyLight.SelectionChanged += (_, _) => ApplyHierarchyFilters();
+        _selectMatchingLights.Click += (_, _) => SelectMatchingLights();
+        _hierarchyLightNote.TextWrapping = TextWrapping.Wrap;
         _clearHierarchyFilter.Click += (_, _) =>
         {
             ClearHierarchyFilters();
@@ -5912,7 +5932,8 @@ public sealed partial class MainWindow : Window
         _hiddenBatchStatus.TextWrapping = TextWrapping.Wrap;
         foreach (Control control in new Control[] { _gizmoMode, _gizmoSnap, _destroy, _pickUp, _moveHere, _toRoot, _moveUp, _moveDown })
             ToolTip.SetShowOnDisabled(control, true);
-        var filterBar = EditorVisuals.Stack(4, _hierarchySearch, _hierarchyComponent,
+        var filterBar = EditorVisuals.Stack(4, _hierarchySearch, _hierarchyComponent, _hierarchyLight,
+            _selectMatchingLights, _hierarchyLightNote,
             EditorVisuals.Actions(_clearHierarchyFilter, _locateHierarchySelection), _hierarchyFilterStatus);
         filterBar.Margin = new Thickness(4);
         UpdateHierarchyFilterStatus();
@@ -5926,10 +5947,13 @@ public sealed partial class MainWindow : Window
     {
         int total = _selection.Nodes.Count;
         int hidden = _hierarchyFilter.Active ? _selection.Nodes.Count(node => !_hierarchyProjection.Visible(node)) : 0;
+        bool filteringLights = _hierarchyFilter.Light is not null;
+        bool incompleteLights = filteringLights && (!_hierarchyHasLightMetadata || !_hierarchyProjection.LightKindsComplete);
         _hierarchyFilterStatus.Text = (total == 0 ? "No selection" : $"{total} selected") + (hidden > 0 ? $" · {hidden} hidden" : "");
         if (_hierarchyFilter.Active)
         {
-            string matches = _hierarchyProjection.MatchCount switch
+            string matches = incompleteLights ? $"Light types incomplete · {_hierarchyProjection.MatchCount} known matches" :
+                _hierarchyProjection.MatchCount switch
             {
                 0 => "No matching nodes",
                 1 => "1 match",
@@ -5940,6 +5964,47 @@ public sealed partial class MainWindow : Window
         _clearHierarchyFilter.IsEnabled = _hierarchyFilter.Active || !string.IsNullOrEmpty(_hierarchySearch.Text);
         _locateHierarchySelection.IsEnabled = !_referenceSessionFailed &&
             _hierarchyRows.Any(row => _selection.Nodes.Contains(row.Node));
+        _selectMatchingLights.IsVisible = _hierarchyLightNote.IsVisible = filteringLights;
+        _selectMatchingLights.IsEnabled = filteringLights && !_referenceSessionFailed && _worker is not null &&
+            (incompleteLights || _hierarchyProjection.MatchingLights.Count > 0);
+    }
+
+    private string? LightSelectionRefusal() => GroupEditRefusal() ??
+        (_leaveArmed || _recoveryDecision || _alignmentId is not null || _pickedUp is not null
+            ? "Finish the current action first." : null);
+
+    private void SelectMatchingLights()
+    {
+        if (!_selectMatchingLights.IsEnabled || _worker is not { } worker) return;
+        if (LightSelectionRefusal() is { } protectedAction)
+        {
+            _hierarchyFilterStatus.Text = protectedAction;
+            return;
+        }
+
+        var filter = _hierarchyFilter;
+        var matches = _hierarchyProjection.MatchingLights;
+        if (matches.Count > Doc.RequireDocumentRevision.MaxWrites)
+        {
+            _hierarchyFilterStatus.Text = $"Select up to {Doc.RequireDocumentRevision.MaxWrites} lights. Narrow the filter and try again.";
+            return;
+        }
+        ulong selection = _selection.Generation;
+        long request = ++_lightSelectionRequest;
+        worker.SelectMatchingLights(filter, matches, selection, (current, notice) =>
+        {
+            if (_shuttingDown || !ReferenceEquals(_worker, worker) || request != _lightSelectionRequest) return;
+            if (!current || !ReferenceEquals(filter, _hierarchyFilter) || selection != _selection.Generation ||
+                LightSelectionRefusal() is not null || !_hierarchyProjection.SameMatchingLights(matches))
+            {
+                _hierarchyFilterStatus.Text = notice.Length > 0 ? notice :
+                    "The matches, selection or active edit changed. Review the matches and try again.";
+                return;
+            }
+            if (!_selection.Set(matches.Select(row => row.Node).ToArray())) return;
+            ++_pickRequest;
+            PublishSelection(scroll: false);
+        });
     }
 
     private void AddInspectorStructureButton(Button button)
@@ -6001,7 +6066,8 @@ public sealed partial class MainWindow : Window
     private void ApplyHierarchyFilters(HierarchyRow? reveal = null)
     {
         if (_updatingHierarchyControls) return;
-        var filter = new HierarchyFilter(_hierarchySearch.Text, (_hierarchyComponent.SelectedItem as HierarchyComponent)?.Id);
+        var filter = new HierarchyFilter(_hierarchySearch.Text, (_hierarchyComponent.SelectedItem as HierarchyComponent)?.Id,
+            (_hierarchyLight.SelectedItem as LightFilterChoice)?.Kind);
         if (_hierarchyFilter.EquivalentTo(filter))
         {
             UpdateHierarchyFilterStatus();
@@ -6036,6 +6102,7 @@ public sealed partial class MainWindow : Window
         {
             _hierarchySearch.Text = "";
             _hierarchyComponent.SelectedIndex = 0;
+            _hierarchyLight.SelectedIndex = 0;
         }
         finally { _updatingHierarchyControls = false; }
         ApplyHierarchyFilters(reveal);
@@ -6053,6 +6120,9 @@ public sealed partial class MainWindow : Window
     {
         _hierarchyBeforeFilter = null;
         _hierarchyViewGeneration = null;
+        _hierarchyViewLightRevision = 0;
+        _hierarchyHasLightMetadata = false;
+        ++_lightSelectionRequest;
         _hierarchyRows = Array.Empty<HierarchyRow>();
         _updatingHierarchyControls = true;
         try { _hierarchyComponent.ItemsSource = new[] { AllHierarchyComponents }; }
@@ -6065,10 +6135,12 @@ public sealed partial class MainWindow : Window
     {
         if (_hierarchyViewGeneration is ulong generation && snapshot.Generation < generation) return;
         _markers = snapshot.Markers;
-        if (_hierarchyViewGeneration == snapshot.Generation) return;
+        if (_hierarchyViewGeneration == snapshot.Generation && _hierarchyViewLightRevision == snapshot.LightRevision) return;
         ClearHierarchyDropFeedback();
         HierarchyScrollAnchor? anchor = CurrentHierarchyAnchor();
         _hierarchyViewGeneration = snapshot.Generation;
+        _hierarchyViewLightRevision = snapshot.LightRevision;
+        _hierarchyHasLightMetadata = snapshot.HasLightMetadata;
         _hierarchyRows = snapshot.Rows;
         var options = snapshot.Components.Prepend(AllHierarchyComponents).ToArray();
         if (_hierarchyComponent.ItemsSource?.OfType<HierarchyComponent>().SequenceEqual(options) != true)

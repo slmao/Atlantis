@@ -12,6 +12,7 @@ using Atlantis.Gameplay.Authoring;
 using Atlantis.Gameplay.Remote;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 
 namespace Atlantis.Editor.Tests;
@@ -73,6 +74,34 @@ public static partial class Program
             HierarchyFilter.ComponentChoices(doc.Schema).Any(choice => choice.Id == FakeDocument.CameraType),
             "Hierarchy component choices include known components and omit nested structs");
 
+        var kindAddress = new SceneAddress(sibling, FakeDocument.Light, FakeDocument.Kind);
+        doc.SubmitTransaction([new Atlantis.Gameplay.Authoring.SetProperty(kindAddress, PropertyValue.FromEnum(1))]);
+        var kinds = SceneMarkers.ReadLightKinds(doc, tree)!;
+        Check(kinds.Count == 2 && kinds[child] == HierarchyLightKind.Directional && kinds[sibling] == HierarchyLightKind.Point,
+            "Light kind is read through the authoring enum schema and only for Light components");
+        var points = new HierarchyFilter("light", FakeDocument.Light, HierarchyLightKind.Point);
+        var pointRows = points.Project(SceneMarkers.Rows(tree, doc.Schema, kinds));
+        Check(pointRows.Rows.Select(row => row.Node).SequenceEqual([parent, sibling]) &&
+            pointRows.MatchingLights.Select(row => row.Node).SequenceEqual([sibling]) &&
+            points.IncludesSelection(tree, [sibling], kinds) && !points.IncludesSelection(tree, [child, sibling], kinds),
+            "Light kind composes with name and component; ancestors and hidden lights are excluded from selection");
+        Check(new HierarchyFilter("missing", null, HierarchyLightKind.All).Project(rows).MatchingLights.Count == 0 &&
+            new HierarchyFilter(null, FakeDocument.CameraType, HierarchyLightKind.Point).Project(rows).MatchingLights.Count == 0,
+            "Light filter returns no match for conflicting criteria");
+        var allLights = new HierarchyFilter(null, null, HierarchyLightKind.All);
+        var both = allLights.Project(SceneMarkers.Rows(tree, doc.Schema, kinds));
+        Check(both.SameMatchingLights(both.MatchingLights) && !both.SameMatchingLights(pointRows.MatchingLights) &&
+            !allLights.EquivalentTo(points), "Light matching is ordered and scoped to the current filter");
+        Change(new NodeNameChanged(sibling, ""));
+        Check(new HierarchyFilter(null, null, HierarchyLightKind.Point).Project(SceneMarkers.Rows(tree, doc.Schema, kinds))
+            .MatchingLights.Single().Name == "", "Unnamed lights match by their authoring kind");
+        Change(new NodeNameChanged(sibling, "Fill light"));
+        doc.Unreadable = kindAddress;
+        var partial = allLights.Project(SceneMarkers.Rows(tree, doc.Schema, SceneMarkers.ReadLightKinds(doc, tree)));
+        Check(!partial.LightKindsComplete && partial.MatchingLights.Count == 1 &&
+            !partial.SameMatchingLights(partial.MatchingLights), "Partial light read preserves known results but refuses selection");
+        doc.Unreadable = null;
+
         var selection = new Selection();
         selection.Set(new[] { child, grandchild });
         ulong generation = selection.Generation;
@@ -105,6 +134,8 @@ public static partial class Program
         Check(anchor.Restore(Rows())?.Node == child, "Hierarchy scroll anchors do not follow replacements with the same GUID");
         Change(new DocumentReopened(default));
         Check(anchor.Restore(Rows())?.Node == Rows()[0].Node, "Hierarchy scroll falls back to the top after a new document");
+        Check(!allLights.Project(SceneMarkers.Rows(tree, doc.Schema, kinds)).SameMatchingLights(both.MatchingLights),
+            "Light matching refuses stale occurrences even when node GUIDs and kinds still match");
 
         HierarchyRow[] Rows() => SceneMarkers.Rows(tree, doc.Schema).ToArray();
         void Change(Atlantis.Gameplay.Authoring.Event e) => tree.Apply(e, doc);
@@ -189,6 +220,17 @@ public static partial class Program
             var notice = NameUiField<TextBlock>(window, "_editLine")!;
             await NameUiWait(() => list.ItemCount > 2, "Hierarchy opened");
             var worker = NameUiField<EditorWorker>(window, "_worker")!;
+            if (!list.Items.OfType<HierarchyRow>().Any(row => row.LightKind == HierarchyLightKind.Point))
+            {
+                var lamp = new EntityGuid(Guid.NewGuid());
+                var plan = SceneObjectPresets.Build(observer.Authoring.Schema, SceneObjectPreset.PointLight, lamp,
+                    (ulong)observer.Authoring.ListNodes().Value.Count, null)!;
+                observer.Authoring.SubmitTransaction(plan.Edit.Commands);
+                Require(observer.Authoring.DrainFailures().Count == 0, "seed a point light through the shared authoring contract");
+                await NameUiWait(() => list.Items.OfType<HierarchyRow>().Any(row => row.Node == lamp &&
+                    row.LightKind == HierarchyLightKind.Point), "The added light kind is read on its new Hierarchy row");
+            }
+            await CheckLightSelection(window, list, undo);
             EntityGuid[] nodes = observer.Authoring.ListNodes().Value.Take(2).Select(node => node.Node).ToArray();
             observer.Authoring.SubmitTransaction([new SetNodeName(nodes[0], "Batch first"), new SetNodeName(nodes[1], "Batch second")]);
             Require(observer.Authoring.DrainFailures().Count == 0, "seed matching selection");
@@ -262,6 +304,53 @@ public static partial class Program
             undo.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await NameUiWait(() => field.Targets.All(target => observer.Authoring.GetProperty(target.Address).Value == target.Value),
                 "explicit Undo while filtered restored both values");
+        }
+
+        async Task CheckLightSelection(MainWindow window, ListBox list, Button undo)
+        {
+            var light = NameUiField<ComboBox>(window, "_hierarchyLight")!;
+            var select = NameUiField<Button>(window, "_selectMatchingLights")!;
+            var status = NameUiField<TextBlock>(window, "_hierarchyFilterStatus")!;
+            var selection = NameUiField<Selection>(window, "_selection")!;
+            var initial = selection.Generation;
+            light.SelectedIndex = 3;
+            await NameUiWait(() => select.IsEnabled && list.Items.OfType<HierarchyRow>()
+                .Any(row => row.LightKind == HierarchyLightKind.Point), "Point light matches are visible");
+
+            var oldRequest = new HeldHierarchyReply("authoring.documentState");
+            Volatile.Write(ref hold, oldRequest);
+            select.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await oldRequest.Held.Task.WaitAsync(deadline.Token);
+            light.SelectedIndex = 2;
+            oldRequest.Release.SetResult();
+            await NameUiWait(() => status.Text?.Contains("try again", StringComparison.Ordinal) == true,
+                "A delayed light selection is refused after changing the kind filter");
+            Require(initial == selection.Generation && submits == 0 && applies == 0 && !undo.IsEnabled,
+                "Stale select preserves selection and produces zero transaction, Apply and history");
+
+            light.SelectedIndex = 3;
+            var matches = list.Items.OfType<HierarchyRow>().Where(row => row.LightKind == HierarchyLightKind.Point).Select(row => row.Node).ToArray();
+            Require(matches.Length > 0, "Current point filter has matches");
+            select.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await NameUiWait(() => selection.Nodes.SequenceEqual(matches), "Current light selection keeps Hierarchy order");
+            Require(submits == 0 && applies == 0 && !undo.IsEnabled,
+                "Successful light select produces zero transaction, Apply and history");
+
+            list.SelectedItems!.Clear();
+            list.SelectedItem = list.Items.OfType<HierarchyRow>().Single(row => row.Node == matches[0]);
+            await NameUiWait(() => NameUiField<InspectorSnapshot>(window, "_inspectorShown")?.Subject == matches[0],
+                "The point light's Inspector is ready");
+            var draft = NameUiField<TextBox>(window, "_nameBox")!;
+            draft.Focus();
+            draft.Text = "Uncommitted point-light name";
+            initial = selection.Generation;
+            select.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Require(status.Text?.Contains("field edit", StringComparison.Ordinal) == true &&
+                draft.Text == "Uncommitted point-light name" && selection.Generation == initial && submits == 0 && applies == 0,
+                "Select matching lights preserves the active draft and emits no transaction or Apply");
+            NameUiKey(draft, Key.Escape);
+            light.SelectedIndex = 0;
+            list.SelectedItems!.Clear();
         }
 
         static void Require(bool condition, string label)

@@ -173,7 +173,7 @@ keeps approval and implementation state separate.
 
 | Spec | Title | Status | Plan | Implementation | Scope |
 |---|---|---|---|---|---|
-| 0143 | [Lighting and Environment Workbench](0143-lighting-environment-workbench.md) | Draft | [Plan 0143](../plans/0143-lighting-environment-workbench.md) | Pending joint review | First slice. Make an independently reopenable Bistro daylight copy at fixed exposure using existing lighting and capture capabilities. |
+| 0143 | [Lighting and Environment Workbench](0143-lighting-environment-workbench.md) | Approved | [Plan 0143](../plans/0143-lighting-environment-workbench.md) (Approved) | [Joint approval](https://github.com/slmao/Atlantis/pull/450#issuecomment-7136435565) | First slice. Make an independently reopenable Bistro daylight copy at fixed exposure using existing lighting and capture capabilities. |
 
 ### B. Candidate Spec Backlog
 

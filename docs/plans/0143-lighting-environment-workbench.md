@@ -1,9 +1,9 @@
 # Plan 0143 — Lighting and Environment Workbench
 
 - **Spec:** [Spec 0143](../specs/0143-lighting-environment-workbench.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending. S2–S4 require explicit authorization and maintainer merge of this design.
+- **Joint Human Review:** The maintainer approved Spec/Plan 0143 and J1–J4 on `f026851b` on 2026-11-24 and authorized S2–S4 after the design merge. [Approval record](https://github.com/slmao/Atlantis/pull/450#issuecomment-7136435565). The maintainer merged PR #450 as `577776e5`.
 - **ADR:** None proposed
 - **Design baseline:** `b27d93fe` on `main`
 
