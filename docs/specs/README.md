@@ -169,6 +169,12 @@ keeps approval and implementation state separate.
 | 0141 | [Hierarchy Batch Rename](0141-hierarchy-batch-rename.md) | Approved | [Plan 0141](../plans/0141-hierarchy-batch-rename.md) (Approved) | Implementation merged [#446](https://github.com/slmao/Atlantis/pull/446) as `0372c4a3` | Numbered Hierarchy selection, guarded name transaction and grouped history. [ADR-0189](../adr/0189-document-guarded-node-name-batch.md) Accepted. |
 | 0142 | [Static Mesh Thumbnails in Assets](0142-assets-mesh-thumbnails.md) | Approved | [Plan 0142](../plans/0142-assets-mesh-thumbnails.md) (Approved) | [Joint review approved](https://github.com/slmao/Atlantis/pull/447#issuecomment-7105301892) | Visible mesh thumbnails using the existing preview and bounded session caching. [ADR-0190](../adr/0190-editor-mesh-thumbnail-admission-and-cache.md) Accepted. |
 
+#### 3D Scene and Render Effects Editor V1
+
+| Spec | Title | Status | Plan | Implementation | Scope |
+|---|---|---|---|---|---|
+| 0143 | [Lighting and Environment Workbench](0143-lighting-environment-workbench.md) | Draft | [Plan 0143](../plans/0143-lighting-environment-workbench.md) | Pending joint review | First slice. Make an independently reopenable Bistro daylight copy at fixed exposure using existing lighting and capture capabilities. |
+
 ### B. Candidate Spec Backlog
 
 Candidates are unapproved work, not implementation commitments. Assign a formal
