@@ -137,7 +137,7 @@ bool recordLookReadback(rhi::CommandList& commands, rhi::RenderTarget& target, r
   if (compiled.isErr()) return false;
   const std::vector bindings{render_graph::ResourceBinding{
       .resource = compiled.value().resourceAt(0), .target = &target,
-      .incomingState = rhi::ResourceState::TransferSource}};
+      .incomingState = rhi::ResourceState::TransferSource, .finalState = std::nullopt}};
   render_graph::execute(compiled.value(), bindings, commands);
   return commands.recordingValid();
 }
