@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <span>
 
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
@@ -33,6 +34,13 @@ class Device {
   // (ADR-0020).
   [[nodiscard]] virtual atlantis::Result<std::unique_ptr<CommandList>, CommandListCreateError>
   createCommandList() = 0;
+
+  // ADR-0192: check the declared immutable pipelines before offscreen capture.
+  // They must remain alive through submission settlement.
+  [[nodiscard]] virtual atlantis::Result<std::monostate, CommandListCreateError>
+  checkIsolatedBindings(std::span<Pipeline* const> pipelines) const = 0;
+  [[nodiscard]] virtual atlantis::Result<std::unique_ptr<CommandList>, CommandListCreateError>
+  createIsolatedCommandList(std::span<Pipeline* const> pipelines) = 0;
 
   // Takes ownership of commandList (moved in, per ADR-0020). target is
   // read only for its acquire-complete wait signal -- Device does not

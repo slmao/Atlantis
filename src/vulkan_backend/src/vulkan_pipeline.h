@@ -42,6 +42,8 @@ class VulkanPipeline final : public atlantis::rhi::Pipeline {
   // pushConstant() bodies -- never reached from RHI's public surface.
   [[nodiscard]] VkPipeline vkPipeline() const noexcept { return pipeline_; }
   [[nodiscard]] VkPipelineLayout pipelineLayout() const noexcept { return pipelineLayout_; }
+  [[nodiscard]] VkDescriptorSetLayout descriptorSetLayout() const noexcept { return descriptorSetLayout_; }
+  [[nodiscard]] VkDevice owner() const noexcept { return device_; }
   [[nodiscard]] VkDescriptorSet descriptorSet() const noexcept { return descriptorSet_; }
   [[nodiscard]] std::uint32_t sampledTextureFirstBinding() const noexcept { return sampledTextureFirstBinding_; }
   [[nodiscard]] std::uint32_t sampledTextureBindingCount() const noexcept { return sampledTextureBindingCount_; }
