@@ -19,6 +19,13 @@ The runtime preview work uses the S2 shared types. Keep the renderer shader
 algorithms, scene source schema, launcher and global gate configuration out of
 the delivery. Finish both client-facing paths before running the Windows matrix.
 
+| Files and modules | Scope |
+| --- | --- |
+| `src/connection/include/atlantis/connection/{authoring_connection,runtime_control}.h`; `src/authoring/{include/atlantis/authoring,src}/authoring_session.*` | Typed pair request/result, closed guard and whole-candidate validation. |
+| `src/remote/`, `src/cli/`, `src/gameplay_sdk/`, `src/csharp/`, `src/mcp/` and `docs/architecture/remote_protocol.md` | Capability advertisement, transport and client exposure. Extend existing client contract and compatibility tests. |
+| `src/runtime/src/{frame_capture,runtime_application}.*`, `src/runtime/include/atlantis/runtime/runtime_application.h` and executable-private control/authoring adapters under `src/runtime/` | Freeze validated input, render the pair and release its resources. Extend existing Runtime capture tests. |
+| `src/editor_app/Atlantis.Editor.Model/AuthoringDocument.cs`, a new render-look model and store, `src/editor_app/Atlantis.Editor/{EditorSession,MainWindow}.cs` and a new render-look panel partial | Local workflow, late-response protection, transaction settlement and history. Extend existing Editor tests, including fixed-view tests. |
+
 ## Joint review decisions
 
 | Decision | Recommendation |
@@ -72,8 +79,8 @@ the delivery. Finish both client-facing paths before running the Windows matrix.
   a held capture and a ready comparison. Check document token, saved bytes,
   history, recovery status and Apply receipt unchanged, including the second
   client's regular captures. Retain native screenshots and raw output pairs.
-- [ ] **Windows 100% — Adopt, Save and cold Open.** Start from settled Night,
-  using the captured Night values and record its existing history depth.
+- [ ] **Windows 100% — Adopt, Save and cold Open.** Establish a settled Night
+  projection using the captured values and record the existing history depth.
   Adopt Daylight with one confirmed transaction and compare the applied PNGs
   with the Daylight preview at both views. One Undo restores Night and one
   Redo restores Daylight. Perform explicit Save and independent 0090
