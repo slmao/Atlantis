@@ -550,6 +550,7 @@ public sealed partial class MainWindow : Window
             _worker?.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         };
         InitializeBistroViews();
+        InitializeRenderLooks();
         _locateSurfaceMaterial.Click += (_, _) =>
         {
             if (BistroLocatorProtected())

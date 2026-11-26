@@ -154,6 +154,10 @@ class AuthoringSession {
   // The open document, read-only, for the host; nullptr until open().
   [[nodiscard]] const asset_system::scene::AuthoringScene* document() const noexcept;
 
+  [[nodiscard]] Result<asset_system::ValidatedSceneData, connection::authoring::Error> cookRenderLook(
+      connection::authoring::DocumentToken document, connection::authoring::ApplyId apply, std::uint64_t generation,
+      const connection::authoring::RenderLookBasis& basis, std::span<const connection::authoring::SetProperty> values);
+
   // The host's scene sink (ADR-0131 D3); without one, apply() is NoSceneSink.
   void setSceneSink(SceneSink sink);
   void setSaveAsSink(SaveAsSink sink);

@@ -1351,6 +1351,37 @@ const scene::AuthoringScene* AuthoringSession::document() const noexcept {
   return state_->document.has_value() ? &*state_->document : nullptr;
 }
 
+Result<asset_system::ValidatedSceneData, ac::Error> AuthoringSession::cookRenderLook(
+    ac::DocumentToken token, ac::ApplyId apply, std::uint64_t generation,
+    const ac::RenderLookBasis& basis, std::span<const ac::SetProperty> values) {
+  using R = Result<asset_system::ValidatedSceneData, ac::Error>;
+  if (!state_->document || !std::holds_alternative<HandAuthored>(state_->source.provenance))
+    return R::Err(ac::Error::NoDocument);
+  if (token != ac::DocumentToken{state_->documentId, state_->documentRevision} ||
+      !state_->projection || state_->projection->generation != generation ||
+      state_->projection->receipt != ac::ApplyReceipt{apply, token.documentRevision})
+    return R::Err(ac::Error::RenderLookStaleDocument);
+  const auto current = renderLookBasis(*state_->document);
+  if (!current || *current != basis) return R::Err(ac::Error::RenderLookTargetChanged);
+  if (values.size() != 8 + current->lightRoster.size() * 3)
+    return R::Err(ac::Error::InvalidGuardedRenderLook);
+  auto candidate = *state_->document;
+  std::set<ac::PropertyAddress> addresses;
+  std::vector<ac::Event> unusedEvents;
+  for (const auto& write : values) {
+    const auto node = findNode(candidate, write.address.node);
+    if (!node || !isRenderLookAddress(candidate.nodes[*node], *current, write.address) ||
+        !addresses.insert(write.address).second)
+      return R::Err(ac::Error::InvalidGuardedRenderLook);
+    if (const auto refusal = state_->apply(candidate, write, unusedEvents)) return R::Err(*refusal);
+  }
+  const auto cooked = asset_system::cookSceneToMemory(candidate, state_->source.scene);
+  if (cooked.isErr()) return R::Err(ac::Error::CookRefused);
+  auto decoded = asset_system::decodeScene(cooked.value());
+  if (decoded.isErr()) return R::Err(ac::Error::CookRefused);
+  return R::Ok(std::move(decoded.value()));
+}
+
 void AuthoringSession::setRecoveryStore(RecoveryStore& store) { state_->recovery = &store; }
 void AuthoringSession::setSceneSink(SceneSink sink) { state_->sink = std::move(sink); }
 void AuthoringSession::setSaveAsSink(SaveAsSink sink) { state_->copySink = std::move(sink); }

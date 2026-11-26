@@ -6,7 +6,10 @@ using System.Numerics;
 namespace Atlantis.Gameplay;
 
 // Plan 0065 P4 (ADR-0131 D5): SceneGeneration counts the Runtime's scene reloads (0: none).
-public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0);
+public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0)
+{
+    public bool SupportsRenderLookCapture { get; init; }
+}
 
 /// <summary>
 /// Run <paramref name="Frames"/> frames (at least one); optionally capture the last to a PNG. Plan 0066 P2 (Spec 0066
@@ -69,6 +72,24 @@ public sealed record DiagnosticBatch(IReadOnlyList<Diagnostic> Entries, ulong La
 /// column-major (the scene camera's convention: it looks down its local -Z). Lens values as the World's Camera.
 /// </summary>
 public sealed record ViewportCamera(IReadOnlyList<float> WorldMatrix, float FovYRadians, float NearZ, float FarZ);
+
+public enum RenderLookCaptureError
+{
+    Unsupported, Busy, InvalidRequest, StaleProjection, TargetChanged, Unavailable, BudgetExceeded, CaptureFailed
+}
+
+public sealed record RenderLookCaptureRequest(Authoring.RequireRenderLookDocument Guard, Authoring.ApplyId Apply,
+    ulong Generation, ViewportCamera Camera, IReadOnlyList<Authoring.SetProperty> A,
+    IReadOnlyList<Authoring.SetProperty> B, string OutputA, string OutputB);
+
+public sealed record RenderLookCapturedPair(FrameReport A, FrameReport B,
+    Authoring.DocumentToken Document, Authoring.ApplyId Apply, ulong Generation, EntityGuid ActiveCamera)
+{
+    public const uint Width = 960;
+    public const uint Height = 540;
+}
+
+public sealed record RenderLookCaptureResult(RenderLookCapturedPair? Pair, RenderLookCaptureError? Error);
 
 public enum ViewportBoundsKind { Mesh, Origin }
 

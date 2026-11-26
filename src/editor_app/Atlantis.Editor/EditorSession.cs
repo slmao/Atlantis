@@ -440,7 +440,108 @@ public sealed class EditorWorker : IDisposable
     private long _postProcessingEpoch;
     private bool _postProcessingOpen, _postProcessingReadQueued, _postProcessingWriting;
     private PostProcessingView? _postProcessingView;
+    private readonly ConditionalWeakTable<BatchPropertyEdit, RenderLookBasis> _renderLookHistory = new();
     internal event Action<PostProcessingView?, string>? PostProcessingChanged;
+
+    internal sealed record RenderLookReview(DocumentState Document, RenderLookSnapshot Snapshot, long Lifetime);
+
+    private RenderLookReview? ReadRenderLook(RemoteSession session)
+    {
+        if (_document is not RemoteAuthoringDocument document ||
+            ReadPersistence(session).State is not { Provenance: Provenance.HandAuthored } before ||
+            document.ObserveEvents() is not { } opening) return null;
+        long lifetime = MeshDocumentLifetime;
+        PollDocument(session, opening, pollApply: false, refreshInspector: false);
+        var snapshot = RenderLookSnapshot.Read(document, _tree);
+        if (snapshot is null || document.ObserveEvents() is not { } closing) return null;
+        PollDocument(session, closing, pollApply: false, refreshInspector: false);
+        return before.Token == ReadPersistence(session).State?.Token && lifetime == MeshDocumentLifetime &&
+            snapshot.Targets.All(target => target.IsCurrent(_tree, true))
+            ? new(before, snapshot, lifetime) : null;
+    }
+
+    internal void RequestRenderLook(Action<RenderLookReview?, string> onRead) => Enqueue(session =>
+    {
+        RenderLookReview? review = null;
+        string reason = "The active camera and complete light roster could not be verified.";
+        try { review = ReadRenderLook(session); }
+        catch (Exception error) when (error is GameplayException or IOException) { reason = error.Message; }
+        _post(() => onRead(review, review is null ? reason : ""));
+    });
+
+    internal void CompareRenderLooks(RenderLookReview review, RenderLookPreset a, RenderLookPreset b,
+        BistroReferenceView view, string pathA, string pathB, Action<RenderLookCapturedPair?, string> onDone) => Enqueue(session =>
+    {
+        RenderLookCapturedPair? pair = null;
+        string notice = "The document, projection, or look targets changed. Refresh before comparing.";
+        ApplyProjection? Projection() => _document?.ApplyStatus().Value?.Projection;
+        try
+        {
+            var status = session.Control.Status();
+            if (!status.SupportsRenderLookCapture) notice = "This Runtime does not support render look capture.";
+            else if (review.Lifetime == MeshDocumentLifetime &&
+                ReadPersistence(session).State?.Token == review.Document.Token &&
+                a.Matches(review.Snapshot.Basis) && b.Matches(review.Snapshot.Basis) &&
+                Projection() is { } projection && projection.Generation == status.SceneGeneration &&
+                projection.Receipt.DocumentRevision == review.Document.Token.DocumentRevision)
+            {
+                var pose = view.Pose();
+                var request = new RenderLookCaptureRequest(new(review.Document.Token, review.Snapshot.Basis),
+                    projection.Receipt.Id, projection.Generation,
+                    new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ), a.Values, b.Values, pathA, pathB);
+                var result = session.Control.CaptureRenderLook(request);
+                if (result.Pair is { } captured && review.Lifetime == MeshDocumentLifetime &&
+                    ReadPersistence(session).State?.Token == review.Document.Token && Projection() == projection &&
+                    session.Control.Status().SceneGeneration == projection.Generation &&
+                    view.Matches(captured.A.Data.View, captured.A.Data.Projection) &&
+                    view.Matches(captured.B.Data.View, captured.B.Data.Projection))
+                {
+                    pair = captured;
+                    notice = "";
+                }
+                else if (result.Error is { } error) notice = "Comparison refused. " + error;
+            }
+        }
+        catch (Exception error) when (error is GameplayException or IOException) { notice = error.Message; }
+        _post(() => onDone(pair, notice));
+    });
+
+    internal void AdoptRenderLook(RenderLookReview review, RenderLookPreset preset, Func<bool> intent,
+        Action<string> onDone) => Enqueue(session =>
+    {
+        string notice = "The document or targets changed. Refresh and review the look again.";
+        bool Current() => !_stopping && intent() && review.Lifetime == MeshDocumentLifetime &&
+            !_dragActive && !_gizmoActive && !_batchSettling && !_postProcessingWriting;
+        if (Current() && preset.Matches(review.Snapshot.Basis) && (_history, _historyTarget) is ({ } history, { } target))
+        {
+            var prior = review.Snapshot.Targets.ToDictionary(row => row.Address, row => row.Value!.Value);
+            if (preset.Values.Count == prior.Count && preset.Values.All(write => prior.ContainsKey(write.Address)))
+            {
+                var writes = preset.Values.Where(write => prior[write.Address] != write.Value)
+                    .Select(write => new PropertyWrite(write.Address, prior[write.Address], write.Value)).ToArray();
+                if (writes.Length != 0)
+                {
+                    string label = "Adopt " + preset.Name;
+                    var edit = new BatchPropertyEdit(label, review.Snapshot.Targets, writes);
+                    _renderLookHistory.Add(edit, review.Snapshot.Basis);
+                    var result = SettlePropertyBatch(session, edit, true, review.Lifetime,
+                        expectedRevision: review.Document.Token.DocumentRevision, sendGuard: Current, directEdit: true);
+                    notice = result.Notice;
+                    if (result.State == BatchReplayState.Committed)
+                    {
+                        history.Record(new EditTransaction(label, writes, [edit]), target.Committed([]));
+                        history.Update();
+                        PostHistory(review.Lifetime);
+                        notice = ApplyVerifiedEdit(review.Lifetime, notice, publishStatus: false);
+                        PostApplyState(review.Lifetime);
+                        PollDocument(session);
+                    }
+                }
+                else notice = "The saved look already matches this document.";
+            }
+        }
+        _post(() => onDone(notice));
+    });
     private DocumentToken? _bistroLocatorDocument;
     private long _bistroLocatorObservation;
     private long _hierarchyObservation;
@@ -4499,7 +4600,9 @@ public sealed class EditorWorker : IDisposable
         ulong? expectedRevision = null, Func<bool>? sendGuard = null, string? uncertaintyDetail = null, bool directEdit = false)
     {
         bool group = edit.Group is not null;
-        if (_document is not RemoteAuthoringDocument document || !(group ? _groupWritable : _batchWritable))
+        _renderLookHistory.TryGetValue(edit, out var renderLook);
+        if (_document is not RemoteAuthoringDocument document ||
+            (renderLook is null && !(group ? _groupWritable : _batchWritable)))
             return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
         bool IsCurrent() => !_stopping && lifetime == MeshDocumentLifetime &&
             (selection is null || selection == _requestedSelectionGeneration) &&
@@ -4561,7 +4664,9 @@ public sealed class EditorWorker : IDisposable
 
             if (!Current()) return Stale();
             DocumentInfo? info = document.Info();
-            if (!(group ? info?.SupportsGuardedTransformTransactions == true : info?.SupportsGuardedPropertyTransactions == true))
+            bool supported = renderLook is not null ? info?.SupportsGuardedRenderLookTransactions == true
+                : group ? info?.SupportsGuardedTransformTransactions == true : info?.SupportsGuardedPropertyTransactions == true;
+            if (!supported)
                 return new(BatchReplayState.Retry, "Guarded editing is unavailable.");
             if (filter?.Active == true)
             {
@@ -4570,6 +4675,12 @@ public sealed class EditorWorker : IDisposable
                     return new(BatchReplayState.Retry, "Some selected nodes are hidden. Locate selection before editing.");
             }
             Command guard = group ? new RequireTransformBatchRevision(revision) : new RequireDocumentRevision(revision);
+            if (renderLook is not null)
+            {
+                var current = ReadPersistence(session).State?.Token;
+                if (current is not DocumentToken token || token.DocumentRevision != revision) return Stale();
+                guard = new RequireRenderLookDocument(token, renderLook);
+            }
             var commands = JsonValue.NewArray().Push(Codec.Encode(guard));
             foreach (var command in changed) commands.Push(Codec.Encode(command));
             var parameters = JsonValue.NewObject().Set("commands", commands);

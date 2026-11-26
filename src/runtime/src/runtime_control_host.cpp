@@ -140,7 +140,12 @@ void RuntimeControlHost::stop() {
 
 connection::RuntimeStatus RuntimeControlHost::status() {
   return connection::RuntimeStatus{paused_, frame_, target_.scene,
-                                   target_.sceneGeneration ? target_.sceneGeneration() : 0};
+                                   target_.sceneGeneration ? target_.sceneGeneration() : 0,
+                                   static_cast<bool>(target_.captureRenderLook)};
+}
+
+connection::RenderLookCaptureResult RuntimeControlHost::captureRenderLook(const connection::RenderLookCaptureRequest& request) {
+  return target_.captureRenderLook ? target_.captureRenderLook(request) : RuntimeControl::captureRenderLook(request);
 }
 
 void RuntimeControlHost::pause() { paused_ = true; }

@@ -265,9 +265,10 @@ internal static partial class Program
 
     private static void MappingChecks()
     {
-        Check(ToolRegistry.Mappings.Select(m => m.Tool.Name).Order().SequenceEqual(Cases.Select(c => c.Tool).Order()),
+        Check(ToolRegistry.Mappings.Select(m => m.Tool.Name).Order()
+            .SequenceEqual(Cases.Select(c => c.Tool).Append("control.capture_render_look").Order()),
             "exactly the approved exact-tier names, without subscription management");
-        Check(ToolRegistry.Mappings.Select(m => m.Method).Distinct().Count() == Cases.Length, "one distinct wire method per tool");
+        Check(ToolRegistry.Mappings.Select(m => m.Method).Distinct().Count() == Cases.Length + 1, "one distinct wire method per tool");
         foreach (var c in Cases)
         {
             FakeSession session = new() { Response = FixtureEnvelope(c.Method, c.Result) };

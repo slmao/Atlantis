@@ -363,6 +363,20 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     return *status;
   }
   void pause() override { (void)state_->call("control.pause"); }
+  atlantis::connection::RenderLookCaptureResult captureRenderLook(
+      const atlantis::connection::RenderLookCaptureRequest& request) override {
+    using R = atlantis::connection::RenderLookCaptureResult;
+    using E = atlantis::connection::RenderLookCaptureError;
+    if (!status().supportsRenderLookCapture) return R::Err(E::Unsupported);
+    const auto wire = state_->call("control.captureRenderLook", codec::encode(request));
+    if (!wire || !wire->isObject() || wire->asObject().size() != 1) return R::Err(E::CaptureFailed);
+    if (const auto* ok = wire->find("ok"))
+      if (auto pair = codec::decodeRenderLookCapturedPair(*ok, request)) return R::Ok(std::move(*pair));
+    if (const auto* err = wire->find("err"))
+      if (const auto failure = codec::decodeRenderLookCaptureError(*err)) return R::Err(*failure);
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err(E::CaptureFailed);
+  }
   void resume() override { (void)state_->call("control.resume"); }
   void step(atlantis::connection::StepRequest request,
             std::function<void(atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>)>

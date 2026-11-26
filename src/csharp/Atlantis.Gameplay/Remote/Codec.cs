@@ -7,6 +7,8 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Linq;
+using A = Atlantis.Gameplay.Authoring;
 
 namespace Atlantis.Gameplay.Remote;
 
@@ -519,9 +521,13 @@ public static partial class Codec
 
     // --- Control values (section 6.6).
 
-    public static JsonValue Encode(RuntimeStatus status) =>
-        JsonValue.NewObject().Set("paused", JsonValue.Bool(status.Paused)).Set("frame", JsonValue.Number(status.Frame))
+    public static JsonValue Encode(RuntimeStatus status)
+    {
+        var value = JsonValue.NewObject().Set("paused", JsonValue.Bool(status.Paused)).Set("frame", JsonValue.Number(status.Frame))
             .Set("scene", Encode(status.Scene)).Set("sceneGeneration", JsonValue.Number(status.SceneGeneration));
+        if (status.SupportsRenderLookCapture) value.Set("supportsRenderLookCapture", JsonValue.Bool(true));
+        return value;
+    }
 
     public static RuntimeStatus? DecodeStatus(JsonValue value)
     {
@@ -537,8 +543,79 @@ public static partial class Codec
             if (DecodeUInt64(g) is not ulong decoded) return null;
             generation = decoded;
         }
-        return new RuntimeStatus(paused.AsBool, f, s, generation);
+        return new RuntimeStatus(paused.AsBool, f, s, generation)
+        {
+            SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true }
+        };
     }
+
+    public static JsonValue Encode(RenderLookCaptureRequest request)
+    {
+        var looks = JsonValue.NewArray();
+        foreach (var variant in new[] { request.A, request.B })
+        {
+            var values = JsonValue.NewArray();
+            foreach (var property in variant) values.Push(Encode(property));
+            looks.Push(values);
+        }
+        return JsonValue.NewObject().Set("guard", Encode(request.Guard))
+            .Set("applyId", JsonValue.String(request.Apply.ToString())).Set("generation", JsonValue.Number(request.Generation))
+            .Set("camera", Encode(request.Camera)).Set("looks", looks)
+            .Set("outputs", JsonValue.NewArray().Push(JsonValue.String(request.OutputA)).Push(JsonValue.String(request.OutputB)));
+    }
+
+    public static RenderLookCaptureRequest? DecodeRenderLookCaptureRequest(JsonValue request)
+    {
+        if (!Exact(request, 6) || request.Find("guard") is not { } guardValue ||
+            DecodeAuthoringCommand(guardValue) is not A.RequireRenderLookDocument guard ||
+            request.Find("applyId") is not { IsString: true } applyValue ||
+            !A.ApplyId.TryParse(applyValue.AsString, out var apply) ||
+            request.Find("generation") is not { } generationValue || DecodeUInt64(generationValue) is not ulong generation ||
+            request.Find("camera") is not { } cameraValue || DecodeViewportCamera(cameraValue) is not { } camera ||
+            request.Find("looks") is not { IsArray: true } looks || looks.Items.Count != 2 ||
+            request.Find("outputs") is not { IsArray: true } outputs || outputs.Items.Count != 2 ||
+            !outputs.Items.All(path => path.IsString && path.AsString.Length is > 0 and <= 2048)) return null;
+        var variants = new List<A.SetProperty>[2];
+        for (int i = 0; i < 2; i++)
+        {
+            var list = looks.Items[i];
+            if (!list.IsArray || list.Items.Count != 8 + 3 * guard.Basis.LightRoster.Count) return null;
+            variants[i] = new List<A.SetProperty>(list.Items.Count);
+            foreach (var entry in list.Items)
+            {
+                if (DecodeAuthoringCommand(entry) is not A.SetProperty write) return null;
+                variants[i].Add(write);
+            }
+        }
+        return new RenderLookCaptureRequest(guard, apply, generation, camera, variants[0], variants[1],
+            outputs.Items[0].AsString, outputs.Items[1].AsString);
+    }
+
+    public static RenderLookCapturedPair? DecodeRenderLookCapturedPair(JsonValue result, RenderLookCaptureRequest request)
+    {
+        if (!Exact(result, 5) || result.Find("document") is not { } doc ||
+            DecodeDocumentToken(doc) != request.Guard.ExpectedDocument ||
+            result.Find("activeCamera") is not { } camera || DecodeEntity(camera) != request.Guard.Basis.ActiveCamera ||
+            result.Find("applyId") is not { IsString: true } apply || apply.AsString != request.Apply.ToString() ||
+            result.Find("generation") is not { } generation || DecodeUInt64(generation) != request.Generation ||
+            result.Find("variants") is not { IsArray: true } variants || variants.Items.Count != 2) return null;
+        var a = Variant(variants.Items[0], "A", request.OutputA, request.A);
+        var b = Variant(variants.Items[1], "B", request.OutputB, request.B);
+        return a is not null && b is not null ? new RenderLookCapturedPair(a, b,
+            request.Guard.ExpectedDocument, request.Apply, request.Generation, request.Guard.Basis.ActiveCamera) : null;
+
+        static FrameReport? Variant(JsonValue row, string role, string path, IReadOnlyList<A.SetProperty> expected)
+        {
+            if (!Exact(row, 3) || row.Find("role") is not { IsString: true } side || side.AsString != role ||
+                row.Find("capture") is not { } capture ||
+                DecodeFrameReport(capture) is not { Frame: 0, Applied: false, Image: { } image } report ||
+                image.Path != path || image.Width != RenderLookCapturedPair.Width || image.Height != RenderLookCapturedPair.Height ||
+                row.Find("values") is not { IsArray: true } values || values.Items.Count != expected.Count) return null;
+            return values.Items.Select(DecodeAuthoringCommand).SequenceEqual(expected) ? report : null;
+        }
+    }
+
+    public static RenderLookCaptureError? DecodeRenderLookCaptureError(JsonValue value) => DecodeName<RenderLookCaptureError>(value);
 
     public static JsonValue Encode(StepRequest request) =>
         JsonValue.NewObject().Set("frames", JsonValue.Number((ulong)request.Frames))

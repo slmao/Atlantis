@@ -496,6 +496,24 @@ int main(int argc, char** argv) {
       const auto catalog = assets.catalog();
       return app.pickMaterialBinding(request, catalog.get());
     };
+    target.captureRenderLook = [&app, &authoring, &config](const atlantis::connection::RenderLookCaptureRequest& request) {
+      namespace ac = atlantis::connection::authoring;
+      using E = atlantis::connection::RenderLookCaptureError;
+      using R = atlantis::connection::RenderLookCaptureResult;
+      auto* session = authoring.session();
+      if (!session) return R::Err(E::Unavailable);
+      const auto failure = [](ac::Error error) {
+        if (error == ac::Error::RenderLookStaleDocument) return E::StaleProjection;
+        if (error == ac::Error::RenderLookTargetChanged) return E::TargetChanged;
+        if (error == ac::Error::NoDocument) return E::Unavailable;
+        return E::InvalidRequest;
+      };
+      auto a = session->cookRenderLook(request.document, request.apply, request.generation, request.basis, request.looks[0]);
+      if (a.isErr()) return R::Err(failure(a.error()));
+      auto b = session->cookRenderLook(request.document, request.apply, request.generation, request.basis, request.looks[1]);
+      if (b.isErr()) return R::Err(failure(b.error()));
+      return app.captureRenderLook(request, {std::move(a.value()), std::move(b.value())}, config);
+    };
     control = std::make_unique<atlantis::runtime::RuntimeControlHost>(
         std::move(target), atlantis::runtime::RuntimeControlHost::Options{});
     // Plan 0066 P4 (ADR-0132 D4; J11): a served RuntimeControl can set a

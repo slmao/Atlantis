@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -300,7 +301,54 @@ static_assert(
   return "unknown DeviceCreateError";
 }
 
+struct FullscreenShaderPair {
+  std::vector<std::uint32_t> vertexSpirv;
+  std::vector<std::uint32_t> fragmentSpirv;
+  VertexInputLayout vertexInputLayout;
+};
+std::optional<FullscreenShaderPair> loadFullscreenShaderPair(const std::string& vertexSpirvPath,
+    const std::string& vertexReflectionPath, const std::string& fragmentSpirvPath) {
+  auto vertexSpirv = loadSpirvFile(vertexSpirvPath);
+  auto fragmentSpirv = loadSpirvFile(fragmentSpirvPath);
+  auto vertexReflection = loadReflectionMetadata(vertexReflectionPath);
+  if (!vertexSpirv.has_value() || !fragmentSpirv.has_value() || vertexReflection.isErr()) return std::nullopt;
+  auto layout = outputTransformVertexLayout(vertexReflection.value());
+  if (!layout.has_value()) return std::nullopt;
+  return FullscreenShaderPair{std::move(*vertexSpirv), std::move(*fragmentSpirv), std::move(*layout)};
+}
+
 }  // namespace
+
+std::optional<RuntimeApplication::RenderLookBloomPipelines>
+RuntimeApplication::createRenderLookBloomPipelines(const BootstrapConfig& config) {
+  const auto down = loadFullscreenShaderPair(config.bloomDownsampleVertexShaderSpirvPath,
+      config.bloomDownsampleVertexShaderReflectionPath, config.bloomDownsampleFragmentShaderSpirvPath);
+  const auto up = loadFullscreenShaderPair(config.bloomUpsampleVertexShaderSpirvPath,
+      config.bloomUpsampleVertexShaderReflectionPath, config.bloomUpsampleFragmentShaderSpirvPath);
+  const auto composite = loadFullscreenShaderPair(config.bloomCompositeVertexShaderSpirvPath,
+      config.bloomCompositeVertexShaderReflectionPath, config.bloomCompositeFragmentShaderSpirvPath);
+  if (!down || !up || !composite) return std::nullopt;
+  RenderLookBloomPipelines result;
+  for (std::size_t i = 0; i < result.size(); ++i) {
+    const auto pass = renderer::bloomPipelineShaderPair(i);
+    const auto& shaders = pass == renderer::BloomShaderPair::Downsample ? *down :
+        pass == renderer::BloomShaderPair::Upsample ? *up : *composite;
+    auto pipeline = device_->createPipeline(
+        {.vertexShader = {.spirvWords = shaders.vertexSpirv.data(), .wordCount = shaders.vertexSpirv.size()},
+         .fragmentShader = {.spirvWords = shaders.fragmentSpirv.data(), .wordCount = shaders.fragmentSpirv.size()},
+         .vertexInputLayout = shaders.vertexInputLayout,
+         .colorFormat = rhi::HdrFormat::Rgba16Float,
+         .pushConstantSizeBytes = 16,
+         .sampledTextureBindingCount = renderer::bloomPipelineSamplerCount(i),
+         .hasCameraUniformBinding = false,
+         .hasDepthAttachment = false,
+         .isolatedBindingsOnly = true,
+         .debugName = ATL_DEBUG_NAME("look_capture_bloom")});
+    if (pipeline.isErr()) return std::nullopt;
+    result[i] = std::move(pipeline.value());
+  }
+  return result;
+}
 
 RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
     : platformSession_(std::move(session)) {}
@@ -822,21 +870,6 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // ruled out a partial set), each on the fullscreen-triangle schema the
   // output-transform pairs use. Local, like the shadow-casting pair: the
   // Pipelines are built once, below, and never rebuilt.
-  struct FullscreenShaderPair {
-    std::vector<std::uint32_t> vertexSpirv;
-    std::vector<std::uint32_t> fragmentSpirv;
-    VertexInputLayout vertexInputLayout;
-  };
-  const auto loadFullscreenShaderPair = [](const std::string& vertexSpirvPath, const std::string& vertexReflectionPath,
-                                           const std::string& fragmentSpirvPath) -> std::optional<FullscreenShaderPair> {
-    auto vertexSpirv = loadSpirvFile(vertexSpirvPath);
-    auto fragmentSpirv = loadSpirvFile(fragmentSpirvPath);
-    auto vertexReflection = loadReflectionMetadata(vertexReflectionPath);
-    if (!vertexSpirv.has_value() || !fragmentSpirv.has_value() || vertexReflection.isErr()) return std::nullopt;
-    auto layout = outputTransformVertexLayout(vertexReflection.value());
-    if (!layout.has_value()) return std::nullopt;
-    return FullscreenShaderPair{std::move(*vertexSpirv), std::move(*fragmentSpirv), std::move(*layout)};
-  };
   std::optional<FullscreenShaderPair> bloomDownsampleShaders;
   std::optional<FullscreenShaderPair> bloomUpsampleShaders;
   std::optional<FullscreenShaderPair> bloomCompositeShaders;
@@ -2930,12 +2963,17 @@ RuntimeExitReason RuntimeApplication::shutdown() {
     auto result = device_->waitIdle();
     if (result.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed during shutdown");
+      if (incompleteRenderLook_ && result.error() != rhi::SubmitError::DeviceLost) {
+        ATLANTIS_LOG_ERROR("render look submission is still unsettled; abandoning this Runtime");
+        std::quick_exit(EXIT_FAILURE);
+      }
       hadFailure = true;  // a wait that cannot complete cleanly is itself an unrecoverable
                            // condition for this run; teardown proceeds regardless.
     }
   }
 
   incompleteMeshPreview_.reset();  // Spec 0091 R3: after the terminal drain, before Device teardown.
+  incompleteRenderLook_.reset();  // ADR-0192: after completion or confirmed device loss.
 
   // Plan 0018 Section P10: explicit clear, texture/sampler-before-
   // material order (D9) -- material_.reset()'s own former single line

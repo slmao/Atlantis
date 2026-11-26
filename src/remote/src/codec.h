@@ -141,6 +141,12 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::FrameData> decodeFrameData(const Value& value);
 [[nodiscard]] Value encode(const connection::FrameReport& report);
 [[nodiscard]] std::optional<connection::FrameReport> decodeFrameReport(const Value& value);
+[[nodiscard]] Value encode(const connection::RenderLookCaptureRequest& request);
+[[nodiscard]] std::optional<connection::RenderLookCaptureRequest> decodeRenderLookCaptureRequest(const Value& value);
+[[nodiscard]] Value encode(const connection::RenderLookCapturedPair& result);
+[[nodiscard]] std::optional<connection::RenderLookCapturedPair> decodeRenderLookCapturedPair(
+    const Value& value, const connection::RenderLookCaptureRequest& request);
+[[nodiscard]] std::optional<connection::RenderLookCaptureError> decodeRenderLookCaptureError(const Value& value);
 [[nodiscard]] Value encode(const connection::DiagnosticBatch& batch);
 [[nodiscard]] std::optional<connection::DiagnosticBatch> decodeDiagnosticBatch(const Value& value);
 // Spec 0064 / ADR-0128: {"worldMatrix":[16 f32],"fovYRadians":f32,"nearZ":f32,"farZ":f32};
