@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -99,6 +100,10 @@ internal sealed class RenderLookStore
             }
             if (current.Revision.Length != 0) SavedSceneCleanupWindows.ReplaceReceipt(stage, _path);
             else File.Move(stage, _path);
+        }
+        catch (Win32Exception error)
+        {
+            throw new IOException("Could not replace the saved render looks. Refresh before retrying.", error);
         }
         finally
         {
