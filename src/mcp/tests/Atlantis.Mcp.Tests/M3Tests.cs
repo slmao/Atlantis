@@ -86,15 +86,18 @@ internal static partial class Program
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
             if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision"
-                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument")
+                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument"
+                or "RequireRenderLookDocument")
             {
-                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument";
+                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision"
+                    or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument" or "RequireRenderLookDocument";
                 QueueSession exact = new()
                 {
                     GuardedCapability = kind == "RequireDocumentRevision" ? JsonValue.Bool(true) : null,
                     TransformCapability = kind == "RequireTransformBatchRevision" ? JsonValue.Bool(true) : null,
                     DuplicateCapability = kind == "RequireDuplicateBatchRevision" ? JsonValue.Bool(true) : null,
                     NameCapability = kind == "RequireNameBatchDocument" ? JsonValue.Bool(true) : null,
+                    RenderLookCapability = kind == "RequireRenderLookDocument" ? JsonValue.Bool(true) : null,
                 };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
@@ -223,6 +226,23 @@ internal static partial class Program
             bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
             Check(session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
                 "Transform capability is discovered independently from the property guard");
+        }
+        const string renderLook = """
+            {"commands":[{"kind":"RequireRenderLookDocument",
+            "expectedDocument":{"documentId":"52052052-0001-4052-8052-000000000001","documentRevision":7},
+            "activeCamera":"52052052-0002-4052-8052-000000000002","lightRoster":[],"placementSignature":"basis"},
+            {"kind":"SetProperty","address":{"node":"52052052-0002-4052-8052-000000000002",
+            "component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"f32":4}}]}
+            """;
+        foreach (JsonValue? capability in new[] { null, JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
+        {
+            session.RenderLookCapability = capability;
+            int start = session.Calls.Count;
+            var submitted = registry.Invoke(Request("authoring.submit_transaction", renderLook));
+            bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
+            Check(session.Calls[start].Method == "authoring.document" &&
+                session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
+                "guarded looks are forwarded only on literal true, without write fallback");
         }
         foreach (var c in CompositionCases)
         {
@@ -421,6 +441,7 @@ internal static partial class Program
         public JsonValue? TransformCapability { get; set; }
         public JsonValue? DuplicateCapability { get; set; }
         public JsonValue? NameCapability { get; set; }
+        public JsonValue? RenderLookCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -451,6 +472,8 @@ internal static partial class Program
                     if (TransformCapability is not null) result.Set("supportsGuardedTransformTransactions", TransformCapability);
                     if (DuplicateCapability is not null) result.Set("supportsGuardedDuplicateTransactions", DuplicateCapability);
                     if (NameCapability is not null) result.Set("supportsGuardedNameTransactions", NameCapability);
+                    if (RenderLookCapability is not null)
+                        result.Set("supportsGuardedRenderLookTransactions", RenderLookCapability);
                     break;
                 case "authoring.submitTransaction":
                 {

@@ -46,6 +46,8 @@ internal static class ToolSchemas
         Command("RequireTransformBatchRevision", ("expectedRevision", Integer)),
         Command("RequireDuplicateBatchRevision", ("expectedRevision", Integer)),
         Command("RequireNameBatchDocument", ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer)))),
+        Command("RequireRenderLookDocument", ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer))),
+            ("activeCamera", String), ("lightRoster", Array(String)), ("placementSignature", String)),
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)),
         Command("SetPrefabOrigin", ("node", String), ("prefab", String)));

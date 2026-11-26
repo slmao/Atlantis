@@ -2467,6 +2467,29 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
       return ResultT::Err(textError(text::TextError::MalformedNumber, t[2]));
     return ResultT::Ok(std::vector<ac::Command>{ac::RequireNameBatchDocument{{id.value(), revision}}});
   }
+  if (verb == "require-render-look-document") {
+    constexpr std::string_view usage =
+        "require-render-look-document <document> <revision> <camera> <placement-signature> [light-guid ...]";
+    if (t.size() < 5 || t.size() > 5 + ac::kMaxRenderLookLights || t[4].empty() ||
+        t[4].size() > ac::kMaxRenderLookPlacementBytes) return ResultT::Err(usageError(usage));
+    const auto id = entityAt(1);
+    if (id.isErr()) return ResultT::Err(textError(id.error(), t[1]));
+    const auto camera = entityAt(3);
+    if (camera.isErr()) return ResultT::Err(textError(camera.error(), t[3]));
+    std::uint64_t revision{};
+    const auto parsed = std::from_chars(t[2].data(), t[2].data() + t[2].size(), revision);
+    if (parsed.ec != std::errc{} || parsed.ptr != t[2].data() + t[2].size() || revision == 0)
+      return ResultT::Err(textError(text::TextError::MalformedNumber, t[2]));
+    ac::RenderLookBasis basis{camera.value(), {}, std::string(t[4])};
+    for (std::size_t i = 5; i < t.size(); ++i) {
+      const auto light = entityAt(i);
+      if (light.isErr()) return ResultT::Err(textError(light.error(), t[i]));
+      if (light.value() == camera.value() || (!basis.lightRoster.empty() && basis.lightRoster.back() >= light.value()))
+        return ResultT::Err(usageError("light GUIDs must be distinct and in canonical ascending order"));
+      basis.lightRoster.push_back(light.value());
+    }
+    return ResultT::Ok(std::vector<ac::Command>{ac::RequireRenderLookDocument{{id.value(), revision}, std::move(basis)}});
+  }
   if (verb == "require-revision" || verb == "require-transform-revision" || verb == "require-duplicate-revision") {
     if (t.size() != 2) return ResultT::Err(usageError(std::string(verb) + " <revision> (first line of scene tx)"));
     std::uint64_t revision{};
@@ -2551,11 +2574,17 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   const bool nameGuard = std::ranges::any_of(commands, [](const auto& edit) {
     return std::holds_alternative<ac::RequireNameBatchDocument>(edit);
   });
-  const bool guarded = propertyGuard || transformGuard || duplicateGuard || nameGuard;
+  const bool renderLookGuard = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireRenderLookDocument>(edit);
+  });
+  const bool guarded = propertyGuard || transformGuard || duplicateGuard || nameGuard || renderLookGuard;
   Value batchTargets = Value::array();
   std::string batchField;
   if (guarded) {
     const auto info = a->document();
+    if (renderLookGuard && (!info || !info->supportsGuardedRenderLookTransactions))
+      return failed(command, plainError("GuardedRenderLookUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded render look transactions"));
     if (nameGuard && (!info || !info->supportsGuardedNameTransactions))
       return failed(command, plainError("GuardedNameBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded name transactions"));
@@ -2590,6 +2619,7 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       if (const auto leaf = leafOf(schema, write->address.component, write->address.field)) batchField = leaf->path;
     }
     if (transformGuard) batchField = "Transform";
+    if (renderLookGuard) batchField = "RenderLook";
   }
   (void)drainSceneEvents();  // only this submission's events below
   (void)a->drainFailures();

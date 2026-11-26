@@ -1264,7 +1264,8 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
         std::holds_alternative<ac::RequireDocumentRevision>(command) ||
         std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
         std::holds_alternative<ac::RequireDuplicateBatchRevision>(command) ||
-        std::holds_alternative<ac::RequireNameBatchDocument>(command))
+        std::holds_alternative<ac::RequireNameBatchDocument>(command) ||
+        std::holds_alternative<ac::RequireRenderLookDocument>(command))
       return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
@@ -1286,12 +1287,16 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     const bool names = std::ranges::any_of(commands, [](const ac::Command& command) {
       return std::holds_alternative<ac::RequireNameBatchDocument>(command);
     });
-    if (property || transform || duplicate || names) {
+    const bool looks = std::ranges::any_of(commands, [](const ac::Command& command) {
+      return std::holds_alternative<ac::RequireRenderLookDocument>(command);
+    });
+    if (property || transform || duplicate || names || looks) {
       const auto info = document();
       if (!info || (property && !info->supportsGuardedPropertyTransactions) ||
           (transform && !info->supportsGuardedTransformTransactions) ||
           (duplicate && !info->supportsGuardedDuplicateTransactions) ||
-          (names && !info->supportsGuardedNameTransactions)) return {};
+          (names && !info->supportsGuardedNameTransactions) ||
+          (looks && !info->supportsGuardedRenderLookTransactions)) return {};
     }
     if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
           return std::holds_alternative<ac::MoveSiblingRelative>(command);

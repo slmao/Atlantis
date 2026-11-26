@@ -70,6 +70,22 @@ template <typename T>
 
 }  // namespace
 
+TEST_CASE("remote codec: guarded render looks round-trip with closed target metadata", "[remote][codec][render-look]") {
+  namespace ac = atlantis::connection::authoring;
+  const ac::RequireRenderLookDocument guard{{entity(1), 7}, {entity(2), {entity(3), entity(4)}, "basis"}};
+  auto jsonGuard = overTheWire(codec::encode(ac::Command{guard}));
+  const auto decoded = codec::decodeAuthoringCommand(jsonGuard);
+  REQUIRE(decoded.has_value());
+  const auto& actual = std::get<ac::RequireRenderLookDocument>(*decoded);
+  CHECK(actual.expectedDocument == guard.expectedDocument);
+  CHECK(actual.basis == guard.basis);
+  auto duplicates = json::Value::array();
+  duplicates.push(codec::encodeEntity(entity(3)));
+  duplicates.push(codec::encodeEntity(entity(3)));
+  jsonGuard.set("lightRoster", std::move(duplicates));
+  CHECK_FALSE(codec::decodeAuthoringCommand(jsonGuard));
+}
+
 TEST_CASE("codec: every PropertyValue alternative round-trips", "[remote][codec]") {
   const std::vector<access::PropertyValue> values = {
       access::PropertyValue(std::uint64_t{0}),

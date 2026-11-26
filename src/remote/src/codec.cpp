@@ -1851,6 +1851,8 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
     authoring::Error::InvalidGuardedDuplicateBatch, authoring::Error::DuplicateBatchStaleRevision,
     authoring::Error::InvalidGuardedNameBatch, authoring::Error::NameBatchStaleDocument,
+    authoring::Error::InvalidGuardedRenderLook, authoring::Error::RenderLookStaleDocument,
+    authoring::Error::RenderLookTargetChanged,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -2018,6 +2020,14 @@ Value encode(const authoring::Command& command) {
         } else if constexpr (std::is_same_v<C, authoring::RequireNameBatchDocument>) {
           out.set("kind", Value::string("RequireNameBatchDocument"));
           out.set("expectedDocument", encode(c.expectedDocument));
+        } else if constexpr (std::is_same_v<C, authoring::RequireRenderLookDocument>) {
+          out.set("kind", Value::string("RequireRenderLookDocument"));
+          out.set("expectedDocument", encode(c.expectedDocument));
+          out.set("activeCamera", encodeEntity(c.basis.activeCamera));
+          Value roster = Value::array();
+          for (const auto& light : c.basis.lightRoster) roster.push(encodeEntity(light));
+          out.set("lightRoster", std::move(roster));
+          out.set("placementSignature", Value::string(c.basis.placementSignature));
         } else if constexpr (std::is_same_v<C, authoring::RequireDuplicateBatchRevision>) {
           out.set("kind", Value::string("RequireDuplicateBatchRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
@@ -2129,6 +2139,27 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
       return std::nullopt;
     const auto expected = decodeDocumentToken(*token);
     return expected ? std::optional<authoring::Command>{authoring::RequireNameBatchDocument{*expected}} : std::nullopt;
+  }
+  if (*kind == "RequireRenderLookDocument") {
+    const auto* token = value.find("expectedDocument");
+    const auto* camera = value.find("activeCamera");
+    const auto* roster = value.find("lightRoster");
+    const auto* signature = value.find("placementSignature");
+    if (value.asObject().size() != 5 || !token || !token->isObject() || token->asObject().size() != 2 ||
+        !camera || !roster || !roster->isArray() || roster->asArray().size() > authoring::kMaxRenderLookLights ||
+        !signature || !signature->isString() || signature->asString().empty() ||
+        signature->asString().size() > authoring::kMaxRenderLookPlacementBytes) return std::nullopt;
+    const auto expected = decodeDocumentToken(*token);
+    const auto active = decodeEntity(*camera);
+    if (!expected || !active) return std::nullopt;
+    authoring::RenderLookBasis basis{*active, {}, std::string(signature->asString())};
+    for (const auto& entry : roster->asArray()) {
+      const auto light = decodeEntity(entry);
+      if (!light || *light == *active || (!basis.lightRoster.empty() && basis.lightRoster.back() >= *light))
+        return std::nullopt;
+      basis.lightRoster.push_back(*light);
+    }
+    return authoring::Command(authoring::RequireRenderLookDocument{*expected, std::move(basis)});
   }
   if (*kind == "RequireDuplicateBatchRevision") {
     const auto* revision = value.find("expectedRevision");
@@ -2369,6 +2400,7 @@ Value encode(const authoring::DocumentInfo& document) {
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
   if (document.supportsGuardedNameTransactions) out.set("supportsGuardedNameTransactions", Value::boolean(true));
+  if (document.supportsGuardedRenderLookTransactions) out.set("supportsGuardedRenderLookTransactions", Value::boolean(true));
   if (document.supportsPrefabOrigin) out.set("supportsPrefabOrigin", Value::boolean(true));
   if (document.supportsPrefabSync) out.set("supportsPrefabSync", Value::boolean(true));
   if (document.supportsPrefabRegistration) out.set("supportsPrefabRegistration", Value::boolean(true));
@@ -2410,6 +2442,9 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   const auto* names = value.find("supportsGuardedNameTransactions");
   out.supportsGuardedNameTransactions = out.provenance == authoring::Provenance::HandAuthored &&
                                         names && names->isBool() && names->asBool();
+  const auto* look = value.find("supportsGuardedRenderLookTransactions");
+  out.supportsGuardedRenderLookTransactions = out.provenance == authoring::Provenance::HandAuthored &&
+                                              look && look->isBool() && look->asBool();
   return out;
 }
 

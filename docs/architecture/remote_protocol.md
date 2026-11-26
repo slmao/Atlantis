@@ -1078,6 +1078,38 @@ ticket. A successful batch advances one revision and emits existing
 requesting Apply. An older host refuses the unknown guard during decoding
 and guarded clients do not send unguarded replacement writes.
 
+### Guarded render-look writes
+
+[ADR-0191](../adr/0191-render-look-preview-and-adoption.md) adds the optional
+`supportsGuardedRenderLookTransactions` boolean to a hand-authored document.
+A client uses the guard only when the flag is true.
+
+`RequireRenderLookDocument` must lead an `authoring.submitTransaction` of one
+to 203 distinct `SetProperty` commands. The guard has exactly four payload
+members: `expectedDocument` (the existing document token), `activeCamera`
+(the camera node GUID), `lightRoster` (up to 65 light node GUIDs in ascending
+canonical order), and `placementSignature` (a nonempty string of at most
+128 KiB). The host checks the open document, token, active camera, full
+direct-light roster and target placement.
+
+The placement signature is the concatenation of target and ancestor rows in
+ascending node GUID order. A row is `node/parent/role` followed by slash-separated
+unsigned decimal binary32 bit patterns and a terminal `|`. An empty parent
+means root. Roles are `C` for the active camera, `D` for the directional light,
+`P` for a point light, and `T` for an ancestor outside the target roster.
+The bit patterns are local position, local scale, and local Euler angles
+(XYZ order for each), omitting Euler angles for the directional light. A camera row
+ends with vertical FOV in radians, near plane, and far plane. A directional light
+must be a leaf. Scene values that the look can edit are excluded from the basis.
+
+Writes are limited to the active camera's exposure, five Fog and two Bloom
+leaves, light color and intensity, point range and directional local Euler
+rotation. The guard consumes one ticket without emitting an event. Shape,
+token and target failures are reported as `InvalidGuardedRenderLook`,
+`RenderLookStaleDocument` and `RenderLookTargetChanged`, respectively. A
+refusal changes no field. Settle the ticket range and verify writes before
+requesting Apply. Existing guards and unguarded edits keep their behavior.
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines

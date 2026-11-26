@@ -74,6 +74,9 @@ std::string_view toString(Error error) noexcept {
     case Error::DuplicateBatchStaleRevision: return "DuplicateBatchStaleRevision";
     case Error::InvalidGuardedNameBatch: return "InvalidGuardedNameBatch";
     case Error::NameBatchStaleDocument: return "NameBatchStaleDocument";
+    case Error::InvalidGuardedRenderLook: return "InvalidGuardedRenderLook";
+    case Error::RenderLookStaleDocument: return "RenderLookStaleDocument";
+    case Error::RenderLookTargetChanged: return "RenderLookTargetChanged";
     case Error::NoDocument: return "NoDocument";
     case Error::UnknownNode: return "UnknownNode";
     case Error::UnknownComponentType: return "UnknownComponentType";
